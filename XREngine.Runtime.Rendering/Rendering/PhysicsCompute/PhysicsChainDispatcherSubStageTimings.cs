@@ -48,6 +48,8 @@ namespace XREngine.Rendering.Compute;
 /// <param name="CommitNotifications">
 /// The number of renderer notifications that successful output page commits sent.
 /// </param>
+/// <param name="BoundsRowReuses">The number of bounds builds that reused every retained row.</param>
+/// <param name="BoundsRowRebuilds">The number of bounds builds that rebuilt every row.</param>
 public readonly record struct PhysicsChainDispatcherSubStageTimings(
     double BoundsRoutesMilliseconds,
     double BoundsRowsMilliseconds,
@@ -65,4 +67,6 @@ public readonly record struct PhysicsChainDispatcherSubStageTimings(
     double CommitNotifyMilliseconds,
     double CommitOtherMilliseconds,
     long CommittedOutputPages,
-    long CommitNotifications);
+    long CommitNotifications,
+    long BoundsRowReuses,
+    long BoundsRowRebuilds);

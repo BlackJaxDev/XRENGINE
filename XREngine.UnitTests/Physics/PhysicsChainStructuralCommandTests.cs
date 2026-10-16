@@ -41,7 +41,7 @@ public sealed class PhysicsChainStructuralCommandTests
     }
 
     [Test]
-    public void RemoveAddBeforeDrainDoesNotRecycleTheLiveSlot()
+    public void RemoveAddBeforeDrainRetiresTheOldHandle()
     {
         var world = new TestWorldContext();
         var node = new SceneNode("PhysicsChain");
@@ -49,15 +49,25 @@ public sealed class PhysicsChainStructuralCommandTests
         SetWorld(node, world);
         world.Invoke(ETickGroup.Normal);
         PhysicsChainRuntimeHandle originalHandle = component.RuntimeHandle;
+        originalHandle.IsValid.ShouldBeTrue();
 
+        // Deactivation retires the live slot immediately. The next add can use
+        // the free slot again, but only with a new generation.
         SetWorld(node, null);
         SetWorld(node, world);
         world.Invoke(ETickGroup.Normal);
 
-        component.RuntimeHandle.ShouldBe(originalHandle);
         PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler).ShouldBeTrue();
         scheduler.ShouldNotBeNull();
         scheduler!.RegisteredCount.ShouldBe(1);
+        scheduler.SlotCapacity.ShouldBe(1);
+        PhysicsChainRuntimeHandle currentHandle = component.RuntimeHandle;
+        currentHandle.IsValid.ShouldBeTrue();
+        currentHandle.Slot.ShouldBe(originalHandle.Slot);
+        currentHandle.Generation.ShouldNotBe(originalHandle.Generation);
+        scheduler.TryResolveRuntimeHandle(originalHandle, out _).ShouldBeFalse();
+        scheduler.TryResolveRuntimeHandle(currentHandle, out PhysicsChainComponent? resolved).ShouldBeTrue();
+        resolved.ShouldBeSameAs(component);
 
         SetWorld(node, null);
         world.Invoke(ETickGroup.Normal);

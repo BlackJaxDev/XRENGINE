@@ -497,6 +497,9 @@ namespace XREngine.Rendering.UI
             UILayoutSystem.FitLayout(this, parentBounds);
         }
 
+        /// <summary>The world change method rebuilds the axis-aligned region, and the local change method is profiled.</summary>
+        protected override int OverriddenMatrixChangeNotifications => LocalMatrixNotification | WorldMatrixNotification;
+
         protected override void OnLocalMatrixChanged(Matrix4x4 localMatrix)
         {
             using var profiler = RuntimeEngine.Profiler.Start("UIBoundableTransform.OnLocalMatrixChanged");

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Numerics;
 using System.Reflection;
-using System.Collections;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
@@ -53,37 +52,16 @@ public sealed class PhysicsChainComponentTests
         field.SetValue(target, value);
     }
 
-    private static T GetPropertyValue<T>(object target, string propertyName)
-    {
-        PropertyInfo property = target.GetType().GetProperty(propertyName, InstanceFlags)
-            ?? throw new InvalidOperationException($"Property '{propertyName}' was not found on {target.GetType().FullName}.");
-        return (T)(property.GetValue(target) ?? throw new InvalidOperationException($"Property '{propertyName}' was null."));
-    }
-
-    private static void SetPropertyValue<T>(object target, string propertyName, T value)
-    {
-        PropertyInfo property = target.GetType().GetProperty(propertyName, InstanceFlags)
-            ?? throw new InvalidOperationException($"Property '{propertyName}' was not found on {target.GetType().FullName}.");
-        property.SetValue(target, value);
-    }
-
-    private static IList GetParticleTrees(PhysicsChainComponent component)
-        => GetFieldValue<IList>(component, "_particleTrees");
-
-    private static IList GetParticles(object particleTree)
-        => GetPropertyValue<IList>(particleTree, "Particles");
-
-    private static object GetParticle(PhysicsChainComponent component, int treeIndex, int particleIndex)
-        => GetParticles(GetParticleTrees(component)[treeIndex]!)[particleIndex]!;
+    /// <summary>
+    /// Reads a particle from the runtime graph of the component.
+    /// The world binds one graph to each component, and this call returns that graph.
+    /// </summary>
+    private static PhysicsChainComponent.Particle GetParticle(PhysicsChainComponent component, int treeIndex, int particleIndex)
+        => PhysicsChainWorld.BindPendingRuntimeGraph(component).ParticleTrees[treeIndex].Particles[particleIndex];
 
     private static PhysicsChainGpuParticle[] CreateReadbackData(PhysicsChainComponent component, Vector3 firstPosition)
     {
-        IList particleTrees = GetParticleTrees(component);
-        int particleCount = 0;
-        foreach (object particleTree in particleTrees)
-            particleCount += GetParticles(particleTree).Count;
-
-        var readback = new PhysicsChainGpuParticle[particleCount];
+        var readback = new PhysicsChainGpuParticle[component.RuntimeParticleCount];
         for (int i = 0; i < readback.Length; ++i)
         {
             Vector3 position = i == 0 ? firstPosition : new Vector3(i, -i, i * 0.5f);
@@ -398,21 +376,21 @@ public sealed class PhysicsChainComponentTests
         SetFieldValue(component, "_lastAppliedGpuSubmissionId", 7L);
         SetFieldValue(component, "_hasPendingGpuBoneSync", false);
 
-        object particle = GetParticle(component, 0, 0);
-        Vector3 initialPosition = GetPropertyValue<Vector3>(particle, "Position");
+        PhysicsChainComponent.Particle particle = GetParticle(component, 0, 0);
+        Vector3 initialPosition = particle.Position;
 
         PhysicsChainGpuParticle[] staleGeneration = CreateReadbackData(component, new Vector3(10.0f, 0.0f, 0.0f));
         component.ApplyGpuReadback(staleGeneration, generation: 3, submissionId: 8L);
-        GetPropertyValue<Vector3>(particle, "Position").ShouldBe(initialPosition);
+        particle.Position.ShouldBe(initialPosition);
 
         PhysicsChainGpuParticle[] staleSubmission = CreateReadbackData(component, new Vector3(20.0f, 0.0f, 0.0f));
         component.ApplyGpuReadback(staleSubmission, generation: 4, submissionId: 7L);
-        GetPropertyValue<Vector3>(particle, "Position").ShouldBe(initialPosition);
+        particle.Position.ShouldBe(initialPosition);
 
         PhysicsChainGpuParticle[] freshReadback = CreateReadbackData(component, new Vector3(30.0f, 0.0f, 0.0f));
         component.ApplyGpuReadback(freshReadback, generation: 4, submissionId: 8L);
 
-        GetPropertyValue<Vector3>(particle, "Position").ShouldBe(new Vector3(30.0f, 0.0f, 0.0f));
+        particle.Position.ShouldBe(new Vector3(30.0f, 0.0f, 0.0f));
         GetFieldValue<long>(component, "_lastAppliedGpuSubmissionId").ShouldBe(8L);
         GetFieldValue<bool>(component, "_hasPendingGpuBoneSync").ShouldBeTrue();
     }
@@ -430,12 +408,12 @@ public sealed class PhysicsChainComponentTests
         SetFieldValue(component, "_lastAppliedGpuSubmissionId", 0L);
         SetFieldValue(component, "_hasPendingGpuBoneSync", false);
 
-        object particle = GetParticle(component, 0, 0);
+        PhysicsChainComponent.Particle particle = GetParticle(component, 0, 0);
         PhysicsChainGpuParticle[] readback = CreateReadbackData(component, new Vector3(5.0f, 6.0f, 7.0f));
 
         component.ApplyGpuReadback(readback, generation: 2, submissionId: 1L);
 
-        GetPropertyValue<Vector3>(particle, "Position").ShouldBe(new Vector3(5.0f, 6.0f, 7.0f));
+        particle.Position.ShouldBe(new Vector3(5.0f, 6.0f, 7.0f));
         GetFieldValue<bool>(component, "_hasPendingGpuBoneSync").ShouldBeFalse();
     }
 
@@ -452,9 +430,9 @@ public sealed class PhysicsChainComponentTests
         PrepareGpuDataMethod(component);
         GetFieldValue<List<Matrix4x4>>(component, "_gpuTransforms")[1].ShouldBe(initialTransform);
 
-        object particle = GetParticle(component, 0, 1);
+        PhysicsChainComponent.Particle particle = GetParticle(component, 0, 1);
         Matrix4x4 updatedMatrix = Matrix4x4.CreateTranslation(new Vector3(0.25f, -0.5f, 0.75f));
-        SetPropertyValue(particle, "TransformLocalToWorldMatrix", updatedMatrix);
+        particle.TransformLocalToWorldMatrix = updatedMatrix;
 
         PrepareGpuDataMethod(component);
 

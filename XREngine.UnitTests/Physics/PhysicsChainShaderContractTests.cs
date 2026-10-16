@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using NUnit.Framework;
 using Shouldly;
@@ -90,18 +91,40 @@ public sealed class PhysicsChainShaderContractTests
     public void BonePaletteShader_ComposesSystemNumericsRowVectorMatrices()
     {
         string source = ReadPhysicsChainShader("PhysicsChainBonePalette.comp").Replace("\r\n", "\n");
+        string bonePose = ReadPhysicsChainShader("PhysicsChainBonePose.glslinc").Replace("\r\n", "\n");
 
+        source.ShouldContain("#include \"Compute/PhysicsChain/PhysicsChainBonePose.glslinc\"");
         source.ShouldContain("layout(row_major, std430, binding = 4) readonly buffer BoneInvBindMatricesBuffer");
-        int columnMatrixIndex = source.IndexOf("mat4 boneWorldColumn = mat4(", StringComparison.Ordinal);
+
+        // The include builds the bone world matrix in GLSL column-vector form.
+        bonePose.ShouldContain("mat4 composeChainBoneWorld(");
+        bonePose.ShouldContain(
+            "return mat4(vec4(basis[0], 0.0), vec4(basis[1], 0.0), vec4(basis[2], 0.0), vec4(position, 1.0));");
+
+        int columnMatrixIndex = source.IndexOf("mat4 boneWorldColumn = composeChainBoneWorld(", StringComparison.Ordinal);
         int transposeIndex = source.IndexOf("mat4 boneWorldRow = transpose(boneWorldColumn);", StringComparison.Ordinal);
         int composeIndex = source.IndexOf(
             "mat4 skinMatrix = BoneInvBindMatrices[mapping.BoneMatrixIndex] * boneWorldRow;",
+            StringComparison.Ordinal);
+        int writeIndex = source.IndexOf(
+            "writeSkinPalette(uint(mapping.BoneMatrixIndex), skinMatrix);",
             StringComparison.Ordinal);
 
         columnMatrixIndex.ShouldBeGreaterThanOrEqualTo(0);
         transposeIndex.ShouldBeGreaterThan(columnMatrixIndex);
         composeIndex.ShouldBeGreaterThan(transposeIndex);
+        writeIndex.ShouldBeGreaterThan(composeIndex);
         source.ShouldNotContain("BoneInvBindMatrices[mapping.BoneMatrixIndex] * boneWorld;");
+
+        // Palette row c is column c of the row-vector skin matrix, as in SkinPaletteMatrix.FromRowVectorMatrix.
+        source.ShouldContain("SkinPaletteRows[rowBase + 0u] = skinMatrix[0];");
+        source.ShouldContain("SkinPaletteRows[rowBase + 1u] = skinMatrix[1];");
+        source.ShouldContain("SkinPaletteRows[rowBase + 2u] = skinMatrix[2];");
+        XREngine.Rendering.SkinPaletteMatrix palette = XREngine.Rendering.SkinPaletteMatrix.FromRowVectorMatrix(
+            Matrix4x4.CreateTranslation(5.0f, 6.0f, 7.0f));
+        palette.Row0.W.ShouldBe(5.0f);
+        palette.Row1.W.ShouldBe(6.0f);
+        palette.Row2.W.ShouldBe(7.0f);
     }
 
     [Test]
@@ -168,25 +191,103 @@ public sealed class PhysicsChainShaderContractTests
     }
 
     [Test]
-    public void Dispatcher_PingPongsCurrentAndPreviousGlobalPaletteAtlases()
+    public void Dispatcher_KeepsCurrentAndPreviousPaletteAtlasesPerOutputPage()
     {
-        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs").Replace("\r\n", "\n");
+        string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs")
+            .Replace("\r\n", "\n");
+        string outputPages = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.OutputPages.cs")
+            .Replace("\r\n", "\n");
 
-        source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer");
-        int swapIndex = source.IndexOf(
-            "(_gpuDrivenSkinPaletteBuffer, _gpuDrivenPreviousSkinPaletteBuffer) =",
+        // Each output page owns one current and one previous palette atlas.
+        outputPages.ShouldContain("public XRDataBuffer<SkinPaletteMatrix>? CurrentPalette;");
+        outputPages.ShouldContain("public XRDataBuffer<SkinPaletteMatrix>? PreviousPalette;");
+        dispatcher.ShouldContain("\"PhysicsChainGlobalPreviousSkinPalette\"");
+
+        // The palette pass writes the current atlas of the page that it writes.
+        // Only the unpaged atlases swap; a page keeps its own pair.
+        int pageCurrentIndex = dispatcher.IndexOf(
+            "_gpuDrivenSkinPaletteBuffer = outputPage.CurrentPalette;",
             StringComparison.Ordinal);
-        int outputBindIndex = source.IndexOf(
+        int pagePreviousIndex = dispatcher.IndexOf(
+            "_gpuDrivenPreviousSkinPaletteBuffer = outputPage.PreviousPalette;",
+            StringComparison.Ordinal);
+        int unpagedSwapIndex = dispatcher.IndexOf(
+            "else if (outputPage is null)\n            (_gpuDrivenSkinPaletteBuffer, _gpuDrivenPreviousSkinPaletteBuffer) =",
+            StringComparison.Ordinal);
+        int outputBindIndex = dispatcher.IndexOf(
             "_gpuBonePaletteProgram.BindBuffer(_gpuDrivenSkinPaletteBuffer, 3);",
             StringComparison.Ordinal);
+        pageCurrentIndex.ShouldBeGreaterThanOrEqualTo(0);
+        pagePreviousIndex.ShouldBeGreaterThan(pageCurrentIndex);
+        unpagedSwapIndex.ShouldBeGreaterThan(pagePreviousIndex);
+        outputBindIndex.ShouldBeGreaterThan(unpagedSwapIndex);
+        dispatcher.ShouldContain("outputPage.CurrentPalette = _gpuDrivenSkinPaletteBuffer;");
+        dispatcher.ShouldContain("outputPage.PreviousPalette = _gpuDrivenPreviousSkinPaletteBuffer;");
 
-        swapIndex.ShouldBeGreaterThanOrEqualTo(0);
-        outputBindIndex.ShouldBeGreaterThan(swapIndex);
-        source.ShouldContain(
-            "SetGpuDrivenSkinPaletteSource(\n                binding.Component,\n                _gpuDrivenSkinPaletteBuffer!,\n                _gpuDrivenPreviousSkinPaletteBuffer,");
-        source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer?.Dispose();");
-        source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer = null;");
+        // The previous atlas is filled after the current palette pass and before the bounds pass reads both.
+        int publishStart = dispatcher.IndexOf("private bool PublishRegisteredOutputs(", StringComparison.Ordinal);
+        publishStart.ShouldBeGreaterThanOrEqualTo(0);
+        int palettePassIndex = dispatcher.IndexOf(
+            "PublishBatchedGpuDrivenBoneMatrices(backend, _outputPublicationRequests)",
+            publishStart,
+            StringComparison.Ordinal);
+        palettePassIndex.ShouldBeGreaterThan(publishStart);
+        int paletteBarrierIndex = dispatcher.IndexOf(
+            "TryCompletePass(backend, BonePaletteCompletionPass)",
+            palettePassIndex,
+            StringComparison.Ordinal);
+        paletteBarrierIndex.ShouldBeGreaterThan(palettePassIndex);
+        int previousCopyIndex = dispatcher.IndexOf(
+            "CopyPreviousOutputPalette(backend,",
+            paletteBarrierIndex,
+            StringComparison.Ordinal);
+        previousCopyIndex.ShouldBeGreaterThan(paletteBarrierIndex);
+        int boundsIndex = dispatcher.IndexOf(
+            "PublishGpuDrivenBounds(backend, _outputPublicationRequests)",
+            previousCopyIndex,
+            StringComparison.Ordinal);
+        boundsIndex.ShouldBeGreaterThan(previousCopyIndex);
+
+        // Matched renderers copy the previous palette from the current palette of the published page.
+        // Other renderers seed it from the current palette of the written page and reset their history.
+        int copyStart = outputPages.IndexOf("private bool CopyPreviousOutputPalette(", StringComparison.Ordinal);
+        copyStart.ShouldBeGreaterThanOrEqualTo(0);
+        int sourcePageIndex = outputPages.IndexOf(
+            "PhysicsChainOutputPage? source = _publishedOutputPageIndex >= 0",
+            copyStart,
+            StringComparison.Ordinal);
+        sourcePageIndex.ShouldBeGreaterThan(copyStart);
+        int sourcePaletteIndex = outputPages.IndexOf(
+            "XRDataBuffer<SkinPaletteMatrix>? sourcePalette = source?.CurrentPalette;",
+            sourcePageIndex,
+            StringComparison.Ordinal);
+        sourcePaletteIndex.ShouldBeGreaterThan(sourcePageIndex);
+        int destinationPaletteIndex = outputPages.IndexOf(
+            "XRDataBuffer<SkinPaletteMatrix> previousPalette = destination.PreviousPalette;",
+            sourcePaletteIndex,
+            StringComparison.Ordinal);
+        destinationPaletteIndex.ShouldBeGreaterThan(sourcePaletteIndex);
+        int publishedCopyIndex = outputPages.IndexOf(
+            "TryCopyPreviousPaletteRanges(backend, sourcePalette, previousPalette)",
+            destinationPaletteIndex,
+            StringComparison.Ordinal);
+        publishedCopyIndex.ShouldBeGreaterThan(destinationPaletteIndex);
+        int seedCopyIndex = outputPages.IndexOf(
+            "TryCopyPreviousPaletteRanges(backend, destination.CurrentPalette, previousPalette)",
+            publishedCopyIndex,
+            StringComparison.Ordinal);
+        seedCopyIndex.ShouldBeGreaterThan(publishedCopyIndex);
+        outputPages.IndexOf("destination.PaletteHistoryResetRenderers.Add(", copyStart, StringComparison.Ordinal)
+            .ShouldBeGreaterThan(copyStart);
+
+        // Disposal releases the atlases of every page and the unpaged pair.
+        outputPages.ShouldContain("page.CurrentPalette?.Dispose();");
+        outputPages.ShouldContain("page.PreviousPalette?.Dispose();");
+        outputPages.ShouldContain("_unpagedPreviousSkinPaletteBuffer?.Dispose();");
+        dispatcher.ShouldContain("DisposeUnpagedPaletteBuffers();");
+        dispatcher.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer = null;");
     }
+
     [Test]
     public void Dispatcher_BatchesPartialPalettesIntoGlobalAtlasWithoutPerRendererDispatches()
     {
@@ -204,9 +305,19 @@ public sealed class PhysicsChainShaderContractTests
         palette.ShouldContain("if (!binding.DrivesCompleteBonePalette)");
         palette.ShouldContain("TryCopyBuffer(backend, copy, \"partial-palette-seed\")");
         palette.ShouldContain("PartialPaletteSeedCompletionPass");
-        dispatcher.ShouldContain("PublishBatchedGpuDrivenBoneMatrices(backend, _dispatchGroup)");
-        dispatcher.ShouldContain("if (!request.Component.HasGpuDrivenRenderers || batchedBonePalettePublished)");
-        dispatcher.ShouldNotContain("includeCompletePalettes: !batchedBonePalettePublished");
+
+        // Every registered request with GPU-driven renderers joins one output publication.
+        dispatcher.ShouldContain("&& request.Component.HasGpuDrivenRenderers)");
+        dispatcher.ShouldContain("_outputPublicationRequests.Add(request);");
+        dispatcher.ShouldContain(
+            "request.Component.AppendBatchedGpuDrivenBonePaletteBindings(request.ParticleOffset, _gpuDrivenPaletteBindings);");
+        dispatcher.ShouldContain("PublishBatchedGpuDrivenBoneMatrices(backend, _outputPublicationRequests)");
+
+        // One palette dispatch covers the mappings of all bindings.
+        dispatcher.ShouldContain("_gpuBonePaletteProgram.Uniform(\"mappingCount\", _gpuDrivenBoneMappings.Count);");
+
+        // No dispatcher path runs a per-component palette publication.
+        ReadDispatcherPartialSources().ShouldNotContain("PublishGpuDrivenBoneMatrices(");
     }
 
     [Test]
@@ -222,6 +333,20 @@ public sealed class PhysicsChainShaderContractTests
 
     private static string ReadPhysicsChainShader(string fileName)
         => ReadWorkspaceFile($"Build/CommonAssets/Shaders/Compute/PhysicsChain/{fileName}");
+
+    /// <summary>Reads all partial source files of the dispatcher in ordinal path order.</summary>
+    private static string ReadDispatcherPartialSources()
+    {
+        string directory = Path.Combine(ResolveRepoRoot(), "XREngine.Runtime.Rendering", "Rendering", "PhysicsCompute");
+        string[] paths = Directory.GetFiles(directory, "GPUPhysicsChainDispatcher*.cs");
+        Array.Sort(paths, StringComparer.Ordinal);
+        paths.Length.ShouldBeGreaterThan(1);
+
+        string[] sources = new string[paths.Length];
+        for (int index = 0; index < paths.Length; ++index)
+            sources[index] = File.ReadAllText(paths[index]).Replace("\r\n", "\n");
+        return string.Join('\n', sources);
+    }
 
     private static string ReadGlRenderProgramLinkingSources()
         => string.Join('\n', new[]

@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using XREngine.Data.Rendering;
 using XREngine.Data.Geometry;
 using XREngine.Components;
@@ -20,8 +22,13 @@ public sealed partial class GPUPhysicsChainDispatcher
     private readonly List<GPUPhysicsChainRequest> _outputPublicationRequests = [];
     // Commit notifications that the render thread sends after it releases _outputPageSync.
     private readonly List<(XRMeshRenderer Renderer, bool BoundsChanged)> _commitNotifications = [];
-    private readonly Dictionary<uint, (uint SourceBase, uint Count)> _copiedPreviousPaletteSlices = [];
-    private readonly HashSet<uint> _seededPreviousPaletteSlices = [];
+    // The prior source of each palette slice in one previous palette publication, indexed by
+    // the first binding of the slice. NoPaletteSliceCopy marks a slice with no copy.
+    private (uint SourceBase, uint Count)[] _previousPaletteSliceCopies = [];
+    private readonly List<(uint SourceBase, uint DestinationBase, uint Count)> _previousPaletteCopyRanges = [];
+    private const uint NoPaletteSliceCopy = uint.MaxValue;
+    // Only the render thread writes this cumulative count; the stage timings report it.
+    private long _previousPaletteSingleCopyCount;
     private XRDataBuffer<SkinPaletteMatrix>? _unpagedSkinPaletteBuffer;
     private XRDataBuffer<SkinPaletteMatrix>? _unpagedPreviousSkinPaletteBuffer;
     private int _publishedOutputPageIndex = -1;
@@ -362,6 +369,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _pendingBoundsSources.Clear();
             _pendingPaletteInputBoundsByRenderer.Clear();
             _lastPublishedPaletteInputBoundsByRenderer.Clear();
+            InvalidateRetainedBoundsRows();
             _gpuBoundsAtlasBuffer = null;
             _gpuBoundsSlotMetadataBuffer = null;
             _gpuDrivenSkinPaletteBuffer = null;
@@ -455,7 +463,8 @@ public sealed partial class GPUPhysicsChainDispatcher
                 page.HasQueuedGpuWork = false;
                 page.KnownProducerFailure = false;
                 page.FailureRecoveryRequested = false;
-                page.PaletteSlices.Clear();
+                // The palette slice map stays: the previous palette publication refills it
+                // only when its layout version differs.
                 page.PaletteHistoryResetRenderers.Clear();
                 page.ClearRendererStates();
                 page.MorphWeights.Clear();
@@ -578,6 +587,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _publishedOutputPageIndex = -1;
             _committedBoundsSources.Clear();
             _lastPublishedPaletteInputBoundsByRenderer.Clear();
+            InvalidateRetainedBoundsRows();
             _paletteOutputRefreshPending = true;
             AdvanceCommittedSpatialEpoch(SpatialEpochCause.Invalidation);
             NotifyCommittedSpatialOutputChanged(failed, published: false, priorPage: null);
@@ -654,17 +664,23 @@ public sealed partial class GPUPhysicsChainDispatcher
             _historyOutputPageIndex = _publishedOutputPageIndex;
             _publishedOutputPageIndex = _writingOutputPageIndex;
             _writingOutputPageIndex = -1;
-            bool sourcesChanged = !HaveSameBoundsSources(_committedBoundsSources, _pendingBoundsSources);
+            // Reused bounds rows have the committed sources, so the comparison is skipped.
+            bool reusedCommittedRows = CommitRetainedBoundsBuild();
+            bool sourcesChanged = !reusedCommittedRows
+                && !HaveSameBoundsSources(_committedBoundsSources, _pendingBoundsSources);
             if (sourcesChanged)
             {
                 _committedBoundsSources.Clear();
                 foreach (KeyValuePair<XRMeshRenderer, PhysicsChainGpuBoundsSource> entry in _pendingBoundsSources)
                     _committedBoundsSources.Add(entry.Key, entry.Value);
             }
-            (_lastPublishedPaletteInputBoundsByRenderer, _pendingPaletteInputBoundsByRenderer) =
-                (_pendingPaletteInputBoundsByRenderer, _lastPublishedPaletteInputBoundsByRenderer);
+            // A build that reused its rows did not refill the pending palette-input bounds;
+            // the published map already holds the bounds of those rows.
+            if (!_currentBoundsBuildReusedRows)
+                (_lastPublishedPaletteInputBoundsByRenderer, _pendingPaletteInputBoundsByRenderer) =
+                    (_pendingPaletteInputBoundsByRenderer, _lastPublishedPaletteInputBoundsByRenderer);
             MarkStageTime(DispatcherStage.CommitPageState, ref stageMark);
-            bool rendererStateChanged = CollectCommittedSpatialNotifications(page, priorPage, _commitNotifications);
+            bool rendererStateChanged = CollectCommitNotifications(page, priorPage);
             if (sourcesChanged)
                 AdvanceCommittedSpatialEpoch(SpatialEpochCause.Sources);
             else if (rendererStateChanged)
@@ -683,152 +699,186 @@ public sealed partial class GPUPhysicsChainDispatcher
                 (XRMeshRenderer renderer, bool boundsChanged) = _commitNotifications[index];
                 renderer.NotifyCommittedOutputChanged(producerEpoch, published: true, boundsChanged);
             }
+            NotifyCoveredShadowCasterScenes(producerEpoch);
         }
         finally
         {
             _commitNotifications.Clear();
+            ClearCommitNotificationBuild();
         }
         MarkStageTime(DispatcherStage.CommitNotify, ref stageMark);
         return true;
     }
 
+    /// <summary>
+    /// Writes the previous palette of <paramref name="destination"/>. A slice whose renderer has
+    /// the same slice size, bone generation, history source, and mesh envelope on the published
+    /// page gets that page's current palette. Any other slice gets the destination's own current
+    /// palette, and its renderer has a history reset. When the published page has the same
+    /// palette layout and no renderer has a history reset, one copy covers the whole layout.
+    /// </summary>
     private bool CopyPreviousOutputPalette(IPhysicsChainComputeBackend backend,
         PhysicsChainOutputPage destination)
     {
         if (destination.CurrentPalette is null || destination.PreviousPalette is null)
             return false;
 
-        destination.PaletteSlices.Clear();
         destination.PaletteHistoryResetRenderers.Clear();
-        _copiedPreviousPaletteSlices.Clear();
-        _seededPreviousPaletteSlices.Clear();
+        if (!FillOutputPagePaletteSlices(destination))
+            return false;
         PhysicsChainOutputPage? source = _publishedOutputPageIndex >= 0
             ? _outputPages[_publishedOutputPageIndex] : null;
         XRDataBuffer<SkinPaletteMatrix>? sourcePalette = source?.CurrentPalette;
         destination.PreviousPaletteSourceToken = sourcePalette is not null
             ? MakeOutputPageToken(_publishedOutputPageIndex) : default;
         XRDataBuffer<SkinPaletteMatrix> previousPalette = destination.PreviousPalette;
-        uint sourceBase = 0u;
-        uint destinationBase = 0u;
-        uint copyCount = 0u;
-        bool copiedAny = false;
+        bool sourceUsable = sourcePalette is not null && IsUsableOutputPage(source!);
+        // A usable published page with the same layout holds each slice at the same base.
+        bool sameLayout = sourceUsable && source!.PaletteSlicesLayoutVersion == _paletteLayoutVersion;
 
-        for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+        ReadOnlySpan<PaletteLayoutEntry> entries = CollectionsMarshal.AsSpan(_paletteLayoutEntries);
+        ReadOnlySpan<GpuDrivenRendererPaletteBinding> bindings = CollectionsMarshal.AsSpan(_gpuDrivenPaletteBindings);
+        if (_previousPaletteSliceCopies.Length < entries.Length)
+            _previousPaletteSliceCopies = new (uint, uint)[Math.Max(entries.Length, _previousPaletteSliceCopies.Length * 2)];
+        Span<(uint SourceBase, uint Count)> sliceCopies = _previousPaletteSliceCopies.AsSpan(0, entries.Length);
+        sliceCopies.Fill((NoPaletteSliceCopy, 0u));
+        _previousPaletteCopyRanges.Clear();
+
+        for (int index = 0; index < entries.Length; ++index)
         {
-            GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            uint baseElement = _gpuDrivenPaletteSliceBases[bindingIndex];
-            uint count = Math.Max(binding.BoneMatrixElementCount, 1u);
-            var catalogEntry = (Base: baseElement, Count: count,
-                BoneGeneration: binding.RendererBoneBufferGeneration);
-            if (destination.PaletteSlices.TryGetValue(binding.Renderer, out var existing))
+            ref readonly PaletteLayoutEntry entry = ref entries[index];
+            if (!sourceUsable
+                || !TryGetPriorPaletteSlice(source!, sourcePalette!, in entry, sameLayout, out uint priorBase)
+                || !HasSamePaletteHistorySource(source!, in bindings[index]))
             {
-                if (existing != catalogEntry)
-                    return false;
-            }
-            else
-                destination.PaletteSlices.Add(binding.Renderer, catalogEntry);
-
-            (uint Base, uint Count, long BoneGeneration) prior = default;
-            bool matched = sourcePalette is not null
-                && IsUsableOutputPage(source!)
-                && source!.PaletteSlices.TryGetValue(binding.Renderer, out prior)
-                && prior.Count == count
-                && prior.BoneGeneration == binding.RendererBoneBufferGeneration
-                && prior.Base < sourcePalette.ElementCount
-                && count <= sourcePalette.ElementCount - prior.Base
-                && binding.Request is { } request
-                && source.RendererStates.TryGetValue(binding.Renderer, out var priorState)
-                && priorState.SpatialSource == GetSpatialSourceIdentity(request, in binding)
-                && ReferenceEquals(priorState.Envelope.Mesh, binding.Renderer.Mesh)
-                && priorState.Envelope.GeometryRevision == binding.Renderer.Mesh?.GeometryRevision
-                && priorState.Envelope.BindRoot == binding.Renderer.Mesh?.BindRootMatrix
-                && ReferenceEquals(priorState.Envelope.BoneLayout, binding.Renderer.Mesh?.UtilizedBones);
-            if (!matched)
-            {
-                destination.PaletteHistoryResetRenderers.Add(binding.Renderer);
+                destination.PaletteHistoryResetRenderers.Add(entry.Renderer);
                 continue;
             }
 
-            if (_copiedPreviousPaletteSlices.TryGetValue(baseElement, out var selected))
+            // Bindings that share a slice must use the same prior source.
+            ref (uint SourceBase, uint Count) selected = ref sliceCopies[entry.FirstBindingOfSlice];
+            if (selected.SourceBase != NoPaletteSliceCopy)
             {
-                if (selected.SourceBase != prior.Base || selected.Count != count)
-                    destination.PaletteHistoryResetRenderers.Add(binding.Renderer);
+                if (selected.SourceBase != priorBase || selected.Count != entry.Count)
+                    destination.PaletteHistoryResetRenderers.Add(entry.Renderer);
                 continue;
             }
-            _copiedPreviousPaletteSlices.Add(baseElement, (prior.Base, count));
-            if (baseElement >= previousPalette.ElementCount
-                || count > previousPalette.ElementCount - baseElement)
+            selected = (priorBase, entry.Count);
+            if (entry.Base >= previousPalette.ElementCount
+                || entry.Count > previousPalette.ElementCount - entry.Base)
                 return false;
-
-            if (copyCount != 0u
-                && sourceBase + copyCount == prior.Base
-                && destinationBase + copyCount == baseElement)
-            {
-                copyCount = checked(copyCount + count);
-                continue;
-            }
-            if (copyCount != 0u)
-            {
-                if (!TryCopyPreviousPaletteRange(backend, sourcePalette!, sourceBase,
-                    previousPalette, destinationBase, copyCount))
-                    return false;
-                copiedAny = true;
-            }
-            sourceBase = prior.Base;
-            destinationBase = baseElement;
-            copyCount = count;
+            AddPreviousPaletteCopyRange(priorBase, entry.Base, entry.Count);
         }
 
-        if (copyCount != 0u)
+        bool hasHistoryResets = destination.PaletteHistoryResetRenderers.Count != 0;
+        if (sameLayout && !hasHistoryResets && entries.Length != 0
+            && _paletteLayoutEnd <= sourcePalette!.ElementCount
+            && _paletteLayoutEnd <= previousPalette.ElementCount)
         {
-            if (!TryCopyPreviousPaletteRange(backend, sourcePalette!, sourceBase,
-                previousPalette, destinationBase, copyCount))
-                return false;
-            copiedAny = true;
+            // Every slice keeps its base and its history. The gaps between slices belong to no
+            // binding, so one copy can include them.
+            _previousPaletteCopyRanges.Clear();
+            _previousPaletteCopyRanges.Add((_paletteLayoutStart, _paletteLayoutStart,
+                _paletteLayoutEnd - _paletteLayoutStart));
+            ++_previousPaletteSingleCopyCount;
         }
 
-        sourceBase = 0u;
-        destinationBase = 0u;
-        copyCount = 0u;
-        for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
-        {
-            uint baseElement = _gpuDrivenPaletteSliceBases[bindingIndex];
-            if (_copiedPreviousPaletteSlices.ContainsKey(baseElement)
-                || !_seededPreviousPaletteSlices.Add(baseElement))
-                continue;
+        bool copiedAny = _previousPaletteCopyRanges.Count != 0;
+        if (!TryCopyPreviousPaletteRanges(backend, sourcePalette, previousPalette))
+            return false;
 
-            uint count = Math.Max(_gpuDrivenPaletteBindings[bindingIndex].BoneMatrixElementCount, 1u);
-            if (baseElement >= destination.CurrentPalette.ElementCount
-                || count > destination.CurrentPalette.ElementCount - baseElement
-                || baseElement >= previousPalette.ElementCount
-                || count > previousPalette.ElementCount - baseElement)
-                return false;
-            if (copyCount != 0u && sourceBase + copyCount == baseElement
-                && destinationBase + copyCount == baseElement)
+        if (hasHistoryResets)
+        {
+            // A slice that no binding copied gets the destination's own current palette.
+            _previousPaletteCopyRanges.Clear();
+            for (int index = 0; index < entries.Length; ++index)
             {
-                copyCount = checked(copyCount + count);
-                continue;
-            }
-            if (copyCount != 0u)
-            {
-                if (!TryCopyPreviousPaletteRange(backend, destination.CurrentPalette,
-                    sourceBase, previousPalette, destinationBase, copyCount))
+                ref readonly PaletteLayoutEntry entry = ref entries[index];
+                if (entry.FirstBindingOfSlice != index || sliceCopies[index].SourceBase != NoPaletteSliceCopy)
+                    continue;
+                if (entry.Base >= destination.CurrentPalette.ElementCount
+                    || entry.Count > destination.CurrentPalette.ElementCount - entry.Base
+                    || entry.Base >= previousPalette.ElementCount
+                    || entry.Count > previousPalette.ElementCount - entry.Base)
                     return false;
-                copiedAny = true;
+                AddPreviousPaletteCopyRange(entry.Base, entry.Base, entry.Count);
             }
-            sourceBase = baseElement;
-            destinationBase = baseElement;
-            copyCount = count;
-        }
-
-        if (copyCount != 0u)
-        {
-            if (!TryCopyPreviousPaletteRange(backend, destination.CurrentPalette,
-                sourceBase, previousPalette, destinationBase, copyCount))
+            copiedAny |= _previousPaletteCopyRanges.Count != 0;
+            if (!TryCopyPreviousPaletteRanges(backend, destination.CurrentPalette, previousPalette))
                 return false;
-            copiedAny = true;
         }
         return !copiedAny || TryCompletePass(backend, PartialPaletteSeedCompletionPass);
+    }
+
+    /// <summary>
+    /// Finds the slice of <paramref name="entry"/>'s renderer on the published page. With the same
+    /// layout, the slice is at the same base. Returns false when the slice size or bone generation
+    /// differs, or when the slice is outside the published palette.
+    /// </summary>
+    private static bool TryGetPriorPaletteSlice(PhysicsChainOutputPage source,
+        XRDataBuffer<SkinPaletteMatrix> sourcePalette, in PaletteLayoutEntry entry, bool sameLayout,
+        out uint priorBase)
+    {
+        priorBase = entry.Base;
+        if (!sameLayout)
+        {
+            if (!source.PaletteSlices.TryGetValue(entry.Renderer, out var prior)
+                || prior.Count != entry.Count
+                || prior.BoneGeneration != entry.BoneGeneration)
+                return false;
+            priorBase = prior.Base;
+        }
+        return priorBase < sourcePalette.ElementCount && entry.Count <= sourcePalette.ElementCount - priorBase;
+    }
+
+    /// <summary>
+    /// True when the renderer's state on the published page has the same spatial source and mesh
+    /// envelope (mesh, geometry revision, bind root, bone layout) as this binding.
+    /// </summary>
+    private static bool HasSamePaletteHistorySource(PhysicsChainOutputPage source,
+        in GpuDrivenRendererPaletteBinding binding)
+    {
+        if (binding.Request is not { } request)
+            return false;
+        // Read the prior state by reference; the state record is large.
+        ref readonly PhysicsChainGpuRendererOutputState prior =
+            ref CollectionsMarshal.GetValueRefOrNullRef(source.RendererStates, binding.Renderer);
+        if (Unsafe.IsNullRef(in prior))
+            return false;
+        XRMesh? mesh = binding.Renderer.Mesh;
+        return prior.SpatialSource == GetSpatialSourceIdentity(request, in binding)
+            && ReferenceEquals(prior.Envelope.Mesh, mesh)
+            && prior.Envelope.GeometryRevision == mesh?.GeometryRevision
+            && prior.Envelope.BindRoot == mesh?.BindRootMatrix
+            && ReferenceEquals(prior.Envelope.BoneLayout, mesh?.UtilizedBones);
+    }
+
+    /// <summary>Adds one slice copy, merged with the last range when both ends continue it.</summary>
+    private void AddPreviousPaletteCopyRange(uint sourceBase, uint destinationBase, uint count)
+    {
+        int last = _previousPaletteCopyRanges.Count - 1;
+        if (last >= 0)
+        {
+            (uint lastSource, uint lastDestination, uint lastCount) = _previousPaletteCopyRanges[last];
+            if (lastSource + lastCount == sourceBase && lastDestination + lastCount == destinationBase)
+            {
+                _previousPaletteCopyRanges[last] = (lastSource, lastDestination, checked(lastCount + count));
+                return;
+            }
+        }
+        _previousPaletteCopyRanges.Add((sourceBase, destinationBase, count));
+    }
+
+    private bool TryCopyPreviousPaletteRanges(IPhysicsChainComputeBackend backend,
+        XRDataBuffer<SkinPaletteMatrix>? source, XRDataBuffer<SkinPaletteMatrix> destination)
+    {
+        for (int index = 0; index < _previousPaletteCopyRanges.Count; ++index)
+        {
+            (uint sourceBase, uint destinationBase, uint count) = _previousPaletteCopyRanges[index];
+            if (!TryCopyPreviousPaletteRange(backend, source!, sourceBase, destination, destinationBase, count))
+                return false;
+        }
+        return true;
     }
 
     private bool TryCopyPreviousPaletteRange(IPhysicsChainComputeBackend backend,
@@ -888,6 +938,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             _writingOutputPageIndex = -1;
             _pendingBoundsSources.Clear();
             _pendingPaletteInputBoundsByRenderer.Clear();
+            InvalidateRetainedBoundsRows();
             _pendingGpuBoundsCommandCount = 0;
             _gpuBoundsCopiedRenderers.Clear();
         }
@@ -972,6 +1023,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         page.ProducerFence = null;
         page.Published = false;
         page.PaletteSlices.Clear();
+        page.PaletteSlicesLayoutVersion = 0L;
         page.PaletteHistoryResetRenderers.Clear();
         page.ClearRendererStates();
         page.MorphWeights.Clear();
@@ -1067,6 +1119,8 @@ public sealed partial class GPUPhysicsChainDispatcher
         public readonly Dictionary<GPUPhysicsChainRequest, PhysicsChainResidentSpatialCheckpoint> SpatialCheckpoints = [];
         public readonly Dictionary<XRMeshRenderer, (uint Base, uint Count, long BoneGeneration)> PaletteSlices =
             new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+        // The palette layout version that PaletteSlices holds; 0 when it holds no layout.
+        public long PaletteSlicesLayoutVersion;
         public readonly HashSet<XRMeshRenderer> PaletteHistoryResetRenderers =
             new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         public bool DisposeRequested;

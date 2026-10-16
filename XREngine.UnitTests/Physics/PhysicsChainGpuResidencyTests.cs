@@ -74,9 +74,13 @@ public sealed class PhysicsChainGpuResidencyTests
 
         source.ShouldContain("BuildResidentArenaBuffers");
         source.ShouldContain("GPUPhysicsChainUploadPlan.Create");
-        source.ShouldContain("IsDynamicHeaderDirty");
-        source.ShouldContain("Span<GPUPerTreeParams> dirtyHeaders");
-        source.ShouldContain("WriteDataRaw(dirtyHeaders, (uint)dirtyStart)");
+        // Resident arena slices get in-place writes only when the upload plan asks for them.
+        source.ShouldContain("if (plan.UploadParticleState && _particlesBuffer is not null");
+        source.ShouldContain("if (plan.UploadStaticTemplate && _particleStaticBuffer is not null");
+        source.ShouldContain("_particleStaticBuffer.WriteDataRaw(adjusted, (uint)request.ParticleOffset)");
+        // Tree headers go into the current input page. They are not packed into a resident buffer.
+        source.ShouldContain("TryWriteInputPage(_perTreeParamsBuffer,");
+        source.ShouldContain("(ReadOnlySpan<GPUPerTreeParams>)CollectionsMarshal.AsSpan(_allPerTreeParams), 0)");
         source.ShouldContain("DeferArenaResource");
         source.ShouldContain("RetirementFence");
         source.ShouldNotContain("CopyResidentParticlesIntoCombinedBuffer");
