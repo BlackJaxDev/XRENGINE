@@ -49,6 +49,8 @@ public sealed partial class GPUPhysicsChainDispatcher
         _gpuDrivenPaletteSliceAllocator.Reset();
         _gpuDrivenPaletteSliceBases.Clear();
         _gpuDrivenPaletteSlicesSeeded.Clear();
+        InvalidatePaletteLayout();
+        ResetPaletteSources();
     }
 }
 

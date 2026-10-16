@@ -72,8 +72,6 @@ public sealed partial class GPUPhysicsChainDispatcher
             _collidersBuffer = page.Colliders;
             _transformMatricesBuffer = page.Transforms;
             _mainPassBindingsValid = false;
-            _dynamicHeaderResourceGeneration = -1;
-            _activeWorkResourceGeneration = -1;
             ++_inputPageAcquiredCount;
             return true;
         }

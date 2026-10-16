@@ -27,6 +27,8 @@ public sealed partial class GPUPhysicsChainDispatcher
     private readonly List<GPUScene?> _gpuBoundsSceneRouteOwners = [];
     private readonly List<PhysicsChainDrawMaterialSnapshot> _gpuBoundsMaterialScratch = [];
     private readonly List<GPUScene> _gpuBoundsScenes = [];
+    // Parallel to _gpuBoundsScenes: the visual scene that owns each GPU scene.
+    private readonly List<XREngine.Scene.VisualScene3D> _gpuBoundsVisualScenes = [];
     // Parallel to _gpuDrivenPaletteBindings for one output publication: the scene of each
     // binding (null without a render world) and its index in _gpuBoundsScenes (-1 without one).
     private readonly List<GPUScene?> _gpuBoundsBindingScenes = [];
@@ -138,11 +140,6 @@ public sealed partial class GPUPhysicsChainDispatcher
 
         PhysicsChainOutputPage outputPage = _outputPages[_writingOutputPageIndex];
         int materialRejections = 0;
-        _gpuBoundsSlotAllocator.BeginLayout();
-        _gpuBoundsWorkItems.Clear();
-        _gpuBoundsSlotByRenderer.Clear();
-        _pendingBoundsSources.Clear();
-        _pendingPaletteInputBoundsByRenderer.Clear();
         // The palette pass has prepared these bindings and slice bases for all requests.
         if (_gpuDrivenPaletteBindings.Count != _gpuDrivenPaletteSliceBases.Count
             || outputPage.CurrentPalette is null || outputPage.PreviousPalette is null)
@@ -151,122 +148,19 @@ public sealed partial class GPUPhysicsChainDispatcher
             return false;
         }
         long rowsStart = Stopwatch.GetTimestamp();
-        for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+        BeginCommitNotificationBuild();
+        _currentBoundsBuildInvalidationVersion = Volatile.Read(ref _boundsRowsInvalidationVersion);
+        _currentBoundsBuildReusedRows = CanReuseRetainedBoundsRows();
+        if (_currentBoundsBuildReusedRows)
         {
-            GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            // Bindings come only from the output publication requests of this frame.
-            if (binding.Request is not { } request
-                || request.ParticleOffset < 0 || request.Particles.Count == 0
-                || !IsCertifiedCompleteBoundsBinding(binding)
-                || binding.Renderer.BoneBufferGeneration != binding.RendererBoneBufferGeneration)
-                continue;
-
-            var key = new PhysicsChainPaletteSliceKey(request.Component, binding.Renderer);
-            PhysicsChainPaletteSlice slice = _gpuBoundsSlotAllocator.Acquire(key, 1u);
-            uint slotGeneration;
-            if (!slice.RequiresHistoryReset
-                && _committedBoundsSources.TryGetValue(binding.Renderer, out PhysicsChainGpuBoundsSource prior)
-                && prior.BoundsSlot == slice.BaseElement
-                && prior.RendererBoneBufferGeneration == binding.RendererBoneBufferGeneration)
-                slotGeneration = prior.SlotGeneration;
-            else
-                slotGeneration = _boundsSlotGenerationOrdinal = checked(_boundsSlotGenerationOrdinal + 1u);
-
-            if (slotGeneration == 0u)
-                throw new OverflowException("Physics-chain bounds slot generation was exhausted.");
-            var source = new PhysicsChainGpuBoundsSource(this, binding.Renderer, slice.BaseElement,
-                slotGeneration, binding.RendererBoneBufferGeneration);
-            _pendingBoundsSources.Add(binding.Renderer, source);
-            _gpuBoundsSlotByRenderer.Add(binding.Renderer, slice.BaseElement);
-
-            XRMeshRenderer.BlendshapeResourceSnapshot morphState = binding.Renderer.CaptureBlendshapeResources();
-            int morphOffset = outputPage.MorphWeights.Count;
-            if (!TryRetainMorphWeights(outputPage, binding.Renderer, in morphState)
-                || !PhysicsChainMeshEnvelope.TryGetPaletteInputBounds(binding.Renderer,
-                    CollectionsMarshal.AsSpan(outputPage.MorphWeights).Slice(morphOffset),
-                    morphState.WeightsVersion, out var localBounds, out PhysicsChainMeshEnvelopeStamp envelopeStamp)
-                || !localBounds.IsValid
-                || !IsFiniteBoundsVector(localBounds.Min)
-                || !IsFiniteBoundsVector(localBounds.Max))
-            {
-                _gpuBoundsFailureStage = "GpuBoundsPublication.MeshEnvelope";
+            // The slots, sources, envelopes, material contracts, and work items are unchanged.
+            if (!PublishRetainedBoundsRows(outputPage))
                 return false;
-            }
-
-            _pendingPaletteInputBoundsByRenderer.Add(binding.Renderer,
-                (localBounds, binding.RendererBoneBufferGeneration));
-            if (_lastPublishedPaletteInputBoundsByRenderer.TryGetValue(binding.Renderer, out var priorBounds)
-                && priorBounds.BoneGeneration == binding.RendererBoneBufferGeneration)
-                localBounds = new AABB(Vector3.Min(localBounds.Min, priorBounds.Bounds.Min),
-                    Vector3.Max(localBounds.Max, priorBounds.Bounds.Max));
-
-            PhysicsChainMaterialBoundsContract materialContract = ResolveDrawnMaterialBoundsContract(binding, bindingIndex);
-            uint flags = 0u;
-            float padding = materialContract.Padding;
-            if (!materialContract.IsSupported)
-            {
-                // The shader writes a rejected slot; no CPU bound replaces it.
-                flags |= BoundsWorkItemRejectedMaterialContract;
-                padding = 0.0f;
-                ++materialRejections;
-                ReportMaterialBoundsRejection(binding.Renderer, materialContract);
-            }
-
-            uint paletteBase = _gpuDrivenPaletteSliceBases[bindingIndex];
-            uint paletteCount = binding.BoneMatrixElementCount;
-            if (paletteCount <= 1u
-                || paletteBase >= outputPage.CurrentPalette.ElementCount
-                || paletteCount > outputPage.CurrentPalette.ElementCount - paletteBase
-                || paletteBase >= outputPage.PreviousPalette.ElementCount
-                || paletteCount > outputPage.PreviousPalette.ElementCount - paletteBase)
-            {
-                _gpuBoundsFailureStage = "GpuBoundsPublication.PaletteSlice";
-                return false;
-            }
-            _gpuBoundsWorkItems.Add(new PhysicsChainGpuBoundsWorkItem(
-                new Vector4(localBounds.Min, padding),
-                new Vector4(localBounds.Max, 0f),
-                paletteBase,
-                paletteCount,
-                slice.BaseElement,
-                flags));
-            // Read the prior published state once, by reference; the state record is large.
-            ref readonly PhysicsChainGpuRendererOutputState priorState = ref _publishedOutputPageIndex >= 0
-                ? ref CollectionsMarshal.GetValueRefOrNullRef(
-                    _outputPages[_publishedOutputPageIndex].RendererStates, binding.Renderer)
-                : ref Unsafe.NullRef<PhysicsChainGpuRendererOutputState>();
-            bool spatialValid = TryBuildRendererSpatialBounds(outputPage, request, in binding,
-                in envelopeStamp, in materialContract, in priorState, out var currentSpatial,
-                out var previousSpatial, out AABB spatialBounds);
-            AABB committedBounds = spatialBounds;
-            ulong committedBoundsVersion = 0UL;
-            if (spatialValid)
-                ResolveCommittedSpatialProxy(in priorState, in source, in spatialBounds,
-                    out committedBounds, out committedBoundsVersion);
-            outputPage.AddRendererState(binding.Renderer, new(source, paletteBase,
-                paletteCount, envelopeStamp,
-                !outputPage.PaletteHistoryResetRenderers.Contains(binding.Renderer),
-                morphOffset, outputPage.MorphWeights.Count - morphOffset)
-            {
-                SpatialSource = GetSpatialSourceIdentity(request, in binding),
-                CurrentSpatialState = currentSpatial,
-                PreviousSpatialState = previousSpatial,
-                PaletteSpatialStateValid = request.ResidentSpatialValid && request.ResidentSpatialInitialized,
-                CpuSpatialBounds = committedBounds,
-                CpuSpatialBoundsValid = spatialValid,
-                CpuSpatialBoundsVersion = committedBoundsVersion,
-                MaterialPadding = materialContract.Padding,
-                MaterialBoundsSupported = materialContract.IsSupported,
-                MaterialRouteScene = _gpuBoundsBindingScenes[bindingIndex],
-            });
-            bool hasTightCheckpoint = request.ResidentSolveCompleted || !request.ResidentSpatialValid;
-            outputPage.SpatialCheckpoints[request] = new(request.ResidentSpatialRevision,
-                hasTightCheckpoint
-                    ? new(request.ResidentTightParticleBounds, request.ResidentTightBasisStretch)
-                    : currentSpatial,
-                hasTightCheckpoint ? request.ResidentTightSpatialValid : request.ResidentSpatialValid);
+            materialRejections = _retainedBoundsMaterialRejectionCount;
+            ++_boundsBuildReuseCount;
         }
-        _gpuBoundsSlotAllocator.EndLayout();
+        else if (!BuildBoundsRows(outputPage, out materialRejections))
+            return false;
         AddStageTime(DispatcherStage.BoundsRows, rowsStart);
         Volatile.Write(ref _gpuBoundsLastMaterialRejectionCount, materialRejections);
         if (materialRejections != 0)
@@ -305,8 +199,12 @@ public sealed partial class GPUPhysicsChainDispatcher
             _gpuBoundsSlotMetadata.Add(0u);
         for (int index = 0; index < _gpuBoundsSlotMetadata.Count; ++index)
             _gpuBoundsSlotMetadata[index] = 0u;
-        foreach (PhysicsChainGpuBoundsSource source in _pendingBoundsSources.Values)
+        ReadOnlySpan<RetainedBoundsBinding> rows = CollectionsMarshal.AsSpan(_retainedBoundsBindings);
+        for (int rowIndex = 0; rowIndex < rows.Length; ++rowIndex)
         {
+            if (!rows[rowIndex].IsRow)
+                continue;
+            ref readonly PhysicsChainGpuBoundsSource source = ref rows[rowIndex].Source;
             int index = checked((int)source.BoundsSlot * 4);
             _gpuBoundsSlotMetadata[index] = source.SlotGeneration;
             _gpuBoundsSlotMetadata[index + 1] = checked(_outputProducerEpoch + 1u);
@@ -323,11 +221,15 @@ public sealed partial class GPUPhysicsChainDispatcher
         if (_gpuBoundsWorkItemBuffer is null || _gpuBoundsAtlasBuffer is null || _gpuBoundsSlotMetadataBuffer is null)
             return false;
 
-        uint workItemBytes = _gpuBoundsWorkItemBuffer.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuBoundsWorkItems));
-        PushBufferUpdate(_gpuBoundsWorkItemBuffer, workItemsResized, workItemBytes);
-        RecordCpuUploadBytes(
-            workItemsResized ? _gpuBoundsWorkItemBuffer.Length : workItemBytes,
-            _currentDispatchGroupIsBatched);
+        // The work-item buffer is not paged. Reused rows leave its uploaded content unchanged.
+        if (!_currentBoundsBuildReusedRows || workItemsResized)
+        {
+            uint workItemBytes = _gpuBoundsWorkItemBuffer.WriteDataRaw(CollectionsMarshal.AsSpan(_gpuBoundsWorkItems));
+            PushBufferUpdate(_gpuBoundsWorkItemBuffer, workItemsResized, workItemBytes);
+            RecordCpuUploadBytes(
+                workItemsResized ? _gpuBoundsWorkItemBuffer.Length : workItemBytes,
+                _currentDispatchGroupIsBatched);
+        }
         _gpuBoundsFailureStage = "GpuBoundsPublication.PaletteBufferReadiness";
         if (!backend.EnsureGpuBufferReady(outputPage.CurrentPalette)
             || !backend.EnsureGpuBufferReady(outputPage.PreviousPalette))
@@ -373,6 +275,138 @@ public sealed partial class GPUPhysicsChainDispatcher
         return true;
     }
 
+    /// <summary>
+    /// Builds every bounds row: the slot layout, the bound sources, the mesh envelopes, the
+    /// material contracts, the work items, and the per-frame output state. It also records
+    /// the retained rows that later unchanged frames reuse.
+    /// </summary>
+    private bool BuildBoundsRows(PhysicsChainOutputPage outputPage, out int materialRejections)
+    {
+        materialRejections = 0;
+        ++_boundsBuildFullCount;
+        ClearRetainedBoundsRows();
+        bool layoutReusable = true;
+        _gpuBoundsSlotAllocator.BeginLayout();
+        _gpuBoundsWorkItems.Clear();
+        _gpuBoundsSlotByRenderer.Clear();
+        _pendingBoundsSources.Clear();
+        _pendingPaletteInputBoundsByRenderer.Clear();
+        for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
+        {
+            GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
+            var entry = new RetainedBoundsBinding
+            {
+                Renderer = binding.Renderer,
+                Component = binding.Component,
+                Request = binding.Request,
+                Scene = _gpuBoundsBindingScenes[bindingIndex],
+                BoneMatrixElementCount = binding.BoneMatrixElementCount,
+                RendererBoneBufferGeneration = binding.RendererBoneBufferGeneration,
+                DrivesCompleteBonePalette = binding.DrivesCompleteBonePalette,
+                PaletteBase = _gpuDrivenPaletteSliceBases[bindingIndex],
+            };
+            // Bindings come only from the output publication requests of this frame.
+            if (!IsBoundsRowBinding(in binding))
+            {
+                _retainedBoundsBindings.Add(entry);
+                continue;
+            }
+            GPUPhysicsChainRequest request = binding.Request!;
+
+            var key = new PhysicsChainPaletteSliceKey(request.Component, binding.Renderer);
+            PhysicsChainPaletteSlice slice = _gpuBoundsSlotAllocator.Acquire(key, 1u);
+            uint slotGeneration;
+            if (!slice.RequiresHistoryReset
+                && _committedBoundsSources.TryGetValue(binding.Renderer, out PhysicsChainGpuBoundsSource prior)
+                && prior.BoundsSlot == slice.BaseElement
+                && prior.RendererBoneBufferGeneration == binding.RendererBoneBufferGeneration)
+                slotGeneration = prior.SlotGeneration;
+            else
+                slotGeneration = _boundsSlotGenerationOrdinal = checked(_boundsSlotGenerationOrdinal + 1u);
+
+            if (slotGeneration == 0u)
+                throw new OverflowException("Physics-chain bounds slot generation was exhausted.");
+            var source = new PhysicsChainGpuBoundsSource(this, binding.Renderer, slice.BaseElement,
+                slotGeneration, binding.RendererBoneBufferGeneration);
+            _pendingBoundsSources.Add(binding.Renderer, source);
+            _gpuBoundsSlotByRenderer.Add(binding.Renderer, slice.BaseElement);
+
+            XRMeshRenderer.BlendshapeResourceSnapshot morphState = binding.Renderer.CaptureBlendshapeResources();
+            int morphOffset = outputPage.MorphWeights.Count;
+            if (!TryRetainMorphWeights(outputPage, binding.Renderer, in morphState)
+                || !PhysicsChainMeshEnvelope.TryGetPaletteInputBounds(binding.Renderer,
+                    CollectionsMarshal.AsSpan(outputPage.MorphWeights).Slice(morphOffset),
+                    morphState.WeightsVersion, out var localBounds, out PhysicsChainMeshEnvelopeStamp envelopeStamp)
+                || !localBounds.IsValid
+                || !IsFiniteBoundsVector(localBounds.Min)
+                || !IsFiniteBoundsVector(localBounds.Max))
+            {
+                _gpuBoundsFailureStage = "GpuBoundsPublication.MeshEnvelope";
+                return false;
+            }
+
+            _pendingPaletteInputBoundsByRenderer.Add(binding.Renderer,
+                (localBounds, binding.RendererBoneBufferGeneration));
+            if (_lastPublishedPaletteInputBoundsByRenderer.TryGetValue(binding.Renderer, out var priorBounds)
+                && priorBounds.BoneGeneration == binding.RendererBoneBufferGeneration)
+            {
+                AABB unionBounds = new(Vector3.Min(localBounds.Min, priorBounds.Bounds.Min),
+                    Vector3.Max(localBounds.Max, priorBounds.Bounds.Max));
+                // A work item that still holds a prior box is rebuilt in the next frame, so it
+                // does not keep that larger box.
+                layoutReusable &= unionBounds.Min == localBounds.Min && unionBounds.Max == localBounds.Max;
+                localBounds = unionBounds;
+            }
+
+            int snapshotStart = _retainedBoundsMaterialSnapshots.Count;
+            PhysicsChainMaterialBoundsContract materialContract = ResolveDrawnMaterialBoundsContract(
+                binding, bindingIndex, _retainedBoundsMaterialSnapshots, out long materialRouteGeneration);
+            // Retained rows need a route witness for their materials and no morph weights.
+            layoutReusable &= materialRouteGeneration >= 0
+                && binding.Renderer.Mesh is { BlendshapeCount: 0u };
+            uint flags = 0u;
+            float padding = materialContract.Padding;
+            if (!materialContract.IsSupported)
+            {
+                // The shader writes a rejected slot; no CPU bound replaces it.
+                flags |= BoundsWorkItemRejectedMaterialContract;
+                padding = 0.0f;
+                ++materialRejections;
+                ReportMaterialBoundsRejection(binding.Renderer, materialContract);
+            }
+
+            uint paletteBase = _gpuDrivenPaletteSliceBases[bindingIndex];
+            uint paletteCount = binding.BoneMatrixElementCount;
+            if (!IsPaletteSliceInPage(outputPage, paletteBase, paletteCount))
+            {
+                _gpuBoundsFailureStage = "GpuBoundsPublication.PaletteSlice";
+                return false;
+            }
+            _gpuBoundsWorkItems.Add(new PhysicsChainGpuBoundsWorkItem(
+                new Vector4(localBounds.Min, padding),
+                new Vector4(localBounds.Max, 0f),
+                paletteBase,
+                paletteCount,
+                slice.BaseElement,
+                flags));
+            AddBoundsRowOutputState(outputPage, request, in binding, in source, paletteBase, paletteCount,
+                in envelopeStamp, in materialContract, morphOffset, bindingIndex);
+
+            entry.IsRow = true;
+            entry.Source = source;
+            entry.Envelope = envelopeStamp;
+            entry.Material = materialContract;
+            entry.MaterialRouteGeneration = materialRouteGeneration;
+            entry.MaterialSnapshotStart = snapshotStart;
+            entry.MaterialSnapshotCount = _retainedBoundsMaterialSnapshots.Count - snapshotStart;
+            _retainedBoundsBindings.Add(entry);
+        }
+        _gpuBoundsSlotAllocator.EndLayout();
+        _retainedBoundsMaterialRejectionCount = materialRejections;
+        _retainedBoundsLayoutReusable = layoutReusable;
+        return true;
+    }
+
     private static bool TryRetainMorphWeights(PhysicsChainOutputPage page, XRMeshRenderer renderer,
         in XRMeshRenderer.BlendshapeResourceSnapshot source)
     {
@@ -400,12 +434,14 @@ public sealed partial class GPUPhysicsChainDispatcher
     private bool CaptureGpuBoundsSceneRoutes()
     {
         _gpuBoundsScenes.Clear();
+        _gpuBoundsVisualScenes.Clear();
         _gpuBoundsBindingScenes.Clear();
         _gpuBoundsBindingSceneIndices.Clear();
         for (int bindingIndex = 0; bindingIndex < _gpuDrivenPaletteBindings.Count; ++bindingIndex)
         {
             GpuDrivenRendererPaletteBinding binding = _gpuDrivenPaletteBindings[bindingIndex];
-            GPUScene? scene = binding.Component.World.GetRenderWorld()?.VisualScene.GPUCommands;
+            XREngine.Scene.VisualScene3D? visualScene = binding.Component.World.GetRenderWorld()?.VisualScene;
+            GPUScene? scene = visualScene?.GPUCommands;
             int sceneIndex = -1;
             if (scene is not null)
             {
@@ -414,6 +450,7 @@ public sealed partial class GPUPhysicsChainDispatcher
                 {
                     sceneIndex = _gpuBoundsScenes.Count;
                     _gpuBoundsScenes.Add(scene);
+                    _gpuBoundsVisualScenes.Add(visualScene!);
                 }
             }
             _gpuBoundsBindingScenes.Add(scene);
@@ -486,9 +523,16 @@ public sealed partial class GPUPhysicsChainDispatcher
     /// renderer's bound. Published routes supply the drawn materials, including
     /// command overrides. A renderer without a route uses its own materials.
     /// </summary>
+    /// <param name="retainedSnapshots">Receives the drawn material snapshots of a route-based contract.</param>
+    /// <param name="routeGeneration">
+    /// The publication generation of the route that supplied the materials, or -1 when the
+    /// contract has no route or used a stale published material.
+    /// </param>
     private PhysicsChainMaterialBoundsContract ResolveDrawnMaterialBoundsContract(
-        in GpuDrivenRendererPaletteBinding binding, int bindingIndex)
+        in GpuDrivenRendererPaletteBinding binding, int bindingIndex,
+        List<PhysicsChainDrawMaterialSnapshot> retainedSnapshots, out long routeGeneration)
     {
+        routeGeneration = -1L;
         XRMeshRenderer renderer = binding.Renderer;
         PhysicsChainMaterialBoundsContract contract = default;
         if (FindGpuBoundsSceneRoutes(bindingIndex) is { } routes
@@ -505,6 +549,8 @@ public sealed partial class GPUPhysicsChainDispatcher
                 contract = PhysicsChainMaterialBoundsContract.Combine(contract,
                     PhysicsChainMaterialBoundsEvaluator.Evaluate(drawn.Material));
             }
+            retainedSnapshots.AddRange(_gpuBoundsMaterialScratch);
+            routeGeneration = routes.PublicationGeneration;
             _gpuBoundsMaterialScratch.Clear();
             return contract;
         }
@@ -686,6 +732,7 @@ public sealed partial class GPUPhysicsChainDispatcher
         _gpuBoundsCommandScratch.Clear();
         ClearGpuBoundsSceneRoutes();
         _gpuBoundsScenes.Clear();
+        _gpuBoundsVisualScenes.Clear();
         _gpuBoundsCopiedRenderers.Clear();
         _pendingGpuBoundsCommandCount = 0;
         _gpuBoundsSlotByRenderer.Clear();
@@ -694,6 +741,9 @@ public sealed partial class GPUPhysicsChainDispatcher
         _committedBoundsSources.Clear();
         _pendingPaletteInputBoundsByRenderer.Clear();
         _lastPublishedPaletteInputBoundsByRenderer.Clear();
+        lock (_outputPageSync)
+            InvalidateRetainedBoundsRows();
+        ClearRetainedBoundsRows();
         AdvanceCommittedSpatialEpoch(SpatialEpochCause.Invalidation);
     }
 

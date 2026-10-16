@@ -2,6 +2,7 @@ using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
+using XREngine.Scene;
 
 namespace XREngine.UnitTests.Physics;
 
@@ -13,18 +14,30 @@ public sealed class PhysicsChainQualityTransitionTests
     [Test]
     public void TierTransitionPreservesNormalizedCadenceProgress()
     {
-        var component = new PhysicsChainComponent
-        {
-            UpdateRate = 60.0f,
-        };
-        SetField(component, "_time", 0.0125f);
-        SetField(component, "_qualityCadenceProgress", 0.75f);
-        SetField(component, "_qualityPhaseInitialized", true);
+        var world = new TestWorldContext();
+        var node = new SceneNode("PhysicsChain");
+        PhysicsChainComponent component = node.AddComponent<PhysicsChainComponent>()!;
+        component.UpdateRate = 60.0f;
+        node.World = world;
+        world.Run(ETickGroup.Normal);
+
+        PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler).ShouldBeTrue();
+        scheduler.ShouldNotBeNull();
+        PhysicsChainRuntimeHandle handle = component.RuntimeHandle;
+        handle.IsValid.ShouldBeTrue();
+
+        // The world owns the cadence clock of each runtime slot.
+        // Put the clock at three quarters of one 60 Hz step.
+        scheduler!.SetCadenceProgress(handle, component, 0.75f, 60.0f);
 
         component.SetEffectiveQualityTier(PhysicsChainQualityTier.Hz30);
 
-        GetField<float>(component, "_qualityCadenceProgress").ShouldBe(0.75f, 0.00001f);
-        GetField<float>(component, "_time").ShouldBe(0.025f, 0.00001f);
+        scheduler.TryGetSimulationClock(handle, component, out PhysicsChainSimulationClock clock).ShouldBeTrue();
+        clock.CadenceProgress.ShouldBe(0.75f, 0.00001f);
+        clock.ElapsedSeconds.ShouldBe(0.025f, 0.00001f);
+
+        node.World = null;
+        world.Run(ETickGroup.Normal);
     }
 
     [Test]
