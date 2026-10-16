@@ -90,11 +90,17 @@ that factory before parallel work; sequential and browser work do not create a
 pool.
 
 Matrix callbacks are collected while the bulk pass runs and dispatched after
-all descendants finish. Subscriber counts update only on event subscription
-changes. Inverse notifications calculate inverses only when subscribed. Render
-events only run for subscribers. Local/world virtual hooks still execute because
-UI bounds and rigid-body reset checks own required side effects there. Mutations
-from callbacks remain dirty for the next pass. Explicit immediate recalculation
+all descendants finish. Each store row keeps a notification interest mask:
+the bit of each matrix event that has handlers, plus the bits of
+`TransformBase.OverriddenMatrixChangeNotifications`. Event subscription
+changes update the mask. The store queues only the notification bits in this
+mask, and a pending-position bitset lets a dispatch visit only queued rows, in
+hierarchy order. A transform with no handlers and no overridden change method
+therefore gets no dispatch. A type that overrides `OnLocalMatrixChanged` or
+`OnWorldMatrixChanged` must return the matching bit; `UIBoundableTransform`
+(UI bounds) and `RigidBodyTransform` (reset checks) do this. Inverse
+notifications calculate inverses only when subscribed. Mutations from
+callbacks remain dirty for the next pass. Explicit immediate recalculation
 outside a bulk pass continues to notify synchronously. Diagnostic evaluation
 suppresses external matrix notifications and publication.
 

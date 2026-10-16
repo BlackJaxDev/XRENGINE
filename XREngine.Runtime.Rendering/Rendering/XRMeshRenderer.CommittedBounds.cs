@@ -7,9 +7,11 @@ namespace XREngine.Rendering;
 public partial class XRMeshRenderer : ICommittedWorldBoundsProvider
 {
     /// <summary>
-    /// Reports a committed GPU output or its invalidation. The arguments are the renderer, the
-    /// producer epoch, whether the output is published, and whether the committed world bound
-    /// changed. A published output with an unchanged bound still changes the GPU pose.
+    /// Reports a committed GPU output whose committed world bound changed, or the invalidation of
+    /// an output. The arguments are the renderer, the producer epoch, whether the output is
+    /// published, and whether the committed world bound changed. A published output with an
+    /// unchanged bound raises no event, although its GPU pose changed; the dispatcher instead
+    /// advances the covered shadow caster output revision of each scene once for each output.
     /// </summary>
     public event Action<XRMeshRenderer, uint, bool, bool>? CommittedOutputChanged;
 

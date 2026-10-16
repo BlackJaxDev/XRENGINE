@@ -1,7 +1,7 @@
 # Skinned GPU Chain Benchmark Investigation
 
 Status: Open. The 100 Hz target is not met.
-Last updated: 2026-10-14
+Last updated: 2026-10-16
 
 [Design](../../design/physics/physics-chain-steady-state-cpu-design.md) ·
 [Code items](../../todo/physics/physics-chain-thousands-scale-optimization-todo.md) ·
@@ -226,6 +226,7 @@ The Math world ambient light repair is recorded in the [ambient validation](../.
 | Early no-solve admission for reduced tiers | No end-to-end gain; component preparation rose from about 3.3 to 4.3–4.7 ms. | Removed. |
 | Phase-local collider dependency proof | Not built or validated. | Removed; superseded by versioned dependency sets. |
 | 64- and 128-thread solver workgroups | Both windows failed with `InputPageFenceFailed`; GPU clocks differed. | Invalid; 32 threads kept. |
+| Swap publication that does not wait for the transform pass gate | The swap transform publication fell, but the Advanced commit in the swap rose from about 3 ms to 7.4–8.9 ms in 3 of 6 sessions. With the blocking swap, 0 of 4 sessions did this. See [swap transform publication](#swap-transform-publication). | Removed. The cause of the commit increase is unknown. |
 | Primary directional shadow collection bypass | Unsafe: the general shadow pipeline still consumes CPU-owned commands. | Replaced by an explicit GPU consumer item. |
 | Collecting GPU input after the normal transform pass | Can change callback, rest-pose, and fixed-step ordering. | Rejected. |
 | Reading GPU bone ownership without its lock | Can observe a retired bone-buffer state. | Rejected. |
@@ -280,6 +281,7 @@ The source evidence is Claude session `a617dff7-7809-4633-99c0-c61be2df316f`, wh
 | Cold start: `visible-mesh-cold-admission` retries, one exhausted descriptor-preparation recovery, one cold `GpuBoundsPublication.AtlasBufferReadiness` failure. Readiness can take more than 45 seconds at 2,000 chains. On 2026-10-08, one of about eight session starts latched at frame 83: "Compute descriptor resources for 'UnnamedProgram' could not be prepared before recording ... The frame plan has no resource-planner generation for the compute operation context." PresentNow recovery used its budget of three attempts. After that, the renderer rejected every frame (0 completed, 11,181 rejected) and discarded the queued scene work. Each physics output page was committed, its fence failed with `QueueDiscard`, and a simulation receipt then withdrew the page as a known producer failure. This was silent: `OutputPageDiagnostics.FailureCount` did not change. A restart without a rebuild was healthy. | Excluded from timing windows by the readiness gate, which needs completed frames. The silent page failures are a code item in the todo. | Find why the compute operation context has no resource-planner generation at cold start. Track separately from steady-state work. |
 | Two cold launches lost their engine loop threads, and one process exited after startup with no log. On 2026-10-14, the first disabled prepared-gate window also lost its MCP connection and editor process. Four repeat windows completed with dump capture enabled and no dump. | Causes unknown; the repeat does not identify or rule out a cause. | Capture a dump on the next occurrence. |
 | A terminating `IndexOutOfRangeException` in `PhysicsChainComponent.BuildRuntimeTemplate`, on the fixed-update thread (`PhysicsChainWorld.DrainStructuralCommands` → `AddComponent` → `GetOrCreateRuntimeTemplate`). It happened once in about 40 benchmark stops on 2026-10-08, in the same second that a 1-chain window ended and the controller restored the source rig. The window had already been accepted. | Cause unconfirmed. The method counts particles in one pass and fills arrays in a second pass, so a concurrent particle-tree rebuild during source restoration could overrun them. | Code item in the todo. |
+| Previous-pose positions outside the routed bound for all 2,000 candidates (2026-10-15, one long session with the vertex-effect test environment and earlier material probes). Current poses were contained. | Not reproduced; a clean session passed with retained rows on and off. See [retained bounds rows](#retained-bounds-rows). | Repeat the material probes, then a 2,000-chain capture, and classify the previous-pose history tokens. |
 | A callback exception during identity delivery stops the editor timer. | Existing terminal-fault policy; direct publisher tests prove caller retry. | No change planned. |
 | The collect thread stopped 20 seconds after a fresh start (desktop, 2026-10-13, one of four starts). `get_time_state` showed a terminal fault: `InvalidOperationException` "Render object 'XRDataBuffer' requested a backend operation before an active render owner was available." The stack is `VisualScene3D.ProcessPendingRenderableOperations` → `GPUScene.Add` → `VerifyUpdatingBufferSize` → `EnsureLodTransitionBufferCapacity` → `SyncLodTransitionBufferFromGpu` → `XRDataBuffer.MapBufferData`. When the GPU scene grows its command capacity after a GPU LOD dispatch has set `_lodTransitionGpuWritePending`, the sync maps the LOD transition buffer on the collect thread, where no render owner exists. That code is the same at HEAD. | Unresolved. A restart of the same binary was healthy. | Code item in the [backlog](../../todo/physics/physics-chain-backlog-todo.md#gpu-residency-and-submission). |
 
@@ -677,6 +679,100 @@ Why a screen-space UI item has a 3D render info in the scene at all is an open [
 - A 15-second window with `-RequireDirectionalShadows -CaptureEvidence` was accepted. The cascade lane accepted 726 new groups, with no new rejected or unconsumed groups. The wide capture shows the full chain grid. MCP readback images are dark (an open fault), so the image check is limited. Before the change no consumer read the primary view in this scene, so skipping it cannot change the image here.
 - Shadow-only casters (VR avatar layers, shadow-pass-only materials), Monado, and light-probe capture at startup are not covered by this scene; see the [shadow validation](../../testing/rendering/shadow-validation.md).
 
+## Swap transform publication
+
+Status: the notification filter is implemented and measured on 2026-10-15 (desktop, Ryzen 9 7950X3D, RTX 3090, `GpuIndirectZeroReadback`, GPU clocks not locked). A user server process used about 9% of one core during the windows. The [transform architecture](../../../architecture/scene/transforms.md) owns the contract.
+
+**Change.** Each `TransformHierarchyStore` row keeps a notification interest mask: the bit of each matrix event with handlers, plus `TransformBase.OverriddenMatrixChangeNotifications`. The store queues only those bits. A pending-position bitset lets each dispatch visit only queued rows, in hierarchy order. `UIBoundableTransform` and `RigidBodyTransform` declare their overridden change methods. Reflection could detect the overrides, but the portable source guard rejects `GetMethod`, and trimming can remove the override metadata without an error.
+
+**Result.** Interleaved windows of the same session conditions, 2,000 chains. Values are milliseconds per completed frame. The HEAD windows ran from a temporary checkout of the HEAD source files in the working tree.
+
+| Build | Windows | Hz | Swap | Swap store publication | Swap gate wait | Swap notified owners | `Process` hold | `Process` notified owners | Advanced commit |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| HEAD | 2 | 35.7–37.0 | 8.06–8.16 | 3.23 | 0.72–0.76 | 9,100–9,300 | 3.67–3.92 | 11,300–11,400 | 3.00–3.02 |
+| Notification filter | 4 | 35.3–37.1 | 7.55–7.87 | 2.59–2.85 | 0.32–0.43 | 1,280–1,340 | 2.72–3.00 | 0 | 2.93–3.09 |
+
+- The filter removes about 87% of the swap notifications and all of the `Process` notifications. The swap store publication falls by about 0.5 ms, the `Process` hold by about 0.8 ms, and the swap by about 0.4 ms. The frame rate does not change outside the window variation.
+- The remaining swap notification time (about 1.6–1.7 ms) belongs to the 1,300 owners with render-matrix handlers, about 1.3 µs each. The handlers are not attributed yet. The likely owners are the covered-mesh render-matrix handlers (`RenderableMesh.RootBone_WorldMatrixChanged` and `Component_WorldMatrixChanged`), which have their own todo item.
+- Two earlier HEAD windows in a slower machine state measured 2.75–3.29 ms swap hold and 9,300–11,700 swap owners.
+
+**Rejected: a swap that does not wait for the pass gate.** A first build let the swap publication return when the update-thread `Process` held the gate, and kept the publication flags for the next pre-collect publication. The swap gate wait became 0, and the swap skipped its publication in 7–18% of frames. But the Advanced commit in the swap rose to 7.4–8.9 ms in 3 of 6 sessions; HEAD and the blocking variant had 2.9–3.3 ms in all 8 of their sessions. A sampled trace of one slow session put 20% of the collect thread in `Buffer.MemmoveInternal` under `AdvancedSharedGpuSceneDatabase.TrySealTablePublication`, against 5% in a fast session. The slow sessions therefore copy more table data in each seal. The acknowledgement lag was 0 in all sessions. Why a skipped swap publication increases the sealed data is not known. The non-blocking swap is removed.
+
+**Tooling.** Two harness faults were fixed. MCP can now answer about 12 seconds before the editor creates its target world, so the first world tool failed with "requires unavailable capabilities: World"; the harness now retries its first tool call for up to 180 seconds. Under Windows PowerShell 5.1, the `dotnet-trace` process from `Start-Process -PassThru` reported no exit code, so every `-CpuTraceSeconds` window was rejected; the harness now reads the process handle at start.
+
+**Validation.** A final-binary window (shared mesh, `-CaptureEvidence`) was accepted at 37.15 Hz, with swap 7.61 ms, Advanced commit 3.01 ms, 1,365 swap notified owners, and no `Process` notification. The wide capture shows the full chain grid, and the near capture shows chains bent by the simulation. These captures do not show native UI layout. The Release editor and test builds have 0 warnings and 0 errors. The transform test filter passed 108 of 109 tests; the failure is the known stale `PhysicsChainComponentTests` reflection on `_particleTrees`. Evidence (disposable): the `headbase-*`, `abhead-*`, `swapnotify-*`, `abchange-*`, `blockswap-*`, and `diag-change-*` summaries and traces in the `20261006-195917-chain-scale` run reports.
+
+## Retained bounds rows
+
+Status: implemented and live-validated on 2026-10-15 and 2026-10-16 (desktop, same conditions as the [swap transform publication](#swap-transform-publication) windows). The [output architecture](../../../architecture/physics/physics-chain-output-and-readback.md#canonical-gpu-bounds) owns the contract.
+
+**Change.** The bounds stage rebuilt the slot layout, bound sources, mesh envelopes, material contracts, and work items of every row in every frame, and uploaded the work items again. A build now reuses the rows of the last committed full build while each binding and row witness holds. It then computes only the per-frame spatial state of each row, and the commit skips the bound-source comparison. Any failed witness rebuilds all rows in that frame.
+
+**Result.** Four windows of each build, 2,000 chains, both mesh modes. Values are milliseconds per dispatcher call.
+
+| Build | Bounds rows | Bounds stage | Dispatcher | Commit page state | Reused builds |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Before | 3.16–3.40 | 3.60–3.86 | 8.88–9.52 | 0.043–0.052 | — |
+| Retained rows | 0.71–1.02 | 1.14–1.62 | 6.22–8.35 | about 0 | every build in each window |
+
+The rows stage fell by about 2.4 ms per frame. The rates were 33.5–42.4 Hz against 35.3–37.1 Hz; the spread is inside the window variation. The scene-copy stage measured 0.19–0.27 ms against 0.13–0.15 ms; that code did not change.
+
+**Witness checks (one chain, vertex-effect test material).** A material translation caused two rebuilds, then reuse resumed; the bound grew by about 3 units, and all 208 offset positions were inside it. A rotation rejected the slot (NaN atlas slot, cleared candidate view mask) and rebuilt in every frame, as the code did before for every frame. After recovery, reuse resumed and the offset positions were inside the bound.
+
+**Containment A/B (2,000 chains).** A temporary switch disabled reuse inside one benchmark run. Captures with reuse on, reuse off, and reuse on again each had 0 failing candidates for 416,000 current and previous positions, all moving. The reuse counters showed steady reuse across the two reuse captures.
+
+**Open finding: previous-pose history in a long session.** An earlier session failed the check for all 2,000 candidates, by up to 3.33 units. Every failing position was a previous-pose position (206,761 of 208,000); every current-pose position was inside its bound. That session used `XRE_PHYSICS_CHAIN_TEST_VERTEX_EFFECTS=1` and had run single-chain material probes with many rebuilds before the benchmark. The retained deformation history therefore did not match the previous palette of the bound. Retained rows do not change palettes or deformation history, and the clean A/B passed with reuse on and off. A repeat with the test environment did not reach a steady benchmark within 75 seconds, so the finding is not reproduced.
+
+**Tooling notes.** `check-native-chain-bounds.py` stores at most 12 failures; the run-root variants report the failing-candidate count, the worst excess, and the failing pose. `Tools/Manage-McpEditorSession.ps1 Start` piped into another command does not return while the editor runs, because the editor inherits the pipe; read the session state with `Status` instead.
+
+## Commit notifications and simulation group
+
+Status: implemented and live-validated on 2026-10-16 (desktop, same conditions as the [swap transform publication](#swap-transform-publication) windows). The [output architecture](../../../architecture/physics/physics-chain-output-and-readback.md#canonical-gpu-bounds) owns the notification contract.
+
+**Change: commit notifications.** The commit sent `CommittedOutputChanged` to every renderer on each page, and the handler of each covered shadow caster advanced the covered shadow revision of its scene. Now the bounds build compares each row with the published page while it writes the row, and the commit notifies only the renderers whose committed bound changed. The commit advances the covered shadow caster output revision of each scene in the publication once. When the published page changes between the build and the commit, the commit compares the two pages again. A withdrawn output still notifies every renderer.
+
+**Change: simulation group.** The dispatcher kept layout lists and per-request upload stamps, so that it could upload only the changed parts of the active-work and tree parameter inputs. But each dispatch group acquires an input page that holds data of an older frame, so every upload wrote the full ranges. The layout lists, checks, and stamps are removed, and the uploads write the full ranges directly. Each request keeps its kernel buckets until its static data version, tree version, or a count changes, and the tree loops read the accepted arrays as spans.
+
+**Result.** Four windows of each build, 2,000 chains, both mesh modes. "Retained rows" is the build of the [retained bounds rows](#retained-bounds-rows) windows. Values are milliseconds per dispatcher call.
+
+| Build | Hz | Dispatcher | Accept inputs | Simulation | Active work | Other uploads | Commit | Notifications per page |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Retained rows | 33.5–42.4 | 6.22–8.35 | 0.68–0.80 | 1.28–1.61 | 0.47–0.54 | 0.115–0.152 | 0.75–1.00 | 1,998–2,000 |
+| This change | 43.0–43.6 | 5.55–5.70 | 0.62–0.66 | 1.13–1.28 | 0.39–0.46 | 0.058–0.065 | 0.003–0.007 | 0 |
+
+- The commit fell by about 0.8 ms per frame. Before, notification collection took 0.32–0.42 ms and the notifications took 0.42–0.57 ms. No window sent a renderer notification, because no committed proxy needed a refit.
+- The simulation group fell by about 0.2 ms. The dirty-range uploads (0.29–0.40 ms before, 0.30–0.32 ms after) and the dispatch remain; `UploadDirtyRequestRanges` did not change.
+- All eight windows were accepted. The rate of the earlier windows varied widely, so do not take the frame-rate difference as a measured gain.
+
+**Shadow validation.** The shared-mesh window ran with `-RequireDirectionalShadows` and `-CaptureEvidence`. The cascade lane accepted about one group per frame. The cascade skip counter `skip_no_atlas_render_request` counted 2–20 skips before and 7–21 skips after the change, about equal to the dispatcher calls with no committed page (2–21 before, 7–26 after). The cascades therefore still re-render on each covered output and skip only the frames with no new output. The wide capture shows the full chain grid, and the near capture shows chains bent by the simulation.
+
+**Tests.** The physics-chain and transform test filter has 24 failures: the 23 known stale tests and `PhysicsChainGpuActiveWorkTests.StableActiveInputs_UploadOnlyVersionedDirtyRanges`. That test reads the dispatcher source text and requires the removed layout checks and upload stamps. It is not changed, because test changes need user clearance during this validation. Evidence (disposable): the `simcommit-*` and `rows-*` summaries in the `20261006-195917-chain-scale` run reports.
+
+## Previous palette and palette sources
+
+Status: implemented and live-measured on 2026-10-16 (desktop, same conditions as the [swap transform publication](#swap-transform-publication) windows). The [output architecture](../../../architecture/physics/physics-chain-output-and-readback.md) owns the contract.
+
+**Change: previous palette.** The copy stage rebuilt the slice map of the written page, looked up each renderer's slice on the published page, and kept a map and a set of copied and seeded slices, for every binding in every frame. The dispatcher now keeps one palette layout entry for each binding and a layout version. A page refills its slice map only when its layout version differs. With the same layout version on the published page, a binding needs no slice lookup, and when no renderer has a history reset, one copy covers the whole layout. Each binding still compares its spatial source identity and mesh envelope with its state on the published page.
+
+**Change: palette sources.** Each commit called `SetGpuDrivenSkinPaletteSource` for every renderer, because each output page has its own palette buffers. Renderers now read their palettes through one shared `SkinPaletteView`. A commit writes the new buffers into the view once, and binds the renderers again only when the layout version, a palette history reset, the external palette source epoch, or the skinning setting changes. The renderer's `SkinnedOutputVersion` adds the view's publication count, so it still advances once for each output.
+
+**Result.** Four windows of each build, 2,000 chains, both mesh modes. "Before" is the build of the [commit notification](#commit-notifications-and-simulation-group) windows. Values are milliseconds per dispatcher call. The fourth new window ran 15–30% slower in every phase, also in the update phase that this change does not touch; the table shows the other three and the fourth in parentheses.
+
+| Build | Hz | Dispatcher | Palette matrices | Previous palette | Palette sources | Single copies per page | Rebinds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before | 43.0–43.6 | 5.55–5.70 | 0.13–0.15 | 0.49–0.52 | 0.61–0.67 | — | — |
+| This change | 42.1–43.8 (33.9) | 5.10–5.49 (6.56) | 0.16–0.18 (0.19) | 0.34–0.42 (0.46) | 0.000 (0.000) | 1 | 0 |
+
+- The palette source stage fell by about 0.65 ms. No window bound a renderer again.
+- The previous palette stage fell by about 0.1 ms, and every committed page used one range copy. The remaining 0.34–0.42 ms is not attributed yet: it holds the per-binding history comparison, two buffer-ready checks, the copy, and the completion barrier.
+- The layout comparison added about 0.03 ms to the palette matrices stage.
+- The bounds stage measured 1.49–1.64 ms against 1.41–1.47 ms. Its code did not change; the difference is inside the window variation.
+- The cascade skips again equal the dispatcher calls with no committed page, so the shadow cascades still re-render on each covered output. The wide and near captures of the shadow window show the chain grid and bent chains.
+
+**Containment (2,000 chains, RenderDoc).** Two captures about 3 seconds apart, while each committed page used one range copy and no rebind happened, each had 0 failing candidates for 416,000 current and previous positions; all 208,000 previous positions moved. The previous palette of the single copy therefore matches the bounds. A first attempt in a new session did not reach a steady state within 75 seconds; a wait with a longer limit reached it after 34 seconds. The palette sources were bound 183 times while the chains spawned, and not again during the captures.
+
+**Tests.** The 24 stale physics-chain tests are repaired: each checks the current code, and four were renamed for their current rule. The physics-chain and transform filter passes. Fifteen renderer contract tests outside that filter fail, on files with no uncommitted change, so they already fail at HEAD.
+
 ## GPU floor with locked clocks
 
 Status: measured on 2026-10-13 (laptop). The RTX 4070 Laptop GPU was locked at 2,595 MHz graphics and 8,101 MHz memory (P0, 65–68 °C). `Tools/Benchmarks/Sample-GpuFrameTime.ps1` sampled the GPU time of the frame command buffer for each completed frame inside accepted harness windows (shared mesh).
@@ -730,8 +826,8 @@ The [stage telemetry](#frame-handoff-and-stage-telemetry) of 2026-10-13 supports
 
 1. Skip the primary directional shadow collection when nothing consumes it. Done on 2026-10-14; see the [gate](#primary-directional-shadow-collection-gate).
 2. The unchanged-row verdict now prepares during collect; the commit stays in the swap. The [closeout](#prepared-unchanged-row-verdict-closeout) records the measured saving and the live-edit validation that remains open.
-3. Remove the swap transform publication costs: the owner notification (1.8 ms) and the wait for `Process` (0.9 ms).
-4. Make the render-thread dispatcher changes, starting with the retained bounds rows (3.5 ms).
+3. Remove the swap transform publication costs. The owner notification filter is done; see [swap transform publication](#swap-transform-publication). The wait for `Process` remains, because a non-blocking swap made the Advanced commit slower in half of the sessions.
+4. Make the render-thread dispatcher changes. The retained bounds rows, the commit notification filter, the simulation-group changes, the previous palette copy, and the shared palette view are done; see [retained bounds rows](#retained-bounds-rows), [commit notifications and simulation group](#commit-notifications-and-simulation-group), and [previous palette and palette sources](#previous-palette-and-palette-sources).
 
 Repeat the windows on a quiet machine before you compare the frame rate with the baseline.
 

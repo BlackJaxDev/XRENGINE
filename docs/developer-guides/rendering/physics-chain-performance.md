@@ -26,7 +26,10 @@ current task run:
 pwsh Tools/Benchmarks/Measure-PhysicsChainScale.ps1 -Session physics-chain-scale -ChainCount 2000 -WindowSeconds 30 -OutputFolder "Build/_AgentValidation/<task-run>/reports"
 ```
 
-`-Session` is required. Chain count defaults to 2,000 and accepts 1 to 10,000.
+`-Session` is required. MCP can answer before the editor creates its target
+world, so the command retries its first tool call for up to 180 seconds while
+world tools report a missing World capability.
+Chain count defaults to 2,000 and accepts 1 to 10,000.
 The timing window defaults to 30 seconds and accepts 5 to 60 seconds.
 The measurement camera uses (0, 400, 450), looking at the grid origin. A
 native 2,000-chain capture confirmed all members at this view. Counts above
@@ -461,6 +464,17 @@ through the MCP `invoke_method` tool, and divide each stage difference by the
 call difference to get milliseconds per frame. The timers are always on and
 cost a few timestamp reads per frame. Use them in place of sampled CPU traces,
 which over-attribute time to lock entry and large struct copies.
+`Detail.BoundsRowReuses` and `Detail.BoundsRowRebuilds` count the bounds builds
+that reused every retained row and the builds that rebuilt them. In a
+steady-state window, only the reuse count should increase.
+`Detail.CommitNotifications` counts renderer notifications, which the commit
+sends only for a changed committed bound. In a steady-state window it should
+stay near 0; a value near the chain count for each page shows proxy refits in
+every frame. `PreviousPaletteSingleCopies` counts previous palette
+publications that used one range copy for the whole layout; in a steady-state
+window it should increase once for each committed page. `PaletteSourceRebinds`
+counts the publications that bound the renderers to the shared palette view
+again; in a steady-state window it should not change.
 
 `GPUPhysicsChainDispatcher.CaptureCommittedSpatialQueryDiagnostics()` counts
 committed spatial query misses by reason (epoch, page, renderer, mesh, scene
