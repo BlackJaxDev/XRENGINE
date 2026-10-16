@@ -563,6 +563,9 @@ internal static partial class UberShaderVariantBuilder
 
             string lhs = expression[..opIndex];
             string rhs = expression[(opIndex + op.Length)..];
+            if (TryEvaluateLiteralVectorComparison(lhs, rhs, op, out value))
+                return true;
+
             if (!TryEvaluateStaticNumberExpression(lhs, constants, out double leftNumber) ||
                 !TryEvaluateStaticNumberExpression(rhs, constants, out double rightNumber))
             {
@@ -634,6 +637,118 @@ internal static partial class UberShaderVariantBuilder
             return true;
 
         return TryParseStaticNumber(expression, out value);
+    }
+
+    // Vector components use GLSL float precision. The scalar evaluator uses double
+    // and must not decide comparisons at float rounding boundaries.
+    private static bool TryEvaluateLiteralVectorComparison(string lhs, string rhs, string op, out bool value)
+    {
+        value = false;
+        lhs = StripOuterParentheses(lhs.Trim());
+        rhs = StripOuterParentheses(rhs.Trim());
+        bool leftVector = TryEvaluateLiteralVectorComponent(lhs, out float left);
+        bool rightVector = TryEvaluateLiteralVectorComponent(rhs, out float right);
+        if (!leftVector && !rightVector)
+            return false;
+        if (!leftVector && !TryParseStaticFloatLiteral(lhs, out left))
+            return false;
+        if (!rightVector && !TryParseStaticFloatLiteral(rhs, out right))
+            return false;
+
+        value = op switch
+        {
+            "==" => left == right,
+            "!=" => left != right,
+            ">=" => left >= right,
+            "<=" => left <= right,
+            ">" => left > right,
+            "<" => left < right,
+            _ => false,
+        };
+        return true;
+    }
+
+    private static bool TryParseStaticFloatLiteral(string expression, out float value)
+    {
+        value = 0.0f;
+        expression = expression.Trim();
+        if (expression.EndsWith('f') || expression.EndsWith('F'))
+            expression = expression[..^1];
+
+        if (!expression.Contains('.') && !expression.Contains('e') && !expression.Contains('E'))
+        {
+            ReadOnlySpan<char> digits = expression.AsSpan();
+            if (!digits.IsEmpty && (digits[0] == '+' || digits[0] == '-'))
+                digits = digits[1..];
+
+            // Leave octal and out-of-range integer conversion to the GLSL compiler.
+            if (digits.Length > 1 && digits[0] == '0')
+                return false;
+            if (!int.TryParse(expression, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out int integer))
+                return false;
+
+            value = integer;
+            return true;
+        }
+
+        return float.TryParse(expression, NumberStyles.Float,
+            CultureInfo.InvariantCulture, out value) && float.IsFinite(value);
+    }
+
+    private static bool TryEvaluateLiteralVectorComponent(string expression, out float value)
+    {
+        value = 0.0f;
+        if (expression.Length < 12 || expression[0] != '(')
+            return false;
+
+        int wrapperClose = FindMatchingDelimiter(expression, 0, '(', ')');
+        if (wrapperClose < 0 || wrapperClose + 3 != expression.Length || expression[wrapperClose + 1] != '.')
+            return false;
+
+        int componentIndex = expression[wrapperClose + 2] switch
+        {
+            'x' or 'r' => 0,
+            'y' or 'g' => 1,
+            'z' or 'b' => 2,
+            'w' or 'a' => 3,
+            _ => -1,
+        };
+        if (componentIndex < 0)
+            return false;
+
+        string constructor = expression[1..wrapperClose].Trim();
+        if (constructor.Length < 7 || !constructor.StartsWith("vec", StringComparison.Ordinal) ||
+            constructor[3] is < '2' or > '4')
+        {
+            return false;
+        }
+
+        int componentCount = constructor[3] - '0';
+        if (componentIndex >= componentCount)
+            return false;
+
+        int argumentsOpen = SkipTrivia(constructor, 4);
+        if (argumentsOpen >= constructor.Length || constructor[argumentsOpen] != '(')
+            return false;
+
+        int argumentsClose = FindMatchingDelimiter(constructor, argumentsOpen, '(', ')');
+        if (argumentsClose != constructor.Length - 1)
+            return false;
+
+        string[] components = constructor[(argumentsOpen + 1)..argumentsClose].Split(',');
+        if (components.Length != componentCount)
+            return false;
+
+        for (int index = 0; index < components.Length; index++)
+        {
+            if (!TryParseStaticFloatLiteral(components[index], out float component))
+                return false;
+
+            if (index == componentIndex)
+                value = component;
+        }
+
+        return true;
     }
 
     private static bool TryParseStaticNumber(string value, out double parsed)

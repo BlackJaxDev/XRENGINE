@@ -140,10 +140,11 @@ public partial class UnitTestingWorldSettings
     /// <summary>
     /// Startup model imports processed when the Unit Testing World boots. Each array item
     /// is a ModelImportSettings object with Enabled, Kind, MaterialMode, ImporterBackend,
-    /// Path, optional UnityProjectRoot, ImportFlags, Scale, ZUp, PostImportFlags, and optional
-    /// YawPitchRoll/Translation objects. Unity prefab entries use the Unity converter; recognized
+    /// Path, optional SourceProjectRoot, ImportFlags, Scale, ZUp, PostImportFlags, and optional
+    /// YawPitchRoll/Translation objects. Unity scenes and prefabs use the Unity converter; recognized
     /// Poiyomi materials are converted to the forward-plus Uber shader.
-    /// Paths are relative to the process working directory unless absolute.
+    /// Relative paths are checked in the working directory, Desktop, and engine assets.
+    /// Unity packages extract to the asset cache and import each scene and prefab as a separate root.
     /// </summary>
     public List<ModelImportSettings> ModelsToImport { get; set; } = [];
     /// <summary>
@@ -201,7 +202,7 @@ public partial class UnitTestingWorldSettings
     public bool AsyncProgramCompilation { get; set; } = true;
     public int OpenGLProgramCompileLinkWorkerCount { get; set; } = 1;
     public int MaxAsyncShaderProgramsPerFrame { get; set; } = 16;
-    public int OpenGLShaderCompilerThreadCount { get; set; } = -1;
+    public int OpenGLShaderCompilerThreadCount { get; set; } = 1;
     public bool OpenGLParallelShaderCompileProbeEnabled { get; set; } = true;
     public int OpenGLParallelShaderCompileProbeTimeoutMs { get; set; } = 25;
     public bool RenderMeshBounds = true;

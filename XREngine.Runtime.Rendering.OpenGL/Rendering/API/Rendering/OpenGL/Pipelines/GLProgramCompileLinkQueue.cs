@@ -14,17 +14,17 @@ namespace XREngine.Rendering.OpenGL
     {
         /// <summary>
         /// Dispatches shader compilation and program linking to one or more shared GL
-        /// context worker threads. This eliminates main-thread stalls on drivers that
-        /// lack <c>GL_ARB_parallel_shader_compile</c> by performing all blocking GL
-        /// compiler work on background threads, then publishing completed program
-        /// handles after the driver reports link completion.
+        /// context worker threads. Compiler calls run on background threads, then
+        /// completed program handles are published after driver link completion.
+        /// Driver-wide locks can still stall other contexts.
         /// <para/>
         /// Shader objects are created, sourced, compiled, attached, and destroyed
         /// entirely on the shared context that owns the job (they share the same object
         /// namespace via GLFW context sharing). The program object (identified by
         /// <paramref name="programId"/>) must already exist — it was created on the
         /// main thread. With multiple workers, jobs are dispatched to the least-loaded
-        /// worker so a single hot fragment-shader link cannot starve the queue tail.
+        /// worker. A process-wide permit serializes source compilation through link
+        /// completion across all instances of this queue.
         /// </summary>
         public sealed class GLProgramCompileLinkQueue
         {
@@ -33,10 +33,19 @@ namespace XREngine.Rendering.OpenGL
             private readonly SemaphoreSlim _programLinkGate;
             private readonly bool _serializeProgramLinkDriverCalls;
             private readonly ConcurrentDictionary<uint, CompileResult> _completed = new();
+            private readonly ConcurrentDictionary<uint, byte> _publishedProgramIds = new();
             private readonly ConcurrentDictionary<uint, byte> _inFlightProgramIds = new();
             private readonly ConcurrentDictionary<uint, byte> _inFlightLargeSourceProgramIds = new();
             private readonly ConcurrentDictionary<uint, byte> _cancelledProgramIds = new();
+            private readonly ConcurrentDictionary<uint, byte> _nativeWorkIncompleteProgramIds = new();
+            private readonly ConcurrentDictionary<uint, byte> _workerStartedProgramIds = new();
+            private readonly ConcurrentDictionary<uint, GLSharedContext> _assignedWorkers = new();
+            private readonly ConcurrentDictionary<uint, long> _jobTokens = new();
+            private static readonly object SourceCompilationAdmissionGate = new();
+            private static readonly SemaphoreSlim SourceCompilationGate = new(1, 1);
+            private static int _sourceCompilationFaulted;
             private int _roundRobinCursor;
+            private long _nextJobToken;
             private int _inFlight;
             private int _largeSourceInFlight;
             private long _completedCount;
@@ -51,7 +60,7 @@ namespace XREngine.Rendering.OpenGL
             private const double DeferredLinkProgressLogMilliseconds = 15000.0;
             private const double ShaderCompletionPollGlCallSlowLogMilliseconds = 1.0;
             private const double DefaultWorkerCompletionHardAbandonMilliseconds = 180000.0;
-            private const string SharedContextAbandonedLinkMarker = "abandoned to keep the async link queue moving";
+            private const string SharedContextAbandonedLinkMarker = "native work may still be active; source compilation requires a process restart";
             private static readonly double WorkerCompletionHardAbandonMilliseconds = ResolveWorkerCompletionHardAbandonMilliseconds();
             private static bool TraceShaderCompletionPollGlCalls
                 => XREnvironment.IsEnabled(XREngineEnvironmentVariables.TraceShaderCompletionPollGlCalls);
@@ -72,10 +81,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public const int MaxInFlight = 4;
             /// <summary>
-            /// Maximum number of large source programs that may occupy driver compiler
-            /// memory concurrently. Large Uber shaders can consume several GiB apiece
-            /// while a deferred link is pending, so count-based queue capacity alone is
-            /// not a sufficient memory bound.
+            /// Maximum number of large source jobs admitted to this queue, including
+            /// jobs waiting for the process-wide source permit. This limits queued
+            /// source data; it does not bound native compiler memory.
             /// </summary>
             public const int MaxLargeSourceInFlight = 1;
             private const int InteractivePriorityReservePerWorker = 2;
@@ -120,6 +128,22 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            /// <summary>True after a source compile or link leaves native work unfinished. Restart the process to reset it.</summary>
+            public static bool SourceCompilationFaulted => Volatile.Read(ref _sourceCompilationFaulted) != 0;
+
+            /// <summary>Stops new source compilation after a native driver failure. The fault is process-wide.</summary>
+            public static void StopSourceCompilation()
+            {
+                lock (SourceCompilationAdmissionGate)
+                    Volatile.Write(ref _sourceCompilationFaulted, 1);
+            }
+
+            /// <summary>True while the queue retains a reservation for this program.</summary>
+            public bool IsProgramInFlight(uint programId) => _inFlightProgramIds.ContainsKey(programId);
+
+            /// <summary>True when unfinished native work can still refer to this program ID.</summary>
+            public bool IsNativeWorkIncomplete(uint programId) => _nativeWorkIncompleteProgramIds.ContainsKey(programId);
+
             public bool CanEnqueue => CanEnqueuePriority(EProgramPriority.Main);
             public bool CanEnqueuePriority(EProgramPriority priority)
                 => CanEnqueuePriority(priority, sourceBytes: 0);
@@ -133,6 +157,9 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool CanEnqueuePriority(EProgramPriority priority, long sourceBytes)
             {
+                if (SourceCompilationFaulted)
+                    return false;
+
                 if (sourceBytes >= LargeSourceLinkDeferralThresholdBytes &&
                     Volatile.Read(ref _largeSourceInFlight) >= MaxLargeSourceInFlight)
                 {
@@ -264,7 +291,8 @@ namespace XREngine.Rendering.OpenGL
                 double CompileMilliseconds,
                 double LinkMilliseconds,
                 ProgramBinarySnapshot? ProgramBinary = null,
-                nint HandoffFence = 0);
+                nint HandoffFence = 0,
+                bool NativeWorkIncomplete = false);
 
             private enum CompletionPollResult : byte
             {
@@ -384,6 +412,13 @@ namespace XREngine.Rendering.OpenGL
                 TransformFeedbackLinkInfo transformFeedback,
                 out string? rejectReason)
             {
+                if (SourceCompilationFaulted)
+                {
+                    rejectReason = "source compilation is disabled after unfinished native compiler work; restart the process";
+                    Interlocked.Increment(ref _rejectedCount);
+                    return false;
+                }
+
                 ShaderInputSummary summary = SummarizeShaderInputs(shaders);
                 if (ContainsKnownAsyncLinkHazard(shaders))
                 {
@@ -430,19 +465,100 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 rejectReason = null;
+                if (!_inFlightProgramIds.TryAdd(programId, 0))
+                {
+                    if (isLargeSource)
+                        Interlocked.Decrement(ref _largeSourceInFlight);
+                    rejectReason = "program already has an in-flight source compile/link job";
+                    Interlocked.Increment(ref _rejectedCount);
+                    return false;
+                }
+
+                long jobToken = Interlocked.Increment(ref _nextJobToken);
+                _jobTokens[programId] = jobToken;
+                _publishedProgramIds.TryRemove(programId, out _);
+                _assignedWorkers[programId] = worker;
+                if (isLargeSource)
+                    _inFlightLargeSourceProgramIds[programId] = 0;
+                Interlocked.Increment(ref _inFlight);
                 LogRenderingQueueEvent(
                     "ENQUEUE",
                     programId,
                     summary,
                     $"inFlight={InFlightCount}/{MaxInFlightTotal} workers={_workers.Length} pickedPending={worker.PendingCount}");
-                _inFlightProgramIds[programId] = 0;
-                if (isLargeSource)
-                    _inFlightLargeSourceProgramIds[programId] = 0;
-                Interlocked.Increment(ref _inFlight);
                 worker.Enqueue(gl =>
                 {
+                    bool nativeCompileStarted = false;
+                    bool sourceCompilationGateHeld = false;
                     try
                     {
+                        lock (SourceCompilationAdmissionGate)
+                        {
+                            if (_publishedProgramIds.ContainsKey(programId) ||
+                                !_inFlightProgramIds.ContainsKey(programId) ||
+                                !_jobTokens.TryGetValue(programId, out long currentJobToken) ||
+                                currentJobToken != jobToken)
+                                return;
+
+                            if (SourceCompilationFaulted)
+                            {
+                                PublishCompletedResult(programId, new CompileResult(
+                                    CompileStatus.RejectedHazard,
+                                    "Source compilation stopped after unfinished native compiler work; restart the process.",
+                                    0.0,
+                                    0.0));
+                                Interlocked.Increment(ref _rejectedCount);
+                                return;
+                            }
+                        }
+
+                        while (!SourceCompilationGate.Wait(50))
+                        {
+                            if (!_jobTokens.TryGetValue(programId, out long currentJobToken) ||
+                                currentJobToken != jobToken ||
+                                !_inFlightProgramIds.ContainsKey(programId) ||
+                                _publishedProgramIds.ContainsKey(programId))
+                                return;
+
+                            if (SourceCompilationFaulted || worker.IsDisposeRequested)
+                            {
+                                PublishCompletedResult(programId, new CompileResult(
+                                    CompileStatus.RejectedHazard,
+                                    SourceCompilationFaulted
+                                        ? "Source compilation stopped before this worker entered the compiler; restart the process."
+                                        : "Shared-context worker stopped before source compilation began.",
+                                    0.0,
+                                    0.0));
+                                Interlocked.Increment(ref _rejectedCount);
+                                return;
+                            }
+                        }
+
+                        sourceCompilationGateHeld = true;
+                        lock (SourceCompilationAdmissionGate)
+                        {
+                            if (!_jobTokens.TryGetValue(programId, out long currentJobToken) ||
+                                currentJobToken != jobToken ||
+                                !_inFlightProgramIds.ContainsKey(programId) ||
+                                _publishedProgramIds.ContainsKey(programId))
+                                return;
+
+                            if (SourceCompilationFaulted || worker.IsDisposeRequested)
+                            {
+                                PublishCompletedResult(programId, new CompileResult(
+                                    CompileStatus.RejectedHazard,
+                                    SourceCompilationFaulted
+                                        ? "Source compilation stopped before this worker entered the compiler; restart the process."
+                                        : "Shared-context worker stopped before source compilation began.",
+                                    0.0,
+                                    0.0));
+                                Interlocked.Increment(ref _rejectedCount);
+                                return;
+                            }
+
+                            _workerStartedProgramIds[programId] = 0;
+                        }
+
                         LogRenderingQueueEvent("WORKER_BEGIN", programId, summary, null);
 
                         // When worker contexts run with ARB/KHR parallel shader compile
@@ -453,6 +569,7 @@ namespace XREngine.Rendering.OpenGL
                         // after the driver says the compile/link is finished.
                         bool useWorkerCompletionPolling = _completionStatusPollingEnabled;
                         bool hazardSuppressParallel = ShouldSuppressParallelCompileForWorkerProgram(shaders);
+                        uint configuredWorkerCompilerThreads = ResolveParallelShaderCompilerThreadCount();
                         ArbParallelShaderCompile? hazardArbExt = null;
                         if (hazardSuppressParallel && gl.TryGetExtension(out ArbParallelShaderCompile arbForHazard))
                         {
@@ -478,6 +595,20 @@ namespace XREngine.Rendering.OpenGL
 
                         for (int i = 0; i < shaders.Length; i++)
                         {
+                            if (SourceCompilationFaulted)
+                            {
+                                if (nativeCompileStarted)
+                                    MarkNativeWorkIncomplete(programId);
+                                PublishCompletedResult(programId, new CompileResult(
+                                    nativeCompileStarted ? CompileStatus.CompileFailed : CompileStatus.RejectedHazard,
+                                    "Source compilation stopped before the next shader stage; restart the process.",
+                                    StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - compileStartTimestamp),
+                                    0.0,
+                                    NativeWorkIncomplete: nativeCompileStarted));
+                                Interlocked.Increment(ref _failedCount);
+                                return;
+                            }
+
                             ref readonly ShaderInput input = ref shaders[i];
                             ShaderType shaderType = input.Type;
                             string resolvedSource = input.ResolvedSource;
@@ -503,7 +634,11 @@ namespace XREngine.Rendering.OpenGL
                                 programId,
                                 sid,
                                 shaderType,
-                                () => gl.CompileShader(sid),
+                                () =>
+                                {
+                                    nativeCompileStarted = true;
+                                    gl.CompileShader(sid);
+                                },
                                 "worker=source-compile");
 
                             // Poll non-blocking GL_COMPLETION_STATUS_ARB before issuing the
@@ -531,29 +666,16 @@ namespace XREngine.Rendering.OpenGL
                                     programId,
                                     summary,
                                     $"compileMs={compileMilliseconds:F2} error={errorLog}");
+                                MarkNativeWorkIncomplete(programId);
                                 PublishCompletedResult(
                                     programId,
                                     new CompileResult(
                                         CompileStatus.CompileFailed,
                                         errorLog,
                                         compileMilliseconds,
-                                        0.0));
+                                        0.0,
+                                        NativeWorkIncomplete: true));
                                 Interlocked.Increment(ref _failedCount);
-
-                                if (hazardArbExt is not null)
-                                {
-                                    try
-                                    {
-                                        MeasureRenderingWorkerGlCall(
-                                            "glMaxShaderCompilerThreadsARB",
-                                            programId,
-                                            0,
-                                            null,
-                                            () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
-                                            "worker=source-compile-thread-restore threads=implementation-max");
-                                    }
-                                    catch { /* best-effort restore */ }
-                                }
                                 return;
                             }
 
@@ -576,6 +698,18 @@ namespace XREngine.Rendering.OpenGL
                                     () => gl.GetShaderInfoLog(sid, out info),
                                     "worker=source-compile-log");
                                 errorLog = info;
+                                if (IsNativeCompilerResourceFailure(errorLog))
+                                {
+                                    MarkNativeWorkIncomplete(programId);
+                                    PublishCompletedResult(programId, new CompileResult(
+                                        CompileStatus.CompileFailed,
+                                        errorLog,
+                                        StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - compileStartTimestamp),
+                                        0.0,
+                                        NativeWorkIncomplete: true));
+                                    Interlocked.Increment(ref _failedCount);
+                                    return;
+                                }
                                 allCompiled = false;
 
                                 // Clean up all created shaders so far.
@@ -617,8 +751,8 @@ namespace XREngine.Rendering.OpenGL
                                         programId,
                                         0,
                                         null,
-                                        () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
-                                        "worker=source-compile-thread-restore threads=implementation-max");
+                                        () => hazardArbExt.MaxShaderCompilerThreads(configuredWorkerCompilerThreads),
+                                        "worker=source-compile-thread-restore threads=configured");
                                 }
                                 catch { /* best-effort restore */ }
                             }
@@ -655,6 +789,19 @@ namespace XREngine.Rendering.OpenGL
 
                         try
                         {
+                            if (SourceCompilationFaulted)
+                            {
+                                MarkNativeWorkIncomplete(programId);
+                                PublishCompletedResult(programId, new CompileResult(
+                                    CompileStatus.LinkFailed,
+                                    "Source compilation stopped before program link; restart the process.",
+                                    compileMillisecondsCompleted,
+                                    0.0,
+                                    NativeWorkIncomplete: true));
+                                Interlocked.Increment(ref _failedCount);
+                                return;
+                            }
+
                             if (setBinaryRetrievableHint)
                             {
                                 MeasureRenderingWorkerGlCall(
@@ -668,6 +815,18 @@ namespace XREngine.Rendering.OpenGL
 
                             long linkStartTimestamp = Stopwatch.GetTimestamp();
                             ApplyTransformFeedbackVaryings(gl, programId, transformFeedback, "worker=source-link-transform-feedback-varyings");
+                            if (SourceCompilationFaulted)
+                            {
+                                MarkNativeWorkIncomplete(programId);
+                                PublishCompletedResult(programId, new CompileResult(
+                                    CompileStatus.LinkFailed,
+                                    "Source compilation stopped before glLinkProgram; restart the process.",
+                                    compileMillisecondsCompleted,
+                                    StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp),
+                                    NativeWorkIncomplete: true));
+                                Interlocked.Increment(ref _failedCount);
+                                return;
+                            }
                             MeasureRenderingWorkerGlCall(
                                 "glLinkProgram",
                                 programId,
@@ -688,14 +847,6 @@ namespace XREngine.Rendering.OpenGL
                             // separable fragment program), freezing the render thread.
                             if (useWorkerCompletionPolling)
                             {
-                                // Deferring leaves the driver compiling/linking the program while
-                                // the worker starts newer jobs. Keep that only for small programs;
-                                // large uber variants must drain serially or NVIDIA can stack
-                                // several compiler jobs and trip the watchdog during startup.
-                                bool allowLinkDeferral = ShouldAllowLinkDeferral(
-                                    summary,
-                                    workerCompilerThreadsSuppressed,
-                                    _serializeProgramLinkDriverCalls);
                                 CompletionPollResult linkPollResult = PollCompletionStatusBlocking(
                                     gl,
                                     worker,
@@ -705,7 +856,7 @@ namespace XREngine.Rendering.OpenGL
                                     isShader: false,
                                     phase: "worker=source-link-completion-poll",
                                     operationStartTimestamp: linkStartTimestamp,
-                                    allowDeferred: allowLinkDeferral,
+                                    allowDeferred: false,
                                     out string? linkPollFailure);
 
                                 if (linkPollResult == CompletionPollResult.Deferred)
@@ -737,29 +888,16 @@ namespace XREngine.Rendering.OpenGL
                                         programId,
                                         summary,
                                         $"compileMs={compileMillisecondsCompleted:F2} linkMs={linkMillisecondsAbandoned:F2} error={abandonedLinkError}");
+                                    MarkNativeWorkIncomplete(programId);
                                     PublishCompletedResult(
                                         programId,
                                         new CompileResult(
                                             CompileStatus.LinkFailed,
                                             abandonedLinkError,
                                             compileMillisecondsCompleted,
-                                            linkMillisecondsAbandoned));
+                                            linkMillisecondsAbandoned,
+                                            NativeWorkIncomplete: true));
                                     Interlocked.Increment(ref _failedCount);
-
-                                    if (hazardArbExt is not null)
-                                    {
-                                        try
-                                        {
-                                            MeasureRenderingWorkerGlCall(
-                                                "glMaxShaderCompilerThreadsARB",
-                                                programId,
-                                                0,
-                                                null,
-                                                () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
-                                                "worker=source-compile-thread-restore threads=implementation-max");
-                                        }
-                                        catch { /* best-effort restore */ }
-                                    }
                                     return;
                                 }
                             }
@@ -783,6 +921,18 @@ namespace XREngine.Rendering.OpenGL
                                     null,
                                     () => gl.GetProgramInfoLog(programId, out linkError),
                                     "worker=source-link-log");
+                                if (IsNativeCompilerResourceFailure(linkError))
+                                {
+                                    MarkNativeWorkIncomplete(programId);
+                                    PublishCompletedResult(programId, new CompileResult(
+                                        CompileStatus.LinkFailed,
+                                        linkError,
+                                        compileMillisecondsCompleted,
+                                        StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - linkStartTimestamp),
+                                        NativeWorkIncomplete: true));
+                                    Interlocked.Increment(ref _failedCount);
+                                    return;
+                                }
                             }
 
                             ProgramBinarySnapshot? programBinary = null;
@@ -799,8 +949,8 @@ namespace XREngine.Rendering.OpenGL
                                         programId,
                                         0,
                                         null,
-                                        () => hazardArbExt.MaxShaderCompilerThreads(0xFFFF_FFFFu),
-                                        "worker=source-compile-thread-restore threads=implementation-max");
+                                        () => hazardArbExt.MaxShaderCompilerThreads(configuredWorkerCompilerThreads),
+                                        "worker=source-compile-thread-restore threads=configured");
                                 }
                                 catch { /* best-effort restore */ }
                             }
@@ -891,14 +1041,22 @@ namespace XREngine.Rendering.OpenGL
                         string error = $"Shared-context source compile/link worker threw: {ex.GetType().Name}: {ex.Message}";
                         LogRenderingQueueEvent("WORKER_EXCEPTION", programId, summary, error);
                         Debug.OpenGLWarning($"[ShaderLinkQueue] {error}");
+                        if (nativeCompileStarted)
+                            MarkNativeWorkIncomplete(programId);
                         PublishCompletedResult(
                             programId,
                             new CompileResult(
                                 CompileStatus.LinkFailed,
                                 error,
                                 0.0,
-                                0.0));
+                                0.0,
+                                NativeWorkIncomplete: nativeCompileStarted));
                         Interlocked.Increment(ref _failedCount);
+                    }
+                    finally
+                    {
+                        if (sourceCompilationGateHeld && !_nativeWorkIncompleteProgramIds.ContainsKey(programId))
+                            SourceCompilationGate.Release();
                     }
                 }, $"ProgramSourceCompile:{programId}", priority);
                 return true;
@@ -950,6 +1108,12 @@ namespace XREngine.Rendering.OpenGL
                 string operation = isShader ? "shader compile" : "program link";
                 while (true)
                 {
+                    if (SourceCompilationFaulted)
+                    {
+                        failureReason = $"Shared-context {operation} stopped after a native compiler fault; restart the process.";
+                        return CompletionPollResult.Abandoned;
+                    }
+
                     if (worker.IsDisposeRequested)
                     {
                         failureReason = $"Shared-context {operation} completion poll aborted because worker disposal was requested.";
@@ -1031,6 +1195,14 @@ namespace XREngine.Rendering.OpenGL
 
             private void ScheduleDeferredProgramLinkCompletion(GLSharedContext worker, DeferredProgramLinkState state)
             {
+                if (SourceCompilationFaulted)
+                {
+                    PublishDeferredProgramLinkFailure(
+                        state,
+                        "Shared-context program link was abandoned after another native compiler operation failed; restart the process.");
+                    return;
+                }
+
                 if (worker.IsDisposeRequested)
                 {
                     PublishDeferredProgramLinkFailure(
@@ -1049,6 +1221,14 @@ namespace XREngine.Rendering.OpenGL
 
             private void EnqueueDeferredProgramLinkCompletion(GLSharedContext worker, DeferredProgramLinkState state)
             {
+                if (SourceCompilationFaulted)
+                {
+                    PublishDeferredProgramLinkFailure(
+                        state,
+                        "Shared-context program link was abandoned after another native compiler operation failed; restart the process.");
+                    return;
+                }
+
                 if (worker.IsDisposeRequested)
                 {
                     PublishDeferredProgramLinkFailure(
@@ -1068,6 +1248,14 @@ namespace XREngine.Rendering.OpenGL
                 bool programLinkGateHeld = false;
                 try
                 {
+                    if (SourceCompilationFaulted)
+                    {
+                        PublishDeferredProgramLinkFailure(
+                            state,
+                            "Shared-context program link was abandoned after another native compiler operation failed; restart the process.");
+                        return;
+                    }
+
                     if (worker.IsDisposeRequested)
                     {
                         PublishDeferredProgramLinkFailure(
@@ -1150,13 +1338,15 @@ namespace XREngine.Rendering.OpenGL
                     string error = $"Deferred shared-context program link completion threw: {ex.GetType().Name}: {ex.Message}";
                     LogRenderingQueueEvent("WORKER_DEFERRED_LINK_EXCEPTION", state.ProgramId, state.Summary, error);
                     Debug.OpenGLWarning($"[ShaderLinkQueue] {error}");
+                    MarkNativeWorkIncomplete(state.ProgramId);
                     PublishCompletedResult(
                         state.ProgramId,
                         new CompileResult(
                             CompileStatus.LinkFailed,
                             error,
                             state.CompileMilliseconds,
-                            StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - state.LinkStartTimestamp)));
+                            StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - state.LinkStartTimestamp),
+                            NativeWorkIncomplete: true));
                     Interlocked.Increment(ref _failedCount);
                 }
                 finally
@@ -1190,6 +1380,11 @@ namespace XREngine.Rendering.OpenGL
                         null,
                         () => gl.GetProgramInfoLog(state.ProgramId, out linkError),
                         "worker=deferred-source-link-log");
+                    if (IsNativeCompilerResourceFailure(linkError))
+                    {
+                        PublishDeferredProgramLinkFailure(state, linkError ?? "Native compiler memory failure.");
+                        return;
+                    }
                 }
 
                 ProgramBinarySnapshot? programBinary = null;
@@ -1278,20 +1473,22 @@ namespace XREngine.Rendering.OpenGL
                     state.ProgramId,
                     state.Summary,
                     $"compileMs={state.CompileMilliseconds:F2} linkMs={linkMilliseconds:F2} error={failureReason}");
+                MarkNativeWorkIncomplete(state.ProgramId);
                 PublishCompletedResult(
                     state.ProgramId,
                     new CompileResult(
                         CompileStatus.LinkFailed,
                         failureReason,
                         state.CompileMilliseconds,
-                        linkMilliseconds));
+                        linkMilliseconds,
+                        NativeWorkIncomplete: true));
                 Interlocked.Increment(ref _failedCount);
             }
 
             /// <summary>
             /// Cancels ownership of a queued source compile/link result. If the worker
             /// already completed, the result is consumed immediately; otherwise the worker
-            /// drops the result when it finishes so the in-flight slot is released.
+            /// drops the result when it finishes. Unfinished native work keeps its reservation.
             /// </summary>
             public bool CancelCompileAndLink(uint programId, GL consumerContext)
             {
@@ -1299,6 +1496,7 @@ namespace XREngine.Rendering.OpenGL
                     return false;
 
                 _cancelledProgramIds[programId] = 0;
+                TryPublishUnavailableSourceResult(programId);
                 if (_completed.TryRemove(programId, out CompileResult completedResult))
                 {
                     DeleteHandoffFence(consumerContext, completedResult.HandoffFence);
@@ -1313,10 +1511,23 @@ namespace XREngine.Rendering.OpenGL
             /// <paramref name="programId"/> but before the owning program consumes it.
             /// </summary>
             public bool HasResult(uint programId)
-                => programId != 0 && _completed.ContainsKey(programId);
+            {
+                if (programId == 0)
+                    return false;
+
+                TryPublishUnavailableSourceResult(programId);
+                return _completed.ContainsKey(programId);
+            }
 
             private void PublishCompletedResult(uint programId, CompileResult result, GL? workerContext = null)
             {
+                if (!_publishedProgramIds.TryAdd(programId, 0))
+                {
+                    if (workerContext is not null)
+                        DeleteHandoffFence(workerContext, result.HandoffFence);
+                    return;
+                }
+
                 _completed[programId] = result;
                 if (_cancelledProgramIds.TryRemove(programId, out _))
                 {
@@ -1334,6 +1545,7 @@ namespace XREngine.Rendering.OpenGL
             public bool TryGetReadyResult(uint programId, GL consumerContext, out CompileResult result)
             {
                 result = default;
+                TryPublishUnavailableSourceResult(programId);
                 if (!_completed.TryGetValue(programId, out CompileResult pendingResult))
                     return false;
 
@@ -1377,10 +1589,70 @@ namespace XREngine.Rendering.OpenGL
 
             private void ReleaseInFlightSlot(uint programId)
             {
+                // An unfinished native operation can still use this ID. Keep the program and
+                // large-source reservations until process shutdown.
+                if (_nativeWorkIncompleteProgramIds.ContainsKey(programId))
+                    return;
+
+                _assignedWorkers.TryRemove(programId, out _);
+                _workerStartedProgramIds.TryRemove(programId, out _);
+                _jobTokens.TryRemove(programId, out _);
+                if (!SourceCompilationFaulted)
+                    _publishedProgramIds.TryRemove(programId, out _);
                 if (_inFlightProgramIds.TryRemove(programId, out _))
                     Interlocked.Decrement(ref _inFlight);
                 if (_inFlightLargeSourceProgramIds.TryRemove(programId, out _))
                     Interlocked.Decrement(ref _largeSourceInFlight);
+            }
+
+            private void MarkNativeWorkIncomplete(uint programId)
+            {
+                lock (SourceCompilationAdmissionGate)
+                {
+                    _nativeWorkIncompleteProgramIds[programId] = 0;
+                    Volatile.Write(ref _sourceCompilationFaulted, 1);
+                }
+            }
+
+            internal static bool IsNativeCompilerResourceFailure(string? errorLog)
+                => !string.IsNullOrWhiteSpace(errorLog) &&
+                   (errorLog.Contains("out of memory", StringComparison.OrdinalIgnoreCase) ||
+                    errorLog.Contains("internal malloc failed", StringComparison.OrdinalIgnoreCase) ||
+                    errorLog.Contains("malloc failed", StringComparison.OrdinalIgnoreCase) ||
+                    errorLog.Contains("GL_OUT_OF_MEMORY", StringComparison.OrdinalIgnoreCase));
+
+            private void TryPublishUnavailableSourceResult(uint programId)
+            {
+                if (!_inFlightProgramIds.ContainsKey(programId) || _publishedProgramIds.ContainsKey(programId) ||
+                    !_assignedWorkers.TryGetValue(programId, out GLSharedContext? worker))
+                    return;
+
+                lock (SourceCompilationAdmissionGate)
+                {
+                    if (_publishedProgramIds.ContainsKey(programId))
+                        return;
+
+                    bool started = _workerStartedProgramIds.ContainsKey(programId);
+                    bool stopped = !worker.IsRunning || worker.IsDisposeRequested;
+                    if (!stopped && !SourceCompilationFaulted)
+                        return;
+
+                    if (started)
+                        MarkNativeWorkIncomplete(programId);
+                    PublishCompletedResult(programId, new CompileResult(
+                        started ? CompileStatus.LinkFailed : CompileStatus.RejectedHazard,
+                        started
+                            ? stopped
+                                ? "Shared-context worker stopped before native compiler work was confirmed complete; restart the process."
+                                : "Source compilation stopped while native compiler work may still be active; restart the process."
+                            : SourceCompilationFaulted
+                                ? "Source compilation stopped before this queued program began; restart the process."
+                                : "Shared-context worker stopped before source compilation began.",
+                        0.0,
+                        0.0,
+                        NativeWorkIncomplete: started));
+                    Interlocked.Increment(ref _failedCount);
+                }
             }
 
             public static bool ContainsKnownAsyncLinkHazard(ReadOnlySpan<ShaderInput> shaders)

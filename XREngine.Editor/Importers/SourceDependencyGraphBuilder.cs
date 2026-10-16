@@ -43,7 +43,7 @@ public static partial class SourceDependencyGraphBuilder
 
         foreach (SourceDependencyEdge missing in graph.UnresolvedEdges)
         {
-            SourceImportDiagnosticSeverity severity = missing.Kind == SourceImportDependencyKind.RequiredVisual
+            SourceImportDiagnosticSeverity severity = missing.Kind == SourceImportDependencyKind.RequiredVisual && !context.AllowPartialImport
                 ? SourceImportDiagnosticSeverity.Error
                 : SourceImportDiagnosticSeverity.Warning;
             context.AddDiagnostic(

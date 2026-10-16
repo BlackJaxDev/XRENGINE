@@ -10,6 +10,7 @@ internal enum EOpenGLProgramBuildLane
     SharedContextSource,
     SharedContextQueueBackpressure,
     SourceUnavailable,
+    SourceCompilationStopped,
     SynchronousSource,
     FailedHash,
 }
@@ -37,7 +38,8 @@ internal readonly record struct OpenGLShaderLinkBackendContext(
     bool HashPreviouslyFailed,
     bool AllowSynchronousSourceLink,
     bool ForceSynchronousSourceRetry = false,
-    bool ForceDriverParallelSourceRetry = false);
+    bool ForceDriverParallelSourceRetry = false,
+    bool SourceCompilationFaulted = false);
 
 internal static class OpenGLShaderLinkBackendSelector
 {
@@ -70,6 +72,14 @@ internal static class OpenGLShaderLinkBackendSelector
             return new OpenGLShaderLinkBackendSelection(
                 EOpenGLProgramBuildLane.BinaryUploadSynchronous,
                 "binary cache hit without async upload lane",
+                IsAsync: false);
+        }
+
+        if (context.SourceCompilationFaulted)
+        {
+            return new OpenGLShaderLinkBackendSelection(
+                EOpenGLProgramBuildLane.SourceCompilationStopped,
+                "native source compilation did not complete; restart the process before compiling more shaders",
                 IsAsync: false);
         }
 

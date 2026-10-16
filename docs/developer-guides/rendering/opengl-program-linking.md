@@ -58,11 +58,16 @@ Related settings:
 - `OpenGLParallelShaderCompileProbeEnabled` and
   `OpenGLParallelShaderCompileProbeTimeoutMs` control the startup probe.
 - `OpenGLShaderCompilerThreadCount` configures driver shader compiler threads.
-  The default is `1` for Windows/NVIDIA startup stability; `-1` opts into the
-  driver implementation maximum for local throughput experiments.
+  The runtime and unit-world default is `1`; `-1` requests the driver
+  implementation maximum for local throughput experiments. Unit-world
+  `DriverParallel` mode changes a configured `0` to `1`. This is a driver hint,
+  not a hard limit on compiler threads or memory. Shared workers apply the hint
+  before source jobs and restore the configured value after temporary suppression.
 - `OpenGLProgramCompileLinkWorkerCount` configures the shared-context source
   worker count. The runtime uses one worker by default for OpenGL driver
-  startup stability and honors higher configured values automatically.
+  startup stability and honors higher configured values automatically. All shared
+  source queues use one process-wide permit from shader compile through completed
+  program link. More workers do not permit concurrent native source builds.
   `XRE_DISABLE_OPENGL_COMPILE_LINK_WORKER_POOL=1` forces the single-worker
   compatibility path.
 - Shader program priorities drain in this order: `Interactive`, `Main`,
@@ -97,12 +102,119 @@ Related settings:
   throughput experiments.
 - `XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1` remains as a legacy narrower
   single-stage suppression flag for local driver experiments.
-- `XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT=1` opts into the old
-  synchronous source retry after an async source link stalls. Leave it unset for
-  editor/runtime work; the default is to keep the fallback material visible and
-  avoid a render-thread compile/link stall.
+- `XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT` is no longer supported.
+  A timeout does not cancel native compiler work. It stops source compilation
+  until process restart; no source retry can bypass this stop.
 - `MaxAsyncShaderProgramsPerFrame` caps how many pending program builds are
   advanced per frame.
+
+## Static Uber Lighting Dispatch
+
+Keep static material dispatch conditions directly on authored properties. Use
+braced `if/else` blocks around complete lighting paths. The source optimizer can
+remove those blocks before the driver compiler runs. A local Boolean alias,
+ternary expression, or return followed by another path can keep unused function
+trees in the generated source.
+
+Flat source lighting does not calculate a light map that it will then replace.
+It samples primary shadows only when their authored weight is positive. Flat
+additive lighting skips unused ramp, shadow-mask, and material-occlusion samples.
+Its point and spot shadow visibility remains active when the material uses it.
+Runtime properties retain their branches.
+
+`calculateUberLocalLighting` selects regular or Forward+ light data in one loop.
+PBR and stylized lighting share its point and spot shadow evaluation. Keep one
+point-shadow call and one spot-shadow call in that loop. Separate model loops
+cause the compiler to copy the full shadow filter trees in dynamic variants.
+
+The loop uses `trySelectUberLocalLight` and its local `UberLocalLight` value.
+The selector contains no shadow sampling. It returns false at the Forward+ list
+terminator; callers must stop before reading its output. Select the response
+after shadow evaluation, with direct `_LightingMode` checks. The disabled-stylized
+macro forces PBR regardless of that property. Keep the stylized additive-off
+guard around the loop in a braced `if/else` so source trimming can remove it.
+
+PBR keeps color and diffuse intensity separate, applies distance attenuation
+inside the BRDF, and applies spot cone factors and shadows after it. Stylized
+spot attenuation retains `spotEffect * spotAttn * distanceAttenuation * brightness`
+before its response. Do not change the multiplication grouping. Select the local
+base color before the shared call. Keep directional responses separate and
+preserve the final sums: `primary + (additionalDirectionals + locals)` for
+stylized lighting and `(directionals + locals) + ambient` for PBR.
+
+Keep regular lights in point-then-spot order. Keep Forward+ list order and stop
+at its first negative index. Calculate the tile base only in Forward+ mode.
+Preserve its brightness clamp and legacy `Params.w` source-index conversion;
+regular brightness stays unchanged. Shadow sampling uses the canonical light
+record, geometric receiver normal, and selected shading direction. Invalid
+Forward+ source indices still contribute unshadowed light. Do not skip a light
+only because its attenuation is zero: shadow evaluation can set debug state.
+
+The 2D, cube, point-atlas cube, and atlas filter dispatchers select the Vogel tap
+count and radius before one shared Vogel call. This includes both linear-depth
+atlas overloads. Their mode-3 one-tap path still uses the original offset Vogel
+sample; do not replace it with a center sample. CHSS penumbra helpers return a negative
+radius when no blocker exists; callers then return fully lit visibility. Keep
+mode 3 ahead of the ordinary filter-sample clamp. Keep the simple, Poisson,
+tent, and PCF paths and their existing selection rules.
+
+Keep literal sampler-slot branches for forward point and spot shadows. A
+Forward+ sampler index can vary per fragment. Do not replace those branches with
+an unrestricted sampler-array index.
+
+Point shadow helpers pass the validated canonical record index. They read fields
+from the read-only `PointLightShadows` buffer when needed. Do not copy the arrays
+for all six faces through filter calls. Keep record-count, buffer-length, face,
+and atlas-page guards. The record index is distinct from the legacy sampler slot.
+The buffer layout is unchanged.
+
+The legacy point and spot paths prepare one plain receiver after validating the
+slot. Preparation retains distance and bounds checks, receiver bias, contact
+sampling, moment shadows, and early debug writes. Spot receiver-plane derivatives
+remain inside `XRENGINE_ComputeSpotShadowDepthBiasSlot` and its literal slot
+branches, after the same receiver guards. Legacy contact texture loops select the literal sampler at each read. Shared screen-space contact removes an outer slot branch;
+it preserves behavior where the original derivatives were defined. It makes no
+promise about samples whose derivatives were undefined in divergent control flow.
+
+Moment adapters fetch through literal sampler branches, then evaluate pure
+visibility or margin math once. Keep the mip branch, normalization, depth
+linearization, and separate debug fetch. `ShadowMomentEncoding.glsl` owns the
+shared evaluators for native and slot adapters.
+
+Preparation returns either completed visibility or a receiver for the depth
+filter. The depth filter runs once. Do not skip it when contact visibility is
+zero; debug output can still depend on its result.
+
+`ShadowFilterBodies.glsl` contains shared depth-filter and contact-shadow bodies. Ordinary function
+wrappers in `ShadowSampling.glsl` use native samplers. The wrappers in
+`ForwardShadowSampling.glsl` use an integer slot. Only the texture-read adapters
+select the literal sampler. Keep the same parameter names in both wrappers.
+Keep implicit texture reads, loop guards, cube normalization, far-distance
+scaling, and both 2D texture dimensions. The full 2D and cube contact overloads
+share their bodies with integer-slot overloads. The slot entry points reject
+invalid slots before the ray march. Preserve the supplied 2D light direction,
+cube normalization, unclamped legacy travel, fade, and all pre-fetch guards.
+
+The normal-aware screen-space contact body is also shared. Native 2D and array
+wrappers fetch through typed adapters. The forward wrapper selects the texture
+type at each depth and normal read with its uniform source mode. Preserve depth
+then normal read order, decode, and the separate clamped sampling UV and unclamped
+hit UV. The 2D adapter ignores the layer; it must not pass it as a texture bias.
+Resolve the array layer only on the array path. Depth-only and MSAA loops retain
+their separate implementations. Keep body definitions before their wrappers.
+New sampling-family changes still require a separate behavior review.
+
+This structure preserves defined derivative behavior. It does not establish
+pixel parity for previously divergent paths with undefined implicit derivatives.
+Source trimming retains macro definitions, so exported source size can increase
+even when the compiled filter code is smaller.
+
+Use CPU shader exports and bounded offline compilation to compare compiler
+workload. Record source bytes, optimized instruction counts, elapsed time, and
+process memory separately. A smaller source can reduce compiler memory even if
+the optimized output is almost unchanged. These results do not establish an
+OpenGL driver-link memory limit. See the
+[Fishnet investigation](../../work/investigations/rendering/2026-10-15-unity-import-shader-compiler-pressure.md).
 
 ## Backend Decision
 
@@ -117,8 +229,8 @@ if binary cache hit:
     otherwise load binary synchronously
 else if hash was marked failed:
     fail before source compile/link
-else if a previous source link for this hash stalled:
-    fail this hash and keep fallback visible unless synchronous retry is explicitly enabled
+else if native source work did not complete or the compiler ran out of memory:
+    stop source compilation until process restart; keep available linked programs
 else if async source compilation is disabled or strategy is Synchronous:
     leave source build pending unless synchronous source linking was explicitly allowed
 else if program is a known driver-parallel hazard:
@@ -191,16 +303,29 @@ between polls. This keeps the potentially long compile/link wait on the shared
 context while avoiding the blocking final `GL_LINK_STATUS` query until the
 driver reports completion.
 
-Small program links may be deferred to background polling if
-`GL_COMPLETION_STATUS_ARB` is still false after 5 seconds. Large source programs
-(64 KiB and up, including imported-model uber variants) do not use that
-deferral path: the worker keeps polling the same link until it completes or
-reaches the hard-abandon timeout. This avoids leaving several huge NVIDIA
-compiler jobs active at once, which can trip the Windows GPU watchdog during a
-cold Sponza-scale startup flood. A synchronous retry is only attempted when
-`XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT=1` is set; render-thread
-driver-parallel source linking remains an explicit local experiment via
-`XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1`.
+Shared-context source links do not defer completion polling to another job.
+The worker retains the process-wide source permit until all shader compilation
+and program linking completes. This also applies to small programs, so pending
+links cannot accumulate behind new compiles. The permit covers shared-context
+source queues; direct shader compilation and the opt-in render-thread lane are
+outside this limit. A timeout does not cancel the driver job. The unfinished
+job retains the permit until process exit.
+The queue retains the reservation for unfinished native work, including its
+large-source reservation. It stops all new source compilation in the process.
+This includes queued work that has not started, synchronous retries, and the
+render-thread driver-parallel lane. Compiler memory-allocation failures also
+stop source admission. Ordinary shader syntax errors remain material-specific.
+
+The stop is terminal, not queue backpressure. Waiting requests leave the pending
+set. Existing linked programs and usable cached binaries can remain available.
+The engine does not poll or delete abandoned source handles. Cancellation only
+ends consumer ownership; shared-context cleanup waits for queue-owned completion
+of both shader and program work. A process restart is required because managed
+renderer shutdown does not prove that a native compiler job has stopped.
+
+Render-thread driver-parallel source linking remains an explicit local experiment
+via `XRE_ALLOW_RENDER_THREAD_DRIVER_PARALLEL_SOURCE=1`. It cannot bypass the
+source-compilation stop.
 
 For shared-context source builds, `GL_PROGRAM_BINARY_RETRIEVABLE_HINT` is set
 on the shared-context worker immediately before `glLinkProgram`, not on the
@@ -219,6 +344,18 @@ fallback material active and reports the source build as failed.
 Shader compile completion polling still uses the longer hard-abandon window
 (180 s by default, configurable with `XRE_SHARED_CONTEXT_LINK_TIMEOUT_MS`)
 because large cold compiles can legitimately take longer than a few seconds.
+
+### Generated source size
+
+Uber depth, depth-normal, and shadow variants exclude the forward-lighting tail
+before dependency pruning. Coverage and alpha-discard code remains available.
+Static material specialization also evaluates comparisons of literal float-vector
+components, with float precision. This removes disabled material layers before
+driver compilation. Dynamic expressions remain in the shader.
+
+Smaller source and serialized jobs reduce compiler pressure. They do not set a
+memory limit on a single native compiler job. Offline SPIR-V validation cannot
+establish the OpenGL driver's peak memory use or desktop stability.
 
 ### Worker unhealthy-job threshold
 

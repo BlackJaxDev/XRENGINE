@@ -23,7 +23,8 @@ if (!File.Exists(sourceFilePath))
     return 2;
 }
 
-var sourceMetadata = SourceMetadataParser.Parse(File.ReadAllText(sourceFilePath));
+string dependencySettingsSource = Path.Combine(repoRoot, "XREngine.Runtime.Host/Settings/Subclasses/UnityPackageDependencySettings.cs");
+var sourceMetadata = SourceMetadataParser.Parse(File.ReadAllText(sourceFilePath) + Environment.NewLine + File.ReadAllText(dependencySettingsSource));
 var metadataBuilder = new SettingsMetadataBuilder(sourceMetadata);
 TypeMetadata rootMetadata = metadataBuilder.Build(typeof(EditorUnitTests.Settings));
 JObject? existingSchema = LoadJsonObjectIfExists(schemaPath);
@@ -161,6 +162,7 @@ static class SourceMetadataParser
         var metadata = new SourceMetadata();
         ParseClass(source, "Settings", metadata);
         ParseClass(source, "ModelImportSettings", metadata);
+        ParseClass(source, "UnityPackageDependencySettings", metadata);
         ParseClass(source, "UnitTestingVrSettings", metadata);
         ParseClass(source, "YawPitchRollDegrees", metadata);
         ParseClass(source, "TranslationXYZ", metadata);
@@ -593,7 +595,7 @@ static class SchemaGenerator
                 "  \"UseForwardForTransparent\": false,\n" +
                 "  \"ImporterBackend\": \"PreferNativeThenAssimp\",\n" +
                 "  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",\n" +
-                "  \"UnityProjectRoot\": null,\n" +
+                "  \"SourceProjectRoot\": null,\n" +
                 "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",\n" +
                 "  \"Scale\": 1.0,\n" +
                 "  \"ZUp\": false,\n" +
@@ -604,9 +606,11 @@ static class SchemaGenerator
                 "```\n\n" +
                 "`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; " +
                 "`ImporterBackend` is `PreferNativeThenAssimp`, `AssimpOnly`, or `NativeOnly`. `NativeOnly` does not fall back to Assimp. " +
-                "A `.prefab` path uses the Unity project converter; use `Kind: Animated` for avatar setup. " +
+                "A `.prefab` or `.unity` path uses the Unity project converter. A `.unitypackage` path extracts to the asset cache and imports every scene and prefab into a separate scene. Loose `.prefab` and `.unity` targets also get separate scenes. Use `Kind: Animated` for prefab avatar setup. " +
+                "`AllowPartialImport: true` keeps available content, uses fallback materials, and reports missing visual assets. The default is strict. " +
                 "The Unity converter ignores the generic material factory and converts recognized Poiyomi materials to the native Uber shader. " +
-                "`UnityProjectRoot` optionally identifies the Unity project root or Assets directory when it cannot be inferred from the prefab path. " +
+                "`SourceProjectRoot` optionally identifies the Unity project root or Assets directory when it cannot be inferred from a loose source path. Package imports use the extracted project. " +
+                "`Dependencies` supplies companion sources for a `.unitypackage`: local archives/folders, HTTPS archives, or VCC/VPM repository URLs. Each item has `Source`, optional `PackageId`, and optional exact `Version`. Only the primary package supplies startup roots. " +
                 "`ImportFlags` is a comma-separated list of Assimp `PostProcessSteps` flag names. " +
                 "`PostImportFlags` is a comma-separated list of model post-import flag names. " +
                 "`YawPitchRoll` uses `{ \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }`; " +
@@ -618,7 +622,8 @@ static class SchemaGenerator
             generated["examples"] = new JArray
             {
                 new JArray(BuildStaticModelImportExample()),
-                new JArray(BuildImportedAvatarPrefabImportExample())
+                new JArray(BuildImportedAvatarPrefabImportExample()),
+                new JArray(BuildUnityPackageImportExample())
             };
         }
 
@@ -637,6 +642,12 @@ static class SchemaGenerator
                     ["label"] = "Unity avatar prefab import",
                     ["description"] = "Convert a Unity prefab as an avatar, including Poiyomi-to-Uber materials.",
                     ["body"] = new JArray(BuildImportedAvatarPrefabImportExample())
+                },
+                new JObject
+                {
+                    ["label"] = "Unity package import",
+                    ["description"] = "Extract a Unity package and convert each scene and prefab into a separate scene.",
+                    ["body"] = new JArray(BuildUnityPackageImportExample())
                 }
             };
         }
@@ -653,7 +664,7 @@ static class SchemaGenerator
                 "  \"UseForwardForTransparent\": false,",
                 "  \"ImporterBackend\": \"PreferNativeThenAssimp\",",
                 "  \"Path\": \"XREngine.UnitTests\\\\TestData\\\\Gltf\\\\external-static-scene.gltf\",",
-                "  \"UnityProjectRoot\": null,",
+                "  \"SourceProjectRoot\": null,",
                 "  \"ImportFlags\": \"Triangulate, FlipUVs, GenerateNormals\",",
                 "  \"Scale\": 1.0,",
                 "  \"ZUp\": false,",
@@ -663,8 +674,9 @@ static class SchemaGenerator
                 "}",
                 "Use comma-separated Assimp PostProcessSteps names for ImportFlags.",
                 "Use comma-separated ModelPostImportFlags names for PostImportFlags.",
-                "A .prefab path uses the Unity converter. Kind Animated enables avatar setup; recognized Poiyomi materials convert to the native Uber shader.",
-                "UnityProjectRoot may name the Unity project root or Assets directory when it cannot be inferred from Path.",
+                "A .prefab or .unity path uses the Unity converter. A .unitypackage imports every scene and prefab into a separate scene. Loose `.prefab` and `.unity` targets also get separate scenes. Kind Animated enables prefab avatar setup; recognized Poiyomi materials convert to the native Uber shader.",
+                "SourceProjectRoot may name the Unity project root or Assets directory when it cannot be inferred from a loose Path. Package imports use the extracted project.",
+                "Dependencies supplies companion sources for a .unitypackage. Each item has Source (local path or HTTPS/VCC URL), optional PackageId, and optional exact Version. Only the primary package supplies startup roots.",
                 "YawPitchRoll is { \"Yaw\": 0.0, \"Pitch\": 0.0, \"Roll\": 0.0 }; Translation is { \"X\": 0.0, \"Y\": 0.0, \"Z\": 0.0 }."
             };
         }
@@ -679,7 +691,7 @@ static class SchemaGenerator
             ["UseForwardForTransparent"] = false,
             ["ImporterBackend"] = "PreferNativeThenAssimp",
             ["Path"] = "XREngine.UnitTests\\TestData\\Gltf\\external-static-scene.gltf",
-            ["UnityProjectRoot"] = null,
+            ["SourceProjectRoot"] = null,
             ["ImportFlags"] = "Triangulate, FlipUVs, GenerateNormals",
             ["Scale"] = 1.0,
             ["ZUp"] = false,
@@ -687,6 +699,25 @@ static class SchemaGenerator
             ["YawPitchRoll"] = null,
             ["Translation"] = null
         };
+
+    private static JObject BuildUnityPackageImportExample()
+    {
+        JObject example = BuildStaticModelImportExample();
+        example["Path"] = "misc/Aryia_By_Mimiiu_V1.3.unitypackage";
+        example["MaterialMode"] = "Uber";
+        example["ImportFlags"] = "None";
+        example["AllowPartialImport"] = true;
+        example["Dependencies"] = new JArray
+        {
+            new JObject
+            {
+                ["Source"] = "https://poiyomi.github.io/vpm/index.json",
+                ["PackageId"] = "com.poiyomi.toon",
+                ["Version"] = "9.3.64"
+            }
+        };
+        return example;
+    }
 
     private static JObject BuildImportedAvatarPrefabImportExample()
         => new()
@@ -697,7 +728,7 @@ static class SchemaGenerator
             ["UseForwardForTransparent"] = false,
             ["ImporterBackend"] = "PreferNativeThenAssimp",
             ["Path"] = "C:\\UnityProjects\\AvatarProject\\Assets\\Avatars\\Avatar.prefab",
-            ["UnityProjectRoot"] = "C:\\UnityProjects\\AvatarProject",
+            ["SourceProjectRoot"] = "C:\\UnityProjects\\AvatarProject",
             ["ImportFlags"] = "None",
             ["Scale"] = 1.0,
             ["ZUp"] = false,

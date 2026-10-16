@@ -626,7 +626,12 @@ public static partial class SerializedMaterialImporter
         string? texturePath = resolver.Resolve(property.TextureReference.Guid);
         if (string.IsNullOrWhiteSpace(texturePath) || !File.Exists(texturePath))
         {
-            warnings.Add($"Could not resolve Unity texture array '_FlipbookTexArray' ({property.TextureReference.Guid}) for material '{document.Name}'.");
+            ReportMissingTexture(
+                resolver,
+                document,
+                "_FlipbookTexArray",
+                $"Could not resolve Unity texture array '_FlipbookTexArray' ({property.TextureReference.Guid}) for material '{document.Name}'.",
+                warnings);
             return;
         }
 

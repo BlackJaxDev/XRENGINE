@@ -322,8 +322,8 @@ public static class BootstrapRenderSettings
     {
         if (strategy == EOpenGLShaderLinkStrategy.DriverParallel && configuredThreadCount == 0)
         {
-            Debug.Out("[BootstrapRenderSettings] OpenGLShaderCompilerThreadCount=0 disables driver compiler threads; using -1 because OpenGLShaderLinkStrategy=DriverParallel.");
-            return -1;
+            Debug.Out("[BootstrapRenderSettings] OpenGLShaderCompilerThreadCount=0 disables driver compiler threads; using 1 because OpenGLShaderLinkStrategy=DriverParallel.");
+            return 1;
         }
 
         return configuredThreadCount;
