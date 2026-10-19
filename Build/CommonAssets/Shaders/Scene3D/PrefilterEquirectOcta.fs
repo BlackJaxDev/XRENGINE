@@ -5,7 +5,6 @@ layout (location = 0) in vec3 FragPos;
 
 uniform sampler2D Texture0;
 uniform float Roughness = 0.0f;
-uniform int SourceDim = 512;
 
 const float PI = 3.14159265359f;
 
@@ -104,6 +103,8 @@ void main()
     const uint SAMPLE_COUNT = 1024u;
     vec3 prefilteredColor = vec3(0.0f);
     float totalWeight = 0.0f;
+    ivec2 sourceSize = textureSize(Texture0, 0);
+    float minPolarCos = sin(0.5f * PI / float(sourceSize.y));
 
     for (uint i = 0u; i < SAMPLE_COUNT; ++i)
     {
@@ -119,8 +120,9 @@ void main()
             float HdotV = max(dot(H, V), 0.0f);
             float pdf   = D * NdotH / (4.0f * HdotV) + 0.0001f;
 
-            float res      = float(SourceDim);
-            float saTexel  = 4.0f * PI / (6.0f * res * res);
+            float cosLatitude = sqrt(max(0.0f, 1.0f - L.y * L.y));
+            float saTexel = 2.0f * PI * PI * max(cosLatitude, minPolarCos) /
+                (float(sourceSize.x) * float(sourceSize.y));
             float saSample = 1.0f / (float(SAMPLE_COUNT) * pdf + 0.0001f);
 
             float mipLevel = Roughness == 0.0f ? 0.0f : 0.5f * log2(saSample / saTexel);

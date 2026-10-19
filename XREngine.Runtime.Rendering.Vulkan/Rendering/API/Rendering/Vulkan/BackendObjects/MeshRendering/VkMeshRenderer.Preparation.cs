@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 
@@ -52,12 +53,28 @@ internal unsafe partial class VkMeshRenderer
 			MeshRenderer.OnPreparingRenderData();
 
 		EnsureRuntimeDeformationBuffersCurrent();
+		XRMaterial coverageSource = material.ShadowBindingSourceMaterial ?? material;
+		bool requiresTriangleCoverage = NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(coverageSource);
+		if (requiresTriangleCoverage && !BackendContext.Supports(EVulkanDeviceCapability.GeometryShader))
+			return SetPrepareResult(false, "UnsupportedVertexUdimDevice", "Fragment primitive identity requires the Vulkan geometry-shader capability.", out reason);
+		if (requiresTriangleCoverage && _triangleIndexBufferExternallyProvided)
+			return SetPrepareResult(false, "UnsupportedVertexUdimDraw", "Vertex-mode UDIM discard requires the original direct triangle index stream.", out reason);
 
 		if (CanReusePreparedRenderState(material))
+		{
+			if (requiresTriangleCoverage && ProgramUsesShaderGeneratedVertices())
+				return SetPrepareResult(false, "UnsupportedVertexUdimDraw", "Vertex-mode UDIM discard requires the original triangle vertex stream.", out reason);
+			if (!TryPrepareUdimTriangleCoverageForProgram(material, requiresTriangleCoverage, out reason))
+				return false;
 			return true;
+		}
 
 		if (!EnsureProgram(material))
-			return SetPrepareResult(false, "ProgramsPending", "No compatible Vulkan render program is available yet.", out reason);
+			return SetPrepareResult(false, "ProgramsPending", DescribePendingProgram(), out reason);
+		if (requiresTriangleCoverage && ProgramUsesShaderGeneratedVertices())
+			return SetPrepareResult(false, "UnsupportedVertexUdimDraw", "Vertex-mode UDIM discard requires the original triangle vertex stream.", out reason);
+		if (!TryPrepareUdimTriangleCoverageForProgram(material, requiresTriangleCoverage, out reason))
+			return false;
 
         bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 		EnsureBuffers(usesShaderGeneratedVertices);
@@ -88,7 +105,8 @@ internal unsafe partial class VkMeshRenderer
 	private bool TryPrepareForDrawEnqueue(
 		XRMaterial material,
 		bool requireExactGeometry,
-		out string reason)
+		out string reason,
+		bool indexedIndirect = false)
 	{
 		reason = "Ready";
 
@@ -118,6 +136,12 @@ internal unsafe partial class VkMeshRenderer
 		EnsureRuntimeDeformationBuffersCurrent();
 
 		RequestIndexPreparationBeforeDrawAdmission();
+		XRMaterial coverageSource = material.ShadowBindingSourceMaterial ?? material;
+		bool requiresTriangleCoverage = NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(coverageSource);
+		if (requiresTriangleCoverage && !BackendContext.Supports(EVulkanDeviceCapability.GeometryShader))
+			return SetPrepareResult(false, "UnsupportedVertexUdimDevice", "Fragment primitive identity requires the Vulkan geometry-shader capability.", out reason);
+		if (requiresTriangleCoverage && (indexedIndirect || _triangleIndexBufferExternallyProvided))
+			return SetPrepareResult(false, "UnsupportedVertexUdimDraw", "Vertex-mode UDIM discard requires the original direct triangle index stream.", out reason);
 
 		bool shaderConfigurationChanged =
 			_pipelineShaderConfigVersion != RuntimeEngine.Rendering.Settings.ShaderConfigVersion ||
@@ -128,13 +152,24 @@ internal unsafe partial class VkMeshRenderer
 			_program is not null &&
 			_activeProgramLinkGeneration == _program.LinkGeneration &&
 			!_buffersDirty &&
-			!shaderConfigurationChanged;
+			!shaderConfigurationChanged &&
+			IsActiveGeneratedProgramCurrent(material);
 		if (canReuseProgramAndBuffers &&
 			AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices()))
+		{
+			if (requiresTriangleCoverage && ProgramUsesShaderGeneratedVertices())
+				return SetPrepareResult(false, "UnsupportedVertexUdimDraw", "Vertex-mode UDIM discard requires the original triangle vertex stream.", out reason);
+			if (!TryPrepareUdimTriangleCoverageForProgram(material, requiresTriangleCoverage, out reason))
+				return false;
 			return true;
+		}
 
 		if (!EnsureProgram(material))
-			return SetPrepareResult(false, "ProgramsPending", "No compatible Vulkan render program is available yet.", out reason);
+			return SetPrepareResult(false, "ProgramsPending", DescribePendingProgram(), out reason);
+		if (requiresTriangleCoverage && ProgramUsesShaderGeneratedVertices())
+			return SetPrepareResult(false, "UnsupportedVertexUdimDraw", "Vertex-mode UDIM discard requires the original triangle vertex stream.", out reason);
+		if (!TryPrepareUdimTriangleCoverageForProgram(material, requiresTriangleCoverage, out reason))
+			return false;
 
 		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 		// Exact geometry is an admission requirement, not permission to join a CPU worker.
@@ -148,6 +183,57 @@ internal unsafe partial class VkMeshRenderer
 			return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
 		return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("DeferredUntilRecording"), out reason);
+	}
+
+	private bool TryPrepareUdimTriangleCoverageForProgram(
+		XRMaterial material,
+		bool required,
+		out string reason)
+	{
+		bool reflected = false;
+		if (_program is { } program)
+		{
+			var bindings = program.DescriptorBindings;
+			for (int index = 0; index < bindings.Count; index++)
+			{
+				if (bindings[index].Set == 0u &&
+					bindings[index].Binding == XRMeshRenderer.UdimTriangleCoverageBinding &&
+					bindings[index].Name == "SourceUdimTriangleCoverage" &&
+					bindings[index].DescriptorType == Silk.NET.Vulkan.DescriptorType.StorageBuffer &&
+					bindings[index].Count == 1u &&
+					(bindings[index].StageFlags & Silk.NET.Vulkan.ShaderStageFlags.FragmentBit) != 0)
+				{
+					reflected = true;
+					break;
+				}
+			}
+		}
+		if (required && !reflected)
+			return SetPrepareResult(false, "UnsupportedVertexUdimProgram", "The active program has no source triangle UDIM coverage binding.", out reason);
+		bool prepared;
+		string detail;
+		MeshRenderer.EnterResourcePublicationLease();
+		try
+		{
+			prepared = MeshRenderer.TryPrepareUdimTriangleCoverage(Mesh, material, reflected, out detail);
+		}
+		finally
+		{
+			MeshRenderer.ExitResourcePublicationLease();
+		}
+		if (!prepared)
+			return SetPrepareResult(false, "UdimTriangleCoverageUnavailable", detail, out reason);
+		reason = "Ready";
+		return true;
+	}
+
+	private string DescribePendingProgram()
+	{
+		if (_program is null)
+			return "No compatible Vulkan render program is available yet.";
+
+		XRRenderProgram.ShaderProgramBackendStatus status = _program.Data.ShaderMetadata.Backend;
+		return $"Program='{_program.Data.Name}' active={_program.IsActive} linkReady={_program.Data.LinkReady} stage={status.Stage} failure='{status.FailureReason}' detail='{status.Detail}'";
 	}
 
 	private bool TryPrepareCapturedProgramForRecording(
@@ -395,7 +481,8 @@ internal unsafe partial class VkMeshRenderer
 			_pipelineUsesNativeDepthClipControl != RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl)
 			return false;
 
-		return AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices());
+		return IsActiveGeneratedProgramCurrent(material) &&
+			AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices());
 	}
 
 	private bool CanReuseCapturedPreparedRenderState(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)

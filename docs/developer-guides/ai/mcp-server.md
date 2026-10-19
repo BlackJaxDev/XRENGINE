@@ -582,6 +582,10 @@ Generated from `McpToolRegistry.Tools` via:
 pwsh Tools/Reports/generate_mcp_docs.ps1
 ```
 
+`Tools/Reports/generate_mcp_docs.ps1 -SourceOnly` updates the table from editor
+action attributes without building or loading the editor. Check its diff and
+confirm newly added tools in a live isolated session.
+
 ### Targeting Live Owned Objects
 
 Generic inspection resolves scene nodes, transforms and components in the active
@@ -597,6 +601,58 @@ indices, with at most 16 member steps and 1,024 characters. Null, destroyed,
 out-of-range and non-engine terminal values fail explicitly. Static method calls
 cannot use `object_path`. Responses retain the root ID and path separately from
 the target's type and optional persistent ID.
+
+At the inspection depth limit, collections report their existing `ICollection`
+count without enumeration. Other enumerables report a null count. A null count
+means that the count is unavailable, not that the collection is empty.
+
+### Live Model Texture Bindings
+
+`get_model_material_bindings` reports exact model component, submesh, LOD, and
+material IDs. Each material has legacy `samplers` and semantic `surfaceBindings`
+with their binding indices and texture IDs. Texture discovery includes both
+collections. Check the material's binding contract before editing one collection.
+The optional `conversion` object reports the source shader version, converter
+version, outcome, failures, and warnings from the retained import report. Use it
+to distinguish generic fallback from native shader admission in Release builds.
+An absent report does not prove that conversion succeeded.
+For `StandardLitTextureV1`, each legacy slot and its surface role must reference
+the same object for native admission. The write tools preserve this pair.
+
+`set_model_material_texture_binding` targets one collection with `binding_kind`
+(`legacy` or `surface`) and `binding_index`. It requires the exact node,
+component, submesh, LOD, and `expected_material_id`. Replacement textures must
+already be referenced by model materials in the active world. Distinct live
+instances with the same requested ID are rejected. The tool checks any existing
+runtime renderable against the source material; a pending renderable does not
+prevent a source edit. Both write tools use Main affinity and Mutate permission.
+
+Legacy replacement preserves the effective sampler name. An unnamed texture
+uses the renderer's indexed sampler name for the selected slot. The tool does
+not rename either texture. A JSON null `texture_id` clears
+only a legacy slot. Empty or invalid IDs are rejected. The registry includes
+null in the JSON Schema type for nullable parameters; required parameters must
+still be supplied. Filling a null slot requires `expected_sampler_name`. Surface
+replacement preserves the other fields of the immutable binding and requires
+a non-null texture. The tool does not rename or destroy borrowed textures.
+Shared material instances remain shared, so all their users can see the edit.
+
+For `StandardLitTextureV1`, either selector updates the legacy and surface pair
+through `StandardLitTextureBindingEditor`. The replacement must preserve the
+strict role contract. Null, incompatible sampler names, wrapping, color space,
+or usage are rejected. The result reports `pairedLegacyIndex` and
+`pairedSurfaceIndex`; restore checks and restores both references and the
+surface metadata. Clearing a role changes the declared shader family and is
+not a texture replacement for this material semantic.
+
+A changed binding returns `receiptId`, previous/current texture IDs, and sampler
+readback. A no-op returns no receipt. Call `restore_model_material_texture_binding`
+with `receipt_id` to restore the exact previous reference, including one whose
+last live binding was removed. Restore verifies the same world and target,
+current replacement, and surface metadata before writing. It consumes the
+receipt only after success. Each world retains at most 32 outstanding receipts;
+older receipts expire. The weak-key store does not retain a closed world.
+The edits enter Undo and do not save assets.
 
 <!-- MCP_TOOL_TABLE:START -->
 
@@ -679,7 +735,7 @@ the target's type and optional persistent ID.
 | `get_loaded_game_types` | List all types loaded from the game DLL plugin: components, menu items, and all exported types grouped by assembly. |
 | `get_material_uniforms` | List all shader uniforms (Parameters) on a material, including names, types, and current values. Target by asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
-| `get_model_material_bindings` | Read model source slots, assigned materials, texture source paths, sampling metadata, and native Uber encoder preflight results. Preflight does not prove GPU execution. Does not decode textures or read GPU pixels. |
+| `get_model_material_bindings` | Read model source slots, assigned materials, legacy and surface texture bindings, source paths, and sampling metadata. Native Uber preflight does not prove GPU execution. Does not decode textures or read GPU pixels. |
 | `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
@@ -774,6 +830,7 @@ the target's type and optional persistent ID.
 | `reset_shader_command_coverage` | Reset shader command counters without invalidating linked-program metadata tokens. |
 | `resolve_natural_language_scene_command` | Resolves a natural language instruction (e.g. 'focus on main light', 'select player node') into a suggested MCP command and target parameters using TypeSafe Jev if configured, or deterministic pattern matching. |
 | `restart_renderer` | Transactionally restart the selected active backend generation. Active OpenXR requires restart_openxr_session=true; active OpenVR remains blocked. |
+| `restore_model_material_texture_binding` | Restore a live texture edit by its receipt ID. The current slot must still hold the replacement. A receipt is consumed after a successful restore. |
 | `restore_world_state` | Restore the active world from a previously captured snapshot. |
 | `rotate_transform` | Apply a local rotation to a scene node's transform (degrees). |
 | `run_editor_command` | Execute an allowlisted editor command via MCP (undo/redo/selection/play-mode/save/load/focus/select/import_external_asset/drop_asset). |
@@ -801,6 +858,7 @@ the target's type and optional persistent ID.
 | `set_material_uniform` | Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_material_uniforms` | Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value and target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_meshlet_debug_display` | Enable or disable per-meshlet colors on a viewport camera. Omit enabled to return control to the camera post-process setting. |
+| `set_model_material_texture_binding` | Replace one legacy or surface texture binding on an exact live model material. The replacement texture must already be used by a model material in the active world. StandardLitTextureV1 updates its paired legacy and surface aliases and rejects null. Other legacy slots can be cleared with null texture_id when the list allows null. |
 | `set_network_runtime_measurements` | Enable allocation-free networking measurement scopes. Counters are cumulative; subtract snapshots after warmup. |
 | `set_node_active` | Set whether a scene node is active in the hierarchy. |
 | `set_node_active_recursive` | Set active state on a node and its children. |

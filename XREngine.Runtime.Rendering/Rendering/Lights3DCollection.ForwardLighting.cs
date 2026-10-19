@@ -700,14 +700,14 @@ namespace XREngine.Scene
             // Global ambient light - required by ForwardLighting snippet
             program.Uniform("GlobalAmbient", (Vector3)World.GetEffectiveAmbientColor());
             AmbientSphericalHarmonics sh = World.GetEffectiveAmbientSphericalHarmonics();
-            program.Uniform("SourceSHEnabled", World.HasAmbientSphericalHarmonics);
-            program.Uniform("SourceSHAr", sh.Ar);
-            program.Uniform("SourceSHAg", sh.Ag);
-            program.Uniform("SourceSHAb", sh.Ab);
-            program.Uniform("SourceSHBr", sh.Br);
-            program.Uniform("SourceSHBg", sh.Bg);
-            program.Uniform("SourceSHBb", sh.Bb);
-            program.Uniform("SourceSHC", sh.C);
+            program.Uniform(EngineShaderBindingNames.Uniforms.SourceSHEnabled, World.HasAmbientSphericalHarmonics);
+            program.Uniform(EngineShaderBindingNames.Uniforms.SourceSHAr, sh.Ar);
+            program.Uniform(EngineShaderBindingNames.Uniforms.SourceSHAg, sh.Ag);
+            program.Uniform(EngineShaderBindingNames.Uniforms.SourceSHAb, sh.Ab);
+            program.Uniform(EngineShaderBindingNames.Uniforms.SourceSHBr, sh.Br);
+            program.Uniform(EngineShaderBindingNames.Uniforms.SourceSHBg, sh.Bg);
+            program.Uniform(EngineShaderBindingNames.Uniforms.SourceSHBb, sh.Bb);
+            program.Uniform(EngineShaderBindingNames.Uniforms.SourceSHC, sh.C);
 
             // Camera position for specular calculations
             program.Uniform("CameraPosition", RuntimeEngine.Rendering.State.RenderingCamera?.Transform.RenderTranslation ?? Vector3.Zero);

@@ -64,7 +64,7 @@ publication issue; neither startup nor MCP readiness counted as a rendered
 spectator pass. The session was stopped before changing scenes.
 
 A separate settings file under this run selected explicit VR emulation, the
-local ARYIA humanoid FBX, locomotion, physics, and OpenGL. Shared unit-world
+local humanoid FBX, locomotion, physics, and OpenGL. Shared unit-world
 settings were not edited. The initial OpenGL launch exited during renderer
 creation because an optional `glMultiDrawMeshTasksIndirectCountEXT` lookup
 threw `SymbolLoadingException` from the desktop context adapter.

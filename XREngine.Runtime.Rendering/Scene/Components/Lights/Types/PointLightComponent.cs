@@ -136,6 +136,7 @@ namespace XREngine.Components.Capture.Lights.Types
             UnsupportedViewportScissorArray = 9,
             UnsupportedVertexStageViewportIndexWrites = 10,
             UnsupportedGeometryStageViewportIndexWrites = 11,
+            SharedIndirectInstancingUnsupported = 12,
         }
 
         private readonly struct PointShadowRenderPlan
@@ -276,6 +277,7 @@ namespace XREngine.Components.Capture.Lights.Types
             {
                 viewport = new(null, resolution, resolution);
                 viewport.RenderPipeline = pipeline;
+                viewport.RenderPipelineInstance.PropagateCommandExceptions = true;
                 viewport.SetRenderPipelineFromCamera = false;
                 viewport.AutomaticallyCollectVisible = false;
                 viewport.AutomaticallySwapBuffers = false;
@@ -305,6 +307,23 @@ namespace XREngine.Components.Capture.Lights.Types
                 requiresRefresh |= state.RequiresRefresh;
             }
             return new(hash, requiresRefresh);
+        }
+
+        internal override ulong GetShadowCasterCommandSetSignature(
+            EShadowProjectionType projectionType,
+            ShadowRequestSource source,
+            int faceOrCascadeIndex)
+        {
+            if (projectionType != EShadowProjectionType.PointFace ||
+                (uint)faceOrCascadeIndex >= ShadowFaceCount || _viewports.Length == 0)
+                return 0u;
+
+            // Collection and swap use viewport zero for layered and grouped faces.
+            int viewportIndex = CreatePointShadowRenderPlan().IsLayered ||
+                ShouldPrepareAtlasGroupedFaceCollection() ? 0 : faceOrCascadeIndex;
+            return (uint)viewportIndex < (uint)_viewports.Length
+                ? _viewports[viewportIndex].RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature
+                : 0u;
         }
 
         internal override ulong GetBrowserShadowProjectionSignature()
@@ -590,6 +609,9 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private static PointShadowRenderPlan CreateAtlasInstancedShadowRenderPlan(EPointShadowRenderMode requestedMode)
         {
+            if (!SupportsInstancedShadowSubmission())
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.SharedIndirectInstancingUnsupported);
+
             if (!RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedVertexStageViewportIndexWrites);
 
@@ -616,6 +638,9 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private static PointShadowRenderPlan CreateInstancedShadowRenderPlan(EPointShadowRenderMode requestedMode)
         {
+            if (!SupportsInstancedShadowSubmission())
+                return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.SharedIndirectInstancingUnsupported);
+
             if (!RuntimeEngine.Rendering.State.SupportsOpenGLViewportArray)
                 return CreateSequentialShadowRenderPlan(requestedMode, PointShadowRenderFallbackReason.UnsupportedViewportArray);
 
@@ -655,10 +680,8 @@ namespace XREngine.Components.Capture.Lights.Types
 
         private void PublishShadowRenderPlan(in PointShadowRenderPlan plan)
         {
-            if (_effectiveShadowRenderMode != plan.SelectedMode)
-                _effectiveShadowRenderMode = plan.SelectedMode;
-            if (_shadowRenderFallbackReason != plan.FallbackReason)
-                _shadowRenderFallbackReason = plan.FallbackReason;
+            SetField(ref _effectiveShadowRenderMode, plan.SelectedMode, nameof(EffectiveShadowRenderMode));
+            SetField(ref _shadowRenderFallbackReason, plan.FallbackReason, nameof(ShadowRenderFallbackReason));
         }
 
         private int CopyShadowFaceMatrices(Span<Matrix4x4> matrices)
@@ -778,7 +801,12 @@ namespace XREngine.Components.Capture.Lights.Types
             => !_shadowResourcesDisposed && !ArePropertyNotificationsSuppressed &&
                 CastsShadows && (ShadowMap is not null || UsesPointShadowAtlasForCurrentEncoding);
 
-        private bool ShouldPrepareAtlasGroupedFaceCollection()
+        // Shared indirect vertices do not expand instances into point-light faces.
+        // Use the declared strategy so collection and rendering select the same layout.
+        private static bool SupportsInstancedShadowSubmission()
+            => RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
+        internal bool ShouldPrepareAtlasGroupedFaceCollection()
         {
             if (!UsesPointShadowAtlasForCurrentEncoding ||
                 _shadowRenderMode == EPointShadowRenderMode.Sequential ||
@@ -790,7 +818,7 @@ namespace XREngine.Components.Capture.Lights.Types
 
             return _shadowRenderMode switch
             {
-                EPointShadowRenderMode.InstancedLayered => RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex,
+                EPointShadowRenderMode.InstancedLayered => SupportsInstancedShadowSubmission() && RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderViewportIndex,
                 EPointShadowRenderMode.GeometryShader => RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
                 _ => false,
             };
@@ -1060,7 +1088,9 @@ namespace XREngine.Components.Capture.Lights.Types
             // grouped path.
             PublishShadowRenderPlan(CreateSequentialShadowRenderPlan(
                 _shadowRenderMode,
-                PointShadowRenderFallbackReason.AtlasUsesSequentialTiles));
+                _shadowRenderMode == EPointShadowRenderMode.InstancedLayered && !SupportsInstancedShadowSubmission()
+                    ? PointShadowRenderFallbackReason.SharedIndirectInstancingUnsupported
+                    : PointShadowRenderFallbackReason.AtlasUsesSequentialTiles));
 
             XRViewport viewport = _viewports[faceIndex];
             if (viewport.RenderPipeline is not ShadowRenderPipeline shadowPipeline)
@@ -1080,14 +1110,13 @@ namespace XREngine.Components.Capture.Lights.Types
                 var state = viewport.RenderPipelineInstance.RenderState;
                 using var renderArea = state.PushRenderArea(renderRect);
                 using var cropArea = state.PushCropArea(renderRect);
-                viewport.Render(atlasFbo, null, null, true, ShadowAtlasMaterial);
+                return viewport.TryRender(atlasFbo, null, null, true, ShadowAtlasMaterial);
             }
             finally
             {
                 shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
             }
 
-            return true;
         }
 
         internal bool RenderGroupedShadowAtlasFaceTiles(
@@ -1180,7 +1209,7 @@ namespace XREngine.Components.Capture.Lights.Types
                 XRMaterial groupedMaterial = plan.IsInstancedLayered
                     ? PointAtlasInstancedShadowMaterial
                     : PointAtlasGeometryShadowMaterial;
-                viewport.Render(atlasFbo, null, null, true, groupedMaterial);
+                return viewport.TryRender(atlasFbo, null, null, true, groupedMaterial);
             }
             finally
             {
@@ -1189,7 +1218,6 @@ namespace XREngine.Components.Capture.Lights.Types
                 shadowPipeline.IndexedClearRegionCount = previousIndexedClearRegionCount;
             }
 
-            return true;
         }
 
         internal void ClearShadowAtlasFaceSlots()
@@ -1328,7 +1356,12 @@ namespace XREngine.Components.Capture.Lights.Types
         }
 
         protected override void RegisterDynamicLight(IRuntimeRenderWorld world)
-            => world.Lights.DynamicPointLights.Add(this);
+        {
+            // Collection can read face cameras as soon as the light is published.
+            // Complete their hierarchy before another thread can observe the light.
+            EnsureShadowResources();
+            world.Lights.DynamicPointLights.Add(this);
+        }
 
         protected override void UnregisterDynamicLight(IRuntimeRenderWorld world)
             => world.Lights.DynamicPointLights.Remove(this);

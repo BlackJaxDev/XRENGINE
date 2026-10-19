@@ -1,5 +1,6 @@
 param(
-    [string]$Configuration = "Debug"
+    [string]$Configuration = "Debug",
+    [switch]$SourceOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,11 +38,12 @@ function Build-TableFromSource {
     $actionFiles = Get-ChildItem -Path (Join-Path $repoRoot "XREngine.Editor\Mcp\Actions") -Filter "*.cs" -File
     $entries = @{}
 
-    # Match the complete method-attribute block so optional attributes such as
+    # Match multiline XRMcp metadata and the complete method-attribute block so
+    # optional attributes such as
     # McpThreadAffinity can sit between XRMcp and Description. The previous
     # fallback looked for McpName on methods (it is a parameter attribute), so
     # an offline generation attempt could replace the table with only headers.
-    $toolPattern = '(?ms)^\s*\[XRMcp\s*\(\s*Name\s*=\s*"(?<name>[^"]+)"[^\r\n]*\)\]\s*\r?\n(?<attrs>.*?)^\s*public\s+static\b'
+    $toolPattern = '(?ms)^\s*\[XRMcp\s*\(\s*Name\s*=\s*"(?<name>[^"]+)".*?\)\]\s*\r?\n(?<attrs>.*?)^\s*public\s+static\b'
     $descriptionPattern = '\[Description\("(?<desc>(?:\\.|[^"\\])*)"\)\]'
 
     foreach ($file in $actionFiles) {
@@ -78,7 +80,7 @@ function Build-TableFromSource {
 
 Push-Location $repoRoot
 try {
-    if (Test-Path $projectPath) {
+    if (-not $SourceOnly -and (Test-Path $projectPath)) {
         try {
             dotnet run --project $projectPath -c $Configuration --no-launch-profile --no-restore
             if ($LASTEXITCODE -eq 0) {

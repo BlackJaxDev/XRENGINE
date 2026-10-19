@@ -3,7 +3,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingMeshDraw Draw, FrameOpContext Context) 
     : FrameOp(PassIndex, Target, Context)
 {
-    private PendingMeshDraw _draw = Draw;
+    private PendingMeshDraw _draw = Draw with { CaptureOwnerToken = Context.CaptureOwnerToken };
     private DescriptorBindingSnapshot _descriptorBindingSnapshot;
     private bool _hasDescriptorBindingSnapshot;
     private VulkanMeshDrawSortKey _canonicalSortKey;
@@ -111,7 +111,7 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
     {
         PassIndex = passIndex;
         Target = target;
-        Draw = draw;
+        Draw = draw with { CaptureOwnerToken = context.CaptureOwnerToken };
         Context = context;
         PreserveSubmissionOrder = preserveSubmissionOrder;
         _descriptorBindingSnapshot = default;

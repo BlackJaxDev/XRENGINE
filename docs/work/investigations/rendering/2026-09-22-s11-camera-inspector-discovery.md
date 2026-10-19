@@ -152,7 +152,7 @@ target controls present, including the Create/Replace affordances.
   review found no remaining blocking source issues.
 - A live game-script reload was attempted through `compile_game_scripts` and
   failed before loading an assembly. The default generated `GeneratedProject`
-  includes ten third-party scripts under `Assets/Imported/Aryia_By_Mimiiu_V1.1`;
+  includes ten third-party scripts from an imported avatar package;
   compiling them produces 77 missing Unity, UnityEditor, VRC and `nadena` type
   errors. These are imported avatar-package scripts, not XRENGINE game code.
   This is an unrelated input/project setup failure, not evidence that generation

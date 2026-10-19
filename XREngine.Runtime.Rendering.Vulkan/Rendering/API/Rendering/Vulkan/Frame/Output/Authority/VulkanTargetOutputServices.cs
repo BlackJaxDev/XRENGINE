@@ -624,7 +624,8 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
                 foreach (ulong child in children)
                 {
                     VulkanResourceLifetimeKey childKey = ResourceKey(ObjectType.CommandBuffer, child);
-                    tracker.CommandBufferLifetimes.Remove(child);
+                    if (tracker.CommandBufferLifetimes.Remove(child, out VulkanCommandBufferLifetimeRecord? lifetime))
+                        lifetime.ReleaseFrameDataAllocations(child);
                     tracker.RemoveResourceNoLock(childKey);
                 }
             }

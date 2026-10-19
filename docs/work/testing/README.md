@@ -43,6 +43,7 @@ Validation docs hold manual, runtime, visual, hardware, profiler, benchmark, and
 - [Animation Validation](animation/animation-validation.md)
 - [Asset Import Validation](assets/asset-import-validation.md)
   - [glTF Import Validation](assets/gltf-import.md)
+  - [Unity Avatar Package Validation](assets/unity-avatar-package-validation.md)
 - [Avatar Validation](avatar/avatar-validation.md)
 - [Modeling Validation](modeling/modeling-validation.md)
 - [Native UI Validation](ui/native-ui-validation.md)

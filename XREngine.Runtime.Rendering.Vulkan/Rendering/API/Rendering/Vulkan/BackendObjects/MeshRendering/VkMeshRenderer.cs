@@ -442,10 +442,10 @@ internal unsafe partial class VkMeshRenderer(
         }
     }
 
-    void IApiMeshRenderer.Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+    void IApiMeshRenderer.Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot, Vector4 sourceFlatDirection)
         => _ = EnqueueMeshRender(modelMatrix, prevModelMatrix, materialOverride,
             renderOptionsOverride, instances, billboardMode, forceNoStereo,
-            canonicalDrawIdentitySnapshot, null, out _);
+            canonicalDrawIdentitySnapshot, sourceFlatDirection, null, out _);
 
     bool IApiMeshRenderer.RenderIndexedIndirect(Matrix4x4 modelMatrix,
         Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
@@ -468,7 +468,7 @@ internal unsafe partial class VkMeshRenderer(
             return false;
         }
         return EnqueueMeshRender(modelMatrix, previousModelMatrix, materialOverride,
-            renderOptionsOverride, 1u, billboardMode, forceNoStereo, default,
+            renderOptionsOverride, 1u, billboardMode, forceNoStereo, default, default,
             new VulkanMeshIndexedIndirectPayload(arguments, byteOffset, topology,
                 authoringLease),
             out failureReason);
@@ -478,6 +478,7 @@ internal unsafe partial class VkMeshRenderer(
         XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride,
         uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo,
         in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
+        Vector4 sourceFlatDirection,
         VulkanMeshIndexedIndirectPayload? indexedIndirect, out string failureReason)
     {
         failureReason = string.Empty;
@@ -510,6 +511,9 @@ internal unsafe partial class VkMeshRenderer(
         }
         ResolvedMeshRenderMaterial resolvedMaterial =
             ResolveMaterialSelection(materialOverride, instances);
+        if (SourceMultilayerFlatDirection.IsRequired(resolvedMaterial.Material) &&
+            !SourceMultilayerFlatDirection.IsValid(sourceFlatDirection))
+            throw new InvalidOperationException("The active flat multilayer draw has no valid source direction.");
         LayeredShadowUniformState shadowUniformState =
             LayeredShadowUniformState.CaptureFromCurrentRenderingState();
         LayeredShadowCasterRelevance shadowCasterRelevance =
@@ -595,6 +599,7 @@ internal unsafe partial class VkMeshRenderer(
             residentTemplateHandle,
             windowPresentationSourceMarker)
         {
+            SourceFlatDirection = sourceFlatDirection,
             IndexedIndirect = indexedIndirect,
         };
         VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
@@ -923,6 +928,9 @@ internal unsafe partial class VkMeshRenderer(
 
             try
             {
+                MeshRenderer.EnterResourcePublicationLease();
+                try
+                {
                 bool prepared;
                 string prepareReason;
                 using (VulkanCpuStageScope resourcePreparationStage = new(
@@ -932,7 +940,8 @@ internal unsafe partial class VkMeshRenderer(
                     prepared = TryPrepareForDrawEnqueue(
                         effectiveMaterial,
                         materializationSnapshot.RequiresSynchronousGeometryPreparation,
-                        out prepareReason);
+                        out prepareReason,
+                        request.IndexedIndirect is not null);
                 }
                 if (!prepared)
                 {
@@ -987,6 +996,11 @@ internal unsafe partial class VkMeshRenderer(
                 preparedProgramSnapshot = _program;
                 preparedProgramIdentitySnapshot = _activeProgramIdentity;
                 preparedProgramLinkGenerationSnapshot = _program?.LinkGeneration ?? 0UL;
+                }
+                finally
+                {
+                    MeshRenderer.ExitResourcePublicationLease();
+                }
             }
             finally
             {
@@ -1043,10 +1057,14 @@ internal unsafe partial class VkMeshRenderer(
             request.WindowPresentationSourceMarker);
         draw = draw with
         {
+            SourceFlatDirection = request.SourceFlatDirection,
             PreparationCompatibilitySignature =
                 request.PreparationCompatibilitySignature,
             IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
             IndexedIndirectAuthoringLease = request.IndexedIndirect?.AuthoringLease,
+        };
+        draw = draw with
+        {
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,

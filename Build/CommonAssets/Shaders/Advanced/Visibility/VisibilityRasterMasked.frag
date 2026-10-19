@@ -20,6 +20,7 @@ layout(location = 16) in vec2 VisibilityCoverageUv3;
 
 #define XR_ADV_VISIBILITY_COUNTER_INDEX VisibilityViewIndex
 #include "Advanced/Shading/NativeUberCoverage.glslinc"
+#include "Advanced/Shading/NativeUberPrimitiveCoverage.glslinc"
 
 layout(location = 0) out uvec2 OutVisibilityIdentity;
 layout(location = 1) out uint OutVisibilityMetadata;
@@ -49,6 +50,11 @@ void main()
     if (uber)
     {
         XR_UBER_Material = material;
+        uint coveragePrimitive = XR_ADV_EncodeVisibilityPrimitive(
+            VisibilityProducer, VisibilityPrimitiveBase,
+            VisibilityMeshletIndex, uint(gl_PrimitiveID));
+        if (!XR_UBER_KeepOriginalTriangle(VisibilityDrawIndex,
+                VisibilityProducer, coveragePrimitive)) discard;
         XRUberCoordinates coordinates;
         coordinates.uv0 = VisibilityCoverageUv;
         coordinates.uv1 = VisibilityCoverageUv1;

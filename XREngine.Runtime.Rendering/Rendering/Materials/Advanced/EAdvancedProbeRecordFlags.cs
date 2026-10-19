@@ -9,4 +9,5 @@ public enum EAdvancedProbeRecordFlags : uint
     Octahedral = 1u << 1,
     ParallaxCorrected = 1u << 2,
     Normalized = 1u << 3,
+    UnityMipFilter = 1u << 4,
 }

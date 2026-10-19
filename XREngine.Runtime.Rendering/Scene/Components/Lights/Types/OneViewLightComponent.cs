@@ -4,6 +4,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Shadows;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Capture.Lights.Types
@@ -25,6 +26,12 @@ namespace XREngine.Components.Capture.Lights.Types
         protected XRViewport PrimaryShadowViewport => _primaryShadowViewport ??= CreateShadowViewport();
 
         protected XRViewport? PrimaryShadowViewportOrNull => _primaryShadowViewport;
+
+        internal override ulong GetShadowCasterCommandSetSignature(
+            EShadowProjectionType projectionType,
+            ShadowRequestSource source,
+            int faceOrCascadeIndex)
+            => _primaryShadowViewport?.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature ?? 0u;
 
         internal override BrowserShadowCasterState GetBrowserShadowCasterState()
             => GetBrowserShadowViewportCasterState(_primaryShadowViewport);
@@ -48,7 +55,7 @@ namespace XREngine.Components.Capture.Lights.Types
             uint width = ShadowMapResolutionWidth > 0 ? ShadowMapResolutionWidth : DefaultResolution;
             uint height = ShadowMapResolutionHeight > 0 ? ShadowMapResolutionHeight : DefaultResolution;
             (width, height) = GetEffectiveShadowMapResolution(width, height);
-            return new XRViewport(null, width, height)
+            var viewport = new XRViewport(null, width, height)
             {
                 RenderPipeline = new ShadowRenderPipeline(),
                 SetRenderPipelineFromCamera = false,
@@ -57,6 +64,8 @@ namespace XREngine.Components.Capture.Lights.Types
                 AllowUIRender = false,
                 CullWithFrustum = true,
             };
+            viewport.RenderPipelineInstance.PropagateCommandExceptions = true;
+            return viewport;
         }
 
         protected override void ResizeShadowMapResources(uint width, uint height)

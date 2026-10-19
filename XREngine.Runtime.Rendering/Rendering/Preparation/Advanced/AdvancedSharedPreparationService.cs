@@ -80,7 +80,13 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 service._extractor.GpuDeformation.LastOutputReuseAuthority,
                 service.GetTelemetryLocked(), service._extractor.ArenaTelemetry,
                 service._extractor.FrameUploadTelemetry,
-                service._extractor.VisibilityContentTelemetry);
+                service._extractor.VisibilityContentTelemetry)
+            {
+                DeformationSourceGeneration = service._extractor.DeformationSourceGeneration,
+                DeformationSourceMeshCount = service._extractor.DeformationSourceMeshCount,
+                DeformationSourceChanges = service._extractor.DeformationSourceChanges,
+                DeformationSourceChangedMesh = service._extractor.DeformationSourceChangedMesh,
+            };
     }
 
     private AdvancedSharedPreparationTelemetry GetTelemetryLocked() => new(

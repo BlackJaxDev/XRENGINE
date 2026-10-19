@@ -92,6 +92,27 @@ public static partial class SerializedMaterialImporter
 
     private static void MapOutlineAndDissolve(XRMaterial material, SerializedMaterialDocument document)
     {
+        MapFloat(document, material, "_OutlineWidth", "_LineWidth", "_OutlineWidth");
+        string? lockedLineColor = null;
+        foreach (string propertyName in document.Vectors.Keys)
+        {
+            if (!propertyName.StartsWith("_LineColor_", StringComparison.Ordinal))
+                continue;
+
+            if (lockedLineColor is not null)
+            {
+                lockedLineColor = null;
+                break;
+            }
+
+            lockedLineColor = propertyName;
+        }
+
+        if (lockedLineColor is not null)
+            MapVector4(document, material, "_OutlineColor", lockedLineColor);
+        else
+            MapVector4(document, material, "_OutlineColor", "_LineColor", "_OutlineColor");
+
         MapInt(document, material, "_OutlineExpansionMode", "_OutlineExpansionMode");
         MapInt(document, material, "_OutlineSpace", "_OutlineSpace");
         MapVector3(document, material, "_OutlinePersonaDirection", "_OutlinePersonaDirection");
@@ -135,11 +156,13 @@ public static partial class SerializedMaterialImporter
         {
             int mode = material.Parameter<ShaderInt>("_UDIMDiscardMode")?.Value ?? 0;
             int uv = material.Parameter<ShaderInt>("_UDIMDiscardUV")?.Value ?? 0;
-            string? unsupported = mode != 1
-                ? "Vertex-mode UDIM discard needs a geometry-stage coverage variant."
+            string? unsupported = mode is not (0 or 1)
+                ? "The active UDIM discard selects an unsupported discard mode."
                 : uv is < 0 or > 1
                     ? "The active UDIM discard selects a UV channel outside native UV0 and UV1."
-                    : null;
+                    : mode == 0
+                        ? "Vertex-mode UDIM discard requires native Advanced triangle coverage. Authored late passes do not support this mode."
+                        : null;
             if (unsupported is not null)
                 diagnostics.Add(new MaterialConversionDiagnostic(
                     MaterialConversionDiagnosticCodes.RenderStateDifference,

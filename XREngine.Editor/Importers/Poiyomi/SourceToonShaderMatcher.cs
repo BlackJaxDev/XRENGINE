@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Matches unlocked and Thry optimizer-generated shaders against the pinned Poiyomi target.
+/// Matches unlocked and Thry optimizer-generated shaders against verified Poiyomi sources.
 /// </summary>
 public static partial class SourceToonShaderMatcher
 {
@@ -39,8 +39,9 @@ public static partial class SourceToonShaderMatcher
         string source = input.ShaderSource ?? string.Empty;
         bool hasCanonicalName = source.Contains("Shader \".poiyomi/Poiyomi Toon\"", StringComparison.Ordinal);
         bool hasSourceToonPath = normalizedPath.Contains("Poiyomi", StringComparison.OrdinalIgnoreCase);
-        bool hasCanonical93Path =
-            normalizedPath.Contains("/_PoiyomiShaders/Shaders/9.3/Toon/", StringComparison.OrdinalIgnoreCase) &&
+        bool hasCanonicalToonPath =
+            (normalizedPath.Contains("/_PoiyomiShaders/Shaders/9.3/Toon/", StringComparison.OrdinalIgnoreCase) ||
+             normalizedPath.Contains(SourceToon92Catalog.ShaderPathSegment, StringComparison.OrdinalIgnoreCase)) &&
             Path.GetFileName(normalizedPath).StartsWith("Poiyomi Toon", StringComparison.OrdinalIgnoreCase);
         bool hasSignature = RequiredSignature.All(input.PropertyNames.Contains);
         bool isLockedName =
@@ -49,13 +50,19 @@ public static partial class SourceToonShaderMatcher
         bool hasOptimizerMarker =
             source.Contains("OPTIMIZER_ENABLED", StringComparison.Ordinal) ||
             input.PropertyNames.Contains("_ShaderOptimizerEnabled");
-        bool exactGuid = string.Equals(input.ShaderGuid, SourceToon93Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase);
+        SourceToonShaderVersion? sourceVersion = ExtractVersion(source);
+        bool supported92 = SourceToon92Catalog.Supports(sourceVersion);
+        bool exact93 = sourceVersion == SourceToon93Catalog.Version;
+        bool exactGuid = sourceVersion is null &&
+            string.Equals(input.ShaderGuid, SourceToon93Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase);
         bool originalGuidMatch =
+            sourceVersion is null &&
             input.OverrideTags.TryGetValue(OriginalShaderGuidTag, out string? originalGuid) &&
             string.Equals(originalGuid, SourceToon93Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase);
-
-        SourceToonShaderVersion? sourceVersion = ExtractVersion(source);
-        bool exactVersion = sourceVersion == SourceToon93Catalog.Version;
+        bool sourceGuidMatches92 =
+            string.Equals(input.ShaderGuid, SourceToon92Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase) ||
+            input.OverrideTags.TryGetValue(OriginalShaderGuidTag, out string? original92Guid) &&
+            string.Equals(original92Guid, SourceToon92Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase);
         bool hasProName =
             source.Contains("Poiyomi Pro", StringComparison.OrdinalIgnoreCase) ||
             normalizedPath.Contains("Poiyomi Pro", StringComparison.OrdinalIgnoreCase) ||
@@ -68,7 +75,8 @@ public static partial class SourceToonShaderMatcher
         bool hasNonToonOriginalGuid =
             input.OverrideTags.TryGetValue(OriginalShaderGuidTag, out string? originalShaderGuid) &&
             !string.IsNullOrWhiteSpace(originalShaderGuid) &&
-            !string.Equals(originalShaderGuid, SourceToon93Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase);
+            !string.Equals(originalShaderGuid, SourceToon93Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(originalShaderGuid, SourceToon92Catalog.ShaderGuid, StringComparison.OrdinalIgnoreCase);
         bool isProDowngradeSource =
             hasProName || hasOriginalProName ||
             (hasProProperties && (hasSourceToonPath || hasSignature || isLockedName)) ||
@@ -102,14 +110,23 @@ public static partial class SourceToonShaderMatcher
         if (originalGuidMatch)
             return Accepted(SourceToonShaderMatchKind.ExactLockedSource, SourceToon93Catalog.Version, isLocked: true);
 
-        if (exactVersion && hasCanonicalName && !isLockedName)
+        if (exact93 && hasCanonicalName && !isLockedName)
             return Accepted(SourceToonShaderMatchKind.ExactUnlockedSource, sourceVersion, isLocked: false);
 
-        if (exactVersion && (isLockedName || hasOptimizerMarker) && (hasCanonicalName || hasSignature))
+        if (exact93 && (isLockedName || hasOptimizerMarker) && (hasCanonicalName || hasSignature))
             return Accepted(SourceToonShaderMatchKind.ExactLockedSource, sourceVersion, isLocked: true);
 
-        bool familyEvidence = hasCanonicalName || hasSourceToonPath || hasCanonical93Path || hasSignature;
-        if (hasSignature && hasOptimizerMarker && sourceVersion is null)
+        if (supported92 && sourceGuidMatches92 && hasCanonicalName && !isLockedName)
+            return Accepted(SourceToonShaderMatchKind.ExactUnlockedSource, sourceVersion, isLocked: false);
+
+        if (supported92 && sourceGuidMatches92 && isLockedName && hasSignature)
+            return Accepted(SourceToonShaderMatchKind.ExactLockedSource, sourceVersion, isLocked: true);
+
+        if (SourceToon81Catalog.Matches(input, sourceVersion) && isLockedName && hasSignature)
+            return Accepted(SourceToonShaderMatchKind.ExactLockedSource, sourceVersion, isLocked: true);
+
+        bool familyEvidence = hasCanonicalName || hasSourceToonPath || hasCanonicalToonPath || hasSignature || sourceGuidMatches92;
+        if (hasSignature && hasOptimizerMarker && sourceVersion is null && !sourceGuidMatches92)
         {
             MaterialConversionDiagnostic diagnostic = new(
                 MaterialConversionDiagnosticCodes.AmbiguousLockedSignature,
@@ -128,7 +145,7 @@ public static partial class SourceToonShaderMatcher
             MaterialConversionDiagnostic diagnostic = new(
                 MaterialConversionDiagnosticCodes.UnknownVersion,
                 MaterialConversionDiagnosticSeverity.Warning,
-                $"Poiyomi Toon version '{foundVersion}' is not the pinned 9.3.64 target. Poiyomi-specific conversion was rejected; pin or add a version catalog before converting it.");
+                $"Poiyomi Toon version '{foundVersion}' has no verified source identity for conversion. Supported sources are the verified Aeri 8.1.167 shader, 9.2.66, 9.2.79, and 9.3.64.");
             return new SourceToonShaderMatchResult
             {
                 Kind = SourceToonShaderMatchKind.UnsupportedVersion,

@@ -30,7 +30,28 @@ internal static partial class SerializedSceneImporter
                 "Only deterministic generation 2 correspondence is supported.");
         }
 
-        bool? nativeHasContentBasis = ValidateSourceModelCoordinates(modelPath, metadata, state);
+        bool? sourceZUp;
+        float sourceUnitToMeters;
+        try
+        {
+            sourceZUp = ValidateSourceModelCoordinates(
+                modelPath, metadata, state, out sourceUnitToMeters);
+        }
+        catch (SourceVisualImportException ex) when (state.Context.AllowPartialImport)
+        {
+            // Reject the unsupported model before a producer allocates geometry.
+            // Keep supported sibling models in an explicitly partial import.
+            state.Context.ReportPartialImport("UNITYPARTIAL0007",
+                $"Skipped model '{modelPath}' because its coordinate settings are unsupported. {ex.Message}",
+                modelPath, "m_SourcePrefab",
+                new SourceAssetIdentity
+                {
+                    AssetGuid = sourceGuid ?? string.Empty,
+                    ObjectKind = SourceAssetObjectKind.Asset,
+                });
+            state.Context.MarkOutcome(modelPath, SourceImportConversionOutcome.Failed);
+            return new ImportedHierarchy(modelPath) { SourceGuid = sourceGuid };
+        }
         Dictionary<string, XRMaterial> externalMaterials = ImportExternalMaterialRemaps(metadata, state);
         if (string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase))
             AddConnectedFbxMaterialRemapAliases(modelPath, externalMaterials, state);
@@ -40,6 +61,9 @@ internal static partial class SerializedSceneImporter
         {
             ImportOptions = options,
             FbxSourceDocuments = state.Context.FbxSourceDocuments,
+            ResolveMissingTexturePath = string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase)
+                ? state.Context.ResolveExactModelTexture
+                : null,
         };
         Func<string, XRTexture2D> defaultTextureFactory = importer.MakeTextureAction;
         importer.MakeTextureAction = path => ResolveModelTexture(path, defaultTextureFactory, state);
@@ -86,8 +110,14 @@ internal static partial class SerializedSceneImporter
             modelPath);
         if (string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase))
             ResolveFbxMaterialSlots(root, modelPath, state);
-        if (nativeHasContentBasis is { } hasContentBasis)
-            root = ConvertImportedModelCoordinates(root, actualBackend, hasContentBasis);
+        if (sourceZUp is { } zUp)
+        {
+            root = ConvertImportedModelCoordinates(
+                root, actualBackend, zUp, sourceUnitToMeters);
+            if (sourceUnitToMeters != 1.0f)
+                RestoreSourceLocalModelUnits(root, actualBackend, zUp, sourceUnitToMeters,
+                    state.Context.FbxSourceDocuments.GetSemantic(modelPath));
+        }
         root = CollapseAssimpSyntheticRoot(root, modelPath, metadata, options, state);
         ApplySourceImportedSkeletonBindPose(root, metadata, state);
         if (metadata.SortHierarchyByName)

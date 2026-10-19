@@ -8,6 +8,8 @@ internal unsafe partial class VkMeshRenderer
     private readonly Dictionary<string, UniformBufferValidityCertificate> _engineUniformBufferCertificates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, UniformBufferValidityCertificate> _autoUniformBufferCertificates = new(StringComparer.Ordinal);
 
+    // This certificate covers array structure. A selected frequency view must
+    // still acquire its exact allocation before a write or native recording.
     private struct UniformBufferValidityCertificate(
         Array source,
         uint minimumSize,

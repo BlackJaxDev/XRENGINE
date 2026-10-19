@@ -410,6 +410,12 @@ internal sealed partial class VulkanResourcePlannerSessionService(
         => planner.GetPublishedResourcePlannerGeneration().State.FrameOpResourcePlannerSwitchingState ??
             planner.MutableState.DefaultSwitchingState;
 
+    internal bool IsPublishedSwitchingState(FrameOpResourcePlannerSwitchingState switchingState)
+    {
+        lock (planner.PlannerReadbackGate)
+            return ReferenceEquals(switchingState, ResolvePublishedSwitchingState());
+    }
+
     /// <summary>
     /// Gets whether any state in <paramref name="switchingState"/>, including its
     /// pending preparation state, still references <paramref name="allocator"/>.
@@ -428,7 +434,7 @@ internal sealed partial class VulkanResourcePlannerSessionService(
             ReferenceEquals(switchingState.PreparationState.ResourceAllocator, allocator);
     }
 
-    private static bool IsSupersededGenerationKey(
+    internal static bool IsSupersededGenerationKey(
         in VulkanFrameOpPlannerStateKey candidate,
         in VulkanFrameOpPlannerStateKey currentKey)
         => candidate.ContextKind == currentKey.ContextKind &&

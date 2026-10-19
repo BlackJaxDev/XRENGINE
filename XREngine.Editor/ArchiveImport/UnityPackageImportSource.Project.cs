@@ -69,7 +69,7 @@ internal static partial class UnityPackageImportSource
                 File.WriteAllText(Path.Combine(staging, CombinedCompletionFile), combinedHash);
                 try
                 {
-                    Directory.Move(staging, target);
+                    PublishCacheDirectory(staging, target);
                 }
                 catch (IOException) when (IsCombinedComplete(target, combinedHash))
                 {

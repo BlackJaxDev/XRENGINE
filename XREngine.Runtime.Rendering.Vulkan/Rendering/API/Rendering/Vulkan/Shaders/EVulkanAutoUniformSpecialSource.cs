@@ -13,4 +13,5 @@ internal enum EVulkanAutoUniformSpecialSource : byte
     BlendshapeActiveCount,
     BlendshapeWeightThreshold,
     UsePrecombinedBlendshapeDeltas,
+    SourceFlatDirection,
 }

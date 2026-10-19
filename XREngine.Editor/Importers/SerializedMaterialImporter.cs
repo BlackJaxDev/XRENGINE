@@ -92,7 +92,7 @@ public static partial class SerializedMaterialImporter
         }
 
         SourceResolvedAsset shaderAsset = resolver.Resolve(document.Shader);
-        SourceToonShaderMatchResult sourceToonMatch = MatchSourceToon93Material(document, resolver, out string? shaderPath);
+        SourceToonShaderMatchResult sourceToonMatch = MatchSourceToonMaterial(document, resolver, out string? shaderPath);
         diagnostics.AddRange(sourceToonMatch.Diagnostics);
         SerializedMaterialDocument conversionDocument = sourceToonMatch.IsDowngradeSource
             ? SourceToonFeatureLossNormalizer.Normalize(document, diagnostics)
@@ -100,6 +100,8 @@ public static partial class SerializedMaterialImporter
         SourceToonMaterialDescriptor? sourceToonDescriptor = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
             ? SourceToonMaterialDescriptorFactory.Create(conversionDocument, resolver, sourceToonMatch, diagnostics)
             : null;
+        if (sourceToonMatch.IsAccepted && SourceToon92Catalog.Supports(sourceToonMatch.Version))
+            SourceToon92Catalog.AppendUnmappedFeatureDiagnostics(conversionDocument, diagnostics);
         bool isSourceToonConversion = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource;
         foreach (MaterialConversionDiagnostic diagnostic in diagnostics)
             warnings.Add(diagnostic.ToString());
@@ -117,7 +119,8 @@ public static partial class SerializedMaterialImporter
                     resolver,
                     warnings,
                     diagnostics,
-                    isSourceToonFeatureLoss)
+                    isSourceToonFeatureLoss,
+                    sourceToonMatch.Version)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
                     : ConvertGenericSerializedMaterial(document, resolver, warnings);
@@ -244,8 +247,14 @@ public static partial class SerializedMaterialImporter
         SourceAssetResolver resolver,
         List<string> warnings,
         List<MaterialConversionDiagnostic> diagnostics,
-        bool isSourceToonFeatureLoss)
+        bool isSourceToonFeatureLoss,
+        SourceToonShaderVersion? sourceVersion)
     {
+        document = SourceToonColorSpaceNormalizer.Normalize(
+            document,
+            resolver.Resolve(document.Shader.Guid),
+            ReadSourceLinearColorSpace(resolver.ProjectRoot),
+            sourceVersion);
         XRTexture2D main = ResolveUberTexture(document, resolver, warnings, "_MainTex", "_MainTex")
             ?? GetDefaultUberSamplerTexture("_MainTex", ColorF4.White);
 
@@ -280,9 +289,15 @@ public static partial class SerializedMaterialImporter
         string? detailMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailMask", "_DetailMask");
         string? detailTexSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailTex", "_DetailTex");
         string? detailNormalSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailNormalMap", "_DetailNormalMap");
-        string? outlineMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_OutlineMask", "_OutlineMask", "_OutlineMask", "_OutlineTexture");
+        string? outlineMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_OutlineMask", "_OutlineMask");
+        if (outlineMaskSource is null)
+            textures.Add(GetDefaultUberSamplerTexture("_OutlineMask", ColorF4.White));
         string? backFaceSource = AddMappedTexture(document, resolver, warnings, textures, "_BackFaceTexture", "_BackFaceTexture");
         string? glitterMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_GlitterMask", "_GlitterMask");
+        if (glitterMaskSource is null)
+            textures.Add(GetDefaultUberSamplerTexture("_GlitterMask", ColorF4.White));
+        textures.Add(ResolveUberTexture(document, resolver, warnings, "_GlitterTexture", "_GlitterTexture", sourceGlitterClamp: true)
+            ?? GetDefaultUberSamplerTexture("_GlitterTexture", ColorF4.White));
         string? flipbookSource = AddMappedTexture(document, resolver, warnings, textures, "_FlipbookTexture", "_FlipbookTexture", "_FlipbookTexture", "_Flipbook");
         string? sssSource = AddMappedTexture(document, resolver, warnings, textures, "_SSSThicknessMap", "_SSSThicknessMap");
         string? dissolveNoiseSource = AddMappedTexture(document, resolver, warnings, textures, "_DissolveNoiseTexture", "_DissolveNoiseTexture");
@@ -370,7 +385,7 @@ public static partial class SerializedMaterialImporter
         // Most rendering properties authored by Poiyomi Pro are the same
         // public Toon modules. The normalizer has already removed active
         // Pro-exclusive groups, so preserve every remaining common feature.
-        ApplySourceToonSurfaceFeatures(material, document, resolver, diagnostics, warnings);
+        ApplySourceToonSurfaceFeatures(material, document, resolver, diagnostics, warnings, sourceVersion);
         NormalizeSourceToonDetailColor(material, document, detailTexSource, resolver.ProjectRoot);
         ApplySourceToonEffectsAndIntegrations(material, document, resolver, diagnostics, warnings);
         ApplySourceToonRenderState(material, document, diagnostics);
@@ -494,6 +509,9 @@ public static partial class SerializedMaterialImporter
         SourceAssetResolver resolver,
         List<string> warnings)
     {
+        if (TryConvertOpaqueStandardMaterial(document, resolver, warnings, out XRMaterial standardMaterial))
+            return standardMaterial;
+
         ColorF4 baseColor = document.TryGetVector("_BaseColor", out Vector4 baseColorVector) ||
                             document.TryGetVector("_Color", out baseColorVector)
             ? new ColorF4(baseColorVector.X, baseColorVector.Y, baseColorVector.Z, baseColorVector.W)
@@ -1324,7 +1342,10 @@ public static partial class SerializedMaterialImporter
         SourceAssetResolver resolver,
         List<string> warnings,
         string sourceProperty,
-        string samplerName)
+        string samplerName,
+        bool sourceMatcapSampler = false,
+        ETexMinFilter? sourceRepeatMinFilter = null,
+        bool sourceGlitterClamp = false)
     {
         if (!document.Textures.TryGetValue(sourceProperty, out SerializedTexturePropertyDocument? textureProperty) ||
             textureProperty is null ||
@@ -1345,11 +1366,15 @@ public static partial class SerializedMaterialImporter
 
         ValidateRequiredSerializedTexture(texturePath, resolver.ImportContext);
         XRTexture2D texture;
+        string? cachePartition = sourceGlitterClamp ? "source-linear-clamp"
+            : sourceRepeatMinFilter.HasValue
+            ? "source-repeat-" + sourceRepeatMinFilter.Value
+            : sourceMatcapSampler ? "source-trilinear-repeat" : null;
         try
         {
             texture = resolver.ImportContext is null
-                ? ModelAssetImporter.GetOrCreateUberSamplerTexture(texturePath, samplerName)
-                : ModelAssetImporter.GetOrCreateDeferredUberSamplerTexture(texturePath, samplerName);
+                ? ModelAssetImporter.GetOrCreateUberSamplerTexture(texturePath, samplerName, cachePartition)
+                : ModelAssetImporter.GetOrCreateDeferredUberSamplerTexture(texturePath, samplerName, cachePartition);
             resolver.ImportContext?.Progress?.Invoke(
                 0.12f,
                 $"Registered streaming texture {Path.GetFileName(texturePath)}");
@@ -1365,6 +1390,21 @@ public static partial class SerializedMaterialImporter
             $"Parsed texture settings {Path.GetFileName(texturePath)}");
         if (importSettings is not null)
             ApplySerializedTextureImportSettings(texture, importSettings, samplerName);
+        if (sourceMatcapSampler || sourceRepeatMinFilter.HasValue || sourceGlitterClamp)
+        {
+            texture.MagFilter = ETexMagFilter.Linear;
+            texture.MinFilter = texture.AutoGenerateMipmaps
+                ? sourceGlitterClamp ? ETexMinFilter.LinearMipmapNearest
+                    : sourceRepeatMinFilter ?? ETexMinFilter.LinearMipmapLinear
+                : ETexMinFilter.Linear;
+            texture.UWrap = sourceGlitterClamp ? ETexWrapMode.ClampToEdge : ETexWrapMode.Repeat;
+            texture.VWrap = sourceGlitterClamp ? ETexWrapMode.ClampToEdge : ETexWrapMode.Repeat;
+            if (sourceGlitterClamp)
+            {
+                texture.LodBias = 0.0f;
+                texture.MaxAnisotropy = 1;
+            }
+        }
         resolver.ImportContext?.MarkOutcome(texturePath, SourceImportConversionOutcome.Converted);
         return texture;
     }
@@ -1623,7 +1663,7 @@ public static partial class SerializedMaterialImporter
             SetInt(material, $"{destinationSampler}UV", uv);
     }
 
-    private static SourceToonShaderMatchResult MatchSourceToon93Material(
+    private static SourceToonShaderMatchResult MatchSourceToonMaterial(
         SerializedMaterialDocument document,
         SourceAssetResolver resolver,
         out string? shaderPath)

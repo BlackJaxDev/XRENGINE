@@ -44,7 +44,7 @@ working directory, Desktop, and engine assets. For example:
 {
   "Enabled": true,
   "Kind": "Static",
-  "Path": "misc/Aryia_By_Mimiiu_V1.3.unitypackage",
+  "Path": "misc/Avatar.unitypackage",
   "SourceProjectRoot": null,
   "MaterialMode": "Uber",
   "AllowPartialImport": true,
@@ -95,6 +95,11 @@ the package SHA-256 hash and extraction format version. Extraction keeps
 asset paths and `.meta` files. A completed cache entry can be reused. A changed
 package gets a new entry. Extraction does not change the source package or
 copy its files into the game assets directory.
+
+Package and combined-project caches publish through a final directory rename.
+On Windows, publication retries transient access and sharing errors for up to
+about two seconds. The complete staging directory remains intact during retries.
+A persistent error still fails import; the retry does not change permissions.
 
 Each `.unity` and `.prefab` file becomes a separate `XRScene` in the startup
 world. This also applies to loose scene and prefab targets. The scene name uses
@@ -161,7 +166,10 @@ Set `AllowPartialImport: true` to keep available content when visual dependencie
 are missing. Missing material references use a lit magenta fallback in the same
 renderer slot. Missing prefab instances are skipped. Material overrides without a drawable
 FBX slot are reported and omitted; supported slots remain intact. Missing textures use the
-material converter's default input. Diagnostics keep the source GUID and
+material converter's default input. FBX prefab instances with unsupported coordinate
+settings are omitted before geometry import, with a source diagnostic. Supported sibling
+models remain available. Strict imports still reject these coordinate settings.
+Diagnostics keep the source GUID and
 property, and the manifest reports `PartialVisual` instead of complete visual
 conversion. The default is `false` for strict imports.
 
@@ -286,7 +294,7 @@ Current limits are important: the `.anim` path imports serialized clip curves, b
 
 Generic Unity materials import their common base color and main texture data when standard properties such as `_BaseColor`, `_Color`, `_BaseMap`, and `_MainTex` are present.
 
-Recognized Poiyomi Toon 9.3.64 and lilToon materials are converted to XRENGINE's forward-plus Uber shader path. The converter maps supported texture slots, scalar properties, color properties, feature toggles, transparency mode, alpha cutoff, culling mode, and texture transforms into engine material parameters.
+Recognized Poiyomi Toon 9.2.66, 9.2.79, and 9.3.64 and lilToon materials are converted to XRENGINE's forward-plus Uber shader path. The converter maps supported texture slots, scalar properties, color properties, feature toggles, transparency mode, alpha cutoff, culling mode, and texture transforms into engine material parameters.
 
 Supported conversion categories include:
 
@@ -311,6 +319,101 @@ Shader-specific parity is still incremental. Failed Poiyomi/lilToon conversions 
 
 The Poiyomi baseline keeps toon ramps, first/second shade maps, metallic/smoothness data, rim color/masks, and dissolve noise/mask/edge inputs in independent sampler slots. UV0-UV3 are available to the uber path. If a mesh lacks an authored UV channel, conversion reports the mismatch and rendering falls back to UV0, or (0,0) when the mesh has no UVs. TextureImporter color-space, normal/data role, alpha, wrapping, filtering, mip, bias, and anisotropy settings are carried into runtime textures. Explicitly disabled Poiyomi sections stay out of the compiled uber variant even when Unity retains dormant texture assignments.
 
+### Source Color And Cubemap Composition
+
+Poiyomi conversion reads the source project's color-space setting. In a Linear
+project, ordinary `Color` properties use the source sRGB-to-linear transfer.
+`HDR` colors stay linear unless they also have `Gamma`. Ordinary colors with
+`Gamma` stay unchanged. Alpha, `Vector`, and scalar values do not use this
+transfer. A Gamma project keeps all authored color values. Exact shader property
+declarations override the pinned catalog, including properties declared as
+vectors. The catalog supplies declarations omitted from a locked shader.
+
+`SourceToonColorSpaceNormalizer` changes a conversion copy. Raw YAML, source
+values, and descriptor metadata remain available for diagnostics. The bounded
+opaque Standard converter also converts its ordinary `_Color` RGB tint in a
+Linear project.
+
+The importer sets `_SourceCubeMap` for enabled source cubemaps. Both native
+Advanced shading and canonical Uber shading apply that cubemap to base color
+before diffuse lighting and PBR evaluation. Its emission remains separate and
+is added once. The source light-mask blend uses `min(mask, lightMask)`. Generic
+engine-authored Uber materials keep their existing cubemap composition.
+Source overlays run in this order: matcap, cubemap, then view rim. A replacing
+cubemap must not overwrite a rim that the source shader applies afterward.
+
+Source matcap slots use linear texel filtering, trilinear mip filtering when
+mips are enabled, and repeat wrap, as required by the source shader's inline
+sampler. Their texture cache partition is separate from the default sampling
+policy. The material sampler name stays unchanged. Masks and other texture
+roles retain their imported sampling settings.
+Procedural source matcap coordinates convert V to the imported texture origin
+after the source texture transform and panning. Mesh-UV masks keep their existing
+imported coordinates. Native Advanced and canonical Uber use the same conversion.
+Source matcap mode 1 also reverses the horizontal cross-product axis to account
+for the source Z reflection. This basis conversion occurs before transform and
+panning. Generic engine matcaps keep their existing projection.
+
+Environmental rim conversion uses the source `_EnableEnvironmentalRim` flag.
+When it is disabled, the converted `_RimEnviroIntensity` is zero. A saved
+intensity can remain in the source material after its module is disabled;
+enabling another shared PBR feature must not activate that value.
+Enabled source rim uses `_SourceEnviroRim` and the selected reflection probes.
+It samples the prefiltered probe in the world-normal direction without box
+parallax correction. The source blur maps to the native prefilter mip range.
+The source view rim, brightness threshold, base color, mask channel, mask UV,
+and intensity control the added light. Native Advanced and canonical forward
+Uber use their existing probe selection and normalization. They do not use the
+material cubemap for this source effect. Disabled and zero-intensity rim skips
+the additional probe samples.
+The current avatar control covers blur 1 and an absent mask. Lower blur values
+need a comparison of the probe prefilter distributions. An authored source mask
+can share the main-texture sampler in Unity; the native mask currently uses its
+own imported sampler. These cases need separate parity validation.
+
+### Source Emission Fluorescence
+
+Each source emission slot stores `_EmissionFluorescence` in
+`_EmissionSlotSamplingN.w`. Native Advanced and canonical Uber multiply that
+slot's emission by `mix(1, clamp((1 - direct) * sqrt(direct), 0, 1), strength)`.
+`direct` is the source primary light color after minimum brightness,
+monochromatic, cap, multiplier, and addition controls. It does not include
+shadow visibility or ambient occlusion. Zero strength retains the previous
+emission result. This operation does not change other emission sources.
+
+The serialized prefab cache version invalidates output that lacks this mapping.
+
+### Source Hair Anisotropy
+
+Enabled Poiyomi `_EnableAniso` uses dedicated source parameters. It does not
+reuse the engine's `_Anisotropy` PBR lobe. The importer carries two strand
+strengths, powers, offsets, direction switches, tints, and theme indices. It
+also carries base-color replacement, additive strength, normal blend, shadow
+mask, light color mix, and base color mix. Native Advanced and canonical Uber
+apply the source base-color replacement before diffuse and PBR shading. They
+add the strand light after the source BRDF. The imported coordinate frame
+reflects the source Z axis, so the strand cross products use the corresponding
+reversed signs.
+
+An unassigned anisotropy color map uses the source fallback `(1, 1, 1, 0)`.
+Assigned anisotropy maps, global masks, and toon edges fail source conversion
+with a diagnostic until those paths have an exact GPU implementation. The
+serialized prefab cache version invalidates output without this source stage.
+
+### Authored Source Ambient Lighting
+
+`WorldSettings.AmbientSphericalHarmonicsEnabled` makes authored SH authoritative
+for source stylized diffuse lighting. Both native Advanced and canonical Uber
+apply those coefficients through the source lighting model. They do not add
+probe diffuse a second time. Enabled zero coefficients mean black authored
+ambient. The enable flag controls this rule, not the coefficient magnitude.
+
+Probe specular reflections, clearcoat, and environmental rim remain active.
+With authored SH disabled, source materials retain engine probe diffuse.
+Generic PBR, including lighting mode 6, retains its probe lighting behavior.
+Use a matching environment, camera, light, and post-processing setup when
+comparing an imported material against Unity.
+
 ### Lossless Material Metadata
 
 `UnityMaterialDocumentParser` is reusable by any Unity shader converter. It preserves shader references, render queues, old and new keyword layouts, disabled passes, override tags, texture transforms, scalar/vector/string properties, and unrecognized serialized fields. `UnityTextureImportDocumentParser` preserves sampling metadata from TextureImporter `.meta` files, including color space, normal/alpha interpretation, wrapping, filtering, mips, anisotropy, and 2D/array/cube shape.
@@ -319,7 +422,19 @@ The Poiyomi baseline keeps toon ramps, first/second shade maps, metallic/smoothn
 
 ## Poiyomi and lilToon Detection
 
-Poiyomi Toon conversion is pinned to the cataloged 9.3.64 shader. Unlocked materials are recognized by the pinned shader GUID or exact source evidence. Optimizer-generated materials can be recognized through their `OriginalShaderGUID` override tag even when the generated shader has a different path. Renamed animated properties retain both their serialized generated-shader name and original semantic binding.
+Poiyomi Toon conversion accepts verified 9.2.66 and 9.2.79 sources and the
+cataloged 9.3.64 source. The two 9.2 releases share a shader GUID, so their exact
+source version marker is required. An `OriginalShaderGUID` override tag supplies
+the original identity for an optimizer-generated shader. A 9.2 GUID without a
+version marker cannot select the ambiguous 9.3 signature path. An explicit
+unsupported version remains unsupported even when its GUID matches.
+
+The 9.2 sources use the common native Uber mappings. Color conversion reads
+their source shader declarations instead of the 9.3 catalog's color flags.
+The descriptor and conversion report retain the exact source version. Active
+9.2 controls without a mapping produce diagnostics. This does not accept every
+version in the advertised legacy bundle. Renamed animated properties retain
+both their serialized generated-shader name and original semantic binding.
 
 lilToon detection checks canonical `lilToon/Shader/` shader paths, shader text markers such as `_lilToonVersion`, and a property-based fallback for common lilToon feature properties.
 
@@ -362,6 +477,12 @@ policy, and local/remote authority flags are diagnosed as intentional loss.
 Future interaction support should feed one native physics-chain interaction
 and authority contract so local and replicated commands do not create separate
 simulation models.
+
+Imported chains retain their saved enabled state and can simulate in edit mode.
+The unit-world physics-chain fixture switch does not disable imported chains.
+Restoring an avatar root transform does not reset particle history. For static
+image comparisons, save and disable the imported chains, take a new baseline,
+then restore their enabled states after the comparison.
 
 Pipeline-manager components are intentionally ignored. Unknown
 `MonoBehaviour` documents are summarized with script identity, local file ID,

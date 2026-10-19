@@ -16,7 +16,7 @@ public static partial class SerializedMaterialImporter
         int directionMode = GetInt(document, "_LightingDirectionMode");
         int shadingMode = GetInt(document, "_LightingMode");
         if (colorMode != 0 && colorMode != 2 || directionMode != 0 ||
-            shadingMode != 0 && shadingMode != 2 && shadingMode != 5 ||
+            shadingMode != 0 && shadingMode != 1 && shadingMode != 2 && shadingMode != 5 ||
             GetInt(document, "_LightingMapMode") > 2 ||
             document.TryGetPositive("_LightingForceColorEnabled") ||
             shadingMode == 2 && HasExternalTexture(document, "_LightingDetailShadowMaps"))
@@ -26,7 +26,7 @@ public static partial class SerializedMaterialImporter
                 $"Source light option on '{document.Name}' uses approximate Uber shading.",
                 colorMode != 0 && colorMode != 2 ? "_LightingColorMode" :
                 directionMode != 0 ? "_LightingDirectionMode" :
-                shadingMode != 0 && shadingMode != 2 && shadingMode != 5 ? "_LightingMode" :
+                shadingMode != 0 && shadingMode != 1 && shadingMode != 2 && shadingMode != 5 ? "_LightingMode" :
                 GetInt(document, "_LightingMapMode") > 2 ? "_LightingMapMode" :
                 document.TryGetPositive("_LightingForceColorEnabled")
                     ? "_LightingForceColorEnabled" : "_LightingDetailShadowMaps");
@@ -56,6 +56,8 @@ public static partial class SerializedMaterialImporter
         SetVector4(material, "_SourceWrappedColor",
             document.TryGetVector("_LightingWrappedColor", out Vector4 wrappedColor)
                 ? wrappedColor : Vector4.One);
+        if (shadingMode == 1)
+            BindSourceMultilayerParameters(material, document);
         AddDiagnostic(diagnostics, warnings,
             MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
             $"Source lighting on '{document.Name}' uses authored world SH when enabled and constant ambient otherwise. Engine point and spot lights use per-pixel additive evaluation and engine attenuation. Unity vertex-light assignment and light cookies require separate source data.",

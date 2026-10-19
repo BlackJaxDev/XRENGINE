@@ -180,6 +180,8 @@ internal sealed partial class VulkanCommandRuntime
         scoped in VulkanRecordedCommandInheritance inheritance)
         => policyAllowsReuse && !CommandChainBenchmarkForceRerecord &&
             chain.SecondaryCommandBufferExecutable &&
+            (_configuredResourceRuntime is not { } resources ||
+             resources.AreCommandFrameDataAllocationsOpen(chain.SecondaryCommandBuffer)) &&
             preparedKeysMatch &&
             chain.RecordedIndirectSecondaryContract ==
                 contract &&

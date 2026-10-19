@@ -1,8 +1,8 @@
 # Jax2031 Unity And Advanced Vulkan Parity
 
 Date: 2026-10-08
-Last updated: 2026-10-15
-Status: Both prefab routes pass the focused Advanced shading, live-edit, probe diffuse GI, and first local-light checks. Release continuous capture completes on both routes with bounded target memory. Compute output bindings retire after capture, and recording cost recovers after removal. Frame-data reservations still need an owner lifetime contract for long runs. Model bounds draw on both routes, old gizmo stencil is cleared each frame, and the default-on blendshape filter is implemented. SDR screenshot display transfer matches composited output on both routes. The saved harness state is preserved. Matched Unity visual parity and production frame-time acceptance remain open.
+Last updated: 2026-10-17
+Status: Both prefab routes have matched front, oblique, and back captures in Release Vulkan with the Advanced pipeline. The optional Unity reflection filter preserves seven mip levels and passes the recorded probe comparisons. Residual surface-image differences remain. The startup resize-policy mismatch is fixed; both routes pass bounded startup and resize checks. The exact rare cold-secondary trigger did not recur. The saved harness state is preserved. Production frame-time acceptance remains open.
 
 Architecture: [Advanced Render Pipeline](../../../architecture/rendering/advanced-render-pipeline.md), [Mesh Submission Strategies](../../../architecture/rendering/mesh-submission-strategies.md), [Uber Shader Varianting](../../../architecture/rendering/uber-shader-varianting.md)
 Code work: [Unity Poiyomi Advanced Parity TODO](../../todo/rendering/unity-poiyomi-advanced-parity-todo.md)
@@ -11,7 +11,7 @@ Validation: [Jax2031 Advanced Parity Validation](../../testing/rendering/jax2031
 
 ## Scope And Evidence Limits
 
-The source is `<unity-project-root>/Assets/Avatars/JAX/Mine/jax2031 (1).prefab`. The visual reference is the Unity image supplied by the user. The source inspection uses the saved prefab and material assets. It does not establish the current unsaved Unity scene state, preview lighting, or final active renderer set.
+The source is `<unity-project-root>/Assets/Avatars/JAX/Mine/jax2031 (1).prefab`. The initial visual reference is the Unity image supplied by the user. The initial source inspection uses the saved prefab and material assets. It does not establish the unsaved Unity scene state or preview lighting. The matched comparison recorded below uses a separate controlled Unity fixture with the exact saved prefab.
 
 The initial review did not change engine code, tests, or Unity assets. It built and ran the current workspace, including changes that were present before the review. It used an isolated ImGui unit-testing editor session named `jax2031-parity-vulkan`. The implementation follow-up is recorded below. All owned sessions are stopped.
 
@@ -2589,3 +2589,1797 @@ Evidence prefixes are `realtime-owned-clean-native` and
 binary. The native CPU dump is incomplete and is not a timing distribution.
 The [validation table](../../testing/rendering/jax2031-advanced-parity-validation.md#release-continuous-capture-result)
 records the workload and remaining acceptance limits.
+
+## 2026-10-16 Capture Reservation And Convolution Work
+
+The resumed investigation separates logical draw-slot ownership from physical
+mapped ranges. Stable component/face output IDs stop replacement capture targets
+from creating new families. Active capture tokens close on deactivation or
+destruction. Family guards delay logical slot reuse until prepared and native
+readers end. Frequency ranges retain exact contributors. Generic eager uniform
+ranges retain renderer ownership and peak capacity until renderer teardown.
+
+Native command reset or destruction releases allocation readers. Retirement
+invalidates the exact command and its recorded parents. Cached primary, UI,
+mesh, and indirect reuse must reject closed allocations. Uniform-array
+certificates remain structural; selected payloads require exact allocation
+identity and a write or command reader.
+
+Compatible IBL mip targets and private materials now survive successive capture
+generations. The writer receipt still gates source and output replacement.
+Compatibility includes mip count, shader object identity, source type, and
+prefilter source dimension. This removes a repeated resource rebuild. It does
+not establish the final frame-time gain without a runtime measurement.
+
+The preliminary native session cannot serve as performance evidence. Its prefab
+scene initially remained hidden. After activation, the renderer entered a
+terminal `MeshMaterialization` state at frame 40,287 with 27 mesh requests.
+Completed desktop presents stopped at 38,986. Front and oblique captures were
+black. The time-state tool did not expose this renderer-local terminal state;
+the render profiler did.
+
+The reported 5.2 ms was the final frame duration, not the watchdog limit. Source
+inspection found a 30-second interval with no new completed mesh preparation
+signature across deferred frames. No watchdog override was present. The timeout
+replaced the earlier request detail with a generic message. The diagnostic now
+preserves that detail and the request counts. A fresh session is required.
+
+The first narrow Vulkan build found one local-name conflict and five nullable
+warnings. These were corrected. The next narrow Release build passed with zero
+warnings and zero errors. An isolated editor build overlapped a token API edit
+and used an earlier rendering assembly; it failed before launch. Subsequent
+validation must use a complete build after source edits stop.
+
+The complete isolated Release build then passed with zero warnings and errors.
+The next native startup again failed before capture. Completed presentations
+stopped at 26,594, with one unavailable request out of 14. The new diagnostic
+identifies `Horns`, material `Mat_Glow 5`, and reports no compatible Vulkan
+program. Front, later front, and oblique PNGs are black. No probe measurements
+were started in this terminal session.
+
+The producer pipeline is present. Request normalization creates the exact
+pipeline context before materialization. Planner entry succeeds; the renderer
+returns the pending result. The material binds the authored `UberShader.frag`.
+Its transparent mode 3 fails Native Uber preflight as expected and must use
+forward shading. That preflight result does not establish the cause of the
+program failure. No current shader-failure log identifies the cause. Pending
+mesh diagnostics now include the backend stage, failure reason, and detail,
+plus wrapper activity and link readiness, for the next startup check.
+
+That check identifies a fragment compile failure. The Horns program is active
+and link-ready, but its backend stage is `Failed`. The compiler reports
+`UberShader:8728: syntax error, unexpected DOT, expecting COMMA or SEMICOLON`.
+Completed presentations stop at 28,841. All three viewed captures remain black.
+The exact line belongs to expanded GLSL. The next isolated launch enables
+`XRE_VULKAN_SHADER_DIAGNOSTICS_DIR` to retain compiler inputs in task scratch.
+Direct reflection calls did not execute because MCP could not convert the
+`XRShader` argument. They did not alter the live material.
+
+The retained compiler input identifies the invalid declaration:
+`float XREngine_AutoUniforms_Fragment_Material_Instance.FarPlaneDist;`.
+`XRENGINE_PointLegacyShadowReceiver` in `ForwardLighting.glsl` declares a field
+named `FarPlaneDist`. The Uber source also declares that global uniform. The
+old name-based replacement changed the struct field declaration into a uniform
+access. It did not distinguish declarations from global references.
+
+Uniform qualification now collects the emitted names and scans source tokens
+once before it inserts generated blocks. It preserves struct bodies, comments,
+strings, and member access across spaces or comments. This fixes the observed
+syntax failure without changing the authored shadow structure or material.
+Local shadowing and preprocessor-aware scope analysis remain separate limits.
+The full isolated Release build passes with zero warnings and errors. A fresh
+native startup is in progress; it has not yet established runtime acceptance.
+
+The corrected shader starts successfully in the native route. After texture
+warmup, 125 textures have no pending transitions, active uploads, or validation
+failures. Viewed front and oblique captures show normal skin, hair, and clothing
+colors. Initial shadow-descriptor failures stop increasing at 36.
+
+An unprofiled 30-second window records 46.81 completed presents per second
+without a probe and 26.20 with one continuous Advanced probe (128-pixel faces,
+16-pixel irradiance). Capture version reaches 207. Reservations stay at 64
+entries and 20,128 bytes during this short run. This does not meet the long-run
+acceptance check. The detailed profile is intrusive and cannot supply a causal
+before/after performance comparison. Its retirement drain P50/P95/P99 is
+2.49/38.33/45.32 ms. Slow frames release many buffers, images, and descriptor
+pools; no single long native call or frame-slot wait explains the cost.
+
+Probe removal stops rendering at frame 25,484. The exact failure is
+`capture owner 1 is closed` during the frame-wide reservation check. The
+operation stream still contains capture work queued before removal. The
+manifest correctly rejects that owner, but the caller treats the rejection as
+a terminal pipeline failure. The named session was stopped. No independent
+shutdown fault appeared in its logs.
+
+The correction rejects the whole unsubmitted frame with a typed retry. It
+settles the frame's output receipts and preserves native allocation readers
+until command reset. Mesh preparation exits when its frozen capture owner
+closes. Prepared mesh ingress now copies the frozen context owner into each
+draw, including cached cohort paths. This closes a separate ownership gap.
+The next runtime check must cover removal, restart, and a surviving second
+probe before further throughput measurements.
+
+The next native check keeps desktop presentation active after one of two probes
+stops. The surviving probe advances from version 30 to 194. Reservations fall
+from 91 entries and 24,112 bytes to 64 entries and 20,128 bytes. After both probes
+are removed, they settle at 34 entries and 14,800 bytes. The initial desktop
+baseline is 32 entries and 8,944 bytes. The difference can include retained
+renderer capacity; this check does not prove complete physical reclamation.
+Viewed front and oblique images retain the full avatar. No terminal frame
+failure occurs during removal.
+
+Restart fails in that check. Deactivation cancels the realtime timer, but
+activation does not restart it when `RealtimeCapture` remains enabled. The
+correction starts the timer on activation and marks capture resources dirty
+after IBL teardown. Capture waits while that teardown is queued. A fresh
+runtime check must confirm the correction.
+
+The gated retirement trace attributes 142,228 of 146,432 accepted buffer
+retirements (97.1%) to `ResourcePlanner`. Retirement stops after probe removal.
+These are enqueue counts, not live allocation counts or completed native frees.
+Compute transient cleanup is ruled out: the current descriptor preparation
+returns no temporary uniform buffers, and the transient allocator has no callers.
+Persistent compute uniform buffers reuse their capacity. The next trace must
+separate empty planner seeds, changed allocation shapes, and state-cache
+eviction before a physical resource reuse change is selected.
+
+The corrected timer passes the native restart and removal check. With two
+probes active, reservations are 91 entries and 24,112 bytes. Deactivating one
+probe reduces them to 64 entries and 20,128 bytes; the second probe reaches
+version 28. Reactivation restores 91 entries, and both versions advance to
+21 and 40. Removing the first probe leaves the second active through version
+62. Removing both leaves 34 entries and 14,800 bytes. Desktop presents reach
+13,616 with no terminal failure. Viewed front and oblique images retain the
+avatar. The next source also invalidates old IBL retry jobs when teardown is
+requested and blocks new convolution while teardown is queued.
+
+The expanded trace reaches 704 planner misses. All 23 sampled physical builds
+start from an empty seed; 21 allocate 75 buffer groups. The samples contain
+18 light-probe capture contexts, four desktop contexts, and one startup preview.
+There are no capacity-eviction records. Face target replacement causes the
+capture misses: successful IBL generation releases the source cubemap and all
+six face targets, and the next capture recreates them. Desktop misses are
+separate probe-array registry publications. Same-sized texture replacement does
+not change the allocation signature, but an empty seed still rebuilds storage.
+
+The next correction retains the complete source cubemap and face targets while
+realtime capture is active. Existing writer and IBL-consumer receipts guard the
+next write. Static capture keeps its optional release policy. Turning realtime
+capture off releases the set on the render thread after pending work settles;
+the callback checks whether capture restarted before it releases anything.
+Actual release invalidates capture resources so that a queued intermediate face
+restarts at face zero. IBL teardown also releases the retained source set.
+Exact planner keys remain unchanged. Desktop internal-buffer reuse remains a
+separate candidate; it needs allocator ownership and write-order guarantees.
+
+The source-target retention build passes component and realtime-property
+stop/restart controls. After component restart, versions reach 32 and 59.
+After `RealtimeCapture` is disabled and enabled, they reach 64 and 94.
+The surviving probe reaches 125 after the other is removed. Removing both
+leaves 34 reservations and 14,800 bytes, with 17,339 completed presents and no
+terminal failure. Viewed front and oblique images retain the avatar.
+
+In this run, sampled replacements 64 through 320 are desktop contexts. The
+previous run sampled capture contexts at replacements 64 through 512. This
+supports the face-target reuse correction, but sampled logs do not prove zero
+intermittent capture misses. Run durations differ, so total counts are not a
+controlled rate comparison. Desktop publication still allocates 75 buffer groups
+from empty planner seeds. A separate run with diagnostics disabled must measure
+the frame-time gain.
+
+Review of the desktop donor option finds a synchronization requirement beyond
+reference counting. First-use buffer barriers currently start at
+`TopOfPipe/None`. Reused storage needs a full-range first-use barrier from
+`AllCommands` and `MemoryRead | MemoryWrite` to the graph's actual first use.
+The barrier must execute on replay. The first donor path must stay on the same
+actual graphics queue; a matching queue-family index is insufficient when the
+secondary graphics queue is active. It must also prevent an old cached primary
+without that barrier from running after adoption. This wider change remains
+open pending the target-reuse performance result.
+
+The native run with diagnostics disabled records 45.92 FPS without a probe,
+32.43 FPS with a fixed probe, and 36.80 FPS after moving the probe. Fixed and
+moved windows publish 2.72 and 2.98 updates per second. The prior fixed result
+was 26.20 FPS. The capture settings remain 128-pixel faces, 16-pixel irradiance,
+and a 100 ms request interval. Detailed profiles reduce retirement P95 from
+38.330 to 19.723 ms and mean retired buffers per frame from 52.74 to 13.44.
+Matching workload hashes support the comparison; separate sessions and profile
+overhead limit causal timing claims.
+
+Capture reaches version 546. Reservations stabilize at 93 entries and 21,488
+bytes in the fixed and moved profile windows. Planned image storage stays at
+636.64 MiB and returns to 616.40 MiB after capture stops. Removing the probe
+leaves 34 reservations and 14,800 bytes. The recovery window records 53.37 FPS.
+There is no renderer terminal. This is still below the long-run update target.
+
+The first separate GPU-stage diagnostic returns no timing history for either
+the desktop or an active probe. Source inspection identifies the missing launch
+gate: `XRE_GPU_TIMESTAMP_DENSE=1`. The two profiler preferences alone cannot
+enable Vulkan command timestamps. Clean performance profiles force that flag
+off. A separate diagnostic launch must enable the flag and render statistics;
+throughput windows must keep it disabled.
+
+The Assimp validation launch imports the Unity prefab with `AssimpOnly`. Its
+import log records the base FBX through Assimp. All 125 textures settle before
+probe checks. Normal component restart, realtime-property restart, three rapid
+inactive/active cycles, and a four-second timer expiry followed by restart all
+preserve publication. Two active probes retain 91 reservations and 24,112 bytes.
+The surviving probe reaches version 183 after the first is removed. Removing
+both leaves 34 reservations and 14,800 bytes at 26,343 completed presents.
+There is no terminal failure.
+
+Standard Vulkan validation reports zero errors before and after these checks.
+Warning count changes from 15 to 16. The added warning repeats the existing
+`WARNING-Shader-OutputNotConsumed` message for vertex attribute location 2.
+Loader message counts do not change. Synchronization validation is disabled;
+these results do not establish synchronization-validation acceptance.
+
+Review of the long-run measurement finds that `CaptureVersion` is an attempt
+generation, not a completion count. Rejected writers can leave gaps. Earlier
+reported update counts and rates therefore measure generation changes. Their
+desktop presentation rates remain valid. `CompletedIblPublicationCount` now
+increases only when a valid completed IBL writer becomes the active output.
+The counter persists across stop and restart for one component lifetime. The
+next build and long-run scripts must use this counter for completion acceptance.
+
+The counter build passes with zero warnings and errors. Assimp settles all
+125 textures, with one owned editor process. Its unprofiled baseline records
+46.76 FPS. The fixed-probe window records 31.99 FPS and 82 completed IBL
+publications in 30.10 seconds (2.724 per second). This rate uses the new
+completion counter. Capture generation happens to advance by the same amount
+in this window. Warm capture retains 64 reservations, 20,128 reserved bytes,
+and 636.64 MiB of planned image storage. There is no terminal failure.
+
+Assimp fixed and moved CPU profiles report a rejected frame package on 320
+frames each. `FrameLifecycle.SnapshotAndReset` resets this counter each frame.
+Its producer is `BackendReadyFramePackageValidator`, before command execution.
+Affected rows have zero Vulkan output-submission and pipeline-queue rejections.
+Presents and IBL publication continue. The saved evidence does not contain the
+exact validation mismatch. The sticky earlier `RetryFrame` detail also appears
+in baseline rows and cannot explain these events. Classify them as recoverable
+admission failures with an unresolved reason, not as GPU submission failures or
+proved harmless deferrals. A diagnostic must capture `LastRenderDeclineReason`
+or the rate-limited `RenderFramePackage.ValidationMismatch` warning.
+
+During the Assimp long run, the user reports a visible stall about once per
+second and simultaneous FPS text disappearance. Stable reservations do not
+establish smooth frame pacing or correct UI output. The CPU retirement spikes
+are a possible stall cause; they do not explain the missing text by themselves.
+The FPS text belongs to the editor's screen-space canvas. Capture viewports
+disable UI rendering and exclude screen-space UI collection. Direct collection
+of the FPS canvas by a capture face is therefore ruled out in source.
+
+A desktop or nested UI package rejection could skip the UI command before
+execution. `XRViewport` does not use its separate overlay path when UI belongs
+to the main pipeline. This is a candidate, not a confirmed cause: the aggregate
+rejection count does not identify the affected pipeline. Compare capture on/off
+and obtain the exact rejected package and reason before changing this path.
+Keep the native long-run repeat pending while this user-reported failure is
+investigated.
+
+The Assimp resource run completes 7,025 successful IBL publications. All 114
+samples after five minutes contain 64 reservations and 20,128 reserved bytes.
+Planned image storage stays at 633.75 MiB. Native allocation bytes fluctuate
+between 4.05 and 5.07 GB. After removal, reservations and image storage return
+to the saved baseline: 34 entries, 14,800 bytes, and 616.40 MiB. Native bytes
+settle at 2.94 GB versus 2.85 GB before capture; 36 pending retirement records
+remain. There is no terminal fault. This supports bounded reservations, not
+complete native reclamation or smooth frame pacing. The current session stays
+open for the user-reported stall and UI-flicker investigation.
+
+The user confirms that both the stalls and FPS text flicker stop after probe
+removal in the same session. The failure depends on active capture in this
+control. Investigate capture-related frame spikes and desktop/UI admission.
+
+The live capture-on control repeatedly reads `DescriptorGenerationMismatch`
+from desktop Advanced pipeline instance 1. Adjacent samples report one rejected
+frame package. Nested UI pipeline instance 2 has no decline reason, and the
+FPS text stays active with 505 characters. After probe removal, sampled package
+rejections return to zero and both pipeline decline reasons remain clear.
+This supports skipped desktop command execution as the UI-flicker cause.
+Trace probe descriptor mutation against frame-package publication before
+changing the validator or adding an overlay fallback.
+
+Source review finds that viewport and canvas collection publish staged imports
+into the active registry while the previous frame can still render. Probe
+replacement stages unbinds and rebinds in separate calls. Collection can publish
+a temporary removal between those calls, so even same-size replacement can
+change descriptor revisions. The correction moves active import publication
+to command-collection swap. It retains the prepared generation, verifies its
+old revisions, commits imports, and seals only the unpublished package's two
+registry revision fields against that exact commit receipt. All other identity
+and canonical data stay unchanged. Pending private generations keep their
+existing materialization path. Package rejection also invokes the existing
+independent UI path while preserving scene failure.
+
+The corrected Release build has zero warnings and errors. The Assimp control
+records 17 samples before capture, 54 during capture, and 19 after removal.
+All samples have zero rejected packages and no desktop or UI decline reason.
+The active window completes 889 presents in 30.5 seconds. The FPS text stays
+active with 505 characters. Three viewed UI-inclusive screenshots show both
+the avatar and HUD. This supports the package correction; sparse screenshots
+cannot exclude every short visual fault.
+
+Capture cost remains high. Render-thread CPU history reports a 23.844 ms mean
+and 69.267 ms maximum during capture, versus 13.954 and 22.901 ms after removal.
+The 54 active retirement samples have a 5.020 ms mean, 18.240 ms P95, and
+20.460 ms maximum. The off controls stay below 0.020 ms. Active samples include
+929 buffer and 846 image retirements. These are sparse samples, not a complete
+frame distribution. Keep Native performance and long-run acceptance pending.
+Inspect redundant physical allocation and storage replacement before changing
+allocator sharing or synchronization.
+
+Source inspection confirms duplicate buffer storage. `UpdatePlan` excludes
+external buffers, but still allocates internal buffers whose pipeline factory
+has already supplied a concrete registry owner. Graph publication and native
+compute use that registry buffer first. They do not use the same-name planner
+copy. The narrow correction excludes concrete registry-owned buffers from
+physical allocation and applies the same rule in pending allocator validation.
+Descriptors, planner keys, barriers, and actual native ownership stay unchanged.
+Review finds no other production consumer that requires these duplicate groups.
+The live registry has 75 buffer records, but the current MCP serializer cannot
+classify every record. Measure the allocation and retirement change at runtime.
+The physical allocation signature also records whether each buffer requires
+planner-owned storage. This covers same-descriptor owner addition and removal.
+It does not hash the concrete buffer identity. The first build exposed one
+nullable-flow warning from an existing unnecessary null-conditional registry
+read; that read now follows the non-null registry contract. Rebuild before
+final validation.
+
+The first isolated launch omitted unit-testing mode. It reached the empty main
+scene with 12 tracked textures, but never requested the prefab import. Its
+bounded warmup expired without a renderer fault. Discard this run as feature
+evidence. Restart with the same settings and `--unit-testing`; confirm the
+prefab scene and all 125 textures before measuring capture.
+
+The corrected launch uses unit-testing mode. Its final Release build includes
+the ownership signature and nullable-flow correction, with zero warnings and
+errors. Assimp settles all 125 textures. Its 52 capture-on samples have no
+rejected packages or desktop/UI decline reason. FPS text remains active and
+nonempty. Sampled buffer retirements fall from 929 to 53 compared with the prior
+54-sample control. Image retirements remain similar, at 828 versus 846. Mean
+retirement drain changes from 5.020 to 4.560 ms; P95 stays near 18.3 ms. These
+sparse samples confirm the duplicate-buffer fix but not a stall fix.
+
+The next change targets internal image storage across desktop registry updates.
+Use a fresh allocator and barrier plan, with exact current external bindings.
+Only compatible internal images from the same output can transfer ownership.
+Review finds a preparation boundary that must change: borrowed-image exclusions
+are cleared before native binding freeze. A later failure can then destroy
+borrowed images during cleanup. Keep those exclusions until successful scope
+publication. Reject reuse across multiple owners or graphics/compute overlap.
+
+The saved control also identifies a separate baseline cost. All three windows
+rebuild the Advanced scene publication with `registration_changed` gate
+failures. Mean swap work stays near 14 ms per frame with capture off or on.
+This does not explain the probe-specific retirement spikes. Keep these costs
+separate when comparing the next build.
+
+A separate unprofiled Assimp window measures 45.91 FPS before capture and
+31.85 FPS during capture. The active window completes 88 IBL publications in
+30.11 seconds. Full CPU profiles then record 2,101 baseline frames and 1,866
+capture frames. These profiles add measurement cost; do not treat their frame
+rates as unprofiled throughput. Baseline retirement drain has a 0.047 ms P95
+and 0.284 ms maximum. Active drain has a 19.077 ms P95 and 34.118 ms maximum.
+The active profile records 20,011 image retirements, 1,209 buffer retirements,
+and 345 physical-plan cache misses. Presentation interval P95 increases from
+25.280 to 135.496 ms. The full profile confirms the image-retirement problem.
+Evidence: `reports/buffer-owner-assimp-final-profile-summary.json` under the
+current ignored validation run.
+
+The active owner census has no ResourcePlanner buffer groups. It has 56 image
+owner names, with 255 live images and 43 pending images. Several Advanced
+targets each have ten live images and three pending images. Removal restores
+34 frame-data reservations and 14,800 reserved bytes. Four allocators remain,
+versus three at baseline; the extra allocator has no planned images. This is
+not evidence of complete native reclamation.
+
+Image-reuse review requires a desktop WSI execution contract. The frame planner's
+resolved queue-overlap mode does not prove the actual execution queue. Require
+the desktop WSI target driver, a MainViewport context, and no OpenXR or VR path.
+Require a strictly superseded donor key from the same published table. If an
+auto-exposure image is borrowed, preserve its current history without copying
+retained history over it. Complete these guards before runtime validation.
+
+The guards are implemented and pass focused lifetime review. The Release build
+has zero warnings and errors. The Assimp prefab settles all 125 textures with
+standard Vulkan validation, synchronization validation, and the debug messenger
+enabled. Before probe creation, validation has zero errors. Warning identities
+are loader messages and `Shader-OutputNotConsumed`. Keep this baseline when
+checking capture controls; cumulative startup warnings are not capture errors.
+
+The Assimp synchronization-validation run passes two-probe ownership, activation,
+realtime restart, three rapid restart cycles, timed stop/restart, and removal.
+Validation errors remain zero. Warnings increase from 15 to 16 with the same
+`Shader-OutputNotConsumed` identity; no new synchronization hazard is reported.
+Reservations change from 91 with two probes to 64 with one and 34 after removal.
+Viewed front, oblique, and post-removal images show the complete avatar.
+
+Image-reuse effectiveness is still unproved. One active probe has 212 live
+ResourcePlanner images. Read-only inspection identifies a possible failed gate:
+the metadata filter keys results by descriptor revision. A probe binding change
+can produce a new filtered pass array. The graph compiler caches by reference,
+so an equivalent graph can have a different object identity and fail the donor
+check. The image census alone does not prove this cause. Next, record donor
+eligibility reasons in a bounded diagnostic run. Preserve exact graph and
+ownership checks; a matching hash alone cannot authorize image reuse.
+
+The user requested a stop before the clean performance repeat. The validation-
+disabled launch ended during texture warmup, before probe creation. It supplies
+no throughput evidence for the image-reuse patch. The owned editor session is
+stopped. Keep the image performance check, final both-route validation, and
+native 7,000-publication run open. No tests were added, changed, or run.
+
+## 2026-10-17 Image Reuse And Capture Frame Times
+
+The bounded diagnostic run settles all 125 Assimp textures before capture.
+Seven sampled MainViewport donor attempts accept the source and reuse 56 of
+58 image groups. Nine sampled MainViewport scope misses select a donor; one
+reports a pipeline or metadata reference mismatch. Capture contexts reject
+this desktop-only donor path as expected. The 30-second active control has
+zero sampled frame-package rejections and no desktop or UI decline reason.
+
+This rules out a general graph-reference rejection in the measured workload.
+Do not replace the exact donor check or redesign filter publication based on
+the earlier hypothesis. The prior image-reuse patch had no completed clean
+performance repeat. Measure that patch with diagnostics disabled before
+assigning a remaining stall cause. The diagnostic now records donor selection,
+eligibility failure, and actual reused image counts under the existing flag.
+
+The same active window has 56 retirement samples with a 0.090 ms mean,
+0.190 ms P95, and 0.220 ms maximum drain. The earlier buffer-only control had
+a 4.557 ms mean and 18.306 ms P95. The new samples contain 27 image retirements.
+This supports the image-retention fix, but sparse diagnostic samples are not
+a full frame-time distribution. A separate run with diagnostics disabled must
+confirm throughput and frame pacing. The two non-reused MainViewport groups
+are consistent with the externally owned probe arrays, which must retain their
+current external bindings. Keep capture-context donor expansion out of scope
+unless measured remaining cost requires it.
+
+The clean Assimp run disables validation and retirement diagnostics. Its
+30-second baseline, fixed-probe, and moved-probe windows measure 53.43, 37.75,
+and 43.33 FPS. Fixed and moved capture complete 143 and 158 IBL publications,
+or 4.75 and 5.25 per second. The 128/16-pixel sizes and 100 ms request interval
+stay unchanged. These are desktop editor results, not a production VR budget.
+
+Separate full CPU profiles confirm the frame-time improvement. Fixed capture
+has 2,218 frames, retirement P95/P99/maximum of 1.247/1.535/4.719 ms, and
+presentation interval P95/P99/maximum of 33.144/36.435/46.863 ms. The earlier
+buffer-only profile had a 135.496 ms presentation P95 and 19.077 ms retirement
+P95. Image retirements fall from 20,011 to 1,131 despite more new profile frames.
+Moved capture has 2,413 frames, retirement P95/P99/maximum of
+1.220/1.454/2.293 ms, and presentation interval P95/P99/maximum of
+31.668/34.635/45.940 ms. Both active profiles have zero rejected frame packages.
+The profiles add measurement cost; keep their frame intervals separate from
+unprofiled throughput. Active reservations are 93 entries and 21,488 bytes in
+this camera/control sequence. Check the post-removal value and long-run bound.
+
+Assimp returns to 51.02 FPS after removal. Its separate removed profile has
+retirement P95/P99/maximum of 0.190/0.208/0.447 ms, zero physical-plan misses,
+and zero image or buffer retirements. Planned images return to 616.40 MiB.
+Reservations settle at 63 entries and 16,160 bytes, above the cold 32 entries
+and 8,944 bytes. This short check does not establish complete reclamation.
+Live renderers can retain ordinary draw-slot capacity after capture stops.
+Closed capture allocations can also remain while authoring or native command
+readers hold them. Aggregate reservation counts do not distinguish these cases;
+the long-run check must establish a bound rather than assume the cold count.
+Viewed active front, oblique, and HUD-inclusive images show the avatar and
+FPS text. All 57 active HUD samples have zero rejected packages, no main/UI
+decline reason, and nonempty FPS text. No terminal fault occurs.
+
+NativeOnly then loads the same prefab and settles all 125 textures. With
+standard and synchronization validation enabled, the ownership control passes
+two probes, activation and realtime restart, rapid restart, timed stop/restart,
+and removal. Validation errors stay at zero. Warnings change from 15 to 16,
+with the existing `Shader-OutputNotConsumed` identity and no new synchronization
+message. Reservations return through 91, 64, and 91 to 34 entries/14,800 bytes
+after both probes are removed. Presents continue and no terminal fault occurs.
+Active front and oblique images were viewed and show the complete avatar.
+
+The validation-disabled NativeOnly comparison uses the same binary. Baseline,
+fixed, and moved windows measure 57.81, 45.99, and 45.21 FPS. Fixed and moved
+capture complete 169 and 167 IBL publications, or 5.62 and 5.56 per second.
+Active reservations stay at 64 entries/20,128 bytes. Separate fixed and moved
+profiles have presentation interval P95/P99/maximum of
+27.241/30.322/40.829 ms and 27.584/31.007/42.664 ms. Retirement P95 is
+0.983 and 1.001 ms. Both active profiles have zero rejected frame packages.
+The fixed profile contains 2,693 frames and 1,308 image retirements. Viewed
+irradiance and prefilter outputs have no nonfinite RGB samples. Irradiance is
+nonzero, and the prefilter output contains recognizable avatar features.
+
+Native removal restores 56.71 FPS, 34 reservations/14,800 bytes, and
+616.40 MiB of planned images. Its removed profile has retirement
+P95/P99/maximum of 0.163/0.179/0.376 ms and presentation interval
+P95/P99/maximum of 22.370/24.990/37.652 ms. There are no physical-plan misses
+or rejected frame packages. Viewed baseline, active, and post-removal front
+and oblique images show the avatar. The HUD-inclusive active image shows FPS
+text. All 64 active HUD samples have zero rejected packages, no main/UI decline,
+and nonempty text. The same warmed clean session then starts the long-run check.
+
+The NativeOnly long run completes 7,019 valid IBL publications
+(final stopped counter) in about 21 minutes. Completed presentations increase
+from 40,920 to 99,207. All 59 samples after the first minute have exactly
+64 reservations, 20,128 reserved bytes, and 633.747 MiB of planned images.
+Native allocation samples range from 2,783,822,128 to 2,785,510,448 bytes,
+with no growth trend or terminal fault. This exceeds the old reservation-limit
+range without reducing capture quality or update cadence.
+
+After probe removal, reservations return to 34 entries/14,800 bytes and planned
+images return to 616.397 MiB. Initial settled native allocation is
+2,763,404,848 bytes, versus 2,763,339,312 before capture. The 36 pending
+retirement records remain, so this proves a bounded workload and reservation
+recovery, not complete native reclamation. Evidence is in
+`reports/probe-long-run-donor-clean-native-7000.ndjson` under the existing
+ignored validation run. The earlier Assimp 7,025-publication reservation run
+predates the final image-retention change; the current Assimp short-run
+correctness, image, HUD, and frame-time checks cover that final change.
+
+Final front and oblique images were viewed and preserve the avatar. The targeted
+clean-session log scan has no terminal, device-loss, fatal, unhandled-exception,
+or VUID entries. Validation was disabled for this run; the separate validation-
+enabled controls supply the synchronization evidence. The owned editor session
+is stopped. The Release build has zero warnings and errors, and the final diff
+check passes. No tests were added, changed, or run. Existing staging is preserved;
+new diagnostic and documentation changes remain unstaged.
+
+## 2026-10-17 Baseline Scene Publication CPU Cost
+
+The next investigation targets repeated scene publication with capture off.
+Earlier profiles show about 14 ms of swap work and repeated
+`registration_changed` outcomes. This outcome covers several row checks; it
+does not prove that registration membership changes each frame. Membership
+generation changes on registration addition or removal and has separate
+baseline validation. Preserve those distinctions during diagnosis.
+
+First classify the exact failing row predicate with bounded, opt-in diagnostics.
+Keep the current source, geometry, material, texture, bounds, and command
+witnesses intact. Use existing clean Assimp and Native profile data as the
+baseline. After a confirmed fix, compare clean Release throughput and separate
+CPU profiles for both prefab routes, with capture off and active. Check live
+edits and visibility changes so an apparent cache improvement cannot hide stale
+scene content. This work does not authorize test source changes.
+
+The saved clean profiles have no unchanged-row passes or prepared hits in the
+capture-off, active, and removed control windows. Assimp commit totals are
+5,302.6/13,230.2/5,333.4 ms across 435/1,071/445 calls, respectively. These
+give 12.19/12.35/11.99 ms per call. Native totals are
+5,818.9/14,504.7/5,694.4 ms across 525/1,315/516 calls, or
+11.08/11.03/11.04 ms per call. Sparse scoped samples place most of the cost
+in `ScenePlan` (9.803 to 15.398 ms); these samples are not a distribution.
+
+The diagnostic Release build succeeds with zero warnings and errors. With
+capture off, the actual Assimp prefab reaches 125 tracked textures with no
+pending textures, uploads, or validation failures. Every sampled registration
+failure reports `CommittedMaterialPlanNotReused` at row 2, source key 1152,
+registration index 1. The cache, layout, and handle are valid. Plan, cache,
+and live material revisions all equal `6/7/3/3/1`. This identifies the failed
+predicate; it does not yet establish why the material plan cannot be reused.
+
+An 18-second capture-off control records 1,001 publication calls and failures,
+zero unchanged publications, and zero prepared hits. Commit time totals
+10,873.574 ms (10.863 ms per call); gate time totals 63.253 ms. All 70 bounded
+diagnostic samples report the same failed row. The next diagnostic identifies
+the exact material preflight rejection while keeping admission checks intact.
+
+The second diagnostic identifies `Cuffs 2`, with semantic `StandardLitTexture`,
+as the blocked row. After initial import registration, repeated material
+preflight samples report `MaterialSourceNotReusable`. The existing eligibility
+check allows untextured materials and `NativeUberV1` only. Stable material
+versions cannot admit this textured standard material. The correction must
+check its current texture sources against committed bindings before reuse;
+removing the eligibility guard alone is not valid.
+
+The correction admits `StandardLitTextureV1` only after it captures the same
+four legacy and six engine-surface texture roles as the full plan. It compares
+surface values and layout, then checks exact logical bindings, source content
+generations, texture metadata, and sampler state. Existing material revisions,
+variants, handles, headers, and render state remain checked. Prepared verdict
+consumption repeats the binding check. Incomplete texture witnesses still
+force the full plan.
+
+Independent source review found no missing source or header check and no
+steady-state allocation in the new branch. The snapshot and records are value
+types; fixed publisher scratch is cleared in `finally`. Initial parameter-name
+cache lookups already occur in the full plan before reuse. Runtime acceptance
+remains separate from this source review.
+
+The corrected Assimp diagnostic reaches 125 settled textures. Its 12-second
+capture-off window records 1,807 calls, 1,807 gate passes, zero failures, and
+1,807 unchanged publications. It records 1,806 prepared hits and one miss.
+Plan-and-commit time totals 43.174 ms (0.024 ms per call), compared with
+10.863 ms per call in the earlier current diagnostic. Gate time totals
+1,449.025 ms (0.802 ms per call). Keep this gate cost separate from the commit
+cost. Live-edit controls and clean both-route measurements remain pending.
+
+Assimp live controls pass with capture off. Setting and restoring tank
+detail-normal strength each produces two gate failures followed by at least
+495 passes. Node visibility off and on each produce two failures followed by
+at least 475 passes. Moving and restoring the prefab produce four and two
+failures, followed by 456 and 489 passes. A settled control then records
+627 passes with no failures. All edits are restored. Viewed front and oblique
+images show the full avatar and HUD through Vulkan, Advanced, and the GPU
+indirect submission route. These controls establish scene invalidation and
+recovery; texture-source mutation needs a separate supported editor control.
+
+The clean Assimp run disables scene-publication diagnostics. Capture off
+completes 4,630 presentations in 30.118 seconds (153.73 FPS), versus 53.43 FPS
+in the saved baseline. Fixed capture completes 3,406 presentations in
+30.120 seconds (113.08 FPS), versus 37.75 FPS. It completes 186 valid IBL
+publications (6.175 per second), versus 4.75 per second. The request interval
+remains 100 ms. Detailed CPU profiles run separately from these cadence windows.
+
+Moved Assimp capture completes 3,303 presentations in 30.088 seconds
+(109.78 FPS) and 166 valid IBL publications (5.517 per second). Fixed and moved
+capture retain 64 reservations, 20,128 reserved bytes, and 636.639 MiB of
+planned images. After capture stops, planned images return to 616.397 MiB.
+Viewed irradiance and prefilter images are nonblack and have no nonfinite
+samples. The stopped front image preserves the avatar.
+
+Native loads the same prefab with 125 settled textures. The standard-texture
+cuff material's roughness changes from 0 to 0.35, and tank detail-normal
+strength changes from 2 to 0. Readback confirms both edits. The edited window
+records four gate failures followed by 590 passes. Restoring both values
+records four failures followed by 1,574 passes, with original values confirmed.
+Viewed front and oblique images during the edits show the full avatar and HUD.
+
+Native node and transform controls also pass. Each transform change and restore
+produces two gate failures, followed by 540 and 521 passes. The final settled
+window has 707 passes and zero failures. All controls restore their original
+values. The clean Native capture-off window completes 4,647 presentations in
+30.109 seconds (154.34 FPS). Fixed capture completes 3,179 presentations in
+30.097 seconds (105.62 FPS) and 170 valid IBL publications (5.648 per second).
+The saved capture-off and fixed baselines are 57.81 and 45.99 FPS. Only the
+owned editor runs at the route switch and during measured cadence windows.
+
+All clean cadence windows pass the unchanged-row gate with zero rejected frame
+packages. Assimp gate-plus-commit means are 0.665/0.685/0.710/0.647 ms per
+call for capture off, fixed, moved, and removed. Native means are
+0.604/0.649/0.630/0.563 ms. Assimp returns to 160.27 FPS after removal.
+Native moved capture reaches 109.56 FPS and 6.013 completed IBL publications
+per second; removal returns it to 169.13 FPS. Both routes restore
+34 reservations/14,800 bytes and 616.397 MiB of planned images after removal.
+The validation document records the complete comparison and profile percentiles.
+
+Final active Native front and oblique images were viewed and show the avatar
+and HUD. The final readback has no terminal fault, probe, or rejected frame
+package. The log scan has no renderer-terminal, terminal-fault, fatal,
+unhandled-exception, or VUID entry. Vulkan validation is disabled in these clean
+runs; this scan does not establish a new validation-layer result. Direct
+texture-binding replacement was not exercised because no typed MCP setter was
+available. The exact source-check review and live scalar controls cover the
+implemented path within that limit.
+
+Evidence remains in the existing ignored validation run:
+`reports/scene-publication-baseline.md`,
+`reports/scene-pub-{assimp,native}-clean-*`, and
+`logs/scene-pub-{assimp,native}-clean-profiles/`. The Release build has zero
+warnings and errors. The owned editor is stopped. No tests were added, changed,
+or run. Existing staging is preserved, and the new changes remain unstaged.
+
+## 2026-10-17 Live Texture Replacement
+
+The next check replaces live material textures on both prefab import routes.
+The previous CPU-cost repeat covered scalar values, visibility, and transforms,
+but had no typed MCP texture-binding setter. Add exact model-component, LOD,
+material, and binding targeting. Expose legacy and semantic surface bindings
+with live texture IDs so each change can be read back and restored. Resolve
+borrowed textures from the active world and reject ambiguous identities. Keep
+sampler names and shared source objects unchanged.
+
+Use the actual Unity prefab through Assimp and Native FBX, Release, Vulkan,
+Advanced, and the GPU indirect route. Check replacement and restoration for
+the standard-texture cuff material and native-Uber tank. Reject invalid slots,
+texture IDs, and stale material guards without mutation. Exercise nullable
+legacy slots and repeated replacements with capture active. Check scene
+publication invalidation and reuse, view edited and restored front and oblique
+images, and inspect Vulkan synchronization diagnostics. Keep original binding
+references for restoration and do not save the source assets.
+
+The first Release build starts with Vulkan synchronization validation enabled.
+Assimp reaches 125 settled textures. The cuff surface and legacy replacements
+pass exact-ID readback and receipt restoration. The first null-slot check stops
+on a PowerShell assertion: a typed string parameter converts null to an empty
+string, and empty pipeline output compares differently from null. Fix the scratch
+harness to preserve JSON null and compare null readback explicitly. The cleanup
+restores the original reference. This is not an engine restore failure.
+
+Publication failures during the edit windows do not persist after restoration.
+A separate eight-second settled window records 872 passes from 872 calls and
+872 unchanged publications. A full-avatar cuff image is too distant to prove
+the visual change. Use a closer view for the final repeat.
+
+The MCP registry also exposes nullable parameters as non-null JSON types. Change
+its schema construction to include null for nullable inputs while retaining the
+required-argument list. Reject empty texture IDs as invalid GUIDs; only JSON null
+clears a legacy slot. Review confirms that the MCP hosts pass the schema through
+and that these allocations occur only during registry construction. Rebuild
+before the complete two-route repeat.
+
+The second Release build has zero warnings and errors. Its live registry reports
+`texture_id` as `string` or null. Assimp passes exact-ID replacement, restoration,
+invalid-input rejection, and consumed-receipt rejection. These checks do not yet
+prove visual replacement.
+
+The cuff test needs two corrections. `Cuffs 2` belongs to `Acc - Leg Cuffs`,
+outside the chest camera view. Also, `StandardLitTextureSurfaceBinding` requires
+strict reference identity between each legacy slot and its semantic role.
+Changing one collection alone breaks native admission. The normal material
+inspector has the same defect: `AssignTextureToBinding` changes only the legacy
+slot. Keep the strict reader and fix the edit path to preserve both references.
+Do not repair aliases per frame or relax native admission.
+
+The tank check remains unresolved. The exact `CLO Tank` visibility control removes
+and restores the blue garment. Replacing or clearing its `_MainTex` leaves that
+garment visually unchanged. The source encoder reads the current texture list,
+indexed replacement advances binding revisions, and native source reuse compares
+the current resource references. The authored detail-color strength is zero.
+Inspect a submitted GPU frame before changing resource publication. Front bangs
+also differ between saved images, but the checks do not yet establish a relation
+to the texture edits.
+
+A shared StandardLit edit helper now updates the legacy and semantic aliases as
+one guarded edit. The MCP setter and material inspector use this helper. It
+checks sampler, wrapping, color space, usage, and the complete source contract.
+A failed write restores both prior aliases. Receipt restore and Undo/Redo use
+the same transaction. Null is rejected for this shader family because removing
+a declared role changes the source contract. Generic native-Uber legacy slots
+retain their explicit null control. Runtime validation of the new helper follows.
+
+RenderDoc rules out a missing Tank texture publication in the captured frames.
+The visibility sample resolves draw 12 to material 9:1. The replacement frame
+resolves main texture 115:1 through matching lookup generations to resident
+descriptor 115. The exported descriptor image contains the selected magenta
+and gray donor texture. Sampler 18:1 also resolves to a resident descriptor.
+The cleared frame has the expected invalid texture handle and white fallback.
+Only the Tank main-texture role changes between those material records.
+
+The submitted dissolve values also rule out dissolve replacing this color:
+progress and continuous animation are zero, so the source function has zero
+dissolve and edge blend. The authored global theme creates a blue tint. This
+explains the hue but does not establish why replacement leaves the image
+apparently unchanged. Continue at shader execution before changing publication.
+
+The paired-helper Release build has zero warnings and errors. Assimp imports the
+actual prefab and reaches 125 settled textures. Selecting either the legacy
+albedo or semantic BaseColor slot updates both references to the donor. Explicit
+null is rejected without mutation. Receipt restore, Undo, and Redo each move
+both aliases together. Viewed leg images do not yet establish a visible cuff
+color change; check visibility and occlusion before using that image as proof.
+
+A separate native-Uber Face control proves a rendered replacement in Assimp.
+Replacing `MAT FACE 3` main texture with the same donor changes the skin face
+to a dark textured mask. Receipt restore returns the original face. Both images
+were viewed. This rules out a general failure to apply native-Uber texture edits.
+The Tank behavior remains a separate material-specific check.
+
+A targeted RenderDoc compute trace resolves the unchanged Tank main-texture
+image. The shader samples donor descriptor 115 with sampler 18 and receives
+the donor texel. An active matcap then replaces the base color with a blend
+weight of approximately 0.999999. The main texture has almost no contribution
+to the final albedo. This occurs inside native compute shading, before late
+raster passes. It is not a stale texture publication or a later duplicate draw.
+Keep the authored material state and use a contributing texture for visual checks.
+
+With the paired helper, Assimp also completes six replacement/restore cycles
+for the cuff pair and Tank during continuous probe capture. The probe publishes
+78 IBL updates. Publication records 1,516 gate calls, 1,466 passes, 50 failures
+during edits, and 1,463 unchanged publications. No terminal fault occurs.
+The cuff node is active and has a model mesh, but hide/show controls do not
+identify visible cuff pixels in the sampled views. This limits the cuff result
+to binding integrity; the Face control supplies rendered replacement evidence.
+
+The active Tank matcap is engine slot 1 (`_Matcap1Tex`, role 42), imported from
+source `_Matcap2`. Its replacement factor is one. Both source and native code
+multiply that factor by the mask and 0.999999. The trace therefore matches
+the importer contract; no converter or publisher correction is required for
+this result. The RenderDoc replay session is closed.
+
+The traced Tank sample is pixel (960,698) at dispatch 238. Replay classification
+reorders tile records, so the traced pixel differs from the first requested
+coordinate; its draw 12 and material 9:1 identity is verified. The main sample
+is (0.172363,0.172363,0.172363,1). After the matcap replacement, albedo is
+(0.1266854,0.2026149,0.3461350,1). The capture uses the regular 64-byte push
+block. Evidence is in `renderdoc/tank-exact-trace.json`,
+`renderdoc/tank-shader238.spirv.txt`, and `renderdoc/pink-set3-binding11.bin`
+under the existing ignored run.
+
+Native FBX repeats the same prefab checks with the paired-helper Release binary.
+It reaches 125 settled textures and passes paired cuff replacement, null
+rejection, receipt restore, Undo, and Redo. The Face donor visibly changes the
+face and restore returns the skin. Invalid Tank targets, explicit null, and
+repeated restore checks also pass. An additional Tank control replaces the
+active `_Matcap1Tex` legacy slot 41 from `T_Matcap_MC (5)` to
+`T_Matcap_MC (18)`. Viewed images change from blue to dark navy and return to
+blue after receipt restore. This supplies visible Tank replacement evidence.
+
+Native continuous capture completes six cuff, Tank, and Face replacement/restore
+cycles and publishes 106 IBL updates. Of 1,618 commit calls, 1,544 pass the
+unchanged-row gate and 74 fail during edits. After an eight-second settle, the
+next 568 calls all pass and reuse unchanged publication. That window has zero
+rejected frame packages.
+
+The first Matcap image review incorrectly identified missing front hair. A
+pixel comparison of the head region (820,140) to (1110,420) finds 1,130 changed
+pixels out of 81,200, with only 166 above an eight-level channel difference.
+Mean RGB difference is 0.045 byte levels. The hair outline and forehead opening
+match. Four fixed-camera images before another edit, three during the edit,
+and four after restore retain the same outline. The small changes are consistent
+with active animated glitter. No missing-mesh defect is established by this
+control, so no additional rendering patch is justified.
+
+After that control, a six-second Native steady window completes 552 of 552
+frames with no deferred, rejected, or failed frame. All 552 publication gates
+pass. It has zero rejected frame packages and zero new Vulkan validation errors.
+The probe is already removed.
+
+The final paired route runs have synchronization validation enabled and zero
+cumulative Vulkan errors or rejected frame packages. Each reports 16 runtime
+validation warnings. Native records four deferred and nine rejected preparation
+outcomes during warmup. The last rejection is frame 6,486, while streaming is
+still pending near frame 6,346. Streaming settles by frame 11,360. The counts
+remain unchanged from probe start at frame 25,121 through frame 33,353. These
+are recoverable warmup outcomes, not failures from the texture edit controls.
+
+Native repeats wrong material, wrong slot, invalid and blank texture IDs, consumed
+receipt, null clear/restore, and repeated swaps on the final paired-helper build.
+Assimp guard checks use the preceding build with unchanged guard implementation;
+the final paired build repeats pair integrity, null rejection, Undo, Face visual
+replacement, and active capture. Both routes restore all edited bindings.
+No authored asset or setting is saved. The owned editor is stopped. Session logs
+are under the shared isolated-session run
+`mcp-sessions/20261017-124522-jax-texture-binding-paired/logs`. They contain no
+VUID, validation error, synchronization hazard, device loss, terminal fault,
+unhandled exception, or readiness-retry text match. No tests were added, changed,
+or run during feature validation. Existing staging is preserved.
+
+## 2026-10-17 Cuff Visibility
+
+The live texture repeat confirmed paired cuff bindings but did not identify
+visible cuff pixels. Investigate the exact `Acc - Leg Cuffs` node before changing
+rendering. Isolate it, inspect geometry, transforms, deformation, and eligibility,
+then identify any occluder. Validate visible replacement through both prefab
+routes with Vulkan, Advanced, and GPU indirect submission. Restore all temporary
+scene controls and keep source assets unchanged.
+
+Raw FBX inspection finds model `Acc - Leg Cuffs`, geometry `Circle.003`, and
+648 control points. Source bounds are X [-0.088916,0.088916],
+Y [-0.008232,0.056606], and Z [0.078342,0.111095]. The model has uniform scale
+1.188317 and a small translation. The geometry connects to a skin deformer,
+with no blendshape deformer connection. Its external material remap resolves
+to `Cuffs 2`, whose source state is opaque with alpha one. These facts do not
+yet prove visibility or a rendering defect.
+
+Native runtime isolation confirms two cuff rings near the ankles. The component
+is active and submits 850 triangles with no CPU fallback. Hiding the other 18
+model components exposes the cuffs. A paired BaseColor replacement changes them
+from dark to magenta, and receipt restore returns the original appearance.
+
+A separate fixed-camera control identifies the occluder. The magenta cuffs stay
+hidden with `SHO Geos` enabled. Disabling only that boot component exposes the
+cuffs over the thigh-highs. Disabling the thigh-highs too exposes them over skin.
+Restoring both components covers the cuffs again. Each state and texture reference
+was restored and checked. The saved outfit explains the missing cuff pixels;
+this control does not establish a mesh submission or publication defect.
+
+Source inspection also finds a separate material conversion defect. `Cuffs 2`
+uses a resolved shader that declares `Standard`, with `_NORMALMAP` enabled,
+`_BumpScale = 1`, `_Metallic = 0`, and `_Glossiness = 0.5`. Its normal texture is
+linear RGB with no green-channel inversion. The generic Unity converter loads
+only albedo and drops this normal map and the scalar material values. A bounded
+opaque Standard conversion will preserve the supported values through the
+existing standard lit-texture contract. The correction requires a new runtime
+repeat for both prefab routes.
+
+Assimp repeats the same baseline controls with the paired-binding build. Isolated
+cuffs visibly change from dark to magenta and return to dark. Disabling only the
+boots exposes the magenta cuffs on the full avatar. Both routes therefore agree
+on boot occlusion. All component states and original texture references were
+restored and checked before the corrected material build.
+
+`SerializedMaterialImporter.Standard.cs` now converts the supported opaque
+Standard surface through `CreateLitPbrTextureMaterial`. It requires a resolved
+`Shader "Standard"` declaration, supported opaque state, identity UVs, and
+compatible linear RGB normal metadata. It maps albedo, normal, tint, metallic,
+and `1 - _Glossiness` roughness. Unsupported features retain generic conversion
+with a warning. Source pass-specific lighting and culling also have an explicit
+scope warning. The prefab producer version advances so old cached material
+output can be rebuilt. No runtime material contract is weakened.
+
+The corrected Release build completes with zero compiler warnings and errors.
+Native imports the prefab with 131 tracked textures and settles with no pending
+transition or active upload. `Cuffs 2` has matching BaseColor and Normal references
+in the legacy and semantic collections. The source normal is linear, has Normal
+usage, and has no green-channel inversion.
+
+With the boots hidden, a visible albedo donor exposes the source fishnet normal
+pattern on both cuff rings. Replacing Normal with the compatible live
+`Tank_Normal_OpenGL` texture changes that detail. Receipt restore returns the
+fishnet pattern. Restoring albedo and the boots returns the original ankle view.
+Viewed images and binding readbacks pass these Native controls. Vulkan
+synchronization validation reports zero errors. The Assimp and active-probe results follow below.
+
+Native also completes three live-edit cycles across cuff BaseColor and Normal,
+Tank, and Face during continuous probe capture. The probe publishes 104 IBL
+updates. All binding and receipt checks pass. The first recovery window has
+538 commit calls, 537 reuse passes, one `row_inputs_changed` miss, and zero
+rejected frame packages. After probe removal settles, a second window passes
+638 of 638 calls with zero new gate failures, rejected frame packages, or Vulkan
+validation errors. Viewed restored front and oblique avatar images retain the
+meshes and HUD. This is a short live-edit check, not a new performance benchmark
+or long-duration soak.
+
+Native numeric readback confirms BaseColor (1,1,1), Opacity 1, Roughness 0.5,
+Metallic 0, and NormalMapMode 0. Wider front and oblique images also retain the
+full avatar, saved outfit, and Vulkan HUD after all temporary controls return
+to their original values.
+
+Assimp passes the corrected material controls on the same Release binary. It
+settles 131 textures with empty queues. Both visible BaseColor and Normal swaps
+restore through their receipts. Both alias pairs and the saved boot state match
+their original values. Numeric readback matches Native. Viewed wide front and
+oblique images preserve the restored avatar and HUD.
+
+The Assimp probe repeat completes three cycles across cuff BaseColor and Normal,
+Tank, and Face. Its edit window records 1,428 commit calls, 1,380 reuse passes,
+and 48 expected edit misses. The settled window passes 549 of 549 calls, with
+zero failures or rejected frame packages. Native's edit window records 1,506
+calls, 1,458 passes, and 48 edit misses. Both routes retain zero Vulkan validation
+errors and 16 cumulative warnings. No VUID, synchronization hazard, device loss,
+fatal error, or unhandled exception appears in the copied logs.
+
+The source material correction is complete for this supported surface. Cuff
+occlusion requires no geometry or rendering change. The saved outfit remains
+unchanged. All temporary texture references and component states are restored,
+and the owned `jax-cuff-standard` session is stopped. No tests were added,
+modified, or run during this live feature validation. Existing staging is kept.
+
+Evidence remains in the existing ignored task run. Binding, uniform, streaming,
+and profiler reports use `mcp-output/animation-cuffs-standard-{native,assimp}-...`.
+Native color/normal images are timestamped 14:09:30/36; restored wide views are
+14:15:02/05. Assimp color/normal images are 14:18:53/59; restored wide views are
+14:20:24/27. Copied engine logs are under `logs/xrengine_2026-10-17_14-05-11_pid59448`
+and `logs/xrengine_2026-10-17_14-15-42_pid44788`. The build log is
+`logs/cuff-standard-build.log`. These short controls do not establish a new
+performance benchmark, a long-duration soak, or complete Unity Standard pass
+parity. The import guide records the bounded conversion and its warnings.
+
+## Source Color And Cubemap Comparison, 2026-10-17
+
+The original Unity image has darker clothing and smaller bright areas than the
+engine validation images. The engine fixture is not a matched lighting reference.
+Its settings disable the skybox, probes, and shadows. Runtime readback confirms
+one white directional light at intensity 1, rotation (-55,-120,0) degrees,
+manual exposure 1, bloom off, and AO on. The source project uses Unity
+2022.3.22f1, Linear color space, and the built-in render pipeline. The saved
+`new.unity` scene has skybox ambient and default reflections, but it does not
+prove the lighting or preview state used for the original image. Do not adjust
+source material values to compensate for this fixture difference.
+
+The image label `Target Avatar` is traced to the JaxVRCTools `AvatarManager`
+callback registered with `SceneView.duringSceneGui`. It draws `Handles.Label`
+at the selected avatar position. This identifies the original view as Unity
+SceneView. No project script found in this check configures the SceneView sky
+or lighting. The label alone does not recover those editor settings.
+
+Exact source shader inspection identifies two material defects. The active
+`Socks` material resolves to the locked shader under
+`Assets/! Juji/Clothing/OptimizedShaders/d0af2e734cc585e439a9a866b11f26b7/`.
+It declares ordinary Color properties for `_MatcapColor` and `_CubeMapColor`.
+The saved RGB values are 0.37735847 and 0.42452824, but the locked shader uses
+linear values 0.1175492 and 0.1507121. The importer copied the saved values into
+linear shader math. This made those tints about 3.21 and 2.82 times too bright.
+
+A Native runtime control changes each tint separately and then both together.
+Viewed close-leg images show the broad sock surface darken when the matcap tint
+uses the source linear value. The cubemap-only change is smaller. The combined
+control retains both changes. Every value, including alpha 1, is restored and
+checked before the new build.
+
+`SourceToonColorSpaceNormalizer` now applies the source Color/HDR/Gamma rules to
+a private conversion copy. Exact shader declarations override the pinned
+catalog. It preserves alpha, vectors, source metadata, and Gamma-project values.
+The bounded Standard converter also converts its ordinary base tint in Linear
+projects. The serialized prefab producer version advances to invalidate old
+material output.
+
+The second defect is composition order. Poiyomi applies the material cubemap to
+base color before diffuse lighting and Mochie BRDF. Native and canonical Uber
+previously blended it into final lit color. Both shader paths now use
+`_SourceCubeMap` to select source composition before lighting and PBR evaluation.
+Emission remains separate and is added once. Generic Uber composition remains
+unchanged. The source mask uses `min(mask, lightMask)`.
+
+The active Tank matcap, SDR theme adjustment, smoothness, and blend controls
+match the locked source. No separate Tank brightness defect is established in
+this comparison. The source forces trilinear matcap sampling, while imported
+bindings can use `LinearMipmapNearest`. Both active Socks matcaps have smoothness
+1 and no smoothness mask, so both paths select mip 0. This filter difference is
+ruled out for these active Socks samples. No shared texture sampler is changed.
+
+The Tank needs a separate sampler correction. Its second active matcap uses
+smoothness 0.225, with no smoothness mask, and samples LOD 6.975. The texture
+metadata selects bilinear filtering, but the locked shader overrides that
+setting with its inline trilinear-repeat sampler. The importer now uses a
+separate cache partition for source matcap slots and applies that sampler policy.
+It keeps canonical sampler names and leaves masks and other shared texture
+policies unchanged. This uses hardware mip interpolation without adding shader
+texture fetches.
+
+Review also finds and fixes a missing feature guard around the extracted
+canonical cubemap helper. Without the guard, variants with advanced PBR disabled
+would refer to uniforms removed by their feature guards. The first Release build
+passes with zero warnings and errors, but predates this guard and the matcap
+sampler correction. It is not the final validation build. No test sources or
+unit-test suites are used during this feature investigation.
+
+Fresh Unity Prefab Mode images confirm the saved outfit and small harness patch
+on the Tank. SceneView lighting on and off produces a large brightness change.
+The source scene has no authored light, while SceneView lighting off uses its
+editor light. Neither setting matches the engine's directional-light fixture.
+Front perspective and orthographic controls both show dark Socks without the
+engine's broad white edge bands. An initial inference that the first front view
+was orthographic was wrong; the projection menu confirms the control states.
+Only view controls changed. No source asset was saved.
+
+The remaining white Socks edges survive directional intensity zero and a source
+cubemap composition control. The source material retains `_RimEnviroIntensity`
+1 but sets `_EnableEnvironmentalRim` to zero. Its locked shader contains no
+environmental-rim code. `BindExactSurfaceParameters` copied that unused intensity,
+and another active PBR feature enabled the shared engine module that consumed it.
+The importer also checked the wrong enable name, `_EnableRimEnviro`.
+
+An Assimp control at directional intensity zero sets only `_RimEnviroIntensity`
+from 1 to 0. The viewed image loses the broad white edges and retains the other
+meshes and HUD. The control restores both values and verifies readback. This
+isolates the disabled module from light strength and camera projection.
+The importer now uses `_EnableEnvironmentalRim` and zeros the converted intensity
+when it is disabled. The serialized prefab producer version advances to 5.
+Raw saved values remain in source metadata. This corrects the disabled state;
+it does not establish complete parity for enabled environmental rim.
+
+Control images use `Screenshot_20261017_145802_306_...` and
+`Screenshot_20261017_145805_193_...`. Fresh Unity references use
+`unity-prefab-scene-lighting-{on,off}.png`,
+`unity-prefab-front-lighting-off.png`, and
+`unity-prefab-front-orthographic-lighting-off.png` in the existing capture folder.
+The gate-only Release build passes with zero compiler warnings and errors.
+Further source review finds a separate active Tank contribution. Its locked
+shader enables environmental rim and samples the Unity reflection probe in the
+world-normal direction. It subtracts brightness 0.07, multiplies by base color,
+clamps negative values to zero, and applies the view rim and intensity 0.26.
+The mask is white, blur is 1, width is 0.739, and sharpness is zero. Tank's
+material cubemap is disabled. The engine's old material-cubemap rim cannot
+produce this contribution when a reflection probe contains light.
+
+The source probe-rim adapter now samples the selected native prefilter in the
+normal direction without reflection or box parallax. Canonical forward Uber
+uses its selected probe array through the same direction policy. Both apply
+the source formula and mask channel/UV controls after lighting. Generic Uber
+keeps its existing rim path. A feature guard, source enable, and positive
+intensity check prevent unnecessary samples. Review corrects the use of
+`abs(dot(N,V))` and keeps base color inside the nonnegative clamp. The serialized
+prefab producer version is 6. No per-frame managed allocation is added.
+The review finds no remaining blocker for the active Tank values. It does not
+establish parity for lower blur values or an authored environmental-rim mask.
+Those cases can differ in prefilter distribution or source shared-sampler use.
+
+The no-probe fixture cannot prove this correction: its probe term is zero.
+The final validation therefore includes a temporary lit-probe control as well
+as the saved-outfit no-probe images. The final Release build uses serialized
+prefab producer version 6 and has zero compiler warnings and errors. Both actual
+prefab routes use the same binary with Vulkan, Advanced, GPU indirect submission,
+and standard plus synchronization validation. Each settles 131 tracked textures.
+Advanced admission succeeds without a downgrade or CPU fallback.
+
+Both routes confirm the linear Socks tints, alpha 1, source cubemap composition,
+and disabled environmental rim. Tank retains source rim settings
+`(1,1,0.07,0)` and intensity 0.26. Its second matcap has 512 by 512 pixels,
+10 mips, `LinearMipmapLinear` minification, and `Linear` magnification.
+Viewed front, oblique, and lower-leg images retain the saved outfit and HUD.
+The broad white Socks edges are absent.
+
+A temporary lit probe supplies a nonzero source rim. With a fixed camera,
+changing only Tank intensity from 0.26 to zero changes 854 Native pixels and
+843 Assimp pixels in the Tank crop by more than eight channel levels. Restoring
+0.26 leaves only 14 and 10 pixels above that difference threshold from the
+original images. Back views retain image integrity, but hair covers most of
+the Tank, so they do not independently prove the rim change. Readback confirms
+the restored intensity, and the temporary probe is removed on both routes.
+
+Native's settled eight-second counter window completes 804 frames and records
+805 publication reuse passes. Assimp completes 753 frames and records 753
+passes. Gate failure counts stay at 198 and 206. Native retains two deferred
+and eight rejected preparation outcomes; Assimp retains three and six. These
+warmup outcomes do not increase during the settled windows. Both routes have
+zero rejected frame packages and zero cumulative Vulkan validation errors.
+Native records 15 warnings and Assimp records 16, with ten suppressed in each
+run. The warnings concern the loader and unused shader vertex outputs.
+The Native counter window comes from a separate restart of the same final
+binary; the main Native run provides the visual and material checks.
+
+An intermediate version 5 session timed out on three screenshot requests while
+its update loop remained active. Its logs did not identify a shader error or
+Vulkan fault. A mixed shader-schema or hot-reload state was considered but not
+proved. Fresh version 6 sessions capture successfully on both routes. Do not
+treat the interim hypothesis as a diagnosed cause.
+
+The owned `jax-probe-rim-final` session is stopped. All temporary control values
+are restored. No Unity source asset is saved, and no tests are added, modified,
+or run. Fresh Unity reference images and final engine views support the five
+material corrections. Full image parity remains open until lighting,
+reflections, camera, and post-processing match. These checks do not establish
+a new performance benchmark, long-duration soak, or VR result.
+
+Reports use `mcp-output/animation-parity-rimv6-...` in the existing ignored task
+run. Native rim on/off/restored captures are timestamped 15:16:27/31/36; Assimp
+captures are 15:23:39/43/47. Native final front/oblique/Socks captures are
+15:18:01/04/06; Assimp captures are 15:23:14/16/19, with a restored front view
+at 15:25:32. Copied logs are under
+`logs/native-rimv6-xrengine_2026-10-17_15-10-50_pid78212`,
+`logs/assimp-rimv6-xrengine_2026-10-17_15-19-37_pid35024`, and
+`logs/native-counter-rimv6-xrengine_2026-10-17_15-26-25_pid12872`.
+Their scans find no VUID, validation error, synchronization hazard, device loss,
+fatal error, or unhandled exception.
+
+## Matched Unity Lighting Comparison, 2026-10-17
+
+The next comparison uses an explicit temporary Unity scene instead of inferring
+SceneView lighting from a screenshot. The source project uses the built-in
+pipeline and Linear color space. Its default procedural sky has exposure 1.3,
+ambient intensity 1, reflection intensity 1, and reflection resolution 128.
+The exact source prefab is instantiated without saving its assets. A temporary
+reflection probe captures only the sky. The reference export records ambient
+SH, direct light, camera, probe settings, and raw HDR environment data.
+
+The engine comparison uses a 1920 by 1080 viewport, vertical FOV 45 degrees,
+near/far planes 0.01/100, and a black background. The front camera is at
+(0,0.8,-2.4), with target (0,0.8,0). The oblique camera is at (0.9,0.8,-2.2).
+The white directional light has intensity 1 and forward direction
+(-0.32139385,-0.76604444,-0.5566705). Unity uses the opposite camera and light Z
+coordinates. SH coefficients use the same Z reflection. Shadows and anti-aliasing are disabled for
+the comparison. Linear tone mapping, manual exposure 1, neutral color grading,
+and disabled bloom, ambient occlusion, and atmospheric scattering remove
+unmatched post-processing. Engine PNG readback reports `LinearToSrgb` from the
+floating-point presentation source.
+
+Source review finds a diffuse-light composition error. The locked Tank, Body,
+and Face shaders derive diffuse lighting from `unity_SH`. Their reflection
+modules add specular light, not another diffuse irradiance term. Native and
+canonical source Uber instead add engine probe diffuse after source shading,
+even when authored SH is enabled. This extra term bypasses source light ramps
+and indirect-light controls. Authored SH must take precedence for source
+stylized diffuse, including enabled zero SH. Probe reflections must remain.
+The dynamic probe diffuse path with authored SH disabled and generic PBR must
+retain their behavior. Runtime acceptance of this correction is pending.
+
+The Unity export uses a temporary additive scene and a dedicated capture layer.
+An initial preview-scene attempt could not become the active scene. An initial
+camera scene mask also included an avatar from the open editor scene. Those
+images are excluded. The accepted images contain one instance of the exact
+prefab. The helper closes its temporary scene without saving source assets.
+The original editor scene stays open with its existing dirty state.
+The loaded-scene inventory finds three inactive SceneLight objects and no
+existing reflection probes. No enabled light from another scene contributes
+to the capture layer, and no existing probe competes with the temporary probe.
+
+Unity's standard equirectangular conversion uses a different azimuth from the
+engine. A direct cubemap sampler now exports the engine's longitude and latitude
+with the Unity Z reflection. A synthetic six-color cubemap verifies all six
+axes in Unity and in the decoded EXR. The verified sky export is byte-identical
+to the environment used for the old-shader engine baseline. Reflection probes
+capture the sky only, at resolution 128, with intensity 1 and no box correction.
+The later selection check confirms that the temporary Unity probe has weight
+one on the Body, Tank, and Leg Cuffs renderers. Its texture is an ARGBHalf HDR
+128 cubemap with decode values `(1,1,0,0)`. The final engine fixture uses an
+export of this actual probe texture at mip zero. The old-shader sky export
+remains a diagnostic baseline; the final comparison records the exact source
+probe. A 30-second Unity probe wait expired once. A nonblocking 120-second wait
+with player-loop updates completed and closed the temporary scene.
+
+The matched old-shader baseline still has a bright cyan tail. The active
+`NEW HAIR TAIL` source shader enables emission strength 5 and fluorescence
+0.581. Source fluorescence multiplies each emission slot by a component-wise
+function of the processed primary light color. The imported emission omitted
+that function. It now uses the spare W component in `_EmissionSlotSamplingN`
+and a shared helper in native and canonical Uber. Serialized prefab producer
+version 7 invalidates older converted materials. The source tail disables
+emission hue adjustment; its dormant saturation value is not the cause.
+Its emission texture contains 1,048,576 opaque pixels. Unity import settings
+preserve that alpha. The source alpha multiplier is therefore one, so omitted
+emission texture alpha does not explain this tail difference.
+
+The no-probe image also has warmer hair. Source theme math and saved theme
+values agree with the native implementation for these materials. Both hair
+materials use environment reflections. A separate hair-color correction is not
+supported by that control. The matched-probe comparison must determine the
+remaining difference before material code changes.
+
+The first corrected Native capture improves the tail, skin, and Tank against
+the matched reference. A Unity reflection-off control changes most avatar
+pixels by a few levels, but the boots remain brighter than the engine even
+without reflections. Reflections alone do not explain that difference.
+
+Source review identifies a separate overlay-order defect in the active `GEOs`
+boot material. Its source shader applies matcap, cubemap, then view rim.
+Native and canonical Uber instead applied rim before the source cubemap.
+Both paths now use the source order. The GEOs cubemap mask is white only in a
+small region. This is a confirmed local composition defect, not proof of the
+cause of broad boot darkness. Source theme math gives the same linear 0.01
+gray in the checked saved settings. Runtime Unity material values and GPU
+reflection inputs remain under investigation.
+
+Live Unity inspection rules out baked-probe overrides. The source scene, its
+loaded preview scene, and the temporary capture scene have no baked light
+probes, LightProbeGroup components, or LightProbeProxyVolume components.
+The boot and rear-hair renderers use BlendProbes without a proxy override.
+They therefore use the scene ambient SH. All 27 captured coefficients equal
+the source values. Saved, cloned, and rendered material values also agree;
+the checked renderers have no material property blocks.
+
+The corrected Native controls confirm that enabled zero SH remains authoritative.
+Disabling authored SH restores engine probe diffuse. Probe specular remains
+active with authored SH enabled. Setting tail fluorescence to zero restores the
+bright cyan error; restoring 0.581 restores the muted source response. The final
+Native run after the overlay-order correction admits Advanced GPU indirect
+rendering with 34 draws and 131 settled textures. Its logs contain no Vulkan
+validation error, synchronization hazard, device loss, or terminal fault.
+
+The corresponding Assimp run admits 29 draws and settles the same 131 textures.
+Its logs also pass the focused validation scan. Front-view region differences
+between the two routes remain small: mean absolute RGB differences are 0.59
+for the tail, 0.40 for the Tank, 0.36 for hair, 0.37 for skin, and 0.65 for boots
+on the 0-to-255 scale. This is route agreement, not full Unity parity.
+
+The remaining hair review finds an omitted Poiyomi anisotropic overlay.
+`_EnableAniso` controls two strand lobes, base-color replacement, and a separate
+light contribution. Generic PBR `_Anisotropy` does not implement this module.
+The native and canonical source paths now carry its active settings and apply
+it before glitter and final diffuse shading. Serialized prefab producer version
+8 invalidates the older material conversion. Runtime acceptance is in progress.
+
+The Native GPU capture confirms that GEOs has the layered matcap feature,
+intensity 2, additive blend 1, theme gray 0.01, a resident matcap texture, and
+a white mask. Probe records contain the recorded SH and valid irradiance and
+prefilter textures. The exported textures were viewed. Missing publication is
+not the cause of the dark boots.
+
+A Unity clone-only control changes Matcap2 intensity from 2 to 0. Only boot
+pixels change: 9,631 pixels in front and 10,877 in the oblique view. Their mean
+RGB drops from about 22 to 7.5. The original material stays at 2. A separate GPU
+sampler check then confirms a vertical texture-coordinate error. At UV
+`(0.5,0.2)`, Unity samples about 0.48 linear RGB while the engine samples 0.88.
+At `(0.5,0.8)`, Unity samples 0.88 while the engine samples 0.47. Horizontal
+samples agree within the source DXT1 compression difference. Mesh UVs already
+receive an import V conversion; procedural matcap UVs bypass it. The source
+matcap sample must convert V after the source texture transform and panning.
+The mesh-UV mask must retain its existing coordinates.
+
+The native and canonical source matcap paths now convert V after the source
+texture transform and panning. A preceding live Native control confirms that
+this change improves the boot crop against Unity: mean absolute RGB error
+drops from 11.47 to 10.71, and pixels with a channel difference above 32 drop
+from 1,274 to 768. The saved transform is identity and remains unchanged.
+This local improvement does not explain all remaining boot darkness.
+
+The Release build with source anisotropy completes with zero warnings and zero
+errors. Native controls show a small, measurable hair response. Against Unity,
+the masked hair crop has mean absolute RGB error 10.263 with anisotropy enabled
+and 10.401 with it disabled. These crop metrics are descriptive; silhouette
+alignment limits exact attribution. The active strand axis uses the mapped
+normal and tangent. Assimp preserves the source binormal sign, while native FBX
+reconstructs it. A numeric vertex comparison is required before a broader
+tangent-basis change. The current evidence does not justify such a change.
+
+A separate matcap mode-1 review finds a horizontal basis error. Source and
+engine both use a fragment-to-camera vector and `cross(viewDir, up)` for the
+right axis. The source-to-engine Z reflection has determinant minus one.
+It therefore reverses that cross product. For example, a source front view
+and normal `(0.3,0.4,0.866)` give horizontal projection minus 0.3, while the
+uncorrected engine gives plus 0.3. Source mode 1 now reverses this axis before
+texture transform and panning. This correction is separate from texture V
+origin conversion. Generic engine matcap coordinates keep their existing basis.
+
+The next Native restart exposes a static-probe publication failure. Advanced
+shading eventually becomes ready with 34 draws and 131 settled textures, but
+two bounded probe waits expire. A retained diagnostic probe is active and has
+the correct EXR. Its generation-attempt count exceeds 600 while capture version
+and completed-publication count remain zero. Main frames continue to advance.
+The pending output extents are 32 and 256. Destruction and quarantine are false.
+These facts rule out a missed initialization as the sole cause. They do not
+identify the failed producer or prove that GPU work completed.
+
+The failure investigation must read the renderer's GPU fence history. Successful
+authoring can cancel the retry timer, then a rejected writer can start a new
+timer and reset its attempt count. That path can explain repeated attempts
+without a terminal LightProbe warning. Do not mark invalid textures usable or
+accept no-probe images as a matched-reflection result. Evidence uses the
+`animation-unity-matcap-final-native` prefix and the isolated session log suffix
+`xrengine_2026-10-17_16-41-32_pid40520`.
+
+The captured fence-history response contains 16 of 512 retained records. All
+16 shown records report `QueueDiscard` before native submission, in their
+authoring frame. The response is truncated, so it does not classify all 512
+records or identify a specific probe rental. A prior viewport snapshot shows
+committed source frame 3,409 while the render counter exceeds 61,000. Its
+discard count exceeds 58,000. The main image was therefore held; advancing
+render counters and Advanced admission did not prove fresh scene submission.
+Paused PresentNow queue cleanup is the leading cause of the observed discards.
+The process exits unexpectedly before its PresentNow latch can be read. The
+available logs and checked Windows events contain no matching crash report.
+
+Further runs must require committed scene progress before probe validation.
+Read `present_now_terminal` and `present_now_latest_failure` from render-profiler
+diagnostics as soon as that progress stops. The stable reflection path for GPU
+fence history is `Camera.Viewports[0].Window.Renderer` from the editor camera
+component. This avoids racing the probe's temporary retry-renderer reference.
+
+The next fresh Native process restores normal submission. Its final render
+frame is 24,997 and its committed source frame is 24,995. The exact Unity probe
+becomes usable in 3.8 seconds. Both source matcap axis corrections are active,
+the saved texture transform remains identity, and all 131 textures settle.
+The final profile has no PresentNow terminal failure. Its latest failure is
+an earlier recoverable pipeline-compilation ticket at frame 17,203. The later
+commits show recovery. Validation and synchronization validation are enabled;
+there are zero errors and 16 warnings, including loader and unused-output
+warnings. The copied logs contain no synchronization or device-loss error.
+This successful restart does not identify the earlier process's original
+PresentNow failure.
+
+A later post-processing audit finds an error in the comparison fixture.
+It set linear tone mapping and exposure but left `ColorGradingSettings.Contrast`
+at its default 1. The shader multiplier is `(1 + Contrast / 100)^2`, so this
+value maps linear color `x` to `1.0201*x - 0.01005`. Channels below about
+0.009852 are clipped. This explains why dark clothes can lose detail while
+skin remains close. Neutral contrast is 0. Assimp readback confirms the
+unintended value 1 before a single-variable control. Earlier matched images
+must retain this limitation until both routes are recaptured with contrast 0.
+
+The Assimp contrast control confirms the cause. With only contrast changed
+from 1 to 0, the masked front crop mean absolute RGB difference from Unity
+falls from 10.76 to 5.32 for boots, 7.73 to 4.12 for hair, 5.14 to 3.52 for
+Tank, 6.02 to 3.71 for skin, and 8.24 to 5.00 for the tail. These values use
+the 0-to-255 scale and include raster and silhouette differences. Front,
+oblique, and back images restore dark clothing detail and the muted hair
+color. The fixture now sets contrast 0 explicitly. Linear tone mapping ignores
+gamma; tint, hue, saturation, and brightness are neutral. SDR output still adds
+small linear dither, so individual dark pixels need not equal Unity exactly.
+
+The final Native repeat also uses contrast 0 and the actual source probe
+environment. It presents new frames, settles 131 textures, and admits 34
+Advanced GPU indirect draws. Assimp admits 29 draws with the same 131 textures.
+Front, oblique, and back captures were viewed for both routes. The broad color
+mismatch is resolved. The validation document records interior image errors
+of 2.50 to 3.40 RGB levels against Unity and below one level between routes.
+Fine reflection highlight shapes and texture details still differ; the probe
+mip-zero environment is matched, but the engine builds its own higher mips.
+No material brightness compensation was applied.
+
+Both final profiles enable standard and synchronization validation and report
+zero errors. Each has 16 cumulative warnings, including loader and unused
+shader-output warnings, with ten suppressed. Neither has a PresentNow terminal
+failure. Native's final render frame is 21,751 and committed source frame is
+21,749. Assimp reaches committed source frame 15,220. The earlier held-frame
+failure does not recur in these runs. It remains unconfirmed because the
+failed process exited before its original failure ticket was captured.
+
+Final copied logs use `jax-unity-xy-final-assimp` and
+`jax-unity-xy-neutral-native`. Each set contains seven files and has no VUID,
+synchronization hazard, device loss, fatal error, or exception match. The owned
+probes and editor sessions are removed or stopped. The temporary Unity helper
+is removed after its evidence is preserved. The original dirty Unity scene
+remains open without being saved or discarded. No tests were added or run,
+and existing Git staging is preserved.
+
+## Reflection Prefilter Direction And Source Area
+
+The next source audit compares the active locked Body, Face, Hair, Socks, and
+Tank shader implementations. Their world-reflection and direct-specular
+functions match. All use probe LOD `6 * roughness`. The generic Unity
+`roughness * (1.7 - 0.7 * roughness)` remap is absent at this call site.
+The earlier source-version BRDF hypothesis is therefore ruled out for these
+active materials. Face clearcoat parameters and composition also match the
+source contract. Do not change saved material brightness or roughness to hide
+an environment-filter difference.
+
+The existing Vulkan capture exposes a 256 by 256 prefilter with nine levels.
+The final level is one texel. Its RGB value is
+`(0.1424561, 0.2172852, 0.3657227)` in linear color. This is the filtered +Y
+direction, not a direction-independent average. Every reflection direction at
+roughness 1 receives this same value. The exported mip montage confirms the
+loss of direction data as the chain reaches one texel.
+
+`CreatePrefilterTexture` now keeps the last mip at least 8 by 8 pixels and
+uses a base extent of at least 16 pixels. A 256-pixel output has six generated
+levels. The producer still spans roughness 0 through 1 across the complete
+chain. Native sampling already queries its available mip range. The canonical
+forward and mono/stereo deferred paths now do the same, replacing their fixed
+four-level scale. Irradiance keeps its existing mip policy.
+
+The equirectangular source filter also used a cubemap texel-area formula.
+At the equator of a 2048 by 1024 source, it underestimated texel area by about
+18.85 times. Where source mips are available, this selects a source LOD about
+2.12 levels too coarse. The shader now uses texture dimensions and sample
+latitude, with a pole limit at the first latitude-row center. This correction
+does not change the source material roughness scale. The shared shader-variable
+helper retains `SourceDim` because the legacy octahedral source shader still
+uses it.
+
+The isolated Release build passes with zero warnings and zero errors. Runtime
+validation and the higher-mip comparison follow below. No tests are added or
+changed during this feature check.
+
+An isolated Unity 2022.3.22f1 project exports all eight levels of the same
+128-pixel realtime sky probe. Mip zero differs from the earlier source capture
+by less than 0.000001 linear RGB per channel on average. This confirms the
+sky settings and coordinate conversion. The full prefilter comparison can
+therefore use these higher mips without changing the saved avatar project.
+The temporary exporter must not reject a negative `RenderProbe` result for
+`NoTimeSlicing`: this run completes with ID -1 and a valid realtime texture.
+The exporter checks completion and the actual texture instead.
+
+Uniform sampling over 20,000 sphere directions confirms the old native filter
+is broader than the source probe at the same source roughness. Exported Vulkan
+octahedral rows need a vertical flip for this CPU comparison. Mip-zero RGB
+RMSE is 0.00274 after that conversion, versus 0.08104 without it. The old
+one- and two-pixel endpoints cannot establish the correct roughness mapping.
+
+Local Unity headers provide a candidate mapping. The generic built-in probe
+consumer applies `f(r) = r * (1.7 - 0.7 * r)` before its six-step LOD scale.
+The active Mochie and clearcoat source bypass that remap. The environment-rim
+source applies it and must remain separate. Local HDRP producer code uses
+the inverse of `f` before GGX convolution, but that code does not prove the
+built-in realtime producer contract. Any inverse conversion must therefore
+pass the corrected-mip and avatar comparison before acceptance. It must apply
+only to source probe sampling, not BRDF alpha or direct lighting.
+
+The rebuilt Native run publishes the corrected probe in 3.8 seconds. Narrow
+property reads confirm a 256 by 256 prefilter with `SmallestMipmapLevel = 5`
+and a 2048 by 1024 source with `SmallestMipmapLevel = 11`. The source has mips,
+so the source-area correction applies to this fixture. All 131 textures settle;
+34 draws use Advanced GPU indirect submission. Front, oblique, and back images
+are captured before the roughness-conversion control. These use the
+`animation-reflection-probe-fixed-native` evidence prefix and
+`renderdoc/reflection-probe-fixed-native_frame24355.rdc` under the existing run.
+The front-view interior RGB errors are 2.49 for tail, 2.90 for Tank, 3.38 for
+hair, 2.66 for skin, and 2.80 for boots. These small changes do not alone prove
+the filter contract; the raw mip comparison remains the stronger check.
+
+A broad MCP object-property request times out while inspecting the source
+texture. Later screenshots and narrow property reads succeed. Use exact
+property paths for this inspection instead of broad texture serialization.
+
+The corrected GPU capture contains two identical 256-pixel prefilter resources.
+Both have six physical mips, ending at 8 by 8. The final mip spans linear RGB
+ranges R 0.1322 to 0.2167, G 0.1337 to 0.2881, and B 0.1232 to 0.4299. This
+confirms that the roughness-1 output retains direction data. The inspection
+session is closed after export.
+
+The source-only inverse control uses
+`2*r / (1.7 + sqrt(2.89 - 2.8*r))` with clamped `r`. It changes only the
+Mochie and clearcoat probe arguments in canonical and native Uber shading.
+Direct BRDF roughness, reflection factors, generic PBR, and environment rim
+remain unchanged. Across the sampled source roughness values, aggregate probe
+RMSE falls about 14%. At roughness 0.1 it falls from 0.0173 to 0.0103; at 0.2
+it falls from 0.0246 to 0.0128. It slightly worsens the 0.7 to 0.9 samples and
+does not change roughness 1. Do not describe this as an exact built-in Unity
+convolution. A fitted 0.8 multiplier is rejected because it lacks a source
+contract and changes the roughness-1 endpoint.
+
+A fresh Native process confirms the shader control. The front-view cheek crop
+error falls from 2.122 to 2.105 RGB levels; the skin-region interior error falls
+from 2.660 to 2.650. The full-face crop is nearly unchanged at 3.313. Other
+regions change by about 0.014 RGB levels or less against Unity. Front, oblique,
+and back views show no material regression. The conversion is retained as a
+source compatibility approximation because the low-roughness probe comparison
+improves. The image result is small and does not establish broad parity gain.
+Evidence uses `animation-reflection-probe-inverse-native` and
+`reports/reflection-highlight-native-comparison.png` under the existing run.
+
+The user reports that the original Unity reference window is broken and asks
+to close and reopen that project. The exact project process is restarted after
+preserving the saved scene file; no temporary scene-recovery files are present.
+The reopened reference window is visible and responsive. The owned temporary
+capture helper is moved out of the project's Assets directory into ignored
+evidence, with its pending request disabled. The other Unity project is not
+closed. The standalone sky-export process has exited.
+
+Final validation uses fresh NativeOnly and AssimpOnly processes with the same
+Release binary and shader sources. Both load the Unity prefab entry, settle
+131 textures, publish the probe in 3.8 seconds, and admit Advanced GPU indirect
+rendering without a final preparation deferral. Native has 34 draws and reaches
+render frame 16,646 with committed source frame 16,644. Assimp has 29 draws and
+reaches render frame 14,054 with committed source frame 14,053. Front, oblique,
+and back captures are viewed for both routes. The final comparison panel is
+`reports/reflection-highlight-final-routes.png` under the existing run.
+
+Both final processes enable standard and synchronization validation without
+RenderDoc. Each reports zero errors and 16 cumulative startup warnings, with
+ten suppressed. Neither has a PresentNow terminal failure. Old recoverable
+readiness tickets remain in history, but committed frames continue to advance.
+The earlier RenderDoc probe-content run muted validation output during capture
+and does not supply this final error check. Copied logs use
+`logs/reflection-probe-inverse-native` and
+`logs/reflection-probe-inverse-assimp`; neither scan finds a VUID, synchronization
+hazard, device loss, fatal error, or exception. The validation document records
+the final image metrics. Both scratch probes are removed, both engine sessions
+are stopped, and existing Git staging is preserved.
+
+Exact high-roughness parity remains open. Preserving Unity's filtered mip chain
+or reproducing its built-in filter would require an explicit filter convention
+for consumers. The present evidence does not justify a fitted multiplier or a
+piecewise roughness curve. These runs also do not establish a new performance
+or soak result; the user's Unity editor remains open during final captures.
+
+## 2026-10-17: High-Roughness Probe Filter Contract
+
+The remaining broad-reflection difference comes from the probe producer. The
+previous GGX output retains too much directional contrast at high source
+roughness. A constant channel and two analytic spherical patterns isolate this
+from avatar materials, source lighting, and the procedural sky. At resolution
+128, Unity final mip 6 has first- and second-order gains 0.45880 and 0.05017.
+A normalized cosine hemisphere filter has gains 2/3 and 1/4. Evaluating the
+Unity result at exact cube texel centers gives 0.49622 and 0.04525. Cube
+reconstruction contributes to the difference, but does not explain it alone.
+
+An isolated Unity 2022.3.22f1 D3D11 capture confirms three producer operations:
+
+1. Reduce captured mip 0 to mip 1 with the ordinary box filter.
+2. Build later Gaussian levels recursively. Each output samples the previous
+   filtered level with 36 taps. Tap offsets are the six half-integer positions
+   from -2.5 to 2.5 on each face-plane axis. The spacing is twice the inverse
+   source face width. For face-plane coordinates p and q, the area correction
+   is J = (1 + p*p + q*q)^(-3/2). A tap at offset (x,y) has weight
+   exp(-4*(x*x+y*y)*J*J). Normalize by the sum of weights. Extend taps across
+   the cube surface, rather than projecting the extended face radially.
+3. Resample the Gaussian chain into final cube mips. This raster step matters:
+   the final mip's own face grid adds reconstruction before material sampling.
+
+The final-to-Gaussian LOD schedule is measured independently of scene content:
+
+| Final mip | Resolution 64 | Resolution 128 | Resolution 256 |
+|---|---:|---:|---:|
+| 0 | 0 | 0 | 0 |
+| 1 | 1.0633167 | 2.0633168 | 3.0633168 |
+| 2 | 2.9842191 | 3.9842191 | 4.9842191 |
+| 3 | 4.0717735 | 5.0717735 | 6.0717735 |
+| 4 | 4.8513417 | 5.8513417 | 6.8513417 |
+| 5 | 5.4144440 | 6.4144440 | 7.4144440 |
+| 6 | 7, clamped to 6 | 7 | 8 |
+
+The last physical mip uses source LOD 7. Shared nonterminal levels shift by
+log2(resolution/128). The CPU expression that produces these constants is
+not established. The implementation owns the measured discrete convention;
+it does not fit the avatar image or change source material roughness.
+
+`ReflectionFilter = UnityRealtime` selects the new producer. GGX remains the
+default. Two private cube images alternate Gaussian writes; a third cube holds
+final resampled levels. Fixed materials and attachments keep deferred face
+commands immutable. The existing IBL writer fence protects intermediate reuse
+and destruction. Output octahedral mips sample Unity LOD 6*r*(1.7-0.7*r) on the
+canonical roughness grid. Thus canonical and native material consumers retain
+one roughness contract. The existing source-only inverse maps into that grid.
+The finite output grid still approximates Unity's final trilinear sampling.
+
+The isolated Unity processes and RenderDoc replay sessions are closed. The
+user's Unity project is unchanged. Engine GPU data and avatar validation follow
+this contract check; the validation document owns their acceptance results.
+
+The first Native RenderDoc launch loads all 131 textures and admits Advanced,
+but presentation stops before probe creation. The terminal state is
+`QueueSubmission` / `sealed-primary-recording`: dynamic UI secondary command
+recording was deferred. Render frames advance while the committed source frame
+remains 136. This is not filter validation. The owned process is stopped after
+saving its terminal state and logs. A fresh process with the same fixture
+advances both render and committed frames. Its analytic compatibility probe
+becomes usable in 4.4 seconds. The raw GPU capture is kept for the independent
+filter comparison.
+
+The explicit producer capture identifies a Vulkan ordering defect. Final-cube
+resolve draws begin at event 3470. Source cube mip-zero draws begin later, at
+3597. At resolve event 3513, the sampled source face is black. Its writer at
+3608 then produces the expected analytic value (0.5, 0.3650, 0.4836). The final
+cube and octahedral output remain black. Thus successful writer completion and
+`HasUsableIblTextures` did not prove correct filter contents.
+
+Deferred mesh materialization passed only query-bracket state to
+`MeshDrawOp.Rent`. It omitted the context's submission-order flag and the active
+required producer batch. Canonical opaque sorting could then sort dependent
+filter draws by target identity. The resource dependency graph runs after this
+sort and cannot reconstruct the lost source order. The fix preserves mesh
+submission order for query brackets, explicit context blocks, and required
+producer batches. These producer draws use primary recording. On a target
+change, that path ends the previous render scope and transitions sampled images
+before the next draw. The compatibility filter uses distinct targets, so this
+path supplies its write-to-read synchronization.
+
+The batch API still captures callback-issued explicit barriers before deferred
+mesh requests are materialized. This separate API limitation needs a source
+sequence that covers both operation kinds. It does not replace the per-draw
+image transitions used by this filter. The code todo records that follow-up.
+
+The next producer capture confirms the corrected order: source cube writes
+start at event 2870, the alternate cube at 2921, final resolve at 3273, and
+octahedral conversion at 3624. All used outputs contain nonzero analytic data.
+The numeric comparison then exposes a second defect. Successive cube writes
+reverse face rows. Populated even mips have one orientation; odd mips have the
+other. Resolve mip 3 mainly reads raw mip 5, so its standard-orientation sphere
+comparison has RMSE 0.096 and an incorrect second-order gain. Its actual
+`SourceLevel` is 5.0717735 and the bound full cube views are correct. The raw
+Gaussian gains remain smooth when each level is inspected with its own row
+orientation. This rules out the kernel, sampler LOD range, and material value
+as causes of that discontinuity.
+
+All five cube writers now convert the raster plane to texture-row coordinates
+once, before applying the shared cube-face direction function. They use the
+existing `FramebufferTextureYDirection` uniform and explicitly request
+`ClipSpacePolicy` uniforms. This follows both supported Vulkan viewport
+directions; a fixed Vulkan-only flip would fail with a positive-height viewport.
+The cube-to-octahedral pass retains its existing output convention.
+
+The corrected analytic capture has standard face orientation at all resolved
+levels. Comparing exact cube texel centers with the Unity export gives linear
+RGB RMSE 0.000181, 0.000205, 0.000252, 0.000302, 0.000338, 0.000412, and
+0.000192 for mips 0 through 6. The red channel stays between 0.4995 and 0.5.
+An earlier full-sphere CPU cube comparison overstated the roughest-level error:
+its per-face bilinear sampler clamps at face boundaries, while the Unity export
+uses seamless GPU cube sampling. The texel-center check removes that difference.
+The final GPU octahedral output has analytic roughness-1 RMSE 0.00411. Its
+8-by-8 grid remains a separate reconstruction approximation.
+
+The corrected actual-sky producer capture cannot be replayed. The first replay
+attempt times out; the second, with a longer startup bound, exits with a
+RenderDoc access violation. No replay remains active. A normal presented-frame
+capture of the already-published result is used next, rather than repeating the
+failed explicit producer capture. This tooling failure is separate from the
+editor, whose render and committed source frames continue to advance.
+
+The settled actual-sky capture opens normally. Its two published octahedral
+images are byte-identical at all six levels. High-roughness error falls sharply,
+but source roughness 0.1 and 0.2 worsen from 0.0103/0.01278 to 0.01550/0.02036.
+A Unity-only reconstruction of the six canonical mip centers reproduces those
+errors at 0.01573/0.02034. Thus the nonlinear six-level storage grid loses source
+mip knots; the cube filter itself is correct. A scalar adjustment cannot restore
+the lost levels. The Native diagnostic avatar remains intact and advances
+committed frames with zero standard/synchronization validation errors, but this
+six-level output is not accepted as the final parity result.
+
+The output contract is changed to preserve Unity mip levels 0 through 6 directly.
+The base octahedral extent is at least 512; the final mip remains at least 8 by 8.
+An immutable convention travels with the completed image generation and its
+retained profile. Advanced probe records carry a convention flag. Classic probe
+parameters carry the convention and maximum mip in an explicit final vector.
+Receivers map roughness per selected probe. Generic PBR uses the Unity forward
+remap; source Mochie and clearcoat use direct source LOD; normal blur uses its
+direct source scale. GGX keeps its existing rules. Shared array layers still
+require equal physical extents and mip counts, with an early diagnostic for
+incompatible layouts. No implicit regridding or CPU fallback is added.
+
+The first refreshed seven-level diagnostic launch reaches the known startup
+presentation terminal before any probe is created. At render frame 4589,
+`QueueSubmission` reports deferred dynamic UI secondary recording; the committed
+source frame remains 4587 and 29 texture transitions are pending. This attempt
+does not validate the filter. Its state and logs are retained, and the owned
+process is stopped before one retry of the same binary.
+
+The retry publishes `UnityMip` with a 512-by-512 output and last mip 6. A settled
+frame capture retains that seven-level result. A live switch to GGX publishes
+generation 2 with `PerceptualRoughness`, extent 256, and last mip 5. Switching
+back publishes generation 3 with `UnityMip`, extent 512, and last mip 6. Render
+and committed source frames reach 15591/15589 with 34 draws and no current
+preparation deferral. The convention and image layout move together.
+
+`reflection-filter-seven-mip-unity-sky-settled_frame12894.rdc` opens normally.
+Its two 512-by-512, seven-level output resources are byte-identical. Each level
+best matches the same numbered Unity level. Direct source LOD `6*r` improves
+all tested roughness values from 0.1 through 1.0. Linear RGB RMSE spans
+0.000828 to 0.004951, compared with 0.010303 to 0.034828 for the old GGX path.
+The validation document records the full sweep. The viewed mip montage has
+aligned sky gradients. Residual error increases with octahedral coarseness.
+The GPU replay is closed before the final unhooked route checks.
+
+The final unhooked `NativeOnly` and `AssimpOnly` runs import the original Unity
+prefab entry through the same Release binary. Both publish `UnityMip`, capture
+version 1, extent 512, and last mip 6. All 131 textures settle. Advanced GPU
+indirect rendering is admitted with 34 Native draws and 29 Assimp draws. Each
+route has viewed front, oblique, and back captures. The three-way Unity/Native/
+Assimp comparison preserves the saved outfit and shows no new material break.
+The validation document records the region metrics. They remain close to the
+previous GGX image metrics; the probe-radiance gain does not imply the same
+gain across the whole avatar image.
+
+Standard and synchronization validation remain active. Each final run reports
+zero errors, 16 warnings with ten suppressed, and no overflow. Native
+render/committed frames advance to 8294/8292; Assimp reaches 15208/15206.
+Neither has a terminal failure or current preparation deferral. Earlier
+recoverable retries occur at Native frame 353 and Assimp frame 6104. The final
+logs have no VUID, synchronization error, device loss, fatal, or exception match.
+The separate diagnostic startup failure above remains an open issue.
+
+Evidence is under the existing `20261008-090000-jax-avatar-parity` validation
+run. Final logs are in `logs/reflection-filter-seven-mip-final-native` and
+`logs/reflection-filter-seven-mip-final-assimp`. The final build log is
+`logs/reflection-filter-seven-mip-final-shaders-build.log`, with zero warnings
+and zero errors. Final Native front/oblique/back PNGs start with
+`Screenshot_20261017_192125`, `Screenshot_20261017_192131`, and
+`Screenshot_20261017_192136`. Assimp equivalents start with
+`Screenshot_20261017_192543`, `Screenshot_20261017_192548`, and
+`Screenshot_20261017_192554`. The viewed comparison is
+`reports/reflection-unity-seven-mip-final-routes.png`.
+
+Scratch probes are removed, both owned editors are stopped, and all GPU
+replays are closed. The user's Unity project remains open. No tests are added,
+modified, or run. The final checks establish the recorded image and runtime
+result only; they do not extend isolated performance, long-run, or VR acceptance.
+
+## 2026-10-17: Startup Failure During Interactive Resize
+
+The saved failed run reports `QueueSubmission` at frame 4589, with
+`accepted_scene_epoch=0`. Its reason is `PresentNow source recording invariant
+violated: Deferred; dynamic UI secondary command recording was deferred`.
+The device remains operational, but the terminal latch rejects subsequent
+frames. The exact snapshot is
+`mcp-output/animation-reflection-filter-seven-mip-diagnostic-final-import-present-check.json`
+under the existing validation run. Its copied log folder has no Vulkan log, so
+it does not establish which secondary preparation condition returned false.
+
+The frame attempt normally starts with `PresentNow` and `BlockForExact`.
+`PrepareInteractiveResizeSceneAttempt` is the only desktop path that changes
+it to `Background` and `AllowDeferral`. That path skips foreground plan
+acceptance, which agrees with the zero accepted scene epoch. A secondary
+deferral therefore correctly returns `Deferred` from primary recording.
+
+`RecordDesktopFrameCore` then reads the strictest foreground contract from the
+sealed output plan and overwrites the attempt policy. This happens after
+recording. Resize overrides cover desktop scene and editor scene outputs;
+another output can retain a foreground contract. A shadow dependency is one
+such output by default. The saved snapshot does not identify the output that
+caused this promotion. The late promotion makes the permitted deferral look
+like a strict presentation invariant failure and sets the terminal latch.
+
+The fix excludes interactive resize attempts from this late contract promotion.
+The ingress policy stays authoritative through recording and recovery. Pending
+UI work uses the existing rejected-image recovery path. Normal desktop attempts
+keep their strict presentation behavior. The fix does not add blocking work to
+resize, broaden graph overrides, replay a partial scene, or relax resource
+lifetime checks. Read-only review found no change to marker settlement, upload
+ownership, command-buffer lifetime, or image-layout journals.
+
+Baseline controls use two Native starts and one Assimp start. They recover from
+normal client resize and a simulated modal callback without reproducing the
+terminal. The existing frame-fault control throws at a phase boundary; it cannot
+return the secondary recorder's `Deferred` result. It is therefore not used as
+evidence for this condition. Private renderer locks are not held to force a
+failure. The precise secondary condition remains unobserved in these controls.
+
+The corrected Release build completes with zero warnings and errors. Both
+routes use that binary with standard and synchronization validation active.
+Native enters simulated modal resize during startup; frame 423 reports active
+resize and committed frame 339. Assimp reports active resize at frame 727 with
+committed frame 567. Both exit through `EndInteractiveResize` and resume normal
+presentation. Normal client resize from 1920 by 1080 to 1600 by 900 and back
+also completes. These are app-thread MCP lifecycle calls, not an OS window drag.
+
+The final matched Native fixture has 131 settled textures, 34 draws, Advanced
+GPU indirect admission, and render/committed frames 13037/13035. Its restored
+resize check reaches 13874/13872. Assimp has 131 settled textures, 29 draws,
+Advanced admission, and final frames 13145/13143; its restored resize check
+reaches 12441/12439. Both probes publish `UnityMip` convention 1 and capture
+version 1. Both terminal states remain null, with no current preparation
+deferral. Each run reports zero validation errors, 16 cumulative warnings with
+ten suppressed, and no overflow.
+
+Front, oblique, back, and HUD views are captured and viewed. The avatars remain
+intact. The Native front capture includes an editor hover outline around the
+boots; it is not a material difference. Clearing selection removes the outline
+in Assimp. The viewed side-by-side crop is `reports/startup-guard-final-routes.png`.
+The final image names start with `Screenshot_20261017_194435` through `194438`
+for Native and `Screenshot_20261017_194807` through `194809` for Assimp.
+
+The build and both session logs are copied under `logs/startup-guard-final` in
+the existing validation run. The bounded scan has no VUID, synchronization
+error, device loss, fatal, exception, or secondary-deferral terminal match.
+The `animation-startup-guard-*` MCP snapshots contain the live state. Scratch
+probes are removed, both owned editors are stopped, and the user's Unity editor
+remains open. No tests are added, modified, or run. The exact rare deferred-
+secondary branch did not recur. Direct trigger coverage and long-run startup
+reliability remain outside this bounded result.

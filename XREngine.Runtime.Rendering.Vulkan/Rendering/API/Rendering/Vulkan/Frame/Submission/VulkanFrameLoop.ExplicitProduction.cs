@@ -580,6 +580,7 @@ internal sealed partial class VulkanFrameLoop
                     allowPreparedCohort: true,
                     out string meshFailure,
                     out _,
+                    out _,
                     ref watchdog,
                     sourceFrameId: frameNumber,
                     sliceColdPreparation: false))

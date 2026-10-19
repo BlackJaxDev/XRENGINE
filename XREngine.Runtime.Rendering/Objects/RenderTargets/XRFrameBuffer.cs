@@ -10,6 +10,16 @@ namespace XREngine.Rendering
     [RuntimeOnly]
     public class XRFrameBuffer : GenericRenderObject
     {
+        private RenderCaptureOwnerToken? _captureOwnerToken;
+
+        /// <summary>Logical capture owner shared by replacement face targets.</summary>
+        [RuntimeOnly]
+        public RenderCaptureOwnerToken? CaptureOwnerToken
+        {
+            get => _captureOwnerToken;
+            internal set => SetField(ref _captureOwnerToken, value);
+        }
+
         private bool _forceOvrMultiview;
 
         /// <summary>

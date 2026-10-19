@@ -17,6 +17,7 @@ uniform vec4 _SourceWrappedColor;
 // Engine sets vertex-stage camera uniforms with a "_VTX" suffix.
 // ============================================
 uniform mat4 ModelMatrix;
+uniform vec4 u_SourceFlatDirection;
 uniform mat4 ViewMatrix_VTX;
 uniform mat4 ProjMatrix_VTX;
 uniform mat4 ViewProjectionMatrix_VTX;
@@ -225,6 +226,41 @@ uniform float _ForceFlatRampedLightmap;
 // Multilayer Math (Mode 1)
 //@property(name="_ShadowColorTex", display="Shadow Color Map", slot=texture)
 uniform sampler2D _ShadowColorTex;
+uniform vec4 _ShadowColorTex_ST;
+uniform vec2 _ShadowColorTexPan;
+uniform int _ShadowColorTexUV;
+uniform sampler2D _Shadow2ndColorTex;
+uniform vec4 _Shadow2ndColorTex_ST;
+uniform vec2 _Shadow2ndColorTexPan;
+uniform int _Shadow2ndColorTexUV;
+uniform sampler2D _Shadow3rdColorTex;
+uniform vec4 _Shadow3rdColorTex_ST;
+uniform vec2 _Shadow3rdColorTexPan;
+uniform int _Shadow3rdColorTexUV;
+uniform sampler2D _MultilayerMathBlurMap;
+uniform vec4 _MultilayerMathBlurMap_ST;
+uniform vec2 _MultilayerMathBlurMapPan;
+uniform int _MultilayerMathBlurMapUV;
+uniform sampler2D _ShadowStrengthMask;
+uniform vec4 _ShadowStrengthMask_ST;
+uniform vec2 _ShadowStrengthMaskPan;
+uniform int _ShadowStrengthMaskUV;
+uniform sampler2D _ShadowBorderMask;
+uniform sampler2D _SourceShadowBorderMaskLod;
+uniform vec4 _ShadowBorderMask_ST;
+uniform vec2 _ShadowBorderMaskPan;
+uniform int _ShadowBorderMaskUV;
+uniform vec4 _Shadow2ndColor;
+uniform vec4 _Shadow3rdColor;
+uniform vec4 _ShadowBorderColor;
+uniform vec4 _SourceMultilayerBorders;
+uniform vec4 _SourceMultilayerBlurs;
+uniform vec4 _SourceMultilayerReceive;
+uniform vec4 _SourceMultilayerMix;
+uniform vec4 _SourceMultilayerOptions;
+uniform vec4 _SourceMultilayerFlat;
+uniform vec4 _ShadowAOShift;
+uniform vec4 _ShadowAOShift2;
 //@property(name="_FirstShadeMap", display="First Shade Map", slot=texture)
 uniform sampler2D _FirstShadeMap;
 uniform vec4 _FirstShadeMap_ST;
@@ -518,9 +554,9 @@ uniform float _MainUseVertexColorAlpha;
 //@subcategory("Outline")
 //@feature(id="outline", name="Outline", default=off, cost=medium)
 #ifndef XRENGINE_UBER_DISABLE_OUTLINE
-//@property(name="_OutlineColor", display="Outline Color", mode=static)
+//@property(name="_OutlineColor", display="Outline Color", mode=animated)
 uniform vec4 _OutlineColor;
-//@property(name="_OutlineWidth", display="Outline Width", mode=static, range=[0,0.1])
+//@property(name="_OutlineWidth", display="Outline Width", mode=animated, range=[0,0.1])
 uniform float _OutlineWidth;
 //@property(name="_OutlineMask", display="Outline Mask", slot=texture)
 uniform sampler2D _OutlineMask;
@@ -610,7 +646,10 @@ uniform float _GlitterMaxAngle;
 uniform float _GlitterRainbow;
 //@property(name="_GlitterMask", display="Glitter Mask", slot=texture)
 uniform sampler2D _GlitterMask;
+//@property(name="_GlitterTexture", display="Glitter Shape", slot=texture)
+uniform sampler2D _GlitterTexture;
 uniform int _SourceGlitter;
+uniform int _SourceGlitterVersion;
 uniform float _GlitterFrequency;
 uniform int _GlitterLayers;
 uniform int _GlitterUV;
@@ -632,6 +671,8 @@ uniform float _GlitterMaskInvert;
 uniform vec2 _GlitterUVPanning;
 uniform vec4 _GlitterMask_ST;
 uniform vec2 _GlitterMaskPan;
+uniform vec4 _GlitterTexture_ST;
+uniform vec2 _GlitterTexturePan;
 uniform int _GlitterMaskUV;
 #endif
 

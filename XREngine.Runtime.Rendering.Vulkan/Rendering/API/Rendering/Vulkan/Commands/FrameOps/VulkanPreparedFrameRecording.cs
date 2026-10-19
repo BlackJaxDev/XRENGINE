@@ -521,8 +521,16 @@ internal sealed class VulkanPreparedFrameRecording
         Set(_vertexBuffers, range, _vertexBufferCount, index, buffer);
         Set(_vertexBindings, range, _vertexBufferCount, index, binding);
     }
-    internal void SetFrameDataPayloadHandle(in VulkanPreparedStreamRange range, int index, in VulkanPreparedFrameDataPayloadHandle value) => Set(_frameDataPayloadHandles, range, _frameDataPayloadHandleCount, index, value);
-    internal VulkanPreparedStreamRange AppendFrameDataPayloadHandles(ReadOnlySpan<VulkanPreparedFrameDataPayloadHandle> values) => Append(values, ref _frameDataPayloadHandles, ref _frameDataPayloadHandleCount, ref _framePayloadHighWater);
+    internal bool TrySetFrameDataPayloadHandle(in VulkanPreparedStreamRange range, int index, in VulkanPreparedFrameDataPayloadHandle value)
+    {
+        if ((uint)index >= (uint)range.Count || !range.IsValidFor(_frameDataPayloadHandleCount))
+            throw new ArgumentOutOfRangeException(nameof(index));
+        if (value.Allocation is { } allocation && !allocation.TryRetainAuthoring())
+            return false;
+        _frameDataPayloadHandles[range.Start + index].Allocation?.ReleaseAuthoring();
+        Set(_frameDataPayloadHandles, range, _frameDataPayloadHandleCount, index, value);
+        return true;
+    }
     internal VulkanPreparedStreamRange AppendViewports(ReadOnlySpan<Silk.NET.Vulkan.Viewport> values) => Append(values, ref _viewports, ref _viewportCount, ref _viewportHighWater);
     internal VulkanPreparedStreamRange AppendScissors(ReadOnlySpan<Silk.NET.Vulkan.Rect2D> values) => Append(values, ref _scissors, ref _scissorCount, ref _scissorHighWater);
     internal VulkanPreparedStreamRange AddDescriptorImagePayload(in VulkanPreparedDescriptorImagePayload value)
@@ -871,8 +879,26 @@ internal sealed class VulkanPreparedFrameRecording
         return true;
     }
 
+    private readonly List<VulkanMappedFrameAllocation> _frameDataFamilyReaders = new(32);
+
+    internal bool TryRetainFrameDataFamily(VulkanMappedFrameAllocation allocation)
+    {
+        if (!allocation.TryRetainAuthoring())
+            return false;
+        _frameDataFamilyReaders.Add(allocation);
+        return true;
+    }
+
     internal void Reset()
     {
+        foreach (VulkanMappedFrameAllocation allocation in _frameDataFamilyReaders)
+            allocation.ReleaseAuthoring();
+        _frameDataFamilyReaders.Clear();
+        for (int index = 0; index < _frameDataPayloadHandleCount; index++)
+        {
+            _frameDataPayloadHandles[index].Allocation?.ReleaseAuthoring();
+            _frameDataPayloadHandles[index] = default;
+        }
         for (int index = 0; index < _residentTemplateUseCount; ++index)
         {
             _residentTemplateUses[index]?.ReleaseUse();

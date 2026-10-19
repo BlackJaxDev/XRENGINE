@@ -238,7 +238,7 @@ namespace XREngine.Rendering
             /// <param name="modelMatrix"></param>
             /// <param name="prevModelMatrix"></param>
             /// <param name="materialOverride"></param>
-            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot, Vector4 sourceFlatDirection = default)
             {
                 // Published mesh versions are backend-neutral until their first draw.
                 // Resolve this draw's owner explicitly so cold versions cannot silently
@@ -249,7 +249,7 @@ namespace XREngine.Rendering
                     renderOptionsOverride = (materialOverride ?? Parent?.Material)?.GetMultisampleBackgroundParameters()
                         ?? throw new InvalidOperationException("Advanced MSAA background requires an admitted material.");
                 renderer.Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride,
-                    instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot);
+                    instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot, sourceFlatDirection);
             }
 
             /// <summary>Submits one indexed draw with GPU-authored arguments.</summary>
@@ -1472,8 +1472,8 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="modelMatrix"></param>
         /// <param name="materialOverride"></param>
-        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default)
-            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot);
+        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default, Vector4 sourceFlatDirection = default)
+            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot, sourceFlatDirection);
 
         /// <summary>Submits one indexed mesh draw from a GPU-authored command.</summary>
         public bool RenderIndexedIndirect(XRDataBuffer arguments, nuint byteOffset,
@@ -1707,6 +1707,7 @@ namespace XREngine.Rendering
                 RuntimeEngine.Rendering.SettingsChanged -= RefreshGpuCoverageForSettings;
                 DetachSubmeshHandlers();
                 DestroyDeformationInputs();
+                DestroyUdimTriangleCoverage();
                 ResetDrivableBuffers();
                 IndirectDrawBuffer?.Dispose();
                 IndirectDrawBuffer = null;

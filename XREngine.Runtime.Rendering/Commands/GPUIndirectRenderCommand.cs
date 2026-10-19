@@ -203,6 +203,8 @@ namespace XREngine.Rendering.Commands
         EditorHighlightMask = EditorHovered | EditorSelected,
         /// <summary>The authored command or primary material pass is disabled.</summary>
         PrimaryDisabled = 1u << 24,
+        /// <summary>The complete source command can use the shared opaque shadow program.</summary>
+        SharedOpaqueShadow = 1u << 25,
     }
 
     public enum GPUSortAlgorithm

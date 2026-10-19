@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 
@@ -14,6 +15,8 @@ internal sealed partial class VulkanFramePlanner
         TimeSpan.FromMilliseconds(750);
     private static readonly TimeSpan OpenXrResourceAllocationFailureRetryDelay =
         TimeSpan.FromSeconds(10);
+    private static long _physicalPlanReplacementDiagnosticCount;
+    private static long _physicalImageDonorDiagnosticCount;
 
     private VulkanPhysicalImageGroup? _activeAutoExposureHistoryGroup;
 
@@ -282,7 +285,8 @@ internal sealed partial class VulkanFramePlanner
                 request.IsOpenXrOrVr);
             pendingAllocator.UpdatePlan(
                 request.PendingPlanner.CurrentPlan,
-                transientAttachmentPlan);
+                transientAttachmentPlan,
+                request.Context.ResourceRegistry);
             pendingAllocator.RebuildPhysicalPlan(
                 request.BackendContext,
                 request.SupportsTransformFeedback,
@@ -290,9 +294,12 @@ internal sealed partial class VulkanFramePlanner
                 request.PendingPlanner,
                 request.ExtentContext,
                 request.Context.ResourceRegistry);
+            VulkanResourceAllocator imageSource = ResolveCompatibleImageSource(in request) ?? state.ResourceAllocator;
             int reusedImageCount = pendingAllocator.ReuseCompatiblePhysicalImagesFrom(
-                state.ResourceAllocator,
+                imageSource,
                 out reusedImageGroups);
+            if (VulkanBufferRetirementDiagnostics.Enabled)
+                RecordPhysicalImageDonorAttempt(in request, imageSource, pendingAllocator, reusedImageCount);
             if (reusedImageCount > 0)
             {
                 Debug.VulkanEvery(
@@ -351,6 +358,109 @@ internal sealed partial class VulkanFramePlanner
         return true;
     }
 
+    private static VulkanResourceAllocator? ResolveCompatibleImageSource(
+        in VulkanPhysicalPlanningRequest request)
+    {
+        if (request.CompatibleImageDonor is not VulkanPhysicalImageReuseDonor donor ||
+            request.Context.ContextKind != EVulkanFrameOpContextKind.MainViewport ||
+            !request.IsDesktopWsiTarget ||
+            request.IsOpenXrOrVr ||
+            (request.QueueOwnership.ComputeQueueFamilyIndex ?? request.QueueOwnership.GraphicsQueueFamilyIndex) != request.QueueOwnership.GraphicsQueueFamilyIndex ||
+            (request.QueueOwnership.TransferQueueFamilyIndex ?? request.QueueOwnership.GraphicsQueueFamilyIndex) != request.QueueOwnership.GraphicsQueueFamilyIndex ||
+            request.Context.SubmissionQueueFamily != request.QueueOwnership.GraphicsQueueFamilyIndex ||
+            !VulkanResourcePlannerSessionService.IsSupersededGenerationKey(
+                donor.Key,
+                VulkanFramePlanner.BuildFrameOpPlannerStateKey(request.Context)) ||
+            !donor.State.HasLiveAllocatorOwnership ||
+            !ReferenceEquals(donor.State.CompiledRenderGraph, request.CompiledGraph) ||
+            donor.State.ResourcePlannerSignatureBreakdown.PassMetadata != request.SignatureBreakdown.PassMetadata ||
+            donor.State.ResourcePlannerSignatureBreakdown.GraphicsQueueFamily != request.QueueOwnership.GraphicsQueueFamilyIndex ||
+            donor.State.ResourcePlannerSignatureBreakdown.ComputeQueueFamily != request.QueueOwnership.GraphicsQueueFamilyIndex ||
+            donor.State.ResourcePlannerSignatureBreakdown.TransferQueueFamily != request.QueueOwnership.GraphicsQueueFamilyIndex ||
+            !request.SwitchingState.States.TryGetValue(donor.Key, out ResourcePlannerRuntimeState published) ||
+            !ReferenceEquals(published.ResourceAllocator, donor.State.ResourceAllocator) ||
+            !VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+                request.SwitchingState,
+                donor.Key,
+                donor.State.ResourceAllocator) ||
+            donor.State.LastActiveFrameOpContext is not FrameOpContext priorContext ||
+            !ReferenceEquals(priorContext.PipelineInstance, request.Context.PipelineInstance) ||
+            !ReferenceEquals(priorContext.PassMetadata, request.Context.PassMetadata))
+        {
+            return null;
+        }
+
+        return donor.State.ResourceAllocator;
+    }
+
+    private static void RecordPhysicalImageDonorAttempt(
+        in VulkanPhysicalPlanningRequest request,
+        VulkanResourceAllocator imageSource,
+        VulkanResourceAllocator pendingAllocator,
+        int reusedImageCount)
+    {
+        long attempt = Interlocked.Increment(ref _physicalImageDonorDiagnosticCount);
+        if (attempt > 12 && attempt % 64 != 0)
+            return;
+
+        string reason = DescribePhysicalImageDonorRejection(in request, imageSource, reusedImageCount);
+        int donorGroups = request.CompatibleImageDonor is VulkanPhysicalImageReuseDonor donor
+            ? donor.State.ResourceAllocator.EnumeratePhysicalGroups().Count
+            : 0;
+        Debug.WriteAuxiliaryLog(
+            "vulkan-physical-plan-replacements.log",
+            $"imageDonorAttempt={attempt} kind={request.Context.ContextKind} " +
+            $"donorKey={request.CompatibleImageDonor?.Key.ToString() ?? "<none>"} " +
+            $"sourceAccepted={request.CompatibleImageDonor is VulkanPhysicalImageReuseDonor selected && ReferenceEquals(imageSource, selected.State.ResourceAllocator)} " +
+            $"reason={reason} reusedImages={reusedImageCount} donorGroups={donorGroups} " +
+            $"pendingGroups={pendingAllocator.EnumeratePhysicalGroups().Count}");
+    }
+
+    private static string DescribePhysicalImageDonorRejection(
+        in VulkanPhysicalPlanningRequest request,
+        VulkanResourceAllocator imageSource,
+        int reusedImageCount)
+    {
+        if (request.CompatibleImageDonor is not VulkanPhysicalImageReuseDonor donor)
+            return "NoScopeDonor";
+        if (ReferenceEquals(imageSource, donor.State.ResourceAllocator))
+            return reusedImageCount == 0 ? "NoCompatibleInternalGroups" : "Reused";
+        if (request.Context.ContextKind != EVulkanFrameOpContextKind.MainViewport ||
+            !request.IsDesktopWsiTarget || request.IsOpenXrOrVr)
+            return "NonDesktopMainViewport";
+        uint graphicsFamily = request.QueueOwnership.GraphicsQueueFamilyIndex;
+        if ((request.QueueOwnership.ComputeQueueFamilyIndex ?? graphicsFamily) != graphicsFamily ||
+            (request.QueueOwnership.TransferQueueFamilyIndex ?? graphicsFamily) != graphicsFamily ||
+            request.Context.SubmissionQueueFamily != graphicsFamily)
+            return "QueueMismatch";
+        if (!VulkanResourcePlannerSessionService.IsSupersededGenerationKey(
+                donor.Key, VulkanFramePlanner.BuildFrameOpPlannerStateKey(request.Context)))
+            return "NotSuperseded";
+        if (!donor.State.HasLiveAllocatorOwnership)
+            return "DonorAllocatorRetired";
+        if (!ReferenceEquals(donor.State.CompiledRenderGraph, request.CompiledGraph))
+            return donor.State.CompiledRenderGraph.Plan.CompatibilityIdentity == request.CompiledGraph.Plan.CompatibilityIdentity
+                ? "GraphReferenceMismatchWithMatchingFingerprint"
+                : "GraphStructureMismatch";
+        if (donor.State.ResourcePlannerSignatureBreakdown.PassMetadata != request.SignatureBreakdown.PassMetadata)
+            return "PassMetadataSignatureMismatch";
+        if (donor.State.ResourcePlannerSignatureBreakdown.GraphicsQueueFamily != graphicsFamily ||
+            donor.State.ResourcePlannerSignatureBreakdown.ComputeQueueFamily != graphicsFamily ||
+            donor.State.ResourcePlannerSignatureBreakdown.TransferQueueFamily != graphicsFamily)
+            return "DonorQueueMismatch";
+        if (!request.SwitchingState.States.TryGetValue(donor.Key, out ResourcePlannerRuntimeState published) ||
+            !ReferenceEquals(published.ResourceAllocator, donor.State.ResourceAllocator))
+            return "DonorNoLongerPublished";
+        if (!VulkanResourcePlannerSessionService.IsAllocatorExclusivelyOwnedByKey(
+                request.SwitchingState, donor.Key, donor.State.ResourceAllocator))
+            return "DonorAllocatorShared";
+        if (donor.State.LastActiveFrameOpContext is not FrameOpContext priorContext ||
+            !ReferenceEquals(priorContext.PipelineInstance, request.Context.PipelineInstance) ||
+            !ReferenceEquals(priorContext.PassMetadata, request.Context.PassMetadata))
+            return "ContextReferenceMismatch";
+        return "OtherGuard";
+    }
+
     private void CommitPhysicalAllocatorPlan(
         ref ResourcePlannerRuntimeState state,
         in VulkanPhysicalPlanningRequest request,
@@ -389,13 +499,42 @@ internal sealed partial class VulkanFramePlanner
         if (request.IsDeviceLost)
             return;
 
-        VulkanPhysicalImageGroup? retainedAutoExposureGroup = PreserveAutoExposureHistory(
-            oldAllocator,
-            state.ResourceAllocator,
-            request.Resources,
-            request.BackendContext,
-            request.Commands,
-            request.IsOpenXrOrVr);
+        if (VulkanBufferRetirementDiagnostics.Enabled)
+        {
+            long replacement = Interlocked.Increment(ref _physicalPlanReplacementDiagnosticCount);
+            if (replacement <= 12 || replacement % 64 == 0)
+            {
+                string previousKey = state.LastActiveFrameOpContext is FrameOpContext previousContext
+                    ? VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(previousContext).ToString()
+                    : "<none>";
+                VulkanFrameOpPlannerStateKey currentKey =
+                    VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(request.Context);
+                Debug.WriteAuxiliaryLog(
+                    "vulkan-physical-plan-replacements.log",
+                    $"replacement={replacement} oldAllocation=0x{state.ResourceAllocationSignature:X16} " +
+                    $"newAllocation=0x{request.AllocationSignature:X16} " +
+                    $"oldPlanner=0x{state.ResourcePlannerSignature:X16} " +
+                    $"newPlanner=0x{request.PlannerSignature:X16} " +
+                    $"oldAllocator={oldAllocator.OwnershipId} newAllocator={state.ResourceAllocator.OwnershipId} " +
+                    $"retiredBuffers={retiredBufferCount} retiredImages={retiredImageCount} " +
+                    $"newBufferGroups={state.ResourceAllocator.EnumeratePhysicalBufferGroups().Count()} " +
+                    $"oldKey={previousKey} newKey={currentKey}");
+            }
+        }
+
+        bool reusedAutoExposureHistory =
+            TryGetAutoExposurePhysicalGroup(state.ResourceAllocator, out VulkanPhysicalImageGroup? autoExposureGroup) &&
+            autoExposureGroup is not null &&
+            reusedImageGroups?.Contains(autoExposureGroup) == true;
+        VulkanPhysicalImageGroup? retainedAutoExposureGroup = reusedAutoExposureHistory
+            ? null
+            : PreserveAutoExposureHistory(
+                oldAllocator,
+                state.ResourceAllocator,
+                request.Resources,
+                request.BackendContext,
+                request.Commands,
+                request.IsOpenXrOrVr);
         EvictFrameOpResourcePlannerStatesReferencingAllocator(
             request.SwitchingState,
             oldAllocator);

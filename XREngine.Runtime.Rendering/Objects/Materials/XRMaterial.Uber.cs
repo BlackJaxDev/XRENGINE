@@ -76,6 +76,7 @@ public partial class XRMaterial
             if (activeFragmentShader is not null &&
                 !ReferenceEquals(activeFragmentShader, fragmentShader) &&
                 ActiveUberVariant.IsEmpty &&
+                UberOutlineSourceMaterial is null &&
                 UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
             {
                 SetInternalUberFragmentShader(fragmentShader);
@@ -186,7 +187,8 @@ public partial class XRMaterial
         UberMaterialAuthoredState next = current;
         XRShader canonicalShader = ResolveCanonicalUberFragmentShader(fragmentShader);
 
-        if (ActiveUberVariant.IsEmpty && UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader) && !ReferenceEquals(canonicalShader, fragmentShader))
+        if (ActiveUberVariant.IsEmpty && UberOutlineSourceMaterial is null &&
+            UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader) && !ReferenceEquals(canonicalShader, fragmentShader))
             SetInternalUberFragmentShader(canonicalShader);
 
         foreach (ShaderUiFeature feature in manifest.Features)
@@ -1173,6 +1175,13 @@ public partial class XRMaterial
 
     private bool HasRenderableUberVariantState(XRShader? activeFragmentShader)
     {
+        if (UberOutlineSourceMaterial is { } outlineSource &&
+            outlineSource.IsResolvedOutlinePassVariant(this) &&
+            UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader))
+        {
+            return true;
+        }
+
         if (ActiveUberVariant.IsEmpty || ActiveUberVariant.VariantHash == 0)
             return false;
 

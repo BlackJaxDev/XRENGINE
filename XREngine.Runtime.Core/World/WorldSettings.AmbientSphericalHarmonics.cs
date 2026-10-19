@@ -8,7 +8,10 @@ public partial class WorldSettings
     private bool _ambientSphericalHarmonicsEnabled;
     private AmbientSphericalHarmonics _ambientSphericalHarmonics;
 
-    /// <summary>Enables authored directional ambient for source material lighting.</summary>
+    /// <summary>
+    /// Uses authored directional ambient instead of probe diffuse for source
+    /// stylized lighting. Probe reflections and generic PBR retain their behavior.
+    /// </summary>
     [Category("Lighting")]
     public bool AmbientSphericalHarmonicsEnabled
     {

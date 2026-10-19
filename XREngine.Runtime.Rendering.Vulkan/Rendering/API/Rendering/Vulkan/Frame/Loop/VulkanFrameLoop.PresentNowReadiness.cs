@@ -232,6 +232,14 @@ internal sealed partial class VulkanFrameLoop
             if (!openXrPublication.HasViewSet)
                 requestCount = RemoveOpenXrMeshRequests(requestCount);
 
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan.AuthoredOperations) ||
+                VulkanCaptureOwnerReadiness.HasClosedOwner(
+                    _meshOperationRequestScratch.AsSpan(0, requestCount)))
+            {
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
+
             attempt.PresentNowMeshRequestCount = requestCount;
             acceptedPlan.CaptureRequiredTextureReferences(
                 _meshOperationRequestScratch.AsSpan(0, requestCount));
@@ -255,10 +263,18 @@ internal sealed partial class VulkanFrameLoop
                     allowPreparedCohort: true,
                     out string meshFailure,
                     out bool coldSliceDeferred,
+                    out bool captureOwnerClosed,
                     ref watchdog,
                     sourceFrameId: attempt.FrameNumber,
                     allowFrameOwnedAuthoringOperations: true))
             {
+                if (captureOwnerClosed ||
+                    VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan.AuthoredOperations))
+                {
+                    CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
+                    retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                    return false;
+                }
                 if (coldSliceDeferred)
                 {
                     CapturePresentNowAuthoredOperations(
@@ -287,6 +303,12 @@ internal sealed partial class VulkanFrameLoop
         }
 
         CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
+        if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan.AuthoredOperations) ||
+            VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
+        {
+            retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+            return false;
+        }
         // Keep target preparation, barrier freezing, and plan sealing on one
         // immutable generation. A later publication is retried as a new
         // PresentNow attempt rather than mixed into this accepted cohort.
@@ -336,6 +358,7 @@ internal sealed partial class VulkanFrameLoop
                 $"packageGeneration={stableBinFailure.PackageGeneration} " +
                 $"packageSourceRevision={stableBinFailure.PackageSourceRevision} " +
                 $"selectedPipeline={stableBinFailure.SelectedPipeline?.Pipeline?.DebugName ?? "<null>"} " +
+                $"ingressDetails={stableBinFailure.IngressEntries} " +
                 $"stableExceptions={failedStableBinStream.OrderedExceptionCount}/{failedStableBinStream.OrderedExceptionCapacity} " +
                 $"stableRecords={failedStableBinStream.RecordCount}/{failedStableBinStream.RecordCapacity} " +
                 $"stableLateResourceUses={failedStableBinStream.LateResourceUseCount}/{failedStableBinStream.LateResourceUseCapacity} " +
@@ -386,6 +409,12 @@ internal sealed partial class VulkanFrameLoop
         }
         if (!computePreparation.Succeeded)
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan) ||
+                VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
+            {
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (computePreparation.Pending)
             {
                 retry = watchdog.CreateRetry(
@@ -432,6 +461,12 @@ internal sealed partial class VulkanFrameLoop
                 allowSynchronousResourceUploads: true,
                 out targetFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan) ||
+                VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
+            {
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (VulkanFrameBufferAttachmentNotReadyException.IsTransientReason(targetFailure))
             {
                 retry = watchdog.CreateRetry(
@@ -617,6 +652,12 @@ internal sealed partial class VulkanFrameLoop
                 out bool materialPending,
                 out string storageFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+            {
+                logicalPlan.Reset();
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (materialPending)
             {
                 retry = watchdog.CreateRetry(
@@ -648,6 +689,12 @@ internal sealed partial class VulkanFrameLoop
                 out bool pipelineRetryable,
                 out string pipelineFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+            {
+                logicalPlan.Reset();
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (pipelineRetryable)
             {
                 retry = watchdog.CreateRetry(
@@ -676,6 +723,12 @@ internal sealed partial class VulkanFrameLoop
                 in plannerState);
         if (!computePreparation.Succeeded)
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(acceptedPlan) ||
+                VulkanCaptureOwnerReadiness.HasClosedOwner(_preparedMeshIngress))
+            {
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (computePreparation.Pending)
             {
                 retry = watchdog.CreateRetry(
@@ -707,6 +760,12 @@ internal sealed partial class VulkanFrameLoop
                 $"Publication changed during readiness preparation. Captured={openXrPublication.Revision}.");
             return false;
         }
+        if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+        {
+            logicalPlan.Reset();
+            retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+            return false;
+        }
         acceptedPlan.Seal(
             in outputContract,
             logicalPlan,
@@ -714,6 +773,14 @@ internal sealed partial class VulkanFrameLoop
             in frozenPlanningSnapshot);
         return true;
     }
+
+    private static VulkanPresentNowReadinessRetry CreateClosedCaptureOwnerRetry(
+        ref VulkanPresentNowReadinessWatchdog watchdog)
+        => watchdog.CreateRetry(
+            EVulkanPresentNowReadinessStage.FramePlanSeal,
+            "capture-owner-closed",
+            "DesktopScene -> capture owner",
+            "A capture owner closed before submission. Discard the unsubmitted frame and accept fresh work.");
 
     private void CapturePresentNowAuthoredOperations(
         VulkanAcceptedFramePlan acceptedPlan,
@@ -883,6 +950,12 @@ internal sealed partial class VulkanFrameLoop
                 out bool materialPending,
                 out string storageFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+            {
+                logicalPlan.Reset();
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (materialPending)
             {
                 retry = watchdog.CreateRetry(
@@ -913,6 +986,12 @@ internal sealed partial class VulkanFrameLoop
                 out bool pipelineRetryable,
                 out string pipelineFailure))
         {
+            if (VulkanCaptureOwnerReadiness.HasClosedOwner(logicalPlan))
+            {
+                logicalPlan.Reset();
+                retry = CreateClosedCaptureOwnerRetry(ref watchdog);
+                return false;
+            }
             if (pipelineRetryable)
             {
                 retry = watchdog.CreateRetry(

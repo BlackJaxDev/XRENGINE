@@ -1,6 +1,14 @@
 #ifndef XR_UBER_SOURCE_SHADING_GLSL
 #define XR_UBER_SOURCE_SHADING_GLSL
 
+vec3 xrSourceEmissionFluorescence(vec3 directColor, float strength)
+{
+    if (strength == 0.0) return vec3(1.0);
+    vec3 response = clamp((vec3(1.0) - directColor) *
+        sqrt(max(directColor, vec3(0.0))), vec3(0.0), vec3(1.0));
+    return mix(vec3(1.0), response, strength);
+}
+
 vec3 xrSourceDirectColor(vec3 color, float minimumBrightness,
     float monochromatic, float capEnabled, float cap)
 {
@@ -440,5 +448,185 @@ vec3 xrSourceRimBlend(vec3 baseColor, vec3 rimColor, float amount, int mode)
     if (mode == 4)
         return mix(baseColor, 1.0 - (1.0 - baseColor) * (1.0 - rimColor), amount);
     return baseColor + rimColor * amount;
+}
+
+vec3 xrSourceAnisoLayer(vec3 tangent, vec3 binormal, vec3 normal,
+    vec3 view, vec3 light, float shadowMask, vec4 layer, vec3 tint)
+{
+    vec3 strand = normalize(mix(binormal, tangent, layer.w) + layer.z * normal);
+    vec3 halfVector = normalize(light + view);
+    float tangentHalf = clamp(dot(strand, halfVector), -1.0, 1.0);
+    float sine = sqrt(max(0.0, 1.0 - tangentHalf * tangentHalf));
+    float response = clamp(smoothstep(-1.0, 0.0, tangentHalf) *
+        pow(sine, layer.y * 1000.0) * layer.x, 0.0, 1.0);
+    return response * shadowMask * tint;
+}
+
+void xrSourceApplyAnisotropy(vec3 geometricNormal, vec3 mappedNormal,
+    vec3 tangent, vec3 bitangent, vec3 view, vec3 light, vec3 directColor,
+    float rampedLightMap, vec4 settings, vec4 mixSettings,
+    vec4 layer0, vec4 layer1, vec3 tint0, vec3 tint1,
+    inout vec3 baseColor, inout vec3 lightAdd)
+{
+    if (settings.x <= 0.5) return;
+
+    float normalBlend = settings.w;
+    vec3 normal = mix(geometricNormal, mappedNormal, normalBlend);
+    // The imported coordinate frame reflects the source Z axis. Reverse the
+    // source cross products to keep the two strand axes in that frame.
+    vec3 mappedTangent = cross(bitangent, mappedNormal);
+    vec3 mappedBinormal = cross(mappedNormal, tangent);
+    vec3 strandTangent = mix(tangent, mappedTangent, normalBlend);
+    vec3 strandBinormal = mix(bitangent, mappedBinormal, normalBlend);
+    float shadowMask = mix(1.0, rampedLightMap, mixSettings.z) *
+        mix(1.0, dot(normal, light), mixSettings.w);
+    vec3 color0 = xrSourceAnisoLayer(strandTangent, strandBinormal,
+        normal, view, light, shadowMask, layer0, tint0);
+    vec3 color1 = xrSourceAnisoLayer(strandTangent, strandBinormal,
+        normal, view, light, shadowMask, layer1, tint1);
+    vec3 lightColor = mix(vec3(dot(directColor, vec3(0.299, 0.587, 0.114))),
+        directColor, mixSettings.y);
+    vec3 result = (color0 + color1) *
+        mix(vec3(1.0), baseColor, mixSettings.x) * lightColor;
+    lightAdd += max(vec3(0.0), result * settings.y);
+    float replaceMask = clamp(length(color0) + length(color1), 0.0, 1.0);
+    baseColor = mix(baseColor, result, settings.z * replaceMask);
+}
+struct XrSourceMultilayerInputs
+{
+    vec4 firstColor;
+    vec4 secondColor;
+    vec4 thirdColor;
+    vec4 borderColor;
+    vec4 firstTexture;
+    vec4 secondTexture;
+    vec4 thirdTexture;
+    vec4 blurTexture;
+    vec4 borders;
+    vec4 blurs;
+    vec4 receive;
+    vec4 mixSettings;
+    vec4 borderMask;
+    vec4 borderMaskX;
+    vec4 borderMaskY;
+    vec4 borderShift;
+    vec4 borderShift2;
+    vec4 options;
+    vec4 flatSettings;
+    float strengthMask;
+    float flatLight;
+};
+
+float xrSourceMultilayerRemap(float value, vec2 limits)
+{
+    float upper = limits.y == limits.x ? limits.y + 0.001 : limits.y;
+    return clamp((value - limits.x) / (upper - limits.x), 0.0, 1.0);
+}
+
+float xrSourceMultilayerEdge(float value, float border, float blur,
+    float range, float footprint, bool nonlinear)
+{
+    float lower = clamp(border - blur * 0.5 - range, 0.0, 1.0);
+    float upper = clamp(border + blur * 0.5, 0.0, 1.0);
+    if (nonlinear)
+        return smoothstep(lower - footprint, upper + footprint, value);
+    return (value - lower) / max(clamp(upper - lower + footprint, 0.0, 1.0), 0.0001);
+}
+
+vec3 xrSourceMultilayerRemappedMask(vec4 sampleValue,
+    XrSourceMultilayerInputs data)
+{
+    return vec3(
+        xrSourceMultilayerRemap(sampleValue.r, data.borderShift.xy),
+        xrSourceMultilayerRemap(sampleValue.g, data.borderShift.zw),
+        xrSourceMultilayerRemap(sampleValue.b, data.borderShift2.xy));
+}
+
+vec4 xrSourceMultilayerBands(float lightMap, vec2 lightMapGradient,
+    float shadowVisibility, vec2 visibilityGradient,
+    XrSourceMultilayerInputs data)
+{
+    bool nonlinear = data.blurs.w > 0.5;
+    vec3 receive = mix(vec3(1.0), vec3(shadowVisibility), data.receive.xyz);
+    vec3 receiveX = mix(vec3(1.0),
+        vec3(shadowVisibility + visibilityGradient.x), data.receive.xyz);
+    vec3 receiveY = mix(vec3(1.0),
+        vec3(shadowVisibility + visibilityGradient.y), data.receive.xyz);
+    vec3 maps = vec3(lightMap) * receive;
+    vec3 mapsX = vec3(lightMap + lightMapGradient.x) * receiveX;
+    vec3 mapsY = vec3(lightMap + lightMapGradient.y) * receiveY;
+    vec3 borderMask = data.borderMask.rgb;
+    if (data.options.x > 0.5 && data.options.z <= 0.5)
+    {
+        maps *= borderMask;
+        mapsX *= data.borderMaskX.rgb;
+        mapsY *= data.borderMaskY.rgb;
+    }
+    if (data.mixSettings.w > 0.5)
+    {
+        maps = vec3(lightMap);
+        mapsX = vec3(lightMap + lightMapGradient.x);
+        mapsY = vec3(lightMap + lightMapGradient.y);
+    }
+    vec3 widths = abs(mapsX - maps) + abs(mapsY - maps);
+    vec4 bands = vec4(
+        xrSourceMultilayerEdge(maps.x, data.borders.x,
+            data.blurs.x * data.blurTexture.r, 0.0, widths.x, nonlinear),
+        xrSourceMultilayerEdge(maps.y, data.borders.y,
+            data.blurs.y * data.blurTexture.g, 0.0, widths.y, nonlinear),
+        xrSourceMultilayerEdge(maps.z, data.borders.z,
+            data.blurs.z * data.blurTexture.b, 0.0, widths.z, nonlinear),
+        xrSourceMultilayerEdge(maps.x, data.borders.x,
+            data.blurs.x * data.blurTexture.r, data.borders.w, widths.x,
+            nonlinear));
+    if (data.options.x > 0.5 && data.options.z > 0.5)
+        bands *= borderMask.rgbr;
+    bands = clamp(bands, 0.0, 1.0);
+    if (data.options.y > 0.5)
+    {
+        float flatBand = clamp((data.flatLight + data.flatSettings.x) /
+            max(data.flatSettings.y, 0.0001), 0.0, 1.0);
+        bands = mix(vec4(flatBand), bands, data.strengthMask);
+    }
+    return bands;
+}
+
+vec3 xrSourceMultilayerDiffuse(vec3 base, vec3 direct, vec3 indirect,
+    float lightMap, vec2 lightMapGradient, float shadowVisibility,
+    vec2 visibilityGradient, float shadowMask, bool primary,
+    XrSourceMultilayerInputs data)
+{
+    vec4 bands = xrSourceMultilayerBands(lightMap, lightMapGradient,
+        shadowVisibility, visibilityGradient, data);
+
+    vec3 shade = vec3(1.0);
+    if (data.firstColor.a > 0.0)
+        shade = mix(vec3(1.0), data.firstTexture.rgb,
+            data.firstTexture.a) * data.firstColor.rgb;
+    if (data.secondColor.a > 0.0)
+    {
+        vec3 second = mix(vec3(1.0), data.secondTexture.rgb,
+            data.secondTexture.a) * data.secondColor.rgb;
+        shade = mix(shade, second,
+            data.secondColor.a * (1.0 - bands.y));
+    }
+    if (data.thirdColor.a > 0.0)
+    {
+        vec3 third = mix(vec3(1.0), data.thirdTexture.rgb,
+            data.thirdTexture.a) * data.thirdColor.rgb;
+        shade = mix(shade, third,
+            data.thirdColor.a * (1.0 - bands.z));
+    }
+    shade = mix(shade, shade * base, data.receive.w);
+    shade = mix(shade, vec3(1.0),
+        bands.w * data.borderColor.rgb * data.borderColor.a);
+    shade *= mix(indirect, direct, data.mixSettings.z);
+    if (primary)
+        shade = mix(shade, direct, indirect * data.mixSettings.x);
+    float strength = data.mixSettings.y * shadowMask * shadowMask;
+    if (data.options.y <= 0.5)
+        strength *= data.strengthMask;
+    shade = mix(direct, shade, strength);
+    return base * mix(shade, direct, bands.x);
 }
 #endif

@@ -44,9 +44,11 @@ internal static class NativeFbxSceneImporter
         public List<int> Indices { get; private set; } = new(Math.Max(6, initialIndexCapacity));
 
         /// <summary>Copies the packed source into an owned mesh and releases temporary storage.</summary>
-        public XRMesh BuildMesh(string[]? blendshapeNames)
+        public XRMesh BuildMesh(string[]? blendshapeNames, bool calculateTangents)
         {
             Source.BlendshapeNames = blendshapeNames;
+            if (calculateTangents && !Source.HasTangents)
+                Source.GenerateTangentsFromUv0(Indices);
             XRMesh mesh = new(Source, Indices);
             _source = null;
             Indices = [];
@@ -278,6 +280,7 @@ internal static class NativeFbxSceneImporter
                 FbxIntermediateMesh[] meshes = [.. semantic.IntermediateScene.Meshes];
                 Array.Sort(meshes, static (left, right) => left.ObjectIndex.CompareTo(right.ObjectIndex));
                 bool flipUvY = importOptions?.ImportSteps.HasFlag(ModelImportSteps.FlipUVs) ?? true;
+                bool calculateTangents = importOptions?.ImportSteps.HasFlag(ModelImportSteps.CalculateTangentSpace) ?? true;
 
                 List<MeshBuildWorkItem> workItems = [];
                 using (IDisposable? buildWorkItemsScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.BuildWorkItems"))
@@ -385,6 +388,7 @@ internal static class NativeFbxSceneImporter
                             materialCacheSync,
                             createdAssetsSync,
                             flipUvY,
+                            calculateTangents,
                             cancellationToken,
                             rootNode.Transform,
                             generateMeshRenderersAsync,
@@ -619,6 +623,7 @@ internal static class NativeFbxSceneImporter
         object materialCacheSync,
         object createdAssetsSync,
         bool flipUvY,
+        bool calculateTangents,
         CancellationToken cancellationToken,
         TransformBase rootTransform,
         bool generateMeshRenderersAsync,
@@ -709,7 +714,7 @@ internal static class NativeFbxSceneImporter
                     if (chunk.Source.VertexCount == 0 || chunk.Indices.Count == 0)
                         continue;
 
-                    XRMesh xrMesh = chunk.BuildMesh(blendShapeNames);
+                    XRMesh xrMesh = chunk.BuildMesh(blendShapeNames, calculateTangents);
                     SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
                     {
                         GenerateAsync = generateMeshRenderersAsync,
@@ -1439,9 +1444,13 @@ internal static class NativeFbxSceneImporter
                 else
                 {
                     bool transparentBlendHint = ShouldUseTransparentBlend(sceneMaterial);
-                    List<TextureSlot> textureSlots = BuildTextureSlots(semantic, intermediateMaterial.ObjectId, transparentBlendHint);
+                    List<TextureSlot> textureSlots = BuildTextureSlots(
+                        semantic,
+                        intermediateMaterial.ObjectId,
+                        transparentBlendHint,
+                        out bool hasTransparencyFactorMask);
                     material = importer.MaterialFactory(sourceFilePath, materialName, textureSlots, 0, ShadingMode.Phong, []);
-                    ApplyMaterialPropertyOverrides(material, sceneMaterial, textureSlots.Count == 0);
+                    ApplyMaterialPropertyOverrides(material, sceneMaterial, textureSlots.Count == 0, hasTransparencyFactorMask);
                 }
             }
             else
@@ -1455,10 +1464,16 @@ internal static class NativeFbxSceneImporter
         }
     }
 
-    private static List<TextureSlot> BuildTextureSlots(FbxSemanticDocument semantic, long materialObjectId, bool transparentBlendHint)
+    private static List<TextureSlot> BuildTextureSlots(
+        FbxSemanticDocument semantic,
+        long materialObjectId,
+        bool transparentBlendHint,
+        out bool hasTransparencyFactorMask)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
-        List<TextureSlot> textureSlots = [];
+        List<(string FilePath, TextureType Type)> sourceSlots = [];
+        bool hasOpacityTexture = false;
+        hasTransparencyFactorMask = false;
         foreach (FbxConnection connection in semantic.Connections)
         {
             if (connection.Destination.Id != materialObjectId ||
@@ -1472,7 +1487,17 @@ internal static class NativeFbxSceneImporter
                 continue;
 
             TextureType textureType = MapTextureType(connection.PropertyName, textureObject, filePath);
-            int flags = transparentBlendHint && textureType is TextureType.Diffuse or TextureType.BaseColor ? 0x2 : 0;
+            sourceSlots.Add((filePath, textureType));
+            hasOpacityTexture |= textureType == TextureType.Opacity;
+            hasTransparencyFactorMask |= textureType == TextureType.Opacity &&
+                string.Equals(connection.PropertyName, "TransparencyFactor", StringComparison.OrdinalIgnoreCase);
+        }
+
+        List<TextureSlot> textureSlots = new(sourceSlots.Count);
+        foreach ((string filePath, TextureType textureType) in sourceSlots)
+        {
+            int flags = transparentBlendHint && !hasOpacityTexture &&
+                textureType is TextureType.Diffuse or TextureType.BaseColor ? 0x2 : 0;
             textureSlots.Add(new TextureSlot(filePath, textureType, 0, default, 0, 1.0f, default, default, default, flags));
         }
 
@@ -1521,7 +1546,7 @@ internal static class NativeFbxSceneImporter
             var text when text.Contains("normal") => TextureType.NormalCamera,
             var text when text.Contains("bump") || text.Contains("height") => TextureType.Height,
             var text when text.Contains("specular") || text.Contains("shininess") => TextureType.Specular,
-            var text when text.Contains("opacity") || text.Contains("transparent") || text.Contains("alpha") => TextureType.Opacity,
+            var text when text.Contains("opacity") || text.Contains("transparent") || text.Contains("transparency") || text.Contains("alpha") => TextureType.Opacity,
             var text when text.Contains("emiss") => TextureType.Emissive,
             var text when text.Contains("metal") => TextureType.Metalness,
             var text when text.Contains("rough") => TextureType.Roughness,
@@ -1530,7 +1555,11 @@ internal static class NativeFbxSceneImporter
         };
     }
 
-    private static void ApplyMaterialPropertyOverrides(XRMaterial material, FbxSceneObject? materialObject, bool noTextures)
+    private static void ApplyMaterialPropertyOverrides(
+        XRMaterial material,
+        FbxSceneObject? materialObject,
+        bool noTextures,
+        bool hasTransparencyFactorMask)
     {
         if (materialObject is null)
             return;
@@ -1539,18 +1568,27 @@ internal static class NativeFbxSceneImporter
             ?? GetVectorProperty(materialObject, "BaseColor")
             ?? new Vector3((float)ColorF4.Magenta.R, (float)ColorF4.Magenta.G, (float)ColorF4.Magenta.B);
         float opacity = GetFloatProperty(materialObject, "Opacity") ?? 1.0f;
-        float roughness = GetFloatProperty(materialObject, "Roughness") ?? 1.0f;
+        float? roughness = GetFloatProperty(materialObject, "Roughness");
         float metallic = GetFloatProperty(materialObject, "Metalness") ?? 0.0f;
         Vector3 emissive = GetVectorProperty(materialObject, "EmissiveColor") ?? Vector3.Zero;
+        float emissionStrength = GetFloatProperty(materialObject, "EmissiveFactor") ?? 1.0f;
 
         if (noTextures)
             material.SetVector3("BaseColor", diffuseColor);
-        material.SetFloat("Opacity", opacity);
-        material.SetFloat("Roughness", roughness);
+        // A near-zero scalar is the fallback for a connected TransparencyFactor map.
+        // Let that map control coverage. Keep other scalar opacity values.
+        material.SetFloat("Opacity", hasTransparencyFactorMask && opacity <= 0.001f ? 1.0f : opacity);
+        if (roughness.HasValue)
+            material.SetFloat("Roughness", roughness.Value);
         material.SetFloat("Metallic", metallic);
-        material.EmissiveColor = emissive;
-        material.EmissionStrength = 1.0f;
-        material.SetFloat("Emission", Math.Max(emissive.X, Math.Max(emissive.Y, emissive.Z)));
+        // Inactive emission must not add an extension to the standard surface contract.
+        bool hasEmission = emissionStrength != 0.0f && emissive != Vector3.Zero;
+        material.EmissiveColor = hasEmission ? emissive : null;
+        material.EmissionStrength = hasEmission ? emissionStrength : null;
+        material.SetFloat("Emission", Math.Max(emissive.X, Math.Max(emissive.Y, emissive.Z)) * emissionStrength);
+        if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 &&
+            !StandardLitTextureSurfaceBinding.TryRead(material, out _, out _))
+            material.EngineSemantic = EngineMaterialSemanticIdentity.None;
     }
 
     private static bool ShouldUseTransparentBlend(FbxSceneObject? materialObject)

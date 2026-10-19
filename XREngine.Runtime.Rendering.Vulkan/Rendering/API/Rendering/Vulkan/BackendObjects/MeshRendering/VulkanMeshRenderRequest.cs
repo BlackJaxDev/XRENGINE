@@ -35,6 +35,7 @@ internal readonly record struct VulkanMeshRenderRequest(
     VulkanResidentDrawTemplateHandle ResidentTemplateHandle,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    internal Vector4 SourceFlatDirection { get; init; }
     internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
 
     internal static void ReleaseAuthoringLease(ref VulkanMeshRenderRequest request)

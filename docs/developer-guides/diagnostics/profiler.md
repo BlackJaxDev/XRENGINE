@@ -359,6 +359,38 @@ admission; a completed reserve can be claimed without another rejected frame.
 The map maintains at most one completed and one pending reserve per arena
 generation and frame slot, with a demand allocation slot kept available.
 
+Set `XRE_VULKAN_BUFFER_RETIREMENT_DIAGNOSTICS=1` before launch to identify buffer
+retirement producers. The optional diagnostic writes aggregate counts and
+tracked allocation bytes by owner category to
+`vulkan-buffer-retirement-diagnostics.log` after at least 256 accepted buffer
+retirements. Counts describe retirement enqueue operations, not native frees or
+live memory. An unknown allocation size contributes zero bytes. The log includes
+one sample owner label for the `other` category. Keep this flag disabled for
+throughput comparisons; formatting and logging add diagnostic cost.
+
+The same flag writes `vulkan-physical-plan-replacements.log`. It records the
+first 12 events and every 64th event for planner cache misses, physical plan
+replacement, and capacity eviction. Cache misses include the requested key and
+the nearest cached key for the same pipeline and viewport. Replacement records
+include allocation signatures and buffer-group counts, including empty seeds.
+Use these records to distinguish new allocation shapes from cache replacement.
+Image donor records identify selection failures, reuse eligibility failures,
+and the number of compatible images retained. A matching graph fingerprint
+with a different graph object is diagnostic evidence only; it does not permit
+reuse. Keep this diagnostic disabled when measuring capture throughput.
+
+Set `XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS=1` before launch to classify
+`RegistrationChanged` failures in the Advanced unchanged-row gate. The flag
+writes `advanced-scene-publication-diagnostics.log`. It samples the first 12
+failures and every 128th failure per publisher. Each record identifies the
+prepare or swap stage, failed predicate, row, source and material identities,
+committed-plan state, and material revisions. A separate sampled counter records
+material-plan reuse failures, including source eligibility, changed draw inputs,
+material identity and revisions, variants, payloads, texture bindings, and
+headers. These records include the material name and semantic. The diagnostic
+does not change publication admission. Keep this flag disabled for throughput
+measurements.
+
 Frame output fields decompose the shared render-thread frame across desktop,
 mirror, XR submit, overlay, and present work. Top-level fields include
 `vr_mirror_mode`, `vr_visibility_policy`, `frame_output_budget_band`,
@@ -557,6 +589,14 @@ The four profile modes have distinct intent:
 | `DevelopmentProfile` | Explicitly selected; labels and detailed scopes allowed | Normal editor and profiling tools allowed | Development trend only |
 | `CleanProfile` | Validation, dense timestamps, command labels, and P3 logging prohibited | ImGui and dynamic diagnostic overlays skipped | Quick feedback; non-promotable |
 | `ReleaseBenchmark` | Same non-intrusive restrictions as CleanProfile | ImGui and dynamic diagnostic overlays skipped | Compare/Gate promotion evidence |
+
+Clean profile overrides use `XREnvironment.SetRuntimeOverride` so the cached
+runtime value and process value agree. For an MCP-driven editor measurement,
+set the target viewport's `AllowUIRender` to `false`. Hiding a scene node does
+not disable the editor shell's text output, and clearing the camera UI reference
+allows viewport fallback discovery to attach it again. Confirm that observer
+metadata reports `ProfilePromotionEligible=true` before accepting a Release
+benchmark. Restore UI rendering after the measurement if the session continues.
 
 Vulkan presentation policy is an independent axis from observer/profile mode.
 The editor defaults to `Stable` (FIFO, refresh paced, no frame generation).

@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Materials;
@@ -17,6 +18,9 @@ namespace XREngine.Rendering.Commands;
 /// </summary>
 public sealed partial class AdvancedGpuScenePublisher
 {
+    private static readonly bool s_scenePublicationDiagnostics =
+        Environment.GetEnvironmentVariable("XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS") == "1";
+    private long _registrationDiagnosticMisses;
     // True while the retained plan, the ordered identities, the legacy mappings,
     // and the command draw handles describe the current publication.
     private bool _unchangedRowBaselineValid;
@@ -108,7 +112,7 @@ public sealed partial class AdvancedGpuScenePublisher
         int rowCount = _plannedCommandCount;
         bool rowsUnchanged = true;
         for (int commandIndex = 0; rowsUnchanged && commandIndex < rowCount; ++commandIndex)
-            rowsUnchanged = EvaluateUnchangedRow(scene, commandIndex, frameId, ref scratch);
+            rowsUnchanged = EvaluateUnchangedRow(scene, commandIndex, frameId, preparing: false, ref scratch);
 
         reusedStaticPlans = scratch.ReusedStaticPlans;
         materialResolveAttempts = scratch.MaterialResolveAttempts;
@@ -164,6 +168,7 @@ public sealed partial class AdvancedGpuScenePublisher
         GPUScene scene,
         int commandIndex,
         ulong frameId,
+        bool preparing,
         ref UnchangedRowGateScratch scratch)
     {
         scratch.ClearRow();
@@ -177,7 +182,13 @@ public sealed partial class AdvancedGpuScenePublisher
             // A missing source stays missing only while a scene lookup still fails.
             if (identity.Source is not null || identity.GroupIndex >= 0 ||
                 identity.RegistrationIndex >= 0 || identity.Draw.IsValid)
+            {
+                ReportRegistrationFailure(preparing, commandIndex, in plan,
+                    identity.Source is not null ? "MissingSourceIdentity" :
+                    identity.GroupIndex >= 0 ? "MissingSourceGroup" :
+                    identity.RegistrationIndex >= 0 ? "MissingSourceRegistration" : "MissingSourceDraw");
                 return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+            }
             if (scene.TryGetAdvancedRowInputs(
                     row,
                     readCullBounds: false,
@@ -197,7 +208,14 @@ public sealed partial class AdvancedGpuScenePublisher
             identity.SourcePrimitiveCount != plan.SourcePrimitiveCount ||
             identity.Supported != plan.Supported ||
             !IsRetainedSourceGroupCurrent(in identity, planSource, plan.SourcePrimitiveCount))
+        {
+            ReportRegistrationFailure(preparing, commandIndex, in plan,
+                !ReferenceEquals(identity.Source, planSource) ? "SourceIdentity" :
+                identity.PrimitiveIndex != plan.PrimitiveIndex ? "PrimitiveIdentity" :
+                identity.SourcePrimitiveCount != plan.SourcePrimitiveCount ? "PrimitiveCount" :
+                identity.Supported != plan.Supported ? "SupportedState" : "RetainedSourceGroup");
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+        }
         if (!scene.TryGetAdvancedRowInputs(
                 row,
                 readCullBounds,
@@ -228,6 +246,11 @@ public sealed partial class AdvancedGpuScenePublisher
         scratch.RowMesh = mesh;
         scratch.RowMaterial = material;
         scratch.RowRenderOptions = renderOptions;
+        if (!TryEncodeSourceFlatDirection(material, snapshot.SourceFlatBasis,
+                out uint flatDirectionOct, out uint flatDirectionValid) ||
+            flatDirectionOct != plan.SourceFlatDirectionOct ||
+            flatDirectionValid != plan.SourceFlatDirectionValid)
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.CommandChanged);
 
         if (!plan.Supported)
             return IsUnchangedUnsupportedRow(in plan, in identity, in command, mesh, material,
@@ -258,6 +281,7 @@ public sealed partial class AdvancedGpuScenePublisher
                 mesh,
                 material,
                 renderOptions,
+                preparing,
                 ref scratch))
             return false;
         ++scratch.SupportedRows;
@@ -271,6 +295,69 @@ public sealed partial class AdvancedGpuScenePublisher
     {
         scratch.RowMismatch = mismatch;
         return false;
+    }
+
+    /// <summary>Writes a bounded sample of registration gate failures.</summary>
+    private void ReportRegistrationFailure(
+        bool preparing,
+        int commandIndex,
+        in AdvancedGpuSceneCommandTransition plan,
+        string reason)
+    {
+        if (!s_scenePublicationDiagnostics)
+            return;
+
+        long miss = System.Threading.Interlocked.Increment(ref _registrationDiagnosticMisses);
+        if (miss > 12 && (miss & 127) != 0)
+            return;
+
+        int registrationIndex = plan.RegistrationIndex;
+        bool hasRegistration = (uint)registrationIndex < (uint)_registrationCount;
+        AdvancedCommittedMaterialPlan cache = hasRegistration
+            ? _registrations[registrationIndex].CommittedMaterialPlan
+            : default;
+        XRMaterial? material = plan.MaterialSource;
+        Debug.WriteAuxiliaryLog("advanced-scene-publication-diagnostics.log",
+            $"registration-miss={miss} stage={(preparing ? "prepare" : "swap")} reason={reason} row={commandIndex} " +
+            $"sourceKey={(plan.Source is RenderCommand command ? command.StableQueryKey : 0u)} " +
+            $"sourceId={(plan.Source is null ? 0 : RuntimeHelpers.GetHashCode(plan.Source))} " +
+            $"meshId={(plan.Mesh is null ? 0 : RuntimeHelpers.GetHashCode(plan.Mesh))} " +
+            $"materialId={(material is null ? 0 : RuntimeHelpers.GetHashCode(material))} " +
+            $"registrationIndex={registrationIndex} reusedMaterial={plan.ReusedCommittedMaterial} " +
+            $"cacheValid={cache.Valid} cacheLayout={cache.Layout is not null} cacheHandle={cache.MaterialHandle.IsValid} " +
+            $"planMaterialVersions={plan.MaterialBindingLayoutVersion}/{plan.MaterialBindingValueVersion}/{plan.MaterialBindingResourceVersion}/{plan.MaterialShaderStateRevision}/{plan.MaterialUberStateRevision} " +
+            $"cacheMaterialVersions={cache.MaterialBindingLayoutVersion}/{cache.MaterialBindingValueVersion}/{cache.MaterialBindingResourceVersion}/{cache.MaterialShaderStateRevision}/{cache.MaterialUberStateRevision} " +
+            $"liveMaterialVersions={material?.BindingLayoutVersion}/{material?.BindingValueVersion}/{material?.BindingResourceVersion}/{material?.ShaderStateRevision}/{material?.UberStateRevision}");
+    }
+
+    /// <summary>Names the first changed resident value after the normal gate fails.</summary>
+    private string GetRegistrationStateMismatch(
+        in AdvancedGpuSceneCommandTransition plan,
+        in AdvancedResidentRegistration registration,
+        in AdvancedCommittedMaterialPlan cache,
+        XRMesh? mesh,
+        XRMaterial? material)
+    {
+        if (registration.StructuralSignature != plan.StructuralSignature) return "StructuralSignature";
+        if (registration.ContentSignature != plan.ContentSignature) return "ContentSignature";
+        if (!ReferenceEquals(registration.TemporalMesh, mesh)) return "TemporalMesh";
+        if (registration.TemporalGeometryRevision != plan.MeshGeometryRevision) return "TemporalGeometryRevision";
+        if (registration.TemporalVertexCount != plan.MeshVertexCount) return "TemporalVertexCount";
+        if (registration.TemporalIndexCount != plan.MeshIndexCount) return "TemporalIndexCount";
+        if (registration.TemporalPrimitiveTopology != plan.MeshPrimitiveTopology) return "TemporalTopology";
+        if (registration.TemporalSkinned != plan.MeshIsSkinned) return "TemporalSkinned";
+        if (!ReferenceEquals(registration.MaterialSource, material)) return "MaterialSource";
+        if (registration.MaterialBindingLayoutVersion != plan.MaterialBindingLayoutVersion) return "MaterialLayoutVersion";
+        if (registration.MaterialBindingValueVersion != plan.MaterialBindingValueVersion) return "MaterialValueVersion";
+        if (registration.MaterialBindingResourceVersion != plan.MaterialBindingResourceVersion) return "MaterialResourceVersion";
+        if (registration.MaterialShaderStateRevision != plan.MaterialShaderStateRevision) return "MaterialShaderRevision";
+        if (registration.MaterialUberStateRevision != plan.MaterialUberStateRevision) return "MaterialUberRevision";
+        if (!cache.Valid) return "InvalidMaterialCache";
+        if (cache.Layout is null) return "MissingMaterialLayout";
+        if (cache.Draw != registration.Draw) return "CachedDraw";
+        if (cache.MaterialHandle != registration.Material) return "CachedMaterialHandle";
+        if (!IsRegistrationCurrent(in registration)) return "RegistrationHandleNotCurrent";
+        return "RegistrationStateUnknown";
     }
 
     /// <summary>
@@ -344,6 +431,7 @@ public sealed partial class AdvancedGpuScenePublisher
         XRMesh? mesh,
         XRMaterial? material,
         RenderingParameters? renderOptions,
+        bool preparing,
         ref UnchangedRowGateScratch scratch)
     {
         int registrationIndex = identity.RegistrationIndex;
@@ -353,7 +441,13 @@ public sealed partial class AdvancedGpuScenePublisher
             registrationIndex < 0 ||
             registrationIndex != plan.RegistrationIndex ||
             registrationIndex >= _registrationCount)
+        {
+            ReportRegistrationFailure(preparing, commandIndex, in plan,
+                !plan.ReusedCommittedMaterial ? "CommittedMaterialPlanNotReused" :
+                registrationIndex < 0 ? "MissingRegistrationIndex" :
+                registrationIndex != plan.RegistrationIndex ? "RegistrationIndex" : "RegistrationIndexRange");
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+        }
         if (mesh is null ||
             !ReferenceEquals(mesh, plan.Mesh) ||
             !ReferenceEquals(material, plan.MaterialSource))
@@ -400,7 +494,15 @@ public sealed partial class AdvancedGpuScenePublisher
             !identity.Draw.IsValid ||
             registration.Draw != identity.Draw ||
             registration.LegacyCommandIndex != (uint)commandIndex)
+        {
+            ReportRegistrationFailure(preparing, commandIndex, in plan,
+                !registration.Active ? "InactiveRegistration" :
+                !ReferenceEquals(registration.Source, plan.Source) ? "RegistrationSource" :
+                registration.PrimitiveIndex != plan.PrimitiveIndex ? "RegistrationPrimitive" :
+                !identity.Draw.IsValid ? "InvalidIdentityDraw" :
+                registration.Draw != identity.Draw ? "RegistrationDraw" : "CommandIndex");
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+        }
         if (registration.LastSeenFrameId == 0UL ||
             unchecked(registration.LastSeenFrameId + 1UL) != frameId)
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.FrameGap);
@@ -423,7 +525,15 @@ public sealed partial class AdvancedGpuScenePublisher
             cache.Draw != registration.Draw ||
             cache.MaterialHandle != registration.Material ||
             !IsRegistrationCurrent(in registration))
+        {
+            if (s_scenePublicationDiagnostics)
+                ReportRegistrationFailure(preparing, commandIndex, in plan,
+                    GetRegistrationStateMismatch(in plan, in registration, in cache, mesh, material));
             return FailRow(ref scratch, EAdvancedPreparedGateOutcome.RegistrationChanged);
+        }
+        if (NativeUberMaterialSchema.IsLayout(layout) &&
+            !_materialPublisher.HasCurrentStrictUberValidation(registration.Material))
+            return FailRow(ref scratch, EAdvancedPreparedGateOutcome.MaterialChanged);
 
         // The material versions do not cover every header input, for example a
         // vertex uniform handler. The full plan checks the header for each

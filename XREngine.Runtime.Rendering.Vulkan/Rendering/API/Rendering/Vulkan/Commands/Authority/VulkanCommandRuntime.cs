@@ -797,6 +797,9 @@ internal sealed partial class VulkanCommandRuntime
         VulkanResourceRuntime resourceRuntime,
         int maxItems = 64)
     {
+        CommandBuffers.FrameWideMeshDataManifest.MaintainCaptureFamilies();
+        resourceRuntime.MappedFrameArena?.DrainCommandInvalidations(
+            _invalidateFrameDataCommand ??= InvalidateFrameDataCommand);
         if (maxItems <= 0 || CommandBuffers.InvalidatedBuffersPendingReset.IsEmpty)
             return;
 

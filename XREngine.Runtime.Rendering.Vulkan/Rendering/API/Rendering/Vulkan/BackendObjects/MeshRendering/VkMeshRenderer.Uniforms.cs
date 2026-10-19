@@ -163,14 +163,17 @@ internal unsafe partial class VkMeshRenderer
 				VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
 				if (arena is null ||
 					!arena.TryGetOrReserveFrequencyAutoUniformRange(
+						this,
+						frameIndex,
+						drawUniformSlot,
 						_program,
 						block,
 						ownerIdentity,
-						out frequencyReservation) ||
+						out frequencyReservation,
+						captureOwner: draw.CaptureOwnerToken) ||
 					!arena.TryGetSlice(
 						frameIndex,
-						frequencyReservation.Offset,
-						block.Size,
+						frequencyReservation,
 						out VulkanMappedFrameSlice sharedSlice))
 				{
 					RuntimeEngine.Rendering.Stats.Vulkan

@@ -351,9 +351,10 @@ namespace XREngine.Rendering.OpenGL
                 uint instances,
                 EMeshBillboardMode billboardMode,
                 bool forceNoStereo,
-                in XREngine.Rendering.Commands.AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+                in XREngine.Rendering.Commands.AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
+                Vector4 sourceFlatDirection)
                 => Render(modelMatrix, previousModelMatrix, materialOverride, renderOptionsOverride,
-                    instances, billboardMode, forceNoStereo);
+                    instances, billboardMode, forceNoStereo, sourceFlatDirection);
 
             public void Render(
                 Matrix4x4 modelMatrix,
@@ -362,7 +363,8 @@ namespace XREngine.Rendering.OpenGL
                 RenderingParameters? renderOptionsOverride,
                 uint instances,
                 EMeshBillboardMode billboardMode,
-                bool forceNoStereo)
+                bool forceNoStereo,
+                Vector4 sourceFlatDirection = default)
             {
                 if (IsDebugCategoryEnabled("Render"))
                     Dbg($"Render request (instances={instances}, billboard={billboardMode})", "Render");
@@ -453,6 +455,9 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 GLMaterial material = GetRenderMaterial(materialOverride, instances);
+                if (SourceMultilayerFlatDirection.IsRequired(material.Data) &&
+                    !SourceMultilayerFlatDirection.IsValid(sourceFlatDirection))
+                    throw new InvalidOperationException("The active flat multilayer draw has no valid source direction.");
 
                 if (ShouldSkipShadowDrawForProgramBuild(material))
                 {
@@ -468,7 +473,8 @@ namespace XREngine.Rendering.OpenGL
                     renderOptionsOverride,
                     instances,
                     billboardMode,
-                    forceNoStereo))
+                    forceNoStereo,
+                    sourceFlatDirection))
                 {
                     return;
                 }
@@ -484,6 +490,7 @@ namespace XREngine.Rendering.OpenGL
                         instances,
                         billboardMode,
                         forceNoStereo,
+                        sourceFlatDirection,
                         uniformSourceMaterial: material))
                 {
                     LogBatchedTextDraw("Render pending-uber-fallback", instances);
@@ -561,7 +568,7 @@ namespace XREngine.Rendering.OpenGL
                 if (TryRenderWithMaterialProgramsCore(
                     material, modelMatrix, previousModelMatrix, materialOverride,
                     renderOptionsOverride, 1u, billboardMode, forceNoStereo,
-                    arguments, byteOffset, out failureReason))
+                    arguments, byteOffset, out failureReason, sourceFlatDirection: default))
                     return true;
 
                 if (TryResolvePendingUberFallbackMaterial(material, out GLMaterial? fallbackMaterial)
@@ -569,7 +576,7 @@ namespace XREngine.Rendering.OpenGL
                     && TryRenderWithMaterialProgramsCore(
                         fallbackMaterial, modelMatrix, previousModelMatrix, materialOverride,
                         renderOptionsOverride, 1u, billboardMode, forceNoStereo,
-                        arguments, byteOffset, out failureReason, material))
+                        arguments, byteOffset, out failureReason, material, sourceFlatDirection: default))
                     return true;
 
                 return false;
@@ -584,11 +591,12 @@ namespace XREngine.Rendering.OpenGL
                 uint instances,
                 EMeshBillboardMode billboardMode,
                 bool forceNoStereo,
+                Vector4 sourceFlatDirection,
                 GLMaterial? uniformSourceMaterial = null)
                 => TryRenderWithMaterialProgramsCore(
                     material, modelMatrix, prevModelMatrix, materialOverride,
                     renderOptionsOverride, instances, billboardMode, forceNoStereo,
-                    null, 0, out _, uniformSourceMaterial);
+                    null, 0, out _, uniformSourceMaterial, sourceFlatDirection);
 
             private bool TryRenderWithMaterialProgramsCore(
                 GLMaterial material,
@@ -602,7 +610,8 @@ namespace XREngine.Rendering.OpenGL
                 XRDataBuffer? indirectArguments,
                 nuint indirectByteOffset,
                 out string failureReason,
-                GLMaterial? uniformSourceMaterial = null)
+                GLMaterial? uniformSourceMaterial = null,
+                Vector4 sourceFlatDirection = default)
             {
                 failureReason = string.Empty;
                 if (!GetPrograms(material, out var vtx, out var mat))
@@ -663,6 +672,8 @@ namespace XREngine.Rendering.OpenGL
                 }
 
                 OnSettingUniforms(vtx!, mat!);
+                vtx!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
+                mat!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
                 PublishTypedBindingPublishers(
                     bindingMaterial.Data.BindingPublishers,
                     vtx!.Data,

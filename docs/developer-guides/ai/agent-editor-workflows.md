@@ -266,3 +266,8 @@ After adding or renaming MCP tools, regenerate docs:
 ```powershell
 pwsh Tools/Reports/generate_mcp_docs.ps1
 ```
+
+For source-only tool-table updates without an implicit build, use
+`pwsh Tools/Reports/generate_mcp_docs.ps1 -SourceOnly`. Check the generated
+diff. This reads the editor action attributes and does not validate runtime
+tool registration; confirm registration in the isolated editor as well.

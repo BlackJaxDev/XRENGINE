@@ -18,26 +18,37 @@ internal static partial class SerializedSceneImporter
     /// Unsupported source settings must not produce an approximate hierarchy.
     /// </summary>
     private static bool? ValidateSourceModelCoordinates(
-        string modelPath, SerializedModelImporterDocument metadata, ImportState state)
+        string modelPath, SerializedModelImporterDocument metadata, ImportState state,
+        out float sourceUnitToMeters)
     {
+        sourceUnitToMeters = 1.0f;
         if (!string.Equals(Path.GetExtension(modelPath), ".fbx", StringComparison.OrdinalIgnoreCase))
             return null;
         if (metadata.BakeAxisConversion || metadata.GlobalScale != 1.0f)
             throw new SourceVisualImportException(
-                "Unity FBX composition currently requires bakeAxisConversion=false and globalScale=1.");
+                $"Unity FBX model '{modelPath}' requires bakeAxisConversion=false and globalScale=1.");
 
         // Check source semantics before either geometry producer runs.
         FbxSemanticDocument source = state.Context.FbxSourceDocuments.GetSemantic(modelPath);
         FbxAxisSystem? axes = source.GlobalSettings?.AxisSystem;
-        if (axes is null || axes.UnitScaleFactor != 100.0d ||
+        if (axes is null ||
+            (axes.UnitScaleFactor != 100.0d && axes.UnitScaleFactor != 1.0d) ||
             axes.CoordAxis.AxisIndex != 0 || axes.CoordAxis.Sign != 1 ||
             !((axes.UpAxis.AxisIndex == 2 && axes.UpAxis.Sign == 1 &&
                axes.FrontAxis.AxisIndex == 1 && axes.FrontAxis.Sign == -1) ||
               (axes.UpAxis.AxisIndex == 1 && axes.UpAxis.Sign == 1 &&
                axes.FrontAxis.AxisIndex == 2 && axes.FrontAxis.Sign == 1)))
             throw new SourceVisualImportException(
-                "Unity FBX composition requires metre units and a supported +X-right source basis: " +
+                $"Unity FBX model '{modelPath}' requires metre or centimetre units and a supported +X-right source basis: " +
                 "+Z-up/-Y-front or +Y-up/+Z-front.");
+
+        sourceUnitToMeters = (float)(axes.UnitScaleFactor / 100.0d);
+        if (axes.UnitScaleFactor == 1.0d && !metadata.UseFileScale)
+            throw new SourceVisualImportException(
+                $"Unity FBX model '{modelPath}' uses centimetre source units without file-scale import. This coordinate contract is not supported.");
+        if (axes.UnitScaleFactor == 1.0d && source.IntermediateScene.Skins.Count != 0)
+            throw new SourceVisualImportException(
+                $"Unity FBX model '{modelPath}' uses centimetre units with skinning. Its source-local bind conversion is not supported.");
 
         foreach (FbxIntermediateNode node in source.IntermediateScene.Nodes)
         {
@@ -46,7 +57,7 @@ internal static partial class SerializedSceneImporter
                 transform.RotationOrder != FbxRotationOrder.XYZ ||
                 !ModelMatricesMatch(node.GeometryTransform, Matrix4x4.Identity))
                 throw new SourceVisualImportException(
-                    $"Unity FBX node '{node.Name}' requires unsupported pivot, inheritance, rotation-order, or geometric-transform conversion.");
+                    $"Unity FBX node '{node.Name}' in '{modelPath}' requires unsupported pivot, inheritance, rotation-order, or geometric-transform conversion.");
         }
 
         return axes.UpAxis.AxisIndex == 2;
@@ -56,13 +67,21 @@ internal static partial class SerializedSceneImporter
     /// Converts the producer's complete coordinate chart to the Unity YAML chart.
     /// Row-vector geometry, local transforms, and inverse binds change together.
     /// </summary>
-    private static SceneNode ConvertImportedModelCoordinates(SceneNode root, string backend, bool nativeHasContentBasis)
+    private static SceneNode ConvertImportedModelCoordinates(
+        SceneNode root, string backend, bool sourceZUp, float sourceUnitToMeters)
     {
         bool native = backend == ModelImportBackendIds.NativeFbx;
-        Matrix4x4 conversion = native
+        Matrix4x4 axisConversion = native
             ? Matrix4x4.CreateScale(-1.0f, 1.0f, -1.0f)
             : Matrix4x4.CreateScale(-1.0f, 1.0f, 1.0f);
-        Matrix4x4 inverse = conversion;
+        // Native FBX already carries file-unit scale in its content basis.
+        // Assimp leaves that scale in source units, so convert its full chart.
+        Matrix4x4 conversion = native
+            ? axisConversion
+            : axisConversion * Matrix4x4.CreateScale(sourceUnitToMeters);
+        Matrix4x4 inverse = native
+            ? axisConversion
+            : Matrix4x4.CreateScale(1.0f / sourceUnitToMeters) * axisConversion;
         var meshes = new HashSet<XRMesh>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         foreach (SceneNode node in EnumerateModelHierarchy(root))
         {
@@ -108,11 +127,13 @@ internal static partial class SerializedSceneImporter
 
         // The native content node has the same role as Assimp's generated root.
         // Use one normalization path before generation-2 Unity identities are assigned.
-        if (native && nativeHasContentBasis)
+        if (native && (sourceZUp || sourceUnitToMeters != 1.0f))
         {
+            Matrix4x4 expectedContentBasis = Matrix4x4.CreateScale(sourceUnitToMeters) *
+                (sourceZUp ? Matrix4x4.CreateRotationX(MathF.PI * 0.5f) : Matrix4x4.Identity);
             if (root.Transform.Children.Count != 1 ||
                 root.Transform.Children[0].SceneNode is not { Name: "FbxImportedContentBasis" } contentRoot ||
-                !ModelMatricesMatch(contentRoot.Transform.LocalMatrix, Matrix4x4.CreateRotationX(MathF.PI * 0.5f)))
+                !ModelMatricesMatch(contentRoot.Transform.LocalMatrix, expectedContentBasis))
                 throw new SourceVisualImportException("The native FBX producer did not return the declared content basis.");
             contentRoot.Name = "RootNode";
         }

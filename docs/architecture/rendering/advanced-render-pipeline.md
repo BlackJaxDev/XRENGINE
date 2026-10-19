@@ -42,6 +42,15 @@ FrameBegin
 
 ### Scene registration identity reuse
 
+Native Uber material reuse retains the result of strict shader validation.
+`AdvancedUberValidationStamp` records the canonical shader, source text and
+identity, provider owner, runtime shader service, asset epoch, and snippet
+version. Reuse requires the same material revisions and exact variant handle.
+Changed inputs require strict validation again. Prepared and unchanged-row
+checks use the same stamp. Successful preflight retains a refreshed stamp even
+when unchanged publication skips the table commit. This metadata update does
+not change GPU rows or material reference counts.
+
 `AdvancedGpuScenePublisher` retains the registration lookup and an ordered
 array of source identities. Each row records the source reference, primitive
 index and count, support state, source group, registration slot, and complete
@@ -104,7 +113,8 @@ The gate passes only when all of these conditions are true:
 - The frame identifier follows the last published frame.
 - The boundary storage did not grow.
 - Each supported row reused its committed material plan. Its material is untextured
-  or uses the fixed `NativeUberV1` layout with current 2D or CPU-backed cube bindings.
+  or uses a supported `NativeUberV1` or `StandardLitTextureV1` layout with current
+  2D or CPU-backed cube bindings.
 - Each active registration belongs to one row.
 
 Any difference runs the full plan with no change in behavior. Thus a rejected
@@ -116,7 +126,12 @@ roles through the same role-only encoder as the full plan and compares each
 source with its committed logical binding. This includes the imported metadata
 epoch, source-content generation, dimensions, format, and sampler state. The
 check repeats when consuming a prepared verdict. Scalar encoding is skipped
-only while these checks pass. GPU-authored cubes without a content witness, arrays, projective mirrors, and other
+only while these checks pass. Standard lit texture reuse captures the same four
+legacy texture roles and six engine-surface roles as the full plan. It checks
+each committed logical binding and the engine-surface layout and scalar values.
+Publisher-owned scratch storage is cleared after each check. The existing five
+material revisions, material variant, current handles, header, and render-state
+checks still apply. GPU-authored cubes without a content witness, arrays, projective mirrors, and other
 textured material families keep the full plan. Native readiness and descriptor
 ownership checks remain at their existing render boundaries.
 
@@ -216,6 +231,42 @@ witness that should have caught it. `get_render_profiler_stats` reports the
 counters in `frame_lifecycle.collect_stages.swap.advanced_publication.prepared_gate`:
 prepares, refusals and misses by reason, hits, re-evaluated rows, verify
 disagreements, and the last exception.
+
+### Deformation source identity
+
+`AdvancedPreparationExtractor` keeps an `AdvancedDeformationSourceSet` for each
+scene. It compares the unique meshes in the bounded captured submission, not
+the scene topology version or material signatures. Each
+`AdvancedDeformationSourceWitness` includes geometry revision and dimensions,
+primitive type, meshlet count, preparation policy, skin-buffer identity and
+revisions, and morph-buffer identity and revisions. Membership order does not
+matter. Additions, removals, or changed inputs advance the source generation.
+Missing geometry and conflicting captures are rejected. A failed scan cannot
+leave partial changes under an accepted generation.
+
+Static GPU generations use scene identity, database epoch, deformation source
+generation, and preparation policy. Camera, texture, and material changes can
+therefore retain unchanged deformation input data. Output pins, copy-on-write,
+and per-mesh witness checks still protect GPU consumers. A membership change can
+reuse a donor from the same scene, database epoch, and policy when every retained
+mesh witness is current. An unpinned donor changes its source-set key. A pinned
+donor keeps its GPU buffers while an unpinned successor adopts its managed rows,
+witness maps, and payload index. Reuse stops when the retained mesh or payload
+count exceeds the configured deformation-job limit. A changed witness uses fresh
+preparation. Renderer-owner state
+continues to reset on scene topology changes because draw owners can change
+without changing a shared mesh. Source-set storage reserves the bounded union
+of old and new membership to avoid allocation during replacement.
+
+`get_render_state.advancedPreparation` reports `deformationSourceGeneration`
+and `deformationSourceMeshCount` for the last preparation attempt.
+`deformationSourceChanges` identifies added/removed meshes and changed input
+fields in the last transition. `deformationSourceChangedMesh` names the first
+changed mesh when available. These fields
+describe the selected inputs. The publication and deferral fields show whether
+preparation completed. An output-arena allocation failure defers the entire
+preparation attempt until boundary growth succeeds. A diagnostic slice must not
+be published as GPU-deformed output.
 
 ### Extraction lookups
 
@@ -433,7 +484,50 @@ Every pipeline request carries an explicit output purpose. Outputs can share sce
 
 Under `Available`, an output that cannot reserve the required family stays explicitly unbound and reports the rejection. Under `Required`, selection throws `AdvancedRenderPipelineNotSupportedException`.
 
+## Native Uber Tile Coverage
+
+Native Uber vertex-mode UDIM coverage reads the three original corners through
+the shared `PrimitiveAccess.glslinc` geometry contract. The visibility and native
+directional-shadow fragments use the same rejection predicate. No geometry
+shader or non-finite clip position is required. Pixel-mode discard continues to
+use interpolated UVs.
+
+`AdvancedPackedVertexCodec` classifies UV0 through UV3 before half precision
+packing. `AdvancedDeformedVertex.Reserved2` stores four five-bit tile IDs and a
+validity bit at bit 31. IDs 0–15 identify the four-by-four tile grid; 16 means
+outside the grid, and 17 means a non-finite source UV. The record remains 64
+bytes. Its layout identity changes when this coverage data becomes required.
+Deformation preserves the field. Native material admission currently permits
+UV0 and UV1. Missing or invalid classification rejects the triangle and increments
+the existing decode diagnostic counter.
+
+## Source Flat Lighting Direction
+
+Source flat-mask lighting needs a source object direction. Skinned geometry uses
+world-space vertices and an identity geometry matrix, so that matrix cannot
+supply the direction. `RenderableMesh` captures a separate skin-root or component
+basis at command swap. `SourceMultilayerFlatDirection` transforms the imported
+axis and normalizes it without overflow from large scale values.
+
+Native draws store the octahedral direction and its validity in words 18 and 19
+of `AdvancedDrawRecord`. The record remains 80 bytes. Publication hashes, reuse
+checks, and journal capacity checks include these values. A direction change
+updates draw content. Root transform changes dirty active flat-mask commands
+before bounds-cache early returns.
+
+Authored draws carry the same direction in `u_SourceFlatDirection`. Vulkan object
+uniform generations and cached draw templates retain it. An active flat mask
+with an invalid direction fails explicitly. Materials with source lighting or
+the stylized feature disabled do not require this direction.
+
 ## Known Limits
+
+Authored late replay and authored Vulkan shadow passes do not have this triangle
+binding contract. They reject active vertex-mode UDIM discard. Point and spot
+shadow atlases use the authored path. A separate local-shadow content-cache
+limit remains: cached local tiles do not include all material input revisions
+in their content hash. These paths require further work before full tile-discard
+shadow parity is available.
 
 - The Advanced pipeline still builds the classic GBuffer and `DeferredLightCombine` resources for its opaque path. Removal is open work in the [Vulkan XR And Advanced Rendering TODO](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md).
 - `AdvancedRenderPipeline` is the source default for new desktop cameras, but it is not yet certified production-ready for every backend, material, and output profile. Promotion gates are in the [Vulkan master TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md).

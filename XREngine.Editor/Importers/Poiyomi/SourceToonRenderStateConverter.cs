@@ -6,7 +6,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Converts Poiyomi Toon 9.3.64 ShaderLab pass and fixed-function state into
+/// Converts verified Poiyomi Toon ShaderLab pass and fixed-function state into
 /// the engine's shared-authored-state material pass architecture.
 /// </summary>
 public static class SourceToonRenderStateConverter
@@ -504,7 +504,7 @@ public static class SourceToonRenderStateConverter
         diagnostics.Add(new MaterialConversionDiagnostic(
             MaterialConversionDiagnosticCodes.EnumValueOutOfRange,
             MaterialConversionDiagnosticSeverity.Warning,
-            $"Serialized enum value {raw.ToString(CultureInfo.InvariantCulture)} is not supported by the pinned Poiyomi 9.3.64 mapping; using '{fallback}'.",
+            $"Serialized enum value {raw.ToString(CultureInfo.InvariantCulture)} is not supported by the Poiyomi Toon mapping; using '{fallback}'.",
             property));
         return fallback;
     }

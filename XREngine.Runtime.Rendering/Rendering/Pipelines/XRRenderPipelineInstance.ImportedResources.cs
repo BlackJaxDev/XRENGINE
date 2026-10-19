@@ -156,7 +156,18 @@ public sealed partial class XRRenderPipelineInstance
     /// The returned revision identifies the exact staged set that was published.
     /// </summary>
     internal int PublishStagedImportedResources(RenderResourceGeneration? generation)
+        => PublishStagedImportedResources(generation, out _, out _);
+
+    /// <summary>
+    /// Returns the registry revisions from the exact commit before change notifications run.
+    /// </summary>
+    internal int PublishStagedImportedResources(
+        RenderResourceGeneration? generation,
+        out int descriptorRevision,
+        out int instanceRevision)
     {
+        descriptorRevision = 0;
+        instanceRevision = 0;
         if (generation is null)
             return ImportedResourceStagingRevision;
 
@@ -219,6 +230,8 @@ public sealed partial class XRRenderPipelineInstance
             }
 
             publishedRevision = _importedResourceStagingRevision;
+            descriptorRevision = registry.DescriptorRevision;
+            instanceRevision = registry.InstanceRevision;
         }
 
         if (bindingsChanged)
