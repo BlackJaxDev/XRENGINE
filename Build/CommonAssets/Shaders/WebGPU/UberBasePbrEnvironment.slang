@@ -10,6 +10,7 @@ struct ProbeParam
 {
     float4 InfluenceInner; float4 InfluenceOuter; float4 InfluenceOffsetShape;
     float4 ProxyCenterEnable; float4 ProxyHalfExtents; float4 ProxyRotation;
+    float4 PrefilterSampling;
 };
 struct ProbeGridCell { int4 OffsetCount; int4 FallbackIndices; };
 [[vk::binding(3, 2)]] ConstantBuffer<UberPbrUniforms> uberPbr;
@@ -29,10 +30,11 @@ float4 uberPbrTetra(int index) { uint w=uint(index)*4u; return asfloat(uint4(ube
 float4 uberPbrParameterVector(uint w) { return asfloat(uint4(uberProbeParameters[w],uberProbeParameters[w+1u],uberProbeParameters[w+2u],uberProbeParameters[w+3u])); }
 ProbeParam uberPbrParameters(int index)
 {
-    uint w=uint(index)*24u; ProbeParam p;
+    uint w=uint(index)*28u; ProbeParam p;
     p.InfluenceInner=uberPbrParameterVector(w); p.InfluenceOuter=uberPbrParameterVector(w+4u);
     p.InfluenceOffsetShape=uberPbrParameterVector(w+8u); p.ProxyCenterEnable=uberPbrParameterVector(w+12u);
-    p.ProxyHalfExtents=uberPbrParameterVector(w+16u); p.ProxyRotation=uberPbrParameterVector(w+20u); return p;
+    p.ProxyHalfExtents=uberPbrParameterVector(w+16u); p.ProxyRotation=uberPbrParameterVector(w+20u);
+    p.PrefilterSampling=uberPbrParameterVector(w+24u); return p;
 }
 ProbeGridCell uberPbrCell(int index)
 {
@@ -251,11 +253,10 @@ float3 XRENGINE_CalculateAmbientPbr(float3 normal, float3 fragPos, float3 albedo
     float3 irradianceColor = float3(0.0);
     float3 prefilteredColor = float3(0.0);
     float totalWeight = 0.0;
-    // Loop-invariant prefilter LOD bounds: hoisted out of the per-probe loop.
+    // Keep the array limit outside the probe loop. Each probe has its own filter.
     uint prefilterWidth, prefilterHeight, prefilterLayers, prefilterLevels;
     PrefilterArray.GetDimensions(0u, prefilterWidth, prefilterHeight, prefilterLayers, prefilterLevels);
     float maxMip = float(prefilterLevels - 1u);
-    float clampedLod = min(roughness * 4.0, maxMip);
 
     for (int i = 0; i < 4; ++i)
     {
@@ -275,8 +276,14 @@ float3 XRENGINE_CalculateAmbientPbr(float3 normal, float3 fragPos, float3 albedo
 
         float3 diffuseDir = XRENGINE_ApplyParallax(probeIndex, normal, fragPos);
         float3 specDir = XRENGINE_ApplyParallax(probeIndex, reflectionDir, fragPos);
-        float normalizationScale = max(uberPbrParameters(probeIndex).ProxyHalfExtents.w, 0.0001);
+        ProbeParam probe = uberPbrParameters(probeIndex);
+        float normalizationScale = max(probe.ProxyHalfExtents.w, 0.0001);
         float weightedScale = weight * normalizationScale;
+        float probeMaxMip = min(max(probe.PrefilterSampling.y, 0.0), maxMip);
+        float r = clamp(roughness, 0.0, 1.0);
+        float clampedLod = probe.PrefilterSampling.x > 0.5
+            ? min(6.0 * r * (1.7 - 0.7 * r), probeMaxMip)
+            : r * probeMaxMip;
 
         // The admitted canonical array sampler is linear, non-mipmapped and
         // non-anisotropic, so explicit level zero preserves its exact footprint

@@ -48,6 +48,8 @@ internal readonly record struct PendingMeshDraw(
     AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    internal Vector4 SourceFlatDirection { get; init; }
+    internal RenderCaptureOwnerToken? CaptureOwnerToken { get; init; }
     internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;
     internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }
 

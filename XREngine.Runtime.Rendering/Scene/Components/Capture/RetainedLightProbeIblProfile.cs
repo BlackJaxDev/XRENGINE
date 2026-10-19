@@ -9,6 +9,7 @@ public sealed record RetainedLightProbeIblProfile
 {
     public int Version { get; init; } = 1;
     public uint SourceGeneration { get; init; }
+    public ELightProbePrefilterConvention PrefilterConvention { get; init; }
     public float InfluenceSphereInner { get; init; }
     public float InfluenceSphereOuter { get; init; }
     public Vector3 InfluenceBoxInner { get; init; }
@@ -30,9 +31,13 @@ public sealed record RetainedLightProbeIblProfile
             throw Invalid("AutoCaptureOnActivate and RealtimeCapture must both be authored false; retained data cannot satisfy requested capture");
         if (!source.IblTexturesValid || source.CaptureVersion == 0 || source.IrradianceTexture is not { } irradiance || source.PrefilterTexture is not { } prefilter)
             throw Invalid("the source requires a valid, nonzero baked generation with both irradiance and prefiltered images");
+        if (!source.TryGetActiveIblOutput(out LightProbeIblOutputGeneration generation) ||
+            !ReferenceEquals(generation.Irradiance, irradiance) || !ReferenceEquals(generation.PrefilteredRadiance, prefilter))
+            throw Invalid("the source images must belong to the completed probe generation");
         ValidateImage(irradiance, false, allowSourceRgb: true);
         ValidateImage(prefilter, true, allowSourceRgb: true);
         return new() { SourceGeneration = source.CaptureVersion, Irradiance = irradiance, Prefilter = prefilter,
+            PrefilterConvention = generation.PrefilterConvention,
             SourceIrradiance = irradiance, SourcePrefilter = prefilter,
             InfluenceSphereInner = source.InfluenceSphereInnerRadius, InfluenceSphereOuter = source.InfluenceSphereOuterRadius,
             InfluenceBoxInner = source.InfluenceBoxInnerExtents, InfluenceBoxOuter = source.InfluenceBoxOuterExtents,
@@ -44,6 +49,9 @@ public sealed record RetainedLightProbeIblProfile
     public void RestoreDecodedImages()
     {
         if (Version != 1 || SourceGeneration == 0 || SourceHdrEncoding != LightProbeComponent.EHdrEncoding.Rgb16f) throw Invalid("the retained target provenance version or generation is invalid");
+        if (!Enum.IsDefined(PrefilterConvention) || PrefilterConvention == ELightProbePrefilterConvention.UnityMip &&
+            (Prefilter.Mipmaps.Length != 7 || Prefilter.Width < 512 || Prefilter.Height < 512))
+            throw Invalid("the retained prefilter convention or Unity seven-level layout is invalid");
         IrradianceSettings.ApplyTo(SourceIrradiance);
         PrefilterSettings.ApplyTo(SourcePrefilter);
         IrradianceSettings.ApplyTo(Irradiance);

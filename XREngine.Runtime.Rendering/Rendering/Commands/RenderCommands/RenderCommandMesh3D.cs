@@ -58,6 +58,7 @@ namespace XREngine.Rendering.Commands
         private uint _editorHighlightBits;
         private AABB? _worldCullingVolumeOverride;
         private string? _gpuProfilingLabel;
+        private EMaterialPassIdentity? _supplementalMaterialPass;
 
         private XRMeshRenderer? _renderMesh;
         private Matrix4x4 _renderWorldMatrix;
@@ -67,11 +68,15 @@ namespace XREngine.Rendering.Commands
         private bool _renderWorldMatrixIsModelMatrix;
         private bool _renderForceCpuRendering;
         private int _renderPass;
+        private EMaterialPassIdentity? _renderSupplementalMaterialPass;
         private uint _renderEditorHighlightBits;
         private GpuSceneOwnerSnapshot _renderGpuSceneOwner;
         private bool _renderBasePassEnabled = true;
         private bool _renderShadowPassEnabled = true;
+        private bool _renderSharedOpaqueShadow;
         private GpuMeshSubmissionLodTransforms? _renderLodTransforms;
+        private Matrix4x4 _renderSourceFlatBasis = Matrix4x4.Identity;
+        private Vector4 _renderSourceFlatDirection;
         private AABB? _renderWorldCullingVolumeOverride;
         private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
         private bool _renderHasPrevWorldMatrix;
@@ -112,6 +117,14 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         internal AdvancedGpuSceneDrawIdentity RenderCanonicalDrawIdentity
             => _renderCanonicalDrawIdentitySnapshot.Primary;
+
+        internal EMaterialPassIdentity? RenderSupplementalMaterialPass => _renderSupplementalMaterialPass;
+
+        internal EMaterialPassIdentity? SupplementalMaterialPass
+        {
+            get => _supplementalMaterialPass;
+            set => SetField(ref _supplementalMaterialPass, value);
+        }
 
         /// <summary>
         /// Immutable primitive mapping and publication reference captured at
@@ -726,7 +739,8 @@ namespace XREngine.Rendering.Commands
                     _renderMaterialOverride,
                     _renderInstances,
                     renderOptionsOverride: _renderRenderOptionsOverride,
-                    canonicalDrawIdentitySnapshot: _renderCanonicalDrawIdentitySnapshot);
+                    canonicalDrawIdentitySnapshot: _renderCanonicalDrawIdentitySnapshot,
+                    sourceFlatDirection: _renderSourceFlatDirection);
             }
             finally
             {
@@ -772,11 +786,13 @@ namespace XREngine.Rendering.Commands
         {
             ulong swapFrameId = RuntimeRenderingHostServices.FrameTiming.SwapFrameId;
             Matrix4x4? componentWorld = GetLodComponentWorldMatrix();
+            Matrix4x4 sourceFlatBasis = GetSourceFlatBasisMatrix();
             // A second collection may reach this command during the same swap boundary.
             // Keep the moving snapshot until the next frame unless a real mutation arrived.
             if (_temporalSettlementPending && !base._dirty &&
                 swapFrameId != 0UL && swapFrameId == _temporalSettlementFrameId &&
                 _renderLodTransforms?.CurrentComponentWorld == componentWorld &&
+                _renderSourceFlatBasis == sourceFlatBasis &&
                 (componentWorld is null || _renderLodTransforms?.SkinningEnabled == RuntimeEngine.Rendering.Settings.AllowSkinning))
                 return;
 
@@ -785,7 +801,7 @@ namespace XREngine.Rendering.Commands
                 throw new InvalidOperationException("A mesh command swap is already in progress.");
             try
             {
-                SwapBuffersCore(swapFrameId, componentWorld);
+                SwapBuffersCore(swapFrameId, componentWorld, sourceFlatBasis);
             }
             finally
             {
@@ -793,20 +809,25 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void SwapBuffersCore(ulong swapFrameId, Matrix4x4? componentWorld)
+        private void SwapBuffersCore(ulong swapFrameId, Matrix4x4? componentWorld,
+            Matrix4x4 sourceFlatBasis)
         {
             long capturedVersion = BeginSwapBuffers();
             _renderMesh = Mesh;
             _renderWorldMatrix = WorldMatrix;
+            _renderSourceFlatBasis = sourceFlatBasis;
             _renderMaterialOverride = MaterialOverride;
             _renderRenderOptionsOverride = RenderOptionsOverride;
             _renderInstances = Instances;
             _renderWorldMatrixIsModelMatrix = WorldMatrixIsModelMatrix;
             _renderForceCpuRendering = ForceCpuRendering;
             _renderPass = RenderPass;
+            _renderSupplementalMaterialPass = SupplementalMaterialPass;
             _renderEditorHighlightBits = EditorHighlightBits;
             _renderGpuSceneOwner = GpuSceneOwnerSnapshot.CaptureLive(OwnerRenderInfo);
             XRMaterial? effectiveMaterial = _renderMaterialOverride ?? _renderMesh?.Material;
+            _renderSourceFlatDirection = CaptureSourceFlatDirection(
+                _renderMesh, _renderMaterialOverride, sourceFlatBasis);
             bool authoredEnabled = Enabled && (OwnerRenderInfo?.ShouldRender ?? true);
             bool isPrimary = OwnerRenderInfo is RenderInfo3D { OwnerRenderableMesh: { } ownerMesh } &&
                 ownerMesh.IsPrimaryCommand(this);
@@ -814,6 +835,10 @@ namespace XREngine.Rendering.Commands
                 (!isPrimary || XREngine.Components.Scene.Mesh.RenderableMesh.IsPrimaryMaterialPassEnabled(effectiveMaterial, false));
             _renderShadowPassEnabled = authoredEnabled &&
                 (!isPrimary || XREngine.Components.Scene.Mesh.RenderableMesh.IsPrimaryMaterialPassEnabled(effectiveMaterial, true));
+            _renderSharedOpaqueShadow = GetType() == typeof(RenderCommandMesh3D) &&
+                !RequiresCpuCollectionCallbacks && SharedOpaqueShadowEligibility.CanOwn(
+                _renderMesh, _renderMaterialOverride, _renderRenderOptionsOverride,
+                _renderForceCpuRendering, OwnerRenderInfo, _renderGpuSceneOwner, _renderShadowPassEnabled, _renderPass);
             _renderWorldCullingVolumeOverride = WorldCullingVolumeOverride;
             _renderGpuCommandIndex = GPUCommandIndex;
             _renderCanonicalDrawIdentitySnapshot = _canonicalDrawIdentitySnapshot;
@@ -936,7 +961,8 @@ namespace XREngine.Rendering.Commands
                 _renderModelHistoryReason,
                 _renderForceCpuRendering,
                 _renderMaterialOverride,
-                _renderRenderOptionsOverride);
+                _renderRenderOptionsOverride,
+                _renderSourceFlatBasis);
 
         /// <summary>Returns the command inputs sealed before swap callbacks run.</summary>
         internal GpuSceneMeshCommandSnapshot CaptureGpuSceneSnapshot()
@@ -944,12 +970,50 @@ namespace XREngine.Rendering.Commands
                 _renderMaterialOverride, _renderInstances, _renderPass,
                 _renderForceCpuRendering, _renderEditorHighlightBits, StableQueryKey,
                 _renderGpuSceneOwner, _renderBasePassEnabled, _renderShadowPassEnabled,
-                _renderRenderOptionsOverride, _renderWorldCullingVolumeOverride.HasValue, _renderLodTransforms);
+                _renderRenderOptionsOverride, _renderWorldCullingVolumeOverride.HasValue, _renderLodTransforms,
+                _renderSharedOpaqueShadow);
+
+        /// <summary>Gets the shadow owner sealed with the render-buffer command.</summary>
+        internal bool RenderSharedOpaqueShadow => _renderSharedOpaqueShadow;
 
         private Matrix4x4? GetLodComponentWorldMatrix()
         {
             var owner = (OwnerRenderInfo as XREngine.Rendering.Info.RenderInfo3D)?.OwnerRenderableMesh;
             return owner?.IsPrimaryMeshCommand(this) == true ? owner.GetLodComponentWorldMatrix() : null;
+        }
+
+        private Matrix4x4 GetSourceFlatBasisMatrix()
+        {
+            var owner = (OwnerRenderInfo as RenderInfo3D)?.OwnerRenderableMesh;
+            return owner?.GetSourceFlatBasisMatrix() ??
+                (WorldMatrixIsModelMatrix ? WorldMatrix : Matrix4x4.Identity);
+        }
+
+        private static Vector4 CaptureSourceFlatDirection(XRMeshRenderer? renderer,
+            XRMaterial? materialOverride, in Matrix4x4 sourceBasis)
+        {
+            Vector4 retained = Vector4.Zero;
+            int count = Math.Max(1, renderer?.Submeshes.Count ?? 0);
+            for (int index = 0; index < count; ++index)
+            {
+                XRMaterial? material = materialOverride;
+                if (material is null && renderer is not null)
+                {
+                    renderer.TryGetMesh(index, out _, out XRMaterial? sourceMaterial);
+                    material = sourceMaterial;
+                }
+                if (!SourceMultilayerFlatDirection.TryCapture(material,
+                        sourceBasis, out Vector4 candidate))
+                    throw new InvalidOperationException(
+                        "A source flat shadow mask has an invalid local axis or source transform.");
+                if (candidate.W <= 0.5f)
+                    continue;
+                if (retained.W > 0.5f && retained != candidate)
+                    throw new InvalidOperationException(
+                        "One mesh draw has conflicting source flat shadow directions.");
+                retained = candidate;
+            }
+            return retained;
         }
 
         internal GpuMeshSubmissionLodTransforms? GetLodTransformsForLiveCapture()

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Collections.Concurrent;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -27,6 +28,11 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
             new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
         private readonly Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> _pendingRendererFamilyDrawSlots =
             new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
+        private readonly Dictionary<VulkanMappedFrameAllocation, FamilyAllocation> _retiringFamilies = [];
+        private readonly ConcurrentQueue<VulkanMappedFrameAllocation> _completedFamilies = new();
+        private readonly List<FamilyHole> _freeHoles = [];
+        private readonly List<FamilyHole> _retiredUnguardedFamilies = [];
+        private long _observedClosedCaptureOwnerRevision;
         private ulong _frameId = ulong.MaxValue;
         private ulong _generation;
         private long _publicationCount;
@@ -88,6 +94,15 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
             lock (_sync)
             {
                 existingFamilyBaseChanged = false;
+                MaintainCaptureFamiliesNoLock();
+                foreach (VulkanMeshFrameDataRendererFamilyKey key in rendererFamilyDrawSlots.Keys)
+                {
+                    if (key.Family.CaptureOwnerToken is not { IsOpen: false } closed)
+                        continue;
+                    generation = _generation;
+                    reason = $"capture owner {closed.Id} is closed";
+                    return false;
+                }
                 if (_frameId != frameId)
                     existingFamilyBaseChanged = BeginFrame(frameId);
 
@@ -104,7 +119,7 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
                         int requiredStride = requiredFamilyStrides.TryGetValue(key.Family, out int familyStride)
                             ? Math.Max(familyStride, requirement.Value)
                             : Math.Max(requirement.Value, 1);
-                        if (!_publishedRendererFamilies.TryGetValue(key, out FamilyAllocation allocation) ||
+                        if (!_publishedRendererFamilies.TryGetValue(key, out FamilyAllocation? allocation) ||
                             allocation.SlotCount < requiredStride)
                         {
                             if (!TryPublishRendererFamilyAfterSeal(
@@ -197,6 +212,8 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
             lock (_sync)
             {
                 _publishedDrawSlots.Remove(renderer);
+                _freeHoles.RemoveAll(hole => ReferenceEquals(hole.Renderer, renderer));
+                _retiredUnguardedFamilies.RemoveAll(hole => ReferenceEquals(hole.Renderer, renderer));
 
                 List<VulkanMeshFrameDataRendererFamilyKey> removed = [];
                 foreach (VulkanMeshFrameDataRendererFamilyKey key in _publishedRendererFamilies.Keys)
@@ -205,7 +222,11 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
                         removed.Add(key);
                 }
                 foreach (VulkanMeshFrameDataRendererFamilyKey key in removed)
+                {
+                    FamilyAllocation allocation = _publishedRendererFamilies[key];
                     _publishedRendererFamilies.Remove(key);
+                    RetireFamilyNoLock(allocation);
+                }
 
                 removed.Clear();
                 foreach (VulkanMeshFrameDataRendererFamilyKey key in _pendingRendererFamilyDrawSlots.Keys)
@@ -219,10 +240,101 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
             }
         }
 
+        public void MaintainCaptureFamilies()
+        {
+            lock (_sync)
+                MaintainCaptureFamiliesNoLock();
+        }
+
+        private void MaintainCaptureFamiliesNoLock()
+        {
+            long closedRevision = RenderCaptureOwnerToken.ClosedRevision;
+            if (closedRevision != _observedClosedCaptureOwnerRevision)
+            {
+                _observedClosedCaptureOwnerRevision = closedRevision;
+                List<VulkanMeshFrameDataRendererFamilyKey>? closed = null;
+                foreach (KeyValuePair<VulkanMeshFrameDataRendererFamilyKey, FamilyAllocation> entry in _publishedRendererFamilies)
+                    if (entry.Value.CaptureOwner is { IsOpen: false })
+                        (closed ??= []).Add(entry.Key);
+                if (closed is not null)
+                    foreach (VulkanMeshFrameDataRendererFamilyKey key in closed)
+                    {
+                        FamilyAllocation allocation = _publishedRendererFamilies[key];
+                        _publishedRendererFamilies.Remove(key);
+                        RetireFamilyNoLock(allocation);
+                    }
+                List<VulkanMeshFrameDataRendererFamilyKey>? pendingClosed = null;
+                foreach (VulkanMeshFrameDataRendererFamilyKey key in _pendingRendererFamilyDrawSlots.Keys)
+                    if (key.Family.CaptureOwnerToken is { IsOpen: false })
+                        (pendingClosed ??= []).Add(key);
+                if (pendingClosed is not null)
+                    foreach (VulkanMeshFrameDataRendererFamilyKey key in pendingClosed)
+                        _pendingRendererFamilyDrawSlots.Remove(key);
+            }
+            while (_completedFamilies.TryDequeue(out VulkanMappedFrameAllocation? guard))
+            {
+                if (!_retiringFamilies.Remove(guard, out FamilyAllocation? allocation))
+                    continue;
+                if (!_publishedDrawSlots.ContainsKey(allocation.Renderer))
+                    continue;
+                AddFreeHoleNoLock(new FamilyHole(
+                    allocation.Renderer,
+                    allocation.FrameDataSlot,
+                    allocation.BaseSlot,
+                    allocation.SlotCount));
+            }
+            PublishCountsNoLock();
+        }
+
+        private void RetireFamilyNoLock(FamilyAllocation allocation)
+        {
+            if (allocation.CaptureOwner is not { } token)
+                return;
+            if (allocation.Guard is not { } guard)
+            {
+                if (_publishedDrawSlots.ContainsKey(allocation.Renderer))
+                    _retiredUnguardedFamilies.Add(new FamilyHole(
+                        allocation.Renderer,
+                        allocation.FrameDataSlot,
+                        allocation.BaseSlot,
+                        allocation.SlotCount));
+                return;
+            }
+            _retiringFamilies.Add(guard, allocation);
+            allocation.Arena?.CloseDrawFamily(allocation.Renderer, guard, token);
+        }
+
+        private void OnFamilyGuardUnused(VulkanMappedFrameAllocation guard)
+            => _completedFamilies.Enqueue(guard);
+
+        private void AddFreeHoleNoLock(FamilyHole hole)
+        {
+            int start = hole.BaseSlot;
+            int end = checked(start + hole.SlotCount);
+            for (int index = 0; index < _freeHoles.Count;)
+            {
+                FamilyHole existing = _freeHoles[index];
+                if (!ReferenceEquals(existing.Renderer, hole.Renderer) ||
+                    existing.FrameDataSlot != hole.FrameDataSlot ||
+                    checked(existing.BaseSlot + existing.SlotCount) < start ||
+                    end < existing.BaseSlot)
+                {
+                    index++;
+                    continue;
+                }
+                start = Math.Min(start, existing.BaseSlot);
+                end = Math.Max(end, checked(existing.BaseSlot + existing.SlotCount));
+                _freeHoles.RemoveAt(index);
+            }
+            _freeHoles.Add(hole with { BaseSlot = start, SlotCount = end - start });
+        }
+
         public void Reset()
         {
             lock (_sync)
             {
+                foreach (FamilyAllocation allocation in _publishedRendererFamilies.Values)
+                    RetireFamilyNoLock(allocation);
                 _publishedDrawSlots.Clear();
                 _publishedRendererFamilies.Clear();
                 _pendingRendererFamilyDrawSlots.Clear();
@@ -277,7 +389,7 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
         {
             existingFamilyBaseChanged = false;
             requiredStride = Math.Max(requiredStride, 1);
-            if (_publishedRendererFamilies.TryGetValue(key, out FamilyAllocation published) &&
+            if (_publishedRendererFamilies.TryGetValue(key, out FamilyAllocation? published) &&
                 published.SlotCount >= requiredStride)
             {
                 return false;
@@ -285,9 +397,9 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
 
             int publishedCapacity = ResolveFamilySlotCapacity(requiredStride);
             int baseSlot;
-            if (!_publishedRendererFamilies.TryGetValue(key, out published))
+            if (!_publishedRendererFamilies.TryGetValue(key, out published) || published is null)
             {
-                baseSlot = ResolveNextFamilyBaseSlot(key);
+                baseSlot = ResolveNextFamilyBaseSlot(key, publishedCapacity);
             }
             else
             {
@@ -295,12 +407,24 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
                 int expandedEnd = checked(baseSlot + publishedCapacity);
                 if (WouldOverlapAnotherFamily(key, baseSlot, expandedEnd))
                 {
-                    baseSlot = ResolveNextFamilyBaseSlot(key);
+                    baseSlot = ResolveNextFamilyBaseSlot(key, publishedCapacity);
                     existingFamilyBaseChanged = baseSlot != published.BaseSlot;
                 }
             }
 
-            _publishedRendererFamilies[key] = new FamilyAllocation(baseSlot, publishedCapacity);
+            if (published is not null && baseSlot == published.BaseSlot)
+            {
+                RemoveOccupiedHoleOverlapNoLock(
+                    key.Renderer, key.Family.FrameDataSlot,
+                    baseSlot, checked(baseSlot + publishedCapacity));
+                published.SlotCount = publishedCapacity;
+                published.Arena?.RegisterDrawFamily(
+                    key.Renderer, key.Family.FrameDataSlot, baseSlot, publishedCapacity, published.Guard!);
+                return true;
+            }
+            if (published is not null)
+                RetireFamilyNoLock(published);
+            _publishedRendererFamilies[key] = CreateFamilyAllocation(key, baseSlot, publishedCapacity);
             return true;
         }
 
@@ -319,7 +443,7 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
             requiredStride = Math.Max(requiredStride, 1);
             if (_publishedRendererFamilies.TryGetValue(
                     key,
-                    out FamilyAllocation published))
+                    out FamilyAllocation? published) && published is not null)
             {
                 if (published.SlotCount >= requiredStride)
                     return true;
@@ -334,25 +458,44 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
                     return false;
                 }
 
-                _publishedRendererFamilies[key] = new FamilyAllocation(
-                    published.BaseSlot,
-                    publishedCapacity);
+                RemoveOccupiedHoleOverlapNoLock(
+                    key.Renderer, key.Family.FrameDataSlot,
+                    published.BaseSlot, expandedEnd);
+                published.SlotCount = publishedCapacity;
+                if (published.Guard is { } guard)
+                    published.Arena?.RegisterDrawFamily(
+                        key.Renderer, key.Family.FrameDataSlot,
+                        published.BaseSlot, publishedCapacity, guard);
                 changed = true;
                 return true;
             }
 
-            int baseSlot = ResolveNextFamilyBaseSlot(key);
+            int baseSlot = ResolveNextFamilyBaseSlot(key, ResolveFamilySlotCapacity(requiredStride));
             _publishedRendererFamilies.Add(
                 key,
-                new FamilyAllocation(
-                    baseSlot,
-                    ResolveFamilySlotCapacity(requiredStride)));
+                CreateFamilyAllocation(key, baseSlot, ResolveFamilySlotCapacity(requiredStride)));
             changed = true;
             return true;
         }
 
-        private int ResolveNextFamilyBaseSlot(VulkanMeshFrameDataRendererFamilyKey key)
+        private int ResolveNextFamilyBaseSlot(VulkanMeshFrameDataRendererFamilyKey key, int slotCount)
         {
+            for (int index = 0; index < _freeHoles.Count; index++)
+            {
+                FamilyHole hole = _freeHoles[index];
+                if (!ReferenceEquals(hole.Renderer, key.Renderer) ||
+                    hole.FrameDataSlot != key.Family.FrameDataSlot ||
+                    hole.SlotCount < slotCount)
+                    continue;
+                _freeHoles.RemoveAt(index);
+                if (hole.SlotCount > slotCount)
+                    _freeHoles.Add(hole with
+                    {
+                        BaseSlot = checked(hole.BaseSlot + slotCount),
+                        SlotCount = hole.SlotCount - slotCount,
+                    });
+                return hole.BaseSlot;
+            }
             int baseSlot = 0;
             foreach (KeyValuePair<VulkanMeshFrameDataRendererFamilyKey, FamilyAllocation> existing in _publishedRendererFamilies)
             {
@@ -365,7 +508,70 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
                 baseSlot = Math.Max(baseSlot, checked(existing.Value.BaseSlot + existing.Value.SlotCount));
             }
 
+            foreach (FamilyAllocation retiring in _retiringFamilies.Values)
+                if (ReferenceEquals(retiring.Renderer, key.Renderer) &&
+                    retiring.FrameDataSlot == key.Family.FrameDataSlot)
+                    baseSlot = Math.Max(baseSlot, checked(retiring.BaseSlot + retiring.SlotCount));
+            foreach (FamilyHole retired in _retiredUnguardedFamilies)
+                if (ReferenceEquals(retired.Renderer, key.Renderer) &&
+                    retired.FrameDataSlot == key.Family.FrameDataSlot)
+                    baseSlot = Math.Max(baseSlot, checked(retired.BaseSlot + retired.SlotCount));
+            foreach (FamilyHole hole in _freeHoles)
+                if (ReferenceEquals(hole.Renderer, key.Renderer) &&
+                    hole.FrameDataSlot == key.Family.FrameDataSlot)
+                    baseSlot = Math.Max(baseSlot, checked(hole.BaseSlot + hole.SlotCount));
+
             return baseSlot;
+        }
+
+        private FamilyAllocation CreateFamilyAllocation(
+            VulkanMeshFrameDataRendererFamilyKey key,
+            int baseSlot,
+            int slotCount)
+        {
+            RenderCaptureOwnerToken? token = key.Family.CaptureOwnerToken;
+            VulkanMappedFrameArena? arena = token is null
+                ? null
+                : key.Renderer.BackendContext.Resources.MappedFrameArena;
+            VulkanMappedFrameAllocation? guard = token is null || arena is null
+                ? null
+                : arena.CreateDrawFamilyGuard(token, OnFamilyGuardUnused);
+            FamilyAllocation allocation = new(
+                baseSlot, slotCount, key.Renderer, key.Family.FrameDataSlot,
+                token, arena, guard);
+            if (guard is not null)
+                arena!.RegisterDrawFamily(key.Renderer, key.Family.FrameDataSlot,
+                    baseSlot, slotCount, guard);
+            return allocation;
+        }
+
+        private void RemoveOccupiedHoleOverlapNoLock(
+            VkMeshRenderer renderer,
+            int frameDataSlot,
+            int start,
+            int end)
+        {
+            for (int index = 0; index < _freeHoles.Count;)
+            {
+                FamilyHole hole = _freeHoles[index];
+                int holeEnd = checked(hole.BaseSlot + hole.SlotCount);
+                if (!ReferenceEquals(hole.Renderer, renderer) ||
+                    hole.FrameDataSlot != frameDataSlot ||
+                    start >= holeEnd || hole.BaseSlot >= end)
+                {
+                    index++;
+                    continue;
+                }
+                _freeHoles.RemoveAt(index);
+                if (hole.BaseSlot < start)
+                    _freeHoles.Add(hole with { SlotCount = start - hole.BaseSlot });
+                if (holeEnd > end)
+                    _freeHoles.Add(hole with
+                    {
+                        BaseSlot = end,
+                        SlotCount = holeEnd - end,
+                    });
+            }
         }
 
         private bool WouldOverlapAnotherFamily(
@@ -385,6 +591,25 @@ internal sealed partial class VulkanFrameWideMeshFrameDataReservationManifest
                 int existingStart = existing.Value.BaseSlot;
                 int existingEnd = checked(existingStart + existing.Value.SlotCount);
                 if (rangeStart < existingEnd && existingStart < rangeEnd)
+                    return true;
+            }
+
+            foreach (FamilyAllocation retiring in _retiringFamilies.Values)
+            {
+                if (!ReferenceEquals(retiring.Renderer, key.Renderer) ||
+                    retiring.FrameDataSlot != key.Family.FrameDataSlot)
+                    continue;
+                int end = checked(retiring.BaseSlot + retiring.SlotCount);
+                if (rangeStart < end && retiring.BaseSlot < rangeEnd)
+                    return true;
+            }
+            foreach (FamilyHole retired in _retiredUnguardedFamilies)
+            {
+                if (!ReferenceEquals(retired.Renderer, key.Renderer) ||
+                    retired.FrameDataSlot != key.Family.FrameDataSlot)
+                    continue;
+                int end = checked(retired.BaseSlot + retired.SlotCount);
+                if (rangeStart < end && retired.BaseSlot < rangeEnd)
                     return true;
             }
 

@@ -30,7 +30,8 @@ internal readonly record struct VulkanPreparedMeshDrawState(
     VulkanPreparedStreamRange FrameDataPayloadHandles,
     VkMeshRenderer.MeshDrawPushConstants PushConstants,
     uint InstanceCount,
-    int ColdDataIndex)
+    int ColdDataIndex,
+    VulkanMappedFrameAllocation? FrameDataFamily = null)
 {
     internal VulkanPreparedMeshPrimitive GetPrimitive(int index)
         => index switch

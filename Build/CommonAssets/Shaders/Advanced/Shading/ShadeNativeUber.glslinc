@@ -14,6 +14,34 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     c.uv2Dx = surface.texCoord2Dx; c.uv2Dy = surface.texCoord2Dy;
     c.uv3Dx = surface.texCoord3Dx; c.uv3Dy = surface.texCoord3Dy;
     c.worldPosition = surface.worldPosition; c.localPosition = surface.localPosition;
+    c.flatNormal = vec3(0.0);
+    if (UBER_I(_LightingMode) == 1 &&
+        UBER_I(_SourceLightMode) == 1 &&
+        XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_STYLIZED_LIGHTING) &&
+        UBER_V(_SourceMultilayerOptions).y > 0.5)
+    {
+        uint drawDense = XR_ADV_ResolveVisibilityStableIndex(surface.identity.x,
+            VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+        if (drawDense == XR_ADV_INVALID_DENSE_INDEX ||
+            drawDense >= uint(XR_ADV_Draws.records.length()))
+        {
+            result.radiance = vec3(1.0, 0.0, 1.0);
+            result.opacity = 1.0;
+            result.reactive = 1.0;
+            result.diagnostics = 1u << 17u;
+            return;
+        }
+        XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+        if (draw.sourceFlatDirectionValid == 0u)
+        {
+            result.radiance = vec3(1.0, 0.0, 1.0);
+            result.opacity = 1.0;
+            result.reactive = 1.0;
+            result.diagnostics = 1u << 17u;
+            return;
+        }
+        c.flatNormal = XR_ADV_DecodeOct(draw.sourceFlatDirectionOct);
+    }
     c.color = surface.color0;
     c.frontFacing = (surface.flags & XR_ADV_SURFACE_BACK_FACING) == 0u;
     c.time = uintBitsToFloat(view.renderTimeBits);
@@ -74,6 +102,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     vec3 sourceRawAmbient = vec3(0.0);
     vec3 sourceIndirect = vec3(0.0);
     vec3 sourceRawDirect = vec3(0.0);
+    bool authoredSh = false;
     XrSourceShCoefficients sourceSh;
     sourceSh.ar = sourceSh.ag = sourceSh.ab = sourceSh.br = sourceSh.bg =
         sourceSh.bb = sourceSh.c = vec4(0.0);
@@ -82,7 +111,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         if (xrSourceLuminance(rawPrimaryColor) <= 0.000001)
             primaryVisibility = 1.0;
         sourceRawAmbient = XR_ADV_WorldAmbient(surface.viewIndex);
-        bool authoredSh = XR_ADV_SourceSH(surface.viewIndex, sourceSh.ar, sourceSh.ag,
+        authoredSh = XR_ADV_SourceSH(surface.viewIndex, sourceSh.ar, sourceSh.ag,
             sourceSh.ab, sourceSh.br, sourceSh.bg, sourceSh.bb, sourceSh.c);
         if (!authoredSh)
         {
@@ -109,11 +138,26 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
             UBER_F(_LightingCapEnabled), UBER_F(_LightingCap)) * sourceSettings.z +
             vec3(sourceSettings.w), vec3(0.0));
     }
+    vec3 matcapLightAdd = vec3(0.0);
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_PBR) &&
+        UBER_V(_SourceAnisoSettings).x > 0.5)
+    {
+        float anisoLightMap = XR_UBER_GlitterLightMap(c, N, Nx, Ny, primaryL,
+            shadowMask, sourceSh, rawPrimaryColor, sourceRawDirect,
+            primaryVisibility);
+        xrSourceApplyAnisotropy(geometric, N, surface.tangent * frameFacing,
+            surface.bitangent * frameFacing, V, primaryL, primaryColor,
+            anisoLightMap, UBER_V(_SourceAnisoSettings), UBER_V(_SourceAnisoMix),
+            UBER_V(_SourceAnisoLayer0), UBER_V(_SourceAnisoLayer1),
+            XR_UBER_Theme(int(UBER_V(_SourceAnisoTint0).w + 0.5),
+                UBER_V(_SourceAnisoTint0).rgb),
+            XR_UBER_Theme(int(UBER_V(_SourceAnisoTint1).w + 0.5),
+                UBER_V(_SourceAnisoTint1).rgb), base.rgb, matcapLightAdd);
+    }
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_GLITTER) && UBER_I(_SourceGlitter) != 0)
         XR_UBER_ApplySourceGlitter(c, geometric, N, V, primaryL, primaryColor,
             XR_UBER_GlitterLightMap(c, N, Nx, Ny, UBER_I(_LightingDirectionMode) == 2 ? V : primaryL,
                 shadowMask, sourceSh, rawPrimaryColor, sourceRawDirect, primaryVisibility), base.rgb, emission);
-    vec3 matcapLightAdd = vec3(0.0);
     float matcapLightMap = UBER_I(_SourceLightMode) != 0
         ? xrSourceLightMap(dot(N, primaryL), UBER_I(_LightingMapMode),
             UBER_V(_SourceLightSettings).y, primaryVisibility)
@@ -121,20 +165,30 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     if (UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMapMode) == 0)
         matcapLightMap = xrSourceShLightMap(sourceSh, N, sourceRawDirect,
             dot(N, primaryL), primaryVisibility, UBER_V(_SourceLightSettings).y);
-    if (UBER_F(_SourceMatcap) > 0.5 &&
+    if ((UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMode) == 1) ||
+        (UBER_F(_SourceMatcap) > 0.5 &&
         (UBER_V(_MatcapSlotParams0).y > 0.0 || UBER_V(_MatcapSlotParams1).y > 0.0 ||
-         UBER_V(_MatcapSlotParams2).y > 0.0 || UBER_V(_MatcapSlotParams3).y > 0.0))
+         UBER_V(_MatcapSlotParams2).y > 0.0 || UBER_V(_MatcapSlotParams3).y > 0.0)))
         matcapLightMap = XR_UBER_GlitterLightMap(c, N, Nx, Ny, primaryL, shadowMask,
             sourceSh, rawPrimaryColor, sourceRawDirect, primaryVisibility);
     if (UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMode) == 5)
         matcapLightMap = UBER_F(_ForceFlatRampedLightmap) > 0.5
             ? smoothstep(0.4, 0.6, dot(N, primaryL) * 0.5 + 0.5)
             : 1.0;
-#define XR_UBER_MATCAP_SLOT(i, target) XR_UBER_Matcap(c, geometric, surface.shadingNormalDx * facing, surface.shadingNormalDy * facing, N, Nx, Ny, V, Vx, Vy, mat3(view.view), XR_UBER_PrimaryLightColor(primaryColor), matcapLightMap, UBER_T(_Matcap ## i ## Tex), UBER_T(_Matcap ## i ## Mask), vec4(XR_UBER_Theme(UBER_I(_MatcapSlotTheme ## i), UBER_V(_MatcapSlotColor ## i).rgb), UBER_V(_MatcapSlotColor ## i).a), UBER_V(_MatcapSlotParams ## i), UBER_V(_MatcapSlotExtra ## i), UBER_V(_MatcapSlotBlend ## i), UBER_V(_MatcapSlotSource ## i), UBER_V(_MatcapSlotMask ## i), UBER_V(_Matcap ## i ## Tex_ST), UBER_V(_Matcap ## i ## TexPan).xy, UBER_V(_Matcap ## i ## Mask_ST), UBER_V(_Matcap ## i ## MaskPan).xy, target, emission, matcapLightAdd)
+#define XR_UBER_MATCAP_SLOT(i, target) XR_UBER_Matcap(c, geometric, surface.shadingNormalDx * facing, surface.shadingNormalDy * facing, N, Nx, Ny, surface.tangent * frameFacing, surface.bitangent * frameFacing, V, Vx, Vy, mat3(view.view), XR_UBER_PrimaryLightColor(primaryColor), matcapLightMap, UBER_T(_Matcap ## i ## Tex), UBER_T(_Matcap ## i ## Mask), UBER_T(_Matcap1NormalMap), UBER_T(_GlobalMaskTexture0), vec4(XR_UBER_Theme(UBER_I(_MatcapSlotTheme ## i), UBER_V(_MatcapSlotColor ## i).rgb), UBER_V(_MatcapSlotColor ## i).a), UBER_V(_MatcapSlotParams ## i), UBER_V(_MatcapSlotExtra ## i), UBER_V(_MatcapSlotBlend ## i), UBER_V(_MatcapSlotSource ## i), UBER_V(_MatcapSlotMask ## i), UBER_V(_MatcapSlotUvBlend ## i), UBER_V(_MatcapSlotUvControl ## i), UBER_V(_Matcap ## i ## Tex_ST), UBER_V(_Matcap ## i ## TexPan).xy, UBER_V(_Matcap ## i ## Mask_ST), UBER_V(_Matcap ## i ## MaskPan).xy, UBER_V(_Matcap1NormalMap_ST), UBER_V(_Matcap1NormalMapPan).xy, target, emission, matcapLightAdd)
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_LAYERED_MATCAP_RIM) && UBER_F(_SourceMatcap) > 0.5)
     {
         XR_UBER_MATCAP_SLOT(0, base.rgb); XR_UBER_MATCAP_SLOT(1, base.rgb);
         XR_UBER_MATCAP_SLOT(2, base.rgb); XR_UBER_MATCAP_SLOT(3, base.rgb);
+    }
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_PBR) && UBER_I(_SourceCubeMap) != 0)
+    {
+        float cubeLightMap = 1.0;
+        if (UBER_F(_CubeMapLightMask) > 0.0)
+            cubeLightMap = XR_UBER_GlitterLightMap(c, N, Nx, Ny, primaryL,
+                shadowMask, sourceSh, rawPrimaryColor, sourceRawDirect,
+                primaryVisibility);
+        XR_UBER_ApplyCubemap(c, N, V, cubeLightMap, true, base.rgb, emission);
     }
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_RIM_LIGHTING) &&
         UBER_V(_SourceRimSettings).x > 0.5 && UBER_I(_RimStyle) == 0)
@@ -192,7 +246,8 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         vec3 rawReflection = (u_Push.flags & 8u) != 0u
             ? XR_ADV_SampleSelectedRawPrefilter(surface.worldPosition, N, V,
                 xrSourcePerceptualRoughness(sourceSmoothness, Nx, Ny,
-                    UBER_V(_SourceMochieSettings)), probeWeights, probeIndices)
+                    UBER_V(_SourceMochieSettings)),
+                probeWeights, probeIndices)
             : vec3(0.0);
         probeSpecular = xrSourceMochieReflection(rawReflection, primaryColor,
             mix(vec3(0.04), base.rgb, metallic), sourceSmoothness,
@@ -206,7 +261,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         primaryVisibility, shadowMask, true, rawPrimaryColor, sourceRawDirect,
         sourceSh) : ambient;
     if (stylized && UBER_I(_SourceLightMode) != 0)
-        color += probeDiffuse + probeSpecular;
+        color += probeSpecular + (authoredSh ? vec3(0.0) : probeDiffuse);
     if (UBER_I(_SourceLightMode) != 0 &&
         XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR) &&
         UBER_V(_SourceMochieSecond).w > 0.5)
@@ -333,6 +388,12 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     color = XR_UBER_AdvancedPbr(c, N, V, primaryL, surface.tangent * frameFacing,
         surface.bitangent * frameFacing,
         XR_UBER_PrimaryLightColor(primaryColor), lightMap, specularColor, color, emission);
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_PBR) &&
+        UBER_V(_SourceEnviroRim).x > 0.5 && UBER_F(_RimEnviroIntensity) > 0.0 &&
+        (u_Push.flags & 8u) != 0u)
+        color += XR_UBER_SourceEnviroRim(c, N, V, base.rgb,
+            XR_ADV_SampleSelectedRawPrefilterNormal(N,
+                UBER_V(_SourceEnviroRim).y, probeWeights, probeIndices));
     color += matcapLightAdd;
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_LAYERED_MATCAP_RIM) && UBER_F(_SourceMatcap) <= 0.5)
     {
@@ -351,7 +412,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     }
     if (XR_UBER_HasFeature(XR_UBER_FEATURE_LAYERED_EMISSION))
     {
-#define XR_UBER_EMISSION_SLOT(i) XR_UBER_EmissionSlot(c, UBER_T(_Emission ## i ## Tex), UBER_T(_Emission ## i ## Mask), UBER_V(_Emission ## i ## Tex_ST), UBER_V(_Emission ## i ## Mask_ST), UBER_V(_EmissionSlotColor ## i), UBER_V(_EmissionSlotParams ## i), UBER_V(_EmissionSlotPan ## i).xy, UBER_I(_EmissionSlotUv ## i), UBER_V(_EmissionSlotModifiers ## i), UBER_V(_EmissionSlotSampling ## i), base.rgb, emission)
+#define XR_UBER_EMISSION_SLOT(i) XR_UBER_EmissionSlot(c, UBER_T(_Emission ## i ## Tex), UBER_T(_Emission ## i ## Mask), UBER_V(_Emission ## i ## Tex_ST), UBER_V(_Emission ## i ## Mask_ST), UBER_V(_EmissionSlotColor ## i), UBER_V(_EmissionSlotParams ## i), UBER_V(_EmissionSlotPan ## i).xy, UBER_I(_EmissionSlotUv ## i), UBER_V(_EmissionSlotModifiers ## i), UBER_V(_EmissionSlotSampling ## i), primaryColor, base.rgb, emission)
         XR_UBER_EMISSION_SLOT(0); XR_UBER_EMISSION_SLOT(1); XR_UBER_EMISSION_SLOT(2); XR_UBER_EMISSION_SLOT(3);
 #undef XR_UBER_EMISSION_SLOT
     }

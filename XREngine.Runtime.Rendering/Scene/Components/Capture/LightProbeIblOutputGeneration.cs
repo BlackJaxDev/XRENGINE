@@ -20,22 +20,28 @@ public sealed class LightProbeIblOutputGeneration : IAdvancedGpuPublicationSourc
     private int _publicationReferences;
     private RetainedLightProbeDataGuard? _retainedData;
 
-    public LightProbeIblOutputGeneration(uint generation, XRTexture2D irradiance, XRTexture2D prefilteredRadiance)
+    public LightProbeIblOutputGeneration(uint generation, XRTexture2D irradiance, XRTexture2D prefilteredRadiance,
+        ELightProbePrefilterConvention prefilterConvention = ELightProbePrefilterConvention.PerceptualRoughness)
     {
+        if (!Enum.IsDefined(prefilterConvention))
+            throw new ArgumentOutOfRangeException(nameof(prefilterConvention));
         Generation = generation;
         Irradiance = irradiance ?? throw new ArgumentNullException(nameof(irradiance));
         PrefilteredRadiance = prefilteredRadiance ?? throw new ArgumentNullException(nameof(prefilteredRadiance));
+        PrefilterConvention = prefilterConvention;
     }
 
     public uint Generation { get; }
     public XRTexture2D Irradiance { get; }
     public XRTexture2D PrefilteredRadiance { get; }
+    /// <summary>Describes these image contents, independent of pending producer settings.</summary>
+    public ELightProbePrefilterConvention PrefilterConvention { get; }
     public bool OutputValid => _outputValid;
     public ELightProbeIblProvenance Provenance { get; private init; }
 
     /// <summary>Retains decoded asset images without manufacturing a GPU completion receipt or taking their destruction ownership.</summary>
     internal static LightProbeIblOutputGeneration RetainCookedData(RetainedLightProbeIblProfile profile)
-        => new(profile.SourceGeneration, profile.Irradiance, profile.Prefilter)
+        => new(profile.SourceGeneration, profile.Irradiance, profile.Prefilter, profile.PrefilterConvention)
         {
             Provenance = ELightProbeIblProvenance.RetainedCookedData,
             _outputValid = true,

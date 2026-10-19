@@ -2443,8 +2443,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         return EProbeRefreshKind.None;
     }
 
-    private static ProbeParamData CreateProbeParamData(LightProbeComponent probe)
-        => new()
+    private static ProbeParamData CreateProbeParamData(LightProbeComponent probe,
+        LightProbeIblOutputGeneration? generation = null)
+    {
+        if (generation is null)
+            probe.TryGetActiveIblOutput(out generation);
+        return new()
         {
             InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius),
             InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius),
@@ -2458,7 +2462,11 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
                 probe.ProxyBoxRotation.Y,
                 probe.ProxyBoxRotation.Z,
                 probe.ProxyBoxRotation.W),
+            PrefilterSampling = new Vector4(
+                (float)(generation?.PrefilterConvention ?? ELightProbePrefilterConvention.PerceptualRoughness),
+                generation?.PrefilteredRadiance.SmallestMipmapLevel ?? 0, 0, 0),
         };
+    }
 
     private void ReportProbeResourceRefresh(bool structuralRefresh, int readyProbeCount, TimeSpan elapsed, bool deferredByBatchCapture)
     {

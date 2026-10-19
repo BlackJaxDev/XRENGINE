@@ -316,6 +316,7 @@ internal sealed class ForwardLightProbeInstanceResources
             MixVector(parameter.ProxyCenterEnable);
             MixVector(parameter.ProxyHalfExtents);
             MixVector(parameter.ProxyRotation);
+            MixVector(parameter.PrefilterSampling);
         }
 
         return signature;

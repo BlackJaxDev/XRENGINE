@@ -33,6 +33,9 @@ layout(location = 4) out vec3 ShadowCoverageWorldPosition;
 layout(location = 5) out vec3 ShadowCoverageLocalPosition;
 layout(location = 6) out vec2 ShadowCoverageUv2;
 layout(location = 7) out vec2 ShadowCoverageUv3;
+layout(location = 8) flat out uint ShadowDrawIndex;
+layout(location = 9) flat out uint ShadowProducer;
+layout(location = 10) flat out uint ShadowPrimitiveBase;
 
 uint XR_ADV_VisibilityPayloadIndex()
 {
@@ -60,9 +63,14 @@ void XR_ADV_RejectShadowVertex()
     ShadowCoverageUv = vec2(0.0);
     ShadowMaterialDenseIndex = XR_ADV_INVALID_DENSE_INDEX;
     ShadowCoverageUv1 = vec2(0.0);
+    ShadowCoverageUv2 = vec2(0.0);
+    ShadowCoverageUv3 = vec2(0.0);
     ShadowCoverageColor = vec4(1.0);
     ShadowCoverageWorldPosition = vec3(0.0);
     ShadowCoverageLocalPosition = vec3(0.0);
+    ShadowDrawIndex = XR_ADV_VIS_INVALID;
+    ShadowProducer = XR_ADV_VIS_INVALID;
+    ShadowPrimitiveBase = 0u;
 }
 
 void main()
@@ -210,4 +218,7 @@ void main()
     ShadowCoverageWorldPosition = worldPosition.xyz;
     ShadowCoverageLocalPosition = localPosition;
     ShadowMaterialDenseIndex = materialDense;
+    ShadowDrawIndex = payload.draw.index;
+    ShadowProducer = producer;
+    ShadowPrimitiveBase = payload.firstIndex / 3u;
 }

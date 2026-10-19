@@ -27,10 +27,15 @@ namespace XREngine.Rendering.Commands
         private float _gpuBvhEstimatedVisibleRatio = 0.5f;
 
         private uint ResolveDisabledFlagsMask()
-            => MeshSubmissionStrategy.IsGpuZeroReadbackStrategy()
+            => _ownerPipeline?.IsShadowPipeline == true || MeshSubmissionStrategy.IsGpuZeroReadbackStrategy()
                 ? 0u
                 : (uint)(GPUIndirectRenderFlags.CpuFallbackOnly |
                          GPUIndirectRenderFlags.EditorHighlightMask);
+
+        private uint ResolveRequiredFlagsMask()
+            => _ownerPipeline?.IsShadowPipeline == true
+                ? (uint)(GPUIndirectRenderFlags.SharedOpaqueShadow | GPUIndirectRenderFlags.CastShadow)
+                : 0u;
 
         /// <summary>
         /// Measured backend/view/visibility crossover table used by GPU BVH
@@ -783,6 +788,7 @@ namespace XREngine.Rendering.Commands
             _cullingComputeShader.Uniform("InputCommandCount", (int)inputCount);
             _cullingComputeShader.Uniform("MaxCulledCommands", (int)capacity);
             _cullingComputeShader.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
+            _cullingComputeShader.Uniform("RequiredFlagsMask", ResolveRequiredFlagsMask());
             _cullingComputeShader.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? System.Numerics.Vector3.Zero);
             _cullingComputeShader.Uniform("ActiveViewCount", (int)activeViewCount);
 
@@ -1055,6 +1061,7 @@ namespace XREngine.Rendering.Commands
             _bvhFrustumCullProgram.Uniform("InputCommandCount", (int)inputCount);
             _bvhFrustumCullProgram.Uniform("MaxCulledCommands", (int)capacity);
             _bvhFrustumCullProgram.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
+            _bvhFrustumCullProgram.Uniform("RequiredFlagsMask", ResolveRequiredFlagsMask());
             _bvhFrustumCullProgram.Uniform("CameraPosition", camera.Transform?.RenderTranslation ?? Vector3.Zero);
             _bvhFrustumCullProgram.Uniform("StatsEnabled", _statsBuffer is not null ? 1u : 0u);
             _bvhFrustumCullProgram.Uniform("OverflowDebugEnabled", 0u);
@@ -1209,6 +1216,7 @@ namespace XREngine.Rendering.Commands
             _copyCommandsProgram.Uniform("CopyCount", copyCount);
             _copyCommandsProgram.Uniform("TargetPass", RenderPass);
             _copyCommandsProgram.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
+            _copyCommandsProgram.Uniform("RequiredFlagsMask", ResolveRequiredFlagsMask());
             _copyCommandsProgram.Uniform("OutputCapacity", capacity);
             _copyCommandsProgram.Uniform("ActiveViewCount", (int)activeViewCount);
             int boundsCheckEnabled = (IsCopyBoundsValidationEnabledForPass() && _cullingOverflowFlagBuffer is not null) ? 1 : 0;
@@ -1375,6 +1383,8 @@ namespace XREngine.Rendering.Commands
                 return false;
             if (reason.StartsWith("disabled-flags", StringComparison.OrdinalIgnoreCase))
                 return false;
+            if (reason.StartsWith("missing-required-flags", StringComparison.OrdinalIgnoreCase))
+                return false;
 
             return true;
         }
@@ -1393,6 +1403,12 @@ namespace XREngine.Rendering.Commands
             if (disabledFlagsMask != 0u && (cmd.Flags & disabledFlagsMask) != 0u)
             {
                 reason = "disabled-flags";
+                return false;
+            }
+            uint requiredFlagsMask = ResolveRequiredFlagsMask();
+            if ((cmd.Flags & requiredFlagsMask) != requiredFlagsMask)
+            {
+                reason = "missing-required-flags";
                 return false;
             }
 

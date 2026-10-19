@@ -35,6 +35,29 @@ Missing Assets when processing finishes, with the source model in their context.
 The editor opens the panel then; a summary warning in `Meshes` links the import
 to the list. Missing textures continue using the existing placeholder behavior.
 
+Native FBX material conversion recognizes `TransparencyFactor` texture
+connections as opacity masks. An explicit opacity texture takes priority over
+the scalar blend hint in the shared material factory. A `TransparencyFactor`
+mask with scalar opacity at or below 0.001 uses texture-controlled coverage;
+other scalar opacity values remain in effect. `EmissiveFactor` scales both the
+material emission strength and the legacy shader emission parameter. A white
+emission color with a zero factor does not emit light. Inactive emission leaves
+the optional emission overrides unset, so eligible materials retain their exact
+`StandardLitTextureV1` contract. After all FBX overrides, the importer checks
+that contract again. A material that no longer satisfies it uses its authored
+shader path. Native FBX cache version 9 invalidates older converted materials.
+
+An absent FBX `Roughness` property retains the material factory default.
+With `CalculateTangentSpace` enabled, meshes without authored tangents generate
+UV0 tangents before packed mesh construction. Generation uses transformed
+positions and the final UVs after `FlipUVs`. Within each material chunk, corners
+share angle-weighted tangents only when position, normal, UV, and handedness
+match. Vertex indices, skin data, and blendshape records stay unchanged.
+Authored tangents remain unchanged. Degenerate UV triangles use a finite
+normal-based fallback if the mesh contains other valid UV triangles. This
+generation covers the base mesh; it does not synthesize blendshape tangent
+deltas or smooth across chunk boundaries.
+
 Enabled trace lines also use the engine `Meshes` category and `log_meshes.log`.
 
 ## Supported V1 Scope

@@ -12,6 +12,9 @@ public sealed class SourceProjectImportContext
     private readonly Dictionary<string, XRMaterial> _materialCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, XRTexture2D> _textureCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, (long Length, long LastWriteTicks)> _validatedTextures = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _modelTexturePathLock = new();
+    private Dictionary<string, string?>? _modelTexturePathsByName;
+    private readonly HashSet<string> _reportedModelTextureNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<SerializedAnimatorRecord, SceneNode> _animatorOwners = [];
     private readonly Dictionary<SerializedAvatarAnimationGraphRecord, SceneNode> _avatarAnimationGraphOwners = [];
     private readonly HashSet<string> _reportedIndexDiagnostics = new(StringComparer.Ordinal);
@@ -75,6 +78,74 @@ public sealed class SourceProjectImportContext
     /// <summary>Records successful decoding without retaining image pixels.</summary>
     internal void RecordValidatedTexture(string sourcePath, long length, long lastWriteTicks)
         => _validatedTextures[sourcePath] = (length, lastWriteTicks);
+
+    /// <summary>Finds one exact texture filename in the composed Unity source.</summary>
+    internal string? ResolveExactModelTexture(string modelPath, string rawPath)
+    {
+        string fileName = Path.GetFileName(rawPath.Trim().Trim('"').Replace('\\', '/'));
+        if (string.IsNullOrWhiteSpace(fileName))
+            return null;
+
+        lock (_modelTexturePathLock)
+        {
+            _modelTexturePathsByName ??= BuildModelTexturePathIndex();
+            if (!_modelTexturePathsByName.TryGetValue(fileName, out string? resolved))
+                return null;
+
+            if (_reportedModelTextureNames.Add(fileName))
+            {
+                AddDiagnostic(
+                    resolved is null ? "UNITYMODEL0012" : "UNITYMODEL0011",
+                    resolved is null ? SourceImportDiagnosticSeverity.Warning : SourceImportDiagnosticSeverity.Info,
+                    SourceImportDiagnosticCategory.TextureImport,
+                    resolved is null
+                        ? $"FBX texture '{fileName}' has more than one exact filename in the composed Unity source. The binding stays unresolved."
+                        : $"FBX texture '{fileName}' resolved to the exact composed Unity asset '{Path.GetRelativePath(ProjectRoot, resolved)}'.",
+                    modelPath,
+                    rawPath);
+            }
+
+            return resolved;
+        }
+    }
+
+    private Dictionary<string, string?> BuildModelTexturePathIndex()
+    {
+        Dictionary<string, string?> paths = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string sourceRootName in new[] { "Assets", "Packages" })
+        {
+            string sourceRoot = Path.Combine(ProjectRoot, sourceRootName);
+            if (!Directory.Exists(sourceRoot))
+                continue;
+
+            try
+            {
+                foreach (string candidate in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
+                {
+                    if (candidate.EndsWith(".meta", StringComparison.OrdinalIgnoreCase) ||
+                        !File.Exists(candidate + ".meta"))
+                        continue;
+
+                    string fileName = Path.GetFileName(candidate);
+                    if (!paths.TryAdd(fileName, candidate) &&
+                        paths[fileName] is { } existing &&
+                        !string.Equals(existing, candidate, StringComparison.OrdinalIgnoreCase))
+                        paths[fileName] = null;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                AddDiagnostic(
+                    "UNITYMODEL0013",
+                    SourceImportDiagnosticSeverity.Warning,
+                    SourceImportDiagnosticCategory.TextureImport,
+                    $"Could not inspect composed Unity texture assets under '{sourceRootName}': {ex.Message}",
+                    sourceRoot);
+            }
+        }
+
+        return paths;
+    }
 
     public SourceDependencyGraph DiscoverDependencies()
     {

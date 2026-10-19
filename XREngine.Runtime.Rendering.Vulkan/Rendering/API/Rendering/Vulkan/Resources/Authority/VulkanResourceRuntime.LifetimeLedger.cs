@@ -494,6 +494,7 @@ internal sealed partial class VulkanResourceRuntime
                     handle,
                     out VulkanCommandBufferLifetimeRecord? lifetime))
             {
+                lifetime.ReleaseFrameDataAllocations(handle);
                 ReleaseCommandBufferDependenciesNoLock(handle, lifetime);
                 if (lifetime.AllocatingCommandPool.IsValid &&
                     Lifetime.Tracker.CommandBuffersByPool.TryGetValue(

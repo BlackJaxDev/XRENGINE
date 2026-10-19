@@ -1,9 +1,38 @@
 # Poiyomi Toon Material Conversion
 
-XRENGINE provides versioned conversion support for **Poiyomi Toon 9.3.64** at
-commit `c5aaeeb3a67782b7e8a26e184d5e0a1970792294`. Other versions are not accepted
-as equivalent: an unknown version produces `POI0001`, preserves inspectable
-source data, and does not silently opt into the pinned converter.
+XRENGINE provides versioned conversion support for **Poiyomi Toon 9.2.66,
+9.2.79, and 9.3.64**. The 9.3.64 catalog comes from commit
+`c5aaeeb3a67782b7e8a26e184d5e0a1970792294`. Other explicit versions produce
+`POI0001` and preserve inspectable source data.
+
+`SourceToon92Catalog` records the two verified 9.2 source identities and hashes.
+Both releases use GUID `104003ab15a9f7a47b6ef0597225e771`; the matcher also
+requires the exact shader version marker. Locked materials supply the original
+GUID through their override tag. A missing marker on this shared GUID cannot
+select the 9.3 signature fallback. This is exact-version support, not support
+for the full 7.3.50-to-9.2.66 bundle range.
+
+`SourceToon81Catalog` also admits a locked Poiyomi 8.1.167 shader. Admission
+requires its shader GUID, original shader GUID, version, and complete source
+SHA-256. It does not admit other 8.1 shaders. Its glitter branch preserves the
+verified single-layer jitter and green global-mask multiplication. Unsupported
+changes to optimizer-fixed inputs remain diagnostic. The conversion report
+version is `1.1.0`.
+
+Source glitter supports the verified 9.2 shape texture. Each nearest flake samples
+the texture with its authored transform and pan. Shape color multiplies flake
+color; shape alpha multiplies coverage. The sampler uses linear filtering, the
+nearest mip level, and clamp addressing. Shape gradients use source UV0. Shared
+world-space glitter rotation accounts for the engine's reflected Z axis.
+The fragment path uses derivatives; the compute path uses explicit footprints.
+
+The 9.2 sources use the existing shared Uber property mappings. Serialized
+values remain in a descriptor with their source version. Color transfer flags
+come from each source shader's declarations. The 9.3 property catalog remains
+the editor authoring inventory; it is not a generated 9.2 property catalog.
+Nonzero `_PoiInternalParallax`, `_AudioLinkDelay`, and `_AudioLinkCCStripY`, or
+a bound `_AnisoNoiseMap`, receive `POI0006` because these 9.2 controls have no
+native mapping. Their source values remain available for inspection.
 
 ## Support Contract
 
@@ -109,7 +138,7 @@ over-limit material receives a deterministic failure reason before rendering.
 
 | Code | Meaning | Remediation |
 | --- | --- | --- |
-| `POI0001` | Source version is unknown. | Use the pinned 9.3.64 source or add a reviewed catalog for the new version. |
+| `POI0001` | Source version or identity is unsupported. | Supply verified 9.2.66, 9.2.79, or 9.3.64 source evidence, or add reviewed support for the new version. |
 | `POI0002` | Locked shader matched only by an ambiguous signature. | Restore the original shader GUID/version metadata and reimport. |
 | `POI0003` | Runtime-visible property lacks classification. | Update the catalog and parity fixture; conversion must not ship in this state. |
 | `POI0004` | Catalog identity/hash mismatch. | Regenerate from the pinned commit and review the source audit. |
@@ -155,6 +184,43 @@ source descriptor, report, and untouched imported values while preserving local
 notes, links, recipes, generated assets, and explicit overrides. Preview state
 is transient and never persists across restart. Schema migration uses stable
 semantic IDs; missing nodes are reported instead of rebound by display label.
+
+## Multilayer Lighting And Tile Coverage
+
+Source lighting mode 1 uses three shadow colors and color textures. It retains
+each layer's border, blur, and shadow receive value. It also retains the blur
+map, strength mask, border color and range, base-color blend, environment blend,
+and nonlinear edge option. Missing source texture keywords use white samples.
+Source color normalization runs before parameter binding. Native and authored
+Uber shading share the layer composition. The first band also controls source
+matcap and rim lighting. `_FirstShadeMap` and `_SecondShadeMap` belong to source
+mode 4; they do not supply mode 1 layers.
+
+Border maps use separate RGB remap ranges and can modify the lighting input or
+the unclamped bands. The final clamp follows the post-edge mask. Equal remap
+limits use the source 0.001 upper-limit adjustment; reversed limits remain valid.
+Conversion enables the border operation only when the source texture is assigned.
+Direct edits to the converted enable value can activate its white fallback.
+The source texture uses two fixed repeat sampler roles: bilinear at LOD zero and
+trilinear for positive LOD. Positive LOD floors the UV gradients by `pow(lod, 4)`.
+Both roles use the same source UV selector, scale, offset, and pan.
+
+Flat-mask mode blends a fixed-direction band with the surface bands through the
+strength texture's red channel. Strength-mask mode instead multiplies shadow
+strength. The imported fixed axis reflects source Z. Each draw transforms this
+axis through its retained skin-root or component basis, independently of the
+geometry matrix. Admission rejects mask types other than zero and one. The first band
+used by matcap, rim, and glitter receives these same mask operations.
+Engine local-light attenuation and reconstructed shader derivatives can differ
+from Unity.
+
+Native Advanced tile discard supports UV0 and UV1. Mode 0 rejects a whole
+triangle when any original corner selects an enabled tile. Mode 1 tests the
+interpolated pixel UV. Mode 0 uses tile IDs computed before half precision UV
+packing. Camera visibility and native directional shadows use the same triangle
+predicate. Authored late passes and authored Vulkan shadow passes reject active
+mode 0 because they do not bind the canonical triangle data. This includes the
+current point and spot shadow atlas paths.
 
 ## Validation
 

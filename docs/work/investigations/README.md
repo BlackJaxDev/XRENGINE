@@ -9,7 +9,8 @@ For rendering, use [Rendering Investigations](rendering/README.md).
 
 Runtime input: [Browser snapshot transient input edges](runtime/browser-snapshot-transient-edges-2026-10-02.md).
 
-- [Unity Package Startup Import](assets/unity-package-startup-import.md): package extraction, VCC companions, and the remaining Aryia source dependencies.
+- [Unity Package Startup Import](assets/unity-package-startup-import.md): package extraction, VCC companions, and the remaining source dependencies.
+- [Unity Avatar Package Import](assets/unity-avatar-package-import.md): generic material, deformation, shadow, and CPU recording findings for both prefab routes.
 
 - [Windows CI Build Preparation](platform/windows-ci-build-preparation-2026-10-05.md): workload provisioning, native symbols, and Visual Studio discovery; hosted-runner confirmation pending.
 - [Skinned GPU Chain Benchmark](physics/skinned-gpu-chain-benchmark-2026-10-06.md): 2,000-chain frame-rate measurements, per-chain CPU cost evidence, fixed defects, rejected experiments, and open faults.

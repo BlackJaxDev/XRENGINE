@@ -111,6 +111,7 @@ uniform int CurrentRenderPass;
 uniform int InputCommandCount;
 uniform int MaxCulledCommands;
 uniform uint DisabledFlagsMask;
+uniform uint RequiredFlagsMask;
 uniform vec3 CameraPosition;
 uniform uint StatsEnabled;
 uniform uint OverflowDebugEnabled;
@@ -294,6 +295,8 @@ void ProcessCommand(uint cmdIndex, uint activePlaneMask, uvec2 inheritedViewMask
     if (meta.InstanceCount == 0u || (meta.LayerMask & CameraLayerMask) == 0u)
         return;
     if (DisabledFlagsMask != 0u && (meta.Flags & DisabledFlagsMask) != 0u)
+        return;
+    if ((meta.Flags & RequiredFlagsMask) != RequiredFlagsMask)
         return;
     if (CurrentRenderPass >= 0 && meta.RenderPass != uint(CurrentRenderPass) && meta.RenderPass != INVALID_INDEX)
         return;

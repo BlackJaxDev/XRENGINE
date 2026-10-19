@@ -91,6 +91,7 @@ internal sealed class VulkanMeshOperationRequestQueue
             if (!capture.TryRetainPublication(
                     request.CanonicalDrawIdentitySnapshot))
             {
+                LogLostCanonicalPin(in request);
                 // The canonical bridge is optional here for the same reason it
                 // is optional on the shared queue: the immutable request can
                 // still take the legacy materialization path without losing
@@ -122,6 +123,7 @@ internal sealed class VulkanMeshOperationRequestQueue
             if (!_publishedPublicationPins.TryRetain(
                     request.CanonicalDrawIdentitySnapshot))
             {
+                LogLostCanonicalPin(in request);
                 // The canonical publication bridge is an optimization. Preserve
                 // the immutable draw through the legacy materialization path when
                 // its optional pin cannot be retained; never poison or drop it.
@@ -142,6 +144,31 @@ internal sealed class VulkanMeshOperationRequestQueue
             IncrementLaneOccupancy(lane);
             return EMeshRequestScheduleResult.Scheduled;
         }
+    }
+
+    private static void LogLostCanonicalPin(in VulkanMeshRenderRequest request)
+    {
+        AdvancedGpuSceneDrawIdentitySnapshot identity = request.CanonicalDrawIdentitySnapshot;
+        if (!identity.IsValid)
+            return;
+
+        AdvancedGpuScenePublication publication = identity.Publication.Publication;
+        Debug.VulkanWarningEvery(
+            "Vulkan.MeshRequest.CanonicalPinLost",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan.MeshRequest] Canonical publication pin failed: handle={0} pass={1} " +
+            "epoch={2} sequence={3} frameGeneration={4} sourceCount={5} " +
+            "material={6} materialId={7} mesh={8} rendererId={9}",
+            identity.Primary.Handle,
+            request.PassIndex,
+            publication.DatabaseEpoch,
+            publication.Sequence,
+            publication.FrameGeneration,
+            identity.Handles?.Count ?? 0,
+            request.ResolvedMaterial.Material.Name ?? "<null>",
+            request.ResolvedMaterial.Material.ID,
+            request.Renderer.MeshRenderer.Mesh?.Name ?? "<null>",
+            request.Renderer.MeshRenderer.ID);
     }
 
     /// <summary>

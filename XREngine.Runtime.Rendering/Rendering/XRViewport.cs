@@ -1583,7 +1583,6 @@ namespace XREngine.Rendering
         {
             long packagePathStart = CollectVisibleStageTimings.StartPath();
             RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
-            _renderPipeline.PublishStagedImportedResources(activeGeneration);
             RenderResourceRegistry? activeRegistry = activeGeneration?.Registry;
             int descriptorGeneration = activeRegistry?.DescriptorRevision ?? 0;
             int instanceRevision = activeRegistry?.InstanceRevision ?? 0;

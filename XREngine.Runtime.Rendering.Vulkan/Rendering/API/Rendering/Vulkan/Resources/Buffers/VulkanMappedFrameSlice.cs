@@ -18,8 +18,11 @@ internal readonly record struct VulkanMappedFrameSlice(
     int FrameSlot,
     ulong Generation,
     Buffer Buffer,
-    DeviceMemory Memory)
+    DeviceMemory Memory,
+    VulkanMappedFrameAllocation? Allocation = null)
 {
+    internal ulong AllocationId => Allocation?.Id ?? 0;
+    internal bool IsCurrent => Allocation is { IsOpen: true };
     internal bool IsValid =>
         ArenaIdentity != 0 &&
         BufferIdentity != 0 &&

@@ -1,3 +1,4 @@
+using System.Threading;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan.RenderGraph;
 
@@ -10,6 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanResourceGenerationTransactionService
 {
     private const int MaxPlannerStates = 12;
+    private static long _plannerStateEvictionDiagnosticCount;
     private readonly VulkanDeviceContext _device;
     private readonly VulkanFramePlanner _planner;
     private readonly VulkanResourceRuntime _resources;
@@ -224,6 +226,17 @@ internal sealed class VulkanResourceGenerationTransactionService
                 break;
 
             switchingState.LastUsedSerials.Remove(oldestKey);
+            if (VulkanBufferRetirementDiagnostics.Enabled)
+            {
+                long eviction = Interlocked.Increment(ref _plannerStateEvictionDiagnosticCount);
+                if (eviction <= 12 || eviction % 64 == 0)
+                {
+                    Debug.WriteAuxiliaryLog(
+                        "vulkan-physical-plan-replacements.log",
+                        $"capacityEviction={eviction} stateCountAfter={switchingState.States.Count} " +
+                        $"key={oldestKey} allocator={removed.ResourceAllocator.OwnershipId}");
+                }
+            }
             if (!VulkanResourcePlannerSessionService.IsAllocatorOwned(switchingState, removed.ResourceAllocator))
                 retiredAllocators.Add(removed.ResourceAllocator);
         }

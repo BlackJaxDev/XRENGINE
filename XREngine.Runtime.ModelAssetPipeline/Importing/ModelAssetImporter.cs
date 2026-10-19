@@ -212,6 +212,7 @@ namespace XREngine
         }
 
         private readonly ConcurrentDictionary<string, XRTexture2D> _texturePathCache = new();
+        private readonly ConcurrentDictionary<string, XRTexture2D> _missingNormalTexturePathCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, string> _recursiveTextureSearchCache = new(StringComparer.OrdinalIgnoreCase);
 
         private XRMaterial MakeMaterialInternal(XRTexture[] textureList, List<TextureSlot> textures, string name)
@@ -360,6 +361,17 @@ namespace XREngine
                 return;
 
             path = ResolveTextureFilePath(modelFilePath, path, out bool textureExists);
+            if (!textureExists && GetEffectiveTextureType(textures[i]) == TextureType.NormalCamera)
+            {
+                // Keep normal placeholders separate when a missing path also supplies color.
+                textureList[i] = _missingNormalTexturePathCache.GetOrAdd(path, static missingPath => TextureFactoryInternal(
+                    missingPath,
+                    schedulePreviewLoad: false,
+                    registerStreamingPlaceholder: false,
+                    useNormalPlaceholder: true));
+                return;
+            }
+
             textureList[i] = textureExists
                 ? _texturePathCache.GetOrAdd(path, MakeTextureAction)
                 : _texturePathCache.GetOrAdd(path, static missingPath => TextureFactoryInternal(
@@ -541,6 +553,13 @@ namespace XREngine
                     return modelDirCandidate;
                 }
 
+                string? sourceProjectCandidate = ResolveMissingTexturePath?.Invoke(modelFilePath, rawPath);
+                if (!string.IsNullOrWhiteSpace(sourceProjectCandidate) && File.Exists(sourceProjectCandidate))
+                {
+                    exists = true;
+                    return Path.GetFullPath(sourceProjectCandidate);
+                }
+
                 string? recursiveSearchCandidate = TryResolveTextureFromConfiguredSearchPaths(modelFilePath, fileName);
                 if (!string.IsNullOrWhiteSpace(recursiveSearchCandidate) && File.Exists(recursiveSearchCandidate))
                 {
@@ -560,13 +579,17 @@ namespace XREngine
 
         public Func<string, XRTexture2D> MakeTextureAction { get; set; } = TextureFactoryInternal;
 
+        /// <summary>Resolves an absent model texture from a known source project.</summary>
+        public Func<string, string, string?>? ResolveMissingTexturePath { get; set; }
+
         private static XRTexture2D TextureFactoryInternal(string path)
             => TextureFactoryInternal(path, schedulePreviewLoad: false, registerStreamingPlaceholder: true);
 
         private static XRTexture2D TextureFactoryInternal(
             string path,
             bool schedulePreviewLoad,
-            bool registerStreamingPlaceholder = true)
+            bool registerStreamingPlaceholder = true,
+            bool useNormalPlaceholder = false)
         {
             string textureName = Path.GetFileNameWithoutExtension(path);
             XRTexture2D placeholder = new()
@@ -585,7 +608,7 @@ namespace XREngine
 
             try
             {
-                using RuntimeImage filler = XRTexture2D.FillerImage;
+                using RuntimeImage filler = useNormalPlaceholder ? XRTexture2D.NormalMapFillerImage : XRTexture2D.FillerImage;
                 placeholder.Mipmaps = [new Mipmap2D(filler)];
                 placeholder.SizedInternalFormat = ESizedInternalFormat.Rgba8;
             }
@@ -901,11 +924,13 @@ namespace XREngine
         private static RuntimeImage CreateUberPlaceholderImage(string samplerName)
             => IsNormalLikeSampler(samplerName) ? XRTexture2D.NormalMapFillerImage : XRTexture2D.FillerImage;
 
-        public static XRTexture2D GetOrCreateUberSamplerTexture(string filePath, string samplerName)
+        public static XRTexture2D GetOrCreateUberSamplerTexture(
+            string filePath, string samplerName, string? cachePartition = null)
             => GetOrCreateUberSamplerTexture(
                 _uberSamplerTextureCache,
                 filePath,
                 samplerName,
+                cachePartition,
                 schedulePreviewLoad: true);
 
         /// <summary>
@@ -913,20 +938,28 @@ namespace XREngine
         /// The texture is registered with the streaming manager and promotes when it is
         /// actually used by a visible material.
         /// </summary>
-        public static XRTexture2D GetOrCreateDeferredUberSamplerTexture(string filePath, string samplerName)
+        public static XRTexture2D GetOrCreateDeferredUberSamplerTexture(
+            string filePath, string samplerName, string? cachePartition = null)
             => GetOrCreateUberSamplerTexture(
                 _deferredUberSamplerTextureCache,
                 filePath,
                 samplerName,
+                cachePartition,
                 schedulePreviewLoad: false);
 
         private static XRTexture2D GetOrCreateUberSamplerTexture(
             WeakTextureCache cache,
             string filePath,
             string samplerName,
+            string? cachePartition,
             bool schedulePreviewLoad)
         {
-            return cache.GetOrAdd((filePath, samplerName), schedulePreviewLoad, static (key, preview) =>
+            // Keep sampler policy in the cache key, but use the material sampler name on the texture.
+            string cacheSamplerName = cachePartition is null
+                ? samplerName
+                : string.Concat(samplerName, "\u001f", cachePartition);
+            return cache.GetOrAdd((filePath, cacheSamplerName),
+                (schedulePreviewLoad, samplerName), static (key, state) =>
             {
                 var tex = new XRTexture2D
                 {
@@ -936,7 +969,7 @@ namespace XREngine
                         ? File.GetLastWriteTimeUtc(key.path)
                         : null,
                     Name = Path.GetFileNameWithoutExtension(key.path),
-                    SamplerName = key.samplerName,
+                    SamplerName = state.samplerName,
                     MagFilter = ETexMagFilter.Linear,
                     MinFilter = ETexMinFilter.LinearMipmapLinear,
                     SmallestAllowedMipmapLevel = 0,
@@ -949,7 +982,7 @@ namespace XREngine
 
                 try
                 {
-                    using RuntimeImage placeholder = CreateUberPlaceholderImage(key.samplerName);
+                    using RuntimeImage placeholder = CreateUberPlaceholderImage(state.samplerName);
                     tex.Mipmaps = [new Mipmap2D(placeholder)];
                 }
                 catch (Exception ex)
@@ -957,14 +990,14 @@ namespace XREngine
                     LogImportWarning($"Failed to assign filler texture for '{key.path}'. {ex.Message}");
                 }
 
-                if (preview)
+                if (state.schedulePreviewLoad)
                 {
                     _ = XRTexture2D.ScheduleImportedTexturePreviewJob(
                         key.path,
                         tex,
                         onError: ex => LogImportException(
                             ex,
-                            $"[UberTexture] Preview load failed for '{key.path}' ({key.samplerName})."),
+                            $"[UberTexture] Preview load failed for '{key.path}' ({state.samplerName})."),
                         priority: JobPriority.Low);
                 }
                 else
@@ -2085,7 +2118,7 @@ namespace XREngine
                     {
                         assimpProgress?.Invoke(0.02f);
                         RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletSourceParserEntry();
-                        scene = _assimp.ImportFile(SourceFilePath, effectiveImportOptions.ImportSteps.ToAssimp());
+                        scene = AssimpModelFileImporter.Import(_assimp, SourceFilePath, effectiveImportOptions.ImportSteps.ToAssimp());
                         assimpProgress?.Invoke(0.12f);
                     }
 

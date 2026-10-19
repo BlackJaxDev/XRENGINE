@@ -84,6 +84,30 @@ the value and reveals the saved global/project preference again.
 `set_game_setting` supports the same `session_only: true` behavior for any writable
 game setting or nested dotted path.
 
+## Replace A Live Model Texture
+
+Use `get_model_material_bindings` to read a model slot and its legacy or surface
+texture bindings. Select a replacement texture ID from model materials already
+in the active world. Then call `set_model_material_texture_binding` with the
+reported node, component, submesh, LOD, material ID, binding kind, and index.
+The response confirms the previous and current texture IDs.
+
+For `StandardLitTextureV1`, either selector updates the legacy and semantic
+binding pair together. Native rendering requires this pair to match. The
+replacement must match the role's sampler, wrapping, and color metadata.
+The tool rejects null for this material type and restores both bindings from
+one receipt.
+
+Keep the returned `receiptId`. Pass it as `receipt_id` to
+`restore_model_material_texture_binding` to restore the exact original texture.
+Restore rejects a changed target or binding. A successful restore consumes its
+receipt; each world keeps at most 32 outstanding receipts. Use receipts promptly.
+
+Legacy replacements must use the same sampler name. For other material types,
+a null texture ID can clear a legacy slot; a surface binding requires a texture.
+The tools change the shared
+live material and add Undo history. They do not save assets or rename textures.
+
 ## VS Code
 
 Add this workspace MCP config when you want Copilot or another MCP-aware client to connect:

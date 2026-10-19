@@ -61,7 +61,7 @@ internal static partial class UnityPackageImportSource
 
                 try
                 {
-                    Directory.Move(staging, target);
+                    PublishCacheDirectory(staging, target);
                 }
                 catch (IOException) when (IsComplete(target, hash))
                 {

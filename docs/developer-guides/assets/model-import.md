@@ -23,9 +23,32 @@ by default to keep validation output bounded.
 Current limitations:
 
 - Non-hierarchy scene settings such as `RenderSettings`, `LightmapSettings`, `NavMeshSettings`, and `OcclusionCullingSettings` are currently skipped.
-- Material import covers common Unity `_BaseColor` / `_Color` tint and `_BaseMap` / `_MainTex` texture paths. Unity 2022 materials using Poiyomi Toon 9.3 or lilToon are additionally converted to the engine Uber shader path. Poiyomi Pro-authored inputs are visibly downgraded to their common Toon surface and do not imply Pro parity. See [Unity Conversion Integrations](unity-conversion-integrations.md) for the shader mapping scope.
+- Material import covers common Unity `_BaseColor` / `_Color` tint and `_BaseMap` / `_MainTex` texture paths. Materials using verified Poiyomi Toon 9.2.66, 9.2.79, and 9.3.64 sources or lilToon are additionally converted to the engine Uber shader path. Poiyomi Pro-authored inputs are visibly downgraded to their common Toon surface and do not imply Pro parity. See [Unity Conversion Integrations](unity-conversion-integrations.md) for the shader mapping scope.
 - Serialized Unity mesh assets currently import the common uncompressed vertex layouts used for positions, normals, tangents, colors, and UV0. More exotic compressed or multi-stream layouts may still need fallback handling.
 
+### Opaque Unity Standard materials
+
+`SerializedMaterialImporter.Standard.cs` recognizes a resolved shader source
+that declares `Shader "Standard"`. It does not infer this family from a file
+name or a saved property list. The supported opaque surface uses
+`XRMaterial.CreateLitPbrTextureMaterial` with `_MainTex`, optional `_BumpMap`,
+`_Color`, `_Metallic`, and roughness equal to `1 - _Glossiness`. Legacy slots
+and semantic texture roles reference the same texture objects. Both FBX routes
+use this material conversion when the entry asset is a Unity prefab.
+
+The normal map requires `_NORMALMAP`, strength one, linear RGB source data,
+and no green-channel inversion or height conversion. Both textures require
+identity UV0 transforms. The converter checks loaded normal metadata before
+it selects this surface. Direct asset loads also check source albedo color
+space without changing a shared texture. The serialized prefab producer version
+invalidates cached output from the older material conversion.
+
+Packed metallic/smoothness maps, detail, emission, height, occlusion, alternate
+coverage, and custom pass state are outside this bounded conversion. Unsupported
+state retains generic import and reports a warning. Supported inputs use the
+engine's PBR lighting and culling; a warning states that source pass-specific
+lighting and culling are not converted. This is not full Unity Standard shader
+parity. See the [standard lit-texture contract](../../architecture/rendering/standard-lit-texture-surface.md).
 ## Default routing
 
 - The ImGui editor exposes `Tools > Import External Files...` and `Tools > Import External Folder...`. Selecting an external Unity `.prefab` converts it directly from its original Unity project to a chosen native `.asset` destination. The detected Unity project root is editable, dependencies are GUID-resolved in place, and the source prefab is neither copied nor modified. Other file and folder imports retain the copy-then-import workflow.
@@ -36,6 +59,13 @@ Current limitations:
 - `.unity`, `.prefab`, and `.mat` files route through the Unity YAML scene, prefab, and material importers.
 - Unit Testing World startup also accepts `.unitypackage` in `ModelsToImport[].Path`. It extracts the package to the asset cache and imports each scene and prefab into a separate `XRScene`. Loose `.unity` and `.prefab` startup targets also get separate scenes. See [Unity package startup](unity-conversion-integrations.md#unit-testing-world-startup).
 - Other third-party model formats still import through Assimp.
+
+For Windows source paths of 260 characters or more,
+`AssimpModelFileImporter` uses AssimpNetter's managed `FileIOSystem`. It keeps
+the original full path and native parser, and uses the model directory to
+resolve relative sidecar files. The adapter removes the IO system from the
+context and disposes it after import, including failure. It does not copy the
+source to a temporary short path or change the process working directory.
 
 The default Assimp material factory preserves the authored diffuse RGB factor
 (`$clr.diffuse`, including OBJ/MTL `Kd`) in a standard material's `BaseColor`.
@@ -84,9 +114,9 @@ The unit-testing world exposes the same high-level policy per startup import thr
 
 For a Unity `.prefab` startup import, `ImporterBackend` selects the FBX backend for referenced model prefabs. Direct converter calls and asset loads without backend options continue to use Assimp. Editor asset loading passes an explicit `ModelImportOptions.FbxBackend` through to the Unity converter. `Auto` permits fallback during model parsing; `Native` does not.
 
-Unity FBX composition checks the source semantic profile before geometry conversion. The supported profiles use metre units (`UnitScaleFactor=100`), `globalScale=1`, `bakeAxisConversion=false`, XYZ rotation, inheritance type 1, and simple TRS nodes without pivot or geometric offsets. The signed axes are +X right with either +Z up/-Y front or +Y up/+Z front. Other FBX profiles fail with a diagnostic. Pivot policy remains independent of the bake-axis setting. Non-FBX model dispatch keeps its existing conversion path.
+Unity FBX composition checks the source semantic profile before geometry conversion. The supported profiles use metre units (`UnitScaleFactor=100`) or centimetre units (`UnitScaleFactor=1`), `globalScale=1`, `bakeAxisConversion=false`, XYZ rotation, inheritance type 1, and simple TRS nodes without pivot or geometric offsets. Centimetre sources require `useFileScale=true` and unskinned geometry. Skinned centimetre models require a separate source-local bind conversion and fail preflight. The signed axes are +X right with either +Z up/-Y front or +Y up/+Z front. Other FBX profiles fail with a diagnostic. Pivot policy remains independent of the bake-axis setting. Non-FBX model dispatch keeps its existing conversion path.
 
-`SerializedSceneImporter.ModelCoordinates.cs` reads source semantics and converts the complete producer coordinate chart. Assimp first uses its Z reflection, then the Unity boundary applies `K=diag(-1,1,1)`. Native FBX uses `K=diag(-1,1,-1)`. For row-vector matrices, positions use `p*K`; local transforms, inverse binds, and optional bind-root matrices use `inverse(K)*M*K`. Each distinct mesh is converted once. The native content helper is checked against the declared source basis before it enters the common root normalization path.
+`SerializedSceneImporter.ModelCoordinates.cs` reads source semantics and converts the complete producer coordinate chart. Assimp first uses its Z reflection, then the Unity boundary applies `K=diag(-s,s,s)`, where `s=UnitScaleFactor/100`. Native FBX already applies file units in its content basis and uses only `K=diag(-1,1,-1)` at this boundary. For row-vector matrices, positions use `p*K`; local transforms, inverse binds, and optional bind-root matrices use `inverse(K)*M*K`. Each distinct mesh is converted once. The native content helper is checked against the declared source basis and unit scale before it enters the common root normalization path. Before root collapse, `SerializedSceneImporter.ModelUnits.cs` restores the authored local transforms for centimetre models. It requires exact source-tree correspondence and a known synthetic basis. It removes synthetic unit scale and transforms unskinned geometry from the old owner world to the new owner world. This keeps file units in geometry, so prefab scale overrides cannot erase them. Shared meshes that require different corrections and meshes with a bind-root matrix fail explicitly. Source animation translation uses the same unit scale.
 
 Unity model metadata reads scale, unit, axis, hierarchy, and name-sorting settings from the `meshes` mapping, with root-level compatibility fallbacks. Generated roots distribute their basis into direct children when the wrapper is identity and each child has an invertible TRS representation. Root removal preserves skin palette products and transforms explicit bounds from the old basis to the new basis. This includes a sole authored child and a palette influence on a removed root. Singular or sheared transforms fail explicitly. Generation-2 identities are assigned after normalization and exclude generated backend helpers.
 
@@ -170,7 +200,17 @@ For importer and exporter tracing, set `XRE_FBX_LOG` before launching the editor
 
 Model import diagnostics and enabled FBX trace lines flow through the engine `Meshes` log category, appearing in the Console's `Meshes` tab and `Build/Logs/.../log_meshes.log` when file logging is enabled. FBX warnings and errors remain visible even with optional tracing off. There is no separate glTF trace env var today; native glTF warnings, unsupported-extension diagnostics, and Auto-to-Assimp fallback messages also surface through the normal model-import logging path.
 
-Missing texture references found by model material loading are collected per import. Once processing finishes, the importer adds them to Missing Assets with the model path as context and emits a summary warning. The ImGui editor reports these references in the menu bar notification bell. Select the missing asset event to open the panel. Import retains its existing placeholder textures and does not rewrite source references. See [Editor Notifications](../../user-guide/editor/notifications.md).
+Missing texture references found by model material loading are collected per import. Once processing finishes, the importer adds them to Missing Assets with the model path as context and emits a summary warning. The ImGui editor reports these references in the menu bar notification bell. Select the missing asset event to open the panel. Missing normal maps use a neutral tangent-space normal placeholder. Other missing maps retain the visible color placeholder. Normal placeholders have a separate cache so a path used for both color and normal data cannot share the wrong placeholder. Import does not rewrite source references. See [Editor Notifications](../../user-guide/editor/notifications.md).
+
+For an FBX referenced by a Unity scene or prefab, both FBX backends first check
+the authored texture path and paths relative to the model. If these checks fail,
+the importer checks the composed Unity source under `Assets` and `Packages`. It
+uses the exact filename and extension, without a directory-name guess. A source
+asset must have an adjacent `.meta` file, and the name must identify one asset
+case-insensitively. The import context builds this lookup once. A missing or
+ambiguous name stays unresolved and receives the normal missing-texture
+placeholder and diagnostic. A successful match retains the resolved source
+path as the texture identity.
 
 The remaining import settings apply across native and compatibility paths unless noted otherwise:
 

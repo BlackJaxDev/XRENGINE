@@ -142,8 +142,7 @@ outside this task.
   additive, mirror, reverse-speed, cycle-offset, transition, and authored-IK
   cases. Its generated avatar definition reported all required bones, 39 axis
   mappings, calibrated IK, and 95% profile coverage.
-- The exact `ARYIA.fbx` extracted from
-  `<downloads>\Aryia_By_Mimiiu_V1.3.unitypackage` ran through
+- A second humanoid FBX extracted from a supplied Unity package ran through
   the same graph and production path. Its generated avatar definition reported
   all required bones, 39 axis mappings, calibrated IK, and 93% profile coverage.
 - In both avatars, changing a frozen direct child from weight 0 to 0.7 and back
@@ -155,7 +154,7 @@ outside this task.
   or overflow.
 - Five IK solvers were active on each avatar. All four authored hand/foot goals
   reported `AppliedAuthored`; no animation/IK warning was emitted.
-- Missing Aryia textures referenced by the package creator's machine produced
+- Missing source textures referenced by the package creator's machine produced
   material warnings only and were not treated as animation failures.
 
 All temporary Unit Testing World model/state-machine code was removed, the

@@ -336,6 +336,24 @@ public sealed partial class XRMaterialInspector
             return;
 
         int slotIndex = binding.MaterialTextureSlot ?? binding.FallbackTextureSlot;
+        if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
+        {
+            if (!StandardLitTextureBindingEditor.TryReplace(material, false, slotIndex,
+                    texture, out StandardLitTextureBindingEdit edit, out string? reason))
+            {
+                Debug.LogWarning(reason ?? "The standard lit texture edit was rejected.");
+                return;
+            }
+            if (!ReferenceEquals(edit.PreviousTexture, edit.ReplacementTexture))
+            {
+                using var interaction = Undo.BeginUserInteraction();
+                Undo.RecordStructuralChange("Set Standard Lit Texture",
+                    undoAction: () => ApplyStandardLitTextureEdit(material, in edit, restore: true),
+                    redoAction: () => ApplyStandardLitTextureEdit(material, in edit, restore: false));
+            }
+            material.MarkDirty();
+            return;
+        }
         EnsureTextureSlots(material, slotIndex + 1);
 
         if (texture is not null)
@@ -349,6 +367,18 @@ public sealed partial class XRMaterialInspector
         }
 
         material.Textures[slotIndex] = texture;
+        material.MarkDirty();
+    }
+
+    /// <summary>Applies a retained paired edit for Undo.</summary>
+    private static void ApplyStandardLitTextureEdit(
+        XRMaterial material, in StandardLitTextureBindingEdit edit, bool restore)
+    {
+        if (!StandardLitTextureBindingEditor.Apply(material, in edit, restore, out string? reason))
+        {
+            Debug.LogWarning(reason ?? "The standard lit texture edit was rejected.");
+            return;
+        }
         material.MarkDirty();
     }
 

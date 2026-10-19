@@ -881,6 +881,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         Pipeline,
                         targetFBO,
                         packageFailure);
+                    RenderIndependentScreenSpaceUi(
+                        userInterface,
+                        viewport,
+                        targetFBO,
+                        "the scene frame package was rejected");
                     return ReportExactOutputPreconditionFailure(in outputCompletionRequest, packageFailure ?? "The backend-ready frame package is invalid.");
                 }
 

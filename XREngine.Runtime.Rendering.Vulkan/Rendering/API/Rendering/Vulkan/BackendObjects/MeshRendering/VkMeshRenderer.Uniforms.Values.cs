@@ -698,6 +698,7 @@ internal unsafe partial class VkMeshRenderer
 			BlendshapeActiveCountUniformName => EVulkanAutoUniformSpecialSource.BlendshapeActiveCount,
 			BlendshapeWeightThresholdUniformName => EVulkanAutoUniformSpecialSource.BlendshapeWeightThreshold,
 			UsePrecombinedBlendshapeDeltasUniformName => EVulkanAutoUniformSpecialSource.UsePrecombinedBlendshapeDeltas,
+			"u_SourceFlatDirection" => EVulkanAutoUniformSpecialSource.SourceFlatDirection,
 			_ => EVulkanAutoUniformSpecialSource.None,
 		};
 		return source != EVulkanAutoUniformSpecialSource.None;
@@ -716,6 +717,10 @@ internal unsafe partial class VkMeshRenderer
 			case EVulkanAutoUniformSpecialSource.TransformId:
 				value = draw.TransformId;
 				type = EShaderVarType._uint;
+				return true;
+			case EVulkanAutoUniformSpecialSource.SourceFlatDirection:
+				value = draw.SourceFlatDirection;
+				type = EShaderVarType._vec4;
 				return true;
 			case EVulkanAutoUniformSpecialSource.SkinPaletteBase:
 				value = draw.AutoUniformPublication.SkinPaletteBase;

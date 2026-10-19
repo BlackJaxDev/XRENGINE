@@ -33,9 +33,12 @@ internal sealed class UnityFbxAnimationConverter
         _targets = new SceneNode[nodes.Count];
         _targetParents = new int[nodes.Count];
         _restCorrections = new Matrix4x4[nodes.Count];
-        _chart = (source.GlobalSettings!.AxisSystem.UpAxis.AxisIndex == 2
+        FbxAxisSystem axes = source.GlobalSettings!.AxisSystem;
+        float sourceUnitToMeters = (float)(axes.UnitScaleFactor / 100.0d);
+        _chart = (axes.UpAxis.AxisIndex == 2
             ? Matrix4x4.CreateRotationX(-MathF.PI * 0.5f) : Matrix4x4.Identity)
-            * Matrix4x4.CreateScale(-1.0f, 1.0f, -1.0f);
+            * Matrix4x4.CreateScale(-1.0f, 1.0f, -1.0f)
+            * Matrix4x4.CreateScale(sourceUnitToMeters);
         var order = new List<int>(nodes.Count);
         int rootCount = nodes.Count(static node => node.ParentNodeIndex is null);
         for (int index = 0; index < nodes.Count; index++)

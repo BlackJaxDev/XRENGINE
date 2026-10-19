@@ -6,6 +6,8 @@ namespace XREngine.Components.Capture.Lights
 {
     public partial class LightProbeComponent
     {
+        private bool _stoppedCaptureReleaseQueued;
+
         #region Component Lifecycle
 
         protected override void OnComponentActivated()
@@ -22,6 +24,7 @@ namespace XREngine.Components.Capture.Lights
                 _registeredWorld = world;
                 SyncPreviewRenderCommandTransform();
             }
+            UpdateRealtimeCaptureTimer();
             ScheduleStartupCaptureIfRequested();
         }
 
@@ -59,6 +62,7 @@ namespace XREngine.Components.Capture.Lights
                     }
                     break;
                 case nameof(IrradianceResolution):
+                case nameof(ReflectionFilter):
                     if (EnvironmentTextureEquirect is not null)
                     {
                         InitializeStatic();
@@ -88,10 +92,13 @@ namespace XREngine.Components.Capture.Lights
                     ScheduleStartupCaptureIfRequested();
                     break;
                 case nameof(RealtimeCapture):
-                    if (RealtimeCapture)
-                        _realtimeCaptureTimer.StartMultiFire(QueueCapture, RealTimeCaptureUpdateInterval ?? TimeSpan.Zero);
-                    else
-                        _realtimeCaptureTimer.Cancel();
+                    UpdateRealtimeCaptureTimer();
+                    if (!RealtimeCapture && !_stoppedCaptureReleaseQueued)
+                    {
+                        SetField(ref _stoppedCaptureReleaseQueued, true, publishNotifications: false);
+                        RuntimeEngine.AddRenderThreadCoroutine(ReleaseStoppedCaptureResources,
+                            "LightProbe.ReleaseStoppedCaptureResources", RenderThreadJobKind.RenderPipelineResource);
+                    }
                     ScheduleStartupCaptureIfRequested();
                     break;
                 case nameof(AutoCaptureOnActivate):
@@ -101,6 +108,29 @@ namespace XREngine.Components.Capture.Lights
                     _realtimeCaptureTimer.TimeBetweenFires = RealTimeCaptureUpdateInterval ?? TimeSpan.Zero;
                     break;
             }
+        }
+
+        private void UpdateRealtimeCaptureTimer()
+        {
+            _realtimeCaptureTimer.Cancel();
+            if (IsActiveInHierarchy && RealtimeCapture)
+                _realtimeCaptureTimer.StartMultiFire(QueueCapture, RealTimeCaptureUpdateInterval ?? TimeSpan.Zero);
+        }
+
+        private bool ReleaseStoppedCaptureResources()
+        {
+            if ((RealtimeCapture && _realtimeCaptureTimer.IsRunning && IsActiveInHierarchy) || IsIblProducerQuarantined)
+            {
+                SetField(ref _stoppedCaptureReleaseQueued, false, publishNotifications: false);
+                return true;
+            }
+
+            if (HasPendingCaptureWriter)
+                return false;
+
+            SetField(ref _stoppedCaptureReleaseQueued, false, publishNotifications: false);
+            ReleaseTransientEnvironmentTexturesAfterIblGeneration();
+            return true;
         }
 
         private void ScheduleStartupCaptureIfRequested()

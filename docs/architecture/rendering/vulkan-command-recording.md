@@ -1,6 +1,6 @@
 # Vulkan Primary And Secondary Command Recording
 
-Last updated: 2026-10-13
+Last updated: 2026-10-18
 
 This document explains how XRENGINE turns a frame's rendering work into Vulkan
 command buffers. It covers the desktop path, the persistent secondary-recording
@@ -11,6 +11,17 @@ For the exact primary-reuse correctness contract, see
 [Vulkan Primary Command-Buffer Reuse](vulkan-primary-command-buffer-reuse.md).
 For the surrounding frame lifecycle, see
 [Vulkan Renderer](vulkan-renderer.md).
+
+## Live Generated Program Reuse
+
+`VkMeshRenderer` checks the current `GeneratedProgramState` before it reuses
+prepared live draw state. The state cache must resolve to the active linked
+program and its exact identity. An unchanged mesh buffer or link generation
+does not prove that the current material shader inputs match that program.
+This check uses the existing value-type key and does not allocate per draw.
+
+Captured draws keep their retained program identity. Their replay does not
+compare against later live material state.
 
 ## The Basic Idea
 
@@ -60,6 +71,14 @@ Worker threads
 | Frame slot | One entry in the frames-in-flight ring. Pools and cached recordings are tracked per slot so in-flight GPU work is not reset. |
 
 ## Recording Modes
+
+An interactive desktop resize keeps `Background` and `AllowDeferral` for the
+whole frame attempt. The sealed output plan can contain a foreground dependency,
+such as a shadow output. That dependency must not promote the desktop attempt
+to `PresentNow` after recording. A pending UI secondary then uses normal recovery
+for the acquired image. Resize callbacks must not enter foreground convergence or latch
+a terminal failure for an allowed recording deferral. Normal desktop attempts
+retain the strict presentation contract.
 
 Primary inline mesh draws use `VkMeshRenderer.RecordDraw`. This path activates
 the captured program, binds the declared vertex slots, and tracks resource use.
@@ -177,6 +196,12 @@ default material classification with a trailing annotation such as
 names fail shader rewriting with the accepted domains instead of silently
 selecting a fallback owner. Each physical block publishes a semantic layout
 signature over its byte layout and typed write operations.
+Uniform reference qualification runs once before the generated blocks are
+inserted. It preserves struct field declarations, comments, and strings.
+Member access stays unchanged when spaces or comments separate the dot and
+field name. A struct field can therefore share a global uniform name without
+becoming an invalid qualified declaration. This lexical pass does not resolve
+local variables that shadow global uniforms.
 Material-owned immutable write plans are cached by the Vulkan material using
 that signature plus the material and runtime-binding revisions, so compatible
 program-local schemas reuse one plan instead of rebuilding it per renderer or
@@ -262,6 +287,14 @@ only in the view domain, and the previous model matrix lives only in the object
 domain. Advancing either history therefore republishes its owner range without
 rewriting frame, pass, material, instance, or callback payloads and without
 invalidating a command artifact whose stable binding location remains valid.
+
+Texture signature reads use one current descriptor snapshot
+when it is available. The snapshot is not retained across calls. Cold or stale
+sources keep the existing descriptor getter path.
+
+All eight `SourceSH*` uniforms belong to the Lights requirement. Their physical
+owner is RuntimeCallback, which matches the forward-lighting producer and
+includes changed SH values in lighting signatures.
 
 Descriptor preparation keeps schema/layout identity separate from resource
 content identity. Auto-uniform descriptor schema entries inherit their exact
@@ -560,6 +593,14 @@ The render thread drains the queued `FrameOp` instances and sorts them into the
 required render order. This order is authoritative. Parallel recording may
 change where CPU work happens, but it must not change the order in which the
 primary observes that work.
+
+Deferred mesh draws preserve submission order inside query brackets, explicit
+submission-order contexts, and required GPU producer batches. Required batches
+can contain texture writers followed by draws that sample those textures.
+Canonical opaque sorting by target or material must not reorder these draws.
+A static auxiliary pipeline can have no declared output framebuffer, so the
+active batch is an independent ordering condition. A completion fence confirms
+that the batch recorded and completed; it cannot repair an incorrect draw order.
 
 ### 3. Prepare resources on the render thread
 

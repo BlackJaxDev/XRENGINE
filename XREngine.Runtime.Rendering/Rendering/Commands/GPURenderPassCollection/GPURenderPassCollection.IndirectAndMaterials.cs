@@ -74,10 +74,20 @@ namespace XREngine.Rendering.Commands
             Log(LogCategory.Lifecycle, LogLevel.Info, "Render begin (pass={0})", RenderPass);
             Dbg("Render begin", "Lifecycle");
 
+            bool requiredSharedShadow = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true;
+            if (requiredSharedShadow && !scene.HasSharedOpaqueShadowCommand(RenderPass))
+            {
+                ClearExactTransparentMultiviewRejection();
+                ClearPassPolicySnapshot();
+                return;
+            }
+
             if (!TryInitializeRender(scene, out XRCamera? camera) || camera is null)
             {
                 ClearExactTransparentMultiviewRejection();
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow pass has no ready GPU render state.");
                 return;
             }
 
@@ -86,7 +96,19 @@ namespace XREngine.Rendering.Commands
                 GpuProgramsPendingThisFrame = true;
                 ClearExactTransparentMultiviewRejection();
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow GPU programs are not ready.");
                 return;
+            }
+
+            if (requiredSharedShadow &&
+                (MeshSubmissionStrategy != EMeshSubmissionStrategy.GpuIndirectZeroReadback ||
+                 MeshPrimitivePathPreference != EMeshPrimitivePathPreference.TraditionalOnly))
+            {
+                ClearExactTransparentMultiviewRejection();
+                ClearPassPolicySnapshot();
+                throw new RenderResourcePreparationPendingException(
+                    "Shared opaque shadows require the traditional zero-readback indirect mesh path.");
             }
 
             // Meshlet debug display force-flip:
@@ -103,6 +125,13 @@ namespace XREngine.Rendering.Commands
                 savedStrategy != EMeshSubmissionStrategy.CpuDirect &&
                 savedPrimitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly &&
                 GpuBvhDebugSettings.ShouldForceMeshletForDebugDisplay(camera, RenderPass);
+
+            if (requiredSharedShadow && meshletDebugForced)
+            {
+                ClearPassPolicySnapshot();
+                throw new RenderResourcePreparationPendingException(
+                    "Meshlet debug drawing cannot write a shared shadow atlas tile.");
+            }
 
             if (meshletDebugForced)
             {
@@ -141,6 +170,8 @@ namespace XREngine.Rendering.Commands
             if (!ResetCounters())
             {
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow GPU counters are not ready.");
                 return;
             }
             resetStopwatch.Stop();
@@ -151,6 +182,8 @@ namespace XREngine.Rendering.Commands
             if (!Cull(scene, camera, deferGpuHiZ: useTwoPassGpuHiZ))
             {
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow GPU cull did not complete.");
                 return;
             }
             LogVulkanCounterDiagnostics("after-cull");
@@ -161,6 +194,8 @@ namespace XREngine.Rendering.Commands
             if (!submitted)
             {
                 ClearPassPolicySnapshot();
+                if (requiredSharedShadow)
+                    throw new RenderResourcePreparationPendingException("The shared shadow visible set was not submitted.");
                 return;
             }
 
@@ -285,7 +320,8 @@ namespace XREngine.Rendering.Commands
             if (batches is not null)
                 Log(LogCategory.Materials, LogLevel.Info, "Material batches={0}, visible commands={1}, phase={2}", batches.Count, VisibleCommandCount, phaseLabel);
 
-            if (!PrepareMaterialTableAndValidateResidency(scene, batches))
+            if (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass != true &&
+                !PrepareMaterialTableAndValidateResidency(scene, batches))
             {
                 Dbg($"Render abort ({phaseLabel}) - material table residency validation failed", "Materials");
                 return false;

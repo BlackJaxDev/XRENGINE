@@ -602,6 +602,7 @@ internal sealed partial class VulkanResourceRuntime
         {
             if (tracker.CommandBufferLifetimes.Remove(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
             {
+                lifetime.ReleaseFrameDataAllocations(handle);
                 lifetime.ReleaseMaterialDescriptorClosures();
                 foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
                     ReleaseRecordedCommandBufferDependencyNoLock(
@@ -1249,6 +1250,7 @@ internal sealed partial class VulkanResourceRuntime
 
             if (lifetime.SealedSubmissionContract is { } completedContract)
                 lifetime.ReusableSealedSubmissionContract = completedContract;
+            lifetime.ReleaseFrameDataAllocations(handle);
             ReleaseCommandBufferDependenciesNoLock(handle, lifetime);
             lifetime.FrameDataLease.EvictCachedVariant();
             lifetime.FrameDataLease.Reset();
@@ -2990,6 +2992,7 @@ internal sealed partial class VulkanResourceRuntime
                     handle,
                     out VulkanCommandBufferLifetimeRecord? commandBufferLifetime))
             {
+                commandBufferLifetime.ReleaseFrameDataAllocations(handle);
                 ReleaseCommandBufferDependenciesNoLock(
                     handle,
                     commandBufferLifetime);

@@ -11,6 +11,9 @@ internal sealed class VulkanCommandBufferLifetimeRecord
     public ulong RecordingGeneration;
     public int QueuedSubmissionCount;
     public VulkanFrameDataGenerationLease FrameDataLease;
+    public readonly HashSet<VulkanMappedFrameAllocation> FrameDataAllocations = [];
+    public long FrameDataRetirementVersion = -1;
+    public bool FrameDataAllocationsOpen;
     public CommandBufferLevel Level;
     public VulkanResourceLifetimeKey AllocatingCommandPool;
     public ulong AllocatingCommandPoolGeneration;
@@ -27,6 +30,15 @@ internal sealed class VulkanCommandBufferLifetimeRecord
         foreach (GPUMaterialTableDescriptorClosure closure in MaterialDescriptorClosures)
             closure.Dispose();
         MaterialDescriptorClosures.Clear();
+    }
+
+    /// <summary>Releases range readers only after native command reset or destruction.</summary>
+    public void ReleaseFrameDataAllocations(ulong commandBufferHandle)
+    {
+        foreach (VulkanMappedFrameAllocation allocation in FrameDataAllocations)
+            allocation.ReleaseCommand(commandBufferHandle);
+        FrameDataAllocations.Clear();
+        FrameDataRetirementVersion = -1;
     }
 
     public void RefreshTouchedDependencies()

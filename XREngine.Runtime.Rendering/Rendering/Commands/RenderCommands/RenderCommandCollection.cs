@@ -391,6 +391,7 @@ namespace XREngine.Rendering.Commands
             _updatingBackendReadyIdentity = BackendReadyFramePackageIdentity.Unspecified;
             _updatingRevision++;
             _updatingBackendReadyPackage.Reset();
+            ClearPreparedImportedResourceGeneration();
             _renderingBackendReadyPackage.Reset();
         }
 
@@ -770,6 +771,7 @@ namespace XREngine.Rendering.Commands
                 _updatingPasses,
                 passMetadata,
                 nativeAuthoredDecals);
+            CapturePreparedImportedResourceGeneration(ownerPipeline);
             PrepareMeshOrderPublicationNoLock(scene, camera);
 
             XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
@@ -846,6 +848,7 @@ namespace XREngine.Rendering.Commands
             {
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
                 _updatingBackendReadyPackage.Cancel();
+                ClearPreparedImportedResourceGeneration();
                 _renderingBackendReadyPackage.Cancel();
                 ResetMeshOrderCollectionNoLock();
                 CancelCollectedResourcesNoLock();
@@ -1751,7 +1754,9 @@ namespace XREngine.Rendering.Commands
             return AdvancedLatePassEligibilityValidator.TryValidateLatePass(
                 material,
                 renderPass,
-                out rejectionReason);
+                out rejectionReason,
+                AbstractRenderer.Current is IAuthoredUdimTriangleCoverageBackendCapability
+                    { SupportsUdimTriangleCoverage: true });
         }
 
         private static void ReportAdvancedLatePassRejection(
@@ -1919,6 +1924,7 @@ namespace XREngine.Rendering.Commands
             if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
                 return;
 
+            bool shadowPass = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true;
             bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
             for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
             {
@@ -1931,10 +1937,10 @@ namespace XREngine.Rendering.Commands
 
                 if (cmd is IRenderCommandMesh meshCmd)
                 {
-                    bool excludedFromGpuIndirect =
-                        !_renderingBackendReadyPackage.IsTraditionalGpuOwned(
-                            renderPass,
-                            meshCmd.StableQueryKey);
+                    bool excludedFromGpuIndirect = shadowPass
+                        ? cmd is not RenderCommandMesh3D shadowCommand || !shadowCommand.RenderSharedOpaqueShadow
+                        : !_renderingBackendReadyPackage.IsTraditionalGpuOwned(
+                            renderPass, meshCmd.StableQueryKey);
                     if (!excludedFromGpuIndirect)
                         continue;
                 }
@@ -2588,6 +2594,8 @@ namespace XREngine.Rendering.Commands
                 if (preparedLate)
                     PrepareBackendReadyFramePackageNoLock();
 
+                FinalizePreparedImportedResourcesNoLock();
+
                 (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
                 SwapCollectedResourcesNoLock();
                 (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
@@ -2685,6 +2693,7 @@ namespace XREngine.Rendering.Commands
                 _numCommandsRecentlyAddedToUpdate = 0;
                 _updatingRevision++;
                 _updatingBackendReadyPackage.Reset();
+                ClearPreparedImportedResourceGeneration();
                 ResetMeshOrderCollectionNoLock();
             }
         }
@@ -2776,6 +2785,21 @@ namespace XREngine.Rendering.Commands
             AddShadowState(ref hash, meshCommand.MaterialOverride is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.MaterialOverride));
             AddShadowState(ref hash, meshCommand.RenderOptionsOverride is null ? 0 : RuntimeHelpers.GetHashCode(meshCommand.RenderOptionsOverride));
 
+            XRMeshRenderer? renderer = meshCommand.Mesh;
+            if (renderer is not null)
+            {
+                int primitiveCount = renderer.Submeshes.Count == 0 ? 1 : renderer.Submeshes.Count;
+                AddShadowState(ref hash, primitiveCount);
+                for (int primitiveIndex = 0; primitiveIndex < primitiveCount; primitiveIndex++)
+                {
+                    renderer.TryGetMesh(primitiveIndex, out XRMesh? sourceMesh, out XRMaterial? sourceMaterial);
+                    AddShadowState(ref hash, sourceMesh is null ? 0 : RuntimeHelpers.GetHashCode(sourceMesh));
+                    AddShadowState(ref hash, sourceMesh?.GeometryRevision ?? 0L);
+                    XRMaterial? material = meshCommand.MaterialOverride ?? sourceMaterial ?? renderer.Material;
+                    AddShadowMaterialState(ref hash, material);
+                }
+            }
+
             // Non-model/skinned commands commonly publish identity as WorldMatrix and
             // carry their animated world extent through the culling-volume override.
             if (command.CullingVolume is AABB bounds)
@@ -2785,6 +2809,18 @@ namespace XREngine.Rendering.Commands
             }
 
             return MixOcclusionCommandKey(hash);
+        }
+
+        private static void AddShadowMaterialState(ref ulong hash, XRMaterial? material)
+        {
+            AddShadowState(ref hash, material is null ? 0 : RuntimeHelpers.GetHashCode(material));
+            if (material is null)
+                return;
+            AddShadowState(ref hash, material.BindingLayoutVersion);
+            AddShadowState(ref hash, material.BindingValueVersion);
+            AddShadowState(ref hash, material.BindingResourceVersion);
+            AddShadowState(ref hash, material.ShaderStateRevision);
+            AddShadowState(ref hash, material.UberStateRevision);
         }
 
         private static void AddShadowState(ref ulong hash, Matrix4x4 value)
@@ -2807,6 +2843,15 @@ namespace XREngine.Rendering.Commands
 
         private static void AddShadowState(ref ulong hash, int value)
             => AddShadowState(ref hash, unchecked((uint)value));
+
+        private static void AddShadowState(ref ulong hash, long value)
+            => AddShadowState(ref hash, unchecked((ulong)value));
+
+        private static void AddShadowState(ref ulong hash, ulong value)
+        {
+            AddShadowState(ref hash, unchecked((uint)value));
+            AddShadowState(ref hash, unchecked((uint)(value >> 32)));
+        }
 
         private static void AddShadowState(ref ulong hash, uint value)
         {
@@ -2852,7 +2897,9 @@ namespace XREngine.Rendering.Commands
                         AdvancedLatePassEligibilityValidator.TryValidateLatePass(
                             material,
                             meshCommand.RenderPass,
-                            out _))
+                            out _,
+                            AbstractRenderer.Current is IAuthoredUdimTriangleCoverageBackendCapability
+                                { SupportsUdimTriangleCoverage: true }))
                     {
                         sceneColorSnapshotConsumerCount = checked(sceneColorSnapshotConsumerCount + 1u);
                     }

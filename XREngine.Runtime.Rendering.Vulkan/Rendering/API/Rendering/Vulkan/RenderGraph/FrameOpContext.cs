@@ -44,6 +44,7 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 /// <param name="OutputSchedulingRequest">Canonical engine output request frozen for this backend context.</param>
 /// <param name="OutputHistorySequenceId">Output-local temporal-history sequence authored by this pipeline invocation.</param>
 /// <param name="OutputHistorySourceFrame">Render-frame identity paired with the temporal-history sequence.</param>
+/// <param name="CaptureOwnerToken">The frozen logical owner of a capture output.</param>
 internal readonly record struct FrameOpContext(
     int PipelineIdentity,
     int ViewportIdentity,
@@ -80,7 +81,8 @@ internal readonly record struct FrameOpContext(
     ulong OutputCompletionReceiptId = 0,
     ulong OutputCompletionSourceFrame = 0,
     VulkanFrameOpWorkspace? OperationWorkspace = null,
-    ulong AdvancedVisibilityOutputIdentity = 0)
+    ulong AdvancedVisibilityOutputIdentity = 0,
+    RenderCaptureOwnerToken? CaptureOwnerToken = null)
 {
     public int SchedulingIdentity => OutputTargetIdentity == 0
         ? HashCode.Combine(PipelineIdentity, ViewportIdentity)

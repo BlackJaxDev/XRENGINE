@@ -129,6 +129,10 @@ namespace XREngine.Components.Scene.Mesh
         /// <summary>Reads the component convention only while sealing the primary command's swap image.</summary>
         internal Matrix4x4 GetLodComponentWorldMatrix() => GetCurrentTransformMatrix(Component.Transform);
 
+        /// <summary>Gets the source orientation used by authored flat shading.</summary>
+        internal Matrix4x4 GetSourceFlatBasisMatrix()
+            => IsSkinned ? GetSkinnedBoundsBasisMatrix() : GetLodComponentWorldMatrix();
+
         public XRMesh? CurrentLODMesh
             => Volatile.Read(ref _currentLODRenderer)?.Mesh;
 

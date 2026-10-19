@@ -417,6 +417,18 @@ namespace XREngine.Rendering.Shaders.Generator
             WriteUniformBufferBlocks();
             base.WriteUniforms();
             WriteVertexEffectUniforms();
+            Line("#if defined(XRENGINE_OUTLINE_PASS)");
+            Line("uniform float _OutlineWidth;");
+            Line("uniform int _OutlineExpansionMode;");
+            Line("uniform int _OutlineSpace;");
+            Line("uniform vec3 _OutlinePersonaDirection;");
+            Line("uniform vec3 _OutlineDropShadowOffset;");
+            Line("uniform float _OutlineFixedSize;");
+            Line("uniform float _OutlineUseVertexColors;");
+            Line("uniform float _OutlineZOffset;");
+            Line("uniform float ScreenWidth;");
+            Line("uniform float ScreenHeight;");
+            Line("#endif");
             if (UseDirectionalCascadeInstancedLayering)
             {
                 Line("uniform int CascadeLayerCount;");
@@ -643,6 +655,26 @@ namespace XREngine.Rendering.Shaders.Generator
             }
 
             WriteVertexEffects(hasNormals);
+
+            if (hasNormals)
+            {
+                Line("#if defined(XRENGINE_OUTLINE_PASS)");
+                Line($"float xreOutlineVertexWidth = mix(1.0f, max({(_colorsUsed > 0 ? $"{ECommonBufferType.Color}0.a" : "1.0f")}, 0.0f), clamp(_OutlineUseVertexColors, 0.0f, 1.0f));");
+                Line("float xreOutlineWidth = _OutlineWidth * 0.01f * xreOutlineVertexWidth;");
+                Line($"vec3 xreOutlineDirection = {FinalNormalName};");
+                Line($"if (_OutlineExpansionMode == 1) xreOutlineDirection = normalize({FinalPositionName}.xyz + {FinalNormalName} * 0.001f);");
+                Line("else if (_OutlineExpansionMode == 2) xreOutlineDirection = normalize(_OutlinePersonaDirection);");
+                Line("else if (_OutlineExpansionMode == 3) xreOutlineDirection = normalize(_OutlineDropShadowOffset);");
+                Line($"if (_OutlineExpansionMode == 3) {FinalPositionName}.xyz += _OutlineDropShadowOffset * xreOutlineWidth;");
+                Line("else if (_OutlineSpace == 1)");
+                using (OpenBracketState())
+                {
+                    Line($"vec3 xreOutlineWorldDirection = normalize({NormalMatrixName} * xreOutlineDirection);");
+                    Line($"{FinalPositionName}.xyz += (inverse({EEngineUniform.ModelMatrix}) * vec4(xreOutlineWorldDirection * xreOutlineWidth, 0.0f)).xyz;");
+                }
+                Line($"else if (_OutlineSpace != 2) {FinalPositionName}.xyz += normalize(xreOutlineDirection) * xreOutlineWidth;");
+                Line("#endif");
+            }
 
             Line();
             if (hasNormals)
@@ -1243,6 +1275,19 @@ namespace XREngine.Rendering.Shaders.Generator
             {
                 DeclareMVP(ViewMatrixName + index, invViewMatrixName, projMatrixName, ModelViewMatrixName + index, ModelViewProjMatrixName + index);
                 Line($"{finalPositionName} = {ModelViewProjMatrixName + index} * {localInputPositionName};");
+                if (_useNormals)
+                {
+                    Line("#if defined(XRENGINE_OUTLINE_PASS)");
+                    Line("if (_OutlineSpace == 2 || _OutlineFixedSize > 0.5f)");
+                    using (OpenBracketState())
+                    {
+                        Line("vec2 xreOutlineScreen = max(vec2(ScreenWidth, ScreenHeight), vec2(1.0f));");
+                        Line($"vec2 xreOutlineClipNormal = normalize(({ModelViewProjMatrixName + index} * vec4({FinalNormalName}, 0.0f)).xy);");
+                        Line($"{finalPositionName}.xy += xreOutlineClipNormal * (_OutlineWidth * 2.0f / xreOutlineScreen) * {finalPositionName}.w;");
+                    }
+                    Line($"{finalPositionName}.z += _OutlineZOffset * 0.0001f * {finalPositionName}.w;");
+                    Line("#endif");
+                }
             }
 
             //Non-extension VR shaders will multiply the view and projection matrices in the geometry shader

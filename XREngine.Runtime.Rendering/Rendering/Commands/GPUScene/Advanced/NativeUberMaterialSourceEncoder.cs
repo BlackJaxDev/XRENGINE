@@ -16,13 +16,25 @@ public static class NativeUberMaterialSourceEncoder
     private static readonly string[] DecalModifiers = ["_DecalSlotModifiers0", "_DecalSlotModifiers1", "_DecalSlotModifiers2", "_DecalSlotModifiers3"];
     private static readonly string[] DecalFx = ["_DecalSlotFx0", "_DecalSlotFx1", "_DecalSlotFx2", "_DecalSlotFx3"];
 
+    /// <summary>Identifies source tile discard that requires all three triangle corners.</summary>
+    public static bool RequiresPrimitiveTileDiscard(XRMaterial material)
+    {
+        if (material.Parameter<ShaderFloat>("_UvTileDiscard") is not { Value: > 0.5f } ||
+            material.Parameter<ShaderInt>("_UDIMDiscardMode") is not { Value: 0 })
+            return false;
+        foreach (string name in NativeUberMaterialSchema.UdimCellNames)
+            if (material.Parameter<ShaderFloat>(name) is { Value: > 0.001f })
+                return true;
+        return false;
+    }
+
     /// <summary>Identifies source operations that can remove fragments from an opaque pass.</summary>
     public static bool RequiresCoverageDiscard(XRMaterial material)
     {
         if (material.Parameter<ShaderInt>("_FaceDiscard") is { Value: 1 or 2 })
             return true;
         if (material.Parameter<ShaderFloat>("_UvTileDiscard") is { Value: > 0.5f } &&
-            material.Parameter<ShaderInt>("_UDIMDiscardMode") is { Value: 1 })
+            material.Parameter<ShaderInt>("_UDIMDiscardMode") is { Value: 0 or 1 })
         {
             foreach (string name in NativeUberMaterialSchema.UdimCellNames)
                 if (material.Parameter<ShaderFloat>(name) is { Value: > 0.001f })
@@ -71,6 +83,13 @@ public static class NativeUberMaterialSourceEncoder
             if (!feature.Enabled) continue;
             if (feature.Id is "render-time" or "forward-ambient-occlusion" or "forward-lighting" or
                 "forward-shadows" or "forward-contact-shadows") continue;
+            // The enabled companion owns hull expansion and outline shading.
+            // The native base row must not execute that operation a second time.
+            if (feature.Id == "outline" &&
+                material.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outline) &&
+                outline.Enabled &&
+                outline.RenderPass == (int)EDefaultRenderPass.MaskedForward)
+                continue;
             int index = NativeUberMaterialSchema.FeatureIndex(feature.Id);
             if (index < 0)
             {
@@ -189,7 +208,7 @@ public static class NativeUberMaterialSourceEncoder
 
     private static bool ValidateModes(XRMaterial material, out string reason)
     {
-        if (!Allowed(material, "_LightingMode", [0, 2, 5, 6], out reason) ||
+        if (!Allowed(material, "_LightingMode", [0, 1, 2, 5, 6], out reason) ||
             !Allowed(material, "_Mode", [0, 1, 9], out reason) ||
             !Allowed(material, "_MatcapUVMode", [0, 1, 2], out reason) ||
             !Allowed(material, "_RimStyle", [0, 1, 2], out reason) ||
@@ -199,6 +218,20 @@ public static class NativeUberMaterialSourceEncoder
             !Allowed(material, "_DissolveType", [0, 1, 2, 3, 4, 5], out reason) ||
             !Allowed(material, "_DissolveCoordinateSpace", [0, 1], out reason))
             return false;
+        if (material.Parameter<ShaderInt>("_LightingMode") is { Value: 1 } &&
+            (material.Parameter<ShaderInt>("_SourceLightMode") is not { Value: 1 } ||
+             !material.IsUberFeatureEnabled("advanced-stylized-lighting", false)))
+        {
+            reason = "Native Uber multilayer lighting requires the source lighting contract.";
+            return false;
+        }
+        if (material.Parameter<ShaderInt>("_LightingMode") is { Value: 1 } &&
+            material.Parameter<ShaderVector4>("_SourceMultilayerOptions") is { Value: var options } &&
+            options.Y is not (0f or 1f))
+        {
+            reason = "Native Uber multilayer lighting requires shadow mask type 0 or 1.";
+            return false;
+        }
         if (!Allowed(material, "_SourceGlitter", [0, 1], out reason))
             return false;
         if (material.IsUberFeatureEnabled("glitter", false) && IsNonZero(material, "_SourceGlitter") &&
@@ -351,10 +384,10 @@ public static class NativeUberMaterialSourceEncoder
             anyUdimCell |= IsNonZero(material, name);
         activeUdimCell &= anyUdimCell;
         if (activeUdimCell &&
-            (!Allowed(material, "_UDIMDiscardMode", [1], out _) ||
+            (!Allowed(material, "_UDIMDiscardMode", [0, 1], out _) ||
              !Allowed(material, "_UDIMDiscardUV", [0, 1], out _)))
         {
-            reason = "Native Uber active UDIM rows require tile-discard mode 1 and UV set 0 or 1.";
+            reason = "Native Uber active UDIM rows require discard mode 0 or 1 and UV set 0 or 1.";
             return false;
         }
         reason = string.Empty;

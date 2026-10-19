@@ -46,6 +46,24 @@ internal sealed class VulkanTextureDescriptorSignaturePlan
             return;
         }
 
+        if (source.TryGetDescriptorSnapshot(null, null, "BindingSignature", false,
+                out VkImageDescriptorSnapshot snapshot))
+        {
+            hash.Add(snapshot.IsReady);
+            hash.Add(snapshot.Generation);
+            hash.Add(snapshot.Image.Handle);
+            hash.Add(snapshot.View.Handle);
+            hash.Add(snapshot.Sampler.Handle);
+            hash.Add((int)snapshot.ViewType);
+            hash.Add((int)snapshot.Format);
+            hash.Add((int)snapshot.Aspect);
+            hash.Add((int)snapshot.Usage);
+            hash.Add((int)snapshot.Samples);
+            hash.Add(snapshot.MipLevels);
+            hash.Add(snapshot.ArrayLayers);
+            return;
+        }
+
         hash.Add(source.IsDescriptorReady);
         hash.Add(source.DescriptorGeneration);
         hash.Add(source.DescriptorImage.Handle);

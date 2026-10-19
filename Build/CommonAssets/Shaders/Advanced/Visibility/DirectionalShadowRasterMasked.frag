@@ -10,9 +10,13 @@ layout(location = 4) in vec3 ShadowCoverageWorldPosition;
 layout(location = 5) in vec3 ShadowCoverageLocalPosition;
 layout(location = 6) in vec2 ShadowCoverageUv2;
 layout(location = 7) in vec2 ShadowCoverageUv3;
+layout(location = 8) flat in uint ShadowDrawIndex;
+layout(location = 9) flat in uint ShadowProducer;
+layout(location = 10) flat in uint ShadowPrimitiveBase;
 
 #define XR_ADV_VISIBILITY_COUNTER_INDEX 0u
 #include "Advanced/Shading/NativeUberCoverage.glslinc"
+#include "Advanced/Shading/NativeUberPrimitiveCoverage.glslinc"
 
 void main()
 {
@@ -36,6 +40,11 @@ void main()
     if (uber)
     {
         XR_UBER_Material = material;
+        uint primitive = XR_ADV_EncodeVisibilityPrimitive(
+            ShadowProducer, ShadowPrimitiveBase, XR_ADV_VIS_INVALID,
+            uint(gl_PrimitiveID));
+        if (!XR_UBER_KeepOriginalTriangle(ShadowDrawIndex,
+                ShadowProducer, primitive)) discard;
         XRUberCoordinates coordinates;
         coordinates.uv0 = ShadowCoverageUv;
         coordinates.uv1 = ShadowCoverageUv1;

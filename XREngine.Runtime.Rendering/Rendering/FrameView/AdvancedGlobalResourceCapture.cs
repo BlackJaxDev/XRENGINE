@@ -111,6 +111,8 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 flags |= EAdvancedProbeRecordFlags.ParallaxCorrected;
             if (probe.NormalizedCubemap)
                 flags |= EAdvancedProbeRecordFlags.Normalized;
+            if (generation.PrefilterConvention == ELightProbePrefilterConvention.UnityMip)
+                flags |= EAdvancedProbeRecordFlags.UnityMipFilter;
             probeRows.Add(new(probe, new AdvancedProbeRecord
             {
                 Type = probe.InfluenceShape == LightProbeComponent.EInfluenceShape.Box ? EAdvancedProbeType.Box : EAdvancedProbeType.Sphere,

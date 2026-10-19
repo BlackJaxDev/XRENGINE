@@ -68,6 +68,7 @@ namespace XREngine.Components.Lights
         private bool _captureResourcesDirty = true;
         private bool _captureResourceInitializationQueued;
         private bool _deferCaptureResourceRefresh;
+        private RenderCaptureOwnerToken? _captureOwnerToken;
 
         // Light probes are captured through a single global queue, so one off-screen viewport
         // and pipeline instance can be reused across every probe face.
@@ -118,10 +119,28 @@ namespace XREngine.Components.Lights
 
         protected override void OnComponentActivated()
         {
+            _captureOwnerToken = new RenderCaptureOwnerToken();
+            for (int face = 0; face < _faceTargets.Length; face++)
+                if (_faceTargets[face] is { } target)
+                    target.CaptureOwnerToken = _captureOwnerToken;
             base.OnComponentActivated();
 
             if (ShouldInitializeCaptureResourcesOnActivate)
                 EnsureCaptureResourcesInitialized();
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            _captureOwnerToken?.Close();
+            _captureOwnerToken = null;
+            base.OnComponentDeactivated();
+        }
+
+        protected override void OnDestroying()
+        {
+            _captureOwnerToken?.Close();
+            _captureOwnerToken = null;
+            base.OnDestroying();
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -268,6 +287,7 @@ namespace XREngine.Components.Lights
             for (int face = 0; face < _faceTargets.Length; face++)
             {
                 XRFrameBuffer target = new() { Name = $"SceneCapture.Face{face}" };
+                target.CaptureOwnerToken = _captureOwnerToken;
                 target.SetRenderTargets(
                     (_environmentTextureCubemap, EFrameBufferAttachment.ColorAttachment0, 0, face),
                     (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, depthLayers[face]));

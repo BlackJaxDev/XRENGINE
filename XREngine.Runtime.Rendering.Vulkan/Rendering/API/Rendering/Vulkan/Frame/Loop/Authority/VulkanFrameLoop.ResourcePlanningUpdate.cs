@@ -28,7 +28,8 @@ internal sealed partial class VulkanFrameLoop
         HashSet<string>? activeFrameBufferNames = null,
         int activeResourceSetSignature = 0,
         bool constrainToActivePassSet = false,
-        bool deferReusedImageMetadataCommit = false)
+        bool deferReusedImageMetadataCommit = false,
+        VulkanPhysicalImageReuseDonor? compatibleImageDonor = null)
     {
         if (!HasThreadResourcePlannerRuntimeState)
         {
@@ -45,7 +46,8 @@ internal sealed partial class VulkanFrameLoop
                         activeFrameBufferNames,
                         activeResourceSetSignature,
                         constrainToActivePassSet,
-                        deferReusedImageMetadataCommit: true);
+                        deferReusedImageMetadataCommit: true,
+                        compatibleImageDonor: compatibleImageDonor);
                     pendingState = scope.CaptureCurrent(
                         CaptureResourcePlannerRuntimeState(),
                         ActiveFrameOpResourcePlannerSwitchingState);
@@ -89,7 +91,9 @@ internal sealed partial class VulkanFrameLoop
                         $"Vulkan resource-plan publication failed: {freezeFailureReason}");
                 }
 
-                PublishResourcePlannerRuntimeState(pendingState, commitReusedImageMetadata: true);
+                PublishResourcePlannerRuntimeState(
+                    pendingState,
+                    commitReusedImageMetadata: !deferReusedImageMetadataCommit);
                 pendingStateHandedOff = true;
                 _framePlanner.PublishPlan(pendingState.RenderGraphPlan);
             }
@@ -110,7 +114,8 @@ internal sealed partial class VulkanFrameLoop
             activeFrameBufferNames,
             activeResourceSetSignature,
             constrainToActivePassSet,
-            deferReusedImageMetadataCommit);
+            deferReusedImageMetadataCommit,
+            compatibleImageDonor);
     }
 
     private void UpdateResourcePlannerFromContextCore(
@@ -119,7 +124,8 @@ internal sealed partial class VulkanFrameLoop
         HashSet<string>? activeFrameBufferNames,
         int activeResourceSetSignature,
         bool constrainToActivePassSet,
-        bool deferReusedImageMetadataCommit)
+        bool deferReusedImageMetadataCommit,
+        VulkanPhysicalImageReuseDonor? compatibleImageDonor)
     {
         if (!_deviceContext.IsOperational)
             return;
@@ -191,7 +197,9 @@ internal sealed partial class VulkanFrameLoop
             SupportsTransformFeedback,
             IsDeviceLost,
             RuntimeRenderingHostServices.Presentation.IsOpenXRActive || RuntimeRenderingHostServices.Presentation.IsInVR,
-            deferReusedImageMetadataCommit);
+            deferReusedImageMetadataCommit,
+            compatibleImageDonor,
+            _targetDriver is VulkanDesktopWsiTargetDriver);
         VulkanResourceAllocator originalAllocator = state.ResourceAllocator;
         bool stateHandedOff = false;
         VulkanPhysicalPlanningResult result;

@@ -14,6 +14,8 @@ public static partial class AdvancedPackedVertexCodec
     public const uint HasTexCoord2Flag = 1u << 1;
     /// <summary>Source vertex contains an authored fourth texture-coordinate set.</summary>
     public const uint HasTexCoord3Flag = 1u << 2;
+    /// <summary>Marks exact source UV tile classifications in Reserved2.</summary>
+    public const uint SourceUvTilesValidFlag = 1u << 31;
     private const float Snorm16Scale = 32767.0f;
     private const float Snorm15Scale = 16383.0f;
 
@@ -114,10 +116,25 @@ public static partial class AdvancedPackedVertexCodec
             Color0Rgba8 = PackRgba8(color0),
             Color1Rgba8 = PackRgba8(color1),
             SourceVertex = sourceVertex,
+            Reserved2 = SourceUvTilesValidFlag |
+                PackSourceTile(texCoord0) |
+                (PackSourceTile(texCoord1) << 5) |
+                (PackSourceTile(texCoord2) << 10) |
+                (PackSourceTile(texCoord3) << 15),
             Flags = (hasTexCoord1 ? HasTexCoord1Flag : 0u) |
                 (hasTexCoord2 ? HasTexCoord2Flag : 0u) |
                 (hasTexCoord3 ? HasTexCoord3Flag : 0u),
         };
+
+    /// <summary>Classifies one original UV before half precision packing.</summary>
+    private static uint PackSourceTile(Vector2 uv)
+    {
+        if (!float.IsFinite(uv.X) || !float.IsFinite(uv.Y))
+            return 17u;
+        if (uv.X < 0.0f || uv.Y < 0.0f || uv.X >= 4.0f || uv.Y >= 4.0f)
+            return 16u;
+        return (uint)uv.X + (uint)uv.Y * 4u;
+    }
 
     public static uint EncodeOct(Vector3 value)
     {

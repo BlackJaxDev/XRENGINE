@@ -25,7 +25,8 @@ internal readonly record struct GpuSceneMeshCommandSnapshot(
     bool ShadowPassEnabled = true,
     RenderingParameters? RenderOptionsOverride = null,
     bool DisableMeshletCulling = false,
-    GpuMeshSubmissionLodTransforms? LodTransforms = null)
+    GpuMeshSubmissionLodTransforms? LodTransforms = null,
+    bool SharedOpaqueShadow = false)
 {
     internal static GpuSceneMeshCommandSnapshot CaptureLive(RenderInfo renderInfo,
         IRenderCommandMesh command)
@@ -37,7 +38,13 @@ internal readonly record struct GpuSceneMeshCommandSnapshot(
             CapturePassEnabled(renderInfo, command, isShadowPass: true),
             command.RenderOptionsOverride,
             command is RenderCommandMesh3D command3D && command3D.WorldCullingVolumeOverride.HasValue,
-            command is RenderCommandMesh3D lodCommand ? lodCommand.GetLodTransformsForLiveCapture() : null);
+            command is RenderCommandMesh3D lodCommand ? lodCommand.GetLodTransformsForLiveCapture() : null,
+            command is RenderCommandMesh3D directCommand &&
+                directCommand.GetType() == typeof(RenderCommandMesh3D) &&
+                !directCommand.RequiresCpuCollectionCallbacks && SharedOpaqueShadowEligibility.CanOwn(command.Mesh, command.MaterialOverride,
+                command.RenderOptionsOverride, command.ForceCpuRendering, renderInfo,
+                GpuSceneOwnerSnapshot.CaptureLive(renderInfo),
+                CapturePassEnabled(renderInfo, command, isShadowPass: true), command.RenderPass));
 
     private static bool CapturePassEnabled(RenderInfo renderInfo,
         IRenderCommandMesh command, bool isShadowPass)
