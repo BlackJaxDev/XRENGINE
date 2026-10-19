@@ -185,7 +185,7 @@ public sealed partial class AdvancedGpuDeformationResources :
     public RuntimeGraphicsApiKind Backend => _backend;
     internal bool UsesPackedAggregateInputs
         => _meshPreparationPolicy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs;
-    private static EAdvancedDeformationMeshPreparationPolicy ResolveMeshPreparationPolicy()
+    internal static EAdvancedDeformationMeshPreparationPolicy ResolveMeshPreparationPolicy()
         => AbstractRenderer.Current is IAdvancedAggregateDeformationBackendCapability
             ? EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs
             : EAdvancedDeformationMeshPreparationPolicy.AuthoredVertices;
@@ -222,14 +222,14 @@ public sealed partial class AdvancedGpuDeformationResources :
     public XRDataBuffer BlendshapeDeltas => _staticGeneration.Buffers.BlendshapeDeltas;
 
     /// <summary>
-    /// Selects immutable static inputs for one exact canonical scene revision.
-    /// An existing exact generation is reused; otherwise only an unpinned
-    /// least-recently-used generation may be reassigned.
+    /// Selects static inputs for a deformation source set. A source membership
+    /// change can retain bounded rows whose mesh witnesses still match.
+    /// Pinned GPU buffers remain unchanged while a successor takes their rows.
     /// </summary>
     public bool TrySelectStaticGeneration(
         GPUScene scene,
         ulong databaseEpoch,
-        ulong topologyGeneration)
+        ulong sourceGeneration)
     {
         ArgumentNullException.ThrowIfNull(scene);
         if (_frameOpen)
@@ -244,7 +244,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         {
             AdvancedGpuDeformationStaticGeneration candidate =
                 _staticGenerations[index];
-            if (!candidate.Matches(scene, databaseEpoch, topologyGeneration, preparationPolicy))
+            if (!candidate.Matches(scene, databaseEpoch, sourceGeneration, preparationPolicy))
                 continue;
 
             if (matched is null || candidate.LastUse > matched.LastUse)
@@ -269,26 +269,92 @@ public sealed partial class AdvancedGpuDeformationResources :
             return true;
         }
 
-        AdvancedGpuDeformationStaticGeneration? replacement = null;
+        AdvancedGpuDeformationStaticGeneration? donor = null;
         for (int index = 0; index < _staticGenerations.Length; index++)
         {
-            AdvancedGpuDeformationStaticGeneration candidate =
-                _staticGenerations[index];
-            if (candidate.PinCount != 0u)
+            AdvancedGpuDeformationStaticGeneration candidate = _staticGenerations[index];
+            if (!CanRetainStaticMeshInputs(candidate, scene, databaseEpoch, preparationPolicy) ||
+                (donor is not null && candidate.LastUse <= donor.LastUse))
                 continue;
-            if (replacement is null || candidate.LastUse < replacement.LastUse)
-                replacement = candidate;
+            donor = candidate;
         }
+        if (donor is not null && donor.TryRestoreCpuMirror())
+        {
+            if (donor.PinCount == 0u)
+            {
+                donor.RebindSourceGeneration(sourceGeneration);
+                donor.LastUse = ++_staticGenerationUse;
+                _staticGeneration = donor;
+                _staticGenerationReplaced = true;
+                _previousOutputValid = false;
+                _meshSliceRevision++;
+                AdvanceResourceGeneration();
+                return true;
+            }
+
+            AdvancedGpuDeformationStaticGeneration? successor =
+                FindUnpinnedStaticGeneration(donor, _staticGeneration);
+            if (successor is not null &&
+                TryForkStaticGeneration(donor, successor, sourceGeneration))
+                return true;
+        }
+
+        AdvancedGpuDeformationStaticGeneration? replacement = FindUnpinnedStaticGeneration();
         if (replacement is null)
             return false;
 
-        replacement.Assign(scene, databaseEpoch, topologyGeneration, preparationPolicy);
+        replacement.Assign(scene, databaseEpoch, sourceGeneration, preparationPolicy);
         replacement.LastUse = ++_staticGenerationUse;
         _staticGeneration = replacement;
         _staticGenerationReplaced = true;
         _previousOutputValid = false;
         AdvanceResourceGeneration();
         return true;
+    }
+
+    private bool CanRetainStaticMeshInputs(
+        AdvancedGpuDeformationStaticGeneration candidate,
+        GPUScene scene,
+        ulong databaseEpoch,
+        EAdvancedDeformationMeshPreparationPolicy preparationPolicy)
+    {
+        if (!ReferenceEquals(candidate.Scene, scene) ||
+            candidate.DatabaseEpoch != databaseEpoch ||
+            candidate.PreparationPolicy != preparationPolicy ||
+            candidate.MeshSlices is null ||
+            candidate.MeshSlices.Count == 0 ||
+            candidate.MeshSlices.Count > _maximumDeformationJobs ||
+            candidate.PayloadEntries.Count > _maximumDeformationJobs)
+            return false;
+
+        foreach ((XRMesh mesh, AdvancedGpuDeformationMeshSlice slice) in candidate.MeshSlices)
+        {
+            if (mesh.IsDestroyed || mesh.IsDestroyQueued ||
+                !candidate.MeshAliasWitnesses.TryGetValue(mesh, out var alias) ||
+                !alias.Matches(mesh, in slice) ||
+                !candidate.InputWitnesses.TryGetValue(mesh, out var input) ||
+                !input.Matches(mesh, preparationPolicy))
+                return false;
+        }
+        return true;
+    }
+
+    private AdvancedGpuDeformationStaticGeneration? FindUnpinnedStaticGeneration(
+        AdvancedGpuDeformationStaticGeneration? excluded = null,
+        AdvancedGpuDeformationStaticGeneration? alsoExcluded = null)
+    {
+        AdvancedGpuDeformationStaticGeneration? replacement = null;
+        for (int index = 0; index < _staticGenerations.Length; index++)
+        {
+            AdvancedGpuDeformationStaticGeneration candidate =
+                _staticGenerations[index];
+            if (candidate.PinCount != 0u || ReferenceEquals(candidate, excluded) ||
+                ReferenceEquals(candidate, alsoExcluded))
+                continue;
+            if (replacement is null || candidate.LastUse < replacement.LastUse)
+                replacement = candidate;
+        }
+        return replacement;
     }
 
     /// <summary>
@@ -369,7 +435,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         uint requiredOutputVertexCapacity)
     {
         // Retained for renderer-independent resource probes. Production
-        // preparation supplies the canonical key through the overload below.
+        // preparation supplies the exact source-set key through the overload below.
         if (_staticGeneration.Scene is not null)
         {
             return TryBeginFrame(
@@ -380,7 +446,7 @@ public sealed partial class AdvancedGpuDeformationResources :
                 requiredOutputVertexCapacity,
                 _staticGeneration.Scene,
                 _staticGeneration.DatabaseEpoch,
-                _staticGeneration.TopologyGeneration);
+                _staticGeneration.SourceGeneration);
         }
         if (_frameOpen)
             throw new InvalidOperationException(
@@ -415,7 +481,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         uint requiredOutputVertexCapacity,
         GPUScene scene,
         ulong databaseEpoch,
-        ulong topologyGeneration)
+        ulong sourceGeneration)
     {
         if (_frameOpen)
             throw new InvalidOperationException(
@@ -430,7 +496,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         if (!TryAcquireOutputSlot(currentFrameSlot))
             return false;
         ReleaseStaticGenerationPin(currentFrameSlot);
-        if (!TrySelectStaticGeneration(scene, databaseEpoch, topologyGeneration))
+        if (!TrySelectStaticGeneration(scene, databaseEpoch, sourceGeneration))
             return false;
 
         return TryOpenFrame(
@@ -1120,74 +1186,89 @@ AdvancedGpuDeformationStaticBuffers replacement =
         if (_staticGeneration.PinCount == 0u)
             return true;
 
-        AdvancedGpuDeformationStaticGeneration? successor = null;
-        for (int index = 0; index < _staticGenerations.Length; index++)
-        {
-            AdvancedGpuDeformationStaticGeneration candidate =
-                _staticGenerations[index];
-            if (ReferenceEquals(candidate, _staticGeneration) ||
-                candidate.PinCount != 0u)
-            {
-                continue;
-            }
-            if (successor is null || candidate.LastUse < successor.LastUse)
-                successor = candidate;
-        }
+        AdvancedGpuDeformationStaticGeneration? successor =
+            FindUnpinnedStaticGeneration(_staticGeneration);
         if (successor is null || _staticGeneration.Scene is null)
             return false;
 
         AdvancedGpuDeformationStaticGeneration source = _staticGeneration;
         if (!source.HasCpuMirror)
             return false;
+        return TryForkStaticGeneration(source, successor, source.SourceGeneration);
+    }
+
+    private bool TryForkStaticGeneration(
+        AdvancedGpuDeformationStaticGeneration source,
+        AdvancedGpuDeformationStaticGeneration successor,
+        ulong sourceGeneration)
+    {
+        if (source.Scene is null || !source.HasCpuMirror ||
+            successor.PinCount != 0u || ReferenceEquals(source, successor))
+            return false;
+
+        AdvancedGpuDeformationStaticGeneration previous = _staticGeneration;
         successor.Assign(
             source.Scene,
             source.DatabaseEpoch,
-            source.TopologyGeneration,
+            sourceGeneration,
             source.PreparationPolicy,
             allocateCpuMirror: false);
-        // The pinned source is never written again and its GPU buffers keep
-        // their own client-side rows, so the successor adopts the managed
-        // rows instead of holding a second copy of them.
         successor.AdoptCpuMirror(source);
         _staticGeneration = successor;
-        foreach ((XRMesh mesh, AdvancedGpuDeformationMeshSlice slice) in
-                 source.MeshSlices)
+        try
         {
-            _meshSlices.Add(mesh, slice);
-            _staticGeneration.InputWitnesses.Add(mesh, source.InputWitnesses[mesh]);
-            _staticGeneration.MeshAliasWitnesses.Add(mesh, source.MeshAliasWitnesses[mesh]);
+            foreach ((XRMesh mesh, AdvancedGpuDeformationMeshSlice slice) in source.MeshSlices)
+            {
+                _meshSlices.Add(mesh, slice);
+                successor.InputWitnesses.Add(mesh, source.InputWitnesses[mesh]);
+                successor.MeshAliasWitnesses.Add(mesh, source.MeshAliasWitnesses[mesh]);
+            }
+            _sourceVertexCount = source.SourceVertexCount;
+            _skinInfluenceCount = source.SkinInfluenceCount;
+            _spillInfluenceCount = source.SpillInfluenceCount;
+            _blendshapeRangeCount = source.BlendshapeRangeCount;
+            _blendshapeRecordCount = source.BlendshapeRecordCount;
+            _blendshapeDeltaCount = source.BlendshapeDeltaCount;
+            if (!TryEnsureStaticBufferCapacity(
+                    _sourceVertexCount,
+                    _skinInfluenceCount,
+                    _spillInfluenceCount,
+                    _blendshapeRangeCount,
+                    _blendshapeRecordCount,
+                    _blendshapeDeltaCount))
+            {
+                RestoreFailedStaticFork(source, successor, previous);
+                return false;
+            }
+            UploadAllStatic(_staticBuffers);
+            _uploadedSourceVertexCount = _sourceVertexCount;
+            _uploadedSkinInfluenceCount = _skinInfluenceCount;
+            _uploadedSpillInfluenceCount = _spillInfluenceCount;
+            _uploadedBlendshapeRangeCount = _blendshapeRangeCount;
+            _uploadedBlendshapeRecordCount = _blendshapeRecordCount;
+            _uploadedBlendshapeDeltaCount = _blendshapeDeltaCount;
         }
-        _sourceVertexCount = source.SourceVertexCount;
-        _skinInfluenceCount = source.SkinInfluenceCount;
-        _spillInfluenceCount = source.SpillInfluenceCount;
-        _blendshapeRangeCount = source.BlendshapeRangeCount;
-        _blendshapeRecordCount = source.BlendshapeRecordCount;
-        _blendshapeDeltaCount = source.BlendshapeDeltaCount;
-        if (!TryEnsureStaticBufferCapacity(
-                _sourceVertexCount,
-                _skinInfluenceCount,
-                _spillInfluenceCount,
-                _blendshapeRangeCount,
-                _blendshapeRecordCount,
-                _blendshapeDeltaCount))
+        catch
         {
-            source.AdoptCpuMirror(successor);
-            _staticGeneration = source;
-            return false;
+            RestoreFailedStaticFork(source, successor, previous);
+            throw;
         }
-        UploadAllStatic(_staticBuffers);
-        _uploadedSourceVertexCount = _sourceVertexCount;
-        _uploadedSkinInfluenceCount = _skinInfluenceCount;
-        _uploadedSpillInfluenceCount = _spillInfluenceCount;
-        _uploadedBlendshapeRangeCount = _blendshapeRangeCount;
-        _uploadedBlendshapeRecordCount = _blendshapeRecordCount;
-        _uploadedBlendshapeDeltaCount = _blendshapeDeltaCount;
         successor.LastUse = ++_staticGenerationUse;
         _staticGenerationReplaced = true;
         _previousOutputValid = false;
         _meshSliceRevision++;
         AdvanceResourceGeneration();
         return true;
+    }
+
+    private void RestoreFailedStaticFork(
+        AdvancedGpuDeformationStaticGeneration source,
+        AdvancedGpuDeformationStaticGeneration successor,
+        AdvancedGpuDeformationStaticGeneration previous)
+    {
+        source.AdoptCpuMirror(successor);
+        _staticGeneration = previous;
+        successor.ReleaseStorage();
     }
 
     private void PinCurrentStaticGeneration(uint slot)

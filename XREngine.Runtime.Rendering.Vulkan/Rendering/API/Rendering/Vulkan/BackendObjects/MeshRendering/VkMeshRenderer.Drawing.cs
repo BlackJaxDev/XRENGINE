@@ -130,6 +130,17 @@ internal unsafe partial class VkMeshRenderer
 	{
 		failureReason = string.Empty;
 		pipelineUnavailable = false;
+		if (!IsFrameDataOwnerOpen(draw, out failureReason))
+			return false;
+		if (draw.CaptureOwnerToken is not null &&
+			BackendContext.Resources.MappedFrameArena is { } captureArena &&
+			(!captureArena.TryGetDrawFamily(this, frameDataImageIndex, drawUniformSlot, out VulkanMappedFrameAllocation? family) ||
+			 !family.HasOwner(draw.CaptureOwnerToken) ||
+			 !BackendContext.Resources.TryRetainFrameDataAllocation(commandBuffer, family)))
+		{
+			failureReason = "capture frame-data family retired";
+			return false;
+		}
 		ActivateDrawMaterializationSnapshot(draw);
 		var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 		if (!TryPrepareDrawForRecording(draw, material, drawUniformSlot, frameDataImageIndex, out string prepareReason))
@@ -188,7 +199,9 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		// Use the non-indexed fallback if no indexed draw succeeds.
-		if (!drew && Mesh is not null)
+		if (!drew && Mesh is not null &&
+			!XREngine.Rendering.Commands.NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(
+				material.ShadowBindingSourceMaterial ?? material))
 			drew = TryRecordNonIndexedDraw(ref state, skipLinePointDraws);
 
 		// An intentional omission has an empty reason. Any successful path clears
@@ -561,7 +574,19 @@ internal unsafe partial class VkMeshRenderer
 	{
 		recordingState = default;
 		ArgumentNullException.ThrowIfNull(preparedFrame);
+		if (!IsFrameDataOwnerOpen(draw, out reason))
+			return false;
 		frameIndex = Math.Max(frameIndex, 0);
+		VulkanMappedFrameAllocation? frameDataFamily = null;
+		if (draw.CaptureOwnerToken is not null &&
+			BackendContext.Resources.MappedFrameArena is { } frameArena &&
+			(!frameArena.TryGetDrawFamily(this, frameIndex, drawUniformSlot, out frameDataFamily) ||
+			 !frameDataFamily.HasOwner(draw.CaptureOwnerToken) ||
+			 !preparedFrame.TryRetainFrameDataFamily(frameDataFamily)))
+		{
+			reason = "capture frame-data family retired";
+			return false;
+		}
 		ActivateDrawMaterializationSnapshot(draw);
 		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 		if (!frameDataAlreadyPrewarmed &&
@@ -959,7 +984,7 @@ internal unsafe partial class VkMeshRenderer
 				payloadRange,
 				CreatePerDrawPushConstants(material, draw),
 				draw.Instances,
-				coldDataIndex);
+				coldDataIndex, frameDataFamily);
 			if (!residentHit && residentLookupAvailable)
 			{
 				_ = TryPublishResidentDrawTemplate(
@@ -1087,6 +1112,14 @@ internal unsafe partial class VkMeshRenderer
 		{
 			return false;
 		}
+
+        if (recordingState.FrameDataFamily is { } family &&
+            !encoder.Runtime.ResourceRuntime.TryRetainFrameDataAllocation(commandBuffer, family))
+            return false;
+        foreach (ref readonly VulkanPreparedFrameDataPayloadHandle payload in preparedFrame.GetFrameDataPayloadHandles(recordingState.FrameDataPayloadHandles))
+            if (payload.Allocation is { } allocation &&
+                !encoder.Runtime.ResourceRuntime.TryRetainFrameDataAllocation(commandBuffer, allocation))
+                return false;
 
 		for (int primitiveIndex = 0;
 			 primitiveIndex < recordingState.PrimitiveCount;
@@ -1253,7 +1286,7 @@ internal unsafe partial class VkMeshRenderer
 						out VulkanAutoUniformBindingSchema blockSchema)
 						? blockSchema.FrequencyMask
 						: EVulkanBindingFrequencyMask.All;
-				preparedFrame.SetFrameDataPayloadHandle(range, handleIndex++,
+				if (!preparedFrame.TrySetFrameDataPayloadHandle(range, handleIndex++,
 					new VulkanPreparedFrameDataPayloadHandle(
 						target.Buffer,
 						target.Offset,
@@ -1265,7 +1298,12 @@ internal unsafe partial class VkMeshRenderer
 						arenaGeneration,
 						frequencyMask,
 						draw.AutoUniformPublication,
-						materialGeneration));
+						materialGeneration,
+                        target.MappedSlice.Allocation)))
+                {
+                    reason = "The auto-uniform range retired during preparation.";
+                    return false;
+                }
 				continue;
 			}
 
@@ -1290,7 +1328,7 @@ internal unsafe partial class VkMeshRenderer
 					frameIndex,
 					drawUniformSlot,
 					engineBuffers.Length)];
-			preparedFrame.SetFrameDataPayloadHandle(range, handleIndex++,
+			if (!preparedFrame.TrySetFrameDataPayloadHandle(range, handleIndex++,
 				new VulkanPreparedFrameDataPayloadHandle(
 					engineTarget.Buffer,
 					engineTarget.Offset,
@@ -1302,7 +1340,12 @@ internal unsafe partial class VkMeshRenderer
 					arenaGeneration,
 					EVulkanBindingFrequencyMask.All,
 					draw.AutoUniformPublication,
-					materialGeneration));
+					materialGeneration,
+                    engineTarget.MappedSlice.Allocation)))
+            {
+                reason = "The engine-uniform range retired during preparation.";
+                return false;
+            }
 		}
 
 		return true;
@@ -1530,6 +1573,26 @@ internal unsafe partial class VkMeshRenderer
 	{
 		indexType = IndexType.Uint32;
 		failureReason = string.Empty;
+		if (!IsFrameDataOwnerOpen(draw, out failureReason))
+			return false;
+		VulkanMappedFrameAllocation? frameDataFamily = null;
+		if (draw.CaptureOwnerToken is not null &&
+			BackendContext.Resources.MappedFrameArena is { } captureArena &&
+			(!captureArena.TryGetDrawFamily(this, frameDataImageIndex, drawUniformSlot, out frameDataFamily) ||
+			 !frameDataFamily.HasOwner(draw.CaptureOwnerToken) ||
+			 !frameDataFamily.TryRetainAuthoring()))
+		{
+			failureReason = "capture frame-data family retired";
+			return false;
+		}
+		try
+		{
+		if (frameDataFamily is not null &&
+			!BackendContext.Resources.TryRetainFrameDataAllocation(commandBuffer, frameDataFamily))
+		{
+			failureReason = "capture frame-data family retired";
+			return false;
+		}
 		var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
         bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
             ? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, frameDataImageIndex, out global::System.String prepareReason)
@@ -1592,6 +1655,11 @@ internal unsafe partial class VkMeshRenderer
 
 		CommandOperations.BindIndexBufferTracked(commandBuffer, indexHandle, 0, indexType);
 		return true;
+		}
+		finally
+		{
+			frameDataFamily?.ReleaseAuthoring();
+		}
 	}
 
 	internal readonly record struct IndirectDrawRecordingState(
@@ -1609,7 +1677,81 @@ internal unsafe partial class VkMeshRenderer
 		int FrameIndex,
 		int DrawUniformSlot,
 		ulong FrameDataGeneration,
-		MeshDrawPushConstants PushConstants);
+		MeshDrawPushConstants PushConstants,
+		RenderCaptureOwnerToken? CaptureOwnerToken,
+		VulkanMappedFrameAllocation? FrameDataFamily,
+		VulkanMappedFrameAllocation[]? SelectedAllocations,
+		int SelectedAllocationCount)
+	{
+		internal void ReleaseAuthoring()
+		{
+			if (SelectedAllocations is { } allocations)
+			{
+				for (int i = 0; i < SelectedAllocationCount; i++)
+					allocations[i].ReleaseAuthoring();
+				ArrayPool<VulkanMappedFrameAllocation>.Shared.Return(allocations, clearArray: true);
+			}
+			FrameDataFamily?.ReleaseAuthoring();
+		}
+	}
+
+	private bool TryCaptureIndirectFrameDataAllocations(
+		VkRenderProgram program,
+		int frameIndex,
+		int drawSlot,
+		out VulkanMappedFrameAllocation[]? allocations,
+		out int count)
+	{
+		allocations = null;
+		count = 0;
+		if (BackendContext.Resources.MappedFrameArena is null || program.DescriptorBindings.Count == 0)
+			return true;
+
+		VulkanMappedFrameAllocation[] selected = ArrayPool<VulkanMappedFrameAllocation>.Shared.Rent(program.DescriptorBindings.Count);
+		bool complete = false;
+		try
+		{
+			foreach (DescriptorBindingInfo binding in program.DescriptorBindings)
+			{
+				if (binding.DescriptorType is not (DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic))
+					continue;
+				VulkanMappedFrameSlice slice;
+				if (program.TryGetAutoUniformBlock(binding.Set, binding.Binding, out AutoUniformBlockInfo block))
+				{
+					if (!_autoUniformBuffers.TryGetValue(block.InstanceName, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
+						return false;
+					slice = buffers[ResolvePublishedAutoUniformBufferIndex(block, frameIndex, drawSlot, buffers.Length)].MappedSlice;
+				}
+				else
+				{
+						string name = NormalizeEngineUniformName(binding.Name ?? string.Empty);
+						if (GetEngineUniformSize(binding.Name ?? string.Empty) == 0)
+							continue;
+						if (!_engineUniformBuffers.TryGetValue(name, out EngineUniformBuffer[]? buffers) || buffers.Length == 0)
+							return false;
+						slice = buffers[ResolveUniformBufferIndex(frameIndex, drawSlot, buffers.Length)].MappedSlice;
+				}
+				if (!slice.IsValid)
+					continue;
+				if (slice.Allocation is not { } allocation || !allocation.TryRetainAuthoring())
+					return false;
+				selected[count++] = allocation;
+			}
+			allocations = selected;
+			complete = true;
+			return true;
+		}
+		finally
+		{
+			if (!complete)
+			{
+				for (int i = 0; i < count; i++)
+					selected[i].ReleaseAuthoring();
+				ArrayPool<VulkanMappedFrameAllocation>.Shared.Return(selected, clearArray: true);
+				count = 0;
+			}
+		}
+	}
 
 	internal bool TryPrepareIndirectDrawRecordingState(
 		uint imageIndex,
@@ -1627,6 +1769,24 @@ internal unsafe partial class VkMeshRenderer
 	{
 		recordingState = default;
 		reason = "Ready";
+		if (!IsFrameDataOwnerOpen(draw, out reason))
+			return false;
+		int frameIndex = (int)Math.Min(imageIndex, int.MaxValue);
+		VulkanMappedFrameAllocation? frameDataFamily = null;
+		if (draw.CaptureOwnerToken is not null &&
+			BackendContext.Resources.MappedFrameArena is { } captureArena &&
+			(!captureArena.TryGetDrawFamily(this, frameIndex, drawUniformSlot, out frameDataFamily) ||
+			 !frameDataFamily.HasOwner(draw.CaptureOwnerToken) ||
+			 !frameDataFamily.TryRetainAuthoring()))
+		{
+			reason = "capture frame-data family retired";
+			return false;
+		}
+		bool authoringTransferred = false;
+		VulkanMappedFrameAllocation[]? selectedAllocations = null;
+		int selectedAllocationCount = 0;
+		try
+		{
 		ActivateDrawMaterializationSnapshot(draw);
 
         var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
@@ -1673,7 +1833,6 @@ internal unsafe partial class VkMeshRenderer
 			bool requiresDescriptors = program.DescriptorSetLayouts.Count > 0 && program.DescriptorBindings.Count > 0;
 			if (requiresDescriptors)
 			{
-				int frameIndex = imageIndex > int.MaxValue ? int.MaxValue : (int)imageIndex;
 				if (!EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot))
 				{
 					reason = "descriptor sets pending";
@@ -1725,6 +1884,16 @@ internal unsafe partial class VkMeshRenderer
 				program.DescriptorHeapLayout is { PushByteCount: > 0 } heapLayout
 					? descriptorHeapPushData?.CaptureIdentity(heapLayout) ?? default
 					: DescriptorHeapPushDataIdentity.CompleteNotUsed;
+			if (!TryCaptureIndirectFrameDataAllocations(
+					program,
+					frameIndex,
+					drawUniformSlot,
+					out selectedAllocations,
+					out selectedAllocationCount))
+			{
+				reason = "selected frame-data allocation retired";
+				return false;
+			}
 			recordingState = new IndirectDrawRecordingState(
 				program,
 				pipeline,
@@ -1740,9 +1909,28 @@ internal unsafe partial class VkMeshRenderer
 				(int)Math.Min(imageIndex, int.MaxValue),
 				drawUniformSlot,
 				BackendContext.Resources.MappedFrameArena?.Generation ?? 0UL,
-				CreatePerDrawPushConstants(material, draw));
+				CreatePerDrawPushConstants(material, draw),
+				draw.CaptureOwnerToken,
+				frameDataFamily,
+				selectedAllocations,
+				selectedAllocationCount);
 
+			authoringTransferred = true;
 			return true;
+		}
+		}
+		finally
+		{
+			if (!authoringTransferred)
+			{
+				if (selectedAllocations is not null)
+				{
+					for (int i = 0; i < selectedAllocationCount; i++)
+						selectedAllocations[i].ReleaseAuthoring();
+					ArrayPool<VulkanMappedFrameAllocation>.Shared.Return(selectedAllocations, clearArray: true);
+				}
+				frameDataFamily?.ReleaseAuthoring();
+			}
 		}
 	}
 
@@ -1752,6 +1940,21 @@ internal unsafe partial class VkMeshRenderer
 			recordingState.PipelineLayout.Handle == 0 ||
 			recordingState.Program is null)
 			return false;
+		if (IsRetired || Data.IsDestroyed ||
+			recordingState.CaptureOwnerToken is { IsOpen: false })
+			return false;
+		if (recordingState.CaptureOwnerToken is { } captureOwner &&
+			BackendContext.Resources.MappedFrameArena is not null &&
+			(recordingState.FrameDataFamily is not { } family ||
+			 !family.HasOwner(captureOwner) ||
+			 !BackendContext.Resources.TryRetainFrameDataAllocation(commandBuffer, family)))
+			return false;
+		if (recordingState.SelectedAllocations is { } selectedAllocations)
+		{
+			for (int i = 0; i < recordingState.SelectedAllocationCount; i++)
+				if (!BackendContext.Resources.TryRetainFrameDataAllocation(commandBuffer, selectedAllocations[i]))
+					return false;
+		}
 
 		CommandOperations.BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, recordingState.Pipeline);
 
@@ -1782,6 +1985,8 @@ internal unsafe partial class VkMeshRenderer
 				WarnOnce($"Skipping prepared draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because descriptor heap push data changed after preparation.");
 				return false;
 			}
+            if (!TryRetainDrawFrameData(commandBuffer, recordingState.Program, recordingState.FrameIndex, recordingState.DrawUniformSlot))
+                return false;
 			if (!CommandOperations.TryPushDescriptorHeapProgramData(commandBuffer, recordingState.Program, recordingState.DescriptorHeapPushData, out string heapReason))
 			{
 				WarnOnce($"Skipping prepared draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because descriptor heap push failed: {heapReason}");
@@ -2141,6 +2346,11 @@ internal unsafe partial class VkMeshRenderer
 				(uint)descriptorSlotIndex < (uint)heapPayloads.Length
 					? heapPayloads[descriptorSlotIndex]
 					: null;
+            if (!TryRetainDrawFrameData(commandBuffer, _program, imageIndex, drawUniformSlot))
+            {
+                failureReason = "The frame-data range retired before descriptor-heap binding.";
+                return false;
+            }
 			if (!CommandOperations.TryPushDescriptorHeapProgramData(commandBuffer, _program, payload, out string heapReason))
 			{
 				failureReason = $"descriptor heap push failed: {heapReason}";
@@ -2216,6 +2426,11 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
+        if (!TryRetainDrawFrameData(commandBuffer, program, frameIndex, drawUniformSlot))
+        {
+            failureReason = "The frame-data range retired before descriptor binding.";
+            return false;
+        }
 		Span<uint> dynamicOffsetScratch = stackalloc uint[64];
 		Span<DescriptorSet> oneSet = stackalloc DescriptorSet[1];
 		for (int setIndex = 0; setIndex < sets.Length; setIndex++)
@@ -2299,6 +2514,10 @@ internal unsafe partial class VkMeshRenderer
 					autoBuffers.Length)];
 			if (target.Offset <= uint.MaxValue)
 			{
+                if (target.MappedSlice.Allocation is { } allocation &&
+                    (!allocation.IsOpen || commandBuffer.Handle != 0 &&
+                     !BackendContext.Resources.TryRetainFrameDataAllocation(commandBuffer, allocation)))
+                    return false;
 				dynamicOffset = (uint)target.Offset;
 				ulong descriptorBaseOffset =
 					BackendContext.Resources.Descriptors.Heap.ActiveBackend !=
@@ -2328,7 +2547,10 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 
 		EngineUniformBuffer engineTarget = engineBuffers[ResolveUniformBufferIndex(frameIndex, drawUniformSlot, engineBuffers.Length)];
-		if (engineTarget.Offset > uint.MaxValue)
+		if (engineTarget.Offset > uint.MaxValue ||
+            engineTarget.MappedSlice.Allocation is { } engineAllocation &&
+            (!engineAllocation.IsOpen || commandBuffer.Handle != 0 &&
+             !BackendContext.Resources.TryRetainFrameDataAllocation(commandBuffer, engineAllocation)))
 			return false;
 		dynamicOffset = (uint)engineTarget.Offset;
 		return true;
@@ -2451,7 +2673,8 @@ internal unsafe partial class VkMeshRenderer
 		int frameIndex,
 		out string reason)
 	{
-		reason = "Ready";
+		if (!IsFrameDataOwnerOpen(draw, out reason))
+			return false;
 		ActivateDrawMaterializationSnapshot(draw);
 		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 
@@ -2624,7 +2847,8 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		out string reason)
 	{
-		reason = "Ready";
+		if (!IsFrameDataOwnerOpen(draw, out reason))
+			return false;
 		ActivateDrawMaterializationSnapshot(draw);
 		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 
@@ -2902,6 +3126,8 @@ internal unsafe partial class VkMeshRenderer
 		lock (_recordDrawSync)
 		{
 			reason = "frame-frequency reusable";
+			if (!IsFrameDataOwnerOpen(draw, out reason))
+				return false;
 			XRMaterial material =
 				draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 			if (draw.PreparedProgram is not { } preparedProgram ||
@@ -3090,6 +3316,14 @@ internal unsafe partial class VkMeshRenderer
 		CommandBuffer recordedSecondaryCommandBuffer)
 	{
 		reason = "reusable";
+		if (!IsFrameDataOwnerOpen(draw, out reason))
+			return false;
+		if (recordedSecondaryCommandBuffer.Handle != 0 &&
+			!BackendContext.Resources.AreCommandFrameDataAllocationsOpen(recordedSecondaryCommandBuffer))
+		{
+			reason = "recorded frame-data allocation retired";
+			return false;
+		}
 		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 		if (draw.PreparedProgram is { } preparedProgram)
 		{

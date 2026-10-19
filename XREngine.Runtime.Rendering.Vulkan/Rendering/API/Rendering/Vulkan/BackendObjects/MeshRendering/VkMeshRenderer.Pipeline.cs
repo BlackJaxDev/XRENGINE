@@ -31,6 +31,18 @@ internal unsafe partial class VkMeshRenderer
 
 	#region Shader Program Management
 
+	/// <summary>Checks the active program against the current material and geometry shader inputs.</summary>
+	private bool IsActiveGeneratedProgramCurrent(XRMaterial material)
+	{
+		if (_program is not { IsLinked: true } active)
+			return false;
+
+		GeneratedProgramState state = CaptureGeneratedProgramState(material);
+		return _programStateCache.TryGetValue(state, out GeneratedProgramCacheEntry? entry) &&
+			ReferenceEquals(entry.Program, active) &&
+			string.Equals(entry.Identity, _activeProgramIdentity, StringComparison.Ordinal);
+	}
+
 	/// <summary>
 	/// Ensures a compiled and linked VkRenderProgram exists for the given material.
 	/// If the material lacks a vertex shader, one is auto-generated from
@@ -54,7 +66,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		bool hasNoVertexShaders = material.VertexShaders.Count == 0;
-		XRShader? suppliedVertexShader = hasNoVertexShaders
+		XRShader? suppliedVertexShader = hasNoVertexShaders || programState.TrustedOutlineVariant
 			? null
 			: FindVertexShader(sourceShaders, Data.VertexShaderSelector);
 
@@ -79,8 +91,12 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
-			generatedVertexIdentity = XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(vsSource);
 			vertexShader = GenerateVertexShader(vsSource);
+			if (programState.TrustedOutlineVariant)
+				vertexShader = ShaderHelper.CreateDefinedShaderVariant(vertexShader, "XRENGINE_OUTLINE_PASS")
+					?? throw new InvalidOperationException("The generated outline vertex shader has no outline variant.");
+			generatedVertexIdentity = XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(
+				vertexShader.Source?.Text ?? vsSource);
 		}
 
 		List<XRShader> shaders = BuildCombinedShaderList(sourceShaders, vertexShader);
@@ -298,6 +314,8 @@ internal unsafe partial class VkMeshRenderer
 			material.ActiveUberVariant.VariantHash,
 			material.ActiveUberVariant.IsEmpty,
 			Data.VertexShaderSource,
+			material.UberOutlineSourceMaterial is { } source &&
+				source.IsResolvedOutlinePassVariant(material),
 			material.Name,
 			mesh?.Name,
 			MeshRenderer.Name,

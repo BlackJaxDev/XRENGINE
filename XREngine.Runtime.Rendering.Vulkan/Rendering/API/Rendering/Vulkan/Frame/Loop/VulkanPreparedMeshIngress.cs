@@ -1,3 +1,5 @@
+using XREngine.Rendering.Models.Materials;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -35,7 +37,11 @@ internal sealed class VulkanPreparedMeshIngress
     {
         if ((uint)index >= (uint)_count)
             throw new ArgumentOutOfRangeException(nameof(index));
-        _entries[index] = _entries[index] with { Context = context };
+        _entries[index] = _entries[index] with
+        {
+            Context = context,
+            Draw = _entries[index].Draw with { CaptureOwnerToken = context.CaptureOwnerToken },
+        };
     }
 
     internal void Clear()
@@ -93,8 +99,9 @@ internal sealed class VulkanPreparedMeshIngress
     {
         if (_count >= _entries.Length)
             return false;
+        PendingMeshDraw ownedDraw = draw with { CaptureOwnerToken = context.CaptureOwnerToken };
         _entries[_count++] = new(
-            passIndex, target, draw, context, preserveSubmissionOrder,
+            passIndex, target, ownedDraw, context, preserveSubmissionOrder,
             isDynamicUi, ResourceUseOffset: 0, ResourceUseCount: 0);
         if (isDynamicUi)
             _dynamicUiCount++;
@@ -287,12 +294,29 @@ internal sealed class VulkanPreparedMeshIngress
         for (int exceptionIndex = 0; exceptionIndex < exceptions.Length; ++exceptionIndex)
         {
             BackendReadyOrderedExceptionRecord exception = exceptions[exceptionIndex];
+            if (!package.TryGetCollectedOrderedException(
+                    in exception,
+                    out bool collected))
+            {
+                failure = CreateStableBinFailure(
+                    EVulkanPreparedMeshIngressFailureKind.PackageExceptionUnmatchedHandle,
+                    -1,
+                    default,
+                    package,
+                    selectedPipeline,
+                    exceptionIndex);
+                return false;
+            }
+            if (!collected)
+                continue;
+
             bool found = false;
             for (int entryIndex = 0; entryIndex < _count; ++entryIndex)
             {
                 ref readonly VulkanPreparedMeshIngressEntry entry = ref _entries[entryIndex];
                 AdvancedGpuSceneDrawIdentitySnapshot draw = entry.Draw.CanonicalDrawIdentitySnapshot;
-                if (!draw.IsValid || draw.Primary.Handle != exception.DrawHandle)
+                if (entry.PassIndex != exception.PassIndex ||
+                    !draw.IsValid || draw.Primary.Handle != exception.DrawHandle)
                     continue;
 
                 VulkanBinOrderedExceptionReason reason = exception.ReasonFlags switch
@@ -317,8 +341,8 @@ internal sealed class VulkanPreparedMeshIngress
                 break;
             }
 
-            // An accepted package exception must have an exact current-frame
-            // canonical identity. Do not silently drop it into a broad path.
+            // A collected exception must have exact current-frame ingress.
+            // A missing draw is a preparation error.
             if (!found)
             {
                 failure = CreateStableBinFailure(
@@ -336,7 +360,7 @@ internal sealed class VulkanPreparedMeshIngress
         return true;
     }
 
-    private static VulkanPreparedMeshIngressFailure CreateStableBinFailure(
+    private VulkanPreparedMeshIngressFailure CreateStableBinFailure(
         EVulkanPreparedMeshIngressFailureKind kind,
         int entryIndex,
         in VulkanPreparedMeshIngressEntry entry,
@@ -360,7 +384,42 @@ internal sealed class VulkanPreparedMeshIngress
             package?.PackageGeneration ?? 0L,
             package?.SourceRevision ?? 0L,
             packageException,
-            selectedPipeline);
+            selectedPipeline,
+            DescribeIngressEntries());
+    }
+
+    private string DescribeIngressEntries()
+    {
+        const int entryLimit = 16;
+        int count = Math.Min(_count, entryLimit);
+        var summary = new System.Text.StringBuilder(count * 128);
+        for (int index = 0; index < count; ++index)
+        {
+            ref readonly VulkanPreparedMeshIngressEntry entry = ref _entries[index];
+            PendingMeshDraw draw = entry.Draw;
+            AdvancedGpuSceneDrawIdentitySnapshot identity = draw.CanonicalDrawIdentitySnapshot;
+            AdvancedGpuScenePublication publication = identity.Publication.Publication;
+            XRMaterial? material = draw.MaterialOverride ?? draw.Renderer.MeshRenderer.Material;
+            if (index != 0)
+                summary.Append(' ');
+            summary.Append('[').Append(index)
+                .Append(" pass=").Append(entry.PassIndex)
+                .Append(" identityValid=").Append(identity.IsValid)
+                .Append(" handle=").Append(identity.Primary.Handle)
+                .Append(" sourceCount=").Append(identity.Handles?.Count ?? 0)
+                .Append(" epoch=").Append(publication.DatabaseEpoch)
+                .Append(" sequence=").Append(publication.Sequence)
+                .Append(" frameGeneration=").Append(publication.FrameGeneration)
+                .Append(" material=").Append(material?.Name ?? "<null>")
+                .Append(" materialId=").Append(material?.ID)
+                .Append(" mesh=").Append(draw.Renderer.MeshRenderer.Mesh?.Name ?? "<null>")
+                .Append(" rendererId=").Append(draw.Renderer.MeshRenderer.ID)
+                .Append(']');
+        }
+
+        if (_count > count)
+            summary.Append(" remaining=").Append(_count - count);
+        return summary.ToString();
     }
     internal void PublishDrawStats()
     {

@@ -36,6 +36,14 @@ public static partial class EditorUnitTests
 {
     public static partial class Models
     {
+        private static void ReportModelImportFailure(Exception exception, string message)
+        {
+            Debug.WriteAuxiliaryLog("model-import-failures.log", $"{message}{Environment.NewLine}{exception}");
+            Debug.MeshesException(exception, message);
+#if !DEBUG && !EDITOR
+            Console.Error.WriteLine($"[EXCEPTION] {message}{Environment.NewLine}{exception}");
+#endif
+        }
         private static ModelAssetImporter.DelMakeMaterialAction ResolveMakeMaterialAction(Settings.ModelImportSettings model)
         {
             ModelAssetImporter.DelMakeMaterialAction baseAction = model.MaterialMode switch
@@ -461,7 +469,7 @@ public static partial class EditorUnitTests
                         },
                         onError: ex =>
                         {
-                            Debug.MeshesException(ex, $"[UnityPackage] Failed to extract package: {resolvedPath}");
+                            ReportModelImportFailure(ex, $"[UnityPackage] Failed to extract package: {resolvedPath}");
                             if (model.Kind is UnitTestModelImportKind.Static)
                                 CompleteStaticImportSlot();
                             CompleteAllModelImportSlot();
@@ -530,7 +538,7 @@ public static partial class EditorUnitTests
                                 }
                                 catch (Exception ex)
                                 {
-                                    Debug.MeshesException(ex, $"[UnityPrefab] Failed to finalize imported prefab: {resolvedPath}");
+                                    ReportModelImportFailure(ex, $"[UnityPrefab] Failed to finalize imported prefab: {resolvedPath}");
                                 }
                                 finally
                                 {
@@ -551,7 +559,7 @@ public static partial class EditorUnitTests
                         {
                             try
                             {
-                                Debug.MeshesException(ex, $"[UnityPrefab] Failed to import prefab: {resolvedPath}");
+                                ReportModelImportFailure(ex, $"[UnityPrefab] Failed to import prefab: {resolvedPath}");
                                 if (model.Kind is UnitTestModelImportKind.Static)
                                     CompleteStaticImportSlot();
                                 CompleteAllModelImportSlot();
@@ -590,7 +598,7 @@ public static partial class EditorUnitTests
                             },
                             onError: ex =>
                             {
-                                Debug.MeshesException(ex, $"[AnimatedModel] Failed to import animated model: {resolvedPath}");
+                                ReportModelImportFailure(ex, $"[AnimatedModel] Failed to import animated model: {resolvedPath}");
                                 CompleteAllModelImportSlot();
                             },
                             onCanceled: () =>
@@ -687,7 +695,7 @@ public static partial class EditorUnitTests
                             },
                             onError: ex =>
                             {
-                                Debug.MeshesException(ex, $"[StaticModel] Failed to import static model: {resolvedPath}");
+                                ReportModelImportFailure(ex, $"[StaticModel] Failed to import static model: {resolvedPath}");
                                 CompleteStaticImportSlot();
                                 CompleteAllModelImportSlot();
                             },

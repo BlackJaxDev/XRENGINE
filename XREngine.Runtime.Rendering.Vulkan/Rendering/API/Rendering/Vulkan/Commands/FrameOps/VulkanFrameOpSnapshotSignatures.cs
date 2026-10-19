@@ -36,6 +36,7 @@ internal static class VulkanFrameOpSnapshotSignatures
         hash.Add(context.PipelineIdentity);
         hash.Add(context.ViewportIdentity);
         hash.Add(context.AdvancedVisibilityOutputIdentity);
+        hash.Add(context.CaptureOwnerToken?.Id ?? 0UL);
         hash.Add(context.OutputFrameBufferIdentity);
         hash.Add(context.OutputTargetIdentity);
         hash.Add(context.LogicalViewId);

@@ -582,6 +582,10 @@ namespace XREngine.Rendering
                 }
             }
 
+            bool sharedShadowPass = RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass == true;
+            if (sharedShadowPass && !scene.HasSharedOpaqueShadowCommand(currentRenderPass))
+                return;
+
             if ((renderPasses.MeshSubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback || meshletStrategy || traditionalGpuFallback) &&
                 !renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
@@ -592,11 +596,19 @@ namespace XREngine.Rendering
                     "[RenderDispatch] {0} mesh submission for pass {1} could not prepare material-tier scatter. Skipping CPU fallback.",
                     renderPasses.MeshSubmissionStrategy,
                     currentRenderPass);
+                if (sharedShadowPass)
+                    throw new RenderResourcePreparationPendingException(
+                        "The shared shadow material-tier scatter is not ready.");
                 return;
             }
 
             if (renderPasses.ZeroReadbackMaterialScatterPreparedThisFrame)
             {
+                if (sharedShadowPass)
+                {
+                    RenderZeroReadbackSharedShadowBuckets(renderPasses, camera, scene, currentRenderPass);
+                    return;
+                }
                 long allocationStart = GC.GetAllocatedBytesForCurrentThread();
                 try
                 {
@@ -662,6 +674,14 @@ namespace XREngine.Rendering
                 }
 
                 return;
+            }
+
+            if (sharedShadowPass)
+            {
+                RejectCompactMaterialTableSubmission(currentRenderPass,
+                    "Shared opaque shadow drawing requires a GPU-written compact tier range.");
+                throw new RenderResourcePreparationPendingException(
+                    "Shared opaque shadow drawing requires a GPU-written compact tier range.");
             }
 
             // Material map from scene (ID -> XRMaterial).
@@ -6166,13 +6186,17 @@ namespace XREngine.Rendering
             uint indirectCommandSsboBinding = IndirectCommandSsboBinding,
             uint instanceTransformSsboBinding = InstanceTransformSsboBinding,
             bool bindForwardLighting = false,
-            int diagnosticRenderPass = int.MinValue)
+            int diagnosticRenderPass = int.MinValue,
+            bool requireSubmission = false)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchRenderIndirectCountBucket");
 
             var renderer = AbstractRenderer.Current;
             if (renderer is null || maxDrawCount == 0)
+            {
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect renderer or range is unavailable.");
                 return;
+            }
 
             // P3: with XRE_BUCKET_LOOP_DRY_RUN=1, skip the entire bucket dispatch (including the
             // upstream BindTo / SetEngineUniforms / VAO bind that would otherwise still cost CPU
@@ -6181,6 +6205,7 @@ namespace XREngine.Rendering
             if (P3Diagnostics.BucketLoopDryRun)
             {
                 P3Diagnostics.IncBucketDryRunSkipped();
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect draw is disabled by the bucket dry-run setting.");
                 return;
             }
             P3Diagnostics.IncBucketDispatched();
@@ -6193,6 +6218,7 @@ namespace XREngine.Rendering
                         diagnosticRenderPass,
                         EZeroReadbackMaterialTableDiagnosticStage.ProgramPending);
                 }
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect graphics program is not ready.");
                 return;
             }
 
@@ -6230,6 +6256,7 @@ namespace XREngine.Rendering
                 useInstanceTransformBuffer,
                 "ZeroReadbackMaterialTable"))
             {
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow scene database bindings are not ready.");
                 return;
             }
             graphicsProgram.Uniform("UseInstanceTransformBuffer", useInstanceTransformBuffer ? 1 : 0);
@@ -6255,6 +6282,7 @@ namespace XREngine.Rendering
             if (TrySkipTransientZeroReadbackCountPathMiss(parity, "DispatchRenderIndirectCountBucket"))
             {
                 renderer.BindVAOForRenderer(null);
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect count path is not ready.");
                 return;
             }
             AssertZeroReadbackUsesGpuCountPath(parity, "DispatchRenderIndirectCountBucket");
@@ -6347,6 +6375,7 @@ namespace XREngine.Rendering
             if (!parity.UsesCountDrawPath)
             {
                 renderer.BindVAOForRenderer(null);
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect count draw path is unavailable.");
                 return;
             }
 
@@ -6360,6 +6389,7 @@ namespace XREngine.Rendering
                 "RenderIndirectCountBucket"))
             {
                 renderer.BindVAOForRenderer(null);
+                RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect count range is invalid.");
                 return;
             }
 
@@ -6401,7 +6431,10 @@ namespace XREngine.Rendering
                         : null;
                     bool bindlessScopeActive = false;
                     if (!TryBeginIndirectDrawState(out IndirectDrawStateCapabilityScope indirectDrawStateScope))
+                    {
+                        RejectMissingSharedShadowSubmission(requireSubmission, "The shadow indirect draw state was rejected.");
                         return;
+                    }
 
                     using (indirectDrawStateScope)
                     {
@@ -6448,6 +6481,12 @@ namespace XREngine.Rendering
                 renderer.BindVAOForRenderer(null);
                 GPURenderPassCollection.Crumb("MDIC.BUCKET.UNBIND.END");
             }
+        }
+
+        private static void RejectMissingSharedShadowSubmission(bool required, string reason)
+        {
+            if (required)
+                throw new RenderResourcePreparationPendingException(reason);
         }
 
         private static void SetMotionVectorTemporalUniforms(
@@ -6621,6 +6660,14 @@ namespace XREngine.Rendering
             foreach (var cache in _materialPrograms.Values)
                 DestroyMaterialProgramCache(cache);
             _materialPrograms.Clear();
+            foreach (SharedShadowProgramSlot slot in _sharedShadowPrograms.Values)
+            {
+                if (slot.Current is { } current)
+                    DestroyMaterialProgramCache(current.Cache);
+                if (slot.Pending is { } pending)
+                    DestroyMaterialProgramCache(pending.Cache);
+            }
+            _sharedShadowPrograms.Clear();
             foreach (var cache in _pendingMaterialPrograms.Values)
                 DestroyMaterialProgramCache(cache);
             _pendingMaterialPrograms.Clear();

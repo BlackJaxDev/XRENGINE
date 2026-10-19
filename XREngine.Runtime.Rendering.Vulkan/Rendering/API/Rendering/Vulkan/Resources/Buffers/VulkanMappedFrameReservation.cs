@@ -7,7 +7,8 @@ internal readonly record struct VulkanMappedFrameReservation(
     ulong Offset,
     uint Length,
     uint Alignment,
-    ulong Generation)
+    ulong Generation,
+    VulkanMappedFrameAllocation? Allocation = null)
 {
-    internal bool IsValid => Length != 0 && Alignment != 0 && Generation != 0;
+    internal bool IsValid => Length != 0 && Alignment != 0 && Generation != 0 && Allocation is { IsOpen: true };
 }

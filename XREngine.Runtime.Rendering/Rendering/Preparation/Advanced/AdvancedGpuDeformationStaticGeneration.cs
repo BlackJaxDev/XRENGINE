@@ -4,9 +4,9 @@ using XREngine.Data;
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Static aggregate-deformation inputs associated with one exact canonical
-/// scene generation. A generation remains immutable while an output slot pins
-/// it, so asynchronous consumers never observe rewritten source data.
+/// Static aggregate-deformation inputs selected for one source-set generation.
+/// Validated mesh rows can survive a source membership change. GPU buffers
+/// remain immutable while an output slot pins them.
 /// </summary>
 /// <remarks>
 /// The managed arrays are the append staging (CPU mirror) of the writable
@@ -37,7 +37,7 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
 
     public GPUScene? Scene { get; private set; }
     public ulong DatabaseEpoch { get; private set; }
-    public ulong TopologyGeneration { get; private set; }
+    public ulong SourceGeneration { get; private set; }
     public EAdvancedDeformationMeshPreparationPolicy PreparationPolicy { get; private set; }
     public ulong LastUse { get; set; }
     public uint PinCount { get; set; }
@@ -72,28 +72,37 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     /// </summary>
     public bool HasCpuMirror { get; private set; }
 
-    public bool Matches(GPUScene scene, ulong databaseEpoch, ulong topologyGeneration,
+    public bool Matches(GPUScene scene, ulong databaseEpoch, ulong sourceGeneration,
         EAdvancedDeformationMeshPreparationPolicy preparationPolicy)
         => ReferenceEquals(Scene, scene) &&
            DatabaseEpoch == databaseEpoch &&
-           TopologyGeneration == topologyGeneration && PreparationPolicy == preparationPolicy;
+           SourceGeneration == sourceGeneration && PreparationPolicy == preparationPolicy;
+
+    /// <summary>Changes the source-set key while all retained mesh inputs stay valid.</summary>
+    public void RebindSourceGeneration(ulong sourceGeneration)
+    {
+        if (PinCount != 0u || !HasCpuMirror)
+            throw new InvalidOperationException(
+                "A pinned generation or one without a CPU mirror cannot change its source-set key.");
+        SourceGeneration = sourceGeneration;
+    }
 
     /// <summary>
-    /// Rebinds this generation to a new canonical scene revision with no rows.
+    /// Rebinds this generation to a new deformation source set with no rows.
     /// Pass <paramref name="allocateCpuMirror"/> false when the caller adopts
     /// a predecessor's arrays right after (<see cref="AdoptCpuMirror"/>).
     /// </summary>
     public void Assign(
         GPUScene scene,
         ulong databaseEpoch,
-        ulong topologyGeneration,
+        ulong sourceGeneration,
         EAdvancedDeformationMeshPreparationPolicy preparationPolicy,
         bool allocateCpuMirror = true)
     {
         EnsureInitialized(allocateCpuMirror);
         Scene = scene;
         DatabaseEpoch = databaseEpoch;
-        TopologyGeneration = topologyGeneration;
+        SourceGeneration = sourceGeneration;
         PreparationPolicy = preparationPolicy;
         MeshSlices.Clear();
         MeshAliasWitnesses.Clear();
@@ -266,7 +275,7 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         ReleaseCpuMirror();
         Scene = null;
         DatabaseEpoch = 0UL;
-        TopologyGeneration = 0UL;
+        SourceGeneration = 0UL;
         SourceVertexCount = 0u;
         SkinInfluenceCount = 0u;
         SpillInfluenceCount = 0u;

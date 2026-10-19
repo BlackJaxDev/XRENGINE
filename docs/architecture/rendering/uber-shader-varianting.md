@@ -98,6 +98,21 @@ operations before publication. Unsupported active operations return a reason.
 `AdvancedGpuScenePublisher` selects the native layout before standard material
 encoding. The native source contract must not enter standard PBR shading.
 
+An enabled masked Outline companion owns hull expansion and
+outline shading. The native base row omits only that companion-owned feature.
+A missing or disabled companion does not make an unsupported outline valid.
+The base row still validates every other active feature. The Advanced outline
+pass must render the companion with its own collected command identity.
+The desktop companion keeps its generated outline fragment during material
+initialization and renderer preparation. It must not adopt a base Uber variant.
+Source Toon outlines map `_LineWidth` to `_OutlineWidth` and a single locked
+`_LineColor_*` property to `_OutlineColor`. These values remain uniforms so
+value edits reach the shared outline companion without a shader rebuild.
+Equal outline fade limits disable distance fade. The fragment keeps full alpha
+for this case and does not evaluate `smoothstep` with equal limits.
+An absent source outline mask binds white. The outline texture remains a
+separate color and alpha sampler.
+
 `ShadeNativeUber.glslinc` supplies the shared native evaluator for mono, MSAA,
 and overflow repair. It implements the supported toon lighting, normals, material
 AO, specular controls, cubemap reflections, layered matcaps, rim, emission,
@@ -228,6 +243,10 @@ not project captured probes into these coefficients or import Unity per-renderer
 light-probe assignments. Other source color or direction modes retain approximate
 Uber lighting with a diagnostic. Source SH maps also feed matcap and glitter
 lighting. Native GI suppression clears the SH input at the shading caller.
+When authored SH is enabled, source stylized composition does not add engine
+probe diffuse after the source lighting result. Zero enabled coefficients use
+the same rule. Probe specular and generic PBR retain their behavior. See
+[Probe Diffuse Composition](default-render-pipeline-notes.md#probe-diffuse-composition).
 
 Supported Mochie probe specular reads raw prefiltered radiance and applies source
 Fresnel, surface reduction, exposure occlusion, reflection tint, mask, and
@@ -235,8 +254,21 @@ strength once. `_SourceMochieReflection` holds Fresnel strength and exposure
 occlusion. `_SourceMochieReflectionTint` holds the linear tint. This source gate
 is independent of source diffuse lighting. The forward evaluator replaces its
 prior probe term after overlays and rebuilds the lighting context. Both paths
-use the available prefilter mip count. Engine probe selection and convolution
-remain in use; this does not establish matched Unity probe baking.
+use the available prefilter mip count. Engine probe selection remains in use.
+`LightProbeComponent.ReflectionFilter` selects GGX or Unity realtime filtering;
+see the [probe producer contract](default-render-pipeline-notes.md).
+
+Source Mochie and clearcoat select the probe LOD after source GSAA, separately
+for each probe. `UnityMip` outputs preserve source levels 0 through 6 and use
+LOD `6*r`. `PerceptualRoughness` outputs use the inverse of
+`r * (1.7 - 0.7 * r)` across their available mip range. The stable inverse is
+`2*r / (1.7 + sqrt(2.89 - 2.8*r))` for clamped `r`. This GGX compatibility rule
+is an approximation. Generic PBR uses the forward remap for Unity outputs and
+its unmodified roughness for canonical GGX outputs. Source environment rim uses
+`6*blur` for Unity outputs and its raw blur across the GGX mip range. Direct
+lighting, reflection BRDF factors, and saved material values remain unchanged.
+The convention belongs to the completed output generation. A requested producer
+change cannot reinterpret the old image while a replacement is pending.
 
 Static probe convolution requires an active renderer that accepts backend work.
 `LightProbeComponent.InitializeStatic` defers resource creation and pending-output
@@ -255,7 +287,8 @@ The source dielectric Fresnel constant is 0.220916301.
 `_SourceClearCoatMaps` is linear data: R is the coat mask, G is smoothness, B is
 the reflection mask, and A is the direct specular mask. The supported adapter
 uses UV0, the imported texture transform, vertex normals, and white tints. It
-uses filtered roughness for both GGX and probe mip selection. Reflection reads
+uses source GSAA for both GGX and probe mip selection. Only probe sampling
+applies the source filter-scale approximation described above. Reflection reads
 raw prefiltered probe radiance and applies source Fresnel, visibility, and
 surface reduction once. It does not reuse the engine split-sum BRDF result.
 Only the combined coat contribution is clamped. Unsupported source modifiers
@@ -276,19 +309,34 @@ together before normal sampling. A disabled flag preserves all three vectors.
 Native normal derivatives use the same frame. Engine-authored materials retain
 their existing normal-only backface rule.
 
-Imported matcaps use `_SourceMatcap` and per-layer source controls. Smoothness
-selects an explicit mip from the texture size. Mask channel, mask inversion,
+Imported matcaps use `_SourceMatcap` and per-layer source controls. Poiyomi 9.2
+smoothness selects an explicit mip from the texture size. The verified locked
+8.1.167 Emote shader disables smoothness and uses implicit texture gradients
+with the `_MainTex` sampler. Mask channel, mask inversion,
 mask UV, optional mask-driven smoothness, texture transform, and source pan
 rate remain separate. Supported projections are source modes 0, 1, and 2.
 Replace, multiply, add, and screen operations change base color before lighting.
 The source Add to Light value and emission use separate contributions. Generic
 engine-authored matcaps retain their existing evaluator path.
 
-The importer rejects enabled matcap controls that the source adapter cannot
-represent, including custom normal, rotation, circle mask, audio controls,
-alpha overrides, and UV1 blend. A hue toggle is accepted only when shift and
-speed are zero in shift mode. Animated matcap hue is not supported. These
-failures use `SourceVisualImportException`.
+The importer supports the verified second-layer custom normal map on UV0,
+the fourth-layer U blend toward UV1, and the first-layer global mask with
+subtract blending. The custom normal uses the mesh tangent frame. The
+global mask samples texture 0 red with its source transform and pan. The
+importer rejects other active custom-normal, UV blend, and global-mask
+settings. It also rejects rotation, circle mask, audio controls, and alpha
+overrides. A hue toggle is accepted only when shift and speed are zero in
+shift mode. Animated matcap hue is not supported. These failures use
+`SourceVisualImportException`. Visual parity for the new paths still needs
+live validation.
+
+### Source Layered Emission
+
+Poiyomi emission slots use `_SourceLayeredEmission`. Each slot multiplies its
+emission map RGB by the selected amount of base color and by the emission map
+alpha. The slot mask and strength then scale the result. Generic engine
+emission slots keep their base-color blend rule. The raster and native
+evaluators use the same source calculation.
 
 ### Source Glitter
 
@@ -300,16 +348,22 @@ transform, pan, channel, and inversion remain independent of flake UVs.
 
 `Uber/source_glitter.glsl` supplies the shared canonical and native evaluator.
 Cell locations remain fixed. Time changes flake orientation, with the source
-time scale and rotation order. Circle coverage uses adjacent surface samples
-to estimate the source derivative across cell boundaries. It does not claim
-pixel-identical hardware derivatives. The evaluator supports angle, pulse,
-and light modes, with one to eight layers. Add blending contributes through
-emission once. Replace blending changes base color before lighting and adds
-only the source excess-brightness emission. Engine-authored glitter keeps its
-existing evaluator, with one emission contribution.
+time scale and rotation order. The verified 9.2 path supports one to eight
+layers, shape textures, and angle, pulse, and light modes. Shape samples use
+UV0 derivatives and the source linear clamp sampler. Circle coverage uses
+adjacent surface samples to estimate derivatives across cell boundaries. The
+verified 8.1.167 Emote shader uses a separate one-layer path and global mask
+texture 0 green. Its fragment path uses hardware `fwidth`; native compute
+uses reconstructed UV footprints. Both paths convert source world rotation
+through the engine Z reflection. Add blending contributes through emission
+once. Replace blending changes base color before lighting and adds only the
+source excess-brightness emission. Engine-authored glitter keeps its existing
+evaluator, with one emission contribution.
 
-The importer rejects enabled shape/color textures, square shapes, random
-size/color/texture rotation, hue, theme, global mask, and AudioLink options.
+The importer rejects square shapes, unsupported random and color textures,
+random size or rotation, hue, theme, unverified global masks, and AudioLink
+options. The 8.1.167 path accepts only the verified locked shader identity
+and material settings. Visual parity still needs live validation.
 The current lighting ramp supplies the shadow mask. Its lighting model still
 differs from Poiyomi, so matched-lighting acceptance remains separate. The
 two-layer circle evaluator checks 54 candidate sites per shaded sample,

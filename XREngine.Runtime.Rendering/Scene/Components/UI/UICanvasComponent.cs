@@ -396,7 +396,6 @@ namespace XREngine.Components
             IRuntimeViewportHost viewport)
         {
             RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
-            _renderPipeline.PublishStagedImportedResources(activeGeneration);
             RenderResourceRegistry? registry = activeGeneration?.Registry;
             int descriptorGeneration = registry?.DescriptorRevision ?? 0;
             int instanceRevision = registry?.InstanceRevision ?? 0;

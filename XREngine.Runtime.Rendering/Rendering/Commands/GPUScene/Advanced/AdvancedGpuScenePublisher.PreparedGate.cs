@@ -238,7 +238,7 @@ public sealed partial class AdvancedGpuScenePublisher
             bool observedBeforeRead = plan.Source is RenderCommandMesh3D observedCommand &&
                 observedCommand.HasCurrentRendererMutationBinding(plan.Renderer);
             int reusedStaticPlansBefore = scratch.ReusedStaticPlans;
-            if (!EvaluateUnchangedRow(scene, commandIndex, expectedFrameId, ref scratch))
+            if (!EvaluateUnchangedRow(scene, commandIndex, expectedFrameId, preparing: true, ref scratch))
                 return scratch.RowMismatch == EAdvancedPreparedGateOutcome.None
                     ? EAdvancedPreparedGateOutcome.RegistrationChanged
                     : scratch.RowMismatch;
@@ -589,7 +589,7 @@ public sealed partial class AdvancedGpuScenePublisher
             // gets the swap-time evaluation. Its result equals the result of
             // the swap-time gate for this row.
             ++reevaluatedRows;
-            if (!EvaluateUnchangedRow(scene, commandIndex, frameId, ref scratch))
+            if (!EvaluateUnchangedRow(scene, commandIndex, frameId, preparing: false, ref scratch))
                 return scratch.RowMismatch == EAdvancedPreparedGateOutcome.None
                     ? EAdvancedPreparedGateOutcome.RegistrationChanged
                     : scratch.RowMismatch;
@@ -650,6 +650,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 (material?.UberStateRevision ?? 0L) != witness.UberStateRevision ||
                 !CanReuseMaterialSources(material) ||
                 witness.HeaderLayout is not { } layout ||
+                (NativeUberMaterialSchema.IsLayout(layout) &&
+                 !_materialPublisher.HasCurrentStrictUberValidation(witness.Handle)) ||
                 !Database.Materials.Materials.TryGet(witness.Handle,
                     out AdvancedMaterialRecord current) ||
                 !Database.Materials.TryGetTextureBindings(current,

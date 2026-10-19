@@ -2401,6 +2401,9 @@ namespace XREngine.Rendering
                     Viewports.Count);
 
                 Viewports.ForEach(vp => vp.SetFullInternalExtent((uint)obj.X, (uint)obj.Y));
+                WindowResizeExtents appliedExtents =
+                    _resizeController.SetAppliedFullInternalExtent(obj);
+                InteractiveResizeDiagnostics.RecordResizeExtents(appliedExtents);
 
                 _scenePanelAdapter.OnFramebufferResized(this, obj.X, obj.Y);
 

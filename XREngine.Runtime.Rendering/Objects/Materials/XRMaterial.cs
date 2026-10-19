@@ -240,7 +240,11 @@ namespace XREngine.Rendering
         public MaterialPassSet PassSet
         {
             get => _passSet;
-            set => SetField(ref _passSet, value ?? MaterialPassSet.Empty);
+            set
+            {
+                if (SetField(ref _passSet, value ?? MaterialPassSet.Empty))
+                    BumpShaderStateRevision();
+            }
         }
 
         [Browsable(false)]
@@ -594,10 +598,11 @@ namespace XREngine.Rendering
                 InvalidateDepthNormalPrePassVariant();
                 InvalidateShadowCasterVariant();
             }
-            // A cooked outline reads the same live ShaderVar instances as its
-            // source. Value animation must not retire its stable program.
+            // Outline variants read the same live ShaderVar instances as the source.
+            // Value animation must not retire a trusted stable program.
             if (propName != nameof(BindingValueVersion) ||
-                _outlinePassVariant?.EngineSemantic != EngineMaterialSemanticIdentity.UberOutlineV1)
+                (_outlinePassVariant?.EngineSemantic != EngineMaterialSemanticIdentity.UberOutlineV1 &&
+                 !ReferenceEquals(_outlinePassVariant?.UberOutlineSourceMaterial, this)))
                 InvalidateOutlinePassVariant();
 
             switch (propName)
@@ -673,6 +678,9 @@ namespace XREngine.Rendering
                 return _outlinePassVariant;
             }
         }
+
+        internal bool IsResolvedOutlinePassVariant(XRMaterial variant)
+            => _outlinePassVariantResolved && ReferenceEquals(_outlinePassVariant, variant);
 
         [Browsable(false)]
         [YamlIgnore]

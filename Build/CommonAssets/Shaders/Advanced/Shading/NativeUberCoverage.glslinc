@@ -20,6 +20,7 @@ struct XRUberCoordinates
     vec2 uv3Dy;
     vec3 worldPosition;
     vec3 localPosition;
+    vec3 flatNormal;
     vec4 color;
     bool frontFacing;
     float time;

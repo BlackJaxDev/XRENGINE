@@ -502,6 +502,9 @@ public readonly record struct WindowResizeExtents(
     ulong PendingFullInternalGeneration)
 {
     public static WindowResizeExtents Empty => new(default, default, default, default, default, 0, 0);
+
+    /// <summary>The extent last applied to the window viewports.</summary>
+    public Vector2D<int> AppliedFullInternalExtent { get; init; }
 }
 
 public enum WindowOutputScaleMode
@@ -649,7 +652,10 @@ public sealed class WindowResizeController
                 EnsureValid(_extents.FullInternalExtent, fallbackPresentation),
                 _extents.PendingFullInternalExtent,
                 _fullInternalGeneration,
-                _pendingFullInternalGeneration);
+                _pendingFullInternalGeneration)
+            {
+                AppliedFullInternalExtent = _extents.AppliedFullInternalExtent,
+            };
             UpdateOutputScaleNoLock();
 
             return _extents;
@@ -698,6 +704,20 @@ public sealed class WindowResizeController
         {
             Vector2D<int> valid = EnsurePositive(extent);
             CommitFullInternalExtentNoLock(valid);
+            _extents = _extents with { AppliedFullInternalExtent = valid };
+            return _extents;
+        }
+    }
+
+    /// <summary>Records a viewport extent without committing a resource generation.</summary>
+    public WindowResizeExtents SetAppliedFullInternalExtent(Vector2D<int> extent)
+    {
+        lock (_sync)
+        {
+            _extents = _extents with
+            {
+                AppliedFullInternalExtent = EnsurePositive(extent),
+            };
             return _extents;
         }
     }
@@ -755,6 +775,7 @@ public sealed class WindowResizeController
                 PresentationExtent = valid,
                 PipelineOutputExtent = valid,
                 FullInternalExtent = valid,
+                AppliedFullInternalExtent = valid,
                 PendingFullInternalExtent = default,
                 FullInternalGeneration = ++_fullInternalGeneration,
                 PendingFullInternalGeneration = 0,
@@ -767,7 +788,10 @@ public sealed class WindowResizeController
 
     public static bool NeedsFullInternalResize(WindowSurfaceSnapshot snapshot, WindowResizeExtents extents)
         => snapshot.HasValidFramebufferExtent &&
-           !ExtentMatches(extents.FullInternalExtent, snapshot.FramebufferExtent);
+           (!ExtentMatches(extents.FullInternalExtent, snapshot.FramebufferExtent) ||
+            (extents.AppliedFullInternalExtent.X > 0 &&
+             extents.AppliedFullInternalExtent.Y > 0 &&
+             !ExtentMatches(extents.AppliedFullInternalExtent, snapshot.FramebufferExtent)));
 
     public WindowResizeExtents SetPolicy(WindowFullInternalResizePolicy policy)
     {
@@ -788,9 +812,14 @@ public sealed class WindowResizeController
         {
             requestAccepted = false;
             Vector2D<int> valid = EnsurePositive(extent);
-            if (valid.X <= 0 || valid.Y <= 0 || ExtentMatches(_extents.FullInternalExtent, valid))
+            bool appliedExtentMatches =
+                _extents.AppliedFullInternalExtent.X <= 0 ||
+                _extents.AppliedFullInternalExtent.Y <= 0 ||
+                ExtentMatches(_extents.AppliedFullInternalExtent, valid);
+            if (valid.X <= 0 || valid.Y <= 0 ||
+                (ExtentMatches(_extents.FullInternalExtent, valid) && appliedExtentMatches))
             {
-                if (ExtentMatches(_extents.PendingFullInternalExtent, valid))
+                if (_pendingFullInternalGeneration != 0)
                 {
                     _pendingFullInternalGeneration = 0;
                     _extents = _extents with

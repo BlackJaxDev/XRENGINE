@@ -36,7 +36,8 @@ public partial class LightProbeComponent
         {
             active.ValidateRetainedData();
             if (active.Provenance != ELightProbeIblProvenance.RetainedCookedData ||
-                active.Generation != profile.SourceGeneration || !ReferenceEquals(active.Irradiance, profile.Irradiance) ||
+                active.Generation != profile.SourceGeneration || active.PrefilterConvention != profile.PrefilterConvention ||
+                !ReferenceEquals(active.Irradiance, profile.Irradiance) ||
                 !ReferenceEquals(active.PrefilteredRadiance, profile.Prefilter))
                 throw new InvalidOperationException("WebGPU.RetainedProbe.GenerationChanged: the active retained source closure differs from its target profile.");
             return;

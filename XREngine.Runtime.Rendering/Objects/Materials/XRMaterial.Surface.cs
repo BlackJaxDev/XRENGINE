@@ -29,15 +29,50 @@ public partial class XRMaterial
         get => _surfaceTextureBindings;
         set
         {
-            if (!SetField(ref _surfaceTextureBindings, value ?? []))
+            MaterialSurfaceTextureBinding[] bindings = value ?? [];
+            bool layoutChanged = !HasSameSurfaceTextureLayout(_surfaceTextureBindings, bindings);
+            if (!SetField(ref _surfaceTextureBindings, bindings))
                 return;
 
-            IncrementBindingLayoutVersion();
+            // Replacing an image in the same binding does not change its layout.
+            // A false layout change retires canonical geometry and deformation inputs.
+            if (layoutChanged)
+                IncrementBindingLayoutVersion();
             IncrementBindingValueVersion();
             IncrementBindingResourceVersion();
             EnsureSurfaceEmissionPublisher();
         }
     }
+
+    private static bool HasSameSurfaceTextureLayout(
+        MaterialSurfaceTextureBinding[] previous,
+        MaterialSurfaceTextureBinding[] current)
+    {
+        if (previous.Length != current.Length)
+            return false;
+
+        for (int index = 0; index < previous.Length; index++)
+        {
+            MaterialSurfaceTextureBinding before = previous[index];
+            MaterialSurfaceTextureBinding after = current[index];
+            if (ReferenceEquals(before, after))
+                continue;
+            if (before is null || after is null ||
+                before.Semantic != after.Semantic || before.TexCoordSet != after.TexCoordSet ||
+                before.Channel != after.Channel || before.IsSrgb != after.IsSrgb ||
+                before.WrapU != after.WrapU || before.WrapV != after.WrapV ||
+                before.UvScaleOffset != after.UvScaleOffset || before.UvRotation != after.UvRotation ||
+                !HasSameSurfaceTextureTarget(before.Texture, after.Texture))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool HasSameSurfaceTextureTarget(XRTexture? previous, XRTexture? current)
+        => ReferenceEquals(previous, current) ||
+           previous is XRTexture2D { Rectangle: false, MultiSample: false } &&
+           current is XRTexture2D { Rectangle: false, MultiSample: false } &&
+           previous.GetType() == current.GetType();
 
     /// <summary>Returns the first binding with the requested semantic without materializing a collection.</summary>
     public MaterialSurfaceTextureBinding? GetSurfaceTexture(EMaterialTextureSemantic semantic)

@@ -23,10 +23,11 @@ float xrGlitterRandom(vec2 seed)
 }
 
 // Return the stable random seed and nearest-site distance.
-vec3 xrGlitterCell(vec2 position, float layer)
+vec3 xrGlitterCell(vec2 position, float layer, out vec2 displacement)
 {
     vec2 cell = floor(position), offset = fract(position);
     vec2 nearest = vec2(0.0);
+    displacement = vec2(0.0);
     float distanceSquared = 100.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
@@ -39,6 +40,7 @@ vec3 xrGlitterCell(vec2 position, float layer)
             {
                 distanceSquared = candidate;
                 nearest = point;
+                displacement = delta;
             }
         }
     return vec3(nearest, sqrt(distanceSquared));
@@ -61,6 +63,8 @@ vec3 xrGlitterAngles(vec2 seed, float time)
 
 vec3 xrGlitterRotate(vec3 normal, vec3 degrees)
 {
+    // Convert source world-axis rotation through the engine Z reflection.
+    degrees.xy = -degrees.xy;
     vec3 c = cos(radians(degrees)), s = sin(radians(degrees));
     // Source order is Rx * Ry * Rz with a column vector.
     normal.xy = vec2(c.z * normal.x - s.z * normal.y, s.z * normal.x + c.z * normal.y);
@@ -69,7 +73,8 @@ vec3 xrGlitterRotate(vec3 normal, vec3 degrees)
     return normal / max(length(normal), 1.0e-6);
 }
 
-void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy, float time,
+void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy,
+    vec2 shapeDx, vec2 shapeDy, float time,
     vec3 geometricNormal, vec3 shadingNormal, vec3 viewDirection,
     vec3 lightDirection, vec3 lightColor, float rampedLight, float directLuminance,
     vec4 tint, float mask, inout vec3 baseColor, inout vec3 emission)
@@ -86,15 +91,25 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy, float time,
 
     for (int layer = 0; layer < min(XR_GLITTER_I(_GlitterLayers), 8); ++layer)
     {
-        vec3 cell = xrGlitterCell(position, float(layer));
+        vec2 displacement;
+        vec3 cell = xrGlitterCell(position, float(layer), displacement);
         // Re-evaluate adjacent surface samples across cell boundaries. A derivative
         // of only the current site is invalid when many flakes cover one pixel.
-        float width = abs(xrGlitterCell(position + dx, float(layer)).z - cell.z) +
-            abs(xrGlitterCell(position + dy, float(layer)).z - cell.z);
+        vec2 adjacentDisplacement;
+        float width = abs(xrGlitterCell(position + dx, float(layer), adjacentDisplacement).z - cell.z) +
+            abs(xrGlitterCell(position + dy, float(layer), adjacentDisplacement).z - cell.z);
         float alpha = clamp((XR_GLITTER_F(_GlitterSize) - cell.z) / clamp(width, 0.0001, 1.0), 0.0, 1.0);
         int mode = XR_GLITTER_I(_GlitterMode);
         float strength;
         vec3 color = tint.rgb * mix(vec3(1.0), baseColor, XR_GLITTER_F(_GlitterUseSurfaceColor));
+        vec2 shapeUv = clamp(displacement / max(XR_GLITTER_F(_GlitterSize) * 2.0, 1.0e-6) + 0.5,
+            vec2(0.0), vec2(1.0));
+        vec4 shapeTransform = XR_GLITTER_V4(_GlitterTexture_ST);
+        shapeUv = shapeUv * shapeTransform.xy + shapeTransform.zw +
+            XR_GLITTER_V2(_GlitterTexturePan) * time * 0.05;
+        vec4 shapeSample = XR_GLITTER_SAMPLE(shapeUv, shapeDx, shapeDy);
+        color *= shapeSample.rgb;
+        float layerMask = mask * shapeSample.a;
         if (mode == 1)
         {
             float pulse = sin((time * 0.5 + xrGlitterRandom(cell.xy)) * XR_GLITTER_F(_GlitterSpeed)) * 0.5 + 0.5;
@@ -121,12 +136,74 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy, float time,
         float brightness = XR_GLITTER_F(_GlitterBrightness);
         if (XR_GLITTER_I(_GlitterBlendType) == 1)
         {
-            baseColor = mix(baseColor, strength * color * brightness, strength * mask);
-            emission += strength * color * max(brightness - 1.0, 0.0) * mask;
+            baseColor = mix(baseColor, strength * color * brightness, strength * layerMask);
+            emission += strength * color * max(brightness - 1.0, 0.0) * layerMask;
         }
         else
-            emission += strength * color * brightness * mask;
+            emission += strength * color * brightness * layerMask;
     }
+}
+
+vec2 xrGlitter81Random2(vec2 seed)
+{
+    return fract(sin(vec2(dot(seed, vec2(127.1, 311.7)),
+        dot(seed, vec2(269.5, 183.3)))) * 43758.5453);
+}
+
+vec3 xrGlitter81Cell(vec2 position, out vec2 displacement)
+{
+    vec2 cell = floor(position);
+    vec2 offset = fract(position);
+    vec2 seed = vec2(0.0);
+    float distanceSquared = 100.0;
+    displacement = vec2(0.0);
+    for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+        {
+            vec2 neighbor = vec2(x, y);
+            vec2 randomPoint = xrGlitter81Random2(cell + neighbor);
+            vec2 point = 0.5 + 0.5 * sin(6.2831 * randomPoint);
+            vec2 delta = neighbor + point - offset;
+            float candidate = dot(delta, delta);
+            if (candidate < distanceSquared)
+            {
+                distanceSquared = candidate;
+                displacement = delta;
+                seed = randomPoint;
+            }
+        }
+    return vec3(seed, sqrt(distanceSquared));
+}
+
+void xrApplySourceGlitter81(vec2 uv, vec2 dx, vec2 dy, float time,
+    vec3 geometricNormal, vec3 viewDirection, vec4 tint, float mask,
+    inout vec3 emission)
+{
+    float frequency = XR_GLITTER_F(_GlitterFrequency);
+    vec2 position = fract(uv) * frequency;
+    vec2 displacement;
+    vec3 cell = xrGlitter81Cell(position, displacement);
+#ifdef XR_GLITTER_FRAGMENT_DERIVATIVES
+    float width = fwidth(cell.z);
+#else
+    vec2 adjacentDisplacement;
+    float width = abs(xrGlitter81Cell(position + dx * frequency, adjacentDisplacement).z - cell.z) +
+        abs(xrGlitter81Cell(position + dy * frequency, adjacentDisplacement).z - cell.z);
+#endif
+    float size = XR_GLITTER_F(_GlitterSize);
+    float alpha = clamp((size - cell.z) / clamp(width, 0.0001, 1.0), 0.0, 1.0);
+    vec3 rotated = xrGlitterRotate(geometricNormal, xrGlitterAngles(cell.xy, time));
+    float alignment = clamp(dot(mix(rotated, viewDirection, XR_GLITTER_F(_GlitterBias)),
+        viewDirection), 0.0, 1.0);
+    float strength = pow(alignment, XR_GLITTER_F(_GlitterContrast)) * alpha;
+    vec2 shapeUv = clamp(displacement / max(2.0 * size, 1.0e-6) + 0.5,
+        vec2(0.0), vec2(1.0));
+    vec4 shapeTransform = XR_GLITTER_V4(_GlitterTexture_ST);
+    shapeUv = shapeUv * shapeTransform.xy + shapeTransform.zw +
+        XR_GLITTER_V2(_GlitterTexturePan) * time * 0.05;
+    vec4 shapeSample = XR_GLITTER_SAMPLE(shapeUv, dx, dy);
+    emission += strength * tint.rgb * shapeSample.rgb * XR_GLITTER_F(_GlitterBrightness) *
+        shapeSample.a * tint.a * mask;
 }
 
 #endif

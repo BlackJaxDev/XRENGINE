@@ -211,10 +211,10 @@ public static partial class Engine
                     s_diagnosticTraceEnvironmentVariables[i],
                     enabled: false);
             }
-            Environment.SetEnvironmentVariable(
+            XREnvironment.SetRuntimeOverride(
                 XREngineEnvironmentVariables.VulkanDiagnosticPreset,
                 "Off");
-            Environment.SetEnvironmentVariable(
+            XREnvironment.SetRuntimeOverride(
                 XREngineEnvironmentVariables.VulkanDiagnosticFlags,
                 "None");
 
@@ -2417,7 +2417,7 @@ public static partial class Engine
             => XREnvironment.IsEnabled(name);
 
         private static void SetEnvironmentFlag(string name, bool enabled)
-            => Environment.SetEnvironmentVariable(name, enabled ? "1" : "0");
+            => XREnvironment.SetRuntimeOverride(name, enabled ? "1" : "0");
 
         private static string ResolvePerformanceProfileMode()
         {

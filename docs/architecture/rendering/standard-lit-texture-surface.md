@@ -46,6 +46,20 @@ clamp and authored tangent basis. The browser normal-map profile requires
 float4 tangents; the desktop derivative-basis fallback for missing tangents is
 not silently substituted.
 
+## Live texture edits
+
+`StandardLitTextureBindingEditor` replaces the legacy slot and semantic role
+together. The material inspector and typed MCP texture tools use this helper.
+It validates the strict source contract and keeps the surface metadata and
+borrowed texture objects unchanged. The replacement must be a live 2D texture
+with compatible sampler, wrapping, color space, and usage. Null is rejected:
+base color is required, and removing an optional role changes the shader family.
+
+`StandardLitTextureBindingEdit` retains both old and new references and surface
+records for Undo and guarded restoration. Publication continues to check binding
+revisions while an edit is in progress. The helper does not repair aliases per
+frame or weaken the reader's reference-identity checks.
+
 ## Browser cooking and rendering
 
 Ordinary engine-world cooking uses an editor-owned material projection through

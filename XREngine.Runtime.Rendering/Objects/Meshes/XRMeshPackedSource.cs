@@ -17,7 +17,7 @@ namespace XREngine.Rendering;
 /// <see cref="BlendshapeNames"/>. A source is single-threaded and is discarded
 /// once the mesh is built.
 /// </remarks>
-public sealed class XRMeshPackedSource
+public sealed partial class XRMeshPackedSource
 {
     private Vector3[] _positions;
     private Vector3[] _normals;
@@ -62,7 +62,7 @@ public sealed class XRMeshPackedSource
     }
 
     public bool HasNormals { get; }
-    public bool HasTangents { get; }
+    public bool HasTangents { get; private set; }
     public int TexCoordSetCount { get; }
     public int ColorSetCount { get; }
     public int VertexCount { get; private set; }

@@ -4,7 +4,7 @@ Last updated: 2026-10-15
 
 ## Problem
 
-The user reported severe PC lag during the last two Aryia package runs. The
+The user reported severe PC lag during two Unity package runs. The
 earlier run also disrupted Codex rendering. The user confirmed that the severe
 lag started later during rendering, not during package extraction.
 
@@ -31,7 +31,7 @@ OpenGL driver-link memory after that change remains unverified.
 - RTX 4070 Laptop GPU, 8,188 MiB reported dedicated memory.
 - Approximately 15.4 GiB usable system RAM.
 - `AdvancedRenderPipeline`, `CpuDirect`, TSR, VSync override off.
-- Main Aryia scene: 125 imported models and 35 materials, including 11 Pro-to-Uber
+- Imported scene: 125 models and 35 materials, including 11 Pro-to-Uber
   conversions. Import completion does not mean shader compilation has completed.
 - Both render and shared worker contexts requested implementation-maximum shader
   compiler threads.
@@ -49,13 +49,13 @@ Times below are Pacific time on 15 October 2026.
 | 12:35:42.372 | Render-thread `glFlush` took 7.621 seconds during a stuck-link nudge. |
 | 12:35:42.625 | Codex desktop began logging `ERR_INSUFFICIENT_RESOURCES`. |
 | 12:36:10.108 | A worker `glGetProgramiv(GL_LINK_STATUS)` call took 26.682 seconds. |
-| 12:36:10–12:37:00 | Eight NVIDIA `C9999: out of memory - internal malloc failed` messages named Fishnet Top, Sheer Gloves, and Panties programs. Repeated messages are not proof of eight separate compiler jobs. |
+| 12:36:10–12:37:00 | Eight NVIDIA `C9999: out of memory - internal malloc failed` messages named several imported material programs. Repeated messages are not proof of eight separate compiler jobs. |
 | 12:36:24.037 | Worker `glCompileShader` took 13.381 seconds. |
 | 12:36:48.895 | Windows Application Error recorded `codex-code-mode-host.exe`, exception `0x80000003`. This identifies the tool host, not a confirmed GPU-process crash. |
 | 12:37:08 | The renderer shutdown was logged. |
 
 The latest run, PID 29952, completed the main import at 13:02:01.619.
-`Combined:Fishnet Top`, program 77, remained pending from 13:02:15 through at least
+A combined material program, program 77, remained pending from 13:02:15 through at least
 13:04:48. Its source contained a 318,172-byte fragment shader and a 4,869-byte
 vertex shader. At 13:04:28, even a completion-status query took 5.277 seconds.
 Mesh and texture jobs later reported queue waits near 126.8 seconds. These are
@@ -100,9 +100,9 @@ isolation for the timed-out work.
   A general same-hash compile retry loop was not established. The timeout retry
   above is a separate, observed path.
 - Repeated `AdvancedMeshPreparation` messages do not establish a rebuild loop.
-  Geometry revisions increase during source mesh writes. The sampled Body,
-  Corset, and Jacket messages show different meshes or normal preparation
-  progress. The large pending Fishnet program is dominated by fragment source,
+  Geometry revisions increase during source mesh writes. The sampled messages
+  show different meshes or normal preparation progress. The large pending
+  program is dominated by fragment source,
   not generated blendshape vertex source.
 - A process sample at 12:33:13 reported a 2,591 MB managed heap and 4,876 MB
   working set. This is one sample, not the peak system commit or driver memory.
@@ -139,7 +139,7 @@ the GLSL compiler. Slot order and blend operations are unchanged.
 Validation uses builds, CPU policy checks, and offline SPIR-V compilation.
 The full avatar scene and GPU driver compilation are excluded from this check.
 This validates the code and generated shader source, but cannot prove that the
-NVIDIA driver will complete the large Fishnet shader within its memory budget.
+NVIDIA driver will complete the large material shader within its memory budget.
 
 Completed CPU checks:
 
@@ -237,7 +237,7 @@ The user authorized one bounded runtime check after closing other applications.
 The first memory preflight had only about 2 GiB available RAM and held the launch.
 Available RAM later rose above the selected 5 GiB launch threshold.
 
-The isolated session was `aryia-single-material`. It used OpenGL,
+The isolated session used OpenGL,
 `DefaultRenderPipeline`, one procedural box, one directional light without
 shadows, no avatar hierarchy, no VR, no sky, and no anti-aliasing. The final run
 used a 640 by 480 window and a 10 Hz render target. Engine program-binary caching
@@ -269,11 +269,11 @@ scratch folder, outside managed-session retention. The box-only run reached
 1.133 GiB sampled private memory and retained at least 4.557 GiB available RAM.
 
 The material run started at 13:58:35 Pacific on 15 October 2026, PID 22952.
-A disposable helper imported `Fishnet Top.mat` from the actual V1.3 package and
+A disposable helper imported one source material from the package and
 assigned its converted Uber material to the box's only source LOD. The import
-reported `POIPRO0001` and 19 texture slots. It retained the existing partial
-conversion behavior. The source shader and several texture GUIDs, including
-`_ToonRamp`, were unavailable in this primary-package-only fixture. Thus this
+reported a Pro shader and 19 texture slots. It retained the existing partial
+conversion behavior. The source shader and several texture references were
+unavailable in this partial source fixture. Thus this
 check does not establish complete dependency conversion or visual parity.
 
 The material's combined program 36 entered the shared source queue at
@@ -310,16 +310,14 @@ attempted after the memory stop. The next code investigation should reduce this
 actual forward shader's link workload and separate managed from native memory
 growth before another GPU run.
 
-Evidence is in `reports/aryia-single-material/summary.json`, `memory.csv`,
-`gpu.csv`, and `attach-result.json`, plus `logs/aryia-single-material/`, under the
-existing task run. The helper, source fixture, settings override, and watchdog
-are disposable scratch artifacts. The normal unit-world settings were not changed.
+Exact run records and source fixture details remain in the ignored accessory notes.
+The helper, settings override, and watchdog are disposable scratch artifacts.
+The normal unit-world settings were not changed.
 
-
-## Fishnet CPU-Only Compiler Reduction
+## Source Material CPU-Only Compiler Reduction
 
 The user requested further memory reduction and prohibited GPU validation.
-A disposable CPU harness imported the same `Fishnet Top.mat`, prepared its Uber
+A disposable CPU harness imported the same source material, prepared its Uber
 variant, and resolved its fragment source. The baseline was exactly 318,172
 bytes, matching the stopped runtime link. No editor, GL context, native driver
 compiler, or RenderDoc capture was started for this follow-up.
@@ -342,7 +340,7 @@ sampling when its authored weight is zero. Flat additive lighting skips ramp,
 shadow-mask, and material-occlusion samples that its result does not consume.
 These changes keep runtime property branches and the existing formulas.
 
-Fishnet uses lighting mode 5 and additive type 3 with additive shadow weight 1.
+The source material uses lighting mode 5 and additive type 3 with additive shadow weight 1.
 Its point and spot shadow visibility remains required. Those shadows were not
 removed or replaced with an unshadowed result.
 
@@ -409,8 +407,8 @@ The full-avatar cold run remains unvalidated. Keep GPU validation separate from
 this result; do not increase the earlier memory limits to force a successful
 link.
 
-Disposable evidence is under the existing task run in `reports/fishnet-cpu-*`.
-The `scratch/fishnet-cpu` harness contains the exact source baseline, CPU export,
+The ignored accessory notes identify the exact local evidence and harness.
+The harness contains the source baseline, CPU export,
 SPIR-V instruction counter, and bounded process monitor. The rendering guide
 records the static-dispatch rule for future shader changes.
 
@@ -438,8 +436,8 @@ zero-attenuation skip. The spot attenuation multiplication order is unchanged.
 
 ### CPU comparison
 
-The exact source baseline was saved before editing. The same actual Fishnet
-material and shaderc configuration produced these results:
+The exact source baseline was saved before editing. The same material and
+shaderc configuration produced these results:
 
 | Measurement | Before shared loop | After shared loop |
 |---|---:|---:|
@@ -492,9 +490,9 @@ include mixed point/spot Forward+ tile boundaries: material texture reads now
 occur after the light-type branches join, while shadow derivatives retain their
 existing logical guards.
 
-Evidence is in `reports/fishnet-shadow-*` under the existing task run. The exact
-pre-edit shader is `scratch/fishnet-cpu/before-shadow-dedup.frag`. The rendering
-guide records the common-loop rules. No tracked test code was added or changed.
+The ignored accessory notes identify the exact local evidence and source snapshot.
+The rendering guide records the common-loop rules. No tracked test code was
+added or changed.
 
 
 ## Dynamic Lighting Variant Compiler Memory
@@ -546,9 +544,9 @@ regular PBR selection can reread a few canonical light fields at the shadow site
 It does not repeat shadow filtering. GPU performance and pixel parity remain
 separate runtime checks, including mixed point/spot Forward+ boundaries.
 
-The static Fishnet material, static modes 0, 2, and 6, and the six representative
+The static source material, static modes 0, 2, and 6, and the six representative
 shader profiles all compiled successfully within the same limits. The static
-Fishnet process peaked at 292,278,272 private bytes. The six-profile process
+The source material process peaked at 292,278,272 private bytes. The six-profile process
 peaked at 965,156,864 private bytes. None of these runs reached a stop condition.
 
 A second fresh-process dynamic compile produced the same 1,458,380-byte SPIR-V
@@ -567,16 +565,16 @@ new call structure after the repository's feature-validation test-edit
 restriction is lifted. No tracked test was added or modified in this CPU-only
 integration check. The shader compile checks validate the actual generated code.
 
-Evidence is under `reports/fishnet-dynamic-*` in the existing task run. The
-pre-edit source snapshots are `scratch/fishnet-cpu/before-dynamic-memory-*`.
+The ignored accessory notes identify the exact local evidence and pre-edit
+source snapshots.
 
 ## Controlled Runtime Retry After Compiler Reductions
 
-The user authorized another Fishnet Top runtime check. After the user closed
+The user authorized another source-material runtime check. After the user closed
 applications, the test passed the 5 GiB available-physical-memory launch check.
-The isolated `aryia-single-material` session reused its existing binaries and
+The isolated session reused its existing binaries and
 read the current shaders from `Build/CommonAssets`. The fixture used one box,
-one imported Fishnet Top material, a 640 by 480 viewport, and a 10 Hz render
+one imported source material, a 640 by 480 viewport, and a 10 Hz render
 target. OpenGL reported one compiler thread and one shared-context worker.
 Engine program binary caching was disabled.
 
@@ -601,11 +599,11 @@ this is not a hard allocation limit.
 | Samples | 171 |
 | Time from first to final sample | 11.103 s |
 | Stop reason | Editor private memory exceeded 2 GiB |
-| Fishnet link ready | No |
+| Source material link ready | No |
 
 The runtime used the expected 234,497-byte fragment source and 4,585-byte vertex
-source. Both compile-status queries completed. Program 36, `Combined:Fishnet
-Top`, called `glLinkProgram` at 14:51:53.271 local time. That call returned in
+source. Both compile-status queries completed. Program 36 called
+`glLinkProgram` at 14:51:53.271 local time. That call returned in
 1.576 ms with asynchronous completion polling enabled. No link-ready result
 appeared before the memory stop at 14:51:56.305. The session manager recorded
 the stopped state at 14:51:56.908. Both the editor and monitor exited.
@@ -625,10 +623,9 @@ sampler-selection/filter expansion and the driver-link input. Keep point and
 spot shadow behavior intact. Do not infer a safe runtime memory bound from
 shaderc memory alone.
 
-Evidence is under `reports/fishnet-runtime-retry/material-run` and
-`logs/fishnet-runtime-retry` in the existing task run. The report contains the
-memory samples, stop reason, attachment result, and summary. No engine code or
-tracked tests changed for this runtime check.
+The ignored accessory notes identify the exact local evidence. The report
+contains the memory samples, stop reason, attachment result, and summary.
+No engine code or tracked tests changed for this runtime check.
 
 ## Shared Shadow Filter Dispatch After The Runtime Stop
 
@@ -685,7 +682,7 @@ harness, fresh processes, and sequential runs:
 
 | Measurement | Before | After |
 |---|---:|---:|
-| Actual Fishnet resolved source bytes | 234,497 | 233,370 |
+| Source material resolved source bytes | 234,497 | 233,370 |
 | Optimized SPIR-V bytes | 458,420 | 424,820 |
 | Instructions | 25,996 | 24,070 |
 | Loop merge instructions | 96 | 82 |
@@ -734,12 +731,8 @@ modes: merging mode paths can change implicit-derivative execution in divergent
 control flow. Point and spot shadow behavior was preserved by source review
 and CPU compilation, not by a rendered comparison.
 
-Evidence is under `reports/fishnet-sampler-*` and
-`logs/fishnet-sampler-*-export.log` in the existing task run. Saved snippet
-baselines are in `scratch/fishnet-cpu/before-sampler-selection-*`. The final
-comparison reports are `fishnet-sampler-baseline-repeat` and
-`fishnet-sampler-final-static-repeat`; the final profile pass is
-`fishnet-sampler-final-profiles-serial`.
+The ignored accessory notes identify the exact local evidence, source baselines,
+comparison reports, and final profile pass.
 
 ## Shared Depth Filters Across Four Sampler Slots
 
@@ -806,7 +799,7 @@ filter loops select a literal sampler per tap, join the four branches, and then
 compare and accumulate once before the loop back-edge. The static point loop
 is `%67037`, with sample join `%67105`; the static spot loop is `%46653`, with
 join `%46749`. Dynamic examples are point `%145317` / `%145385` and spot
-`%124947` / `%125043`. These IDs refer to this run's `fishnet.spvasm` files.
+`%124947` / `%125043`. These IDs refer to the local SPIR-V assembly.
 This confirms shared filter loops in those paths, not whole-program semantic
 equivalence or driver behavior.
 
@@ -825,7 +818,7 @@ The 1,907,560,448-byte value measured the whole CPU compiler process, not shader
 storage or GPU memory. Its source was 316,544 bytes. Its final SPIR-V module was
 1,384,044 bytes, or about 1.32 MiB. That module contained 79,269 instructions in
 one function. The dynamic variant retains all runtime lighting choices and
-their shadow paths. The actual static Fishnet material retains fewer paths.
+their shadow paths. The static source material retains fewer paths.
 
 The harness loads the .NET runtime and engine assemblies, prepares and rewrites
 GLSL, then calls the packaged shaderc compiler. `VulkanShaderCompiler` selects
@@ -841,10 +834,8 @@ does not prove that any one pass accounts for the full 1.78 GiB. A stage-specifi
 allocation trace would be needed for that attribution. CPU results also do not
 establish the OpenGL driver's link memory or a safe runtime launch.
 
-Evidence is under `reports/fishnet-four-slot-*` and matching export logs in the
-existing task run. This change's saved source baselines are
-`scratch/fishnet-cpu/before-four-slot-ForwardLighting.glsl` and
-`scratch/fishnet-cpu/before-four-slot-ShadowSampling.glsl`.
+The ignored accessory notes identify the exact local evidence, export logs, and
+saved source baselines.
 
 ## Dynamic Compiler Stage Measurement
 
@@ -903,7 +894,7 @@ No dependency revision, compiler DLL, or production optimization level changed.
 ### Source Candidates
 
 Reusing primary visibility in `applySourcePrimaryShading` was rejected for this
-material. Fishnet's source shadow weight is zero, so later optimization already
+material. The source material's shadow weight is zero, so later optimization already
 removes those results. The candidate retained 75,763 instructions and the same
 binary size. Its small peak difference did not establish a useful reduction.
 
@@ -930,10 +921,8 @@ also hit the free-RAM guard. Compiler work paused for memory headroom. At that p
 validation and the evaluation-order decision remained pending. The later shared
 receiver checks below complete CPU validation with this order retained.
 
-Evidence is under `reports/fishnet-stage-*`. Probe sources and the original
-shader snapshot are in `scratch/fishnet-cpu/`; the snapshot is
-`before-stage-UberShader.frag`. These files are disposable evidence, not build
-dependencies.
+The ignored accessory notes identify the exact local evidence, probe sources, and
+original shader snapshot. These are disposable evidence, not build dependencies.
 
 ### Resume Checks And Host Memory
 
@@ -966,8 +955,8 @@ was stopped. A single snapshot does not establish a memory leak.
 The dominant user-process consumer is Codex itself. The process counters do not
 map its renderer IDs to internal views. Available RAM remained below the roughly
 5 GiB needed for the dynamic check plus the 3 GiB reserve. At that point the check remained
-pending; its limits were unchanged. Resume evidence is under
-`reports/fishnet-stage-resume-*` and `fishnet-stage-memory-pool-tags.json`.
+pending; its limits were unchanged. Resume evidence is in the ignored accessory
+notes.
 
 
 ## Shared Shadow Receivers Within Available RAM
@@ -1024,14 +1013,12 @@ memory, 3 GiB available RAM, and 120 seconds, sampled every 25 ms. No editor,
 OpenGL context, driver link, or GPU work ran. CPU success does not establish the
 OpenGL driver's link peak or visual parity. Those runtime checks remain open.
 
-Evidence is under `reports/fishnet-point-index-*`,
-`reports/fishnet-point-receiver-*`, and `reports/fishnet-shared-receivers-*` in the
-existing run. Source snapshots and transformation scripts are in
-`scratch/fishnet-cpu/`. They are disposable evidence, not build dependencies.
+The ignored accessory notes identify the exact local evidence, source snapshots,
+and transformation scripts. They are disposable evidence, not build dependencies.
 
 ### Runtime Retry Preflight After Shared Receivers
 
-The user requested another controlled Fishnet Top runtime check. The saved
+The user requested another controlled source-material runtime check. The saved
 fixture remains one imported material on one box at 640 by 480 and 10 Hz, with
 one driver compiler thread, one shared-context worker, and binary caching off.
 The monitor process-identity self-check passed. No engine editor or shader
@@ -1045,13 +1032,13 @@ material attachment, or GPU operation ran. No application or service was stopped
 The lower CPU compile peak does not establish a lower driver-link peak, so it
 does not justify reducing the runtime launch reserve.
 
-Evidence is in `reports/fishnet-shared-receivers-runtime-preflight`. Runtime
+Exact preflight evidence remains in the ignored accessory notes. Runtime
 validation remains pending until the unchanged launch preflight passes.
 
 
 ## Contact And Atlas Filter Sharing
 
-The next reduction preserved every enabled Fishnet feature, authored property,
+The next reduction preserved every enabled source-material feature, authored property,
 point/spot shadow path, filter mode, and sample-count limit. The packaged compiler
 and Performance optimization remained unchanged. No tracked test changed.
 
@@ -1094,7 +1081,7 @@ about 2.4%, from 1.16 to 1.14 GiB. The first two small peak differences do not
 establish substantial memory improvements by themselves. Final minimum available
 RAM was 3,829,694,464 bytes. The final module passed `spirv-val`.
 
-| Final Fishnet variant | Watchdog compile peak private bytes |
+| Source material variant | Watchdog compile peak private bytes |
 |---|---:|
 | Authored properties | 191,139,840 |
 | Static lighting mode 0 | 566,398,976 |
@@ -1119,28 +1106,26 @@ remain 2 GiB editor-private, 3 GiB available physical RAM, 4 GiB available commi
 and 90 seconds. Shader reduction cannot change the idle-RAM preflight condition.
 No runtime launch is permitted while that condition fails.
 
-Evidence is under `reports/fishnet-contact-shared-*`,
-`reports/fishnet-atlas-shared-*`, and `reports/fishnet-screen-contact-*` in the
-existing run. The corresponding pre-edit snapshots and transformation scripts
-are under `scratch/fishnet-cpu/`. They are disposable evidence only.
+The ignored accessory notes identify the exact local evidence, pre-edit snapshots,
+and transformation scripts. They are disposable evidence only.
 
 The final runtime preflight self-check passed, but available physical RAM was
 4,544,745,472 bytes (4.23 GiB), below the unchanged 5 GiB launch requirement.
 Available commit was 16,927,526,912 bytes. The editor was not launched. No GPU
-operation ran. The preflight report is under
-`reports/fishnet-screen-contact-runtime-preflight`.
+operation ran. The exact preflight report remains in the ignored accessory
+notes.
 
-### Return To The Full Aryia Package
+### Return To The Full Imported Package
 
-The user requested a return to the Aryia package to check for PC lag. The local
-unit-world settings already enable the Aryia unitypackage with its seven pinned
+The user requested a full package retry to check for PC lag. The local
+unit-world settings already enabled the package with seven pinned
 companion dependencies and partial import. The scene visibility policy remains:
 Unity scenes checked, standalone prefab scenes unchecked. All managed editor
 sessions were stopped. The available-memory check remained below the unchanged
 5 GiB runtime launch requirement. No editor or GPU work started. Evidence is in
-`reports/aryia-package-return-preflight` in the existing run.
+the ignored accessory notes.
 
-### Full Aryia Package With A 4 GiB Launch Check
+### Full Package With A 4 GiB Launch Check
 
 The user authorized a 4 GiB available-physical-memory launch requirement for
 this attempt. Only the launch requirement changed. The stop limits remained
@@ -1151,8 +1136,8 @@ These sampled limits can have an overshoot between samples.
 The run used the full package entry in `Assets/UnitTestingWorldSettings.jsonc`,
 with seven companion dependencies, OpenGL, and `AdvancedRenderPipeline`.
 The existing isolated session binaries contained the managed shader changes.
-Shader sources came from the current repository. The session name remained
-`aryia-single-material`, but this attempt did not use the single-material setup.
+Shader sources came from the current repository. This attempt reused the earlier
+session, but it did not use the single-material setup.
 
 The editor started at 23:17:03 UTC on 15 October 2026. The monitor stopped the
 owned session after about 8.5 seconds because available physical memory fell
@@ -1167,15 +1152,14 @@ below 3 GiB. There were 132 memory samples.
 
 Startup completed world creation and some cached pipeline program uploads.
 The last package progress record was `0% Resolving companion source 1 of 7`.
-There is no evidence of Aryia scene publication or Aryia material compilation
+There is no evidence of imported scene publication or material compilation
 in this attempt. It did not reach the later avatar-rendering condition that
 previously caused lag. Driver-link memory after the shader changes and the lag
 outcome remain unverified. The editor and monitor were confirmed stopped.
 
-Evidence is under `reports/aryia-package-runtime-4g` and
-`logs/aryia-package-runtime-4g` in the existing run. The launch environment and
-monitor script are under `scratch/aryia-package-runtime`. No engine code,
-root unit-world settings, or test code changed for this attempt.
+The ignored accessory notes identify the exact local evidence, launch environment,
+and monitor script. No engine code, root unit-world settings, or test code
+changed for this attempt.
 
 ### Startup And Package Preparation Memory
 
@@ -1200,7 +1184,7 @@ without a second byte-array copy. Archive limits and cache validation remain.
 
 Separate editor measurements sampled the managed heap every 100 ms. A bounded
 EventPipe allocation trace used a 16 MiB event buffer. The two runs stopped
-before Aryia conversion. Their dependency resolver rejected an incomplete cache
+before imported scene conversion. Their dependency resolver rejected an incomplete cache
 entry left by the earlier forced stop. The startup memory increase therefore
 does not require avatar content. The trace is incomplete because the monitor
 terminated the editor; its sampled allocation totals are diagnostic estimates.
@@ -1274,7 +1258,7 @@ There were 125 samples over 7.83 seconds before the RAM stop threshold fired.
 | Minimum available commit | 14,650,429,440 bytes (13.64 GiB) |
 
 Startup completed world creation and loaded cached Advanced pipeline programs.
-No Aryia import progress or scene publication was logged before shutdown.
+No scene import progress or publication was logged before shutdown.
 The managed-memory probe recorded about 343 MB of managed memory near shutdown;
 this counter does not prove that all sampled objects remain reachable.
 The runtime result is not a controlled before/after memory comparison because
@@ -1282,7 +1266,7 @@ the default sky selection and host memory load can differ between launches.
 The CPU image comparison above provides the controlled codec measurement.
 
 The editor and monitor were confirmed stopped. Evidence is in
-`reports/aryia-startup-memory-after` and `logs/aryia-startup-memory-after`.
+the ignored accessory notes.
 Source preparation now passes within the limits, but complete editor import
 and the reported rendering lag remain unverified. The next measurement must
 separate startup shader preparation, driver allocations, and host memory use.
@@ -1323,7 +1307,7 @@ below 4 GiB. No candidate allocation reduction or output-hash equality is yet
 measured. No editor runtime started in this follow-up. Work stopped at the
 user's request to wrap up. The next check is the guarded CPU comparison of
 resolved and optimized source hashes and interface bindings for the Advanced
-shader and the existing generated Fishnet shader, followed by a guarded editor
+shader and a generated imported-material shader, followed by a guarded editor
 run only if those checks pass.
 
 Source review also ruled out the schema builder's temporary shader-program
@@ -1333,7 +1317,7 @@ startup frequency was not measured. Neither path changed. An optional API
 review failed at the configured provider spend limit; native review continued.
 
 Evidence is under `reports/startup-shader-baseline`,
-`reports/startup-shader-fishnet-baseline`, and
+the local source-material baseline report, and
 `reports/startup-source-allocation-build-ready` in the existing run. The CPU
 probe and unchanged-limit guards are under `scratch/startup-shader-probe` and
 `scratch/startup-memory-probe`.
@@ -1342,28 +1326,27 @@ probe and unchanged-limit guards are under `scratch/startup-shader-probe` and
 
 Work resumed on 16 October 2026. Both CPU shader comparisons passed under the
 unchanged memory guards. Resolved source, optimized source, and interface
-bindings matched the baseline for the Advanced and Fishnet shaders.
+bindings matched the baseline for the Advanced and imported-material shaders.
 
 | Cold operation | Previous managed allocation | Changed managed allocation |
 |---|---:|---:|
 | Advanced include resolution | 39,120,152 bytes | 38,381,552 bytes |
 | Advanced source optimization | 109,228,624 bytes | 51,044,392 bytes |
-| Fishnet include resolution | 2,657,984 bytes | 1,843,840 bytes |
-| Fishnet source optimization | 12,682,168 bytes | 7,517,112 bytes |
+| Imported material include resolution | 2,657,984 bytes | 1,843,840 bytes |
+| Imported material source optimization | 12,682,168 bytes | 7,517,112 bytes |
 
 Interface parsing allocation was unchanged. These are cumulative managed
 allocations during CPU source preparation. They do not measure driver linking.
 The changed Advanced probe peaked at 91,787,264 private bytes. Both probes
 completed without a guard stop. Evidence is in `reports/startup-shader-after`
-and `reports/startup-shader-fishnet-after` in the existing validation run.
+and the local after report in the existing validation run.
 
-The next full Aryia startup began at 17:26:22 UTC. All seven companion sources
+The next full package startup began at 17:26:22 UTC. All seven companion sources
 became ready, but scene conversion did not complete. The monitor stopped the
 editor after 10.14 seconds when available RAM crossed the 3 GiB reserve.
 Initial available RAM was 4,486,336,512 bytes; the minimum was 3,219,218,432
 bytes. Sampled editor-private memory peaked at 1,167,659,008 bytes. The editor
-and monitor both stopped. Evidence is in `reports/aryia-startup-source-after`
-and `logs/aryia-startup-source-after`.
+and monitor both stopped. Exact evidence remains in the ignored accessory notes.
 
 Host process sampling found a separate startup cost. Windows Audio Device
 Graph Isolation (`audiodg`) working memory grew by about 370 MiB. The desktop
@@ -1407,7 +1390,7 @@ under the existing guards, then build the isolated editor and retry the full
 package. A first native request can occur before audible playback. Device
 errors now occur at that request; the existing hardware-dependent audio test
 setup will need adjustment after live validation and user clearance for test
-changes. Complete Aryia import and rendering remain unverified.
+changes. Complete scene import and rendering remain unverified.
 
 Final source review found no remaining initialization, replay, disposal, or
 lock-order blocker. It found one new tick-allocation path: pose setters could
@@ -1450,7 +1433,7 @@ previous constrained editor build. It completed in 35.12 seconds, peaked at
 available RAM. The audio assembly in the editor output matched the newly built
 assembly. Evidence is in `reports/startup-audio-editor-build`.
 
-The next full Aryia runtime began at 18:45:12 UTC. All seven companion sources
+The next full package runtime began at 18:45:12 UTC. All seven companion sources
 became ready. Package preparation produced all 26 roots, then six prefab
 conversions started within about 0.17 seconds. The editor rendered its startup
 world and remained accessible through MCP. A viewed viewport capture showed
@@ -1462,11 +1445,10 @@ between two samples about 67 ms apart. The sampled peak therefore exceeded the
 threshold despite termination. Minimum available RAM was 3,864,567,808 bytes.
 `audiodg` working memory stayed near 250 MB rather than growing during startup.
 The editor and watchdog were confirmed stopped. Evidence is in
-`reports/aryia-startup-audio-after`, `logs/aryia-startup-audio-after`, and the
-corresponding `mcp-captures/` directory.
+the ignored accessory notes. The related capture remains disposable.
 
 The audio change is now validated through native device use and editor startup.
-Complete Aryia import and avatar rendering remain unverified. The next
+Complete scene import and avatar rendering remain unverified. The next
 investigation targets concurrent prefab conversion and repeated project setup
 before the first conversion progress message. No memory or timeout limit changed.
 
@@ -1477,7 +1459,7 @@ initial conversions reported 2% at 11:46:23.276 local time, after waiting about
 50.9 seconds. `SourceGuidIndex` is already shared by project root. Its locked
 initial scan reads `.meta` files through the first GUID line. It does not read
 model or texture bytes. When that scan completed, several roots imported
-`GoBone_Coat.fbx` at the same time. Concurrent native model import is a supported
+the same source FBX at the same time. Concurrent native model import is a supported
 candidate for the abrupt private-memory rise, but its exact allocation was not
 captured.
 
@@ -1512,7 +1494,7 @@ The watchdog stopped the editor after 12.07 sampled seconds at the unchanged
 bytes (2.06 GiB); minimum available RAM was 4,225,634,304 bytes (3.94 GiB).
 The editor and watchdog stopped. The process ended before a viewport capture
 could verify the imported demo visually. Evidence is in
-`reports/aryia-startup-serial-after` and `logs/aryia-startup-serial-after`.
+the ignored accessory notes.
 
 The remaining increase coincides with directional-shadow resource creation.
 The log reports four-layer 2048-square arrays with 12 mip levels, followed by
@@ -1565,10 +1547,9 @@ The private-memory guard fired after 14.42 sampled seconds at 2,196,180,992 byte
 (2.05 GiB). The independent managed probe then observed 2,729,590,784 private
 bytes (2.54 GiB) while session shutdown completed. Minimum available RAM was
 3,954,106,368 bytes (3.68 GiB). Both the editor and watchdog stopped. Evidence
-is in `reports/aryia-startup-mip-after`, `logs/aryia-startup-mip-after`, and its
-`mcp-captures/` folder. Different sky selection and refreshed core binaries mean
-these runs are not a controlled total-memory comparison. The allocation log
-establishes that unused mip storage was removed.
+remains in the ignored accessory notes. Different sky selection and refreshed
+core binaries mean these runs are not a controlled total-memory comparison.
+The allocation log establishes that unused mip storage was removed.
 
 The scratch watchdog now terminates its already verified editor process before
 calling the session manager to reconcile the named session. It verifies the
@@ -1578,7 +1559,7 @@ exercised by another editor run. Polling still cannot prevent a large allocation
 from crossing the threshold between samples. Do not treat it as a hard memory
 cap or claim that the sampled stop value was the actual process peak.
 
-Complete Aryia import remains blocked by the 2 GiB runtime budget. Further work
+Complete scene import remained blocked by the 2 GiB runtime budget. Further work
 must distinguish retained import data, renderer target storage, and driver
 commit without another uncontrolled runtime attempt. All configured limits
 remain unchanged. No unit test code was added or changed.
@@ -1623,7 +1604,7 @@ context. Early probe attempts lacked texture and model service registrations;
 those failed attempts are not complete import measurements.
 
 With the required services installed, the first 25 roots completed at about
-146 MiB private memory. The final `Open Me.unity` root imported the avatar model
+146 MiB private memory. The final scene root imported the avatar model
 more than once and reached the hard process cap. The run ended with an Assimp
 allocation failure after 80.53 seconds. Sampled private memory peaked at
 2,146,824,192 bytes; minimum available RAM was 3,489,935,360 bytes. At the final
@@ -1679,7 +1660,7 @@ Evidence is in `reports/startup-geometry-stream-build`,
 parity and allocation reduction. They do not establish the full import peak.
 
 The next full CPU run still reached the hard cap while importing repeated
-ARYIA model instances. It ended with an Assimp allocation failure after 76.41
+avatar model instances. It ended with an Assimp allocation failure after 76.41
 seconds. Sampled private memory peaked at 2,147,479,552 bytes. Available RAM
 stayed above 3,516,547,072 bytes. The final progress sample reported about
 1.31 GB managed live memory and 23.49 GB cumulative allocation. Evidence:
@@ -1737,7 +1718,7 @@ passed with zero warnings and errors. Evidence:
 
 The full CPU import started with 5,298,348,032 bytes of available RAM. The
 first 25 roots completed. The guard stopped the process during required-texture
-validation in `Open Me.unity` after 24.73 seconds because available RAM fell
+validation in the final scene after 24.73 seconds because available RAM fell
 below 3 GiB. Sampled process private memory peaked at 1,938,538,496 bytes
 (1.81 GiB), below the unchanged 2 GiB hard cap. Minimum available RAM was
 3,189,563,392 bytes (2.97 GiB); minimum available system commit was
@@ -1784,8 +1765,7 @@ matching dimensions. Both rejected invalid bytes, a truncated PNG, and a PNG
 with a valid header but damaged IDAT pixel data. Streams remained open after
 success and failure. Evidence: `reports/texture-validation-payload-fixtures`.
 
-Separate guarded processes measured the same 4096-square Aryia texture,
-`Top-straps-choker_Normal_OpenGL.png`:
+Separate guarded processes measured the same 4096-square normal texture:
 
 | Measurement | Legacy decode | Streamed validation |
 |---|---:|---:|
@@ -1801,7 +1781,7 @@ The full CPU retry started with 5,498,925,056 bytes of available RAM and passed
 the texture-validation stage that stopped the previous run. During later
 texture validation, process private memory fell to about 893 MB. The first
 25 roots completed. The guard stopped the final scene during the fourth
-ARYIA model import at 62.63 seconds, when private memory reached exactly the
+avatar model import at 62.63 seconds, when private memory reached exactly the
 2,147,483,648-byte hard cap. Minimum available RAM was 3,315,666,944 bytes;
 minimum available system commit was 15,821,180,928 bytes. Evidence:
 `reports/startup-import-stream-validation`. The owned process was confirmed
@@ -1809,8 +1789,8 @@ absent after the stop. This was not a successful full import.
 
 The measured texture-validation spike is reduced. Repeated model import is
 the remaining observed blocker. Source and scene inspection confirmed four
-separate instances of the same FBX: FULL FT/GoGo/SPS, GoGo, GoGo/SPS, and
-Default. `ImportPrefabInstance` calls `ImportModelHierarchy` for each external
+separate instances of the same FBX in four prefab variants.
+`ImportPrefabInstance` calls `ImportModelHierarchy` for each external
 model instance; that path creates a new `ModelAssetImporter` and decodes the
 model each time. This is not a GUID lookup failure. Each hierarchy receives
 its own Unity modifications, removals, and additions. Reuse must preserve
@@ -1872,7 +1852,7 @@ The zero-tangent case reduced temporary source allocation by 10.7% in this
 probe. Evidence: `reports/packed-tangents-build`,
 `reports/packed-source-baseline`, and `reports/packed-source-after`.
 
-The final CPU retry completed all 26 package roots, including `Open Me.unity`,
+The final CPU retry completed all 26 package roots, including the final scene,
 with exit code zero and no guard stop. It took 88.01 seconds. Peak sampled
 private memory was 2,114,826,240 bytes (1.970 GiB). Minimum available RAM was
 3,239,968,768 bytes (3.018 GiB), and minimum available system commit was
@@ -1888,10 +1868,10 @@ allowed; the importer still applies each instance's existing overrides.
 
 | Avatar | Nodes | Meshes | Unique bones | Mesh buffer bytes |
 |---|---:|---:|---:|---:|
-| FULL FT/GoGo/SPS | 542 | 47 | 340 | 243,411,056 |
-| GoGo | 525 | 46 | 340 | 243,320,480 |
-| GoGo/SPS | 532 | 46 | 340 | 243,320,480 |
-| Default | 505 | 46 | 340 | 243,320,480 |
+| Variant A | 542 | 47 | 340 | 243,411,056 |
+| Variant B | 525 | 46 | 340 | 243,320,480 |
+| Variant C | 532 | 46 | 340 | 243,320,480 |
+| Variant D | 505 | 46 | 340 | 243,320,480 |
 
 The final root reported 125 models and 35 materials. Private memory after
 completion was 1,830,850,560 bytes. The owned child was confirmed absent after

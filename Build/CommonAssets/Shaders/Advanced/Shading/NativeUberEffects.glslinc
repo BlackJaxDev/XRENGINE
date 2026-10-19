@@ -4,7 +4,11 @@
 #define XR_GLITTER_F(name) UBER_F(name)
 #define XR_GLITTER_I(name) UBER_I(name)
 #define XR_GLITTER_V2(name) UBER_V(name).xy
+#define XR_GLITTER_V4(name) UBER_V(name)
+#define XR_GLITTER_SAMPLE(uv, dx, dy) XR_UBER_Sample(UBER_T(_GlitterTexture), clamp(uv, vec2(0.0), vec2(1.0)), dx, dy, vec4(1.0))
 #include "Uber/source_glitter.glsl"
+#undef XR_GLITTER_SAMPLE
+#undef XR_GLITTER_V4
 #undef XR_GLITTER_I
 #undef XR_GLITTER_F
 #undef XR_GLITTER_V2
@@ -21,7 +25,17 @@ void XR_UBER_ApplySourceGlitter(XRUberCoordinates c, vec3 geometric, vec3 normal
         UBER_V(_GlitterMask_ST), UBER_V(_GlitterMaskPan).xy * 0.05, c, vec4(1.0));
     float mask = maskSample[clamp(UBER_I(_GlitterMaskChannel), 0, 3)];
     if (UBER_F(_GlitterMaskInvert) > 0.5) mask = 1.0 - mask;
-    xrApplySourceGlitter(uv, dx, dy, c.time, geometric, normal, viewDirection,
+    if (UBER_I(_SourceGlitterVersion) == 81)
+    {
+        vec4 globalSample = XR_UBER_CoverageTexture(UBER_T(_GlobalMaskTexture0),
+            UBER_I(_GlobalMaskTexture0UV), UBER_V(_GlobalMaskTexture0_ST),
+            vec2(0.0), c, vec4(1.0));
+        xrApplySourceGlitter81(uv, dx, dy, c.time, geometric, viewDirection,
+            UBER_V(_GlitterColor), mask * globalSample.g, emission);
+        return;
+    }
+    xrApplySourceGlitter(uv, dx, dy, c.uv0Dx, c.uv0Dy, c.time,
+        geometric, normal, viewDirection,
         lightDirection, lightColor, rampedLight, dot(lightColor, vec3(0.299, 0.587, 0.114)),
         UBER_V(_GlitterColor), mask, baseColor, emission);
 }

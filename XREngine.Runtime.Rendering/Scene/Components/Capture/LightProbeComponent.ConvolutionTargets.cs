@@ -8,6 +8,7 @@ public partial class LightProbeComponent
 {
     private XRQuadFrameBuffer[] _irradianceMipTargets = [];
     private XRQuadFrameBuffer[] _prefilterMipTargets = [];
+    private int _prefilterMipSourceDimension;
 
     private void DestroyIblMipTargets()
     {
@@ -17,6 +18,7 @@ public partial class LightProbeComponent
             DestroyIblMipTarget(target);
         _irradianceMipTargets = [];
         _prefilterMipTargets = [];
+        _prefilterMipSourceDimension = 0;
     }
 
     private static void DestroyIblMipTarget(XRQuadFrameBuffer target)
@@ -31,15 +33,18 @@ public partial class LightProbeComponent
     {
         ref XRQuadFrameBuffer[] targets = ref (prefilter ? ref _prefilterMipTargets : ref _irradianceMipTargets);
         int count = output.SmallestMipmapLevel + 1;
-        if (targets.Length != count)
+        XRQuadFrameBuffer template = (prefilter ? _prefilterFBO : _irradianceFBO)
+            ?? throw new InvalidOperationException("Convolution template is missing.");
+        XRTexture source = (prefilter ? _prefilterSourceTexture : _irradianceSourceTexture)
+            ?? throw new InvalidOperationException("Convolution source is missing.");
+        XRMaterial templateMaterial = template.Material
+            ?? throw new InvalidOperationException("Convolution template material is missing.");
+        if (!AreIblMipTargetsCompatible(targets, count, templateMaterial, source) ||
+            prefilter && _prefilterMipSourceDimension != _prefilterSourceDimension)
         {
             foreach (XRQuadFrameBuffer target in targets)
                 DestroyIblMipTarget(target);
             targets = [];
-            XRQuadFrameBuffer template = (prefilter ? _prefilterFBO : _irradianceFBO)
-                ?? throw new InvalidOperationException("Convolution template is missing.");
-            XRTexture source = (prefilter ? _prefilterSourceTexture : _irradianceSourceTexture)
-                ?? throw new InvalidOperationException("Convolution source is missing.");
             XRQuadFrameBuffer[] created = new XRQuadFrameBuffer[count];
             int createdCount = 0;
             try
@@ -64,6 +69,8 @@ public partial class LightProbeComponent
                     ConfigureProbeFullscreenFramebuffer(target);
                 }
                 targets = created;
+                if (prefilter)
+                    _prefilterMipSourceDimension = _prefilterSourceDimension;
             }
             catch
             {
@@ -74,10 +81,46 @@ public partial class LightProbeComponent
         }
 
         // A generation cannot be replaced until its writer receipt settles.
-        // Each deferred request therefore retains a stable attachment tuple and
-        // roughness material for the entire lifetime of that generation.
+        // The next generation can then bind its new source and output to these
+        // compatible materials and targets.
         for (int mip = 0; mip < count; mip++)
-            targets[mip].SetRenderTargets((output, EFrameBufferAttachment.ColorAttachment0, mip, -1));
+        {
+            XRMaterial material = targets[mip].Material!;
+            if (!ReferenceEquals(material.Textures[0], source))
+                material.Textures[0] = source;
+            // Keep the attachment array when this output and mip remain bound.
+            if (targets[mip].Targets is not { Length: 1 } attachments ||
+                !ReferenceEquals(attachments[0].Target, output) ||
+                attachments[0].Attachment != EFrameBufferAttachment.ColorAttachment0 ||
+                attachments[0].MipLevel != mip || attachments[0].LayerIndex != -1)
+            {
+                targets[mip].SetRenderTargets((output, EFrameBufferAttachment.ColorAttachment0, mip, -1));
+            }
+        }
         return targets;
+    }
+
+    private static bool AreIblMipTargetsCompatible(
+        XRQuadFrameBuffer[] targets,
+        int count,
+        XRMaterial templateMaterial,
+        XRTexture source)
+    {
+        if (targets.Length != count)
+            return false;
+
+        for (int mip = 0; mip < targets.Length; mip++)
+        {
+            XRMaterial? material = targets[mip].Material;
+            if (material is null || material.Textures.Count != 1 ||
+                material.Textures[0]?.GetType() != source.GetType() ||
+                material.Shaders.Count != templateMaterial.Shaders.Count)
+                return false;
+            for (int shader = 0; shader < material.Shaders.Count; shader++)
+                if (!ReferenceEquals(material.Shaders[shader], templateMaterial.Shaders[shader]))
+                    return false;
+        }
+
+        return true;
     }
 }

@@ -433,6 +433,7 @@ internal sealed class VulkanAutoUniformBindingSchema
             "blendshapeActiveCount" => (EVulkanAutoUniformSpecialSource.BlendshapeActiveCount, EShaderVarType._int),
             "blendshapeWeightThreshold" => (EVulkanAutoUniformSpecialSource.BlendshapeWeightThreshold, EShaderVarType._float),
             "usePrecombinedBlendshapeDeltas" => (EVulkanAutoUniformSpecialSource.UsePrecombinedBlendshapeDeltas, EShaderVarType._int),
+            "u_SourceFlatDirection" => (EVulkanAutoUniformSpecialSource.SourceFlatDirection, EShaderVarType._vec4),
             _ => (EVulkanAutoUniformSpecialSource.None, default),
         };
         return source != EVulkanAutoUniformSpecialSource.None;

@@ -25,6 +25,59 @@ vec3 XR_UBER_PrimaryLightColor(vec3 color)
     return UBER_I(_SourceLightMode) != 0 ? color : XR_UBER_LightColor(color);
 }
 
+XrSourceMultilayerInputs XR_UBER_MultilayerInputs(XRUberCoordinates c, vec3 L)
+{
+    XrSourceMultilayerInputs data;
+    data.firstColor = UBER_V(_ShadowColor);
+    data.secondColor = UBER_V(_Shadow2ndColor);
+    data.thirdColor = UBER_V(_Shadow3rdColor);
+    data.borderColor = UBER_V(_ShadowBorderColor);
+    data.firstTexture = UBER_SAMPLE(c, _ShadowColorTex, vec4(1.0));
+    data.secondTexture = UBER_SAMPLE(c, _Shadow2ndColorTex, vec4(1.0));
+    data.thirdTexture = UBER_SAMPLE(c, _Shadow3rdColorTex, vec4(1.0));
+    data.blurTexture = UBER_SAMPLE(c, _MultilayerMathBlurMap, vec4(1.0));
+    data.options = UBER_V(_SourceMultilayerOptions);
+    data.borderShift = UBER_V(_ShadowAOShift);
+    data.borderShift2 = UBER_V(_ShadowAOShift2);
+    data.borderMask = vec4(1.0);
+    data.borderMaskX = vec4(1.0);
+    data.borderMaskY = vec4(1.0);
+    if (data.options.x > 0.5)
+    {
+        vec2 uv, dx, dy;
+        XR_UBER_CoverageUv(c, UBER_I(_ShadowBorderMaskUV), uv, dx, dy);
+        vec4 st = UBER_V(_ShadowBorderMask_ST);
+        uv = uv * st.xy + st.zw + UBER_V(_ShadowBorderMaskPan).xy * c.time;
+        dx *= st.xy;
+        dy *= st.xy;
+        vec2 sampleDx = dx, sampleDy = dy;
+        uint slot = UBER_T(_ShadowBorderMask);
+        if (data.options.w > 0.0)
+        {
+            float minimumGradient = pow(data.options.w, 4.0);
+            dx = max(abs(dx), vec2(minimumGradient));
+            dy = max(abs(dy), vec2(minimumGradient));
+            slot = UBER_T(_SourceShadowBorderMaskLod);
+        }
+        data.borderMask = XR_UBER_Sample(slot, uv, dx, dy, vec4(1.0));
+        data.borderMaskX = XR_UBER_Sample(slot, uv + sampleDx,
+            dx, dy, vec4(1.0));
+        data.borderMaskY = XR_UBER_Sample(slot, uv + sampleDy,
+            dx, dy, vec4(1.0));
+        data.borderMask.rgb = xrSourceMultilayerRemappedMask(data.borderMask, data);
+        data.borderMaskX.rgb = xrSourceMultilayerRemappedMask(data.borderMaskX, data);
+        data.borderMaskY.rgb = xrSourceMultilayerRemappedMask(data.borderMaskY, data);
+    }
+    data.flatSettings = UBER_V(_SourceMultilayerFlat);
+    data.flatLight = dot(c.flatNormal, L);
+    data.borders = UBER_V(_SourceMultilayerBorders);
+    data.blurs = UBER_V(_SourceMultilayerBlurs);
+    data.receive = UBER_V(_SourceMultilayerReceive);
+    data.mixSettings = UBER_V(_SourceMultilayerMix);
+    data.strengthMask = UBER_SAMPLE(c, _ShadowStrengthMask, vec4(1.0)).r;
+    return data;
+}
+
 float XR_UBER_PrimaryLightMap(XRUberCoordinates c, vec3 N, vec3 L,
     XrSourceShCoefficients sh, vec3 rawPrimary, vec3 selectedDirect, float visibility)
 {
@@ -50,6 +103,18 @@ float XR_UBER_GlitterLightMap(XRUberCoordinates c, vec3 N, vec3 Nx, vec3 Ny, vec
     else if (direction == 3) L = vec3(0.0, 1.0, 0.0);
     float nl = dot(N, L);
     float map = XR_UBER_PrimaryLightMap(c, N, L, sh, rawPrimary, selectedDirect, visibility);
+    if (UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMode) == 1)
+    {
+        float unshadowed = XR_UBER_PrimaryLightMap(c, N, L, sh,
+            rawPrimary, selectedDirect, 1.0);
+        float unshadowedX = XR_UBER_PrimaryLightMap(c, normalize(N + Nx), L,
+            sh, rawPrimary, selectedDirect, 1.0);
+        float unshadowedY = XR_UBER_PrimaryLightMap(c, normalize(N + Ny), L,
+            sh, rawPrimary, selectedDirect, 1.0);
+        return xrSourceMultilayerBands(unshadowed,
+            vec2(unshadowedX - unshadowed, unshadowedY - unshadowed),
+            visibility, vec2(0.0), XR_UBER_MultilayerInputs(c, L)).x;
+    }
     float ramp;
     if (UBER_I(_LightingMode) == 0)
     {
@@ -84,6 +149,29 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
     bool primary, vec3 rawPrimary, vec3 rawSelectedDirect,
     XrSourceShCoefficients sh)
 {
+    if (UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMode) == 1 &&
+        (primary || UBER_V(_SourceAdditiveColor).z >= 1.5))
+    {
+        float map = primary
+            ? XR_UBER_PrimaryLightMap(c, N, L, sh, rawPrimary,
+                rawSelectedDirect, 1.0)
+            : xrSourceAdditiveLightMap(dot(N, L), UBER_I(_LightingMapMode),
+                1.0, 0.0);
+        float mapX = primary
+            ? XR_UBER_PrimaryLightMap(c, normalize(N + Nx), L, sh,
+                rawPrimary, rawSelectedDirect, 1.0)
+            : xrSourceAdditiveLightMap(dot(normalize(N + Nx), L),
+                UBER_I(_LightingMapMode), 1.0, 0.0);
+        float mapY = primary
+            ? XR_UBER_PrimaryLightMap(c, normalize(N + Ny), L, sh,
+                rawPrimary, rawSelectedDirect, 1.0)
+            : xrSourceAdditiveLightMap(dot(normalize(N + Ny), L),
+                UBER_I(_LightingMapMode), 1.0, 0.0);
+        XrSourceMultilayerInputs data = XR_UBER_MultilayerInputs(c, L);
+        return xrSourceMultilayerDiffuse(base, radiance, ambient, map,
+            vec2(mapX - map, mapY - map), visibility, vec2(0.0),
+            mask, primary, data);
+    }
     if (!primary && UBER_I(_SourceLightMode) != 0)
     {
         float map = xrSourceAdditiveLightMap(dot(N, L), UBER_I(_LightingMapMode),
@@ -245,6 +333,28 @@ vec3 XR_UBER_Specular(vec3 N, vec3 V, vec3 L, vec3 tangent, vec3 radiance, vec3 
     return tint * radiance * highlight * nl * strength * mix(0.5, 2.0, clamp(UBER_F(_StylizedSpecular), 0.0, 1.0));
 }
 
+vec3 XR_UBER_ApplyCubemap(XRUberCoordinates c, vec3 N, vec3 V, float lightMap,
+    bool sourceComposition, inout vec3 color, inout vec3 emission)
+{
+    vec3 direction = reflect(-V, N);
+    if (UBER_I(_CubeMapUvMode) == 0) direction = -V;
+    else if (UBER_I(_CubeMapUvMode) == 2 || UBER_I(_CubeMapUvMode) == 3) direction = N;
+    direction.z *= UBER_F(_CubeMapCoordinateZSign);
+    float cubeRoughness = 1.0 - clamp(UBER_F(_CubeMapSmoothness), 0.0, 1.0);
+    vec4 cube = XR_UBER_Cube(UBER_T(_CubeMap), direction, cubeRoughness * cubeRoughness * 8.0);
+    vec3 environment = cube.rgb * UBER_V(_CubeMapColor).rgb * max(UBER_F(_CubeMapStrength), 0.0);
+    float mask = UBER_SAMPLE(c, _CubeMapMask, vec4(1.0))[clamp(UBER_I(_CubeMapMaskChannel), 0, 3)];
+    mask = mix(mask, 1.0 - mask, clamp(UBER_F(_CubeMapMaskInvert), 0.0, 1.0));
+    float lightMask = mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(UBER_F(_CubeMapLightMask), 0.0, 1.0));
+    mask = sourceComposition ? min(mask, lightMask) : mask * lightMask;
+    float alpha = clamp(mask * cube.a * UBER_F(_CubeMapBlendAmount), 0.0, 1.0);
+    if (UBER_I(_CubeMapBlendType) == 1) color *= mix(vec3(1.0), environment, alpha);
+    else if (UBER_I(_CubeMapBlendType) == 2) color += environment * alpha;
+    else color = mix(color, environment, alpha);
+    emission += environment * max(UBER_F(_CubeMapEmissionStrength), 0.0) * mask * cube.a;
+    return environment;
+}
+
 vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V, vec3 L, vec3 tangent,
     vec3 bitangent, vec3 lightColor, float lightMap, vec3 specularColor, vec3 color, inout vec3 emission)
 {
@@ -256,24 +366,38 @@ vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V, vec3 L, vec3 tange
     float spec2 = pow(clamp(dot(N, H), 0.0, 1.0), mix(4.0, 512.0, clamp(UBER_F(_Specular2Smoothness), 0.0, 1.0))) * UBER_F(_Specular2Strength);
     color += (UBER_V(_Specular2Color).rgb * spec2 + specularColor * anisoSpec * abs(UBER_F(_Anisotropy))) * lightColor;
     color += pow(clamp(dot(N, H), 0.0, 1.0), mix(16.0, 1024.0, clamp(UBER_F(_ClearCoatSmoothness), 0.0, 1.0))) * clamp(dot(N, L), 0.0, 1.0) * UBER_F(_ClearCoat);
+    vec3 environment = vec3(0.0);
+    if (UBER_I(_SourceCubeMap) == 0 && UBER_V(_SourceEnviroRim).x < 0.5)
+        environment = XR_UBER_ApplyCubemap(c, N, V, lightMap, false, color, emission);
     vec3 direction = reflect(-V, N);
-    if (UBER_I(_CubeMapUvMode) == 0) direction = -V;
-    else if (UBER_I(_CubeMapUvMode) == 2 || UBER_I(_CubeMapUvMode) == 3) direction = N;
-    direction.z *= UBER_F(_CubeMapCoordinateZSign);
-    float cubeRoughness = 1.0 - clamp(UBER_F(_CubeMapSmoothness), 0.0, 1.0);
-    vec4 cube = XR_UBER_Cube(UBER_T(_CubeMap), direction, cubeRoughness * cubeRoughness * 8.0);
-    vec3 environment = cube.rgb * UBER_V(_CubeMapColor).rgb * max(UBER_F(_CubeMapStrength), 0.0);
-    float mask = UBER_SAMPLE(c, _CubeMapMask, vec4(1.0))[clamp(UBER_I(_CubeMapMaskChannel), 0, 3)];
-    mask = mix(mask, 1.0 - mask, clamp(UBER_F(_CubeMapMaskInvert), 0.0, 1.0));
-    mask *= mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(UBER_F(_CubeMapLightMask), 0.0, 1.0));
-    float alpha = clamp(mask * cube.a * UBER_F(_CubeMapBlendAmount), 0.0, 1.0);
-    if (UBER_I(_CubeMapBlendType) == 1) color *= mix(vec3(1.0), environment, alpha);
-    else if (UBER_I(_CubeMapBlendType) == 2) color += environment * alpha;
-    else color = mix(color, environment, alpha);
-    emission += environment * max(UBER_F(_CubeMapEmissionStrength), 0.0) * mask * cube.a;
+    if (UBER_I(_SourceCubeMap) != 0 && UBER_V(_SourceEnviroRim).x < 0.5 &&
+        UBER_F(_RimEnviroIntensity) > 0.0)
+    {
+        if (UBER_I(_CubeMapUvMode) == 0) direction = -V;
+        else if (UBER_I(_CubeMapUvMode) == 2 || UBER_I(_CubeMapUvMode) == 3) direction = N;
+        direction.z *= UBER_F(_CubeMapCoordinateZSign);
+        float cubeRoughness = 1.0 - clamp(UBER_F(_CubeMapSmoothness), 0.0, 1.0);
+        environment = XR_UBER_Cube(UBER_T(_CubeMap), direction, cubeRoughness * cubeRoughness * 8.0).rgb *
+            UBER_V(_CubeMapColor).rgb * max(UBER_F(_CubeMapStrength), 0.0);
+    }
     float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), mix(0.25, 16.0, clamp(UBER_F(_RimEnviroSharpness), 0.0, 1.0)));
-    color += environment * smoothstep(1.0 - UBER_F(_RimEnviroWidth), 1.0, rim) * UBER_F(_RimEnviroIntensity);
+    if (UBER_V(_SourceEnviroRim).x < 0.5)
+        color += environment * smoothstep(1.0 - UBER_F(_RimEnviroWidth), 1.0, rim) * UBER_F(_RimEnviroIntensity);
     color += UBER_V(_BacklightColor).rgb * clamp(dot(-N, L), 0.0, 1.0) * UBER_SAMPLE(c, _BacklightMask, vec4(1.0)).r * UBER_F(_BacklightStrength);
     return color;
+}
+
+vec3 XR_UBER_SourceEnviroRim(XRUberCoordinates c, vec3 N, vec3 V,
+    vec3 baseColor, vec3 probeRadiance)
+{
+    vec4 settings = UBER_V(_SourceEnviroRim);
+    if (settings.x < 0.5 || UBER_F(_RimEnviroIntensity) <= 0.0) return vec3(0.0);
+    float width = UBER_F(_RimEnviroWidth);
+    float edge = clamp(1.0 - smoothstep(min(UBER_F(_RimEnviroSharpness), width),
+        width, abs(dot(N, V))), 0.0, 1.0);
+    float mask = UBER_SAMPLE(c, _RimEnviroMask, vec4(1.0))[
+        clamp(int(settings.w + 0.5), 0, 3)];
+    return max((probeRadiance - vec3(settings.z)) * baseColor, vec3(0.0)) *
+        edge * mask * UBER_F(_RimEnviroIntensity);
 }
 #endif

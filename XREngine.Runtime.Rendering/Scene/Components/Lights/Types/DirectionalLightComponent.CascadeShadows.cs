@@ -3039,6 +3039,7 @@ namespace XREngine.Components.Lights
                     Camera = camera,
                 };
 
+                viewport.RenderPipelineInstance.PropagateCommandExceptions = true;
                 transforms[i] = transform;
                 cameras[i] = camera;
                 viewports[i] = viewport;
@@ -3996,7 +3997,7 @@ namespace XREngine.Components.Lights
             CollectVisibleStageTimings.EndView(previousCascadeView, cascadeViewStart);
         }
 
-        internal ulong GetShadowCasterCommandSetSignature(
+        internal override ulong GetShadowCasterCommandSetSignature(
             EShadowProjectionType projectionType,
             ShadowRequestSource source,
             int faceOrCascadeIndex)

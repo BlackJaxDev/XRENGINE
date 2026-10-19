@@ -26,6 +26,42 @@ public sealed class SerializedMaterialDocument
     public Dictionary<string, string> UnknownSerializedFields { get; } = new(StringComparer.Ordinal);
     public Dictionary<string, string> UnknownSavedProperties { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Copies the parsed values so conversion does not change the source metadata.
+    /// Texture records are shared and must remain unchanged during conversion.
+    /// </summary>
+    public SerializedMaterialDocument CreateConversionCopy()
+    {
+        SerializedMaterialDocument copy = new()
+        {
+            Name = Name,
+            SourcePath = SourcePath,
+            RawYaml = RawYaml,
+            SerializedVersion = SerializedVersion,
+            SavedPropertiesSerializedVersion = SavedPropertiesSerializedVersion,
+            Shader = Shader,
+            CustomRenderQueue = CustomRenderQueue,
+        };
+        copy.ValidKeywords.UnionWith(ValidKeywords);
+        copy.InvalidKeywords.UnionWith(InvalidKeywords);
+        copy.DisabledShaderPasses.UnionWith(DisabledShaderPasses);
+        CopyProperties(OverrideTags, copy.OverrideTags);
+        CopyProperties(Textures, copy.Textures);
+        CopyProperties(Floats, copy.Floats);
+        CopyProperties(Ints, copy.Ints);
+        CopyProperties(Vectors, copy.Vectors);
+        CopyProperties(Strings, copy.Strings);
+        CopyProperties(UnknownSerializedFields, copy.UnknownSerializedFields);
+        CopyProperties(UnknownSavedProperties, copy.UnknownSavedProperties);
+        return copy;
+    }
+
+    private static void CopyProperties<T>(Dictionary<string, T> source, Dictionary<string, T> destination)
+    {
+        foreach ((string key, T value) in source)
+            destination.Add(key, value);
+    }
+
     public bool HasAnyProperty(string name)
         => Textures.ContainsKey(name) ||
            Floats.ContainsKey(name) ||

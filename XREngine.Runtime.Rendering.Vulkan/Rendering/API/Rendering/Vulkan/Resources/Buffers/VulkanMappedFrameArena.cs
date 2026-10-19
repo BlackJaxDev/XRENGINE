@@ -14,13 +14,20 @@ internal unsafe sealed class VulkanMappedFrameArena
     internal const int MaximumFrameSlotCount = 8;
     private const int MaxReservations = 131_072;
     private static long s_nextArenaIdentity;
+    private static long s_nextAllocationIdentity;
 
     private readonly VulkanMappedFrameArenaBackend _backend;
     private readonly Lock _reservationLock = new();
     private readonly Dictionary<VulkanMappedFrameReservationKey, VulkanMappedFrameReservation> _reservations = [];
     private readonly Dictionary<VulkanFrequencyAutoUniformReservationKey, VulkanFrequencyAutoUniformReservation> _frequencyReservations = [];
+    private readonly List<FreeRange> _freeRanges = [];
+    private readonly Queue<(ulong Handle, VulkanMappedFrameAllocation Allocation)> _pendingCommandInvalidations = [];
+    private readonly HashSet<VulkanMappedFrameAllocation> _allocations = [];
+    private readonly Dictionary<VkMeshRenderer, Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>> _drawFamilies =
+        new(ReferenceEqualityComparer.Instance);
     private Chunk?[] _chunks = [];
     private ulong _reservedBytes;
+    private ulong _nextOffset;
     private ulong _generation;
     private ulong _capacity;
     private int _active;
@@ -29,6 +36,7 @@ internal unsafe sealed class VulkanMappedFrameArena
     private long _reservationHighWater;
     private long _mappedBytesHighWater;
     private long _flushExpansionBytes;
+    private long _allocationRetirementVersion;
 
     internal VulkanMappedFrameArena(
         VulkanMappedFrameArenaBackend backend,
@@ -57,12 +65,138 @@ internal unsafe sealed class VulkanMappedFrameArena
         get
         {
             lock (_reservationLock)
-                return _reservations.Count + _frequencyReservations.Count;
+                return _allocations.Count;
         }
     }
     internal long ReservationHighWater => Volatile.Read(ref _reservationHighWater);
     internal long MappedBytesHighWater => Volatile.Read(ref _mappedBytesHighWater);
     internal long FlushExpansionBytes => Volatile.Read(ref _flushExpansionBytes);
+    internal long AllocationRetirementVersion => Volatile.Read(ref _allocationRetirementVersion);
+
+    internal VulkanMappedFrameAllocation CreateDrawFamilyGuard(
+        RenderCaptureOwnerToken token,
+        Action<VulkanMappedFrameAllocation> onUnused)
+    {
+        ulong id = NextAllocationId();
+        return new VulkanMappedFrameAllocation(id, Identity, 0, 0, Generation, token, onUnused);
+    }
+
+    internal void RegisterDrawFamily(
+        VkMeshRenderer renderer,
+        int frameSlot,
+        int baseSlot,
+        int slotCount,
+        VulkanMappedFrameAllocation guard)
+    {
+        if (frameSlot < 0 || baseSlot < 0 || slotCount <= 0 || !guard.IsOpen)
+            throw new ArgumentOutOfRangeException(nameof(baseSlot));
+        lock (_reservationLock)
+        {
+            if (!_drawFamilies.TryGetValue(renderer, out Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>? slots))
+            {
+                slots = [];
+                _drawFamilies.Add(renderer, slots);
+            }
+            for (int index = 0; index < slotCount; index++)
+            {
+                (int FrameSlot, int DrawSlot) key = (frameSlot, checked(baseSlot + index));
+                if (slots.TryGetValue(key, out VulkanMappedFrameAllocation? existing) &&
+                    !ReferenceEquals(existing, guard))
+                    throw new InvalidOperationException("Mapped-frame draw families overlap in one frame slot.");
+                slots[key] = guard;
+                foreach (KeyValuePair<VulkanMappedFrameReservationKey, VulkanMappedFrameReservation> reservation in _reservations)
+                    if (ReferenceEquals(reservation.Key.Owner, renderer) &&
+                        reservation.Key.DrawSlot == key.DrawSlot)
+                        reservation.Value.Allocation?.TryAddOwner(guard);
+            }
+        }
+    }
+
+    internal bool TryGetDrawFamily(
+        VkMeshRenderer renderer,
+        int frameSlot,
+        int drawSlot,
+        out VulkanMappedFrameAllocation guard)
+    {
+        guard = null!;
+        lock (_reservationLock)
+        {
+            if (!_drawFamilies.TryGetValue(renderer, out Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>? slots) ||
+                !slots.TryGetValue((frameSlot, drawSlot), out VulkanMappedFrameAllocation? found) ||
+                !found.IsOpen)
+                return false;
+            guard = found;
+            return true;
+        }
+    }
+
+    internal void CloseDrawFamily(
+        VkMeshRenderer renderer,
+        VulkanMappedFrameAllocation guard,
+        RenderCaptureOwnerToken token)
+    {
+        List<VulkanMappedFrameAllocation> recycle = [];
+        bool guardRecycle = false;
+        lock (_reservationLock)
+        {
+            if (_drawFamilies.TryGetValue(renderer, out Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>? slots))
+            {
+                List<(int FrameSlot, int DrawSlot)> removed = [];
+                foreach (KeyValuePair<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation> entry in slots)
+                    if (ReferenceEquals(entry.Value, guard))
+                        removed.Add(entry.Key);
+                foreach ((int FrameSlot, int DrawSlot) key in removed)
+                    slots.Remove(key);
+                if (slots.Count == 0)
+                    _drawFamilies.Remove(renderer);
+            }
+            if (guard.ReleaseOwner(token, out ulong[] guardCommands, out guardRecycle))
+            {
+                Interlocked.Increment(ref _allocationRetirementVersion);
+                foreach (ulong command in guardCommands)
+                    _pendingCommandInvalidations.Enqueue((command, guard));
+            }
+            List<VulkanMappedFrameReservationKey> removedReservations = [];
+            foreach (KeyValuePair<VulkanMappedFrameReservationKey, VulkanMappedFrameReservation> entry in _reservations)
+            {
+                if (!ReferenceEquals(entry.Key.Owner, renderer) ||
+                    !entry.Value.Allocation!.HasOwner(guard))
+                    continue;
+                if (entry.Value.Allocation.ReleaseOwner(guard, out ulong[] commands, out bool reclaim))
+                {
+                    removedReservations.Add(entry.Key);
+                    Interlocked.Increment(ref _allocationRetirementVersion);
+                    foreach (ulong command in commands)
+                        _pendingCommandInvalidations.Enqueue((command, entry.Value.Allocation));
+                    if (reclaim)
+                        recycle.Add(entry.Value.Allocation);
+                }
+            }
+            foreach (VulkanMappedFrameReservationKey key in removedReservations)
+                _reservations.Remove(key);
+            List<VulkanFrequencyAutoUniformReservationKey> removedFrequency = [];
+            foreach (VulkanFrequencyAutoUniformReservation shared in _frequencyReservations.Values)
+            {
+                if (shared.Allocation is not { } allocation || !allocation.HasOwner(guard))
+                    continue;
+                if (allocation.ReleaseOwner(guard, out ulong[] commands, out bool reclaim))
+                {
+                    removedFrequency.Add(shared.Key);
+                    Interlocked.Increment(ref _allocationRetirementVersion);
+                    foreach (ulong command in commands)
+                        _pendingCommandInvalidations.Enqueue((command, allocation));
+                    if (reclaim)
+                        recycle.Add(allocation);
+                }
+            }
+            foreach (VulkanFrequencyAutoUniformReservationKey key in removedFrequency)
+                _frequencyReservations.Remove(key);
+        }
+        if (guardRecycle)
+            guard.NotifyUnused();
+        foreach (VulkanMappedFrameAllocation allocation in recycle)
+            RecycleAllocation(allocation);
+    }
 
     internal void Initialize(int frameSlotCount)
     {
@@ -172,20 +306,22 @@ internal unsafe sealed class VulkanMappedFrameArena
         {
             if (_reservations.TryGetValue(key, out VulkanMappedFrameReservation existing))
             {
-                if (existing.Length < size)
+                if (existing.Length < size || existing.Allocation is not { IsOpen: true } allocation)
                     return false;
+                AttachDrawFamilyOwners_NoLock(owner, drawSlot, allocation);
                 reservation = existing;
                 return true;
             }
 
-            if (_reservations.Count + _frequencyReservations.Count >= MaxReservations ||
-                !TryAllocateReservation_NoLock(size, out reservation))
+            if (_allocations.Count >= MaxReservations ||
+                !TryAllocateReservation_NoLock(owner, size, out reservation))
             {
                 return false;
             }
+            AttachDrawFamilyOwners_NoLock(owner, drawSlot, reservation.Allocation!);
 
             _reservations.Add(key, reservation);
-            UpdateHighWater(ref _reservationHighWater, _reservations.Count + _frequencyReservations.Count);
+            UpdateHighWater(ref _reservationHighWater, _allocations.Count);
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformAllocation(size);
@@ -194,22 +330,45 @@ internal unsafe sealed class VulkanMappedFrameArena
     }
 
     internal bool TryGetOrReserveFrequencyAutoUniformRange(
+        VkMeshRenderer owner,
         VkRenderProgram program,
         AutoUniformBlockInfo block,
         ulong ownerIdentity,
         out VulkanFrequencyAutoUniformReservation reservation)
+        => TryGetOrReserveFrequencyAutoUniformRange(
+            owner, -1, -1, program, block, ownerIdentity, out reservation);
+
+    internal bool TryGetOrReserveFrequencyAutoUniformRange(
+        VkMeshRenderer owner,
+        int frameSlot,
+        int drawSlot,
+        VkRenderProgram program,
+        AutoUniformBlockInfo block,
+        ulong ownerIdentity,
+        out VulkanFrequencyAutoUniformReservation reservation,
+        RenderCaptureOwnerToken? captureOwner = null)
     {
         reservation = null!;
-        if (!IsActive || !_backend.IsOperational || program is null || block.Frequency == EVulkanBindingFrequency.Unknown || ownerIdentity == 0 || block.Size == 0)
+        if (!IsActive || !_backend.IsOperational || owner is null || program is null ||
+            captureOwner is { IsOpen: false } ||
+            block.Frequency == EVulkanBindingFrequency.Unknown || ownerIdentity == 0 || block.Size == 0)
             return false;
 
         ulong layoutSignature = ResolvePublicationLayoutSignature(program, block);
         VulkanFrequencyAutoUniformReservationKey key = new(layoutSignature, block.Frequency, ownerIdentity);
         lock (_reservationLock)
         {
+            bool hasGuard = TryResolveDrawFamily_NoLock(owner, frameSlot, drawSlot, out VulkanMappedFrameAllocation? guard);
+            if (captureOwner is not null &&
+                (!hasGuard || guard is null || !guard.HasOwner(captureOwner) || !captureOwner.IsOpen))
+                return false;
+            object contributor = hasGuard ? guard! : owner;
             if (_frequencyReservations.TryGetValue(key, out VulkanFrequencyAutoUniformReservation? existing))
             {
                 if (existing.Size < block.Size)
+                    return false;
+                if (existing.Allocation is not { } existingAllocation ||
+                    !existingAllocation.TryAddOwner(contributor))
                     return false;
                 if (existing.PublicationStates.Length == _chunks.Length)
                 {
@@ -222,13 +381,14 @@ internal unsafe sealed class VulkanMappedFrameArena
                     existing.Offset,
                     existing.Size,
                     existing.RecordingVisibleGeneration,
-                    _chunks.Length);
+                    _chunks.Length,
+                    existingAllocation);
                 _frequencyReservations[key] = reservation;
                 return true;
             }
 
-            if (_reservations.Count + _frequencyReservations.Count >= MaxReservations ||
-                !TryAllocateReservation_NoLock(block.Size, out VulkanMappedFrameReservation range))
+            if (_allocations.Count >= MaxReservations ||
+                !TryAllocateReservation_NoLock(contributor, block.Size, out VulkanMappedFrameReservation range))
             {
                 return false;
             }
@@ -238,9 +398,10 @@ internal unsafe sealed class VulkanMappedFrameArena
                 range.Offset,
                 range.Length,
                 range.Generation,
-                _chunks.Length);
+                _chunks.Length,
+                range.Allocation!);
             _frequencyReservations.Add(key, reservation);
-            UpdateHighWater(ref _reservationHighWater, _reservations.Count + _frequencyReservations.Count);
+            UpdateHighWater(ref _reservationHighWater, _allocations.Count);
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformAllocation(block.Size);
@@ -251,7 +412,12 @@ internal unsafe sealed class VulkanMappedFrameArena
     internal bool TryGetSlice(int frameSlot, in VulkanMappedFrameReservation reservation, out VulkanMappedFrameSlice slice)
     {
         slice = default;
-        if (!_backend.IsOperational || !reservation.IsValid || reservation.Generation != Generation ||
+        if (!_backend.IsOperational || !reservation.IsValid ||
+            reservation.Allocation!.ArenaIdentity != Identity ||
+            reservation.Allocation.Offset != reservation.Offset ||
+            reservation.Allocation.Length < reservation.Length ||
+            reservation.Allocation.Generation != reservation.Generation ||
+            reservation.Generation != Generation ||
             (uint)frameSlot >= (uint)_chunks.Length || _chunks[frameSlot] is not { } chunk ||
             reservation.Offset % reservation.Alignment != 0 ||
             reservation.Offset % DynamicOffsetAlignment != 0 ||
@@ -270,14 +436,35 @@ internal unsafe sealed class VulkanMappedFrameArena
             frameSlot,
             reservation.Generation,
             chunk.Buffer,
-            chunk.Memory);
+            chunk.Memory,
+            reservation.Allocation);
         return true;
     }
 
     internal bool TryGetSlice(int frameSlot, ulong offset, uint length, out VulkanMappedFrameSlice slice)
     {
-        VulkanMappedFrameReservation reservation = new(offset, length, DynamicOffsetAlignment, Generation);
-        return TryGetSlice(frameSlot, reservation, out slice);
+        slice = default;
+        if (offset != 0 || !_backend.IsOperational || !IsActive || length == 0 ||
+            (uint)frameSlot >= (uint)_chunks.Length || _chunks[frameSlot] is not { } chunk ||
+            length > chunk.Capacity)
+            return false;
+        slice = new VulkanMappedFrameSlice(
+            Identity, chunk.Buffer.Handle, chunk.Memory.Handle, 0, length,
+            DynamicOffsetAlignment, frameSlot, Generation, chunk.Buffer, chunk.Memory, null);
+        return true;
+    }
+
+    internal bool TryGetSlice(int frameSlot, VulkanFrequencyAutoUniformReservation reservation, out VulkanMappedFrameSlice slice)
+    {
+        if (reservation.Allocation is not { } allocation)
+        {
+            slice = default;
+            return false;
+        }
+        VulkanMappedFrameReservation range = new(
+            allocation.Offset, allocation.Length, DynamicOffsetAlignment,
+            allocation.Generation, allocation);
+        return TryGetSlice(frameSlot, range, out slice);
     }
 
     internal string DescribeSliceRejection(int frameSlot, ulong offset, uint length)
@@ -317,8 +504,15 @@ internal unsafe sealed class VulkanMappedFrameArena
             return false;
 
         Volatile.Write(ref _writerThreadId, currentThreadId);
+        VulkanMappedFrameAllocation? allocation = slice.Allocation;
+        if (allocation is null || !allocation.TryRetainAuthoring())
+        {
+            ReleaseHostAccessGate();
+            return false;
+        }
         if (!TryValidateWritableSlice(slice, out Chunk? chunk) || chunk is null)
         {
+            allocation.ReleaseAuthoring();
             ReleaseHostAccessGate();
             return false;
         }
@@ -520,20 +714,71 @@ internal unsafe sealed class VulkanMappedFrameArena
     {
         if (owner is null)
             return;
+        List<VulkanMappedFrameAllocation> recycle = [];
         lock (_reservationLock)
         {
-            List<VulkanMappedFrameReservationKey>? removed = null;
-            foreach (VulkanMappedFrameReservationKey key in _reservations.Keys)
+            List<VulkanMappedFrameReservationKey> removed = [];
+            foreach (KeyValuePair<VulkanMappedFrameReservationKey, VulkanMappedFrameReservation> entry in _reservations)
             {
-                if (!ReferenceEquals(key.Owner, owner))
+                if (!ReferenceEquals(entry.Key.Owner, owner) ||
+                    entry.Value.Allocation is not { } allocation)
                     continue;
-                (removed ??= []).Add(key);
+                if (!allocation.ReleaseOwner(owner, out ulong[] commands, out bool reclaim))
+                    continue;
+                removed.Add(entry.Key);
+                Interlocked.Increment(ref _allocationRetirementVersion);
+                foreach (ulong command in commands)
+                    _pendingCommandInvalidations.Enqueue((command, allocation));
+                if (reclaim)
+                    recycle.Add(allocation);
             }
-            if (removed is not null)
-                for (int index = 0; index < removed.Count; index++)
-                    _reservations.Remove(removed[index]);
+            foreach (VulkanMappedFrameReservationKey key in removed)
+                _reservations.Remove(key);
+            List<VulkanFrequencyAutoUniformReservationKey> removedFrequency = [];
+            foreach (VulkanFrequencyAutoUniformReservation shared in _frequencyReservations.Values)
+            {
+                if (shared.Allocation is not { } allocation)
+                    continue;
+                if (!allocation.ReleaseOwner(owner, out ulong[] commands, out bool reclaim))
+                    continue;
+                removedFrequency.Add(shared.Key);
+                Interlocked.Increment(ref _allocationRetirementVersion);
+                foreach (ulong command in commands)
+                    _pendingCommandInvalidations.Enqueue((command, allocation));
+                if (reclaim)
+                    recycle.Add(allocation);
+            }
+            foreach (VulkanFrequencyAutoUniformReservationKey key in removedFrequency)
+                _frequencyReservations.Remove(key);
         }
+        for (int index = 0; index < recycle.Count; index++)
+            RecycleAllocation(recycle[index]);
         PublishTelemetry();
+    }
+
+    /// <summary>Drains exact command handles that must record again after an owner closes.</summary>
+    internal void DrainCommandInvalidations(Action<ulong, VulkanMappedFrameAllocation> invalidate)
+    {
+        while (true)
+        {
+            (ulong Handle, VulkanMappedFrameAllocation Allocation) entry;
+            lock (_reservationLock)
+            {
+                if (_pendingCommandInvalidations.Count == 0)
+                    return;
+                entry = _pendingCommandInvalidations.Dequeue();
+            }
+            try
+            {
+                invalidate(entry.Handle, entry.Allocation);
+            }
+            catch
+            {
+                lock (_reservationLock)
+                    _pendingCommandInvalidations.Enqueue(entry);
+                throw;
+            }
+        }
     }
 
     internal void Destroy()
@@ -553,9 +798,21 @@ internal unsafe sealed class VulkanMappedFrameArena
             _chunks = [];
             lock (_reservationLock)
             {
+                foreach (VulkanMappedFrameAllocation allocation in _allocations)
+                    allocation.CloseGeneration();
+                foreach (Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation> slots in _drawFamilies.Values)
+                    foreach (VulkanMappedFrameAllocation guard in slots.Values)
+                        guard.CloseGeneration();
+                if (_allocations.Count != 0)
+                    Interlocked.Increment(ref _allocationRetirementVersion);
+                _allocations.Clear();
+                _drawFamilies.Clear();
                 _reservations.Clear();
                 _frequencyReservations.Clear();
+                _freeRanges.Clear();
+                _pendingCommandInvalidations.Clear();
                 _reservedBytes = 0;
+                _nextOffset = 0;
             }
             PublishTelemetry();
         }
@@ -574,27 +831,122 @@ internal unsafe sealed class VulkanMappedFrameArena
             throw new InvalidOperationException("Mapped-frame arena permits exactly one active host writer.");
         MarkDirty(slice);
         ReleaseHostAccessGate();
+        slice.Allocation!.ReleaseAuthoring();
     }
 
-    private bool TryAllocateReservation_NoLock(uint size, out VulkanMappedFrameReservation reservation)
+    private bool TryAllocateReservation_NoLock(object owner, uint size, out VulkanMappedFrameReservation reservation)
     {
         reservation = default;
-        ulong aligned = AlignUp(_reservedBytes, DynamicOffsetAlignment);
-        if (aligned > _capacity || size > _capacity - aligned)
-            return false;
-
         ulong generation = Generation;
         if (generation == 0)
             return false;
-        reservation = new VulkanMappedFrameReservation(aligned, size, DynamicOffsetAlignment, generation);
-        _reservedBytes = aligned + size;
+        ulong aligned = 0;
+        bool found = false;
+        for (int index = 0; index < _freeRanges.Count; index++)
+        {
+            FreeRange free = _freeRanges[index];
+            ulong candidate = AlignUp(free.Offset, DynamicOffsetAlignment);
+            if (candidate > free.End || size > free.End - candidate)
+                continue;
+            _freeRanges.RemoveAt(index);
+            if (candidate > free.Offset)
+                _freeRanges.Insert(index++, new FreeRange(free.Offset, candidate - free.Offset));
+            ulong end = candidate + size;
+            if (end < free.End)
+                _freeRanges.Insert(index, new FreeRange(end, free.End - end));
+            aligned = candidate;
+            found = true;
+            break;
+        }
+        if (!found)
+        {
+            aligned = AlignUp(_nextOffset, DynamicOffsetAlignment);
+            if (aligned > _capacity || size > _capacity - aligned)
+                return false;
+            if (aligned > _nextOffset)
+                _freeRanges.Add(new FreeRange(_nextOffset, aligned - _nextOffset));
+            _nextOffset = aligned + size;
+        }
+        ulong id = NextAllocationId();
+        VulkanMappedFrameAllocation allocation = new(id, Identity, aligned, size, generation, owner, RecycleAllocation);
+        _allocations.Add(allocation);
+        reservation = new VulkanMappedFrameReservation(aligned, size, DynamicOffsetAlignment, generation, allocation);
+        _reservedBytes += size;
         return true;
+    }
+
+    private void AttachDrawFamilyOwners_NoLock(
+        VkMeshRenderer renderer,
+        int drawSlot,
+        VulkanMappedFrameAllocation allocation)
+    {
+        if (!_drawFamilies.TryGetValue(renderer, out Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>? slots))
+            return;
+        foreach (KeyValuePair<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation> entry in slots)
+            if (entry.Key.DrawSlot == drawSlot && entry.Value.IsOpen)
+                allocation.TryAddOwner(entry.Value);
+    }
+
+    private bool TryResolveDrawFamily_NoLock(
+        VkMeshRenderer renderer,
+        int frameSlot,
+        int drawSlot,
+        out VulkanMappedFrameAllocation? guard)
+    {
+        guard = null;
+        return frameSlot >= 0 && drawSlot >= 0 &&
+            _drawFamilies.TryGetValue(renderer, out Dictionary<(int FrameSlot, int DrawSlot), VulkanMappedFrameAllocation>? slots) &&
+            slots.TryGetValue((frameSlot, drawSlot), out guard) && guard.IsOpen;
+    }
+
+    private void RecycleAllocation(VulkanMappedFrameAllocation allocation)
+    {
+        lock (_reservationLock)
+        {
+            if (!_allocations.Remove(allocation) || allocation.Generation != Generation)
+                return;
+            _reservedBytes -= allocation.Length;
+            ulong start = allocation.Offset;
+            ulong end = start + allocation.Length;
+            int index = 0;
+            while (index < _freeRanges.Count && _freeRanges[index].Offset < start)
+                index++;
+            if (index > 0 && _freeRanges[index - 1].End == start)
+            {
+                start = _freeRanges[index - 1].Offset;
+                _freeRanges.RemoveAt(--index);
+            }
+            if (index < _freeRanges.Count && _freeRanges[index].Offset == end)
+            {
+                end = _freeRanges[index].End;
+                _freeRanges.RemoveAt(index);
+            }
+            _freeRanges.Insert(index, new FreeRange(start, end - start));
+        }
+        PublishTelemetry();
+    }
+
+    private readonly record struct FreeRange(ulong Offset, ulong Length)
+    {
+        internal ulong End => Offset + Length;
+    }
+
+    private static ulong NextAllocationId()
+    {
+        ulong id = unchecked((ulong)Interlocked.Increment(ref s_nextAllocationIdentity));
+        return id == 0
+            ? unchecked((ulong)Interlocked.Increment(ref s_nextAllocationIdentity))
+            : id;
     }
 
     private bool TryValidateSlice(in VulkanMappedFrameSlice slice, out Chunk? chunk)
     {
         chunk = null;
-        if (!_backend.IsOperational || !slice.IsValid || slice.ArenaIdentity != Identity || slice.Generation != Generation ||
+        if (!_backend.IsOperational || !slice.IsValid || !slice.IsCurrent ||
+            slice.Allocation!.Offset != slice.Offset || slice.Allocation.Length < slice.Length ||
+            slice.Allocation.Generation != slice.Generation ||
+            slice.Allocation.ArenaIdentity != Identity ||
+            slice.ArenaIdentity != Identity || slice.Generation != Generation ||
             slice.Alignment < DynamicOffsetAlignment ||
             slice.Offset % slice.Alignment != 0 ||
             slice.Offset % DynamicOffsetAlignment != 0 ||

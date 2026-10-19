@@ -899,6 +899,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             PreviousTransform = previousTransform,
             PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex)),
             Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask,
+            SourceFlatDirectionOct = plan.SourceFlatDirectionOct,
+            SourceFlatDirectionValid = plan.SourceFlatDirectionValid,
         };
         if (!tables.Draws.TryAdd(drawRecord, out AdvancedGpuHandle draw))
         {
@@ -1025,6 +1027,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             draw.PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex));
             draw.Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask;
             draw.Material = material;
+            draw.SourceFlatDirectionOct = plan.SourceFlatDirectionOct;
+            draw.SourceFlatDirectionValid = plan.SourceFlatDirectionValid;
             if (!Database.Scene.Draws.TryReplace(
                     registration.Draw,
                     draw,
@@ -1056,8 +1060,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             throw new InvalidOperationException("Canonical content draw is unavailable after successful preflight.");
         uint contentDrawFlags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask;
         bool drawFlagsChanged = contentDraw.Flags != contentDrawFlags;
+        bool flatDirectionChanged =
+            contentDraw.SourceFlatDirectionOct != plan.SourceFlatDirectionOct ||
+            contentDraw.SourceFlatDirectionValid != plan.SourceFlatDirectionValid;
         if (!CanUpdateRegistrationContent(registration) ||
-            (drawFlagsChanged && !Database.Scene.Draws.CanApply(0, 1, 0)) ||
+            ((drawFlagsChanged || flatDirectionChanged) && !Database.Scene.Draws.CanApply(0, 1, 0)) ||
             !Database.Scene.Transforms.TryReplace(
             registration.PreviousTransform,
             CreateTransform(previousWorld)) ||
@@ -1073,15 +1080,22 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         {
             throw new InvalidOperationException("Canonical content update failed after successful preflight.");
         }
-        if (drawFlagsChanged)
+        if (drawFlagsChanged || flatDirectionChanged)
         {
             contentDraw.Flags = contentDrawFlags;
+            contentDraw.SourceFlatDirectionOct = plan.SourceFlatDirectionOct;
+            contentDraw.SourceFlatDirectionValid = plan.SourceFlatDirectionValid;
             if (!Database.Scene.Draws.TryReplace(
                     registration.Draw, contentDraw,
-                    EAdvancedGpuMutationDomain.RecordingTopology))
+                    drawFlagsChanged
+                        ? EAdvancedGpuMutationDomain.RecordingTopology
+                        : EAdvancedGpuMutationDomain.Content))
                 throw new InvalidOperationException("Canonical draw flags update failed after successful preflight.");
-            ++_topologyDeltaCount;
-            AdvanceNonZero(ref _topologyGeneration);
+            if (drawFlagsChanged)
+            {
+                ++_topologyDeltaCount;
+                AdvanceNonZero(ref _topologyGeneration);
+            }
         }
         registration.World = world;
         registration.ContentSignature = content;
@@ -1319,6 +1333,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         in DrawMetadata command,
         out Matrix4x4 world,
         out Matrix4x4 previousWorld,
+        out Matrix4x4 sourceFlatBasis,
         out BoundsGpu bounds,
         out XRMeshRenderer? capturedRenderer,
         out XRMesh? mesh,
@@ -1333,6 +1348,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         previousWorld = snapshot.WorldMatrixIsModelMatrix
             ? snapshot.PreviousWorld
             : Matrix4x4.Identity;
+        sourceFlatBasis = snapshot.SourceFlatBasis;
         bounds = ReadCullBounds(scene, in command);
         capturedRenderer = snapshot.Renderer;
         sourcePrimitiveCount = Math.Max(1, snapshot.Renderer?.Submeshes.Count ?? 0);
@@ -1352,7 +1368,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 EAdvancedVelocityValidityReason.HistoryReset,
                 source.ForceCpuRendering,
                 source.MaterialOverride,
-                source.RenderOptionsOverride);
+                source.RenderOptionsOverride,
+                source.WorldMatrixIsModelMatrix ? source.WorldMatrix : Matrix4x4.Identity);
 
     /// <summary>Resolves the mesh, effective material, and raster options of one source primitive.</summary>
     private static void ResolveSourcePrimitive(
@@ -1669,7 +1686,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         in Matrix4x4 world,
         in Matrix4x4 previousWorld,
         XRMaterial? material,
-        bool gpuOwnedBounds)
+        bool gpuOwnedBounds,
+        uint sourceFlatDirectionOct,
+        uint sourceFlatDirectionValid)
     {
         ulong hash = Mix(command.TransformID, command.InstanceCount);
         hash = Mix(hash, command.Flags & ((uint)GPUIndirectRenderFlags.EditorHighlightMask |
@@ -1678,6 +1697,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             (uint)GPUIndirectRenderFlags.ReceiveShadows));
         hash = Mix(hash, command.LayerMask);
         hash = Mix(hash, gpuOwnedBounds ? 1u : 0u);
+        hash = Mix(hash, sourceFlatDirectionOct);
+        hash = Mix(hash, sourceFlatDirectionValid);
         if (!gpuOwnedBounds)
             hash = Mix(hash, bounds.BoundsVersion);
         hash = Mix(hash, material?.BindingValueVersion ?? 0u);
@@ -1691,6 +1712,15 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             hash = MixMatrix(hash, in previousWorld);
         }
         return hash;
+    }
+
+    private static bool TryEncodeSourceFlatDirection(XRMaterial? material,
+        in Matrix4x4 sourceBasis, out uint packed, out uint valid)
+    {
+        bool captured = SourceMultilayerFlatDirection.TryCapture(material,
+            sourceBasis, out Vector4 direction);
+        SourceMultilayerFlatDirection.Pack(direction, out packed, out valid);
+        return captured;
     }
 
     private static ulong MixMatrix(ulong hash, in Matrix4x4 value)

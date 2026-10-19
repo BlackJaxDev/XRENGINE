@@ -268,6 +268,18 @@ uniform float _Specular2Smoothness;
 uniform float _Anisotropy;
 //@property(name="_AnisotropyRotation", display="Anisotropy Rotation", mode=animated, default="0.0")
 uniform float _AnisotropyRotation;
+//@property(name="_SourceAnisoSettings", display="Source Anisotropy Settings", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceAnisoSettings;
+//@property(name="_SourceAnisoMix", display="Source Anisotropy Mix", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceAnisoMix;
+//@property(name="_SourceAnisoLayer0", display="Source Anisotropy Layer 0", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceAnisoLayer0;
+//@property(name="_SourceAnisoLayer1", display="Source Anisotropy Layer 1", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceAnisoLayer1;
+//@property(name="_SourceAnisoTint0", display="Source Anisotropy Tint 0", mode=animated, default="vec4(1.0, 1.0, 1.0, 0.0)")
+uniform vec4 _SourceAnisoTint0;
+//@property(name="_SourceAnisoTint1", display="Source Anisotropy Tint 1", mode=animated, default="vec4(1.0, 1.0, 1.0, 0.0)")
+uniform vec4 _SourceAnisoTint1;
 //@property(name="_ClearCoat", display="Clear Coat", mode=static, default="0.0")
 uniform float _ClearCoat;
 //@property(name="_ClearCoatSmoothness", display="Clear Coat Smoothness", mode=static, default="0.8")
@@ -279,6 +291,7 @@ uniform sampler2D _SourceClearCoatMaps;
 uniform vec4 _SourceClearCoatMaps_ST;
 //@property(name="_CubeMap", display="Material Cubemap", slot=texture, semantic=environment)
 uniform samplerCube _CubeMap;
+uniform int _SourceCubeMap;
 //@property(name="_CubeMapColor", display="Cubemap Tint", mode=animated, default="vec4(1.0)")
 uniform vec4 _CubeMapColor;
 //@property(name="_CubeMapStrength", display="Cubemap Strength", mode=static, default="0.0")
@@ -311,6 +324,12 @@ uniform float _RimEnviroIntensity;
 uniform float _RimEnviroWidth;
 //@property(name="_RimEnviroSharpness", display="Environmental Rim Sharpness", mode=static, default="0.0")
 uniform float _RimEnviroSharpness;
+uniform vec4 _SourceEnviroRim;
+//@property(name="_RimEnviroMask", display="Environmental Rim Mask", slot=texture, semantic=mask)
+uniform sampler2D _RimEnviroMask;
+uniform vec4 _RimEnviroMask_ST;
+uniform vec2 _RimEnviroMaskPan;
+uniform int _RimEnviroMaskUV;
 //@property(name="_StylizedReflectionMode", display="Stylized Reflection", mode=static, default="0")
 uniform int _StylizedReflectionMode;
 //@property(name="_BacklightColor", display="Backlight Color", mode=animated, default="vec4(1.0)")
@@ -344,6 +363,9 @@ uniform sampler2D _Matcap1Mask;
 uniform sampler2D _Matcap2Mask;
 //@property(name="_Matcap3Mask", display="Matcap 3 Mask", slot=texture, semantic=mask)
 uniform sampler2D _Matcap3Mask;
+uniform sampler2D _Matcap1NormalMap;
+uniform vec4 _Matcap1NormalMap_ST;
+uniform vec2 _Matcap1NormalMapPan;
 uniform vec4 _Matcap0Tex_ST;
 uniform vec4 _Matcap1Tex_ST;
 uniform vec4 _Matcap2Tex_ST;
@@ -408,6 +430,14 @@ uniform vec4 _MatcapSlotMask0;
 uniform vec4 _MatcapSlotMask1;
 uniform vec4 _MatcapSlotMask2;
 uniform vec4 _MatcapSlotMask3;
+uniform vec4 _MatcapSlotUvBlend0;
+uniform vec4 _MatcapSlotUvBlend1;
+uniform vec4 _MatcapSlotUvBlend2;
+uniform vec4 _MatcapSlotUvBlend3;
+uniform vec4 _MatcapSlotUvControl0;
+uniform vec4 _MatcapSlotUvControl1;
+uniform vec4 _MatcapSlotUvControl2;
+uniform vec4 _MatcapSlotUvControl3;
 
 //@property(name="_Rim2Color", display="Rim 2 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _Rim2Color;
@@ -605,6 +635,9 @@ uniform vec4 _EmissionSlotModifiers1;
 uniform vec4 _EmissionSlotModifiers2;
 //@property(name="_EmissionSlotModifiers3", display="Emission 3 Modifiers", mode=static, default="vec4(0.0)")
 uniform vec4 _EmissionSlotModifiers3;
+//@property(name="_SourceLayeredEmission", display="Source Layered Emission", mode=static, default="0.0")
+uniform float _SourceLayeredEmission;
+// Slot sampling: base-color map weight, mask channel, mask inversion, fluorescence.
 //@property(name="_EmissionSlotSampling0", display="Emission 0 Sampling", mode=static, default="vec4(0.0)")
 uniform vec4 _EmissionSlotSampling0;
 //@property(name="_EmissionSlotSampling1", display="Emission 1 Sampling", mode=static, default="vec4(0.0)")

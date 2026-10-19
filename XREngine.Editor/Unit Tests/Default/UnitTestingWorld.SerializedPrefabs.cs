@@ -350,8 +350,8 @@ public static partial class EditorUnitTests
                 {
                     throw new SourceVisualImportException(
                         $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' uses an unsupported " +
-                        $"shader version ({report.SourceShaderVersion}); the pinned converter target is " +
-                        $"{SourceToon93Catalog.VersionText}.");
+                        $"shader version ({report.SourceShaderVersion}); supported Poiyomi Toon versions are " +
+                        $"{SourceToon92Catalog.Version66}, {SourceToon92Catalog.Version79}, and {SourceToon93Catalog.VersionText}.");
                 }
 
                 if (report.Outcome is EMaterialConversionOutcome.GenericFallback or EMaterialConversionOutcome.Failed)

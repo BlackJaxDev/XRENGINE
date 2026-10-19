@@ -20,7 +20,7 @@ sections describe the historical point-in-time state, not the current backlog.
   to 1.14 GiB after contact-loop and atlas-filter sharing. The dynamic compile
   passed with the unchanged 3 GiB RAM
   reserve, 2 GiB child-private limit, and 120-second limit. Driver-link memory
-  after these changes remains unverified. A full Aryia package attempt with the
+  after these changes remains unverified. A full avatar package attempt with the
   authorized 4 GiB launch check stopped after 8.5 seconds at the unchanged
   3 GiB available-RAM threshold. Editor-private memory peaked at 1.33 GiB.
   Package preparation now completes in a CPU process with 54% fewer managed
@@ -43,7 +43,7 @@ sections describe the historical point-in-time state, not the current backlog.
   unused mip levels; runtime logs confirm one level at full resolution. Import
   still reaches the private-memory guard. The latest run observed a 2.54 GiB
   peak during shutdown, so the scratch monitor now requests direct termination
-  before session bookkeeping. Full Aryia import remains unverified.
+  before session bookkeeping. Full avatar import remains unverified.
   CPU isolation now uses a verified 2 GiB Windows job cap before child startup.
   It separates the main scene's large CPU import cost from shadow storage.
   Streamed geometry conversion passed exact populated-data comparisons with

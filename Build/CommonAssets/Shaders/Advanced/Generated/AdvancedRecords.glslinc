@@ -362,8 +362,8 @@ struct XRAdvancedDrawRecord
     XRAdvancedGpuHandle previousTransform;
     uint primitiveSection;
     uint flags;
-    uint reserved0;
-    uint reserved1;
+    uint sourceFlatDirectionOct;
+    uint sourceFlatDirectionValid;
 };
 
 struct XRAdvancedEditorIdentityRecord

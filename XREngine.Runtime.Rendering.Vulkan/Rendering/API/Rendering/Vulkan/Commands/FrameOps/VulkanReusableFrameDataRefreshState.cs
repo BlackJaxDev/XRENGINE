@@ -7,6 +7,8 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanReusableFrameDataRefreshState
 {
+    internal long FrameDataRetirementVersion = -1;
+    internal long FrameDataCommandMutationVersion = -1;
     private ulong _stableMeshSignature;
     private int _meshRequestCount = -1;
     private bool _ownerOnlyRefreshPublished;
@@ -118,6 +120,8 @@ internal sealed class VulkanReusableFrameDataRefreshState
 
     internal void Invalidate()
     {
+        FrameDataRetirementVersion = -1;
+        FrameDataCommandMutationVersion = -1;
         _stableMeshSignature = 0;
         _meshRequestCount = -1;
         _ownerOnlyRefreshPublished = false;

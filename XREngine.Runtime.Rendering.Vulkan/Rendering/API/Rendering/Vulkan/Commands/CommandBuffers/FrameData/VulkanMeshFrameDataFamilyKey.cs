@@ -13,25 +13,36 @@ internal readonly record struct VulkanMeshFrameDataFamilyKey(
     int CameraIdentity,
     int StereoRightEyeCameraIdentity,
     bool StereoEnabled,
-    bool MultiviewEnabled)
+    bool MultiviewEnabled,
+    ulong CaptureOutputId = 0,
+    RenderCaptureOwnerToken? CaptureOwnerToken = null)
 {
     public static VulkanMeshFrameDataFamilyKey From(
         int frameDataSlot,
         EVulkanMeshFrameDataStreamKind streamKind,
         in FrameOpContext context,
         in PendingMeshDraw draw)
-        => new(
+    {
+        // A capture face keeps its draw range when its physical target changes.
+        // The shared viewport identity cannot distinguish components or faces.
+        ulong captureOutputId = context.OutputSchedulingRequest.OutputKind is
+            EFrameOutputKind.SceneCapture or EFrameOutputKind.LightProbeCapture or EFrameOutputKind.ReflectionProbeCapture
+                ? context.OutputSchedulingRequest.OutputId : 0UL;
+        return new(
             frameDataSlot,
             streamKind,
             context.ContextKind,
             context.PipelineIdentity,
             context.ViewportIdentity,
-            context.OutputFrameBufferIdentity,
-            context.OutputTargetIdentity,
+            captureOutputId == 0 ? context.OutputFrameBufferIdentity : 0,
+            captureOutputId == 0 ? context.OutputTargetIdentity : 0,
             draw.Camera is null ? 0 : RuntimeHelpers.GetHashCode(draw.Camera),
             draw.StereoRightEyeCamera is null ? 0 : RuntimeHelpers.GetHashCode(draw.StereoRightEyeCamera),
             context.StereoEnabled,
-            context.MultiviewEnabled);
+            context.MultiviewEnabled,
+            captureOutputId,
+            captureOutputId == 0 ? null : context.CaptureOwnerToken);
+    }
 
     public override int GetHashCode()
     {
@@ -44,6 +55,8 @@ internal readonly record struct VulkanMeshFrameDataFamilyKey(
             hash = (hash * 397) ^ ViewportIdentity;
             hash = (hash * 397) ^ OutputFrameBufferIdentity;
             hash = (hash * 397) ^ OutputTargetIdentity;
+            hash = (hash * 397) ^ CaptureOutputId.GetHashCode();
+            hash = (hash * 397) ^ (CaptureOwnerToken is null ? 0 : RuntimeHelpers.GetHashCode(CaptureOwnerToken));
             hash = (hash * 397) ^ CameraIdentity;
             hash = (hash * 397) ^ StereoRightEyeCameraIdentity;
             hash = (hash * 397) ^ (StereoEnabled ? 1 : 0);

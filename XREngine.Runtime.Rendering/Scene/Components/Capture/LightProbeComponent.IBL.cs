@@ -30,7 +30,7 @@ namespace XREngine.Components.Capture.Lights
         private bool _staticIblInitializationQueued;
         private int _iblRetryCoroutineGeneration;
         private int _iblRetryQueuedCoroutineGeneration = -1;
-        protected override bool HasPendingCaptureConsumer => _pendingIblOutput is not null;
+        protected override bool HasPendingCaptureConsumer => _pendingIblOutput is not null || _iblDestroyQueued;
 
         protected override XRTextureCube CreateEnvironmentColorCubemap(uint resolution)
             => new(resolution, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, false)
@@ -116,7 +116,7 @@ namespace XREngine.Components.Capture.Lights
 
             // Main-thread jobs can run outside the window's active renderer scope.
             // Resource creation and convolution must use the same renderer as retries.
-            if (!IsIblRetryRendererActive() || _pendingIblOutput is not null)
+            if (_iblDestroyQueued || !IsIblRetryRendererActive() || _pendingIblOutput is not null)
             {
                 if (!_staticIblInitializationQueued)
                 {
@@ -148,7 +148,6 @@ namespace XREngine.Components.Capture.Lights
             uint irradianceOctaExtent,
             uint prefilterOctaExtent)
         {
-            DestroyIblMipTargets();
             // Directly convolve from the captured cubemap into the final octahedral outputs.
             DestroyCubemapConvolutionResources();
             _useCubemapConvolution = false;
@@ -191,7 +190,6 @@ namespace XREngine.Components.Capture.Lights
             uint irradianceExtent,
             uint prefilterExtent)
         {
-            DestroyIblMipTargets();
             DestroyCubemapConvolutionResources();
             _useCubemapConvolution = false;
             _pendingIrradianceExtent = irradianceExtent;
@@ -320,17 +318,17 @@ namespace XREngine.Components.Capture.Lights
                 // inactive. Destruction releases it; reactivation must not reseal changed data.
                 return;
             }
+            CancelPendingIblGenerationRetry();
             if (!RuntimeEngine.IsRenderThread)
             {
                 if (!_iblDestroyQueued)
                 {
-                    _iblDestroyQueued = true;
+                    SetField(ref _iblDestroyQueued, true, publishNotifications: false);
                     RuntimeEngine.AddRenderThreadCoroutine(DrainIblResourceDestruction,
                         "LightProbe.DestroyIblResources", RenderThreadJobKind.RenderPipelineResource);
                 }
                 return;
             }
-            CancelPendingIblGenerationRetry();
             if (_quarantinedIblOutput is not null)
                 return;
             if (_pendingIblOutput is { } pending)
@@ -344,7 +342,7 @@ namespace XREngine.Components.Capture.Lights
                 {
                     if (!_iblDestroyQueued)
                     {
-                        _iblDestroyQueued = true;
+                        SetField(ref _iblDestroyQueued, true, publishNotifications: false);
                         RuntimeEngine.AddRenderThreadCoroutine(DrainIblResourceDestruction,
                             "LightProbe.DestroyIblResources", RenderThreadJobKind.RenderPipelineResource);
                     }
@@ -352,6 +350,7 @@ namespace XREngine.Components.Capture.Lights
                 }
             }
             DestroyIblMipTargets();
+            DestroyRealtimeFilterResources();
 
             if (_irradianceFBO is not null)
                 _irradianceFBO.SettingUniforms -= BindIrradianceSourceSampler;
@@ -380,6 +379,8 @@ namespace XREngine.Components.Capture.Lights
             IblTexturesValid = false;
             CaptureVersion = 0;
             _previewSphereDirty = true;
+            ReleaseCapturedEnvironmentTextures(releaseCubemap: true, releaseOctahedral: true);
+            InvalidateCaptureResources();
         }
 
         private bool DrainIblResourceDestruction()
@@ -387,7 +388,7 @@ namespace XREngine.Components.Capture.Lights
             if (_pendingIblOutput is { } pending && !pending.IsSubmittedWriterUncertain() &&
                 !pending.IsWriterComplete() && !pending.IsWriterRejected())
                 return false;
-            _iblDestroyQueued = false;
+            SetField(ref _iblDestroyQueued, false, publishNotifications: false);
             DestroyIblResources();
             return true;
         }
@@ -399,7 +400,7 @@ namespace XREngine.Components.Capture.Lights
                 _staticIblInitializationQueued = false;
                 return true;
             }
-            if (!IsIblRetryRendererActive())
+            if (_iblDestroyQueued || !IsIblRetryRendererActive())
                 return false;
             ResolvePendingIblOutputVersion();
             if (_pendingIblOutput is not null)
@@ -434,9 +435,15 @@ namespace XREngine.Components.Capture.Lights
 
         private bool GeneratePrefilterInternal()
         {
-            XRTexture2D? target = _pendingIblOutput?.PrefilteredRadiance;
-            if (_prefilterFBO is null || target is null)
+            LightProbeIblOutputGeneration? pending = _pendingIblOutput;
+            if (_prefilterFBO is null || pending is null)
                 return false;
+            XRTexture2D target = pending.PrefilteredRadiance;
+
+            if (pending.PrefilterConvention == ELightProbePrefilterConvention.UnityMip)
+                return GenerateRealtimeFilteredProbe(target);
+            if (_realtimeFilterCubes.Length != 0)
+                DestroyRealtimeFilterResources();
 
             if (_useCubemapConvolution)
             {
@@ -563,7 +570,7 @@ namespace XREngine.Components.Capture.Lights
             bool scheduleRetryOnFailure,
             bool logFailure)
         {
-            if (IsIblProducerQuarantined)
+            if (_iblDestroyQueued || IsIblProducerQuarantined)
                 return false;
             // Deferred mesh requests require a pipeline owner, not merely a pass
             // number. The face viewport's scope has already ended here.
@@ -658,13 +665,17 @@ namespace XREngine.Components.Capture.Lights
             unchecked { ++_nextIblOutputGeneration; }
             if (_nextIblOutputGeneration == 0u)
                 _nextIblOutputGeneration = 1u;
+            ELightProbePrefilterConvention convention = ReflectionFilter == ELightProbeReflectionFilter.UnityRealtime
+                ? ELightProbePrefilterConvention.UnityMip
+                : ELightProbePrefilterConvention.PerceptualRoughness;
             XRTexture2D irradiance = CreateIrradianceTexture(_pendingIrradianceExtent);
             try
             {
-                _pendingIblOutput = new LightProbeIblOutputGeneration(
+                SetField(ref _pendingIblOutput, new LightProbeIblOutputGeneration(
                     _nextIblOutputGeneration,
                     irradiance,
-                    CreatePrefilterTexture(_pendingPrefilterExtent));
+                    CreatePrefilterTexture(_pendingPrefilterExtent, convention),
+                    convention), publishNotifications: false);
             }
             catch
             {
@@ -709,6 +720,7 @@ namespace XREngine.Components.Capture.Lights
             PrefilterTexture = pending.PrefilteredRadiance;
             IblTexturesValid = true;
             CaptureVersion = pending.Generation;
+            SetField(ref _completedIblPublicationCount, _completedIblPublicationCount + 1, publishNotifications: false);
             _previewSphereDirty = true;
             previous?.ReleaseProducer();
             if (_pendingReleaseTransientEnvironmentTextures)
@@ -745,7 +757,7 @@ namespace XREngine.Components.Capture.Lights
 
         private bool HasIblGenerationRetryResources()
         {
-            if (_irradianceFBO is null || _prefilterFBO is null ||
+            if (_iblDestroyQueued || _irradianceFBO is null || _prefilterFBO is null ||
                 _irradianceSourceTexture is null || _prefilterSourceTexture is null)
             {
                 return false;
@@ -758,6 +770,9 @@ namespace XREngine.Components.Capture.Lights
 
         private bool ScheduleIblGenerationRetry(bool releaseTransientEnvironmentTexturesOnSuccess)
         {
+            if (_iblDestroyQueued)
+                return false;
+
             _releaseTransientEnvironmentTexturesOnIblRetrySuccess |= releaseTransientEnvironmentTexturesOnSuccess;
 
             if (_iblRetryTimer.IsRunning)
@@ -914,7 +929,8 @@ namespace XREngine.Components.Capture.Lights
 
         private void ReleaseTransientEnvironmentTexturesAfterIblGeneration()
         {
-            if (!ReleaseTransientEnvironmentTexturesAfterCapture)
+            if (!ReleaseTransientEnvironmentTexturesAfterCapture ||
+                (RealtimeCapture && _realtimeCaptureTimer.IsRunning && IsActiveInHierarchy))
                 return;
 
             if (PreviewDisplay == ERenderPreview.Environment
@@ -924,6 +940,7 @@ namespace XREngine.Components.Capture.Lights
                 return;
             }
 
+            InvalidateCaptureResources();
             ReleaseCapturedEnvironmentTextures(releaseCubemap: true, releaseOctahedral: true);
             CachePreviewSphere();
         }
@@ -1090,8 +1107,11 @@ namespace XREngine.Components.Capture.Lights
                 Name = "LightProbeIrradianceOcta",
             });
 
-        private static XRTexture2D CreatePrefilterTexture(uint extent)
-            => ConfigureFullMipChain(new XRTexture2D(extent, extent, EPixelInternalFormat.Rgb16f, EPixelFormat.Rgb, EPixelType.HalfFloat, false)
+        private static XRTexture2D CreatePrefilterTexture(uint extent, ELightProbePrefilterConvention convention)
+        {
+            bool unityMip = convention == ELightProbePrefilterConvention.UnityMip;
+            extent = Math.Max(unityMip ? 512u : 16u, extent);
+            XRTexture2D texture = new(extent, extent, EPixelInternalFormat.Rgb16f, EPixelFormat.Rgb, EPixelType.HalfFloat, false)
             {
                 MinFilter = ETexMinFilter.LinearMipmapLinear,
                 MagFilter = ETexMagFilter.Linear,
@@ -1101,7 +1121,14 @@ namespace XREngine.Components.Capture.Lights
                 SizedInternalFormat = ESizedInternalFormat.Rgb16f,
                 AutoGenerateMipmaps = false,
                 Name = "LightProbePrefilterOcta",
-            });
+            };
+            // Unity probe levels use their authored mip numbers. The last level
+            // must keep at least an 8-by-8 directional footprint.
+            texture.SmallestAllowedMipmapLevel = unityMip
+                ? 6
+                : XRTexture.GetSmallestMipmapLevel(extent / 8u, extent / 8u);
+            return texture;
+        }
 
         private static XRTexture2D ConfigureFullMipChain(XRTexture2D texture)
         {

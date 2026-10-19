@@ -83,6 +83,14 @@ namespace XREngine.Rendering.Vulkan
             }
 
             PrimaryCommandArtifactOwner variant = _primaryCommandArtifactOwners[imageIndex];
+            if (_configuredResourceRuntime is { } allocationRuntime &&
+                (!allocationRuntime.AreCommandFrameDataAllocationsOpen(variant.PrimaryCommandBuffer) ||
+                 variant.DynamicUiSecondaryCommandBuffer.Handle != 0 &&
+                 !allocationRuntime.AreCommandFrameDataAllocationsOpen(variant.DynamicUiSecondaryCommandBuffer)))
+            {
+                TraceCommandChainPrimaryReuseRejection(imageIndex, "FrameDataOwnerRetired");
+                return false;
+            }
             // Swapchain acquisition can revisit an image with a different in-flight
             // slot. Refreshing that slot cannot rewrite bindings baked into a primary.
             if (variant.RecordedFrameDataSlotIndex != frameDataImageIndex)
@@ -556,6 +564,30 @@ namespace XREngine.Rendering.Vulkan
         {
             if (requests.IsEmpty)
                 return true;
+
+            if (_configuredResourceRuntime is { } resources)
+            {
+                long retirementVersion = resources.MappedFrameArena?.AllocationRetirementVersion ?? 0;
+                long commandVersion = CommandChains.SnapshotArtifactMutationGeneration();
+                if (refreshState.FrameDataRetirementVersion != retirementVersion ||
+                    refreshState.FrameDataCommandMutationVersion != commandVersion)
+                {
+                    foreach (ref readonly VulkanReusableFrameDataRefreshRequest request in requests)
+                    {
+                        CommandBuffer recorded = ResolveRecordedSecondaryCommandBuffer(
+                            request, commandChainCache, scheduledCommandChainKeys);
+                        if (request.Context.CaptureOwnerToken is { IsOpen: false } ||
+                            recorded.Handle != 0 && !resources.AreCommandFrameDataAllocationsOpen(recorded))
+                        {
+                            _lastReusableFrameDataRefreshFailureReason = "recorded frame-data owner retired";
+                            refreshState.Invalidate();
+                            return false;
+                        }
+                    }
+                    refreshState.FrameDataRetirementVersion = retirementVersion;
+                    refreshState.FrameDataCommandMutationVersion = commandVersion;
+                }
+            }
 
             bool directOwnerOnlyRefresh =
                 batchInfo.MeshRequestCount > 0 &&

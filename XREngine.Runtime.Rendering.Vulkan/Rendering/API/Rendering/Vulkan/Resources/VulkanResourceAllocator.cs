@@ -72,7 +72,8 @@ internal sealed class VulkanResourceAllocator
 
     public void UpdatePlan(
         VulkanResourcePlan plan,
-        VulkanTransientAttachmentPlan? transientAttachmentPlan = null)
+        VulkanTransientAttachmentPlan? transientAttachmentPlan = null,
+        RenderResourceRegistry? resourceRegistry = null)
     {
         ObjectDisposedException.ThrowIf(IsRetired, this);
         _transientAttachmentPlan = transientAttachmentPlan ?? VulkanTransientAttachmentPlan.Baseline;
@@ -121,10 +122,11 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanBufferAllocationRequest request in plan.AllBuffers())
         {
-            // Caller-owned imports must resolve through the registry binding.
-            // A planner allocation with the same logical name is unwritten and
-            // can otherwise be frozen as a plausible but incorrect fallback.
-            if (request.Descriptor.Lifetime == RenderResourceLifetime.External)
+            // The exact registry owns concrete buffers, including internal buffers
+            // made by a pipeline factory. Barrier publication resolves that owner
+            // first. Keep its descriptor, but do not allocate unused shadow storage.
+            if (request.Descriptor.Lifetime == RenderResourceLifetime.External ||
+                resourceRegistry?.TryGetBuffer(request.Name, out _) == true)
                 continue;
 
             // Alias groups key on descriptor shape only, with no lifetime check and

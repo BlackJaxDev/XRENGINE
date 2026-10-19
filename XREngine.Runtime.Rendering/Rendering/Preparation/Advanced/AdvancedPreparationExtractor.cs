@@ -57,6 +57,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     private int _animationScheduleCount;
     private bool _hasDeformationUpload;
     private bool _meshPreparationPending;
+    private bool _deformationArenaPending;
     private uint _feedbackLookupGeneration;
     private uint _scheduleLookupGeneration;
     private ulong _publicationGeneration;
@@ -264,6 +265,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
         ResetTemporalStateForSceneEpoch(world.GpuScene, frameId);
         uint submissionCount = checked((uint)publicationSnapshot.Submission.Records.Length);
+        ulong deformationSourceGeneration = CaptureDeformationSourceGeneration(world.GpuScene,
+            publicationSnapshot, checked((int)Math.Min(submissionCount, (uint)_options.MaximumDraws)));
         ulong completedValue = frameId == 0UL ? 0UL : frameId - 1UL;
         if (!_frameUploadArena.TryBeginFrame(frameId, completedValue))
         {
@@ -294,7 +297,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 _deformedArena.VertexCapacity,
                 world.GpuScene,
                 world.GpuScene.AdvancedScenePublication.Publication.DatabaseEpoch,
-                world.GpuScene.AdvancedScenePublication.Publication.TopologyGeneration))
+                deformationSourceGeneration))
         {
             _deformedArena.EndFrame(frameId);
             _frameUploadArena.EndFrame(frameId);
@@ -343,6 +346,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
         long extractionStarted = Stopwatch.GetTimestamp();
         _meshPreparationPending = false;
+        _deformationArenaPending = false;
         _physicsOutputMismatch = false;
         _materialBoundsContracts.Clear();
         AdvancedExtractionSubStageTimers.CountBuild();
@@ -356,6 +360,9 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 frameId,
                 world.GpuScene.AdvancedScenePublication.Publication.FrameGeneration);
         }
+        if (_deformationArenaPending)
+            return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
+                "The deformation output arena must grow before this scene can be prepared.");
         if (_physicsOutputMismatch)
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
                 "The covered draw palette or authored envelope does not match its retained bounds page.");
@@ -1064,6 +1071,9 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 newlyVisible,
                 out slice))
         {
+            // A diagnostic slice has no GPU output. Retry after boundary growth
+            // instead of publishing canonical vertex offsets as deformed data.
+            _deformationArenaPending = true;
             return false;
         }
         AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.HistoryAndArena);
@@ -1174,10 +1184,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     }
 
     private bool RequiresAggregateDeformation(uint flags)
-        => _gpuDeformation.UsesPackedAggregateInputs
-            ? ((flags & (uint)GPUIndirectRenderFlags.Skinned) != 0 && RuntimeEngine.Rendering.Settings.AllowSkinning) ||
-              ((flags & (uint)GPUIndirectRenderFlags.BlendShapes) != 0 && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
-            : (flags & (uint)GPUIndirectRenderFlags.Skinned) != 0;
+        => RequiresAggregateDeformation(flags, AdvancedGpuDeformationResources.ResolveMeshPreparationPolicy());
 
     private void ApplyDeformationAdmissionVerdicts()
     {
@@ -1624,6 +1631,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
 
     public void Dispose()
     {
+        _deformationSourceSets.Clear();
         ReleaseGpuBoundsPublication();
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;

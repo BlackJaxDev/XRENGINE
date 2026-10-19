@@ -492,14 +492,13 @@ namespace XREngine.Components.Capture.Lights.Types
                 var state = viewport.RenderPipelineInstance.RenderState;
                 using var renderArea = state.PushRenderArea(renderRect);
                 using var cropArea = state.PushCropArea(renderRect);
-                viewport.Render(atlasFbo, null, null, true, ShadowAtlasMaterial);
+                return viewport.TryRender(atlasFbo, null, null, true, ShadowAtlasMaterial);
             }
             finally
             {
                 shadowPipeline.PreserveExistingRenderArea = previousPreserveArea;
             }
 
-            return true;
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)

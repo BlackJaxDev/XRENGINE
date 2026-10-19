@@ -18,6 +18,8 @@ internal sealed class VulkanMeshFrameDataRendererFamilyKeyComparer :
            x.Family.ViewportIdentity == y.Family.ViewportIdentity &&
            x.Family.OutputFrameBufferIdentity == y.Family.OutputFrameBufferIdentity &&
            x.Family.OutputTargetIdentity == y.Family.OutputTargetIdentity &&
+           x.Family.CaptureOutputId == y.Family.CaptureOutputId &&
+           ReferenceEquals(x.Family.CaptureOwnerToken, y.Family.CaptureOwnerToken) &&
            x.Family.CameraIdentity == y.Family.CameraIdentity &&
            x.Family.StereoRightEyeCameraIdentity == y.Family.StereoRightEyeCameraIdentity &&
            x.Family.StereoEnabled == y.Family.StereoEnabled &&

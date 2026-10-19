@@ -276,6 +276,7 @@ namespace XREngine.Editor.Mcp
             var parameters = method.GetParameters();
             var properties = new Dictionary<string, object>();
             var required = new List<string>();
+            var nullability = new NullabilityInfoContext();
 
             foreach (var parameter in parameters)
             {
@@ -284,7 +285,9 @@ namespace XREngine.Editor.Mcp
 
                 string propertyName = parameter.GetCustomAttribute<McpNameAttribute>()?.Name ?? parameter.Name ?? "param";
                 string? description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description;
-                properties[propertyName] = BuildParameterSchema(parameter.ParameterType, propertyName, description);
+                bool allowsNull = Nullable.GetUnderlyingType(parameter.ParameterType) is not null
+                    || nullability.Create(parameter).WriteState == NullabilityState.Nullable;
+                properties[propertyName] = BuildParameterSchema(parameter.ParameterType, propertyName, description, allowsNull);
 
                 if (!parameter.HasDefaultValue && !parameter.IsOptional)
                     required.Add(propertyName);
@@ -309,14 +312,16 @@ namespace XREngine.Editor.Mcp
                 requiredCapabilities: method.GetCustomAttribute<McpRequiredCapabilitiesAttribute>()?.Capabilities ?? McpCapability.World);
         }
 
-        private static object BuildParameterSchema(Type parameterType, string title, string? description)
+        private static object BuildParameterSchema(Type parameterType, string title, string? description, bool allowsNull)
         {
             var schema = new Dictionary<string, object?>();
             // object-typed parameters accept any JSON value. Omitting "type" lets clients pass
             // scalars (booleans, numbers, strings) directly instead of being forced by schema
             // validation to wrap them in a JSON object.
             if (parameterType != typeof(object))
-                schema["type"] = MapJsonType(parameterType);
+                schema["type"] = allowsNull
+                    ? new[] { MapJsonType(parameterType), "null" }
+                    : (object)MapJsonType(parameterType);
             if (!string.IsNullOrWhiteSpace(description))
                 schema["description"] = description;
             if (!string.IsNullOrWhiteSpace(title))

@@ -12,6 +12,7 @@ public sealed record SerializedTextureImportDocument
     public bool IsSrgb { get; init; } = true;
     public int TextureType { get; init; }
     public bool IsNormalMap { get; init; }
+    public bool ConvertsToNormalMap { get; init; }
     public bool FlipGreenChannel { get; init; }
     public int NormalMapChannel { get; init; }
     public int AlphaSource { get; init; }

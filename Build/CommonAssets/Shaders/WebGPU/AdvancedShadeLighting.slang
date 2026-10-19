@@ -288,6 +288,7 @@ float3 XR_ADV_EvaluatePBRDirect(float3 N, float3 V, float3 L, float3 lightRadian
 #define XR_ADV_PROBE_OCTAHEDRAL 2u
 #define XR_ADV_PROBE_PARALLAX 4u
 #define XR_ADV_PROBE_NORMALIZED 8u
+#define XR_ADV_PROBE_UNITY_MIP_FILTER 16u
 
 float2 XR_ADV_OctahedralUv(float3 direction)
 {
@@ -366,7 +367,10 @@ bool XR_ADV_TrySampleProbe(XRAdvancedProbeRecord probe, float3 worldPosition, fl
     float3 R = XR_ADV_ParallaxCorrectedDirection(probe, worldPosition, reflect(-V, N));
     float normalization = (probe.flags & XR_ADV_PROBE_NORMALIZED) != 0u ? probe.proxyHalfExtents.w : 1.0;
     diffuse = XR_ADV_SampleTexture2D(irradianceReference, XR_ADV_OctahedralUv(N)).rgb * normalization;
-    float mip = roughness * max(float(prefilterRecord.mipCount) - 1.0, 0.0);
+    float maxMip = max(float(prefilterRecord.mipCount) - 1.0, 0.0);
+    float r = clamp(roughness, 0.0, 1.0);
+    float mip = (probe.flags & XR_ADV_PROBE_UNITY_MIP_FILTER) != 0u
+        ? min(6.0 * r * (1.7 - 0.7 * r), maxMip) : r * maxMip;
     specular = XR_ADV_SampleTexture2DLod(prefilterReference, XR_ADV_OctahedralUv(R), mip).rgb * normalization;
     return XR_ADV_IsFinite(diffuse) &&
         XR_ADV_IsFinite(specular);

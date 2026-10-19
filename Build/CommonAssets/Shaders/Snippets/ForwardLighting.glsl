@@ -19,7 +19,6 @@
 #endif
 
 const float PI = 3.14159265359;
-const float MAX_REFLECTION_LOD = 4.0;
 const float XRENGINE_MIN_FORWARD_AMBIENT_FALLBACK = 0.08;
 const int XRENGINE_SHADOW_FALLBACK_LIT = 1;
 const int XRENGINE_SHADOW_FALLBACK_CONTACT_ONLY = 2;
@@ -99,6 +98,7 @@ struct ProbeParam
     vec4 ProxyCenterEnable;
     vec4 ProxyHalfExtents;
     vec4 ProxyRotation;
+    vec4 PrefilterSampling;
 };
 
 layout(std430, XRENGINE_FORWARD_DESCRIPTOR_SET binding = 2) readonly buffer LightProbeParameters
@@ -937,8 +937,23 @@ vec3 XRENGINE_GetForwardAmbientFallback(vec3 albedo, vec3 diffuseAO)
     return XRENGINE_ResolveForwardAmbientFallback() * albedo * diffuseAO;
 }
 
-vec3 XRENGINE_SampleForwardRawPrefilter(vec3 normal, vec3 fragPos,
-    vec3 viewDir, float perceptualRoughness)
+#ifndef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
+float XRENGINE_ForwardProbePrefilterLod(int index, float roughness,
+    float availableMip, bool sourceFilter, bool normalDirection)
+{
+    ProbeParam probe = ProbeParams[index];
+    float maxMip = min(max(probe.PrefilterSampling.y, 0.0), availableMip);
+    float r = clamp(roughness, 0.0, 1.0);
+    if (probe.PrefilterSampling.x > 0.5)
+        return min(6.0 * (sourceFilter ? r : r * (1.7 - 0.7 * r)), maxMip);
+    if (sourceFilter && !normalDirection)
+        r = 2.0 * r / (1.7 + sqrt(max(2.89 - 2.8 * r, 0.0)));
+    return r * maxMip;
+}
+#endif
+
+vec3 XRENGINE_SampleForwardRawPrefilterDirection(vec3 normal, vec3 fragPos,
+    vec3 viewDir, float perceptualRoughness, bool useNormalDirection)
 {
 #ifdef XRENGINE_UBER_DISABLE_FORWARD_PBR_RESOURCES
     return vec3(0.0);
@@ -954,11 +969,10 @@ vec3 XRENGINE_SampleForwardRawPrefilter(vec3 normal, vec3 fragPos,
     else
         XRENGINE_ResolveProbeWeights(fragPos, weights, indices);
 #endif
-    vec3 reflection = reflect(-viewDir, normal);
+    vec3 reflection = useNormalDirection ? normal : reflect(-viewDir, normal);
     vec3 radiance = vec3(0.0);
     float total = 0.0;
-    float mip = clamp(perceptualRoughness, 0.0, 1.0) *
-        float(max(textureQueryLevels(PrefilterArray) - 1, 0));
+    float availableMip = float(max(textureQueryLevels(PrefilterArray) - 1, 0));
     for (int slot = 0; slot < 4; ++slot)
     {
         int index = indices[slot];
@@ -966,14 +980,31 @@ vec3 XRENGINE_SampleForwardRawPrefilter(vec3 normal, vec3 fragPos,
         float weight = barycentric ? weights[slot]
             : weights[slot] * XRENGINE_ComputeInfluenceWeight(index, fragPos);
         if (weight <= 0.0) continue;
-        vec3 direction = XRENGINE_ApplyParallax(index, reflection, fragPos);
+        vec3 direction = useNormalDirection ? reflection
+            : XRENGINE_ApplyParallax(index, reflection, fragPos);
         float normalization = max(ProbeParams[index].ProxyHalfExtents.w, 0.0001);
+        float mip = XRENGINE_ForwardProbePrefilterLod(index,
+            perceptualRoughness, availableMip, true, useNormalDirection);
         radiance += weight * normalization * XRENGINE_SampleOctaArrayLod(
             PrefilterArray, direction, index, mip);
         total += weight;
     }
     return total > 0.0 ? radiance / total : vec3(0.0);
 #endif
+}
+
+vec3 XRENGINE_SampleForwardRawPrefilter(vec3 normal, vec3 fragPos,
+    vec3 viewDir, float perceptualRoughness)
+{
+    return XRENGINE_SampleForwardRawPrefilterDirection(normal, fragPos,
+        viewDir, perceptualRoughness, false);
+}
+
+vec3 XRENGINE_SampleForwardRawPrefilterNormal(vec3 normal, vec3 fragPos,
+    float blur)
+{
+    return XRENGINE_SampleForwardRawPrefilterDirection(normal, fragPos,
+        normal, blur, true);
 }
 
 vec3 XRENGINE_CalculateAmbientPbrWithProbe(vec3 normal, vec3 fragPos,
@@ -1019,9 +1050,7 @@ vec3 XRENGINE_CalculateAmbientPbrWithProbe(vec3 normal, vec3 fragPos,
     vec3 irradianceColor = vec3(0.0);
     vec3 prefilteredColor = vec3(0.0);
     float totalWeight = 0.0;
-    // Loop-invariant prefilter LOD bounds: hoisted out of the per-probe loop.
-    float maxMip = float(textureQueryLevels(PrefilterArray) - 1);
-    float clampedLod = min(roughness * MAX_REFLECTION_LOD, maxMip);
+    float availableMip = float(max(textureQueryLevels(PrefilterArray) - 1, 0));
 
     for (int i = 0; i < 4; ++i)
     {
@@ -1043,9 +1072,11 @@ vec3 XRENGINE_CalculateAmbientPbrWithProbe(vec3 normal, vec3 fragPos,
         vec3 specDir = XRENGINE_ApplyParallax(probeIndex, reflectionDir, fragPos);
         float normalizationScale = max(ProbeParams[probeIndex].ProxyHalfExtents.w, 0.0001);
         float weightedScale = weight * normalizationScale;
+        float mip = XRENGINE_ForwardProbePrefilterLod(probeIndex,
+            roughness, availableMip, false, false);
 
         irradianceColor += weightedScale * XRENGINE_SampleOctaArray(IrradianceArray, diffuseDir, probeIndex);
-        prefilteredColor += weightedScale * XRENGINE_SampleOctaArrayLod(PrefilterArray, specDir, probeIndex, clampedLod);
+        prefilteredColor += weightedScale * XRENGINE_SampleOctaArrayLod(PrefilterArray, specDir, probeIndex, mip);
         totalWeight += weight;
     }
 
