@@ -565,6 +565,11 @@ are independent optional capabilities. When the user did not pin a tier, the
 coordinator fills `requested_model` from `recommend_agent_route`. The other
 fields make the run safer and more reproducible.
 
+Use optional `system_instructions` for provider system instructions, such as an
+exact JSON output rule. The broker prepends its safety instructions. Swarm
+planning, leaf, and review requests retain these instructions and add their
+role instructions. `additional_instructions` remains a separate task field.
+
 A reasoning-only request has no repository access, editor session, or tool
 policy entries:
 
