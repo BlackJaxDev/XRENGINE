@@ -8,9 +8,10 @@ namespace XREngine.UnitTests.AgentOrchestration;
 [TestFixture]
 public class AgentSwarmRunnerTests
 {
-    [TestCase("gpt-6-luna")]
-    [TestCase("claude-haiku-5-5")]
-    public async Task SemaphoreOneHierarchyMergesTwoLeafEditsAndPreservesSelectedModel(string model)
+    [TestCase("gpt-6-luna", "max")]
+    [TestCase("claude-haiku-5-5", "max")]
+    [TestCase("claude-haiku-5-5", "medium")]
+    public async Task SemaphoreOneHierarchyMergesTwoLeafEditsAndPreservesSelectedModel(string model, string effort)
     {
         var client = new DelegatingModelClient(request => (request.Run.SystemInstructions.Contains("reviewer", StringComparison.Ordinal)
             ? Response("{\"approved\":true,\"summary\":\"looks good\"}")
@@ -21,13 +22,15 @@ public class AgentSwarmRunnerTests
                 "beta" => Response("{\"path\":\"Source.cs\",\"base_sha256\":\"hash\",\"old_text\":\"beta\",\"new_text\":\"BETA\"}"),
                 _ => throw new InvalidOperationException("Unexpected swarm phase."),
             }) with { ActualModel = model });
-        AgentSwarmRunResult result = await RunAsync(client, new AgentSwarmOptions { AllowedPaths = ["Source.cs"], MaxAgents = 3, MaxChildren = 2, MaxParallelAgents = 2 }, model: model);
+        AgentSwarmRunResult result = await RunAsync(client, new AgentSwarmOptions { AllowedPaths = ["Source.cs"], MaxAgents = 3, MaxChildren = 2, MaxParallelAgents = 2 }, model: model, effort: effort);
 
         result.Aggregate.Status.ShouldBe(AgentRunStatus.Completed);
         result.Changes.Count.ShouldBe(2);
         AgentSwarmChangeMerger.Merge(result.Changes, [Snapshot()]).Single().NewText.ShouldBe("ALPHA\nBETA\n");
         client.Requests.ShouldAllBe(request =>
-            request.Run.RequestedModel == model && request.Run.ReasoningEffort == "max");
+            request.Run.RequestedModel == model && request.Run.ReasoningEffort == effort
+            && request.Run.Swarm == null && request.Run.Budget.MaxTurns == 1
+            && request.Run.Budget.MaxToolCalls == 0);
         result.Aggregate.RequestedModel.ShouldBe(model);
         result.Aggregate.ActualModel.ShouldBe(model);
         result.Snapshot.Nodes.ShouldAllBe(node => node.RequestedModel == model && node.ActualModel == model);
@@ -181,7 +184,8 @@ public class AgentSwarmRunnerTests
         AgentSwarmOptions options,
         CancellationToken cancellationToken = default,
         IReadOnlyList<AgentContextFileSnapshot>? snapshots = null,
-        string model = "gpt-6-luna")
+        string model = "gpt-6-luna",
+        string effort = "max")
     {
         using var providerSlots = new SemaphoreSlim(1, 1);
         var runner = new AgentSwarmRunner(new AgentOrchestrator(client), providerSlots);
@@ -189,7 +193,7 @@ public class AgentSwarmRunnerTests
         {
             Objective = "root",
             RequestedModel = model,
-            ReasoningEffort = "max",
+            ReasoningEffort = effort,
             Swarm = options,
             Budget = new AgentRunBudget { MaxOutputTokens = 0, MaxElapsedSeconds = 60 },
         }, snapshots ?? [Snapshot()], cancellationToken: cancellationToken);

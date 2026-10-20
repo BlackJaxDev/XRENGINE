@@ -343,7 +343,8 @@ Explicit independent `gpt-6.1-sol` runs accept `low`, `medium`, `high`,
 provider execution. See the official
 [GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
 Automatic route advice still selects `gpt-6-sol` for ordinary work, and
-hierarchical swarms accept exact `gpt-6-luna` or `claude-haiku-5-5` at `max`.
+hierarchical swarms accept exact `gpt-6-luna` at `max`, or `claude-haiku-5-5`
+at any approved effort; Haiku defaults to `medium`.
 Route advice implements the repository policy but has no launch
 side effect. Both the requested and provider-reported model must match the same
 exact ID; aliases and dated snapshot suffixes are terminal substitution failures
@@ -362,8 +363,9 @@ deprecated compatibility route). Recommendations and starts identify deprecated
 model selection. Model controls are validated
 against `AgentModelCatalog` before any paid request.
 
-`SwarmRequestValidator` enforces bounded options and exact Luna or Haiku selection
-at `max` effort. Version `0.11.1` adds Haiku swarms. `AgentModelCatalog.SupportsSwarm`
+`SwarmRequestValidator` enforces bounded options and exact Luna or Haiku selection.
+Luna requires max; Haiku accepts low, medium, high, xhigh, or max. Version `0.11.1`
+adds Haiku swarms; `0.11.2` adds its configurable effort. `AgentModelCatalog.SupportsSwarm`
 defines the two accepted IDs. Each provider request and the aggregate result use
 the root request's exact model. The public runner also rejects unsupported
 model/effort combinations before starting a provider request.
@@ -396,7 +398,7 @@ remain the exact reviewed leaf proposals; a merged whole-file replacement is
 used only during deterministic host application.
 
 Planning, coding, and review are separate single-turn executions of the shared
-orchestrator. All request the root model, `reasoning_effort: max`, and no tools,
+orchestrator. Each requests the root model and effort, with no tools,
 background mode, or retries. JSON contracts enforce roles rather than granting
 spawn or write functions to the model. No automatic repair run follows a
 rejection. Node failures and model mismatches prevent the root from approving.
