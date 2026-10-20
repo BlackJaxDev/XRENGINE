@@ -38,8 +38,8 @@ Call `start_agent_run` only when all of these conditions are true:
   Explicit Claude runs can select `claude-fable-5-1`, `claude-opus-5-5`,
   `claude-sonnet-5-5`, or `claude-haiku-5-5`. These models use
   `ANTHROPIC_API_KEY` and accept `low`, `medium`, `high`, `xhigh`, or `max` effort.
-  They do not change automatic GPT routing. Haiku 5.5 also supports the swarm
-  contract at `max` effort.
+  They do not change automatic GPT routing. Haiku 5.5 supports the swarm
+  contract at each of these efforts; `medium` is its default.
 - The five broker tools are callable in the current session. If they are
   missing, follow `docs/user-guide/ai/local-agent-broker.md` for setup,
   project trust, and restart requirements. Do not simulate a broker run.
@@ -78,8 +78,9 @@ Global broker concurrency remains bounded by
 ### Opt-In Hierarchical Code Swarms
 
 When the user requests a hierarchical swarm, `start_agent_run` also accepts
-`swarm` with exact `gpt-6-luna` or `claude-haiku-5-5` and
-`reasoning_effort: "max"`. Every node uses the selected root model. Keep the node,
+`swarm` with exact `gpt-6-luna` at `max`, or `claude-haiku-5-5` at
+`low`, `medium`, `high`, `xhigh`, or `max`. Haiku defaults to `medium`.
+Every node uses the selected root model and effort. Keep the node,
 depth, fanout, concurrency, output-reservation, and elapsed-time bounds narrow.
 Supply exact `allowed_paths` and any read-only `context_files`. Every node
 either decomposes/reviews or proposes one small code replacement. Agents have

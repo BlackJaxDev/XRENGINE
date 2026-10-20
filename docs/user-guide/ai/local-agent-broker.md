@@ -88,7 +88,8 @@ reasoning; GPT-6 Luna and Sol also accept `none`. GPT-6.1 Sol rejects both
 `none` and `minimal` before a paid call. Use `requested_model: "gpt-6.1-sol"`
 and `reasoning_effort: "max"` for an explicit independent worker.
 Automatic route advice continues to choose `gpt-6-sol` for ordinary work;
-hierarchical swarms accept `gpt-6-luna` or `claude-haiku-5-5` at `max`. See the official
+hierarchical swarms accept `gpt-6-luna` at `max` or `claude-haiku-5-5` at any
+approved effort. See the official
 [GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
 and [GPT-6 model guidance](https://developers.openai.com/api/docs/guides/latest-model).
 
@@ -253,11 +254,15 @@ in either mode.
 
 ## Hierarchical Code Swarms
 
-Add a `swarm` object to `start_agent_run`, with `requested_model: "gpt-6-luna"`
-or `requested_model: "claude-haiku-5-5"` and `reasoning_effort: "max"`.
+Add a `swarm` object to `start_agent_run`. Select `gpt-6-luna` at `max`, or
+`claude-haiku-5-5` at `low`, `medium`, `high`, `xhigh`, or `max`.
+Haiku defaults to `medium`; the existing Luna/max request remains supported.
 Every node uses that exact model and effort for planning, proposals, and review.
 Haiku uses `ANTHROPIC_API_KEY` and, for multi-workspace keys,
 `ANTHROPIC_WORKSPACE_ID`. A swarm never mixes providers or substitutes models.
+Each phase is one provider turn with no tools or retries. Its request carries
+no `swarm` object. Parent approval still applies to every unchanged child proposal.
+See the official [Haiku effort controls](https://platform.claude.com/docs/en/build-with-claude/effort).
 The root decomposes the objective into children. A child is either an
 orchestrator that decomposes and reviews, or a leaf that returns one small
 exact text replacement. Orchestrators never write code, and leaves cannot

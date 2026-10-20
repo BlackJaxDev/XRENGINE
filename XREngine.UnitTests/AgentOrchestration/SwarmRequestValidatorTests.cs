@@ -13,7 +13,14 @@ public class SwarmRequestValidatorTests
     public void AcceptsSupportedModelAtMaxEffort(string model)
         => Should.NotThrow(() => SwarmRequestValidator.Validate(Request(model, "max")));
 
-    [TestCase("claude-haiku-5-5", "medium")]
+    [TestCase("low")]
+    [TestCase("medium")]
+    [TestCase("high")]
+    [TestCase("xhigh")]
+    public void AcceptsApprovedHaikuEfforts(string effort)
+        => Should.NotThrow(() => SwarmRequestValidator.Validate(Request("claude-haiku-5-5", effort)));
+
+    [TestCase("claude-haiku-5-5", "none")]
     [TestCase("gpt-6-luna", "high")]
     [TestCase("claude-sonnet-5-5", "max")]
     [TestCase("claude-opus-5-5", "max")]
