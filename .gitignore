@@ -470,3 +470,7 @@ Assets/
 !docs/**/assets/
 Build/RenderBench/
 *.code-workspace
+
+# Local dependency checkouts
+/Build/Dependencies/vcpkg/
+/Build/Submodules/Flyleaf/
