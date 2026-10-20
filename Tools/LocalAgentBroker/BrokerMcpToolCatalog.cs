@@ -212,6 +212,7 @@ internal static class BrokerMcpToolCatalog
                 },
             }),
             ("swarm", SwarmSchema()),
+            ("system_instructions", StringSchema("Optional provider system instructions. The broker prepends its safety instructions.")),
             ("additional_instructions", StringSchema("Optional task-specific instructions.")));
 
     private static JsonObject SwarmSchema()
