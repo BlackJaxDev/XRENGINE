@@ -47,7 +47,7 @@ public sealed class BrokerHistoryStore
         {
             try
             {
-                string json = ReadSnapshot(path);
+                string json = ReadAtomicallyPublishedText(path);
                 BrokerHistoryRecord? record = JsonSerializer.Deserialize<BrokerHistoryRecord>(
                     json,
                     s_jsonOptions);
@@ -74,7 +74,7 @@ public sealed class BrokerHistoryStore
         {
             if (!File.Exists(_paths.SettingsPath))
                 return new BrokerUiSettings();
-            string json = ReadSnapshot(_paths.SettingsPath);
+            string json = ReadAtomicallyPublishedText(_paths.SettingsPath);
             return (JsonSerializer.Deserialize<BrokerUiSettings>(json, s_jsonOptions)
                 ?? new BrokerUiSettings()).Normalize();
         }
@@ -145,11 +145,11 @@ public sealed class BrokerHistoryStore
         => runId.Length == 32
             && runId.All(static character => char.IsAsciiHexDigit(character));
 
-    private static string ReadSnapshot(string path)
+    private static string ReadAtomicallyPublishedText(string path)
     {
-        // Writers replace files atomically. Readers must permit that replacement on Windows.
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
+        // Keep this immutable file readable while another process replaces its directory entry.
+        using var stream = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
@@ -164,7 +164,10 @@ public sealed class BrokerHistoryStore
         try
         {
             File.WriteAllText(temporaryPath, content);
-            File.Move(temporaryPath, path, overwrite: true);
+            if (File.Exists(path))
+                File.Replace(temporaryPath, path, destinationBackupFileName: null);
+            else
+                File.Move(temporaryPath, path);
         }
         finally
         {

@@ -281,7 +281,23 @@ They include the provider prompt, optional system instructions, incremental or
 terminal response text, concise run metadata, usage, and failures. Initial
 inline image data, raw context snapshots, repository/editor tool
 arguments/results, API keys, headers, and raw provider payloads are excluded.
-Writes are coalesced during streaming and flushed immediately at terminal state.
+Writes are coalesced during streaming and attempted immediately at terminal state.
+Existing JSON files use `File.Replace`; new records use `File.Move`. Readers
+share read, write, and delete access so refreshes can overlap atomic replacement.
+The publisher serializes snapshot capture and publication, preventing an older
+streaming snapshot from replacing a terminal snapshot.
+
+History write I/O and access errors remain separate from the authoritative
+provider result. The publisher emits one metadata-only stderr diagnostic per
+continuous failure, including the run ID, history path, exception type, and
+HResult. It retains a pending update, retries on subsequent updates plus a
+one-second fallback interval, and attempts a final flush during shutdown.
+Persistent write denial can leave history stale; `get_agent_run` still retains
+the original status, final text, usage, and provider diagnostics. A refresh may
+omit a record during replacement and retry it on the next pass.
+The [history persistence investigation](../../work/investigations/ai/local-agent-broker-history-2026-10-07.md)
+records the reproduced Windows failure and validation.
+
 The tray's `settings.json` supports a
 nullable idle-exit duration and a nullable terminal-record retention duration;
 null means never. It also stores whether new-prompt Windows notifications are
@@ -551,6 +567,11 @@ relationship. `BrokerConcurrencyTests` holds scripted HTTP responses open to
 confirm 100 independent runs enter together, the next run is rejected at full
 admission capacity, and overflow queued runs cancel without provider execution.
 No API requests or editor processes are used by those tests.
+
+`BrokerHistoryPersistenceTests` holds a history file open with restrictive
+Windows sharing to verify that a completed provider result remains intact and
+history recovers after the reader closes. It also overlaps atomic publication
+with 19 history readers. These tests use fake Responses HTTP events.
 
 The broker's non-paid protocol validation must also confirm that
 `editor_session` is optional and that `context_files`, `repository_access`, and
