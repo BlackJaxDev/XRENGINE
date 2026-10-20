@@ -45,6 +45,11 @@ public class AnthropicMessagesModelClientTests
         root.TryGetProperty("input", out _).ShouldBeFalse();
         root.TryGetProperty("reasoning", out _).ShouldBeFalse();
         result.OutputText.ShouldBe("done");
+        result.ProviderAttempt.ActualModel.ShouldBe("claude-haiku-5-5");
+        result.ProviderAttempt.Outcome.ShouldBe("completed");
+        result.ProviderAttempt.TerminalStatus.ShouldBe("completed");
+        result.ProviderAttempt.LastProviderEventType.ShouldBe("message_stop");
+        result.ProviderAttempt.ProviderStopReason.ShouldBe("end_turn");
     }
 
     [Test]
@@ -120,6 +125,7 @@ public class AnthropicMessagesModelClientTests
         error.Category.ShouldBe(AgentFailureCategory.Transport);
         error.ProviderAttempt.ShouldNotBeNull();
         error.ProviderAttempt.ResponseId.ShouldBe("msg_1");
+        error.Retryable.ShouldBeFalse();
     }
 
     [Test]
@@ -147,6 +153,63 @@ public class AnthropicMessagesModelClientTests
         {
             exception.ProviderAttempt.Outcome.ShouldBe("cancelled");
         }
+    }
+
+    [TestCase("max_tokens", AgentFailureCategory.BudgetExceeded, "incomplete")]
+    [TestCase("refusal", AgentFailureCategory.ProviderError, "failed")]
+    public async Task TerminalFailureKeepsVisibleTextAndUsage(string stopReason, AgentFailureCategory category, string terminal)
+    {
+        var handler = new QueueHttpMessageHandler();
+        handler.EnqueueSse(TextStream().Replace("end_turn", stopReason, StringComparison.Ordinal));
+        using var httpClient = new HttpClient(handler);
+        var client = new AnthropicMessagesModelClient(httpClient, () => "test-key");
+        AgentRunRequest run = Request().Run with
+        {
+            Objective = "Keep partial failed evidence.",
+            Budget = new AgentRunBudget { MaxTurns = 1, MaxToolCalls = 0, MaxRetries = 1, MaxOutputTokens = 16 },
+        };
+
+        AgentRunResult result = await new AgentOrchestrator(client).RunAsync("partial-test", run, EmptyAgentToolProvider.Instance);
+
+        result.Status.ShouldBe(AgentRunStatus.Failed);
+        result.Failure!.Category.ShouldBe(category);
+        result.ActualModel.ShouldBe("claude-haiku-5-5");
+        result.FinalText.ShouldBe("done");
+        result.Usage.InputTokens.ShouldBe(2);
+        result.Usage.OutputTokens.ShouldBe(2);
+        result.ProviderAttempts.Single().TerminalStatus.ShouldBe(terminal);
+        result.ProviderAttempts.Single().ProviderStopReason.ShouldBe(stopReason);
+        result.ProviderAttempts.Single().LastProviderEventType.ShouldBe("message_stop");
+        result.RetryCount.ShouldBe(0);
+        handler.RequestBodies.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public async Task AcceptedStreamErrorIsNotReissuedWhenRetryBudgetExists()
+    {
+        var handler = new QueueHttpMessageHandler();
+        handler.EnqueueSse("""
+            data: {"type":"message_start","message":{"id":"msg_failed","model":"claude-haiku-5-5","usage":{"input_tokens":7,"output_tokens":1}}}
+
+            data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+
+            """);
+        using var httpClient = new HttpClient(handler);
+        var client = new AnthropicMessagesModelClient(httpClient, () => "test-key");
+        var run = new AgentRunRequest
+        {
+            Objective = "Fail without a duplicate paid request.",
+            RequestedModel = "claude-haiku-5-5",
+            ReasoningEffort = "medium",
+            Budget = new AgentRunBudget { MaxTurns = 1, MaxToolCalls = 0, MaxRetries = 1 },
+        };
+        AgentRunResult result = await new AgentOrchestrator(client).RunAsync("stream-failure", run, EmptyAgentToolProvider.Instance);
+
+        result.Status.ShouldBe(AgentRunStatus.Failed);
+        result.ProviderAttempts.Single().ResponseId.ShouldBe("msg_failed");
+        result.Usage.TotalTokens.ShouldBe(8);
+        result.RetryCount.ShouldBe(0);
+        handler.RequestBodies.Count.ShouldBe(1);
     }
 
     [TestCase("claude-fable-5-1")]
