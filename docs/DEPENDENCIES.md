@@ -1,7 +1,7 @@
 # Dependency Inventory
 
-Generated: 2026-10-05T16:10:51-07:00
-Commit: 71ccb6a4fc7fc31647fc04f10e9c419811f68db4
+Generated: 2026-10-20T13:03:05-10:00
+Commit: 49959abd75214fcb3e6198fdd1542d6a7c2ce9f4
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
 
@@ -17,7 +17,7 @@ Notes:
 |---|---|---|---|---|
 | CoACD | Build/Submodules/CoACD | SarahWeiii | [MIT](licenses/submodules/CoACD-MIT.txt) | https://github.com/SarahWeiii/CoACD |
 | monado | Build/Submodules/monado | BlackJaxDev | [LICENSE](licenses/submodules/monado-LICENSE.txt) | https://github.com/BlackJaxDev/Monado.git |
-| OpenVR.NET | Build/Submodules/OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | https://github.com/BlackJaxDev/OpenVR.NET.git |
+| Build/Submodules/OpenVR.NET | Build/Submodules/OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/Build_Submodules_OpenVR.NET-MIT.txt) | https://github.com/BlackJaxDev/OpenVR.NET.git |
 | OscCore-NET9 | Build/Submodules/OscCore-NET9 | stella3d + BlackJaxDev (modifications) | [MIT](licenses/submodules/OscCore-NET9-MIT.txt) | https://github.com/BlackJaxDev/OscCore-NET9.git |
 | rive-sharp | Build/Submodules/rive-sharp | Rive (rive-app) | [MIT](licenses/fetched/rive-sharp-MIT.txt) | https://github.com/rive-app/rive-sharp.git |
 

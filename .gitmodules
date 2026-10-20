@@ -1,7 +1,3 @@
-[submodule "OpenVR.NET"]
-	path = Build/Submodules/OpenVR.NET
-	url = https://github.com/BlackJaxDev/OpenVR.NET.git
-
 [submodule "OscCore-NET9"]
 	path = Build/Submodules/OscCore-NET9
 	url = https://github.com/BlackJaxDev/OscCore-NET9.git
@@ -10,6 +6,7 @@
 	path = Build/Submodules/rive-sharp
 	url = https://github.com/rive-app/rive-sharp.git
 	ignore = untracked
+
 [submodule "Build/Submodules/OpenVR.NET"]
 	path = Build/Submodules/OpenVR.NET
 	url = https://github.com/BlackJaxDev/OpenVR.NET.git
