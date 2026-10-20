@@ -62,6 +62,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
 - [Local Agent Broker Validation](work/testing/ai/local-agent-broker.md)
+- [Local Agent Broker History Persistence Investigation](work/investigations/ai/local-agent-broker-history-2026-10-07.md)
 - [Animation API](developer-guides/animation/animation-api.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)

@@ -201,6 +201,13 @@ but not raw context-file contents. Repository tool arguments/results also remain
 excluded. The live provider still receives selected snapshot contents and tool
 results as described under [Cost, Data, And Security](#cost-data-and-security).
 
+History is a separate view of the run. If a file lock or write permission blocks
+an update, the broker logs a deferred-history diagnostic and retries while it
+is running. `get_agent_run` keeps the worker's original result; a history write
+error does not turn a completed API response into a failed worker. Persistent
+storage errors can leave the history view stale. Save the authoritative result
+before closing its broker process when history remains unavailable.
+
 ### Run Status And Progress Contract
 
 `get_agent_run` is the authoritative snapshot for one run; `list_agent_runs`
@@ -874,6 +881,11 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
   `use_background_mode: true`; do not silently enable it for unrelated runs.
 - **Requested and actual model differ:** treat the run as failed and report it.
   Never accept silent substitution.
+- **History write is deferred:** inspect the broker's stderr diagnostic for the
+  exact run ID, record path, exception type, and HResult. A blocking reader or
+  storage permission can prevent record replacement. The broker retries and
+  preserves the provider result; use `get_agent_run` to retrieve it. Existing
+  processes need the updated deployment before they use this behavior.
 
 ## Related Documentation
 
