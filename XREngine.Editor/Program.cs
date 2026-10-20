@@ -90,18 +90,23 @@ internal partial class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        Stopwatch processEntryStopwatch = Stopwatch.StartNew();
         ImGuiBackend.Register();
         CoACD.InstallBackend(new CoAcdNativeBackend());
         using IDisposable colliderAuthoringServices =
             PhysicsColliderAuthoringServices.Install(new CoAcdPhysicsColliderAuthoringService());
         using IDisposable editorSecretCipherServices =
             SecretCipherServices.Install(new EditorSecretCipherServices());
+        long beforeEnvironmentMs = processEntryStopwatch.ElapsedMilliseconds;
         XREnvironment.Initialize();
+        long afterEnvironmentMs = processEntryStopwatch.ElapsedMilliseconds;
         using IDisposable editorWorldHostCompositionServices =
             RuntimeWorldHostCompositionServices.Install(new EditorRuntimeWorldHostCompositionServices());
         RuntimeApplicationBootstrap.PrepareDesktopServices();
+        long afterDesktopServicesMs = processEntryStopwatch.ElapsedMilliseconds;
         using IDisposable modelAssetPipelineRegistration =
             ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
+        long afterModelPipelineMs = processEntryStopwatch.ElapsedMilliseconds;
         using IDisposable applicationServices =
             RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.Editor);
         using IDisposable editorSerializedPrefabImport =
@@ -109,7 +114,13 @@ internal partial class Program
         using IDisposable editorSceneImportServices =
             RuntimeSceneImportServices.Install(new EditorRuntimeSceneImportServices());
         using IDisposable editorThirdPartyAssetWatcher = EditorThirdPartyAssetWatcher.Install(Engine.Assets);
-        WriteBootstrapTrace("Editor process entry.");
+        processEntryStopwatch.Stop();
+        WriteBootstrapTrace(
+            $"Editor process entry. Service registrations completed in {processEntryStopwatch.Elapsed.TotalMilliseconds:F0} ms " +
+            $"(preEnv={beforeEnvironmentMs} ms, env={afterEnvironmentMs - beforeEnvironmentMs} ms, " +
+            $"desktopServices={afterDesktopServicesMs - afterEnvironmentMs} ms, " +
+            $"engineAssetsInit={afterModelPipelineMs - afterDesktopServicesMs} ms, " +
+            $"appServicesAndWatcher={processEntryStopwatch.ElapsedMilliseconds - afterModelPipelineMs} ms).");
         InstallGlobalCrashDiagnostics();
 
         if (TryRunGpuRecordLayoutCommand(args))
@@ -189,6 +200,7 @@ internal partial class Program
         // Start vr pawn switcher to allow switching between desktop and VR pawns in the editor without restarting
         EditorOpenXrPawnSwitcher.Initialize();
 
+        Stopwatch settingsLoadStopwatch = Stopwatch.StartNew();
         UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.Load(false);
         UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
         UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
@@ -202,12 +214,16 @@ internal partial class Program
         BootstrapEditorHookRegistration.Register();
         OpenXrSmokeRunController smokeRun = OpenXrSmokeRunController.Parse(args);
         smokeRun.Configure(settings);
+        settingsLoadStopwatch.Stop();
+        WriteBootstrapTrace($"UnitTestingWorldSettings loaded and configured in {settingsLoadStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
 
         // Retrieve the world, startup settings, and last game state to run the engine
+        Stopwatch initEditorStopwatch = Stopwatch.StartNew();
         InitializeEditor(
             out VRGameStartupSettings<EVRActionCategory, EVRGameAction> startupSettings,
             out GameState gameState);
-        WriteBootstrapTrace($"Editor startup settings created. Windows={startupSettings.StartupWindows.Count}, RenderLibrary={startupSettings.DefaultUserSettings?.RenderLibrary}, VRInPlace={startupSettings.RunVRInPlace}");
+        initEditorStopwatch.Stop();
+        WriteBootstrapTrace($"Editor startup settings created in {initEditorStopwatch.Elapsed.TotalMilliseconds:F0} ms. Windows={startupSettings.StartupWindows.Count}, RenderLibrary={startupSettings.DefaultUserSettings?.RenderLibrary}, VRInPlace={startupSettings.RunVRInPlace}");
 
         void BeforeWindowsCreated(GameStartupSettings settings, GameState __)
         {
@@ -223,15 +239,11 @@ internal partial class Program
             TraceBootstrapStep("BeforeCreateWindows.ApplyOpenXrPoseTimeOffsetOverride", ApplyOpenXrPoseTimeOffsetOverride);
             TraceBootstrapStep("BeforeCreateWindows.StartStartupFontPrewarm", StartStartupFontPrewarm);
             TraceBootstrapStep("BeforeCreateWindows.StartStartupTextShaderPrewarm", StartStartupTextShaderPrewarm);
-            
-            // Assign the target world AFTER all settings have been applied and BEFORE windows are created, 
-            // so that the render pipeline and other systems can be properly initialized.
+            TraceBootstrapStep("BeforeCreateWindows.EditorImGuiUI.Initialize", EditorImGuiUI.Initialize);
+
             EWorldMode worldMode = ResolveWorldMode(args);
-            Stopwatch targetWorldStopwatch = Stopwatch.StartNew();
-            TraceBootstrapStep($"BeforeCreateWindows.GetTargetWorld({worldMode})", () => settings.StartupWindows[0].TargetWorld = GetTargetWorld(worldMode));
-            targetWorldStopwatch.Stop();
-            WriteBootstrapTrace($"Target world created in {targetWorldStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
-            WriteBootstrapTrace($"BeforeCreateWindows configured target world '{settings.StartupWindows[0].TargetWorld?.Name ?? "<null>"}'.");
+            if (worldMode == EWorldMode.UnitTesting)
+                TraceBootstrapStep("BeforeCreateWindows.BootstrapRenderSettings.Apply", BootstrapRenderSettings.Apply);
 
             // MCP and profiler startup may persist editor preferences, which recomputes the effective preference
             // object. Apply unit-test-only choices last so pipeline selection observes them during window creation.
@@ -242,7 +254,30 @@ internal partial class Program
             // session overrides remain authoritative through window creation.
             TraceBootstrapStep("BeforeCreateWindows.McpServerHost.Initialize", () => McpServerHost.Initialize(args));
         }
+
+        void AfterWindowsCreated(GameStartupSettings settings, GameState __)
+        {
+            WriteBootstrapTrace("AfterCreateWindows callback entered.");
+            Engine.AfterCreateWindows -= AfterWindowsCreated;
+
+            EWorldMode worldMode = ResolveWorldMode(args);
+            Stopwatch targetWorldStopwatch = Stopwatch.StartNew();
+            XRWorld? targetWorld = null;
+            TraceBootstrapStep($"AfterCreateWindows.GetTargetWorld({worldMode})", () =>
+            {
+                targetWorld = GetTargetWorld(worldMode);
+                settings.StartupWindows[0].TargetWorld = targetWorld;
+                IRuntimeRenderWorld? renderWorld = targetWorld is null ? null : Engine.GetOrCreateRenderWorld(targetWorld);
+                foreach (XRWindow window in RuntimeEngine.Windows)
+                    window.SetWorld(renderWorld);
+                BootstrapRenderSettings.ReapplyEditorRenderStateAfterBootstrap("AfterCreateWindows target world assigned");
+            });
+            targetWorldStopwatch.Stop();
+            WriteBootstrapTrace($"Target world created in {targetWorldStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
+            WriteBootstrapTrace($"AfterCreateWindows configured target world '{targetWorld?.Name ?? "<null>"}'.");
+        }
         Engine.BeforeCreateWindows += BeforeWindowsCreated;
+        Engine.AfterCreateWindows += AfterWindowsCreated;
         try
         {
             smokeRun.Install();
@@ -1784,6 +1819,18 @@ internal partial class Program
                 throw new ArgumentException($"Unknown build platform '{platformArg}'.");
 
             settings.Platform = platform;
+
+            if (platform == EBuildPlatform.BrowserWebGPU)
+            {
+                // A target override must not carry persisted desktop launcher options into a
+                // browser build or save temporary CLI settings back to the authored project.
+                // Explicit CLI AOT requests remain intact and fail browser validation.
+                if (!publishNativeAot.HasValue)
+                    settings.PublishLauncherAsNativeAot = false;
+                if (!validateAotCompatibility.HasValue)
+                    settings.ValidateLauncherAotCompatibility = false;
+                settings.SaveSettingsBeforeBuild = false;
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(outputSubfolderArg))

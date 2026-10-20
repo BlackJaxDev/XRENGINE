@@ -1,0 +1,17 @@
+{
+  "repository": "BlackJaxDev/XRENGINE",
+  "sourceCommit": "e4a90cf2f865a08421bb68c293d27616465e1558",
+  "runId": "37386054995",
+  "runAttempt": 1,
+  "jobId": "112019576000",
+  "jobName": "Publish RollingBall with the Windows Editor CLI",
+  "artifactId": "11380253911",
+  "artifactName": "windows-editor-network-kinematic-bundle",
+  "artifactBytes": 56380647,
+  "artifactSha256": "ad562f2b62ab3c24361056ecc90aa3a9e9f1458e83eeb11213898af1e6e11f50",
+  "worldSha256": "2ad421b20b513a997227633a9e822eabbb43643be5f4bf8f894ffb9c5de8b34c",
+  "worldBytes": 2025,
+  "declaredFiles": 310,
+  "totalBytes": 11795241,
+  "packageHash": "sha256:d066014dc4294b151aedd25517c6ec9ff1061512af5c93ffde117d742839a3af"
+}

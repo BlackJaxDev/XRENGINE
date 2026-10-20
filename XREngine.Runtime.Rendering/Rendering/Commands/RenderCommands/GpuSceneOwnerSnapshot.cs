@@ -11,7 +11,8 @@ internal readonly record struct GpuSceneOwnerSnapshot(
     bool CastsShadows,
     bool ReceivesShadows,
     AABB? LocalCullingVolume,
-    Matrix4x4 CullingOffsetMatrix)
+    Matrix4x4 CullingOffsetMatrix,
+    bool HasCullingIntersectionOverride = false)
 {
     internal static GpuSceneOwnerSnapshot CaptureLive(RenderInfo? renderInfo)
     {
@@ -20,6 +21,6 @@ internal readonly record struct GpuSceneOwnerSnapshot(
 
         return new(true, 1u << info3D.Layer, info3D.CastsShadows,
             info3D.ReceivesShadows, info3D.LocalCullingVolume,
-            info3D.CullingOffsetMatrix);
+            info3D.CullingOffsetMatrix, info3D.CullingIntersectionOverride is not null);
     }
 }

@@ -73,8 +73,9 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
         }
 
         XRMaterial? material = materialOverride ?? mesh?.Material;
+        bool multisampleCoverage = ActivePipelineInstance.RenderState.AdvancedMultisampleBackground;
         string? reason = null;
-        if (material is null || optionsOverride is not null || !material.TryValidateAdvancedBackground(Stereo, out reason))
+        if (material is null || optionsOverride is not null || !material.TryValidateAdvancedBackground(Stereo, out reason, multisampleCoverage))
         {
             ReportRejection(material, optionsOverride is not null
                 ? "Per-draw state overrides have no background admission receipt."
@@ -93,7 +94,7 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
             for (int i = 0; i < mesh!.Submeshes.Count; ++i)
             {
                 XRMaterial? submaterial = mesh.Submeshes[i].Material;
-                if (submaterial is null || !submaterial.TryValidateAdvancedBackground(Stereo, out reason))
+                if (submaterial is null || !submaterial.TryValidateAdvancedBackground(Stereo, out reason, multisampleCoverage))
                 {
                     ReportRejection(submaterial, reason ?? "The background submesh has no admitted material.");
                     return false;

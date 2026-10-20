@@ -886,7 +886,7 @@ public sealed class VulkanP0ValidationTests
         batchCollector.ShouldNotContain("UIBatchTextDrawFill");
         batchCollector.ShouldContain("gpu.Mesh.CaptureUniformsOnRender = true;");
 
-        string vkMeshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs");
+        string vkMeshUniforms = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Diagnostics.cs");
         vkMeshUniforms.ShouldContain("or \"TextDebugMode\" or \"TextRenderLayer\" or \"TextRenderLayer_VTX\"");
 
         string commandBuffers = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(

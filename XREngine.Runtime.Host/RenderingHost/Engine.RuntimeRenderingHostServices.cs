@@ -129,7 +129,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public bool AllowCpuOversubscription => Engine.EffectiveSettings.AllowCpuOversubscription;
     public ERenderWorkerQos RenderWorkerQos => Engine.EffectiveSettings.RenderWorkerQos;
     public EngineExecutionTopology ExecutionTopology => RequireWorkScheduler().Topology;
-    public JobManager GeneralJobs => RequireWorkScheduler().GeneralJobs;
+    public JobManager GeneralJobs => Engine.Jobs;
     public RenderWorkDomain RenderWork => RequireWorkScheduler().Render;
     public EVulkanAllocatorBackend VulkanAllocatorBackend => RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend;
     public EVulkanSynchronizationBackend VulkanSynchronizationBackend => RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend;
@@ -187,7 +187,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public float ElapsedTime => Engine.ElapsedTime;
     public string CollectVisibleLatePolicy => Engine.Time.Timer.CollectVisibleLatePolicy.ToString();
     public ulong UpdateFrameId => Engine.Time.Timer.UpdateFrameId;
-    public ulong CollectFrameId => Engine.Time.Timer.CollectFrameId;
+    public ulong CollectFrameId => Engine.Time.Timer.IsCallerThreadLoop
+        ? Engine.Time.Timer.CallerThreadCollectionRenderFrameId
+        : Engine.Time.Timer.CollectFrameId;
     public ulong SwapFrameId => Engine.Time.Timer.SwapFrameId;
     public ulong PresentFrameId => Engine.Time.Timer.PresentFrameId;
     public long RequestedCollectGeneration => Engine.Time.Timer.RequestedCollectGeneration;
@@ -327,6 +329,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
 
     public byte[] ReadAllBytes(string filePath)
         => DirectStorageIO.ReadAllBytes(filePath);
+
+    public bool SupportsSynchronousTextureSourceWork
+        => Engine.Assets.SupportsSynchronousAssetWork;
 
     public string ResolveTextureStreamingAuthorityPath(string filePath)
         => Engine.Assets?.ResolveTextureStreamingAuthorityPath(filePath) ?? Path.GetFullPath(filePath);
@@ -505,6 +510,10 @@ internal sealed class EngineRuntimeRenderingHostServices :
     {
         if (Engine.IsRenderThread)
             return task();
+
+        if (RuntimeWorkScheduler.IsCallerThread || OperatingSystem.IsBrowser())
+            throw new InvalidOperationException(
+                "InvokeRenderThreadTask cannot wait for an off-owner render dispatch in a caller-thread host.");
 
         T? result = default;
         ExceptionDispatchInfo? exception = null;
@@ -2031,6 +2040,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
 
         if (runtimeRenderer.BackendId == RendererBackendId.Vulkan)
             return RuntimeGraphicsApiKind.Vulkan;
+
+        if (runtimeRenderer.BackendId == RendererBackendId.WebGPU)
+            return RuntimeGraphicsApiKind.WebGPU;
 
         return runtimeRenderer.BackendId == RendererBackendId.OpenGL
             ? RuntimeGraphicsApiKind.OpenGL

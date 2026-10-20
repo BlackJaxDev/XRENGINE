@@ -20,7 +20,7 @@ namespace XREngine.Components
     /// 3: Viewport's RMSI texture; 
     /// 4: Viewport's Depth texture; 
     /// </summary>
-    public class DeferredDecalComponent : XRComponent, IRenderable
+    public partial class DeferredDecalComponent : XRComponent, IRenderable
     {
         private XRMaterial? _material;
         public XRMaterial? Material
@@ -95,6 +95,14 @@ namespace XREngine.Components
                 case nameof(UseForwardOit):
                     RecreateActiveMaterial();
                     break;
+                case nameof(World):
+                case nameof(IsActive):
+                    RefreshNativeDecalRegistration();
+                    break;
+                case nameof(Material):
+                    if (IsActiveInHierarchy)
+                        RebindDecalRenderer();
+                    break;
             }
         }
 
@@ -106,6 +114,9 @@ namespace XREngine.Components
 
         private void UpdateRenderCommandMatrix()
         {
+            // Asset hydration sets box fields before attaching the component to
+            // its node. Activation/transform publication supplies the first matrix.
+            if (SceneNode is null) return;
             RenderCommandDecal.WorldMatrix = Matrix4x4.CreateScale(HalfExtents) * Transform.RenderMatrix;
             RenderInfo.CullingOffsetMatrix = Transform.RenderMatrix;
             RenderInfo.LocalCullingVolume = new AABB(-HalfExtents, HalfExtents);
@@ -146,12 +157,13 @@ namespace XREngine.Components
                 RequiredEngineUniforms = EUniformRequirements.Camera,
                 DepthTest = new DepthTest() { Enabled = ERenderParamUsage.Disabled }
             };
-            return new XRMaterial(decalVars, decalRefs, GetDefaultShader())
-            {
-                Name = "MAT_DeferredDecal",
-                RenderOptions = decalRenderParams,
-                RenderPass = (int)EDefaultRenderPass.DeferredDecals
-            };
+            XRMaterial material = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked
+                ? new PublishedDeferredDecalMaterial { Parameters = decalVars, Textures = [.. decalRefs] }
+                : new XRMaterial(decalVars, decalRefs, GetDefaultShader());
+            material.Name = "MAT_DeferredDecal";
+            material.RenderOptions = decalRenderParams;
+            material.RenderPass = (int)EDefaultRenderPass.DeferredDecals;
+            return material;
         }
 
         /// <summary>
@@ -163,6 +175,8 @@ namespace XREngine.Components
         /// <returns>The <see cref="XRMaterial"/> to be used with a <see cref="DeferredDecalComponent"/> in OIT mode.</returns>
         public static XRMaterial CreateForwardOitMaterial(XRTexture2D albedo)
         {
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                throw new NotSupportedException("WebGPU.Advanced.AuthoredDecalOitUnsupported: forward weighted OIT decals require an exact late-pass lowering.");
             XRTexture?[] decalRefs =
             [
                 null, //unused (no GBuffer albedo needed)
@@ -200,24 +214,15 @@ namespace XREngine.Components
                 ? (int)EDefaultRenderPass.WeightedBlendedOitForward
                 : (int)EDefaultRenderPass.DeferredDecals;
 
-            // If already active, rebind the mesh renderer
-            if (IsActiveInHierarchy && Material is not null)
-            {
-                RenderCommandDecal.Mesh?.Destroy();
-                RenderCommandDecal.Mesh = new XRMeshRenderer(XRMesh.Shapes.SolidBox(-Vector3.One, Vector3.One), Material);
-                RenderCommandDecal.Mesh.SettingUniforms += DecalManager_SettingUniforms;
-            }
         }
 
         protected override void OnComponentActivated()
         {
-            if (Material is null)
-                return;
-
-            RenderCommandDecal.Mesh = new XRMeshRenderer(XRMesh.Shapes.SolidBox(-Vector3.One, Vector3.One), Material);
-            RenderCommandDecal.Mesh.SettingUniforms += DecalManager_SettingUniforms;
-
+            if (_decalTeardownRequested) return;
+            RebindDecalRenderer();
+            UpdateRenderCommandMatrix();
             base.OnComponentActivated();
+            RefreshNativeDecalRegistration();
         }
 
         protected virtual void DecalManager_SettingUniforms(XRRenderProgram vtxProg, XRRenderProgram matProg)

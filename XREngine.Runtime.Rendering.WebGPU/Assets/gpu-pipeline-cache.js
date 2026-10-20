@@ -29,6 +29,11 @@ export class GpuPipelineCache {
         this.device = device;
         this.capacity = capacity;
         this.entries = new Map();
+        this.shaderModules = new Map();
+        this.shaderModuleKeyBytes = 0;
+        this.shaderModuleKeyLimit = 8 * 1024 * 1024;
+        this.shaderModuleHits = 0;
+        this.shaderModuleMisses = 0;
         this.identities = new WeakMap();
         this.nextIdentity = 1;
         this.generation = 1;
@@ -108,6 +113,64 @@ export class GpuPipelineCache {
     getRenderPipelineAsync(descriptor) { return this._get('render', descriptor, value => this.device.createRenderPipelineAsync(value), true); }
     getComputePipelineAsync(descriptor) { return this._get('compute', descriptor, value => this.device.createComputePipelineAsync(value), true); }
 
-    clear() { this.generation++; this.entries.clear(); }
+    _createUncachedShaderModule(create) {
+        try { return { value: Promise.resolve(create()), reused: false }; }
+        catch (error) { return { value: Promise.reject(error), reused: false }; }
+    }
+
+    /** The creator supplies the complete scoped preparation, including compilation diagnostics. */
+    getShaderModuleAsync(descriptor, create) {
+        if (this.disposed) throw new Error('Pipeline cache is disposed.');
+        if (!descriptor || Object.getPrototypeOf(descriptor) !== Object.prototype ||
+            Object.keys(descriptor).some(key => key !== 'code' && key !== 'label') ||
+            Object.getOwnPropertySymbols(descriptor).length !== 0 ||
+            typeof descriptor.code !== 'string' || typeof descriptor.label !== 'string')
+            throw new TypeError('Unsupported shader module descriptor.');
+        const key = JSON.stringify([descriptor.code, descriptor.label]);
+        const bytes = key.length * 2;
+        const cached = this.shaderModules.get(key);
+        if (cached) {
+            this.shaderModuleHits++;
+            this.shaderModules.delete(key);
+            this.shaderModules.set(key, cached);
+            return { value: cached.value, reused: true };
+        }
+        this.shaderModuleMisses++;
+        // Oversized sources and a cache occupied entirely by pending work still compile.
+        // Neither case may reduce the renderer's existing preparation concurrency.
+        if (bytes > this.shaderModuleKeyLimit) return this._createUncachedShaderModule(create);
+        while (this.shaderModules.size >= this.capacity || this.shaderModuleKeyBytes + bytes > this.shaderModuleKeyLimit) {
+            let removed = false;
+            for (const [oldKey, entry] of this.shaderModules) {
+                if (entry.pending) continue;
+                this.shaderModules.delete(oldKey);
+                this.shaderModuleKeyBytes -= entry.bytes;
+                removed = true;
+                break;
+            }
+            if (!removed) return this._createUncachedShaderModule(create);
+        }
+        const generation = this.generation;
+        const entry = { value: null, bytes, pending: true };
+        // Start the creator synchronously so its native call is enclosed by its own error scopes.
+        try { entry.value = Promise.resolve(create()).then(value => {
+            if (this.disposed || this.generation !== generation)
+                throw new Error('Shader module completed for an obsolete cache.');
+            entry.pending = false;
+            return value;
+        }, error => {
+            if (this.shaderModules.get(key) === entry) {
+                this.shaderModules.delete(key);
+                this.shaderModuleKeyBytes -= bytes;
+            }
+            throw error;
+        }); }
+        catch (error) { return { value: Promise.reject(error), reused: false }; }
+        this.shaderModules.set(key, entry);
+        this.shaderModuleKeyBytes += bytes;
+        return { value: entry.value, reused: false };
+    }
+
+    clear() { this.generation++; this.entries.clear(); this.shaderModules.clear(); this.shaderModuleKeyBytes = 0; }
     dispose() { this.clear(); this.disposed = true; this.device = undefined; }
 }

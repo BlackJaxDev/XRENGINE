@@ -14,6 +14,7 @@ public interface IPhysicsChainComputeSource
     Guid ID { get; }
     IRuntimeWorldContext? World { get; }
     PhysicsChainRuntimeHandle RuntimeHandle { get; }
+    long ReadbackSourceGeneration => 0L;
     IPhysicsChainReadbackCoordinator? ReadbackCoordinator { get; }
     int UpdateMode { get; }
     bool UseBatchedDispatcher { get; }
@@ -28,6 +29,14 @@ public interface IPhysicsChainComputeSource
         ReadOnlySpan<GPUPhysicsChainDispatcher.GPUParticleData> readbackData,
         int generation,
         long submissionId);
+    /// <summary>Updates palette bindings from the accepted input generation.</summary>
+    void AcceptGpuDrivenBoneBindings(
+        ReadOnlySpan<PhysicsChainGpuBone> bones,
+        int boneStructureSignature,
+        int particleStateVersion,
+        bool effectiveGpuDrivenSkinning) { }
+    /// <summary>Applies a renderer-route change without advancing the simulation.</summary>
+    bool RefreshGpuDrivenBoneBindings() => false;
     void AppendBatchedGpuDrivenBonePaletteBindings(
         int particleBaseOffset,
         List<GPUPhysicsChainDispatcher.GpuDrivenRendererPaletteBinding> bindings);

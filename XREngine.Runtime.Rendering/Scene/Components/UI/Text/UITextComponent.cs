@@ -55,10 +55,28 @@ namespace XREngine.Rendering.UI
     /// </remarks>
     public class UITextComponent : UIRenderableComponent
     {
+        private static bool UseWebGpuBatchOnly =>
+            RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
+            AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+
         #region Construction
         public UITextComponent()
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward;
+            RenderCommand3D.Instances = 0;
+            RenderCommand2D.Instances = 0;
+        }
+
+        private bool HasAuthoredOrMaterializedText
+            => !string.IsNullOrEmpty(_text) || Mesh is not null || _glyphs.Count > 0;
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            // Cooked component hydration does not raise Text/Font property notifications.
+            // Resolve the preloaded font and build glyph layout after transform wiring.
+            if (!string.IsNullOrEmpty(Text))
+                UpdateText(forceRemake: false);
         }
 
         #endregion
@@ -147,6 +165,14 @@ namespace XREngine.Rendering.UI
         {
             get => _font;
             set => SetField(ref _font, value);
+        }
+
+        private string? _publishedFontAssetPath;
+        /// <summary>Portable cooked font identity set by the browser publisher and resolved before UI activation.</summary>
+        public string? PublishedFontAssetPath
+        {
+            get => _publishedFontAssetPath;
+            set => SetField(ref _publishedFontAssetPath, value);
         }
 
         private bool _animatableTransforms = false;
@@ -346,7 +372,7 @@ namespace XREngine.Rendering.UI
             switch (e.PropertyName)
             {
                 case nameof(UIBoundableTransform.ActualSize):
-                    if (BoundsAffectGlyphLayout())
+                    if (HasAuthoredOrMaterializedText && BoundsAffectGlyphLayout())
                         UpdateText(false, false);
                     break;
             }
@@ -392,8 +418,8 @@ namespace XREngine.Rendering.UI
                 if (string.IsNullOrEmpty(Text))
                     return 0.0f;
 
-                Font ??= FontGlyphSet.LoadDefaultUIFont();
-                return MeasureWidth(Text, Font, FontSize ?? 30.0f);
+                _font ??= FontGlyphSet.LoadDefaultUIFont();
+                return MeasureWidth(Text, _font, FontSize ?? 30.0f);
             }
 
             return _glyphs.Max(g => g.transform.X + g.transform.Z);
@@ -416,6 +442,20 @@ namespace XREngine.Rendering.UI
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            // YAML assigns properties before ComponentsSerialized gives the component an owner.
+            // OnComponentActivated builds the authored text after its transform is wired.
+            if (SceneNode is null)
+                return;
+
+            if (propName == nameof(GlyphRelativeTransforms))
+            {
+                MarkGlyphTransformsChanged();
+                return;
+            }
+
+            if (!HasAuthoredOrMaterializedText)
+                return;
+
             switch (propName)
             {
                 case nameof(Font):
@@ -425,9 +465,6 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(Text):
                     UpdateText(false);
-                    break;
-                case nameof(GlyphRelativeTransforms):
-                    MarkGlyphTransformsChanged();
                     break;
                 case nameof(RenderPass):
                     {
@@ -505,10 +542,10 @@ namespace XREngine.Rendering.UI
         /// <param name="forceRemake"></param>
         protected virtual void UpdateText(bool forceRemake, bool invalidateLayout = true)
         {
-            Font ??= FontGlyphSet.LoadDefaultUIFont();
+            _font ??= FontGlyphSet.LoadDefaultUIFont();
             //Task.Run(() =>
             //{
-                VerifyCreated(forceRemake, Font.Atlas);
+                VerifyCreated(forceRemake, _font.Atlas);
                 uint count;
                 using (_glyphLock.EnterScope())
                 {
@@ -521,12 +558,19 @@ namespace XREngine.Rendering.UI
                         h = float.MaxValue;
                     float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
                     float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
-                    Font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, glyphSpacing, DefaultLineSpacing + outlineSpacing);
+                    _font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, glyphSpacing, DefaultLineSpacing + outlineSpacing);
                     AlignQuads(tfm, w, h);
                     count = (uint)(_glyphs?.Count ?? 0);
                 }
                 ResizeGlyphCount(count, invalidateLayout);
             //});
+        }
+
+        /// <summary>Rebuilds attached text after a restore changes its value without property notifications.</summary>
+        internal void RefreshTextLayoutAfterSuppressedChange()
+        {
+            if (SceneNode is not null)
+                UpdateText(forceRemake: false);
         }
 
         private float ResolveLayoutSpacingForOutputPixels(float outputSpacing)
@@ -622,6 +666,11 @@ namespace XREngine.Rendering.UI
         /// <param name="atlas"></param>
         private void VerifyCreated(bool forceRemake, XRTexture2D? atlas)
         {
+            // Browser screen text is rendered by the shared bitmap batch. Building this
+            // legacy per-component mesh would synchronously load desktop GLSL stages.
+            if (UseWebGpuBatchOnly)
+                return;
+
             var mesh = Mesh;
             if ((!forceRemake && mesh is not null) || atlas is null)
                 return;
@@ -650,6 +699,9 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         protected virtual XRMaterial CreateMaterial(XRTexture2D atlas)
         {
+            if (UseWebGpuBatchOnly)
+                throw new NotSupportedException("WebGPU.UI.IndividualTextUnsupported: screen bitmap text must use the shared UI batch.");
+
             string fragmentShaderName = Font?.AtlasType switch
             {
                 EFontAtlasType.Mtsdf => "TextMtsdfScreen.fs",
@@ -992,22 +1044,29 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public override bool SupportsBatchedRendering
             => !DisableBatching &&
-               !ClipToBounds &&
-               !AnimatableTransforms;
+               (!ClipToBounds || UseWebGpuBatchOnly) &&
+               !AnimatableTransforms &&
+               (!UseWebGpuBatchOnly ||
+                NonVertexShadersOverride is null &&
+                UIBatchCollector.HasWebGpuRasterProfile(RenderParameters));
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
+            if (string.IsNullOrEmpty(Text))
+                return true;
+
             var font = Font;
             if (font is null || font.Atlas is not { } atlas)
-                return false; // Font not loaded yet — fall back to individual rendering
+                return UseWebGpuBatchOnly &&
+                    string.IsNullOrEmpty(Text);
 
             using (_glyphLock.EnterScope())
             {
                 if (_glyphs.Count == 0)
-                    return false; // No glyphs — fall back to individual rendering
+                    return true;
 
                 var tfm = BoundableTransform;
-                var worldMatrix = GetRenderWorldMatrix(tfm);
+                var worldMatrix = GetRenderCanvasMatrix(tfm);
                 var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A);
                 var outlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A);
                 var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
@@ -1030,7 +1089,8 @@ namespace XREngine.Rendering.UI
                     font.DistanceRangeMiddle,
                     MsdfFillBias,
                     (int)BatchedDebugMode,
-                    _glyphs);
+                    _glyphs,
+                    UIClipRegion.ResolveCrop(tfm, ClipToBounds));
             }
             return true;
         }

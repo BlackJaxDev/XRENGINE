@@ -8,12 +8,22 @@ namespace XREngine.Scene.Physics.Jolt
     // Jolt Actor base class
     public abstract class JoltActor : IAbstractPhysicsActor
     {
+        protected JoltActor(JoltScene allocationOwner, BodyID bodyId)
+        {
+            AllocationOwner = allocationOwner ?? throw new ArgumentNullException(nameof(allocationOwner));
+            BodyID = bodyId;
+        }
+
         public BodyID BodyID { get; protected set; }
         public JoltScene? Scene { get; private set; }
+        internal JoltScene? AllocationOwner { get; private set; }
+
+        /// <summary>Whether the owning native physics system has released this body.</summary>
+        public bool IsDestroyed { get; private set; }
 
         public virtual void Destroy(bool wakeOnLostTouch = false)
         {
-            Scene?.DestroyActor(this);
+            AllocationOwner?.DestroyActor(this);
         }
 
         internal virtual void OnAddedToScene(JoltScene scene)
@@ -26,14 +36,28 @@ namespace XREngine.Scene.Physics.Jolt
             Scene = null;
         }
 
+        internal void OnNativeBodyDestroyed()
+        {
+            Scene = null;
+            AllocationOwner = null;
+            BodyID = BodyID.Invalid;
+            IsDestroyed = true;
+        }
+
         public abstract XRComponent? GetOwningComponent();
     }
 
     // Jolt Rigid Actor base class
     public abstract class JoltRigidActor : JoltActor, IAbstractRigidPhysicsActor
     {
+        protected JoltRigidActor(JoltScene allocationOwner, BodyID bodyId)
+            : base(allocationOwner, bodyId)
+        {
+        }
+
         private JoltShapeMetadata? _shapeMetadata;
 
+        public abstract XRComponent? OwningComponent { get; set; }
         public abstract (Vector3 position, Quaternion rotation) Transform { get; }
         public abstract Vector3 LinearVelocity { get; }
         public abstract Vector3 AngularVelocity { get; }

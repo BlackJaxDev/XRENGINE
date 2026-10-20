@@ -71,7 +71,8 @@ internal sealed partial class VulkanCommandRuntime
                             operationIndex,
                             recordingState.CurrentPrimaryOperationRecorded);
                     }
-                    if (recordingState.CommandChainPublicationDeferred)
+                    if (recordingState.CommandChainPublicationDeferred ||
+                        recordingState.FailureKind != EVulkanCommandRecordingFailureKind.None)
                         return false;
                     continue;
                 }
@@ -108,7 +109,8 @@ internal sealed partial class VulkanCommandRuntime
                         operationIndex,
                         recordingState.CurrentPrimaryOperationRecorded);
                 }
-                if (recordingState.CommandChainPublicationDeferred)
+                if (recordingState.CommandChainPublicationDeferred ||
+                    recordingState.FailureKind != EVulkanCommandRecordingFailureKind.None)
                     return false;
             }
             catch (Exception exception)
@@ -337,12 +339,18 @@ internal sealed partial class VulkanCommandRuntime
             throw new VulkanPlanPreconditionException(
                 "Advanced visibility operation reached native recording without admitted set-1 and canonical scene states.");
         }
-        if (payload.EarlyVisibilityProgram is not { IsLinked: true } early ||
+        if (payload.BoundsPatchProgram is not { IsLinked: true } patch ||
+            payload.EarlyVisibilityProgram is not { IsLinked: true } early ||
             payload.BuildIndirectProgram is not { IsLinked: true } indirect ||
+            payload.EarlyIndexedGroupFinalizeProgram is not { IsLinked: true } groupFinalize ||
+            patch.LinkGeneration != payload.BoundsPatchLinkGeneration ||
             early.LinkGeneration != payload.EarlyVisibilityLinkGeneration ||
             indirect.LinkGeneration != payload.BuildIndirectLinkGeneration ||
+            groupFinalize.LinkGeneration != payload.EarlyIndexedGroupFinalizeLinkGeneration ||
+            payload.BoundsPatchPipeline.Handle == 0 ||
             payload.EarlyVisibilityPipeline.Handle == 0 ||
-            payload.BuildIndirectPipeline.Handle == 0)
+            payload.BuildIndirectPipeline.Handle == 0 ||
+            payload.EarlyIndexedGroupFinalizePipeline.Handle == 0)
         {
             throw new VulkanPlanPreconditionException(
                 "Advanced visibility compute pipeline closure changed after frame-plan sealing.");
@@ -359,6 +367,41 @@ internal sealed partial class VulkanCommandRuntime
         // Their zeroed per-frame buffers have no payload work to dispatch here.
         if (groups == 0u)
             return info.OperationIndex;
+
+        if (payload.Input.BoundsPage.Token.IsValid)
+        {
+            if (payload.State.BoundsPageToken != payload.Input.BoundsPage.Token ||
+                !XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.Instance.TryValidateOutputPage(
+                    payload.State.BoundsPageToken, out _) ||
+                !payload.State.BoundsAtlas.IsValid ||
+                !payload.State.BoundsMetadata.IsValid ||
+                !ResourceRuntime.TryValidateNativeBufferRange(payload.State.BoundsAtlas, out _) ||
+                !ResourceRuntime.TryValidateNativeBufferRange(payload.State.BoundsMetadata, out _))
+                throw new VulkanPlanPreconditionException("The physics-chain bounds output page changed before native recording.");
+
+            TrackCommandBufferResource(state.CommandBuffer,
+                new(ObjectType.Buffer, payload.State.BoundsAtlas.Buffer.Handle),
+                "Advanced.Visibility.PhysicsBoundsAtlas", payload.State.BoundsAtlas.NativeGeneration);
+            TrackCommandBufferResource(state.CommandBuffer,
+                new(ObjectType.Buffer, payload.State.BoundsMetadata.Buffer.Handle),
+                "Advanced.Visibility.PhysicsBoundsMetadata", payload.State.BoundsMetadata.NativeGeneration);
+
+            CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.PhysicsBoundsPatch");
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                payload.BoundsPatchPipeline);
+            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                PipelineBindPoint.Compute, patch.PipelineLayout, in payload);
+            PushConstantsTracked(state.CommandBuffer, patch.PipelineLayout,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0u,
+                new AdvancedVisibilityPreparationPushConstants(
+                    payload.State.PayloadCapacity,
+                    payload.Input.BoundsPage.ProducerEpoch,
+                    payload.Input.BoundsPage.PageGeneration,
+                    0u));
+            Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
+            CmdEndLabel(state.CommandBuffer);
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+        }
 
         for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
         {
@@ -402,6 +445,27 @@ internal sealed partial class VulkanCommandRuntime
             Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
             CmdEndLabel(state.CommandBuffer);
         }
+        if (payload.State.IndexedInstanceGroupCount != 0u)
+        {
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+            uint groupWorkgroups = DivideRoundUp(payload.State.IndexedInstanceGroupCount, 256u);
+            for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+            {
+                if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
+                    throw new VulkanPlanPreconditionException("An indexed group has no sealed early view segment.");
+                BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                    payload.EarlyIndexedGroupFinalizePipeline);
+                BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                    PipelineBindPoint.Compute, groupFinalize.PipelineLayout, in payload);
+                PushConstantsTracked(state.CommandBuffer, groupFinalize.PipelineLayout,
+                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0u,
+                    new AdvancedVisibilityPreparationPushConstants(
+                        viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+                Api.CmdDispatch(state.CommandBuffer, groupWorkgroups, 1u, 1u);
+            }
+            EmitMemoryBarrierMask(state.CommandBuffer,
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+        }
         return info.OperationIndex;
     }
 
@@ -414,10 +478,13 @@ internal sealed partial class VulkanCommandRuntime
             payload.LateTargetClosure is not { IsRecordingReady: true } closure ||
             payload.BuildDepthPyramidProgram is not { IsLinked: true } depth ||
             payload.LateVisibilityProgram is not { IsLinked: true } late ||
+            payload.LateIndexedGroupFinalizeProgram is not { IsLinked: true } lateGroupFinalize ||
             depth.LinkGeneration != payload.BuildDepthPyramidLinkGeneration ||
             late.LinkGeneration != payload.LateVisibilityLinkGeneration ||
+            lateGroupFinalize.LinkGeneration != payload.LateIndexedGroupFinalizeLinkGeneration ||
             payload.BuildDepthPyramidPipeline.Handle == 0 ||
-            payload.LateVisibilityPipeline.Handle == 0)
+            payload.LateVisibilityPipeline.Handle == 0 ||
+            payload.LateIndexedGroupFinalizePipeline.Handle == 0)
         {
             throw new VulkanPlanPreconditionException("Advanced late visibility reached recording without its sealed compute, image, and descriptor closure.");
         }
@@ -498,6 +565,22 @@ internal sealed partial class VulkanCommandRuntime
                     Stopwatch.GetElapsedTime(testRecordStart).TotalMilliseconds);
             }
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+            if (payload.State.IndexedInstanceGroupCount != 0u)
+            {
+                BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                    payload.LateIndexedGroupFinalizePipeline);
+                BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                    PipelineBindPoint.Compute, lateGroupFinalize.PipelineLayout, in payload,
+                    closure.DescriptorSets![closure.DescriptorIndex(viewIndex, 1)]);
+                PushConstantsTracked(state.CommandBuffer, lateGroupFinalize.PipelineLayout,
+                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0u,
+                    new AdvancedVisibilityPreparationPushConstants(
+                        viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+                Api.CmdDispatch(state.CommandBuffer,
+                    DivideRoundUp(payload.State.IndexedInstanceGroupCount, 256u), 1u, 1u);
+                EmitMemoryBarrierMask(state.CommandBuffer,
+                    EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            }
             const uint counterByteLength = 152u;
             GpuDiagnosticReadbackPlanNode counterNode = new(
                 (ulong)payload.State.Counters.Buffer.Handle,
@@ -970,27 +1053,35 @@ internal sealed partial class VulkanCommandRuntime
                 records[0].VisibilityGeometryClosure;
             VulkanAdvancedScenePublicationState sealedSceneState =
                 payload.SceneState;
+            VulkanVisibilityPreparedVertexSource deformedVertices =
+                bins.VisibilityGeometrySources.CurrentVertices;
+            VulkanVisibilityPreparedVertexSource boundVertices =
+                geometryClosure.ResolveVertexSource(in deformedVertices);
             using (VulkanCpuStageScope validationStage = new(
                        _frameTelemetry,
                        EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation))
             {
-                for (int recordIndex = 0; recordIndex < records.Length; ++recordIndex)
+                // The records of one bin share the index slice and vertex source of
+                // the bin key, and they are frozen after the seal validated each one.
+                // One check of the bin covers its members: the stream must be bound
+                // to this scene publication, and the bound sources must be live.
+                if (bins.BoundSceneNativeGeneration != sealedSceneState.NativeGeneration)
                 {
-                    VulkanVisibilityGeometryRecordClosure recordClosure =
-                        records[recordIndex].VisibilityGeometryClosure;
-                    string closureReason =
-                        "the geometry range does not share its bin publication";
-                    if (!recordClosure.PreparedVertexSource.Matches(
-                            geometryClosure.PreparedVertexSource) ||
-                        !recordClosure.IndexSlice.Matches(
-                            geometryClosure.IndexSlice) ||
-                        !recordClosure.TryValidate(
-                            ResourceRuntime,
-                            in sealedSceneState,
-                            out closureReason))
-                    {
-                        throw new VulkanPlanPreconditionException(closureReason);
-                    }
+                    throw new VulkanPlanPreconditionException(
+                        "the visibility stream is not bound to the scene publication of this frame");
+                }
+                if (!geometryClosure.TryValidate(
+                        ResourceRuntime,
+                        in sealedSceneState,
+                        in deformedVertices,
+                        out string closureReason))
+                {
+                    throw new VulkanPlanPreconditionException(closureReason);
+                }
+                if (!meshlet && native.GetVertexBuffer(0).Handle != boundVertices.Buffer.Handle)
+                {
+                    throw new VulkanPlanPreconditionException(
+                        "the visibility bin header does not bind the vertex source of its records");
                 }
             }
             if (!meshlet)
@@ -1006,7 +1097,7 @@ internal sealed partial class VulkanCommandRuntime
                         state.CommandBuffer,
                         native.GetVertexBinding(bindingIndex),
                         native.GetVertexBuffer(bindingIndex),
-                        geometryClosure.PreparedVertexSource.Offset);
+                        boundVertices.Offset);
                 }
                 BindIndexBufferTracked(
                     state.CommandBuffer,
@@ -1028,7 +1119,8 @@ internal sealed partial class VulkanCommandRuntime
                     0u,
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
-                        (uint)indirectRange.Key.Producer,
+                        (uint)indirectRange.Key.Producer |
+                            (payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 8u : 0u),
                         viewIndex,
                         1u));
                 RecordAdvancedVisibilityCpuDirect(
@@ -1046,7 +1138,8 @@ internal sealed partial class VulkanCommandRuntime
                     0u,
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
-                        (uint)indirectRange.Key.Producer,
+                        (uint)indirectRange.Key.Producer |
+                            (payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 8u : 0u),
                         viewIndex,
                         1u));
             }
@@ -1060,7 +1153,8 @@ internal sealed partial class VulkanCommandRuntime
                     0u,
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
-                        (uint)indirectRange.Key.Producer,
+                        (uint)indirectRange.Key.Producer |
+                            (payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster ? 8u : 0u),
                         viewIndex,
                         1u));
             }
@@ -1373,7 +1467,8 @@ internal sealed partial class VulkanCommandRuntime
         }
         else
         {
-            payload.Fence.Fail();
+            payload.Fence.Fail(EGpuFenceFailureSite.RequiredProducerMissing,
+                EGpuFenceNativeSubmission.NotCalled);
             state.FrameOpsRequireRerecordLocal = true;
             throw new VulkanPlanPreconditionException(
                 "A required GPU producer operation was not recorded; the partial primary command buffer must not be submitted.");
@@ -1614,8 +1709,19 @@ internal sealed partial class VulkanCommandRuntime
             BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         }
         int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
-        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot);
+        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot, out string failureReason, out bool pipelineUnavailable);
         state.CurrentPrimaryOperationRecorded = recorded;
+        if (!recorded && failureReason.Length > 0)
+        {
+            // Downstream passes must not publish retained intermediate images
+            // as the output of this accepted frame.
+            if (pipelineUnavailable)
+                InvalidatePrimaryGraphicsPipelineAdmission(ref state);
+            state.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+            state.RecordingDeferredReason =
+                $"Mesh draw did not record. pass={info.PassIndex} target='{target?.Name ?? "<swapchain>"}' reason={failureReason}";
+            return info.OperationIndex;
+        }
         int originalIndex = state.Ops.GetHeader(info.OperationIndex).OriginalIndex;
         if (IsTemporalResolveProducer(originalIndex))
         {
@@ -1806,13 +1912,13 @@ internal sealed partial class VulkanCommandRuntime
         EmitIndirectDrawRunReadBarrier(ref state);
         if (info.BeginsRendering) BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         CmdBeginLabel(state.CommandBuffer, "IndirectDraw");
-        bool recorded = RecordIndirectDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, info.OperationIndex);
+        bool recorded = RecordIndirectDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, info.OperationIndex, out string failureReason);
         CmdEndLabel(state.CommandBuffer);
         state.CurrentPrimaryOperationRecorded = recorded;
         if (!recorded)
         {
             if (state.Policy.ReadinessPolicy == ERenderOutputReadinessPolicy.BlockForExact)
-                throw new VulkanPlanPreconditionException("An indirect draw required by an exact output could not bind its prepared material and mesh state.");
+                throw new VulkanPlanPreconditionException($"An indirect draw required by an exact output could not bind its prepared material and mesh state: {failureReason}.");
             return info.OperationIndex;
         }
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectRecordingMode(false, false, 1);

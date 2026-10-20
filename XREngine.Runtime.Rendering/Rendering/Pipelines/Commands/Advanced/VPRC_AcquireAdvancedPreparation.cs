@@ -34,6 +34,8 @@ public sealed class VPRC_AcquireAdvancedPreparation : ViewportRenderCommand
         LastPublication = AdvancedSharedPreparationService.Instance.Acquire(
             world,
             state.FrameViewSet,
-            consumers);
+            consumers,
+            ActivePipelineInstance.ActiveMeshRenderCommands
+                .RenderingBackendReadyPackage.SubmissionResolution.Resolved);
     }
 }

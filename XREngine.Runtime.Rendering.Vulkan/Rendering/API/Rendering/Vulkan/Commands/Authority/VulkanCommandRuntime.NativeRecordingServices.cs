@@ -370,7 +370,8 @@ internal sealed partial class VulkanCommandRuntime
                     out List<VulkanTimelineGpuFence>? existing))
             {
                 for (int markerIndex = 0; markerIndex < existing.Count; markerIndex++)
-                    existing[markerIndex].Fail();
+                    existing[markerIndex].Fail(EGpuFenceFailureSite.CommandBufferReuse,
+                        EGpuFenceNativeSubmission.Unknown);
                 existing.Clear();
             }
             RegisterSubmissionMarkersNoLock(commandBuffer, frameOps);
@@ -404,9 +405,12 @@ internal sealed partial class VulkanCommandRuntime
                 // structural submission markers. Their original artifact is
                 // deliberately one-shot; reject any attempted reuse rather than
                 // transferring evidence from a prior recording generation.
-                marker.Fence.Fail();
+                marker.Fence.SetCommandBuffer((ulong)commandBuffer.Handle);
+                marker.Fence.Fail(EGpuFenceFailureSite.RequiredProducerReuse,
+                    EGpuFenceNativeSubmission.Unknown);
                 continue;
             }
+            marker.Fence.SetCommandBuffer((ulong)commandBuffer.Handle);
             markers.Add(marker.Fence);
         }
     }
@@ -543,7 +547,12 @@ internal sealed partial class VulkanCommandRuntime
             }
         }
 
-        Format[] colorFormats = colorCount == 0 ? [] : new Format[colorCount];
+        // Use stack storage for the supported color count. A larger count uses a heap array, so
+        // the signature constructor still throws its out-of-range exception for that count.
+        Span<Format> colorFormats = colorCount <= DynamicRenderingFormatSignature.MaxColorAttachmentCount
+            ? stackalloc Format[DynamicRenderingFormatSignature.MaxColorAttachmentCount]
+            : new Format[colorCount];
+        colorFormats = colorFormats[..colorCount];
         int colorIndex = 0;
         for (int index = 0; index < signatures.Length; index++)
             if (signatures[index].Role == AttachmentRole.Color)
@@ -684,7 +693,8 @@ internal sealed partial class VulkanCommandRuntime
                 return;
             }
             for (int index = 0; index < markers.Count; index++)
-                markers[index].Fail();
+                markers[index].Fail(EGpuFenceFailureSite.CommandBufferReuse,
+                    EGpuFenceNativeSubmission.Unknown);
         }
     }
 
@@ -1601,6 +1611,7 @@ internal sealed partial class VulkanCommandRuntime
                     markers);
             }
 
+            fence.SetCommandBuffer((ulong)commandBuffer.Handle);
             markers.Add(fence);
         }
     }

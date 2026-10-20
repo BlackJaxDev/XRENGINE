@@ -35,6 +35,9 @@ namespace XREngine.Input.Devices
         }
         //public Rectangle? WrapBounds { get; set; } = null;
         protected internal void Tick(float x, float y)
+            => Tick(x, y, null, 0);
+
+        internal void Tick(float x, float y, InputDevice? device, ulong revision)
         {
             float dX, dY;
             //if (WrapBounds is not null)
@@ -50,8 +53,9 @@ namespace XREngine.Input.Devices
                 dX = x - _lastX;
                 dY = y - _lastY;
             //}
-            PerformAction(EMouseMoveType.Absolute, x, y);
-            PerformAction(EMouseMoveType.Relative, dX, -dY);
+            ExecuteList(x, y, _onCursorUpdate[(int)EMouseMoveType.Absolute], device, revision);
+            if (device is null || revision == device.InputDispatchRevision)
+                ExecuteList(dX, -dY, _onCursorUpdate[(int)EMouseMoveType.Relative], device, revision);
             _lastX = x;
             _lastY = y;
         }
@@ -80,14 +84,17 @@ namespace XREngine.Input.Devices
         }
 
         private static void ExecuteList(float x, float y, List<DelCursorUpdate?>? list)
+            => ExecuteList(x, y, list, null, 0);
+
+        private static void ExecuteList(float x, float y, List<DelCursorUpdate?>? list, InputDevice? device, ulong revision)
         {
             if (list is null)
                 return;
 
             try
             {
-                foreach (var action in list)
-                    action?.Invoke(x, y);
+                for (int i = 0; i < list.Count && (device is null || revision == device.InputDispatchRevision); i++)
+                    list[i]?.Invoke(x, y);
             }
             catch (Exception)
             {

@@ -681,8 +681,18 @@ namespace XREngine.Rendering
 
         private bool EnsureLayoutResourcesReady()
         {
-            if (!TryGetLayoutResourceIssue(this, out _))
+            if (!TryGetLayoutResourceIssue(this, out string? issue))
                 return true;
+
+            try
+            {
+                RuntimeAssetReadServices.EnsureHostFileAccess("Font layout recovery");
+            }
+            catch (NotSupportedException error)
+            {
+                throw new NotSupportedException(
+                    $"Font.CookedLayoutMissing: '{OriginalPath ?? FilePath ?? Name ?? ID.ToString()}' has {issue}; load a cooked font with its glyph table and bitmap atlas before layout.", error);
+            }
 
             string recoveryKey = !string.IsNullOrWhiteSpace(OriginalPath)
                 ? OriginalPath!
@@ -1037,10 +1047,7 @@ namespace XREngine.Rendering
         }
 
         public static FontGlyphSet LoadDefaultFontBitmap()
-            => LoadEngineFont(
-                RuntimeEngine.Rendering.Settings.DefaultFontFolder,
-                RuntimeEngine.Rendering.Settings.DefaultFontFileName,
-                CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize));
+            => ResolveDefaultBitmapFont();
 
         public static FontGlyphSet LoadDefaultUIFont()
                 => LoadDefaultUIFontBitmap();
@@ -1054,10 +1061,7 @@ namespace XREngine.Rendering
             ?? LoadDefaultUIFontBitmap();
 
         public static FontGlyphSet LoadDefaultUIFontBitmap()
-            => LoadEngineFont(
-                RuntimeEngine.Rendering.Settings.DefaultFontFolder,
-                    RuntimeEngine.Rendering.Settings.DefaultFontFileName,
-                CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize));
+            => ResolveDefaultBitmapFont();
 
         public static FontGlyphSet LoadDefaultUIFontMtsdf()
             => LoadEngineFont(
@@ -1126,6 +1130,9 @@ namespace XREngine.Rendering
             }
         }
 
+        private const uint FastBinaryFontCacheMagic = 0x464E5442u;
+        private const int FastBinaryFontCacheVersion = 1;
+
         private static FontGlyphSet LoadEngineFontDirect(string path, XRFontImportOptions importOptions)
         {
             bool logTiming = RuntimeEngine.StartingUp || RuntimeEngine.StartupPresentationEnabled;
@@ -1135,7 +1142,24 @@ namespace XREngine.Rendering
             string? cacheAssetPath = RuntimeEngine.Assets.TryResolveThirdPartyCachePath(path, typeof(FontGlyphSet), importProfileKey, out string resolvedCacheAssetPath)
                 ? resolvedCacheAssetPath
                 : null;
+            string? fastCachePath = !string.IsNullOrWhiteSpace(cacheAssetPath)
+                ? cacheAssetPath + ".fastbin"
+                : null;
             Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFontDirect: path='{path}', cacheDir='{cacheDirectory ?? "<null>"}', cacheAssetPath='{cacheAssetPath ?? "<null>"}', cacheAssetPathMode='asset-manager-variant'");
+
+            if (TryLoadEngineFontFastBinaryCache(fastCachePath, path, out FontGlyphSet? fastFont))
+            {
+                stopwatch?.Stop();
+                if (stopwatch is not null)
+                {
+                    Debug.Rendering(
+                        "[StartupUI] FontGlyphSet.LoadEngineFontDirect (fastbin) completed in {0:F1} ms for '{1}'.",
+                        stopwatch.Elapsed.TotalMilliseconds,
+                        Path.GetFileName(path));
+                }
+
+                return fastFont;
+            }
 
             FontGlyphSet font = RuntimeEngine.Assets.Load3rdPartyVariantWithCache<FontGlyphSet>(path, importOptions, importProfileKey, JobPriority.Highest, bypassJobThread: true)
                 ?? throw new FileNotFoundException($"Unable to import engine font at {path}");
@@ -1164,6 +1188,8 @@ namespace XREngine.Rendering
             font.FilePath = path;
             font.OriginalPath = path;
 
+            TryWriteEngineFontFastBinaryCache(fastCachePath, path, font);
+
             stopwatch?.Stop();
             if (stopwatch is not null)
             {
@@ -1174,6 +1200,244 @@ namespace XREngine.Rendering
             }
 
             return font;
+        }
+
+        private static bool TryLoadEngineFontFastBinaryCache(
+            string? fastCachePath,
+            string sourcePath,
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out FontGlyphSet? font)
+        {
+            font = null;
+            if (string.IsNullOrWhiteSpace(fastCachePath) || !File.Exists(fastCachePath) || !File.Exists(sourcePath))
+                return false;
+
+            try
+            {
+                var sourceInfo = new FileInfo(sourcePath);
+                using var stream = new FileStream(fastCachePath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536);
+                using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: false);
+
+                if (reader.ReadUInt32() != FastBinaryFontCacheMagic ||
+                    reader.ReadInt32() != FastBinaryFontCacheVersion ||
+                    reader.ReadInt32() != FontCacheSchemaVersion ||
+                    reader.ReadInt64() != sourceInfo.Length ||
+                    reader.ReadInt64() != sourceInfo.LastWriteTimeUtc.Ticks)
+                {
+                    return false;
+                }
+
+                string fontName = reader.ReadString();
+                var atlasType = (EFontAtlasType)reader.ReadInt32();
+                float distanceRange = reader.ReadSingle();
+                float distanceRangeMiddle = reader.ReadSingle();
+                float layoutEmSize = reader.ReadSingle();
+
+                int characterCount = reader.ReadInt32();
+                if (characterCount < 0 || characterCount > 200_000)
+                    return false;
+                var characters = new List<string>(characterCount);
+                for (int i = 0; i < characterCount; i++)
+                    characters.Add(reader.ReadString());
+
+                int glyphCount = reader.ReadInt32();
+                if (glyphCount <= 0 || glyphCount > 200_000)
+                    return false;
+                var glyphs = new Dictionary<string, Glyph>(glyphCount, StringComparer.Ordinal);
+                for (int i = 0; i < glyphCount; i++)
+                {
+                    string key = reader.ReadString();
+                    var pos = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                    var atlasSize = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                    var size = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                    var bearing = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                    float advanceX = reader.ReadSingle();
+                    glyphs[key] = new Glyph(size, bearing)
+                    {
+                        Position = pos,
+                        AtlasSize = atlasSize,
+                        AdvanceX = advanceX,
+                    };
+                }
+
+                string atlasName = reader.ReadString();
+                string atlasOriginalPath = reader.ReadString();
+                var sizedInternalFormat = (ESizedInternalFormat)reader.ReadInt32();
+                var minFilter = (ETexMinFilter)reader.ReadInt32();
+                var magFilter = (ETexMagFilter)reader.ReadInt32();
+                var uWrap = (ETexWrapMode)reader.ReadInt32();
+                var vWrap = (ETexWrapMode)reader.ReadInt32();
+                bool autoGenerateMipmaps = reader.ReadBoolean();
+                int largestMipmapLevel = reader.ReadInt32();
+                int smallestAllowedMipmapLevel = reader.ReadInt32();
+                bool preferSyncUpload = reader.ReadBoolean();
+
+                int mipCount = reader.ReadInt32();
+                if (mipCount <= 0 || mipCount > 32)
+                    return false;
+
+                var mipmaps = new Mipmap2D[mipCount];
+                for (int level = 0; level < mipCount; level++)
+                {
+                    uint mipWidth = reader.ReadUInt32();
+                    uint mipHeight = reader.ReadUInt32();
+                    var internalFormat = (EPixelInternalFormat)reader.ReadInt32();
+                    var pixelFormat = (EPixelFormat)reader.ReadInt32();
+                    var pixelType = (EPixelType)reader.ReadInt32();
+                    int byteLength = reader.ReadInt32();
+                    if (mipWidth == 0 || mipHeight == 0 || byteLength <= 0)
+                        return false;
+
+                    byte[] bytes = reader.ReadBytes(byteLength);
+                    if (bytes.Length != byteLength)
+                        return false;
+
+                    mipmaps[level] = new Mipmap2D(mipWidth, mipHeight, internalFormat, pixelFormat, pixelType, allocateData: false)
+                    {
+                        Data = new DataSource(bytes)
+                        {
+                            PreferCompressedYaml = true,
+                        },
+                    };
+                }
+
+                var atlas = new XRTexture2D(
+                    mipmaps[0].Width,
+                    mipmaps[0].Height,
+                    mipmaps[0].InternalFormat,
+                    mipmaps[0].PixelFormat,
+                    mipmaps[0].PixelType,
+                    allocateData: false)
+                {
+                    Name = atlasName,
+                    FilePath = string.IsNullOrWhiteSpace(atlasOriginalPath) ? sourcePath : atlasOriginalPath,
+                    OriginalPath = string.IsNullOrWhiteSpace(atlasOriginalPath) ? sourcePath : atlasOriginalPath,
+                    Resizable = false,
+                    AutoGenerateMipmaps = autoGenerateMipmaps,
+                    UWrap = uWrap,
+                    VWrap = vWrap,
+                    MinFilter = minFilter,
+                    MagFilter = magFilter,
+                    SizedInternalFormat = sizedInternalFormat,
+                    LargestMipmapLevel = largestMipmapLevel,
+                    SmallestAllowedMipmapLevel = smallestAllowedMipmapLevel,
+                    PreferSynchronousGpuUpload = preferSyncUpload,
+                    Mipmaps = mipmaps,
+                };
+
+                var loaded = new FontGlyphSet(characters, glyphs, atlas)
+                {
+                    Name = string.IsNullOrWhiteSpace(fontName) ? Path.GetFileNameWithoutExtension(sourcePath) : fontName,
+                    FilePath = sourcePath,
+                    OriginalPath = sourcePath,
+                    AtlasType = atlasType,
+                    DistanceRange = distanceRange,
+                    DistanceRangeMiddle = distanceRangeMiddle,
+                    LayoutEmSize = layoutEmSize,
+                };
+
+                if (TryGetLayoutResourceIssue(loaded, out _))
+                    return false;
+
+                font = loaded;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void TryWriteEngineFontFastBinaryCache(string? fastCachePath, string sourcePath, FontGlyphSet font)
+        {
+            if (string.IsNullOrWhiteSpace(fastCachePath) ||
+                !File.Exists(sourcePath) ||
+                font.Glyphs is null ||
+                font.Atlas?.Mipmaps is not { Length: > 0 } mipmaps)
+            {
+                return;
+            }
+
+            try
+            {
+                string? directory = Path.GetDirectoryName(fastCachePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                var sourceInfo = new FileInfo(sourcePath);
+                string tempPath = fastCachePath + ".tmp";
+                using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 65536))
+                using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false))
+                {
+                    writer.Write(FastBinaryFontCacheMagic);
+                    writer.Write(FastBinaryFontCacheVersion);
+                    writer.Write(FontCacheSchemaVersion);
+                    writer.Write(sourceInfo.Length);
+                    writer.Write(sourceInfo.LastWriteTimeUtc.Ticks);
+
+                    writer.Write(font.Name ?? Path.GetFileNameWithoutExtension(sourcePath));
+                    writer.Write((int)font.AtlasType);
+                    writer.Write(font.DistanceRange);
+                    writer.Write(font.DistanceRangeMiddle);
+                    writer.Write(font.LayoutEmSize);
+
+                    List<string> characters = font.Characters;
+                    writer.Write(characters.Count);
+                    for (int i = 0; i < characters.Count; i++)
+                        writer.Write(characters[i] ?? string.Empty);
+
+                    writer.Write(font.Glyphs.Count);
+                    foreach (KeyValuePair<string, Glyph> pair in font.Glyphs)
+                    {
+                        Glyph g = pair.Value;
+                        writer.Write(pair.Key);
+                        writer.Write(g.Position.X);
+                        writer.Write(g.Position.Y);
+                        writer.Write(g.AtlasSize.X);
+                        writer.Write(g.AtlasSize.Y);
+                        writer.Write(g.Size.X);
+                        writer.Write(g.Size.Y);
+                        writer.Write(g.Bearing.X);
+                        writer.Write(g.Bearing.Y);
+                        writer.Write(g.AdvanceX);
+                    }
+
+                    XRTexture2D atlas = font.Atlas;
+                    writer.Write(atlas.Name ?? string.Empty);
+                    writer.Write(atlas.OriginalPath ?? atlas.FilePath ?? sourcePath);
+                    writer.Write((int)atlas.SizedInternalFormat);
+                    writer.Write((int)atlas.MinFilter);
+                    writer.Write((int)atlas.MagFilter);
+                    writer.Write((int)atlas.UWrap);
+                    writer.Write((int)atlas.VWrap);
+                    writer.Write(atlas.AutoGenerateMipmaps);
+                    writer.Write(atlas.LargestMipmapLevel);
+                    writer.Write(atlas.SmallestAllowedMipmapLevel);
+                    writer.Write(atlas.PreferSynchronousGpuUpload);
+
+                    writer.Write(mipmaps.Length);
+                    for (int level = 0; level < mipmaps.Length; level++)
+                    {
+                        Mipmap2D mip = mipmaps[level];
+                        byte[]? bytes = mip.Data?.GetBytes();
+                        if (bytes is null || bytes.Length == 0)
+                            return;
+
+                        writer.Write(mip.Width);
+                        writer.Write(mip.Height);
+                        writer.Write((int)mip.InternalFormat);
+                        writer.Write((int)mip.PixelFormat);
+                        writer.Write((int)mip.PixelType);
+                        writer.Write(bytes.Length);
+                        writer.Write(bytes);
+                    }
+                }
+
+                File.Move(tempPath, fastCachePath, overwrite: true);
+            }
+            catch
+            {
+                // Best-effort fast binary cache write.
+            }
         }
 
         private static void ConfigureBitmapAtlasTexture(XRTexture2D? atlas, string? diagnosticPath)
@@ -1593,6 +1857,10 @@ namespace XREngine.Rendering
 
             try
             {
+                string fastCachePath = cacheAssetPath + ".fastbin";
+                if (File.Exists(fastCachePath))
+                    File.Delete(fastCachePath);
+
                 if (!File.Exists(cacheAssetPath))
                     return;
 
@@ -1631,6 +1899,7 @@ namespace XREngine.Rendering
             importOptions.MsdfOuterPixelPadding = importOptionsOverride.MsdfOuterPixelPadding;
             importOptions.MsdfThreadCount = importOptionsOverride.MsdfThreadCount;
             importOptions.AllowBitmapFallback = importOptionsOverride.AllowBitmapFallback;
+            importOptions.BrowserLicenseNoticePath = importOptionsOverride.BrowserLicenseNoticePath;
             return importOptions;
         }
 
@@ -1645,6 +1914,7 @@ namespace XREngine.Rendering
                 MsdfOuterPixelPadding = source.MsdfOuterPixelPadding,
                 MsdfThreadCount = source.MsdfThreadCount,
                 AllowBitmapFallback = source.AllowBitmapFallback,
+                BrowserLicenseNoticePath = source.BrowserLicenseNoticePath,
             };
 
         private static XRFontImportOptions CreateBitmapImportOptions(float drawSize)

@@ -5,12 +5,16 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_PushViewportRenderArea : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("render-area");
+
         /// <summary>
         /// If true, the internal resolution region of the viewport is used.
         /// Otherwise, the full-resolution active output target is used when one
         /// is bound, falling back to the viewport region.
         /// Defaults to true.
         /// </summary>
+        [System.ComponentModel.DefaultValue(true)]
         public bool UseInternalResolution { get; set; } = true;
 
         protected override void Execute()

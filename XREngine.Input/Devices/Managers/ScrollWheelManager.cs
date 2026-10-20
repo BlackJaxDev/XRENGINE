@@ -9,11 +9,14 @@ namespace XREngine.Input.Devices
         private readonly List<DelMouseScroll> _onUpdate = [];
 
         internal void Tick(float diff)
+            => Tick(diff, null, 0);
+
+        internal void Tick(float diff, InputDevice? device, ulong revision)
         {
             if (diff.EqualTo(0.0f))
                 return;
             //Debug.WriteLine($"ScrollWheelManager::Tick({diff})");
-            OnUpdate(diff);
+            OnUpdate(diff, device, revision);
         }
         public void Register(DelMouseScroll func, bool unregister)
         {
@@ -29,11 +32,11 @@ namespace XREngine.Input.Devices
                     _onUpdate.Add(func);
             }
         }
-        private void OnUpdate(float diff)
+        private void OnUpdate(float diff, InputDevice? device, ulong revision)
         {
             lock (_onUpdate)
             {
-                for (int x = 0; x < _onUpdate.Count; ++x)
+                for (int x = 0; x < _onUpdate.Count && (device is null || revision == device.InputDispatchRevision); ++x)
                     _onUpdate[x](diff);
             }
         }

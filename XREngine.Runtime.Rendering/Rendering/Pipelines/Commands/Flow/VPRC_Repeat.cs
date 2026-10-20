@@ -10,9 +10,17 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_Repeat : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+        {
+            if (IterationConfigurator is not null)
+                base.DescribeRequirements(requirements);
+            requirements.Include(Body);
+        }
+
         /// <summary>
         /// Fixed iteration count when <see cref="CountProvider"/> is <c>null</c>.
         /// </summary>
+        [System.ComponentModel.DefaultValue(1)]
         public int Count { get; set; } = 1;
 
         /// <summary>
@@ -37,8 +45,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             get => _body;
             set
             {
-                _body = value;
+                if (!SetField(ref _body, value)) return;
                 AttachPipeline(_body);
+                ParentPipeline?.NotifyCommandChainStructureChanged();
             }
         }
 

@@ -11,6 +11,9 @@ public sealed class AdvancedMaterialPublicationSnapshot
     private readonly AdvancedMaterialLayoutMember[] _layoutMembers;
     private readonly uint[] _constantWords;
     private readonly AdvancedMaterialTextureBinding[] _textureBindings;
+    private readonly AdvancedEngineSurfaceRecord[] _engineSurfaces;
+    private readonly AdvancedUberBaseSurfaceRecord[] _uberBaseSurfaces;
+    private readonly AdvancedNativeVertexMaterial[] _nativeVertices;
     private int _layoutMemberCount;
     private int _constantWordCount;
     private int _textureBindingCount;
@@ -22,7 +25,8 @@ public sealed class AdvancedMaterialPublicationSnapshot
         int layoutHandleCapacity,
         int layoutMemberCapacity,
         int constantWordCapacity,
-        int textureBindingCapacity)
+        int textureBindingCapacity,
+        int engineSurfaceCapacity)
     {
         Materials = materials ?? throw new ArgumentNullException(nameof(materials));
         Kernels = kernels ?? throw new ArgumentNullException(nameof(kernels));
@@ -31,6 +35,9 @@ public sealed class AdvancedMaterialPublicationSnapshot
         _layoutMembers = new AdvancedMaterialLayoutMember[layoutMemberCapacity];
         _constantWords = new uint[constantWordCapacity];
         _textureBindings = new AdvancedMaterialTextureBinding[textureBindingCapacity];
+        _engineSurfaces = new AdvancedEngineSurfaceRecord[engineSurfaceCapacity];
+        _uberBaseSurfaces = new AdvancedUberBaseSurfaceRecord[engineSurfaceCapacity];
+        _nativeVertices = new AdvancedNativeVertexMaterial[engineSurfaceCapacity];
     }
 
     public ulong Sequence { get; private set; }
@@ -46,10 +53,18 @@ public sealed class AdvancedMaterialPublicationSnapshot
     public ReadOnlySpan<AdvancedMaterialTextureBinding> TextureBindings
         => _textureBindings.AsSpan(0, _textureBindingCount);
 
+    public ReadOnlySpan<AdvancedEngineSurfaceRecord> EngineSurfaces => _engineSurfaces;
+    internal int EngineSurfaceCapacity => _engineSurfaces.Length;
+    public ReadOnlySpan<AdvancedUberBaseSurfaceRecord> UberBaseSurfaces => _uberBaseSurfaces;
+    internal int UberBaseSurfaceCapacity => _uberBaseSurfaces.Length;
+
     internal int LayoutHandleCapacity => _layoutHandles.Length;
     internal int LayoutMemberCapacity => _layoutMembers.Length;
     internal int ConstantWordCapacity => _constantWords.Length;
     internal int TextureBindingCapacity => _textureBindings.Length;
+
+    /// <summary>Releases managed program closures only after the publication's final pin is retired.</summary>
+    internal void ReleaseRetainedSources() => Array.Clear(_nativeVertices);
 
     internal bool TryCapture(
         ulong sequence,
@@ -57,6 +72,9 @@ public sealed class AdvancedMaterialPublicationSnapshot
         ReadOnlySpan<AdvancedMaterialLayoutMember> layoutMembers,
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
+        ReadOnlySpan<AdvancedEngineSurfaceRecord> engineSurfaces,
+        ReadOnlySpan<AdvancedUberBaseSurfaceRecord> uberBaseSurfaces,
+        ReadOnlySpan<AdvancedNativeVertexMaterial> nativeVertices,
         in AdvancedGpuOwnerGenerations materialGeneration,
         in AdvancedGpuOwnerGenerations kernelGeneration,
         in AdvancedGpuOwnerGenerations layoutGeneration)
@@ -66,7 +84,10 @@ public sealed class AdvancedMaterialPublicationSnapshot
             layoutHandles.Length > _layoutHandles.Length ||
             layoutMembers.Length > _layoutMembers.Length ||
             constantWords.Length > _constantWords.Length ||
-            textureBindings.Length > _textureBindings.Length)
+            textureBindings.Length > _textureBindings.Length ||
+            engineSurfaces.Length > _engineSurfaces.Length ||
+            uberBaseSurfaces.Length > _uberBaseSurfaces.Length ||
+            nativeVertices.Length > _nativeVertices.Length)
         {
             return false;
         }
@@ -75,11 +96,55 @@ public sealed class AdvancedMaterialPublicationSnapshot
         layoutMembers.CopyTo(_layoutMembers);
         constantWords.CopyTo(_constantWords);
         textureBindings.CopyTo(_textureBindings);
+        engineSurfaces.CopyTo(_engineSurfaces);
+        _engineSurfaces.AsSpan(engineSurfaces.Length).Clear();
+        uberBaseSurfaces.CopyTo(_uberBaseSurfaces);
+        _uberBaseSurfaces.AsSpan(uberBaseSurfaces.Length).Clear();
+        nativeVertices.CopyTo(_nativeVertices);
+        _nativeVertices.AsSpan(nativeVertices.Length).Clear();
         _layoutMemberCount = layoutMembers.Length;
         _constantWordCount = constantWords.Length;
         _textureBindingCount = textureBindings.Length;
         Sequence = sequence;
         Generations = new AdvancedMaterialDatabaseGenerations(materialGeneration, kernelGeneration, layoutGeneration);
+        return true;
+    }
+
+    public bool TryGetEngineSurface(in AdvancedMaterialRecord material, out AdvancedEngineSurfaceRecord surface)
+    {
+        if (material.StableRowId >= (uint)_engineSurfaces.Length ||
+            !Materials.TryGetDenseIndex(new(material.StableRowId, material.Generation), out _))
+        {
+            surface = default;
+            return false;
+        }
+        surface = _engineSurfaces[checked((int)material.StableRowId)];
+        return surface.SchemaVersion == 0 || surface.Generation == material.Generation;
+    }
+
+    /// <summary>Returns an exact copied Uber companion for the retained material generation.</summary>
+    public bool TryGetUberBaseSurface(in AdvancedMaterialRecord material, out AdvancedUberBaseSurfaceRecord surface)
+    {
+        if (material.StableRowId >= (uint)_uberBaseSurfaces.Length ||
+            !Materials.TryGetDenseIndex(new(material.StableRowId, material.Generation), out _))
+        {
+            surface = default;
+            return false;
+        }
+        surface = _uberBaseSurfaces[checked((int)material.StableRowId)];
+        return surface.SchemaVersion == 0 || surface.Generation == material.Generation;
+    }
+
+    /// <summary>Reads copied inputs only from the same retained material generation.</summary>
+    public bool TryGetNativeVertex(in AdvancedMaterialRecord material, out AdvancedNativeVertexMaterial vertex)
+    {
+        if (material.StableRowId >= (uint)_nativeVertices.Length ||
+            !Materials.TryGetDenseIndex(new(material.StableRowId, material.Generation), out _))
+        {
+            vertex = default;
+            return false;
+        }
+        vertex = _nativeVertices[checked((int)material.StableRowId)];
         return true;
     }
 

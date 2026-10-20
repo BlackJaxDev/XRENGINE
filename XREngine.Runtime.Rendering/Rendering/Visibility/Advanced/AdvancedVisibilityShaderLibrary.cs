@@ -25,8 +25,14 @@ public static class AdvancedVisibilityShaderLibrary
         "Advanced/Preparation/BuildDepthPyramid.comp";
     public const string EarlyVisibilityCompute =
         "Advanced/Preparation/EarlyVisibility.comp";
+    public const string PhysicsChainBoundsPatchCompute =
+        "Advanced/Preparation/PatchPhysicsChainBounds.comp";
     public const string LateVisibilityCompute =
         "Advanced/Preparation/LateVisibility.comp";
     public const string BuildIndirectCompute =
         "Advanced/Preparation/BuildVisibilityIndirect.comp";
+    public const string FinalizeIndexedInstanceGroupsCompute =
+        "Advanced/Preparation/FinalizeIndexedInstanceGroups.comp";
+    public const string CullDirectionalShadowCastersCompute =
+        "Advanced/Preparation/CullDirectionalShadowCasters.comp";
 }

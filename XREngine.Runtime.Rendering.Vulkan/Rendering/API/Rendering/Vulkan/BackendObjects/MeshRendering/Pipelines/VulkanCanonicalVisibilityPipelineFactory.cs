@@ -72,7 +72,7 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
             target.UsesDynamicRendering ? 0UL : target.RenderPass.Handle,
             target.DynamicRenderingFormats,
             program.ComputeGraphicsPipelineFingerprint(),
-            program.LinkGeneration,
+            program.InterfaceGeneration,
             meshlet ? 0UL : vertexInput.LayoutHash,
             program.DescriptorSchemaFingerprint,
             program.PipelineLayout.Handle,

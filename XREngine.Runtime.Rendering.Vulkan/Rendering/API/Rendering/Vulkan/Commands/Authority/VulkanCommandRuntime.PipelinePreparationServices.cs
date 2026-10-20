@@ -122,6 +122,11 @@ internal sealed partial class VulkanCommandRuntime
             useDynamicRendering,
             targetCompatibilitySignature,
             framePlan);
+        recordingState.RecordingScratch.CurrentPipelineVariantManifest = manifest;
+        long pipelineRetirementGeneration =
+            ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration;
+        RefreshPipelineAdmissionForRetirement(
+            recordingState.RecordingScratch, pipelineRetirementGeneration);
         for (int index = 0; index < manifest.Requirements.Count; index++)
         {
             VulkanPipelineVariantRequirement requirement = manifest.Requirements[index];
@@ -150,7 +155,9 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         watchdog.RecordProgress();
-        manifest.MarkWarmupCompleted();
+        if (ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration ==
+            pipelineRetirementGeneration)
+            manifest.MarkWarmupCompleted(pipelineRetirementGeneration);
         return true;
     }
 

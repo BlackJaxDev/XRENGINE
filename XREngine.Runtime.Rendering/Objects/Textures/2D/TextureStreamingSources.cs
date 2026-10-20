@@ -1,6 +1,7 @@
 using XREngine.Imaging;
 using System.IO;
 using System.Threading;
+using XREngine.Data;
 
 namespace XREngine.Rendering;
 
@@ -21,7 +22,10 @@ internal static class TextureStreamingSourceFactory
     /// request rather than during placeholder registration.
     /// </summary>
     internal static ITextureStreamingSource CreateDeferred(string filePath)
-        => new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath));
+    {
+        RuntimeTextureSourceAccess.RequireHostFiles();
+        return new DeferredAuthorityTextureStreamingSource(Path.GetFullPath(filePath));
+    }
 }
 
 /// <summary>
@@ -54,6 +58,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
 
     public TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken)
     {
+        RuntimeTextureSourceAccess.RequireHostFiles();
         if (Volatile.Read(ref _preferFallback) != 0 && _fallbackSource is not null)
             return _fallbackSource.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
 
@@ -196,24 +201,53 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
 
     public TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken)
     {
+        RuntimeTextureSourceAccess.RequireHostFiles();
         cancellationToken.ThrowIfCancellationRequested();
-        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture(cancellationToken);
+        read.EnsureHostFileAccess("Texture streaming source import");
+        if (string.IsNullOrWhiteSpace(sourcePath) || !read.Exists(sourcePath))
         {
             using RuntimeImage filler = XRTexture2D.FillerImage;
-            return XRTexture2D.BuildResidentDataFromImage(filler, maxResidentDimension, includeMipChain, cancellationToken: cancellationToken);
+            TextureStreamingResidentData missingData = XRTexture2D.BuildResidentDataFromImage(
+                filler, maxResidentDimension, includeMipChain, cancellationToken: read.CancellationToken);
+            try
+            {
+                using IDisposable missingPublication = read.BeginPublication();
+                read.EnsureCurrent();
+                return missingData;
+            }
+            catch
+            {
+                foreach (Mipmap2D mip in missingData.Mipmaps)
+                    mip.Data?.Dispose();
+                throw;
+            }
         }
 
         long decodeStartTimestamp = XRTexture2D.StartImportedTextureTiming();
-        using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(sourcePath));
+        byte[] bytes = read.ReadAllBytes(sourcePath);
+        using RuntimeImage sourceImage = RuntimeImageCodecs.Require().Decode(bytes);
         double decodeMilliseconds = XRTexture2D.CompleteImportedTextureTiming(decodeStartTimestamp);
-        cancellationToken.ThrowIfCancellationRequested();
-        return XRTexture2D.BuildResidentDataFromImage(
+        read.EnsureCurrent();
+        TextureStreamingResidentData residentData = XRTexture2D.BuildResidentDataFromImage(
             sourceImage,
             maxResidentDimension,
             includeMipChain,
             sourcePath,
             decodeMilliseconds,
-            cancellationToken);
+            read.CancellationToken);
+        try
+        {
+            using IDisposable publication = read.BeginPublication();
+            read.EnsureCurrent();
+            return residentData;
+        }
+        catch
+        {
+            foreach (Mipmap2D mip in residentData.Mipmaps)
+                mip.Data?.Dispose();
+            throw;
+        }
     }
 }
 
@@ -318,6 +352,8 @@ internal static class TextureStreamingResidentDataReuseCache
         out CacheKey key)
     {
         key = default;
+        if (!RuntimeTextureSourceAccess.CanAccessHostFiles)
+            return false;
         if (string.IsNullOrWhiteSpace(source.SourcePath))
             return false;
 

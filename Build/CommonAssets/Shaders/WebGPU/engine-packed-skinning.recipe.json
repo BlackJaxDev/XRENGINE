@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-packed-skinning",
+  "pass": "skinning",
+  "source": "Assets/gpu-skinning.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "skin"
+  },
+  "computeArtifact": {
+    "kernel": "packed-skinning"
+  },
+  "workgroupSize": [
+    64,
+    1,
+    1
+  ],
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 6,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 5,
+    "maxStorageBufferBindingSize": 16,
+    "maxComputeWorkgroupSizeX": 64,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 64
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "PackedSkinningData",
+        "physicalName": "data",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "BonePalette",
+        "physicalName": "palette",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 16,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "ActiveMorphs",
+        "physicalName": "activeMorphs",
+        "group": 0,
+        "binding": 2,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 8,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "DeformedPositions",
+        "physicalName": "vertices",
+        "group": 0,
+        "binding": 3,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "DeformedAttributes",
+        "physicalName": "attributes",
+        "group": 0,
+        "binding": 4,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 16,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Update",
+        "physicalName": "update",
+        "group": 0,
+        "binding": 5,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "activeCount",
+            "provider": "ActiveMorphCount",
+            "offset": 0,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved0",
+            "provider": "Reserved0",
+            "offset": 4,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "provider": "Reserved1",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved2",
+            "provider": "Reserved2",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {}
+}

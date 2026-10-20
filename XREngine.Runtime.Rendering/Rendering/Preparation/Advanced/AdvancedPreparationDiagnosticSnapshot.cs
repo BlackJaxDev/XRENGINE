@@ -9,4 +9,5 @@ public readonly record struct AdvancedPreparationDiagnosticSnapshot(
     string OutputReuseAuthority,
     AdvancedSharedPreparationTelemetry SharedTelemetry,
     AdvancedDeformedVertexArenaTelemetry ArenaTelemetry,
-    AdvancedFrameUploadTelemetrySnapshot FrameUploadTelemetry);
+    AdvancedFrameUploadTelemetrySnapshot FrameUploadTelemetry,
+    AdvancedVisibilityContentTelemetry VisibilityContent);

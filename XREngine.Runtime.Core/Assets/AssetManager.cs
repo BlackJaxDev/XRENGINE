@@ -39,6 +39,18 @@ namespace XREngine
 
         private readonly Func<JobManager> _jobManagerProvider;
         private readonly Func<bool> _remoteAssetDownloadAllowedProvider;
+        private IRuntimeAssetSource? _runtimeAssetSource;
+        private readonly IRuntimeAssetSource? _watcherSourceAtSubscription;
+        private readonly int _watcherEpochAtSubscription;
+        private volatile bool _runtimeCatalogOwner;
+        private CancellationTokenSource _runtimeSourceLifetime = new();
+        private int _runtimeSourceEpoch;
+        private readonly object _runtimePublicationGate = new();
+        private bool _runtimeSourceTeardown;
+        private bool _runtimeSourceDisposing;
+        private bool _runtimeSourceUnbinding;
+        private readonly List<RuntimeSourceAssetOwnership> _runtimeSourceObjects = [];
+        private readonly HashSet<XRAsset> _runtimeSourceAssets = new(ReferenceEqualityComparer.Instance);
         private readonly ConcurrentDictionary<string, byte> _pendingFeatureCacheImports =
             new(StringComparer.OrdinalIgnoreCase);
 
@@ -57,8 +69,12 @@ namespace XREngine
             if (bypassJobThread || IsOnJobThread)
                 return work();
 
+            JobManager jobs = _jobManagerProvider();
+            if (OperatingSystem.IsBrowser() || jobs.IsCallerThreadExecutor)
+                throw new NotSupportedException("AssetSource.BlockingJobUnavailable: a caller-thread host cannot wait for its own asset job; use the asynchronous operation or explicitly run completed CPU work inline.");
+
             var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _jobManagerProvider().Schedule(() => JobRoutine(work, tcs), priority: priority);
+            jobs.Schedule(() => JobRoutine(work, tcs), priority: priority);
             return tcs.Task.GetAwaiter().GetResult();
         }
 
@@ -111,6 +127,35 @@ namespace XREngine
         {
             _jobManagerProvider = jobManagerProvider ?? (() => RuntimeWorkScheduler.Jobs);
             _remoteAssetDownloadAllowedProvider = remoteAssetDownloadAllowedProvider ?? (static () => false);
+            _runtimeAssetSource = DirectStorageIO.Source;
+            if (_runtimeAssetSource is IRuntimeAssetCatalog catalog)
+            {
+                _runtimeCatalogOwner = true;
+                // Catalog paths identify assets; they are not writable host directories.
+                EngineAssetsPath = Path.GetFullPath(catalog.EngineAssetsRoot);
+                _gameAssetsPath = Path.GetFullPath(catalog.GameAssetsRoot);
+                GameWatcher.Path = _gameAssetsPath;
+                EngineWatcher.Path = EngineAssetsPath;
+                return;
+            }
+            if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread
+                || _runtimeAssetSource is { SupportsSynchronousReads: false })
+            {
+                // Keep virtual path identities without probing or creating desktop directories.
+                string? engineOverride = Environment.GetEnvironmentVariable(EngineAssetsPathEnvVar);
+                string? gameOverride = Environment.GetEnvironmentVariable(GameAssetsPathEnvVar);
+                EngineAssetsPath = Path.GetFullPath(!string.IsNullOrWhiteSpace(engineOverride)
+                    ? engineOverride
+                    : !string.IsNullOrWhiteSpace(engineAssetsDirPath)
+                        ? engineAssetsDirPath
+                        : Path.Combine(AppContext.BaseDirectory, "Build", "CommonAssets"));
+                _gameAssetsPath = Path.GetFullPath(string.IsNullOrWhiteSpace(gameOverride)
+                    ? _gameAssetsPath
+                    : gameOverride);
+                GameWatcher.Path = _gameAssetsPath;
+                EngineWatcher.Path = EngineAssetsPath;
+                return;
+            }
             string? resolvedEngineAssetsPath = null;
             string? engineAssetsOverridePath = Environment.GetEnvironmentVariable(EngineAssetsPathEnvVar);
             if (!string.IsNullOrWhiteSpace(engineAssetsOverridePath))
@@ -175,6 +220,8 @@ namespace XREngine
             if (!Directory.Exists(EngineAssetsPath))
                 throw new DirectoryNotFoundException($"Could not find the engine assets directory at '{EngineAssetsPath}'.");
 
+            _watcherSourceAtSubscription = _runtimeAssetSource;
+            _watcherEpochAtSubscription = RuntimeSourceEpoch;
             GameWatcher.Path = GameAssetsPath;
             GameWatcher.Filter = "*.*";
             GameWatcher.IncludeSubdirectories = true;
@@ -201,13 +248,23 @@ namespace XREngine
         public bool MonitorGameAssetsForChanges
         {
             get => GameWatcher.EnableRaisingEvents;
-            set => GameWatcher.EnableRaisingEvents = value;
+            set
+            {
+                if (value)
+                    EnsureHostFileAssetAccess();
+                GameWatcher.EnableRaisingEvents = value;
+            }
         }
 
         public bool MonitorEngineAssetsForChanges
         {
             get => EngineWatcher.EnableRaisingEvents;
-            set => EngineWatcher.EnableRaisingEvents = value;
+            set
+            {
+                if (value)
+                    EnsureHostFileAssetAccess();
+                EngineWatcher.EnableRaisingEvents = value;
+            }
         }
 
         private static bool VerifyDirectoryExists(string? directoryPath)
@@ -310,17 +367,19 @@ namespace XREngine
             }
         }
 
-        private static string? NormalizeOptionalDirectoryPath(string? path, string argumentName)
+        private string? NormalizeConfiguredDirectoryPath(string? path, string argumentName)
         {
             if (string.IsNullOrWhiteSpace(path))
                 return null;
-
-            return NormalizeDirectoryPath(path, argumentName);
+            return SupportsSynchronousAssetWork
+                ? NormalizeDirectoryPath(path, argumentName)
+                : Path.GetFullPath(path);
         }
 
         private void UpdateGameAssetsPath(string path)
         {
-            string normalized = NormalizeDirectoryPath(path, nameof(GameAssetsPath));
+            string normalized = NormalizeConfiguredDirectoryPath(path, nameof(GameAssetsPath))
+                ?? throw new ArgumentException("GameAssetsPath cannot be null or empty.", nameof(GameAssetsPath));
             if (string.Equals(_gameAssetsPath, normalized, StringComparison.OrdinalIgnoreCase))
                 return;
 
@@ -348,28 +407,30 @@ namespace XREngine
         public string? GameMetadataPath
         {
             get => _gameMetadataPath;
-            set => _gameMetadataPath = NormalizeOptionalDirectoryPath(value, nameof(GameMetadataPath));
+            set => _gameMetadataPath = NormalizeConfiguredDirectoryPath(value, nameof(GameMetadataPath));
         }
 
         private string? _gameCachePath;
         public string? GameCachePath
         {
             get => _gameCachePath;
-            set => _gameCachePath = NormalizeOptionalDirectoryPath(value, nameof(GameCachePath));
+            set => _gameCachePath = NormalizeConfiguredDirectoryPath(value, nameof(GameCachePath));
         }
 
         private string _packagesPath = Path.Combine(AppContext.BaseDirectory, "Packages");
         public string PackagesPath
         {
             get => _packagesPath;
-            set => _packagesPath = NormalizeDirectoryPath(value, nameof(PackagesPath));
+            set => _packagesPath = NormalizeConfiguredDirectoryPath(value, nameof(PackagesPath))
+                ?? throw new ArgumentException("PackagesPath cannot be null or empty.", nameof(PackagesPath));
         }
 
         private string _librariesPath = Path.Combine(AppContext.BaseDirectory, "Libraries");
         public string LibrariesPath
         {
             get => _librariesPath;
-            set => _librariesPath = NormalizeDirectoryPath(value, nameof(LibrariesPath));
+            set => _librariesPath = NormalizeConfiguredDirectoryPath(value, nameof(LibrariesPath))
+                ?? throw new ArgumentException("LibrariesPath cannot be null or empty.", nameof(LibrariesPath));
         }
 
         public ConcurrentDictionary<string, XRAsset> LoadedAssetsByOriginalPathInternal { get; } = [];
@@ -470,52 +531,92 @@ namespace XREngine
             if (assetId == Guid.Empty)
                 return false;
 
-            if (LoadedAssetsByIDInternal.TryGetValue(assetId, out var asset) && !string.IsNullOrWhiteSpace(asset.FilePath) && File.Exists(asset.FilePath))
+            IAssetFileSystem? fileSystem = AssetFileSystemServices.Current;
+            IAssetMetadataFileBackend? files = fileSystem as IAssetMetadataFileBackend;
+            IRuntimeAssetSource? source = _runtimeAssetSource;
+            int sourceEpoch = Volatile.Read(ref _runtimeSourceEpoch);
+            if (LoadedAssetsByIDInternal.TryGetValue(assetId, out var asset) && !asset.IsDestroyed
+                && !string.IsNullOrWhiteSpace(asset.FilePath)
+                && (UsesRuntimeAssetCatalog
+                    ? source is IRuntimeAssetCatalog catalog && catalog.TryGetAsset(asset.FilePath, out _)
+                    : !SupportsSynchronousAssetWork || (source?.Exists(asset.FilePath) ?? files?.FileExists(asset.FilePath) ?? false)))
             {
-                assetPath = asset.FilePath;
-                return true;
+                lock (_runtimePublicationGate)
+                {
+                    if (_runtimeSourceTeardown || _runtimeSourceUnbinding || _runtimeSourceDisposing
+                        || !ReferenceEquals(source, _runtimeAssetSource)
+                        || sourceEpoch != Volatile.Read(ref _runtimeSourceEpoch)
+                        || asset.IsDestroyed
+                        || !LoadedAssetsByIDInternal.TryGetValue(assetId, out XRAsset? current)
+                        || !ReferenceEquals(asset, current))
+                        return false;
+
+                    assetPath = asset.FilePath;
+                    return true;
+                }
             }
 
-            if (TryResolveAssetPathByIdFromMetadataRoot(assetId, GameMetadataPath, GameAssetsPath, out assetPath))
+            if (!SupportsSynchronousAssetWork)
+                return false;
+
+            if (fileSystem is null || files is null)
+            {
+                Debug.LogWarning($"Failed to resolve asset id '{assetId}': the installed asset file system does not provide metadata file operations.");
+                return false;
+            }
+
+            if (TryResolveAssetPathByIdFromMetadataRoot(assetId, GameMetadataPath, GameAssetsPath, fileSystem, files, out assetPath))
                 return true;
 
-            if (!TryInferMetadataRootsFromReferenceAssetPath(referenceAssetPath, out string? metadataRoot, out string? assetsRoot))
-                return false;
+            try
+            {
+                if (!TryInferMetadataRootsFromReferenceAssetPath(referenceAssetPath, files, out string? metadataRoot, out string? assetsRoot))
+                    return false;
 
-            if (string.Equals(metadataRoot, GameMetadataPath, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(assetsRoot, GameAssetsPath, StringComparison.OrdinalIgnoreCase))
-                return false;
+                if (string.Equals(metadataRoot, GameMetadataPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(assetsRoot, GameAssetsPath, StringComparison.OrdinalIgnoreCase))
+                    return false;
 
-            return TryResolveAssetPathByIdFromMetadataRoot(assetId, metadataRoot, assetsRoot, out assetPath);
+                return TryResolveAssetPathByIdFromMetadataRoot(assetId, metadataRoot, assetsRoot, fileSystem, files, out assetPath);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to resolve asset id '{assetId}' from reference path '{referenceAssetPath}': {ex.Message}");
+                return false;
+            }
         }
 
         private static bool TryResolveAssetPathByIdFromMetadataRoot(
             Guid assetId,
             string? metadataRoot,
             string? assetsRoot,
+            IAssetFileSystem fileSystem,
+            IAssetMetadataFileBackend files,
             [NotNullWhen(true)] out string? assetPath)
         {
             assetPath = null;
 
             if (assetId == Guid.Empty
                 || string.IsNullOrWhiteSpace(metadataRoot)
-                || string.IsNullOrWhiteSpace(assetsRoot)
-                || !Directory.Exists(metadataRoot))
+                || string.IsNullOrWhiteSpace(assetsRoot))
                 return false;
 
             try
             {
-                foreach (string metaFile in AssetFileSystemServices.Required.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories))
+                if (!files.DirectoryExists(metadataRoot))
+                    return false;
+
+                foreach (string metaFile in fileSystem.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories))
                 {
                     if (IsTransientMetadataPath(metaFile))
                         continue;
 
-                    AssetMetadata? meta = TryReadMetadata(metaFile);
+                    AssetMetadata? meta = TryReadMetadata(metaFile, files);
                     if (meta?.Guid != assetId || string.IsNullOrWhiteSpace(meta.RelativePath))
                         continue;
 
                     string candidate = Path.Combine(assetsRoot, meta.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-                    if (File.Exists(candidate))
+                    if (files.FileExists(candidate))
                     {
                         assetPath = candidate;
                         return true;
@@ -532,6 +633,7 @@ namespace XREngine
 
         private static bool TryInferMetadataRootsFromReferenceAssetPath(
             string? referenceAssetPath,
+            IAssetMetadataFileBackend files,
             [NotNullWhen(true)] out string? metadataRoot,
             [NotNullWhen(true)] out string? assetsRoot)
         {
@@ -555,6 +657,7 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(directoryPath))
                 return false;
 
+            // DirectoryInfo walks path names here. Only the backend checks if a directory exists.
             for (DirectoryInfo? directory = new(directoryPath); directory is not null; directory = directory.Parent)
             {
                 if (!string.Equals(directory.Name, "Assets", StringComparison.OrdinalIgnoreCase))
@@ -565,7 +668,7 @@ namespace XREngine
                     break;
 
                 string candidateMetadataRoot = Path.Combine(parent.FullName, "Metadata");
-                if (!Directory.Exists(candidateMetadataRoot))
+                if (!files.DirectoryExists(candidateMetadataRoot))
                     continue;
 
                 assetsRoot = directory.FullName;
@@ -585,7 +688,7 @@ namespace XREngine
         /// </summary>
         private int _duplicateIdWarningCount;
 
-        private void CacheAsset(XRAsset asset)
+        private void CacheAsset(XRAsset asset, List<XRAsset>? pathCacheOwners = null)
         {
             string path = asset.FilePath ?? string.Empty;
             XRAsset UpdatePathDict(string existingPath, XRAsset existingAsset)
@@ -593,7 +696,10 @@ namespace XREngine
                 if (existingAsset is not null)
                 {
                     if (existingAsset != asset && !existingAsset.EmbeddedAssets.Contains(asset))
+                    {
+                        pathCacheOwners?.Add(existingAsset);
                         existingAsset.EmbeddedAssets.Add(asset);
+                    }
                     return existingAsset;
                 }
                 else
@@ -753,7 +859,8 @@ namespace XREngine
         public void NotifyExternalAssetPathWritten(string path)
             => MarkRecentlySaved(path);
 
-        private void PostLoaded<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, T? file) where T : XRAsset
+        private void PostLoaded<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, T? file,
+            ObjectCacheOwnership? ownership = null, List<XRAsset>? pathCacheOwners = null) where T : XRAsset
         {
             if (file is null)
                 return;
@@ -761,10 +868,25 @@ namespace XREngine
             file.Name = Path.GetFileNameWithoutExtension(filePath);
             file.FilePath = filePath;
 
-            // Refresh asset graph to populate SourceAsset/EmbeddedAssets relationships
-            XRAssetGraphUtility.RefreshAssetGraph(file);
+            if (ownership is null)
+                XRAssetGraphUtility.RefreshAssetGraph(file);
+            else
+            {
+                // Runtime catalogs already know which allocations belong to this payload.
+                // An authoring traversal would claim virtual-path dependencies and lazy
+                // process resources, attaching them back to an otherwise stopped world.
+                List<XRAsset> ownedAssets = [];
+                file.SourceAsset = file;
+                foreach (XRObjectBase value in ownership.Objects)
+                    if (value is XRAsset embedded && !embedded.IsDestroyed && !ReferenceEquals(embedded, file))
+                    {
+                        embedded.SourceAsset = file;
+                        ownedAssets.Add(embedded);
+                    }
+                file.EmbeddedAssets.Set(ownedAssets, reportRemoved: false, reportAdded: false, reportModified: false);
+            }
 
-            CacheAsset(file);
+            CacheAsset(file, pathCacheOwners);
 
             if (file is IOverrideableSettingsOwner overrideableOwner)
                 overrideableOwner.TrackOverrideableSettings();
@@ -824,16 +946,73 @@ namespace XREngine
 
         public void Dispose()
         {
-            foreach (var asset in LoadedAssetsByIDInternal.Values)
-                asset.Destroy();
-            LoadedAssetsByIDInternal.Clear();
-            LoadedAssetsByPathInternal.Clear();
-            LoadedAssetsByOriginalPathInternal.Clear();
-            PublishedArchiveRegistry.CloseAll();
+            bool ownsDisposalReservation;
+            lock (_runtimePublicationGate)
+            {
+                RejectRemoteAssetLifecycleOverlap();
+                ownsDisposalReservation = _runtimeAssetSource is not IRuntimeAssetCatalog;
+                if (ownsDisposalReservation)
+                {
+                    _remoteAssetDisposalInProgress = true;
+                    Interlocked.Increment(ref _runtimeSourceEpoch);
+                }
+            }
+            try
+            {
+                DisposeAssetsCore();
+                PublishedArchiveRegistry.CloseAll();
+            }
+            finally
+            {
+                if (ownsDisposalReservation)
+                    lock (_runtimePublicationGate)
+                        _remoteAssetDisposalInProgress = false;
+            }
+        }
+
+        private void DisposeAssetsCore()
+        {
+            DisposeFailedRemoteAssets();
+            if (_runtimeAssetSource is IRuntimeAssetCatalog && _runtimeAssetSource is { } source)
+            {
+                UnbindRuntimeSource(source);
+                return;
+            }
+            if (_runtimeSourceObjects.Count != 0)
+            {
+                lock (_runtimePublicationGate)
+                    DisposeRuntimeSourceObjects();
+                return;
+            }
+
+            HashSet<XRAsset> assets = new(ReferenceEqualityComparer.Instance);
+            foreach (XRAsset asset in LoadedAssetsByIDInternal.Values) assets.Add(asset);
+            foreach (XRAsset asset in LoadedAssetsByPathInternal.Values) assets.Add(asset);
+            foreach (XRAsset asset in LoadedAssetsByOriginalPathInternal.Values) assets.Add(asset);
+            List<Exception>? failures = null;
+            try
+            {
+                foreach (XRAsset asset in assets)
+                {
+                    asset.PropertyChanged -= AssetPropertyChanged;
+                    try { asset.Destroy(); }
+                    catch (Exception error) { (failures ??= []).Add(error); }
+                }
+            }
+            finally
+            {
+                LoadedAssetsByIDInternal.Clear();
+                LoadedAssetsByPathInternal.Clear();
+                LoadedAssetsByOriginalPathInternal.Clear();
+                DirtyAssets.Clear();
+            }
+            if (failures is not null)
+                throw new AggregateException("AssetSource.TeardownFailed: asset caches were cleared, but one or more assets failed destruction.", failures);
         }
 
         public static string VerifyAssetPath(XRAsset asset, string directory)
         {
+            EnsureDirectHostAssetFileAccess();
             VerifyDirectoryExists(directory);
             string fileName = string.IsNullOrWhiteSpace(asset.Name) ? asset.GetType().Name : asset.Name;
             //Add the asset extension for regular assets
@@ -844,6 +1023,7 @@ namespace XREngine
 
         public static string GetUniqueAssetPath(string path)
         {
+            EnsureDirectHostAssetFileAccess();
             if (!File.Exists(path))
                 return path;
 

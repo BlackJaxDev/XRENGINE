@@ -109,6 +109,28 @@ The MCP server settings are located in the **Global Editor Preferences** panel u
 | `McpDispatchMode` | Default thread dispatch mode for MCP tools without explicit affinity | `Direct` |
 
 Changes take effect immediately - the server will start or stop based on the `McpServerEnabled` setting, and will restart on a new port if `McpServerPort` is changed while running.
+The server reads these settings only after the effective preferences are fully composed
+(`Engine.EditorPreferencesChanged`). A composition copies the global values first and then
+applies overrides and session values, such as the `--mcp` switch, so a partial value must not
+stop the server. A session-only `set_editor_preference` call therefore does not restart it.
+
+Tools with `Main` affinity, and unannotated tools in `MainThread` mode, run as app-thread jobs on
+the update thread. The update thread does not start app-thread work while a render frame
+dispatches, but it starts work that render frames have deferred for 50 ms. Under a heavy render
+load, a call can therefore wait about 50 ms plus one update iteration, or longer while another
+long app-thread job runs (for example a benchmark spawn). Call the static
+`Engine.CaptureAppThreadDispatchDiagnostics()` through `invoke_method` to read the deferral counts
+and the longest deferral.
+
+Set `XRE_MCP_REQUEST_TRACE=1` before editor startup to trace single-request
+`invoke_method` calls. The trace records the JSON-RPC ID, tool and target
+type/method names, request milestones, elapsed time, and managed thread ID. It
+does not record method arguments, object data, headers, or credentials. The
+server keeps the latest 512 milestones and writes each milestone to the MCP
+log. After a request timeout or recovery, call the static
+`McpServerHost.GetRequestTraceSnapshot()` method to read the retained records.
+Restart the editor to turn the flag on or off. Use the flag only during an MCP
+request investigation.
 
 ### Command Line Arguments (Override)
 
@@ -583,6 +605,7 @@ the target's type and optional persistent ID.
 | `add_component_to_node` | Add a component to a scene node by type name. |
 | `arm_advanced_publication_rejection` | Arm a development-only diagnostic that rejects the next count canonical scene publications that would open a new publication (after the unchanged-reuse check). Zero disarms; the response reports remaining and total injected rejections. |
 | `arm_ddgi_visibility_interruption` | Arm a development-only DDGI receipt-lifetime diagnostic. It skips the selected pipeline's Visibility border copy for skip_count render frames. |
+| `arm_vulkan_desktop_frame_fault` | Arm a development-only diagnostic that fails the occurrence-th upcoming observation of one Vulkan desktop frame phase boundary. The frame takes its normal failure path, so markers of its unsubmitted plan fail with PlanUnsubmitted. point 'Clear' disarms. |
 | `arm_vulkan_texture_upload_faults` | Arm a development-only diagnostic that fails admission of, or cancels, the next Vulkan imported-texture upload schedules (streaming and restart rehydration). Zeros disarm; the response reports remaining and total injected outcomes. |
 | `assign_component_asset_property` | Assign an asset reference to a component property or field (e.g., Material). |
 | `bake_ddgi_volume` | Bake the selected viewport's converged DDGI state to output_path. The volume is not changed or automatically assigned to the new asset. |
@@ -644,6 +667,7 @@ the target's type and optional persistent ID.
 | `get_ddgi_visibility_interruption` | Read the development-only DDGI receipt-lifetime diagnostic for one exact selected pipeline. |
 | `get_derived_types` | Find all types that derive from a given type across all loaded assemblies. |
 | `get_editor_openxr_toggle_status` | Read whether the editor OpenXR toggle is available, its requested and runtime states, and the local player's controlled pawn. |
+| `get_editor_preference` | Read one effective editor preference by property name or dotted path. |
 | `get_editor_preferences` | Read all editor preferences (effective view: global base + project and process-local session overrides merged). |
 | `get_engine_settings` | Read engine configuration overview (user settings, timing, project info, runtime metrics). |
 | `get_engine_state` | Get engine/editor play mode and high-level state flags. |
@@ -673,6 +697,7 @@ the target's type and optional persistent ID.
 | `get_scene_statistics` | Get scene statistics including node and component counts. |
 | `get_selection` | Get the currently selected scene nodes. |
 | `get_shader_command_coverage` | Return opt-in shader command coverage. OpenGL counters are issued commands; Vulkan counters are command-buffer Recorded commands, never GPU-completed work. |
+| `get_shadow_caster_census` | Read the shadow-only caster census that gates the primary directional shadow views under a zero-readback strategy: GPU dispatch state, previous and current candidate counts, previous and current main-view GPU collection counts, the shadow caster membership revision against its pass-start value, MayHaveShadowOnlyCasters, and the last atlas planning decision. With capture_candidates, also capture the candidates that the next completed main-view GPU collection counts, with reason, owner, scene node, layer, flags, pre-collection callback method and command types. A world without GPU dispatch or without a recent main-view GPU collection gets no capture. |
 | `get_texture_streaming_summary` | Return imported texture streaming summary telemetry, including Vulkan freeze and generation state. |
 | `get_time_state` | Get timing, delta, and target frequency information. |
 | `get_transform_decomposed` | Get local/world/render translation, rotation, and scale for a scene node. |
@@ -781,6 +806,7 @@ the target's type and optional persistent ID.
 | `set_node_transform` | Set a scene node transform (translation, rotation, scale). |
 | `set_node_world_transform` | Set a scene node world transform (translation, rotation, scale). |
 | `set_object_property` | Set a property on any XRBase instance by GUID (uses SetField pipeline). |
+| `set_object_reference` | Set a reference property to an existing engine object, including compatible interface properties. Omit reference_object_id to clear the reference. |
 | `set_tag` | Assign or remove a tag on a scene node. |
 | `set_transform` | Set a scene node transform (translation, rotation, scale). |
 | `snapshot_world_state` | Capture an in-memory snapshot of the active world state for later restore. |

@@ -3,13 +3,11 @@ namespace XREngine.Core.Files;
 /// <summary>Asset reads delegated to the source installed by the application.</summary>
 public static class DirectStorageIO
 {
-    private static IRuntimeAssetSource? _source;
-
     /// <summary>Installs the asset source before worlds or importers begin loading.</summary>
     public static IRuntimeAssetSource? Source
     {
-        get => Volatile.Read(ref _source);
-        set => Volatile.Write(ref _source, value);
+        get => (XREngine.Data.RuntimeAssetReadServices.Source as RuntimeAssetReadSource)?.Source;
+        set => XREngine.Data.RuntimeAssetReadServices.SetSource(value is null ? null : new RuntimeAssetReadSource(value));
     }
 
     public static bool IsEnabled => Source?.IsAccelerated ?? false;

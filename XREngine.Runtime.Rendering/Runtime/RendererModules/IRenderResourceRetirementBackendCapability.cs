@@ -5,5 +5,8 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRenderResourceRetirementBackendCapability
 {
+    /// <summary>Whether retirement pressure may synchronously wait; event-loop backends poll on later frames.</summary>
+    bool RequiresBlockingRetirementProgress => true;
+
     void PrepareForPhysicalResourceDestruction(string reason);
 }

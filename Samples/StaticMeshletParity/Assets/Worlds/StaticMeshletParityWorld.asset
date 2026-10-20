@@ -1,0 +1,404 @@
+﻿__assetType: XREngine.Scene.XRWorld
+Scenes:
+- __assetType: XREngine.Scene.XRScene
+  IsVisible: true
+  RootNodes:
+  - Transform:
+      ID: 5de46269-f186-4def-9cae-a7af93cf319a
+    ID: ef01bf99-747d-46c2-b17a-417a7f341cf8
+    Name: Rendering Inspection
+    ChildNodes:
+    - Components:
+      - &o0
+        __type: XREngine.Components.CameraComponent
+        RenderPipelineSource:
+          __type: XREngine.Rendering.DefaultRenderPipeline
+          __assetType: XREngine.Rendering.DefaultRenderPipeline
+          ID: 6ae570dc-6307-49df-8102-068df6766081
+        CameraParameters:
+          __type: XREngine.Rendering.XRPerspectiveCameraParameters
+          VerticalFieldOfView: 48
+          HorizontalFieldOfView: 48
+          AspectRatio: 1
+          InheritAspectRatio: true
+          NearZ: 0.1
+          FarZ: 100
+        InternalResolutionScale: 1
+        ManualInternalWidth: 1920
+        ManualInternalHeight: 1080
+        CullWithFrustum: true
+        ID: affcb0fb-30a4-4c02-98fd-91526e97acf3
+      - __type: StaticMeshletParity.StaticMeshletParityPawnComponent
+        CameraComponent: *o0
+        ID: 4717d3f8-f401-4c4d-b750-19622d20e082
+      Transform:
+        ID: ac81db5c-4f7a-4371-a9c8-540fbb50f502
+        Translation: 0 0 6.5
+      ID: e51f249e-3b4a-4e49-a7fd-bb8a9919b4ed
+      Name: Inspection Camera
+    - Components:
+      - __type: XREngine.Components.Lights.DirectionalLightComponent
+        CascadeCount: 4
+        CascadeOverlapPercent: 0.1
+        CascadeShadowRenderMode: Auto
+        CascadePercentages:
+        - 0.1
+        - 0.2
+        - 0.3
+        - 0.4
+        CascadeBiasOverrides:
+        - &o1 {}
+        - *o1
+        - *o1
+        - *o1
+        Scale: 1 1 1
+        CascadedShadowDistance: 200
+        MeshCenterAdjustMatrix: 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1
+        CastsShadows: false
+        ShadowMapStorageFormat: Depth24
+        ShadowMomentMinVariance: 2E-05
+        ShadowMomentLightBleedReduction: 0.2
+        ShadowMomentPositiveExponent: 5
+        ShadowMomentNegativeExponent: 5
+        ShadowExponentBase: 0.035
+        ShadowExponent: 1.221
+        ShadowMinBias: 1E-05
+        ShadowMaxBias: 0.004
+        ShadowDepthBiasTexels: 1
+        ShadowSlopeBiasTexels: 2
+        ShadowNormalBiasTexels: 1
+        ShadowMapResolutionWidth: 2048
+        ShadowMapResolutionHeight: 2048
+        Color: 1 0.939999998 0.839999974
+        DiffuseIntensity: 2.2
+        Samples: 8
+        FilterSamples: 8
+        BlockerSamples: 8
+        VogelTapCount: 5
+        FilterRadius: 0.0012
+        BlockerSearchRadius: 0.01
+        MinPenumbra: 0.001
+        MaxPenumbra: 0.015
+        SoftShadowMode: ContactHardeningPcss
+        LightSourceRadius: 1.2
+        ContactShadowDistance: 1
+        ContactShadowSamples: 16
+        ContactShadowThickness: 2
+        ContactShadowFadeStart: 10
+        ContactShadowFadeEnd: 40
+        ContactShadowJitterStrength: 1
+        ID: ca38568d-3621-4cc6-8481-e0a6b59779ff
+      Transform:
+        ID: 5e308a5c-9e73-4bb9-bc87-168102731baa
+        Rotation: -0.1714489 -0.1714489 -0.030313643 0.9696864
+      ID: c11e8868-0d09-46ed-bffb-b4a46393cac0
+      Name: Warm Directional Light
+    - Components:
+      - __type: XREngine.Components.Capture.Lights.Types.PointLightComponent
+        ShadowRenderMode: InstancedLayered
+        ShadowNearPlaneDistance: 0.1
+        Radius: 9
+        Brightness: 1
+        MeshCenterAdjustMatrix: 9 0 0 0 0 9 0 0 0 0 9 0 0 0 0 1
+        CastsShadows: false
+        ShadowMomentMinVariance: 2E-05
+        ShadowMomentLightBleedReduction: 0.2
+        ShadowMomentPositiveExponent: 5
+        ShadowMomentNegativeExponent: 5
+        ShadowExponentBase: 0.035
+        ShadowExponent: 1.221
+        ShadowMinBias: 1E-05
+        ShadowMaxBias: 0.004
+        ShadowDepthBiasTexels: 1
+        ShadowSlopeBiasTexels: 2
+        ShadowNormalBiasTexels: 1
+        ShadowMapResolutionWidth: 1024
+        ShadowMapResolutionHeight: 1024
+        Color: 0.349999994 0.649999976 1
+        DiffuseIntensity: 6
+        Samples: 4
+        FilterSamples: 4
+        BlockerSamples: 4
+        VogelTapCount: 5
+        FilterRadius: 0.0012
+        BlockerSearchRadius: 0.0012
+        MinPenumbra: 0.0002
+        MaxPenumbra: 0.0048
+        SoftShadowMode: FixedPoisson
+        UseLightRadiusForContactHardening: true
+        LightSourceRadius: 0.01
+        ContactShadowDistance: 0.1
+        ContactShadowSamples: 4
+        ContactShadowThickness: 0.25
+        ContactShadowFadeStart: 10
+        ContactShadowFadeEnd: 40
+        ContactShadowJitterStrength: 1
+        ID: ef7b6a8d-0792-4dd6-b995-7e988832a877
+      Transform:
+        ID: c147f38e-6601-4607-b29e-59b752eba632
+        Translation: 2 1.5 3
+      ID: 3042b574-03aa-4104-9482-6a350e25ad29
+      Name: Cool Point Light
+    - Components:
+      - __type: XREngine.Components.Scene.Mesh.ModelComponent
+        Model:
+          __assetType: XREngine.Rendering.Models.Model
+          Meshes:
+          - __assetType: XREngine.Rendering.Models.SubMesh
+            LODs:
+            - &o0
+              Material:
+                __assetType: XREngine.Rendering.XRMaterial
+                Shaders:
+                - __assetType: XREngine.Rendering.XRShader
+                  Source: Shaders/Common/TexturedNormalMetallicRoughnessDeferred.fs
+                  EntryPoint: main
+                  SlangOptions: {}
+                  OriginalLastWriteTimeUtc: 2026-10-01T16:31:28.8938633Z
+                  ID: e2958347-0d9e-4e6e-a3cf-290c9376a81a
+                  Name: TexturedNormalMetallicRoughnessDeferred
+                UberAuthoredState: {}
+                PassSet:
+                  SourceRenderQueue: -1
+                  ForwardAddPolicy: FoldedIntoForwardPlusBase
+                AlphaCutoff: 0.5
+                SurfaceTextureBindings:
+                - Texture:
+                    __assetType: XREngine.Rendering.XRTexture2D
+                    ID: c55b561c-7c97-4d95-979a-d80abdf44856
+                    Format: CookedBinary
+                    Version: 1
+                    Payload:
+                      Length: 1092
+                      Encoding: ZstdHex
+                      Bytes: 28B52FFD604403E50900F20D3534606D73C08697340762A20882D04D3A550BCC1E24913124996CCBEE5C4B86283DE55C88DDB671D4B7EF744EFD39FD65E0FE514A01221F856EE143B2CB965D8E6C6033EBD22C4B14767E6624F46FEA0F5A6B44CD5728CCCCBBCB02CCCB1C80D66665015F82E3F19BCA98D960E5E90B23410A2F5C85A1DD8012A8EB4E0EA0FDE6365D41BD9F725204059883090865E4C3A3EAD8F00899C0120CA4AC3E7973F3CA68884D941435E245123EADED93ACD48B2C12C3E433627C632FEA44EAF5459786FE4A3D7D5999B479FCD6BC2DA93D6E8EB1B20B842B2070022364C31B10500FF0857660FA8576238080E600EFB159D6217FCB06D117590E090C92B72AF79E0241E37C9CBD72D8A2039DFB096447820D1B348E110213E277F001FF01F08503F5027845251192CA1553CDED6545F1CE03EE430BE1AF1AADB1C127
+                  IsSrgb: true
+                  WrapU: ClampToEdge
+                  WrapV: ClampToEdge
+                  UvScaleOffset: 1 1 0 0
+                - Semantic: Normal
+                  Texture:
+                    __assetType: XREngine.Rendering.XRTexture2D
+                    ID: 9d469349-56a9-417c-8901-4d868719a262
+                    Format: CookedBinary
+                    Version: 1
+                    Payload:
+                      Length: 1100
+                      Encoding: ZstdHex
+                      Bytes: 28B52FFD604C037D0A00024F3733706B73907FAEAAAAAACB95DCC963690C146524253F6D32B1C416935AFE482B112A5101EAA0FD06DB05F3AF3B5C7EBF84624A01F5EBD7AFFFF5EBD7AF1F4FFD5D96EC5E64039B59D8B52C4D2A3E973DBDA27505BC2484809979775980795903D0DA56FD93101A87B2678454E6559DC628D29B6FB28130B41BF0017D3E1E0468E3E3C8CDC135E645487A39ADFF5F755070E988646054ACB16061F1E0A0362A0631529FBC371B46D10D18182FF4C145F1C949DBA748195C24911226DFE0846C8B8B38703A75D144A1259D9DC6AC4CCA3894AD795B523BCC38C5CA2422013220D08292A19D033AD11D1DDBC9EEEA984E2CA38EE984EE766C2775E78E2DF87648E23DACC8814C19C913246EDDECA640224B23AD7A2E0E5C396C6181CEED04D94DB0618F468C909910570719F02B00DE70A0BA002251690C49878A89E6C2B26271838CB3176F0A7FD1688DAD3E01
+                  WrapU: ClampToEdge
+                  WrapV: ClampToEdge
+                  UvScaleOffset: 1 1 0 0
+                - Semantic: Metallic
+                  Texture:
+                    __assetType: XREngine.Rendering.XRTexture2D
+                    ID: 26feecc1-1c23-4406-a86f-4ec83e8e1dd8
+                    Format: CookedBinary
+                    Version: 1
+                    Payload:
+                      Length: 1093
+                      Encoding: ZstdHex
+                      Bytes: 28B52FFD6045034D0A00C28E3633806B3A98E5C269A86ACC8A32858737C58BACA295D442A4BD722435F7C7DE8BBBBA846B6675DFC84F2816F0937C2C7B8E504A01B7DD76DB6DB7DD76DBCD981B73539837AC01B6A8EAC2FD2ADCD06991F0A9D787B85C235EE884A0BB9B995BA09B3B03E0D79C2E20ADC87CA45E65B46070EA785579B0424933E98739E03E5926D21EE65C0F1D1C264A09AB4F1209080247C387C4EC909E83048591108F0229ED47EF9A59657804264A0B3BE1200969B5FE91B40F0EA2BC85E867E450A770D026D6B70E92189CDADAF18AB21EF691FAF54E3DFF887D85B2300C023120D08292A19D033AD11D1DDBC9EEEA984EEE4EC77442773BB693BA73C7167C3B24F11E56E440A68CE40912B76E764F8144E35C9CBD72D8C2029DDB09B29B60C31E8D18213321AE0E32E0570084E14075013DA29A18120B1513CD8565C5E29F0CB8175A0A7FD1688DAD3E01
+                  WrapU: ClampToEdge
+                  WrapV: ClampToEdge
+                  UvScaleOffset: 1 1 0 0
+                - Semantic: Roughness
+                  Texture:
+                    __assetType: XREngine.Rendering.XRTexture2D
+                    ID: 722246f2-5113-4546-b13c-6257f24cef11
+                    Format: CookedBinary
+                    Version: 1
+                    Payload:
+                      Length: 1094
+                      Encoding: ZstdHex
+                      Bytes: 28B52FFD6046035D0900F20D3432806B3AB09D86B2C148206882B41BD84BB9FC28A98554DE211B49F1FEECAA28A109BB1E8EC345238FAC85E0FFC1F9DF234A291FD9AEC32E53763BAA81AD1E75597614727E4E12FA37F508AB39E2E52704CCCCBBCB02CCCB1A80B6A625033E46E3F19BCA385DD0D2694A7290C2CA66C2CF6E00C893652308CF6296C3878661ED18579D4F526010322182C934784853C5C12B4C221229AB47DE9B496DB4C44594994AD120099FD6F64856880651DC42E43362DF160DE244EAB5411586FE4A3B4DBDCA5D1EBF2DEFE7DAE3E5D2AB341202232060022354C41B9C54E467B20EF9DB3688BEC877486190BC95BBF714081AE773F6EA610B0D746E4E00BB09366CA33146084F88B38304FC05C0980F140BF0151525482E514C35D7CB0AC50114671F6F087FC5688D2D3F01
+                  WrapU: ClampToEdge
+                  WrapV: ClampToEdge
+                  UvScaleOffset: 1 1 0 0
+                TransmissionColor: 1 1 1
+                RenderPass: 1
+                RenderOptions:
+                  __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+                  WriteRed: true
+                  WriteGreen: true
+                  WriteBlue: true
+                  WriteAlpha: true
+                  AlphaToCoverage: Disabled
+                  Winding: CounterClockwise
+                  CullMode: Back
+                  DepthTest:
+                    Enabled: Enabled
+                    UpdateDepth: true
+                    Function: Lequal
+                  StencilTest:
+                    FrontFace:
+                      BothFailOp: Keep
+                      StencilPassDepthFailOp: Keep
+                      BothPassOp: Keep
+                    BackFace:
+                      BothFailOp: Keep
+                      StencilPassDepthFailOp: Keep
+                      BothPassOp: Keep
+                  ID: 4882de35-01e1-4c1b-9516-59607f2f1fdb
+                Parameters:
+                - __type: XREngine.Rendering.Models.Materials.ShaderVector3
+                  Color: {}
+                  Value: 1 1 1
+                  Name: BaseColor
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Value: 1
+                  Name: Opacity
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Value: 1
+                  Name: Specular
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Value: 0.9
+                  Name: Roughness
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Value: 0.85
+                  Name: Metallic
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Name: Emission
+                - __type: XREngine.Rendering.Models.Materials.ShaderInt
+                  Name: NormalMapMode
+                - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                  Name: HeightMapScale
+                Textures:
+                - __assetType: XREngine.Rendering.XRTexture2D
+                  ID: c55b561c-7c97-4d95-979a-d80abdf44856
+                  Format: CookedBinary
+                  Version: 1
+                  Payload:
+                    Length: 1092
+                    Encoding: ZstdHex
+                    Bytes: 28B52FFD604403E50900F20D3534606D73C08697340762A20882D04D3A550BCC1E24913124996CCBEE5C4B86283DE55C88DDB671D4B7EF744EFD39FD65E0FE514A01221F856EE143B2CB965D8E6C6033EBD22C4B14767E6624F46FEA0F5A6B44CD5728CCCCBBCB02CCCB1C80D66665015F82E3F19BCA98D960E5E90B23410A2F5C85A1DD8012A8EB4E0EA0FDE6365D41BD9F725204059883090865E4C3A3EAD8F00899C0120CA4AC3E7973F3CA68884D941435E245123EADED93ACD48B2C12C3E433627C632FEA44EAF5459786FE4A3D7D5999B479FCD6BC2DA93D6E8EB1B20B842B2070022364C31B10500FF0857660FA8576238080E600EFB159D6217FCB06D117590E090C92B72AF79E0241E37C9CBD72D8A2039DFB096447820D1B348E110213E277F001FF01F08503F5027845251192CA1553CDED6545F1CE03EE430BE1AF1AADB1C127
+                - __assetType: XREngine.Rendering.XRTexture2D
+                  ID: 9d469349-56a9-417c-8901-4d868719a262
+                  Format: CookedBinary
+                  Version: 1
+                  Payload:
+                    Length: 1100
+                    Encoding: ZstdHex
+                    Bytes: 28B52FFD604C037D0A00024F3733706B73907FAEAAAAAACB95DCC963690C146524253F6D32B1C416935AFE482B112A5101EAA0FD06DB05F3AF3B5C7EBF84624A01F5EBD7AFFFF5EBD7AF1F4FFD5D96EC5E64039B59D8B52C4D2A3E973DBDA27505BC2484809979775980795903D0DA56FD93101A87B2678454E6559DC628D29B6FB28130B41BF0017D3E1E0468E3E3C8CDC135E645487A39ADFF5F755070E988646054ACB16061F1E0A0362A0631529FBC371B46D10D18182FF4C145F1C949DBA748195C24911226DFE0846C8B8B38703A75D144A1259D9DC6AC4CCA3894AD795B523BCC38C5CA2422013220D08292A19D033AD11D1DDBC9EEEA984E2CA38EE984EE766C2775E78E2DF87648E23DACC8814C19C913246EDDECA640224B23AD7A2E0E5C396C6181CEED04D94DB0618F468C909910570719F02B00DE70A0BA002251690C49878A89E6C2B26271838CB3176F0A7FD1688DAD3E01
+                - __assetType: XREngine.Rendering.XRTexture2D
+                  ID: 26feecc1-1c23-4406-a86f-4ec83e8e1dd8
+                  Format: CookedBinary
+                  Version: 1
+                  Payload:
+                    Length: 1093
+                    Encoding: ZstdHex
+                    Bytes: 28B52FFD6045034D0A00C28E3633806B3A98E5C269A86ACC8A32858737C58BACA295D442A4BD722435F7C7DE8BBBBA846B6675DFC84F2816F0937C2C7B8E504A01B7DD76DB6DB7DD76DBCD981B73539837AC01B6A8EAC2FD2ADCD06991F0A9D787B85C235EE884A0BB9B995BA09B3B03E0D79C2E20ADC87CA45E65B46070EA785579B0424933E98739E03E5926D21EE65C0F1D1C264A09AB4F1209080247C387C4EC909E83048591108F0229ED47EF9A59657804264A0B3BE1200969B5FE91B40F0EA2BC85E867E450A770D026D6B70E92189CDADAF18AB21EF691FAF54E3DFF887D85B2300C023120D08292A19D033AD11D1DDBC9EEEA984EEE4EC77442773BB693BA73C7167C3B24F11E56E440A68CE40912B76E764F8144E35C9CBD72D8C2029DDB09B29B60C31E8D18213321AE0E32E0570084E14075013DA29A18120B1513CD8565C5E29F0CB8175A0A7FD1688DAD3E01
+                - __assetType: XREngine.Rendering.XRTexture2D
+                  ID: 722246f2-5113-4546-b13c-6257f24cef11
+                  Format: CookedBinary
+                  Version: 1
+                  Payload:
+                    Length: 1094
+                    Encoding: ZstdHex
+                    Bytes: 28B52FFD6046035D0900F20D3432806B3AB09D86B2C148206882B41BD84BB9FC28A98554DE211B49F1FEECAA28A109BB1E8EC345238FAC85E0FFC1F9DF234A291FD9AEC32E53763BAA81AD1E75597614727E4E12FA37F508AB39E2E52704CCCCBBCB02CCCB1A80B6A625033E46E3F19BCA385DD0D2694A7290C2CA66C2CF6E00C893652308CF6296C3878661ED18579D4F526010322182C934784853C5C12B4C221229AB47DE9B496DB4C44594994AD120099FD6F64856880651DC42E43362DF160DE244EAB5411586FE4A3B4DBDCA5D1EBF2DEFE7DAE3E5D2AB341202232060022354C41B9C54E467B20EF9DB3688BEC877486190BC95BBF714081AE773F6EA610B0D746E4E00BB09366CA33146084F88B38304FC05C0980F140BF0151525482E514C35D7CB0AC50114671F6F087FC5688D2D3F01
+                ID: 567bd906-0f69-425b-b2cc-147a21fa72df
+                Name: Mapped Checker Surface
+                EngineSemantic:
+                  Semantic: StandardLitTexture
+                  Version: 1
+              Mesh:
+                __assetType: XREngine.Rendering.XRMesh
+                ID: 56f211b4-9743-4823-a5d7-5811788e65b7
+                Format: CookedBinary
+                Version: 1
+                Payload:
+                  Length: 606
+                  Encoding: ZstdHex
+                  Bytes: 28B52FFD605E014D0800740A196C5852456E67696E652E52656E646572696E672E58524D6573682C20756E74696D2C2056657273696F6E3D312E302C2043756C747572653D6E65757472616C2C205075626C69634B6579546F6B656E3D6E756C6C0FB411F25643972348A5D75811788E65B70E13537461746963204D61707065642050616E656C00000006000000040000009A99F9BF000080BF0000403F0101010000000203020550BF24FF7F0160000030002D20708272653C0D104601FA6650EEE01786222EFF8C4106C805345C044200F217738465A1F873D6658E5E3C0F5D90E1831DC339400013683470C1D5558C86CD19DF614721CA7766764DB90CC8E0C6C05B450ECD9DC1424454E19B189D6FD509
+              MinProjectedScreenRadiusPixels: .nan
+              StableSortKey: manual:Static Mapped Panel:Mapped Checker Surface:00000000
+            CookedBinaryLODs:
+            - *o0
+            MeshOptimizer:
+              UseModelImportDefaults: true
+              Meshlets:
+                Enabled: true
+                MaxVertices: 64
+                MinTriangles: 32
+                MaxTriangles: 124
+                ConeWeight: 0.25
+                SplitFactor: 2
+                FillWeight: 0.5
+                OptimizeMeshlets: true
+                ComputeBounds: true
+                EncodeVertexReferences: true
+              Lods:
+                Mode: SimplifyWithAttributes
+                AdditionalLodCount: 2
+                FirstLodIndexRatio: 0.5
+                LodRatioScale: 0.5
+                TargetError: 0.01
+                FirstLodDistance: 20
+                LodDistanceScale: 2
+                ReusePreviousLodAsSource: true
+                Options: Prune
+                UseNormals: true
+                NormalWeight: 0.5
+                UseTangents: true
+                TangentWeight: 0.25
+                UseTexCoords: true
+                TexCoordWeight: 1
+                ColorWeight: 1
+            Bounds:
+              Min: -1.95 -1 0
+              Max: -0.75 1 0
+            UseGpuMeshBvh: true
+            RealtimeGpuMeshBvhForSkinnedMeshes: true
+            ID: 1ad216cd-a15b-4d58-9e15-6406011217a7
+            Name: Static Reference Surface
+          ID: 43202099-ed41-41ec-a5e6-f0d023801c0c
+        UseSkinnedMotionVectors: true
+        MeshLayer: -1
+        ID: c06279be-d06c-4da8-aaf5-5698c9bb542d
+      Transform:
+        ID: 6ffbc6c3-53ca-4349-8c86-08d13ee4e59c
+      ID: db623703-99db-4df1-9aef-527358e30784
+      Name: Static Reference
+  ID: c6d487aa-4b46-4ab0-8967-c331e3e73e6e
+  Name: Static Mapped Meshlet
+DefaultGameMode:
+  __type: StaticMeshletParity.StaticMeshletParityGameMode
+  __assetType: StaticMeshletParity.StaticMeshletParityGameMode
+  FixtureMarker: mapped-static-meshlet-v1
+  ID: 48930f60-062f-4656-a2b6-3132b8f4c7c4
+  Name: Authored Rendering Game Mode
+Settings:
+  __assetType: XREngine.Scene.WorldSettings
+  Gravity: 0 -9.81 0
+  PhysicsResetMinYDist: 100
+  PhysicsTimestep: 0.016666668
+  PhysicsSubsteps: 1
+  DefaultAngularDamping: 0.05
+  DefaultFriction: 0.5
+  EnableContinuousCollision: true
+  TimeDilation: 1
+  Bounds:
+    Min: -2500 -2500 -2500
+    Max: 2500 2500 2500
+  SkyboxIntensity: 1
+  RenderSkybox: false
+  ClearColor: 0.0149999997 0.0250000004 0.0500000007 1
+  AmbientLightColor: 0.0599999987 0.0700000003 0.0900000036
+  AmbientLightIntensity: 0.5
+  EnvironmentLightingIntensity: 1
+  ReflectionIntensity: 1
+  LightProbeResolution: 256
+  AutoCaptureLightProbes: false
+  FogColor: 0.5 0.5 0.5
+  FogDensity: 0.01
+  FogStartDistance: 10
+  FogEndDistance: 1000
+  FogHeightFalloff: 0.2
+  SpeedOfSound: 343
+  DopplerFactor: 1
+  DefaultAudioAttenuation: 1
+  MasterVolume: 1
+  PreviewWorldBounds: true
+  ID: a866b4a0-31b9-4bc2-ad40-60f3683b3b06
+ID: 78fa878c-c1b7-428d-b0c5-7224317139c2
+Name: Static Meshlet Parity World

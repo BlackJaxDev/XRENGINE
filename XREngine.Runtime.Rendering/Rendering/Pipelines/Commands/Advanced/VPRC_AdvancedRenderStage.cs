@@ -1,6 +1,8 @@
 using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Shadows;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -11,6 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 {
     /// <summary>Frozen registry-resolved GI selection for this native stage family.</summary>
+    [YamlIgnore]
     public GlobalIlluminationPlan? GlobalIlluminationPlan
     {
         get => _globalIlluminationPlan;
@@ -27,9 +30,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     public EAdvancedRenderStage Stage
     {
         get => _stage;
-        set => SetField(ref _stage, value);
+        set
+        {
+            if (SetField(ref _stage, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
     }
 
+    [YamlIgnore]
     public AdvancedRenderStageDescriptor Descriptor
         => AdvancedRenderPipelineFrameContract.GetDescriptor(Stage);
 
@@ -37,11 +44,44 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
     public override string CpuProfilingName => Descriptor.PassName;
 
+    private bool _enableAuthoredDecals;
+    /// <summary>Consumes the selected view's DeferredDecals membership as native XZ albedo projection.</summary>
+    public bool EnableAuthoredDecals
+    {
+        get => _enableAuthoredDecals;
+        set
+        {
+            if (SetField(ref _enableAuthoredDecals, value)) ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
+    }
+
     public VPRC_AdvancedRenderStage SetStage(EAdvancedRenderStage stage)
     {
         Stage = stage;
         return this;
     }
+
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        base.DescribeRequirements(requirements);
+        if (requirements.Backend == RendererBackendId.WebGPU && IsNativeSceneConsumer(Stage))
+            requirements.RequiresNativeScenePasses = true;
+        DescribeAuthoredDecalRequirements(requirements);
+    }
+
+    internal void DescribeAuthoredDecalRequirements(RenderPipelineRequirements requirements)
+    {
+        if (requirements.Backend == RendererBackendId.WebGPU && Stage == EAdvancedRenderStage.NativeOpaqueShading && EnableAuthoredDecals)
+            requirements.RequireOperation("native-authored-decals");
+    }
+
+    private static bool IsNativeSceneConsumer(EAdvancedRenderStage stage)
+        => stage is EAdvancedRenderStage.VisibilityPreparation or
+            EAdvancedRenderStage.VisibilityRaster or
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+            EAdvancedRenderStage.AmbientOcclusion or
+            EAdvancedRenderStage.WorkClassification or
+            EAdvancedRenderStage.NativeOpaqueShading;
 
     protected override void Execute()
     {
@@ -60,12 +100,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
         }
 
-        if (Stage is not (EAdvancedRenderStage.VisibilityPreparation or
-            EAdvancedRenderStage.VisibilityRaster or
-            EAdvancedRenderStage.DepthPyramidAndLateVisibility or
-            EAdvancedRenderStage.AmbientOcclusion or
-            EAdvancedRenderStage.WorkClassification or
-            EAdvancedRenderStage.NativeOpaqueShading))
+        if (!IsNativeSceneConsumer(Stage))
         {
             using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
             PublishStageDiagnostic(
@@ -74,6 +109,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 "The logical stage command scope was reached; no native-stage enqueue belongs to this marker.");
             return;
         }
+
+        if (Stage == EAdvancedRenderStage.AmbientOcclusion &&
+            AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU &&
+            !ActivePipelineInstance.Resources.TryGetTexture(AdvancedAmbientOcclusionContract.ResourceName, out _))
+            return;
 
         if (!TryBuildStageRequest(
                 state,
@@ -196,20 +236,33 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return false;
         }
         AdvancedRenderPipeline pipeline = familyHost.AdvancedStageFamilyDefinition;
+        bool useNeutralWebAmbientOcclusion = rendererHost.BackendId == RendererBackendId.WebGPU &&
+            !ActivePipelineInstance.Resources.TryGetTexture(AdvancedAmbientOcclusionContract.ResourceName, out _);
         AdvancedPreparationPublication publication =
             AdvancedSharedPreparationService.Instance.Acquire(
                 world,
                 state.FrameViewSet,
-                pipeline.RequiredPreparationConsumers);
+                pipeline.RequiredPreparationConsumers,
+                ActivePipelineInstance.ActiveMeshRenderCommands
+                    .RenderingBackendReadyPackage.SubmissionResolution.Resolved);
         bool requiresAmbientOcclusion =
             Stage == EAdvancedRenderStage.AmbientOcclusion;
         bool requiresNativeOpaqueShading =
             Stage == EAdvancedRenderStage.NativeOpaqueShading;
+        bool frozenAuthoredDecals = ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage.NativeAuthoredDecalsEnabled;
+        if (rendererHost.BackendId == RendererBackendId.WebGPU && requiresNativeOpaqueShading && EnableAuthoredDecals != frozenAuthoredDecals)
+        {
+            failureReason = "The authored decal operation changed after frame collection; recollect the selected command graph.";
+            if (reportRejections)
+                ReportExecutionPrerequisiteRejection(failureReason);
+            return false;
+        }
         bool isMinimalVisibilityOutput =
             pipeline.IsMinimalVisibilityOutput;
         IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
         bool enableBuiltInAmbientOcclusion =
             !isMinimalVisibilityOutput &&
+            !useNeutralWebAmbientOcclusion &&
             pipeline.EnableBuiltInAmbientOcclusion &&
             ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
         if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
@@ -287,6 +340,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
         uint samples = RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa
             ? AdvancedRenderPipeline.ResolveEffectiveMsaaSampleCount() : 1u;
+        EAdvancedVisibilitySampleEncoding sampleEncoding = ActivePipelineInstance.ActiveGeneration is { } generation
+            ? AdvancedVisibilitySampleContract.Select(generation.Key.ToProfile()) : EAdvancedVisibilitySampleEncoding.None;
+        bool packedSamples = sampleEncoding == EAdvancedVisibilitySampleEncoding.PackedUInt16;
         bool multisampleRaster = samples > 1u && Stage is (EAdvancedRenderStage.VisibilityPreparation or
             EAdvancedRenderStage.VisibilityRaster or EAdvancedRenderStage.DepthPyramidAndLateVisibility);
         string targetName = multisampleRaster ? AdvancedVisibilityResourceNames.FrameBufferMultisample : AdvancedVisibilityResourceNames.FrameBuffer;
@@ -305,6 +361,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return false;
         }
 
+        string rawMetadata = packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.MetadataMultisample;
+        string rawSelection = packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.SelectionMultisample;
         request = new(
             Stage,
             EAdvancedVisibilityStageBackendPhase.Complete,
@@ -316,10 +374,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 "Advanced visibility requires an immutable frame view set."),
             target,
             multisampleRaster ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity,
-            multisampleRaster ? AdvancedVisibilityResourceNames.MetadataMultisample : AdvancedVisibilityResourceNames.Metadata,
-            multisampleRaster ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection,
+            multisampleRaster ? rawMetadata : AdvancedVisibilityResourceNames.Metadata,
+            multisampleRaster ? rawSelection : AdvancedVisibilityResourceNames.Selection,
             multisampleRaster ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil,
-            AdvancedAmbientOcclusionContract.ResourceName,
+            useNeutralWebAmbientOcclusion ? AdvancedRenderPipeline.WebPostProcessNeutralTextureName : AdvancedAmbientOcclusionContract.ResourceName,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid,
             pipeline.ShadingDebugView,
             RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required ||
@@ -340,7 +398,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             BackendReadyPackage = ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
             FroxelDepthSlices = pipeline.FroxelDepthSlices,
             MsaaSampleCount = samples,
+            SampleEncoding = sampleEncoding,
             HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
+            EnableAuthoredDecals = frozenAuthoredDecals,
         };
         return true;
     }
@@ -357,7 +417,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         in RenderWorldSnapshot world)
     {
         using IDisposable? passScope = PushRenderGraphPass(Descriptor.PassName);
-        XRViewport? viewport = state.WindowViewport ?? ActivePipelineInstance.LastWindowViewport;
+        XRViewport? viewport = state.WindowViewport;
         ShadowAtlasManager? atlas = viewport?.World?.Lights?.ShadowAtlas;
         if (atlas is null)
         {
@@ -369,16 +429,19 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         }
 
         string? unavailableReason = null;
+        ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        RenderCommandCollection commands = ActivePipelineInstance.ActiveMeshRenderCommands;
+        using var renderingBufferScope = commands.EnterRenderingBufferReadScope();
+        BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+        AdvancedDirectionalShadowConsumerAuthority stageAuthority = new(
+            viewport, ActivePipelineInstance, commands, renderFrameId,
+            package.PackageGeneration, package.Identity,
+            package.SubmissionResolution.Resolved);
         AdvancedVisibilityStageBackendRequest template = default;
         IAdvancedVisibilityStageBackendCapability? visibility = null;
         bool ready = ShadowAtlasManager.AdvancedDirectionalShadowLaneEnabled;
         if (!ready)
             unavailableReason = "The Advanced directional shadow lane is disabled by XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE.";
-        else if (RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() != EMeshSubmissionStrategy.CpuDirect)
-        {
-            ready = false;
-            unavailableReason = "The directional shadow lane records CPU-direct draws; GPU-driven submission strategies keep the generic path.";
-        }
         else if (!TryBuildStageRequest(
                      state,
                      in world,
@@ -391,9 +454,23 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             ready = false;
         }
+        else if (template.BackendReadyPackage?.SubmissionResolution.Resolved is not
+            (EMeshSubmissionStrategy.CpuDirect or EMeshSubmissionStrategy.GpuIndirectZeroReadback))
+        {
+            ready = false;
+            unavailableReason = "The frozen directional shadow submission strategy has no supported caster producer.";
+        }
+        else if (!stageAuthority.Matches(viewport!, ActivePipelineInstance,
+                     commands, package, renderFrameId) ||
+                 !atlas.MatchesAdvancedDirectionalShadowConsumerAuthority(in stageAuthority) ||
+                 !ReferenceEquals(template.BackendReadyPackage, package))
+        {
+            ready = false;
+            unavailableReason = "The directional shadow stage does not own this frame's frozen desktop command package.";
+        }
 
         atlas.NotifyAdvancedDirectionalShadowLaneConsumer(
-            RuntimeEngine.Rendering.State.RenderFrameId,
+            renderFrameId,
             ready,
             unavailableReason);
 
@@ -403,12 +480,16 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         while (atlas.TryDequeuePendingAdvancedDirectionalShadowGroup(
                    out AdvancedDirectionalShadowLaneRequest lane))
         {
-            if (!ready || lane.PageFrameBuffer is not { } page)
+            if (!ready || lane.PageFrameBuffer is not { } page ||
+                lane.RenderFrameId != renderFrameId ||
+                !lane.ConsumerAuthority.SameAs(in stageAuthority) ||
+                !lane.ConsumerAuthority.Matches(viewport!, ActivePipelineInstance,
+                    commands, package, renderFrameId))
             {
                 atlas.CompleteAdvancedDirectionalShadowGroup(
                     lane,
                     accepted: false,
-                    unavailableReason ?? "The deferred cascade group has no atlas page.");
+                    unavailableReason ?? "The deferred cascade group has no matching frozen desktop consumer or atlas page.");
                 rejected++;
                 continue;
             }
@@ -552,7 +633,15 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         AdvancedRenderStageDescriptor descriptor = Descriptor;
+        bool hasAmbientOcclusion = context.ResourceLayout is null
+            ? !Shaders.Compilation.WebPipelineRasterProgram.IsActive ||
+                ParentPipeline is not IAdvancedRenderStageFamilyHost familyHost ||
+                familyHost.AdvancedStageFamilyDefinition.UsesWebAmbientOcclusion
+            : context.HasResource(AdvancedAmbientOcclusionContract.ResourceName);
+        if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion && !hasAmbientOcclusion)
+            return;
         bool usesMultisampleVisibility = UsesMultisampleVisibility(context);
+        bool packedSamples = context.HasResource(AdvancedVisibilityResourceNames.MetadataSelectionMultisample);
         // Stage ordinals describe the Advanced command chain, while the mesh
         // passes use the same small integers for their own collection keys.
         // Give graph nodes their own identities so these unrelated passes
@@ -566,7 +655,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             builder,
             descriptor.Stage,
             GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true,
-            usesMultisampleVisibility);
+            usesMultisampleVisibility, packedSamples,
+            hasAmbientOcclusion ? AdvancedAmbientOcclusionContract.ResourceName : AdvancedRenderPipeline.WebPostProcessNeutralTextureName);
 
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
@@ -575,9 +665,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             // Reserve the optional node even when this generation is not MSAA so the
             // following synthetic passes retain their stable execution identities.
             context.ReserveSyntheticPassIndex(MultisampleVisibilityResolvePassName);
-            DescribeLateRasterPass(context, builder.PassIndex, usesMultisampleVisibility);
+            DescribeLateRasterPass(context, builder.PassIndex, usesMultisampleVisibility, packedSamples);
             if (usesMultisampleVisibility)
-                DescribeMultisampleResolvePass(context);
+                DescribeMultisampleResolvePass(context, packedSamples);
         }
         else if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion)
         {
@@ -639,7 +729,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     private static void DescribeLateRasterPass(
         RenderGraphDescribeContext context,
         int computePassIndex,
-        bool usesMultisampleVisibility)
+        bool usesMultisampleVisibility, bool packedSamples)
     {
         RenderPassBuilder builder = context.GetOrCreateSyntheticPass(
                 LateVisibilityRasterPassName,
@@ -650,20 +740,20 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
         DescribeLateRasterSlotResources(builder);
         if (usesMultisampleVisibility)
-            DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Load);
+            DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Load, packedSamples);
         else
             DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Load);
     }
 
-    private static void DescribeMultisampleResolvePass(RenderGraphDescribeContext context)
+    private static void DescribeMultisampleResolvePass(RenderGraphDescribeContext context, bool packedSamples)
     {
         RenderPassBuilder builder = context.GetOrCreateSyntheticPass(MultisampleVisibilityResolvePassName, ERenderGraphPassStage.Graphics)
             .UseEngineDescriptors()
             .DependsOn(context.GetOrCreateSyntheticPass(LateVisibilityRasterPassName, ERenderGraphPassStage.Graphics).PassIndex)
             .SampleTexture(Tex(AdvancedVisibilityResourceNames.IdentityMultisample))
-            .SampleTexture(Tex(AdvancedVisibilityResourceNames.MetadataMultisample))
-            .SampleTexture(Tex(AdvancedVisibilityResourceNames.SelectionMultisample))
+            .SampleTexture(Tex(packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.MetadataMultisample))
             .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencilMultisample));
+        if (!packedSamples) builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.SelectionMultisample));
         for (int attachment = 0; attachment < 3; attachment++)
             builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, attachment),
                 ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
@@ -671,9 +761,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
     }
 
-    private static void DescribeMultisampleRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load)
+    private static void DescribeMultisampleRasterAttachments(RenderPassBuilder builder, ERenderPassLoadOp load, bool packedSamples)
     {
-        for (int attachment = 0; attachment < 4; attachment++)
+        for (int attachment = 0; attachment < (packedSamples ? 3 : 4); attachment++)
             builder.UseColorAttachment(RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBufferMultisample, attachment),
                 ERenderGraphAccess.ReadWrite, load, ERenderPassStoreOp.Store);
         builder.UseDepthAttachment(RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBufferMultisample),
@@ -684,7 +774,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         RenderPassBuilder builder,
         EAdvancedRenderStage stage,
         bool requiresMaterialSurfaceExports,
-        bool usesMultisampleVisibility)
+        bool usesMultisampleVisibility, bool packedSamples, string ambientOcclusionTextureName)
     {
         switch (stage)
         {
@@ -731,7 +821,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
             case EAdvancedRenderStage.VisibilityRaster:
                 if (usesMultisampleVisibility)
-                    DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Clear);
+                    DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Clear, packedSamples);
                 else
                     DescribeCanonicalRasterAttachments(builder, ERenderPassLoadOp.Clear);
                 builder
@@ -770,8 +860,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 break;
 
             case EAdvancedRenderStage.WorkClassification:
-                builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.Identity))
-                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata));
+                builder.SampleTexture(Tex(packedSamples ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity))
+                    .SampleTexture(Tex(packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.Metadata));
                 for (uint slot = 0; slot < AdvancedFrameSlotContract.DefaultSlotCount; ++slot)
                     builder.WriteBuffer(AdvancedClassificationResourceNames.ActiveTiles(slot))
                         .WriteBuffer(AdvancedClassificationResourceNames.KernelTiles(slot))
@@ -789,7 +879,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 if (usesMultisampleVisibility)
                 {
                     builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.IdentityMultisample))
-                        .SampleTexture(Tex(AdvancedVisibilityResourceNames.MetadataMultisample))
+                        .SampleTexture(Tex(packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.MetadataMultisample))
                         .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencilMultisample))
                         .SampleTexture(Tex(AdvancedVisibilityResourceNames.SamplePositionMultisample));
                 }
@@ -799,9 +889,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                         .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata))
                         .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil));
                 }
+                if (packedSamples) builder.ReadWriteTexture(Tex(AdvancedShadingResourceNames.SampleRadianceReactive));
                 // ShadeNativeOpaque reconstructs the local surface on demand;
                 // there is no intermediate AttributeReconstruction pass.
-                builder.SampleTexture(Tex(AdvancedAmbientOcclusionContract.ResourceName))
+                builder.SampleTexture(Tex(ambientOcclusionTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.HDRSceneTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
                     .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))

@@ -10,4 +10,6 @@ public enum EAdvancedTextureIndirectionMode
     OpenGlBindlessHandles,
     VulkanDescriptorIndexing,
     VulkanDescriptorHeap,
+    /// <summary>Canonical logical texture/sampler pairs resolved through an output-owned WebGPU cohort bank.</summary>
+    WebGpuCohortBindings,
 }

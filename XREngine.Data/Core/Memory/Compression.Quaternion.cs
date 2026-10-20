@@ -5,93 +5,70 @@ namespace XREngine.Data
     public static partial class Compression
     {
         /// <summary>
-        /// Compresses a unit quaternion q = [w, x, y, z] into a compressed form.
+        /// Compresses a unit quaternion q = [x, y, z, w] into a compressed form.
         /// N is the number of bits per component for the quantized components.
         /// </summary>
         public static (int index, int signBit, int[] quantizedComponents) CompressQuaternion(Quaternion q, int bitsPerComponent = 8)
         {
-            // Find the index of the largest component
-            float[] absQ = Array.ConvertAll([q.X, q.Y, q.Z, q.W], MathF.Abs);
-            int i = Array.IndexOf(absQ, MaxValue(absQ));
+            ValidateQuaternionBits(bitsPerComponent);
+            float lengthSquared = q.LengthSquared();
+            if (!float.IsFinite(lengthSquared) || lengthSquared < 1e-12f)
+                throw new ArgumentException("Quaternion compression requires a finite, nonzero rotation.", nameof(q));
+            q = Quaternion.Normalize(q);
+            int index = 0;
+            for (int component = 1; component < 4; component++)
+                if (MathF.Abs(q[component]) > MathF.Abs(q[index]))
+                    index = component;
 
-            // Get the sign of q_i
-            int signBit = q[i] >= 0 ? 0 : 1;
-
-            // Remove q_i to get the remaining components
-            var qRest = new float[3];
-            int restIndex = 0;
-            for (int idx = 0; idx < 4; idx++)
-                if (idx != i)
-                    qRest[restIndex++] = q[idx];
-
-            // Compute the scaling factor
-            float scale = MathF.Sqrt(1 - q[i] * q[i]);
-            float[] scaledComponents = scale > 0 ? Array.ConvertAll(qRest, qi => qi / scale) : ([0.0f, 0.0f, 0.0f]);
-
-            // Quantize the scaled components
+            int signBit = q[index] >= 0 ? 0 : 1;
             int[] quantizedComponents = new int[3];
-            int maxInt = (1 << bitsPerComponent) - 1; // 2^N - 1
-            for (int j = 0; j < 3; j++)
+            int maxInt = (1 << bitsPerComponent) - 1;
+            int retained = 0;
+            for (int component = 0; component < 4; component++)
             {
-                // Map from [-1, 1] to [0, maxInt]
-                int qc = (int)MathF.Round((scaledComponents[j] + 1) * (maxInt / 2.0f));
-                qc = Math.Max(0, Math.Min(maxInt, qc)); // Clamp to [0, maxInt]
-                quantizedComponents[j] = qc;
+                if (component == index)
+                    continue;
+                // Preserve the retained components' magnitude. Normalizing this triple loses the rotation angle.
+                int value = (int)MathF.Round((q[component] + 1.0f) * (maxInt / 2.0f));
+                quantizedComponents[retained++] = Math.Clamp(value, 0, maxInt);
             }
-
-            // Pack the data
-            return (i, signBit, quantizedComponents);
+            return (index, signBit, quantizedComponents);
         }
 
         public static Quaternion DecompressQuaternion((int index, int signBit, int[] quantizedComponents) compressedData, int bitsPerComponent = 8)
         {
-            int i = compressedData.index;
-            int signBit = compressedData.signBit;
-            int[] quantizedComponents = compressedData.quantizedComponents;
-            int maxInt = (1 << bitsPerComponent) - 1; // 2^N - 1
-
-            // Dequantize the components
-            float[] scaledComponents = new float[3];
-            for (int j = 0; j < 3; j++)
+            ValidateQuaternionBits(bitsPerComponent);
+            if (compressedData.index is < 0 or > 3 || compressedData.signBit is < 0 or > 1
+                || compressedData.quantizedComponents is not { Length: 3 })
+                throw new ArgumentException("Invalid compressed quaternion fields.", nameof(compressedData));
+            int maxInt = (1 << bitsPerComponent) - 1;
+            Quaternion result = default;
+            float sumOfSquares = 0;
+            int retained = 0;
+            for (int component = 0; component < 4; component++)
             {
-                float sc = (quantizedComponents[j] / (maxInt / 2.0f)) - 1;
-                sc = Math.Max(-1.0f, Math.Min(1.0f, sc)); // Clamp to [-1, 1]
-                scaledComponents[j] = sc;
+                if (component == compressedData.index)
+                    continue;
+                int quantized = compressedData.quantizedComponents[retained++];
+                if (quantized < 0 || quantized > maxInt)
+                    throw new ArgumentException("Compressed quaternion component exceeds its bit range.", nameof(compressedData));
+                float value = quantized / (maxInt / 2.0f) - 1.0f;
+                result[component] = value;
+                sumOfSquares += value * value;
             }
-
-            // Compute q_i
-            float sumOfSquares = scaledComponents.Sum(x => x * x);
-            float q_i = MathF.Sqrt(Math.Max(0.0f, 1.0f - sumOfSquares));
-            if (signBit == 1)
-                q_i = -q_i;
-
-            // Rescale the components
-            float scale = MathF.Sqrt(1.0f - q_i * q_i);
-            float[] qRest = scale > 0 ? Array.ConvertAll(scaledComponents, sc => sc * scale) : ([0.0f, 0.0f, 0.0f]);
-
-            // Reconstruct the quaternion
-            Quaternion q = new();
-            int restIndex = 0;
-            for (int idx = 0; idx < 4; idx++)
-                q[idx] = idx == i ? q_i : qRest[restIndex++];
-
-            return q;
+            float omitted = MathF.Sqrt(MathF.Max(0, 1 - sumOfSquares));
+            result[compressedData.index] = compressedData.signBit == 0 ? omitted : -omitted;
+            return Quaternion.Normalize(result);
         }
 
-        /// <summary>
-        /// Utility method to find the maximum value in a double array.
-        /// </summary>
-        private static float MaxValue(float[] array)
+        private static void ValidateQuaternionBits(int bitsPerComponent)
         {
-            float max = array[0];
-            foreach (var val in array)
-                if (val > max)
-                    max = val;
-            return max;
+            if (bitsPerComponent is < 2 or > 20)
+                throw new ArgumentOutOfRangeException(nameof(bitsPerComponent), "Quaternion components require 2 to 20 bits to fit the packed wire representation.");
         }
 
         /// <summary>
-        /// Compresses a unit quaternion q = [w, x, y, z] into a byte array.
+        /// Compresses a unit quaternion q = [x, y, z, w] into a byte array.
         /// N is the number of bits per component for the quantized components.
         /// </summary>
         public static byte[] CompressQuaternionToBytes(Quaternion q, int bitsPerComponent = 8)
@@ -99,6 +76,7 @@ namespace XREngine.Data
             // Compress the quaternion to get the index, sign bit, and quantized components
             var (index, signBit, quantizedComponents) = CompressQuaternion(q, bitsPerComponent);
 
+            ValidateQuaternionBits(bitsPerComponent);
             // Calculate the total number of bits
             int totalBits = 2 + 1 + 3 * bitsPerComponent; // index (2 bits) + sign bit (1 bit) + 3 components (N bits each)
 
@@ -140,13 +118,17 @@ namespace XREngine.Data
         }
 
         /// <summary>
-        /// Decompresses the quaternion from a byte array back to the quaternion q = [w, x, y, z].
+        /// Decompresses the quaternion from a byte array back to the quaternion q = [x, y, z, w].
         /// </summary>
         public static Quaternion DecompressQuaternion(byte[] byteArray, int offset = 0, int bitsPerComponent = 8)
         {
+            ValidateQuaternionBits(bitsPerComponent);
+            ArgumentNullException.ThrowIfNull(byteArray);
             // Calculate the total number of bits
             int totalBits = 2 + 1 + 3 * bitsPerComponent; // index (2 bits) + sign bit (1 bit) + 3 components (N bits each)
             int totalBytes = (totalBits + 7) / 8;
+            if (offset < 0 || offset > byteArray.Length - totalBytes)
+                throw new ArgumentOutOfRangeException(nameof(offset), "Compressed quaternion bytes are truncated.");
 
             // Reconstruct the packed data from the byte array
             ulong packedData = 0;

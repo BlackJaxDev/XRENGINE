@@ -46,27 +46,27 @@ namespace XREngine.Rendering.Vulkan
             in FrameOpContext context,
             int passIndex,
             int uniformSlot)
+            => RecordMeshDrawPayloadIntoCommandBuffer(ref recordingState,
+                commandBuffer, in payload, target, in context, passIndex,
+                uniformSlot, out _, out _);
+
+        internal bool RecordMeshDrawPayloadIntoCommandBuffer(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            CommandBuffer commandBuffer,
+            in MeshDrawPayload payload,
+            XRFrameBuffer? target,
+            in FrameOpContext context,
+            int passIndex,
+            int uniformSlot,
+            out string failureReason,
+            out bool pipelineUnavailable)
         {
             PendingMeshDraw draw = payload.Draw;
             if (draw.ViewportScissorCount > 1 && draw.IndexedViewports is { } viewports && draw.IndexedScissors is { } scissors && viewports.Length >= (int)draw.ViewportScissorCount && scissors.Length >= (int)draw.ViewportScissorCount)
                 SetViewportScissorTracked(commandBuffer, viewports, scissors, draw.ViewportScissorCount);
             else
                 SetViewportScissorTracked(commandBuffer, draw.Viewport, draw.Scissor);
-            if (VulkanResidentMeshEncoder.TryRecordDraw(
-                    Api!,
-                    _commandRuntime,
-                    recordingState.LaneContext,
-                    commandBuffer,
-                    draw,
-                    passIndex,
-                    context,
-                    uniformSlot,
-                    recordingState.FrameDataSlot))
-            {
-                return true;
-            }
-
-            return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.FrameDataSlot);
+            return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.FrameDataSlot, out failureReason, out pipelineUnavailable);
         }
 
         internal bool RecordIndirectDrawPayloadIntoCommandBuffer(
@@ -76,8 +76,10 @@ namespace XREngine.Rendering.Vulkan
             XRFrameBuffer? target,
             in FrameOpContext context,
             int passIndex,
-            int opIndex)
+            int opIndex,
+            out string failureReason)
         {
+            failureReason = string.Empty;
             PendingMeshDraw draw = payload.Draw;
             if (draw.ViewportScissorCount > 1 && draw.IndexedViewports is { } viewports && draw.IndexedScissors is { } scissors && viewports.Length >= (int)draw.ViewportScissorCount && scissors.Length >= (int)draw.ViewportScissorCount)
                 SetViewportScissorTracked(commandBuffer, viewports, scissors, draw.ViewportScissorCount);
@@ -90,9 +92,10 @@ namespace XREngine.Rendering.Vulkan
                     materialBinding.Consumer,
                     draw.ProgramBindingSnapshot?.MaterialTablePublication))
             {
+                failureReason = "global material texture descriptor set could not bind";
                 return false;
             }
-            if (!payload.MeshRenderer.RecordIndirectDrawState(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", GetMeshDrawUniformSlot(ref recordingState, opIndex, payload.MeshRenderer, context, draw), recordingState.FrameDataSlot, out _)) return false;
+            if (!payload.MeshRenderer.RecordIndirectDrawState(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", GetMeshDrawUniformSlot(ref recordingState, opIndex, payload.MeshRenderer, context, draw), recordingState.FrameDataSlot, out _, out failureReason)) return false;
             RecordIndirectDrawPayload(commandBuffer, in payload, allowInlineBarrier: false);
             return true;
         }
@@ -181,20 +184,6 @@ namespace XREngine.Rendering.Vulkan
                     draw.ViewProjectionMatrix.M44);
             }
 
-            if (VulkanResidentMeshEncoder.TryRecordDraw(
-                    Api!,
-                    _commandRuntime,
-                    recordingState.LaneContext,
-                    targetCommandBuffer,
-                    drawOp.Draw,
-                    passIndex,
-                    drawOp.Context,
-                    drawUniformSlot,
-                    recordingState.FrameDataSlot))
-            {
-                return true;
-            }
-
             bool recordedDraw = drawOp.Draw.Renderer.RecordDraw(
                 targetCommandBuffer,
                 drawOp.Draw,
@@ -276,6 +265,7 @@ namespace XREngine.Rendering.Vulkan
                         indirectOp.Context,
                         indirectOp.Draw),
                     recordingState.FrameDataSlot,
+                    out _,
                     out _))
                 return;
 

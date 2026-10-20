@@ -7,9 +7,11 @@ using System.Net.NetworkInformation;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
+using XREngine.Execution;
 using XREngine.Networking;
 using XREngine.Scene.Transforms;
 using XREngine.Timers;
@@ -86,6 +88,19 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 
     public bool UDPServerConnectionEstablished
         => UdpReceiver is { } transport && (transport.Connected || transport.IsBound);
+    /// <summary>Bounds browser queues and coalesces only complete transform snapshots.</summary>
+    protected virtual bool UseBoundedRealtimeQueues => false;
+    private string? _wireProtocolFailure;
+    /// <summary>Reports an incompatible packet rejected before it can affect peer state.</summary>
+    public string? WireProtocolFailure => _wireProtocolFailure;
+    private void RecordWireProtocolMismatch()
+    {
+        if (!SetField(ref _wireProtocolFailure, RealtimeWireProtocol.UpdateRequiredMessage))
+            return;
+        Debug.NetworkingWarning("[Net] {0}", RealtimeWireProtocol.UpdateRequiredMessage);
+    }
+    protected virtual void OnRealtimeQueueOverflow()
+        => throw new NetworkTransportException("Realtime send backlog exceeded its bounded capacity.", 0);
     public string LocalPeerId { get; }
     protected static string CurrentProtocolVersion => RuntimeNetworkingHostServices.Current.ProtocolVersion;
 
@@ -130,7 +145,8 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 
             try
             {
-                _consumeTask.Wait(TimeSpan.FromMilliseconds(50));
+                if (!OperatingSystem.IsBrowser() && !RuntimeWorkScheduler.IsCallerThread)
+                    _consumeTask.Wait(TimeSpan.FromMilliseconds(50));
             }
             catch
             {
@@ -234,7 +250,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
     private async Task ReadUdpAllocatingAsync(IDatagramTransport receiver)
     {
         bool anyAcked = false;
-        while (receiver.Available > 0)
+        for (int received = 0; received < MaxDatagramsPerPump && !_disposed && receiver.Available > 0; received++)
         {
             DatagramReceiveResult result = await receiver.ReceiveAsync(_consumeCts.Token).ConfigureAwait(false);
             if (result.Buffer.Length > MaxInboundDatagramBytes)
@@ -253,6 +269,11 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
     private void ProcessDatagram(byte[] buffer, int length, IPEndPoint remote, ref bool anyAcked)
     {
         ReadOnlyMemory<byte> datagram = buffer.AsMemory(0, length);
+        if (RealtimeWireProtocol.IsIncompatible(datagram.Span))
+        {
+            RecordWireProtocolMismatch();
+            return;
+        }
         ReadOnlyMemory<byte> accepted = datagram;
         bool isManagedEnvelope = ManagedUdpEnvelope.TryRead(datagram.Span, out _, out _, out _);
         if ((RequiresManagedUdpTransport && !isManagedEnvelope)
@@ -343,6 +364,9 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 
         public IPEndPoint EndPoint { get; }
         public ConcurrentQueue<QueuedUdpPacket> SendQueue { get; } = new();
+        public Dictionary<Guid, QueuedUdpPacket> PendingTransforms { get; } = [];
+        public int PendingBytes;
+        public int ReliablePacketCount;
         public ConcurrentDictionary<ushort, PendingAckPacket> MustAck { get; } = new();
         public ConcurrentDictionary<ushort, long> RttBuffer { get; } = new();
 
@@ -597,7 +621,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
         ClearOldRTTs(peer);
 
         bool hasHighRate = peer.HighRateRing is { Count: > 0 };
-        if (peer.SendQueue.IsEmpty && !hasHighRate)
+        if (!UseBoundedRealtimeQueues && peer.SendQueue.IsEmpty && !hasHighRate)
             return;
 
         int packetsAllowed = int.MaxValue;
@@ -611,10 +635,13 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
         // datagram a newly routable peer receives.
         int packetsSent = 0;
         byte[] scratch = _sendScratch;
-        while (packetsSent < packetsAllowed && peer.SendQueue.TryDequeue(out QueuedUdpPacket data))
+        while (packetsSent < packetsAllowed && TryTakeQueuedPacket(peer, out QueuedUdpPacket data))
         {
             if (client is null)
+            {
+                ReleaseReliablePacket(peer, data.ResendOnFailedAck);
                 continue;
+            }
 
             ushort sequence;
             lock (peer.Sync)
@@ -628,7 +655,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
                 // A managed association can be provisional while its simulation-thread
                 // admission publishes. Retain the inner reliable frame until a transport
                 // key is routable instead of silently losing its first assignment.
-                peer.SendQueue.Enqueue(data);
+                EnqueueForPeer(peer, data, retainReliableReservation: true, requeue: true);
                 break;
             }
 
@@ -671,6 +698,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 
             if (pending.TimeoutTicks > 0L && nowTicks - pending.FirstSendTicks >= pending.TimeoutTicks)
             {
+                ReleaseReliablePacket(peer, true);
                 double timeoutSeconds = TickDeltaToSeconds(pending.TimeoutTicks, 0L);
                 Debug.Out($"Required packet sequence {key} to {peer.EndPoint} timed out after {timeoutSeconds:0.###}s, dropping...");
                 continue;
@@ -681,8 +709,10 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
                 // The resend takes a fresh sequence when it is transmitted, so the receiver
                 // processes it instead of discarding it as an out-of-order duplicate.
                 Debug.Out($"Required packet sequence {key} to {peer.EndPoint} failed to return, resending...");
-                peer.SendQueue.Enqueue(new QueuedUdpPacket(pending.Bytes, true, pending.OwnerId, pending.FirstSendTicks, pending.TimeoutTicks));
+                EnqueueForPeer(peer, new QueuedUdpPacket(pending.Bytes, true, pending.OwnerId, pending.FirstSendTicks, pending.TimeoutTicks), retainReliableReservation: true);
             }
+            else
+                ReleaseReliablePacket(peer, true);
         }
     }
 
@@ -700,7 +730,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
     }
 
     //protocol header is only 3 bytes so the flag can come right after to align back to 4 bytes
-    private static ReadOnlySpan<byte> Protocol => "FRK"u8;
+    private static ReadOnlySpan<byte> Protocol => RealtimeWireProtocol.FrameMagic;
     private const ushort _halfMaxSeq = 32768;
     /// <summary>
     /// Compares two sequence numbers, accounting for the wrap-around point at half the maximum value.
@@ -755,7 +785,9 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
     /// </summary>
     public void ReplicateTransform(TransformBase transform, bool resendOnFailedAck, float maxAckWaitSec = DefaultAckTimeoutSec)
     {
-        Send(transform.ID, false, transform.EncodeToBytes(), EBroadcastType.Transform, resendOnFailedAck, maxAckWaitSec);
+        // A coalesced transform cannot depend on a delta that the queue can replace.
+        byte[] bytes = UseBoundedRealtimeQueues ? transform.EncodeToBytes(false) : transform.EncodeToBytes();
+        Send(transform.ID, false, bytes, EBroadcastType.Transform, resendOnFailedAck, maxAckWaitSec);
     }
 
     private const int HeaderLen = 16; //3 bytes for protocol, 1 byte for flags, 2 bytes for sequence, 2 bytes for ack, 4 bytes for ack bitfield, 4 bytes for data length (not including header or guid)
@@ -846,7 +878,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
             data.CopyTo(frame.AsSpan(HeaderLen + GuidLen));
         }
 
-        peer.SendQueue.Enqueue(new QueuedUdpPacket(frame, resendOnFailedAck, id, 0L, resendOnFailedAck ? SecondsToStopwatchTicks(maxAckWaitSec) : 0L));
+        EnqueueForPeer(peer, new QueuedUdpPacket(frame, resendOnFailedAck, id, 0L, resendOnFailedAck ? SecondsToStopwatchTicks(maxAckWaitSec) : 0L));
     }
 
     protected virtual void CollectUdpSendTargets(List<IPEndPoint> targets)
@@ -950,6 +982,11 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
     {
         if (inBuf is null || start < 0 || start > inBuf.Length || length < 0 || length > inBuf.Length - start || length > MaxInboundDatagramBytes)
             return 0;
+        if (RealtimeWireProtocol.IsIncompatible(inBuf.AsSpan(start, length)))
+        {
+            RecordWireProtocolMismatch();
+            return 0;
+        }
 
         int end = start + length;
         int offset = start;
@@ -987,6 +1024,10 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
             if (end - offset < wirePayloadLength)
                 return 0;
 
+            if (!TryDecodeRealtimeFrame(inBuf.AsMemory(offset - HeaderLen, HeaderLen + wirePayloadLength), decompBuffer,
+                out _, out Guid ownerId, out ReadOnlySpan<byte> data, sender))
+                return 0;
+
             if (!TryRegisterInboundUdpPeer(sender!, out UdpPeerState peer))
                 return 0;
 
@@ -1011,12 +1052,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 
             // Only propagate data if this sequence should be processed (in order)
             if (shouldRead)
-            {
-                if (compressed)
-                    ReadCompressed(type, inBuf, decompBuffer, offset, dataLength, sender);
-                else
-                    Propogate(new Guid(inBuf.AsSpan(offset, GuidLen)), type, inBuf.AsSpan(offset + GuidLen, dataLength), sender);
-            }
+                Propogate(ownerId, type, data, sender);
 
             offset += wirePayloadLength;
         }
@@ -1032,7 +1068,7 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
         => sender is not null;
 
     /// <summary>
-    /// Verifies an outer managed UDP envelope before the inner FRK packet can update peer
+    /// Verifies an outer managed UDP envelope before the inner realtime packet can update peer
     /// state. Roles own handshake and association state; the default is fail-closed. A successful
     /// unwrap returns a slice of <paramref name="datagram"/>, not a copy.
     /// </summary>
@@ -1042,11 +1078,11 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
         return false;
     }
 
-    /// <summary>When enabled, bare legacy FRK packets are rejected before they can create peer or ACK state.</summary>
+    /// <summary>When enabled, bare realtime packets are rejected before they can create peer or ACK state.</summary>
     protected virtual bool RequiresManagedUdpTransport => false;
 
     /// <summary>
-    /// Writes the wire form of a queued inner FRK datagram into <paramref name="destination"/>
+    /// Writes the wire form of a queued inner realtime datagram into <paramref name="destination"/>
     /// immediately before transmission, so retries receive fresh outer counters. The default
     /// copies the datagram unchanged. Returns false when the target is not routable yet.
     /// </summary>
@@ -1068,7 +1104,10 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
             UpdateRTT((float)TickDeltaToSeconds(CurrentEngineTicks(), timeTicks));
 
             if (peer.MustAck.TryRemove(ackedSeq, out _))
+            {
+                ReleaseReliablePacket(peer, true);
                 Debug.Out($"Acknowledged required sequence number {ackedSeq} from {peer.EndPoint}");
+            }
 
             //Can't print here otherwise because it will be repeated up to 32 extra times according to the ack bitfield
             return true; //We acknowledged the sequence number
@@ -1096,29 +1135,6 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 
     private void UpdateRTT(float rttSec)
         => AverageRoundTripTimeSec = Interp.Lerp(AverageRoundTripTimeSec, rttSec, RTTSmoothingPercent);
-
-    private void ReadCompressed(EBroadcastType type, byte[] inBuf, byte[] decompBuffer, int dataOffset, int dataLength, IPEndPoint? sender)
-    {
-        int decompLen;
-        try
-        {
-            lock (_decompressionStateSync)
-                decompLen = Compression.Decompress(inBuf, dataOffset, dataLength, decompBuffer, 0, ref _decoder, ref _decompStreamIn, ref _decompStreamOut);
-        }
-        catch (Exception ex)
-        {
-            Debug.NetworkingWarning("[Net] Dropped malformed compressed realtime frame from {0}: {1}", sender?.ToString() ?? "<unknown>", ex.Message);
-            return;
-        }
-
-        if (decompLen < GuidLen || decompLen > decompBuffer.Length)
-        {
-            Debug.NetworkingWarning("[Net] Dropped invalid decompressed realtime frame from {0}: {1} bytes.", sender?.ToString() ?? "<unknown>", decompLen);
-            return;
-        }
-
-        Propogate(new Guid(decompBuffer.AsSpan(0, GuidLen)), type, decompBuffer.AsSpan(GuidLen, decompLen - GuidLen), sender);
-    }
 
     /// <summary>
     /// Finds the target object in the cache and applies the data to it.
@@ -1201,10 +1217,19 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
     }
 
     #region TCP
+    private static void RequireHostFileTransfer()
+    {
+        if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread
+            || DirectStorageIO.Source is { SupportsSynchronousReads: false } or IRuntimeAssetCatalog)
+            throw new NotSupportedException(
+                "NetworkFileTransfer.HostFileUnavailable: this host cannot transfer operating-system file paths; use an already opened stream with an available transport.");
+    }
+
     public static async Task SendFileAsync(string filePath, string targetIP, int port, IProgress<double> progress)
     {
-        var fileInfo = new FileInfo(filePath);
-        long fileLength = fileInfo.Length;
+        RequireHostFileTransfer();
+        IHostFileTransferBackend fileBackend = HostFileTransferServices.Required;
+        long fileLength = fileBackend.GetLength(filePath);
 
         using Stream ns = await NetworkTransportServices.Required.ConnectStreamAsync(targetIP, port);
 
@@ -1213,7 +1238,8 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 
         byte[] buffer = new byte[8192];
         long totalSent = 0;
-        using FileStream fs = File.OpenRead(filePath);
+        RequireHostFileTransfer();
+        using Stream fs = fileBackend.OpenRead(filePath);
         int bytesRead;
         while ((bytesRead = await fs.ReadAsync(buffer)) > 0)
         {
@@ -1242,13 +1268,16 @@ public abstract partial class BaseNetworkingManager : XRBase, IDisposable
 
     public static async Task ReceiveFileAsync(string filePath, int port, IProgress<double> progress)
     {
+        RequireHostFileTransfer();
+        IHostFileTransferBackend fileBackend = HostFileTransferServices.Required;
         using Stream ns = await NetworkTransportServices.Required.AcceptStreamAsync(port);
         byte[] lengthBytes = new byte[8];
         await ns.ReadExactlyAsync(lengthBytes);
         long fileLength = BitConverter.ToInt64(lengthBytes);
         byte[] buffer = new byte[8192];
         long totalReceived = 0;
-        using FileStream fs = File.OpenWrite(filePath);
+        RequireHostFileTransfer();
+        using Stream fs = fileBackend.OpenWrite(filePath);
         int bytesRead;
         while (totalReceived < fileLength && (bytesRead = await ns.ReadAsync(buffer)) > 0)
         {

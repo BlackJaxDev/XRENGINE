@@ -1550,6 +1550,9 @@ public static partial class EditorImGuiUI
                 if (ImGui.MenuItem("User Settings", null, false, Engine.UserSettings is not null))
                     OpenSettingsInInspector(Engine.UserSettings, "User Settings");
 
+                if (ImGui.MenuItem("Build Settings", null, _showBuildSettings, Engine.BuildSettings is not null))
+                    _showBuildSettings = !_showBuildSettings;
+
                 ImGui.EndMenu();
             }
 
@@ -2355,6 +2358,14 @@ public static partial class EditorImGuiUI
             {
                 Interlocked.Exchange(ref _iniSaveInFlight, 0);
             }
+        }
+
+        internal static void PrepareForImGuiContextReplacement()
+        {
+            FlushImGuiLayoutImmediate();
+            _imguiStyledContext = IntPtr.Zero;
+            _dockingIniReloadedContext = IntPtr.Zero;
+            _imguiStyleInitialized = false;
         }
 
         private static ImGuiPanelVisibilityState CapturePanelVisibilityState()

@@ -24,6 +24,9 @@ public readonly record struct AdvancedGlobalResourceCapture(
 {
     /// <summary>Texture-owning probe rows paired with the numeric probe capture.</summary>
     public ReadOnlyMemory<AdvancedProbeCaptureRow> ProbeRows { get; init; }
+    // This exclusive producer input never escapes GPUScene into a render-world
+    // snapshot. Frozen output ownership is the canonical publication's responsibility.
+    internal AdvancedAuthoredDecalCaptureLease AuthoredDecals { get; init; }
 
     /// <summary>World ambient light captured without a resource array.</summary>
     public AdvancedEnvironmentRecord? AmbientEnvironment { get; init; }
@@ -32,12 +35,13 @@ public readonly record struct AdvancedGlobalResourceCapture(
         => new(frameId, default, default, default, default, default, default, default, default);
 
     /// <summary>
-    /// Captures world-owned light, probe, and ambient numeric state. Decal and GI
-    /// collection owners are not exposed by <see cref="IRuntimeRenderWorld"/>.
+    /// Captures world-owned light, probe, and ambient state plus explicitly
+    /// requested browser authored decals. GI owners remain valid-empty.
     /// </summary>
     public static AdvancedGlobalResourceCapture Capture(
         ulong frameId,
-        IRuntimeRenderWorld? world)
+        IRuntimeRenderWorld? world,
+        bool includeShadows = true)
     {
         if (world is null)
             return Empty(frameId);
@@ -70,10 +74,13 @@ public readonly record struct AdvancedGlobalResourceCapture(
         }
 
         List<AdvancedShadowCaptureRow> shadowRows = [];
-        for (int lightIndex = 0; lightIndex < index; ++lightIndex)
+        for (int lightIndex = 0; includeShadows && lightIndex < index; ++lightIndex)
         {
             int groupStart = shadowRows.Count;
-            if (lightSources[lightIndex] is DirectionalLightComponent directional)
+            if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                lightSources[lightIndex] is LightComponent browserLight)
+                CaptureBrowserStandaloneShadow(frameId, browserLight, lightIndex, shadowRows);
+            else if (lightSources[lightIndex] is DirectionalLightComponent directional)
                 CaptureDirectionalShadows(world.Lights, directional, lightIndex, shadowRows);
             else if (lightSources[lightIndex] is PointLightComponent point)
                 CapturePointAtlasShadows(world.Lights, point, lightIndex, shadowRows);
@@ -126,6 +133,8 @@ public readonly record struct AdvancedGlobalResourceCapture(
         return new(frameId, lightSources, lights, default, shadowRows.ToArray(), probes, default, default, default)
         {
             ProbeRows = probeRows.ToArray(),
+            AuthoredDecals = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                world.VisualScene.GPUCommands.AdvancedAuthoredDecalsRequested ? AdvancedAuthoredDecalRegistry.Capture(world, frameId) : default,
             AmbientEnvironment = new AdvancedEnvironmentRecord
             {
                 Flags = 1u,
@@ -141,6 +150,30 @@ public readonly record struct AdvancedGlobalResourceCapture(
         };
     }
 
+    private static void CaptureBrowserStandaloneShadow(ulong frameId, LightComponent light,
+        int lightIndex, List<AdvancedShadowCaptureRow> rows)
+    {
+        if (!light.CastsShadows || light is SpotLightComponent { ShadowFrustumRelevant: false })
+            return;
+        if (light.TryCaptureBrowserStandaloneShadow(frameId, out AdvancedShadowRecord record, out XRTexture? texture))
+        {
+            rows.Add(new(lightIndex, record, texture));
+            return;
+        }
+
+        // Keep an unready required producer explicit. Native consumers must defer
+        // the whole frame until its exact resource and production receipt exist.
+        rows.Add(new(lightIndex, new AdvancedShadowRecord
+        {
+            Type = light is PointLightComponent ? EAdvancedShadowType.PointCube :
+                light is SpotLightComponent ? EAdvancedShadowType.Spot : EAdvancedShadowType.DirectionalCascade,
+            Flags = EAdvancedShadowRecordFlags.BrowserStandalonePcss | EAdvancedShadowRecordFlags.BrowserStandaloneCandidate,
+            Encoding = (uint)light.ShadowMapEncoding,
+            CascadeCount = 1u,
+            LastRenderedFrameLo = (uint)frameId,
+            LastRenderedFrameHi = (uint)(frameId >> 32),
+        }, null));
+    }
     private const int DirectionalShadowRecordCapacity = 8;
     private const float DirectionalShadowFilterRadiusTexels = 1.0f;
 

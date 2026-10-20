@@ -30,7 +30,14 @@ namespace XREngine.Components
         public bool IsActive
         {
             get => _isActive;
-            set => SetField(ref _isActive, value);
+            set
+            {
+                if (_isActive == value)
+                    return;
+                using var mutation = this is PhysicsChainComponent chain
+                    ? PhysicsChainWorld.BeginComponentMutation(chain) : null;
+                SetField(ref _isActive, value);
+            }
         }
 
         [Browsable(false)]
@@ -234,6 +241,8 @@ namespace XREngine.Components
         private bool _clearTicksOnStop = true;
         private bool _componentActivated;
 
+        internal bool IsComponentActivated => _componentActivated;
+
         /// <summary>
         /// Scene node refers to the node that this component is attached to.
         /// It will be set automatically when the component is added to a scene node, and never change.
@@ -377,6 +386,11 @@ namespace XREngine.Components
                         this,
                         ((RuntimeWorldObjectBase)this).World,
                         IsActiveInHierarchy);
+                    if (this is PhysicsChainComponent
+                        && PhysicsChainWorld.IsWorldMutationActive
+                        && World is not null
+                        && IsActiveInHierarchy)
+                        TryActivateComponent();
                     break;
                 case nameof(IsActive):
                     if (IsActiveInHierarchy)
@@ -406,6 +420,8 @@ namespace XREngine.Components
         {
             if (_componentActivated)
                 return;
+            using var mutation = this is PhysicsChainComponent chain
+                ? PhysicsChainWorld.BeginComponentMutation(chain) : null;
             _componentActivated = true;
             OnComponentActivated();
         }
@@ -417,6 +433,8 @@ namespace XREngine.Components
         {
             if (!_componentActivated)
                 return;
+            using var mutation = this is PhysicsChainComponent chain
+                ? PhysicsChainWorld.BeginComponentMutation(chain) : null;
             _componentActivated = false;
             OnComponentDeactivated();
         }

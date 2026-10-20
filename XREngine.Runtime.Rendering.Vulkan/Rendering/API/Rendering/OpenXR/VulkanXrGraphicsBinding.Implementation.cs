@@ -403,9 +403,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     SupportsTransferDestinationLayout: (usage & SwapchainUsageFlags.TransferDstBit) != 0,
                     ResourceGeneration: attachmentSignature,
                     TemporalGeneration: GetOpenXrHistoryKey(kind)));
+            XRCamera? eyeCamera = GetOpenXrEyeCamera((uint)i);
             views[i] = views[i] with
             {
-                SourceCameraIdentity = GetOpenXrEyeCamera((uint)i)?.RenderIdentity ?? 0UL,
+                SourceCameraIdentity = eyeCamera?.RenderIdentity ?? 0UL,
+                CullingLayerMask = eyeCamera?.CullingLayerMask ?? uint.MaxValue,
             };
         }
 

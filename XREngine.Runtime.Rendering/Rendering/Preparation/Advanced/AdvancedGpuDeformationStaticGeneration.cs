@@ -38,10 +38,14 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     public GPUScene? Scene { get; private set; }
     public ulong DatabaseEpoch { get; private set; }
     public ulong TopologyGeneration { get; private set; }
+    public EAdvancedDeformationMeshPreparationPolicy PreparationPolicy { get; private set; }
     public ulong LastUse { get; set; }
     public uint PinCount { get; set; }
     public AdvancedGpuDeformationStaticBuffers Buffers = null!;
     public Dictionary<XRMesh, AdvancedGpuDeformationMeshSlice> MeshSlices = null!;
+    public Dictionary<ulong, int> PayloadHashHeads = null!;
+    public List<AdvancedGpuDeformationMeshPayloadEntry> PayloadEntries = null!;
+    public Dictionary<XRMesh, AdvancedGpuDeformationInputWitness> InputWitnesses = null!;
     public AdvancedDeformedVertex[] SourceVertices = null!;
     public AdvancedSkinInfluence[] SkinInfluences = null!;
     public AdvancedSpillInfluence[] SpillInfluences = null!;
@@ -67,10 +71,11 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     /// </summary>
     public bool HasCpuMirror { get; private set; }
 
-    public bool Matches(GPUScene scene, ulong databaseEpoch, ulong topologyGeneration)
+    public bool Matches(GPUScene scene, ulong databaseEpoch, ulong topologyGeneration,
+        EAdvancedDeformationMeshPreparationPolicy preparationPolicy)
         => ReferenceEquals(Scene, scene) &&
            DatabaseEpoch == databaseEpoch &&
-           TopologyGeneration == topologyGeneration;
+           TopologyGeneration == topologyGeneration && PreparationPolicy == preparationPolicy;
 
     /// <summary>
     /// Rebinds this generation to a new canonical scene revision with no rows.
@@ -81,13 +86,18 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         GPUScene scene,
         ulong databaseEpoch,
         ulong topologyGeneration,
+        EAdvancedDeformationMeshPreparationPolicy preparationPolicy,
         bool allocateCpuMirror = true)
     {
         EnsureInitialized(allocateCpuMirror);
         Scene = scene;
         DatabaseEpoch = databaseEpoch;
         TopologyGeneration = topologyGeneration;
+        PreparationPolicy = preparationPolicy;
         MeshSlices.Clear();
+        PayloadHashHeads.Clear();
+        PayloadEntries.Clear();
+        InputWitnesses.Clear();
         SourceVertexCount = 0u;
         SkinInfluenceCount = 0u;
         SpillInfluenceCount = 0u;
@@ -122,6 +132,11 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         BlendshapeRanges = source.BlendshapeRanges;
         BlendshapeRecords = source.BlendshapeRecords;
         BlendshapeDeltas = source.BlendshapeDeltas;
+        PayloadHashHeads.Clear();
+        foreach ((ulong hash, int head) in source.PayloadHashHeads)
+            PayloadHashHeads.Add(hash, head);
+        PayloadEntries.Clear();
+        PayloadEntries.AddRange(source.PayloadEntries);
         HasCpuMirror = true;
         source.ReleaseCpuMirror();
     }
@@ -217,6 +232,9 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         MeshSlices = new Dictionary<XRMesh, AdvancedGpuDeformationMeshSlice>(
             _maximumJobs,
             ReferenceEqualityComparer.Instance);
+        PayloadHashHeads = new Dictionary<ulong, int>(_maximumJobs);
+        PayloadEntries = new List<AdvancedGpuDeformationMeshPayloadEntry>(_maximumJobs);
+        InputWitnesses = new(_maximumJobs, ReferenceEqualityComparer.Instance);
         BlendshapeDeltaCount = 1u;
     }
 
@@ -235,6 +253,10 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
         Buffers?.Destroy();
         Buffers = null!;
         MeshSlices = null!;
+        PayloadHashHeads = null!;
+        PayloadEntries = null!;
+        InputWitnesses = null!;
+        PreparationPolicy = default;
         ReleaseCpuMirror();
         Scene = null;
         DatabaseEpoch = 0UL;
@@ -257,6 +279,10 @@ internal sealed class AdvancedGpuDeformationStaticGeneration
     {
         if (MeshSlices is not null)
             MeshSlices.Clear();
+        PayloadHashHeads?.Clear();
+        PayloadEntries?.Clear();
+        if (InputWitnesses is not null)
+            InputWitnesses.Clear();
     }
 
     public void Destroy()

@@ -14,6 +14,7 @@ Validation docs hold manual, runtime, visual, hardware, profiler, benchmark, and
 - [Global Illumination Validation](rendering/global-illumination-validation.md)
 - [Shadow Validation](rendering/shadow-validation.md)
 - [Poiyomi Toon 9.3 Parity Validation](rendering/poiyomi-parity-validation.md)
+- [Jax2031 Advanced Parity Validation](rendering/jax2031-advanced-parity-validation.md)
 - [GPU-Driven Submission Validation](rendering/gpu-driven-submission-validation.md)
   - [Optimization 01-08 Acceptance Closeout Validation](rendering/01-08-optimization-acceptance-closeout.md)
   - [GPU Scene BVH External-Hardware Qualification](rendering/gpu-scene-bvh-external-hardware-qualification.md)
@@ -32,7 +33,7 @@ Validation docs hold manual, runtime, visual, hardware, profiler, benchmark, and
 - [OpenXR Validation](xr/openxr-validation.md)
 - [OpenXR SteamVR Hardware Validation](xr/openxr-steamvr-hardware-validation.md)
 - [OpenVR VRClient GPU Handoff Validation](xr/openvr-vrclient-gpu-handoff-validation.md)
-- [MonkeyBall VR Release Matrix](xr/monkeyball-vr-release-matrix.md)
+- [Rolling Ball Release Matrix](xr/rolling-ball-release-matrix.md)
 
 ### Other Subsystems
 

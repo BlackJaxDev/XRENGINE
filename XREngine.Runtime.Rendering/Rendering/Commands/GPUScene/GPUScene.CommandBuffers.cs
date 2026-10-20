@@ -65,7 +65,10 @@ namespace XREngine.Rendering.Commands
                 // Copy the updating buffer data to the render buffer
                 // This ensures the render buffer has the latest commands while keeping
                 // the updating buffer's indices consistent with _commandIndexLookup
-                bool stageStreamsDirty = _drawMetadataDirtyRange.HasValue ||
+                // Material overrides change draw metadata without a content-version
+                // advance. Republish the renderer routes so their drawn materials stay current.
+                bool drawMetadataDirty = _drawMetadataDirtyRange.HasValue;
+                bool stageStreamsDirty = drawMetadataDirty ||
                     _boundsDirtyRange.HasValue ||
                     _classificationDirtyRange.HasValue ||
                     _visibilityDirtyRange.HasValue ||
@@ -83,6 +86,10 @@ namespace XREngine.Rendering.Commands
                     CopyDrawIndexedSoABuffersToRenderSnapshot();
                     CopyDirtyStableSoABuffersToRenderSnapshot();
                 }
+                // The render-side rows now equal the updating rows. A row-input
+                // write after this copy reaches the render side only at the next
+                // swap, so it must leave the version newer than this record.
+                RecordAdvancedRowInputVersionAtSwap();
 
                 // This is the sole publication point for meshlet descriptor-table
                 // generations. VisualScene calls it after collect/update and before
@@ -105,8 +112,18 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
+                if (commandSnapshotDirty || drawMetadataDirty || _rendererRoutesDirty)
+                {
+                    PublishRendererCommandIndices();
+                    _rendererRoutesDirty = false;
+                }
+                PublishMeshSubmissionIfRequested();
                 using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.AdvancedPublication"))
+                {
+                    long advancedPublicationStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
                     PublishAdvancedResidentSceneIfRequested();
+                    CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedPublication, advancedPublicationStart);
+                }
 
                 if (_useInternalBvh && !_commandAabbBackfillRequired)
                     _commandAabbPublishedContentVersion = _lastSwappedCommandsContentVersion;
@@ -146,7 +163,7 @@ namespace XREngine.Rendering.Commands
         {
             // Cull-control and cull-bounds are published as one storage generation.
             CopyDirtyRange(_updatingDrawMetadataBuffer, _allLoadedDrawMetadataBuffer, ref _drawMetadataDirtyRange);
-            CopyDirtyRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer, ref _boundsDirtyRange);
+            CopyCpuOwnedBoundsToRenderSnapshot();
             CopyDirtyRange(_updatingClassificationBuffer, _allLoadedClassificationBuffer, ref _classificationDirtyRange);
             CopyDirtyRange(_updatingVisibilityBuffer, _allLoadedVisibilityBuffer, ref _visibilityDirtyRange);
         }
@@ -161,6 +178,37 @@ namespace XREngine.Rendering.Commands
 
             CopyBufferRange(source, destination, dirtyRange.Min, dirtyRange.MaxExclusive - dirtyRange.Min);
             dirtyRange.Clear();
+        }
+
+        private void CopyCpuOwnedBoundsToRenderSnapshot()
+        {
+            if (!_boundsDirtyRange.HasValue || _updatingBoundsBuffer is null || _allLoadedBoundsBuffer is null)
+                return;
+
+            if (_gpuCopiedAabbRenderers.Count == 0)
+            {
+                CopyDirtyRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer, ref _boundsDirtyRange);
+                return;
+            }
+
+            uint rangeStart = _boundsDirtyRange.Min;
+            uint rangeEnd = _boundsDirtyRange.MaxExclusive;
+            uint copyStart = rangeStart;
+            for (uint index = rangeStart; index < rangeEnd; ++index)
+            {
+                if (!IsCommandOwnedByGpuCopiedAabb(index))
+                    continue;
+
+                if (index > copyStart)
+                    CopyBufferRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer,
+                        copyStart, index - copyStart);
+                copyStart = index + 1u;
+            }
+
+            if (rangeEnd > copyStart)
+                CopyBufferRange(_updatingBoundsBuffer, _allLoadedBoundsBuffer,
+                    copyStart, rangeEnd - copyStart);
+            _boundsDirtyRange.Clear();
         }
 
         private void CopyDirtyStableSoABuffersToRenderSnapshot()
@@ -400,19 +448,10 @@ namespace XREngine.Rendering.Commands
                 StorageFlags = EBufferMapStorageFlags.DynamicStorage | EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
                 RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
             };
-            InitializeLodTransitionBuffer(buffer);
+            // Scene mirroring prepares CPU state even for CPU-only draw submission.
+            // The caller commits initialized rows through the owner-first write contract;
+            // only an actual backend binding should create and allocate its API wrapper.
             return buffer;
-        }
-
-        private static void InitializeLodTransitionBuffer(XRDataBuffer buffer)
-        {
-            // Publish the fully constructed owner-first buffer before Generate enters the object cache.
-            // Generate performs the initial backend upload where a wrapper exists. Mapping remains
-            // lazy until a CPU read needs it, avoiding an eager driver synchronization.
-            if (RuntimeEngine.IsRenderThread)
-                buffer.Generate();
-            else
-                RuntimeEngine.EnqueueMainThreadTask(buffer.Generate, "GPUScene.LodTransitionBuffer.Initialize");
         }
 
         private void EnsureLodTransitionBufferCapacity(uint requiredSize)
@@ -728,6 +767,8 @@ namespace XREngine.Rendering.Commands
         private XRDataBuffer? _skinningPaletteBuffer;
 
         private DirtyRange _drawMetadataDirtyRange;
+        // Set under _lock when an update changes only the accepted snapshot renderer.
+        private bool _rendererRoutesDirty;
         private DirtyRange _transformDirtyRange;
         private DirtyRange _previousPublishedTransformDirtyRange;
         private DirtyRange _boundsDirtyRange;
@@ -879,7 +920,7 @@ namespace XREngine.Rendering.Commands
         {
             _meshlets.Clear();
 
-            foreach ((uint commandIndex, (IRenderCommandMesh command, int subMeshIndex) entry) in _commandIndexLookup.OrderBy(static kvp => kvp.Key))
+            foreach (var (commandIndex, entry) in _commandIndexLookup.OrderBy(static kvp => kvp.Key))
             {
                 IRenderCommandMesh meshCommand = entry.command;
                 var subMeshes = meshCommand.Mesh?.GetMeshes();
@@ -975,7 +1016,10 @@ namespace XREngine.Rendering.Commands
             set
             {
                 if (SetField(ref _updatingCommandCount, value))
+                {
                     MarkUpdatingCommandsDirty();
+                    MarkAllAdvancedRowInputsWritten();
+                }
             }
         }
 
@@ -1006,6 +1050,12 @@ namespace XREngine.Rendering.Commands
 
         private void EnsureDrawIndexedSoACapacity(uint requiredCapacity)
         {
+            // A resize replaces the row storage that the canonical row gate reads.
+            bool rowInputStorageGrows =
+                requiredCapacity > UpdatingDrawMetadataBuffer.ElementCount ||
+                requiredCapacity > DrawMetadataBuffer.ElementCount ||
+                requiredCapacity > UpdatingBoundsBuffer.ElementCount ||
+                requiredCapacity > BoundsBuffer.ElementCount;
             EnsureBufferCapacity(UpdatingDrawMetadataBuffer, requiredCapacity);
             EnsureBufferCapacity(DrawMetadataBuffer, requiredCapacity);
             EnsureBufferCapacity(UpdatingBoundsBuffer, requiredCapacity);
@@ -1014,6 +1064,8 @@ namespace XREngine.Rendering.Commands
             EnsureBufferCapacity(ClassificationBuffer, requiredCapacity);
             EnsureBufferCapacity(UpdatingVisibilityBuffer, requiredCapacity);
             EnsureBufferCapacity(VisibilityBuffer, requiredCapacity);
+            if (rowInputStorageGrows)
+                MarkAllAdvancedRowInputsWritten();
         }
 
         private void EnsureTransformCapacity(uint requiredCapacity)

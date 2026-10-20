@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 3,
+  "name": "modular-msaa-present",
+  "pass": "msaa-present",
+  "source": "ModularMsaaPresent.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "modularMsaaPresentVertex",
+    "fragment": "modularMsaaPresentFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 2,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.modular-msaa-present.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          { "location": 0, "offset": 0, "format": "float32x3", "semantic": "position" }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "SourceTexture",
+        "physicalName": "sourceTexture_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": ["fragment"],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "SourceTexture",
+        "physicalName": "sourceSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": ["fragment"],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": { "scope": "custom", "pass": "msaa-present" }
+}

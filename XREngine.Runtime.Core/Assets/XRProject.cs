@@ -51,6 +51,11 @@ namespace XREngine
         private string _description = string.Empty;
         private string _author = string.Empty;
         private string _startupScenePath = string.Empty;
+        private string? _desktopHostProjectPath;
+        private string? _desktopHostRegistrationType;
+        private string? _browserShaderArtifactManifestPath;
+        private string? _browserSharedWorldPackageManifestPath;
+        private List<string> _browserStreamedScenePaths = [];
 
         [MemoryPackConstructor]
         public XRProject() { }
@@ -113,6 +118,41 @@ namespace XREngine
         {
             get => _startupScenePath;
             set => SetField(ref _startupScenePath, value);
+        }
+
+        /// <summary>Optional project-relative desktop composition project, excluded from browser gameplay.</summary>
+        public string? DesktopHostProjectPath
+        {
+            get => _desktopHostProjectPath;
+            set => SetField(ref _desktopHostProjectPath, value);
+        }
+
+        /// <summary>Public desktop composition type exposing a parameterless static Register method.</summary>
+        public string? DesktopHostRegistrationType
+        {
+            get => _desktopHostRegistrationType;
+            set => SetField(ref _desktopHostRegistrationType, value);
+        }
+
+        /// <summary>Project-relative schema-three shader cooker manifest used for explicit browser artifact identities.</summary>
+        public string? BrowserShaderArtifactManifestPath
+        {
+            get => _browserShaderArtifactManifestPath;
+            set => SetField(ref _browserShaderArtifactManifestPath, value);
+        }
+
+        /// <summary>Optional project-relative verified native package to extend with browser representations for shared admission.</summary>
+        public string? BrowserSharedWorldPackageManifestPath
+        {
+            get => _browserSharedWorldPackageManifestPath;
+            set => SetField(ref _browserSharedWorldPackageManifestPath, value);
+        }
+
+        /// <summary>Optional scene assets beneath Assets to include for on-demand browser loading.</summary>
+        public List<string> BrowserStreamedScenePaths
+        {
+            get => _browserStreamedScenePaths;
+            set => SetField(ref _browserStreamedScenePaths, value);
         }
 
         /// <summary>
@@ -221,7 +261,9 @@ namespace XREngine
         /// <returns>The created XRProject instance.</returns>
         public static XRProject CreateNew(string projectDirectoryPath, string projectName)
         {
-            EnsureProjectDirectory(projectDirectoryPath);
+            RuntimeAssetReadServices.EnsureHostFileAccess("Project creation");
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project creation");
+            EnsureProjectDirectory(projectDirectoryPath, files);
 
             // Create the project file
             var project = new XRProject(projectName)
@@ -229,8 +271,8 @@ namespace XREngine
                 FilePath = Path.Combine(projectDirectoryPath, $"{projectName}.{ProjectExtension}")
             };
 
-            project.EnsureStructure();
-            project.Save();
+            project.EnsureStructure(files);
+            project.Save(files);
 
             return project;
         }
@@ -253,11 +295,13 @@ namespace XREngine
         /// <returns>The loaded XRProject, or null if loading failed.</returns>
         public static XRProject? Load(string projectFilePath)
         {
-            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+            if (string.IsNullOrWhiteSpace(projectFilePath))
                 return null;
 
-            var project = AssetSerializationServices.Current.LoadImmediate(projectFilePath, typeof(XRProject)) as XRProject;
-            project?.EnsureStructure();
+            IAssetSerializationServices services = AssetSerializationServices.Current;
+            XRProject? project = services.LoadImmediate(projectFilePath, typeof(XRProject)) as XRProject;
+            if (project is not null && services.SupportsHostProjectDirectories && SupportsDesktopProjectStructure())
+                project.EnsureStructure();
             return project;
         }
 
@@ -266,15 +310,21 @@ namespace XREngine
         /// </summary>
         public static XRProject? Load3rdPartyStatic(string projectFilePath)
         {
-            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+            if (string.IsNullOrWhiteSpace(projectFilePath))
                 return null;
 
-            XRProject? project = AssetManager.Deserializer.Deserialize<XRProject>(File.ReadAllText(projectFilePath));
+            using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+            read.EnsureHostFileAccess("Third-party project descriptor import");
+            if (!read.Exists(projectFilePath))
+                return null;
+
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Third-party project descriptor import");
+            XRProject? project = AssetManager.Deserializer.Deserialize<XRProject>(files.ReadAllText(projectFilePath));
             if (project is null)
                 return null;
 
             project.FilePath = projectFilePath;
-            project.EnsureStructure();
+            project.EnsureStructure(files);
             return project;
         }
 
@@ -282,7 +332,8 @@ namespace XREngine
         {
             ArgumentNullException.ThrowIfNull(assets);
             XRProject? project = assets.LoadImmediate<XRProject>(projectFilePath);
-            project?.EnsureStructure();
+            if (project is not null && assets.SupportsSynchronousAssetWork && SupportsDesktopProjectStructure())
+                project.EnsureStructure();
             return project;
         }
 
@@ -294,16 +345,31 @@ namespace XREngine
             if (ProjectDirectory is null)
                 return;
 
-            EnsureProjectDirectory(ProjectDirectory);
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project directory creation");
+            EnsureStructure(files);
         }
 
-        private static void EnsureProjectDirectory(string projectDirectoryPath)
+        private void EnsureStructure(IAssetMetadataFileBackend files)
         {
-            Directory.CreateDirectory(projectDirectoryPath);
+            if (ProjectDirectory is null)
+                return;
+
+            EnsureProjectDirectory(ProjectDirectory, files);
+        }
+
+        private static bool SupportsDesktopProjectStructure()
+            => !OperatingSystem.IsBrowser()
+                && !RuntimeAssetReadServices.IsCallerThread
+                && RuntimeAssetReadServices.Source?.SupportsHostFileAccess != false;
+
+        private static void EnsureProjectDirectory(string projectDirectoryPath, IAssetMetadataFileBackend files)
+        {
+            RuntimeAssetReadServices.EnsureHostFileAccess("Project directory creation");
+            files.CreateDirectory(projectDirectoryPath);
 
             foreach (string folder in RequiredDirectoryNames)
             {
-                Directory.CreateDirectory(Path.Combine(projectDirectoryPath, folder));
+                files.CreateDirectory(Path.Combine(projectDirectoryPath, folder));
             }
         }
 
@@ -347,9 +413,20 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(FilePath))
                 return;
 
-            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            RuntimeAssetReadServices.EnsureHostFileAccess("Project descriptor save");
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Project descriptor save");
+            Save(files);
+        }
+
+        private void Save(IAssetMetadataFileBackend files)
+        {
+            if (string.IsNullOrWhiteSpace(FilePath))
+                return;
+
+            RuntimeAssetReadServices.EnsureHostFileAccess("Project descriptor save");
+            files.CreateDirectory(Path.GetDirectoryName(FilePath)!);
             string yaml = AssetManager.Serializer.Serialize(this);
-            File.WriteAllText(FilePath, yaml);
+            files.WriteAllText(FilePath, yaml);
         }
     }
 }

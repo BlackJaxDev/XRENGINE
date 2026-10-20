@@ -8,5 +8,8 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IAdvancedRenderStageFamilyHost
 {
+    /// <summary>Whether the current command chain executes this complete native stage family.</summary>
+    bool UsesAdvancedStageFamily => true;
+
     AdvancedRenderPipeline AdvancedStageFamilyDefinition { get; }
 }

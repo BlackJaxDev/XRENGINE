@@ -104,6 +104,18 @@ generation becomes active, the legacy integer `ResourceGeneration` stamp
 increments, and the old generation is retired. On failure, the pending
 generation is disposed and the active generation keeps rendering.
 
+A backend that completes physical creation through asynchronous receipts throws
+`RenderResourcePreparationPendingException` to yield preparation. This preserves
+the pending generation, its current specification, and its incremental factory
+or completed factory result. The next bounded slice retries those same owners;
+pending does not arm failure backoff or replace the active generation. A completed
+factory result remains generation-owned until validation and publication succeed,
+and cancellation or supersession destroys unpublished resources along with the
+other pending ownership. Fullscreen helper construction retains its logical
+renderer when physical preparation is pending, so retry uses the same version.
+Backend transaction preparation and commit likewise leave the generation pending
+on this exception; all other failures keep their existing failure behavior.
+
 Each generation also carries two stable ownership identities:
 
 - `ResourceGenerationKey.PipelineRevision` is local to the pipeline instance and
@@ -193,10 +205,9 @@ replacement generation commits.
 
 Resize-sized generation requests are debounced for 125 ms and capped at 300 ms
 of coalescing so interactive window and scene-panel drags do not rebuild every
-intermediate size. Initial generation is prepared immediately so the first frame
-has a complete registry. Replacement generations are materialized incrementally
-on the render thread, currently up to four declared specs or roughly 2 ms per
-slice, and commit only after the final slice validates required resources and
+intermediate size. Initial and replacement generations are both materialized
+incrementally on the render thread, currently up to four declared specs or
+roughly 2 ms per slice, and commit only after the final slice validates required resources and
 FBO completeness. This avoids black-frame registry gaps while preserving the
 active generation during longer replacement builds.
 
@@ -272,10 +283,52 @@ Generation logs include the pipeline key, generation key, resource counts, build
 duration, commit reason, failure reason, and active generation retained after a
 failure.
 
+The Vulkan desktop resource guard retains the first and latest blockers from
+its most recent catch-up episode. The value snapshots include viewport and
+pipeline identity, requested dimensions, active and pending generation keys,
+window state, and the pipeline decline reason. They do not retain viewport or
+generation objects. `CaptureResourceCatchUpEpisode()` reads the snapshot under
+the same gate as its writer. Recovery preserves the episode for inspection;
+`RecoveryFrameId` means the resource guard passed, not that presentation
+completed. Healthy frames add no snapshot allocation or lock.
+
 Descriptor parity diagnostics run once per committed generation and compare the
 declared descriptors with the registry descriptors for migrated resources. They
 are migration diagnostics only and should become unnecessary as legacy
 cache-command authoring is removed for migrated resources.
+
+### Retained Vulkan fence failures
+
+`XRGpuFence.DiagnosticRentalId` identifies a fence rental when the backend
+supports this diagnostic. The default is zero. Vulkan assigns a new ID when
+it rents a pooled marker. `FirstFailureDiagnostic` copies the first failure
+for that rental; later failures do not replace it. Read this value before
+disposing the fence. A pooled object can subsequently represent another rental.
+
+`GpuFenceFailureDiagnostic` records the rental ID, authoring frame and pass,
+failure frame, `EGpuFenceFailureSite`, status before failure, command-buffer
+handle, native submission outcome, native result validity, and timeline
+semaphore/value. `EGpuFenceNativeSubmission` distinguishes `Unknown`,
+`NotCalled`, `Called`, and `Accepted`. Fence submission status alone does not
+prove that the native queue call ran or succeeded. Read `NativeResult` only
+when `NativeResultValid` is true. It then contains the result from a failed
+native submit or timeline query. A missing timeline signal can occur after
+native acceptance and has its own failure site.
+
+`VulkanCommandSynchronizationState` retains the latest 512 first-failure
+records in a fixed, value-only ring. It does not retain marker, command-buffer,
+or resource objects. New records replace the oldest records at capacity.
+`VulkanRenderer.CaptureGpuFenceFailureHistory()` copies the retained records
+in oldest-to-newest order under the marker gate. This inspection call allocates
+its result array; failure recording does not allocate an array. Keep snapshot
+capture off the frame path. The existing MCP `invoke_method` can call this
+public method; no separate MCP tool is required.
+
+These records describe failure origin and observation. They do not change
+failure counters, page reuse rules, quarantine, or completion requirements.
+Completed frames or safe native buffer reuse do not classify a failed marker
+as benign. Correlate rental IDs and frame identities before drawing a cause
+from a later observation.
 
 Focused tests live in
 `XREngine.UnitTests/Rendering/RenderPipelineResourceLifecycleTests.cs` and cover

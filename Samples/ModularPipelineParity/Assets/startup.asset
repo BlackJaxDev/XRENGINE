@@ -1,0 +1,25 @@
+__type: XREngine.GameStartupSettings
+Name: Modular Pipeline Parity Startup
+ID: a92285b3-a48d-4546-8bfb-c7fc80ecc641
+LogOutputToFile: true
+NetworkingType: Local
+TargetUpdatesPerSecond: 60
+TargetFramesPerSecond: 60
+FixedFramesPerSecond: 60
+RunVRInPlace: false
+DefaultUserSettings:
+  VSync: Off
+  GlobalIlluminationMode: None
+  AntiAliasingModeOverride:
+    HasOverride: true
+    Value: None
+  GPURenderDispatchOverride:
+    HasOverride: true
+    Value: false
+BuildSettings:
+  Configuration: Release
+  Platform: BrowserWebGPU
+  OutputSubfolder: BrowserWebGPU
+  CleanOutputDirectory: true
+  CookContent: true
+  BuildManagedAssemblies: true

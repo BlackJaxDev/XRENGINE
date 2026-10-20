@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 3,
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "matrixLayout": "column-major",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "pipeline": {},
+  "name": "engine-authored-mask-ranked-arguments",
+  "pass": "mask-ranked-arguments",
+  "pipelineArtifact": {
+    "scope": "authored-indexed",
+    "pass": "mask-ranked-arguments"
+  },
+  "source": "engine-authored-mask-ranked-arguments.wgsl",
+  "entryPoints": {
+    "compute": "authoredMaskRankedArguments"
+  },
+  "workgroupSize": [
+    64,
+    1,
+    1
+  ],
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 4,
+    "maxUniformBufferBindingSize": 16,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 3,
+    "maxStorageBufferBindingSize": 4,
+    "maxComputeWorkgroupSizeX": 64,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 64
+  },
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "Ranks",
+        "physicalName": "ranks",
+        "group": 0,
+        "binding": 0,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "OriginalArguments",
+        "physicalName": "originalArguments",
+        "group": 0,
+        "binding": 1,
+        "kind": "read-only-storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "RankedArguments",
+        "physicalName": "rankedArguments",
+        "group": 0,
+        "binding": 2,
+        "kind": "storage",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "group": 0,
+        "binding": 3,
+        "kind": "uniform",
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "sourceIndex",
+            "provider": "SourceIndex",
+            "offset": 0,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "sourceCount",
+            "provider": "SourceCount",
+            "offset": 4,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "rankCount",
+            "provider": "RankCount",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "reserved",
+            "provider": "Reserved",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  }
+}

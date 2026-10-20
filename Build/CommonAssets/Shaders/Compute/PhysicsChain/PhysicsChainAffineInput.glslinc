@@ -1,0 +1,25 @@
+#ifndef PHYSICS_CHAIN_AFFINE_INPUT_INCLUDED
+#define PHYSICS_CHAIN_AFFINE_INPUT_INCLUDED
+
+struct PhysicsChainAffineInput
+{
+    vec4 Column0;
+    vec4 Column1;
+    vec4 Column2;
+};
+
+vec3 physicsChainAffineTranslation(PhysicsChainAffineInput inputMatrix)
+{
+    return vec3(inputMatrix.Column0.w, inputMatrix.Column1.w, inputMatrix.Column2.w);
+}
+
+mat4 decodePhysicsChainAffineInput(PhysicsChainAffineInput inputMatrix)
+{
+    return mat4(
+        vec4(inputMatrix.Column0.xyz, 0.0),
+        vec4(inputMatrix.Column1.xyz, 0.0),
+        vec4(inputMatrix.Column2.xyz, 0.0),
+        vec4(physicsChainAffineTranslation(inputMatrix), 1.0));
+}
+
+#endif

@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
     [switch]$ReserveTaskRun,
+    # A directory without an editor-process manifest is not evidence of inactivity.
+    # Callers must coordinate with its owner before explicitly selecting a run.
+    [string[]]$InactiveTaskRuns = @(),
     [switch]$AsJson
 )
 
@@ -15,6 +18,27 @@ $maximumImmediateDirectoryCount = 5
 $maximumTaskRunCount = $maximumImmediateDirectoryCount - 1
 $maximumMcpSessionCount = 5
 $runNamePattern = '^\d{8}-\d{6}-[A-Za-z0-9][A-Za-z0-9._-]*$'
+foreach ($runName in $InactiveTaskRuns) {
+    if ($runName -notmatch $runNamePattern) {
+        throw "Inactive task run must be one exact validation-directory name: '$runName'."
+    }
+}
+
+function ConvertTo-UtcTimestamp($Value) {
+    # ConvertFrom-Json may already parse ISO timestamps. Converting that value
+    # back to a display string loses sub-second precision and defeats PID reuse checks.
+    if ($Value -is [DateTimeOffset]) { return $Value.UtcDateTime }
+    if ($Value -is [DateTime]) { return $Value.ToUniversalTime() }
+    $parsed = [DateTime]::MinValue
+    if ([DateTime]::TryParse(
+            [string]$Value,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind,
+            [ref]$parsed)) {
+        return $parsed.ToUniversalTime()
+    }
+    return $null
+}
 
 function Test-OwnedProcess($Manifest) {
     if ($null -eq $Manifest -or $null -eq $Manifest.processId) {
@@ -26,17 +50,8 @@ function Test-OwnedProcess($Manifest) {
         return $false
     }
 
-    $expectedStart = [DateTime]::MinValue
-    # PowerShell 7 can deserialize ISO timestamps as DateTime. Stringifying that
-    # value with the current culture drops subsecond precision and loses ownership.
-    if ($Manifest.processStartTimeUtc -is [DateTime]) {
-        $expectedStart = $Manifest.processStartTimeUtc.ToUniversalTime()
-    }
-    elseif (-not [DateTime]::TryParse(
-            [string]$Manifest.processStartTimeUtc,
-            [Globalization.CultureInfo]::InvariantCulture,
-            [Globalization.DateTimeStyles]::RoundtripKind,
-            [ref]$expectedStart)) {
+    $expectedStart = ConvertTo-UtcTimestamp $Manifest.processStartTimeUtc
+    if ($null -eq $expectedStart) {
         return $false
     }
 
@@ -69,14 +84,8 @@ function Get-DirectoryActivityUtc([System.IO.DirectoryInfo]$Directory) {
         try {
             $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
             foreach ($propertyName in @('stoppedUtc', 'startedUtc', 'createdUtc')) {
-                $parsed = [DateTime]::MinValue
-                if ([DateTime]::TryParse(
-                        [string]$manifest.$propertyName,
-                        [Globalization.CultureInfo]::InvariantCulture,
-                        [Globalization.DateTimeStyles]::RoundtripKind,
-                        [ref]$parsed)) {
-                    return $parsed.ToUniversalTime()
-                }
+                $parsed = ConvertTo-UtcTimestamp $manifest.$propertyName
+                if ($null -ne $parsed) { return $parsed }
             }
         }
         catch {
@@ -198,7 +207,16 @@ $taskRuns = @(
         Where-Object { $_.Name -ne $sharedRootName } |
         Sort-Object LastWriteTimeUtc -Descending
 )
-foreach ($run in @($taskRuns | Select-Object -Skip $targetTaskRunCount)) {
+$requiredRemovalCount = [Math]::Max(0, $taskRuns.Count - $targetTaskRunCount)
+$confirmedInactiveRuns = @(
+    $taskRuns |
+        Where-Object { $_.Name -in $InactiveTaskRuns -and -not (Test-ActiveDirectory $_) } |
+        Sort-Object LastWriteTimeUtc
+)
+if ($requiredRemovalCount -gt $confirmedInactiveRuns.Count) {
+    throw "Validation directory limit requires removing $requiredRemovalCount task run(s), but only $($confirmedInactiveRuns.Count) were explicitly confirmed inactive. Reuse an active run, or coordinate with its owner and pass its exact name through -InactiveTaskRuns. Missing process metadata does not authorize deletion."
+}
+foreach ($run in @($confirmedInactiveRuns | Select-Object -First $requiredRemovalCount)) {
     Remove-ContainedDirectory $run
     $removed.Add($run.FullName)
 }

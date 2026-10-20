@@ -99,12 +99,14 @@ namespace XREngine.Rendering.Commands
             uint lodCount)
         {
             GPUIndirectRenderFlags flags = GPUIndirectRenderFlags.None;
+            if (!snapshot.BasePassEnabled)
+                flags |= GPUIndirectRenderFlags.PrimaryDisabled;
             if (material.IsTransparentLike())
                 flags |= GPUIndirectRenderFlags.Transparent;
 
             if (snapshot.Owner.Is3D)
             {
-                if (snapshot.Owner.CastsShadows)
+                if (snapshot.Owner.CastsShadows && snapshot.ShadowPassEnabled)
                     flags |= GPUIndirectRenderFlags.CastShadow;
                 if (snapshot.Owner.ReceivesShadows)
                     flags |= GPUIndirectRenderFlags.ReceiveShadows;
@@ -264,6 +266,12 @@ namespace XREngine.Rendering.Commands
                     return true;
                 }
 
+                // A command update follows a command swap. The swap can change the
+                // render-side command state that the canonical row gate reads, even
+                // when no row bytes change, so each update counts as a row write.
+                for (int i = 0; i < indices.Count; i++)
+                    MarkAdvancedRowInputWritten(indices[i]);
+
                 XRMeshRenderer? meshRenderer = snapshot.Renderer;
                 if (meshRenderer is null)
                 {
@@ -400,6 +408,13 @@ namespace XREngine.Rendering.Commands
                     BoundsGpu existingBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(index);
                     bool boundsChanged = !existingBounds.Equals(updatedBounds);
                     RecordAllocationPhase(ref allocationMark, ref observation.BoundsCompareAllocatedBytes);
+                    // Routes follow the accepted snapshot renderer. A renderer change can leave
+                    // every published row byte-identical, so mark the routes dirty explicitly.
+                    if (!ReferenceEquals(_commandIndexLookup[index].snapshot.Renderer, snapshot.Renderer))
+                        _rendererRoutesDirty = true;
+                    _commandIndexLookup[index] = (meshCmd, subMeshIndex, snapshot);
+                    CaptureUpdatingMeshSubmission(index, snapshot, mesh, material, subMeshIndex, lodCount,
+                        updated, updatedBounds);
 
                     bool metadataChanged = !existing.Equals(updated);
                     if (metadataChanged || transformChanged || boundsChanged)

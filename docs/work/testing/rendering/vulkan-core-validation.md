@@ -648,6 +648,40 @@ Hardware and worker gates:
 - [ ] Freeze the accepted revision and publish raw reports, summaries, profiler and capture evidence, screenshots, validation logs, unsupported rows, and follow-ups for each tail source. Last evidence: none.
 - [ ] Vulkan promotion from opt-in to regular development use: smoke passes on one NVIDIA, one AMD, and one Intel or laptop GPU; Sync2 and legacy sync match; stress checks pass without validation errors, device loss, or unbounded allocation; no unexplained visual differences from OpenGL; pipeline misses are quiet after warmup; black-frame diagnostics are not needed for routine failures. Keep legacy allocator and sync fallbacks for one stable milestone after promotion. Last evidence: none.
 
+## Direct Draw Readability Check
+
+Last run: 2026-10-14. See the [draw readability validation record](../../investigations/rendering/2026-10-14-vulkan-draw-readability.md)
+for the fixture, source review, startup observations, and limits.
+
+| Check | Procedure | Expected | Status |
+|---|---|---|---|
+| Build | Build the named isolated editor session. | No warnings or errors. | Passed |
+| Direct recording | Run Vulkan with the Default pipeline, `CpuDirect`, command chains disabled, primary reuse disabled, and draw tracing enabled. | Indexed and non-indexed commands reach the edited draw methods. | Passed |
+| Camera views | Capture the Sponza scene from opposite ends of the hall. Open both PNG files. | Complete scene output changes with camera position. | Passed |
+| Validation | Enable standard and synchronization validation. Read the counters and session logs. | No Vulkan validation errors during drawing. | Passed; loader and unused vertex-attribute warnings remain. |
+
+This check does not cover skinned or blendshape meshes, every failure branch,
+hardware XR, or performance. It does not establish image parity against a
+before-change capture.
+
+## Uniform Readability Check
+
+Last run: 2026-10-14. The [uniform readability record](../../investigations/rendering/2026-10-14-vulkan-uniform-readability.md)
+contains the fixture, measurements, baseline control, and limits.
+
+| Check | Result |
+|---|---|
+| Release build | Passed; zero warnings and errors. |
+| Source and compiled operations | All 119 member token streams, 103 uniform methods, nine generated lambdas, class initializer, and field order match the baseline. |
+| Live Vulkan views | Two settled Sponza views captured and inspected. Zero failed frames in the final candidate snapshot. |
+| Vulkan validation | Standard and synchronization validation active; zero errors. Loader and unused vertex-attribute warnings remain. |
+| Performance | No slowdown in three bounded timing windows. Matching Release IL adds no managed operations. The editor rebuild and machine load limit the timing comparison. |
+| Uniform byte parity | Existing `EngineTime` mismatch reproduced with the saved baseline DLL. No rejected uniform writes. See the investigation. |
+| Existing source checks | File references updated with user approval. Three passed; eight fail on pre-existing source assertions. See the investigation. |
+
+This check does not establish hardware XR coverage or a uniform-only native-code
+benchmark. The optional byte-parity check and the source-check suite are not green.
+
 ## Hardware Matrix
 | System | Role | Status |
 |---|---|---|

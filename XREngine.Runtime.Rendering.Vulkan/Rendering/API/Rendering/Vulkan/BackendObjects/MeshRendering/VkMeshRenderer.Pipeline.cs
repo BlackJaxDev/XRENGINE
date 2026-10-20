@@ -821,7 +821,7 @@ internal unsafe partial class VkMeshRenderer
 			useDynamicRendering ? 0UL : renderPass.Handle,
 			useDynamicRendering ? dynamicRenderingFormats : default,
 			programPipelineHash,
-			_program.LinkGeneration,
+			_program.InterfaceGeneration,
 			vertexLayoutHash,
 			descriptorLayoutHash,
 			_program.PipelineLayout.Handle,
@@ -894,7 +894,7 @@ internal unsafe partial class VkMeshRenderer
 		{
 			_pipelineDirty = true;
 			retryable = true;
-			failureReason = "graphics pipeline was not present in the prepared cache";
+			failureReason = $"graphics pipeline was not present in the prepared cache; key=0x{unchecked((uint)key.GetHashCode()):X8} program='{_program?.Data?.Name ?? "<none>"}' pipeline='{pipelineName}' retirementGeneration={pipelineRetirementGeneration}";
 			return false;
 		}
 
@@ -1362,6 +1362,7 @@ internal unsafe partial class VkMeshRenderer
 		long dependencyGeneration = dependencyLease.Generation;
 				if (!program.IsLinked ||
 					program.PipelineLayout.Handle == 0 ||
+					program.InterfaceGeneration != key.InterfaceGeneration ||
 					program.ComputeGraphicsPipelineFingerprint() != key.ProgramPipelineHash ||
 					program.DescriptorSchemaFingerprint != key.DescriptorLayoutHash)
 				{

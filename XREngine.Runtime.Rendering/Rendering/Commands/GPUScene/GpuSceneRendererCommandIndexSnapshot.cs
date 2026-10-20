@@ -1,41 +1,72 @@
 namespace XREngine.Rendering.Commands;
 
+using XREngine.Rendering.Compute;
+
 /// <summary>
-/// Reusable caller-owned command indices grouped by renderer. Capture and read
-/// this storage on one thread; no scene-owned lists remain in the snapshot.
+/// Reusable caller-owned command indices grouped by renderer. Each index keeps
+/// the material that its published draw uses, including command overrides.
+/// Capture and read this storage on one thread; no scene-owned lists remain in
+/// the snapshot.
 /// </summary>
 internal sealed class GpuSceneRendererCommandIndexSnapshot
 {
     private readonly Dictionary<XRMeshRenderer, (int First, int Last)> _ranges =
         new(ReferenceEqualityComparer.Instance);
-    private readonly List<(uint CommandIndex, int Next)> _indices = [];
+    private readonly List<(uint CommandIndex, PhysicsChainDrawMaterialSnapshot Material, int Next)> _indices = [];
+    private long _publicationGeneration = -1;
+
+    /// <summary>
+    /// The publication that filled this snapshot, or -1 while it is empty. Writers hold the
+    /// owner's lock. A reader without that lock may use the value only as a change witness.
+    /// </summary>
+    internal long PublicationGeneration
+    {
+        get => Volatile.Read(ref _publicationGeneration);
+        private set => Volatile.Write(ref _publicationGeneration, value);
+    }
 
     /// <summary>Releases renderer references and retains storage for the next capture.</summary>
     public void Clear()
     {
         _ranges.Clear();
         _indices.Clear();
+        PublicationGeneration = -1;
     }
 
-    internal void Append(XRMeshRenderer renderer, List<uint> commandIndices)
-    {
-        if (commandIndices.Count == 0)
-            return;
+    internal void SetPublicationGeneration(long generation)
+        => PublicationGeneration = generation;
 
-        int first = _indices.Count;
-        for (int index = 0; index < commandIndices.Count; ++index)
-        {
-            int next = index + 1 < commandIndices.Count ? _indices.Count + 1 : -1;
-            _indices.Add((commandIndices[index], next));
-        }
+    internal bool ContainsRenderer(XRMeshRenderer renderer)
+        => _ranges.ContainsKey(renderer);
+
+    internal void CopyTo(GpuSceneRendererCommandIndexSnapshot destination)
+    {
+        destination.Clear();
+        for (int index = 0; index < _indices.Count; ++index)
+            destination._indices.Add(_indices[index]);
+        foreach (KeyValuePair<XRMeshRenderer, (int First, int Last)> entry in _ranges)
+            destination._ranges.Add(entry.Key, entry.Value);
+        destination.PublicationGeneration = PublicationGeneration;
+    }
+
+    /// <summary>
+    /// Appends one command index for one renderer with the material that its
+    /// published draw uses. A null material means that the capture had no
+    /// material. Indices of one renderer keep their append order.
+    /// </summary>
+    internal void Append(XRMeshRenderer renderer, uint commandIndex, XRMaterial? material)
+    {
+        int added = _indices.Count;
+        _indices.Add((commandIndex, PhysicsChainDrawMaterialSnapshot.Capture(material), -1));
 
         if (_ranges.TryGetValue(renderer, out var range))
         {
             var tail = _indices[range.Last];
-            _indices[range.Last] = (tail.CommandIndex, first);
-            first = range.First;
+            _indices[range.Last] = (tail.CommandIndex, tail.Material, added);
+            _ranges[renderer] = (range.First, added);
+            return;
         }
-        _ranges[renderer] = (first, _indices.Count - 1);
+        _ranges[renderer] = (added, added);
     }
 
     /// <summary>Copies the captured indices for one renderer into reusable storage.</summary>
@@ -47,6 +78,34 @@ internal sealed class GpuSceneRendererCommandIndexSnapshot
 
         for (int index = range.First; index >= 0; index = _indices[index].Next)
             output.Add(_indices[index].CommandIndex);
+        return output.Count != 0;
+    }
+
+    /// <summary>
+    /// Copies the drawn material of each captured command for one renderer
+    /// into reusable storage. An entry is null when the capture had no material.
+    /// </summary>
+    public bool TryGetCommandMaterials(XRMeshRenderer renderer, List<XRMaterial?> output)
+    {
+        output.Clear();
+        if (!_ranges.TryGetValue(renderer, out var range))
+            return false;
+
+        for (int index = range.First; index >= 0; index = _indices[index].Next)
+            output.Add(_indices[index].Material.Material);
+        return output.Count != 0;
+    }
+
+    /// <summary>Copies the material state sealed with each published command.</summary>
+    public bool TryGetCommandMaterialSnapshots(XRMeshRenderer renderer,
+        List<PhysicsChainDrawMaterialSnapshot> output)
+    {
+        output.Clear();
+        if (!_ranges.TryGetValue(renderer, out var range))
+            return false;
+
+        for (int index = range.First; index >= 0; index = _indices[index].Next)
+            output.Add(_indices[index].Material);
         return output.Count != 0;
     }
 }

@@ -9,4 +9,5 @@ public enum EAdvancedFrameSlotCompletionMode
     OpenGlFence,
     VulkanFence,
     VulkanTimelineSemaphore,
+    WebGpuQueueCompletion,
 }

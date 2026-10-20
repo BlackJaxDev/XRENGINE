@@ -29,6 +29,9 @@ public readonly record struct VulkanFrameTelemetryPublication(
     VulkanFrameStageTiming OutputComplete,
     VulkanFrameStageTiming FrameSettlement)
 {
+    /// <summary>Stopwatch timestamp when this completed frame was published.</summary>
+    public long CompletedTimestamp { get; init; }
+
     /// <summary>Returns a stable stage by its schema identifier.</summary>
     public VulkanFrameStageTiming GetStage(EVulkanFrameStage stage)
         => stage switch

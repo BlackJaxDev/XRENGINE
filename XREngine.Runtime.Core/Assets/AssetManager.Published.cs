@@ -20,6 +20,10 @@ namespace XREngine
             string? gameContentArchivePath,
             string? engineContentArchivePath)
         {
+            if (!string.IsNullOrWhiteSpace(configArchivePath)
+                || !string.IsNullOrWhiteSpace(gameContentArchivePath)
+                || !string.IsNullOrWhiteSpace(engineContentArchivePath))
+                EnsureDirectHostAssetFileAccess();
             _publishedConfigArchivePath = NormalizeExistingArchivePath(configArchivePath);
             _publishedGameContentArchivePath = NormalizeExistingArchivePath(gameContentArchivePath);
             _publishedEngineContentArchivePath = NormalizeExistingArchivePath(engineContentArchivePath);

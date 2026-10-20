@@ -58,8 +58,12 @@ namespace XREngine.Core
                     return;
                 }
 
+                AotRuntimeMetadataStore.NoteBrowserDevelopmentTypeDiscovery(nameof(XRTypeRedirectRegistry));
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
+                    if (!XRLoadableTypeCatalog.ShouldScanAssemblyForEngineTypes(asm))
+                        continue;
+
                     foreach (Type type in XRLoadableTypeCatalog.GetTypes(asm))
                     {
                         XRTypeRedirectAttribute[] attrs;

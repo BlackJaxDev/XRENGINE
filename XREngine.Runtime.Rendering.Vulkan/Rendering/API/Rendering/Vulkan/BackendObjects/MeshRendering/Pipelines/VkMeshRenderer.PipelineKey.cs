@@ -12,7 +12,7 @@ internal readonly record struct VulkanGraphicsPipelineKey(
     ulong RenderPassHandle,
     DynamicRenderingFormatSignature DynamicRenderingFormats,
     ulong ProgramPipelineHash,
-    ulong ProgramLinkGeneration,
+    ulong InterfaceGeneration,
     ulong VertexLayoutHash,
     ulong DescriptorLayoutHash,
     ulong PipelineLayoutHandle,
@@ -47,7 +47,7 @@ internal readonly record struct VulkanGraphicsPipelineKey(
                RenderPassHandle == other.RenderPassHandle &&
                DynamicRenderingFormats.Equals(other.DynamicRenderingFormats) &&
                ProgramPipelineHash == other.ProgramPipelineHash &&
-               ProgramLinkGeneration == other.ProgramLinkGeneration &&
+               InterfaceGeneration == other.InterfaceGeneration &&
                VertexLayoutHash == other.VertexLayoutHash &&
                DescriptorLayoutHash == other.DescriptorLayoutHash &&
                PassMetadataHash == other.PassMetadataHash &&
@@ -84,7 +84,7 @@ internal readonly record struct VulkanGraphicsPipelineKey(
             hash.Add(RenderPassHandle);
             hash.Add(DynamicRenderingFormats);
             hash.Add(ProgramPipelineHash);
-            hash.Add(ProgramLinkGeneration);
+            hash.Add(InterfaceGeneration);
             hash.Add(VertexLayoutHash);
             hash.Add(DescriptorLayoutHash);
             hash.Add(PassMetadataHash);

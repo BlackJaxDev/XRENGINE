@@ -1,10 +1,262 @@
 # Physics Chain Performance
 
-Last updated: 2026-10-06
+Last updated: 2026-10-13
 
 The physics-chain optimization work reduces `PhysicsChainComponent` CPU cost, GPU transfer bandwidth, synchronization stalls, and hot-path allocations across CPU, standalone GPU, and batched GPU modes.
 
-The implementation now has the core architecture in place: low-allocation buffer upload paths, async readback for compatibility sync, dirty/version-aware uploads, reduced transform propagation cost, reusable CPU scheduling, and regression coverage for the main synchronization and versioning risks. Remaining work is validation and benchmark capture, tracked separately in [Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md).
+The runtime has low-allocation buffer uploads, asynchronous compatibility
+readback, version-aware uploads, reduced transform propagation, and reusable
+CPU scheduling. The thousands-scale path also has generation-safe bone
+coverage, retained canonical GPU bounds, committed CPU spatial snapshots,
+mapped input pages, world-owned clocks, and reused rest-input ranges.
+Covered untextured identity-world draws retain static plans. Strict canonical
+submission uses GPU collection and indexed instance groups in the main view.
+Directional shadows and the remaining world input work are tracked in the
+[implementation todo](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md).
+Runtime evidence and acceptance checks remain in
+[Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md).
+
+## GPU skinned scale measurement
+
+Use `Tools/Benchmarks/Measure-PhysicsChainScale.ps1` for the Math Intersections
+skinned-chain scene in a named isolated Release session. Put output in the
+current task run:
+
+```powershell
+pwsh Tools/Benchmarks/Measure-PhysicsChainScale.ps1 -Session physics-chain-scale -ChainCount 2000 -WindowSeconds 30 -OutputFolder "Build/_AgentValidation/<task-run>/reports"
+```
+
+`-Session` is required. Chain count defaults to 2,000 and accepts 1 to 10,000.
+The timing window defaults to 30 seconds and accepts 5 to 60 seconds.
+The measurement camera uses (0, 400, 450), looking at the grid origin. A
+native 2,000-chain capture confirmed all members at this view. Counts above
+2,000 scale the camera distance by the square root of the count ratio; those
+larger views still need their own native visibility checks. The summary saves
+the camera position. Do not compare this full-grid view with earlier partially
+clipped camera measurements as a matched performance result.
+Sampling uses a wall-clock deadline. If a tool call passes one or more sample
+times, the command skips those times instead of collecting missed samples.
+The final in-flight sample and the after-window query can extend the measured
+duration by their tool latency. Before/after checks remain required, and each
+raw sample retains its actual elapsed time.
+`-SubmissionStrategy` defaults to `GpuIndirectZeroReadback`. Use `CpuDirect`
+for an explicit CPU submission comparison. The command restores the prior
+runtime override after cleanup. It checks the frozen package before and after
+timing and rejects a changed strategy, a downgrade, or new physics readback
+in the strict GPU window.
+`-QualityTier` accepts `Authored` (default), `Strict`, `Hz30`, `Hz15`,
+`Hz7_5`, or `Automatic`. `-InterpolationMode` accepts `Authored` (default),
+`Discrete`, `Interpolate`, or `Extrapolate`. The command reads the source chain
+before cloning, applies explicit values to that source, and reads the effective
+values back. The benchmark copies these source settings to new chains. The
+summary records the requested, original, and effective source profile. It does
+not check each clone's profile. Cleanup restores the original source values and
+reports any restore failure in the summary.
+`-MeshSharing` accepts `Shared` (default) or `Unique`. In `Shared` mode, all
+copies have identical mesh content, so the Advanced pipeline draws them as one
+indexed instance group. In `Unique` mode, the benchmark widens the
+cross-section of each copy by a small, distinct amount. Each copy then has
+distinct vertex content with the same topology, vertex count, and material, and
+no instance group can merge copies. The command sets the controller field
+`_benchmarkUniqueMeshes` (the **Benchmark Unique Meshes** control in the editor)
+and restores the prior value during cleanup. After the window, it reads the
+draw payload and indexed instance-group counts of the latest Advanced visibility
+input from `get_advanced_profile_diagnostics` and records them as
+`meshSharingEvidence`. It rejects a `Unique` window with fewer groups than
+chains, and a `Shared` window with at least as many groups as chains. The
+ladder passes the mode to each point.
+To compare two binaries, build each into its own named session, run its
+windows with `-UseExistingSession`, and alternate the sessions. Run routine
+`Tools/Limit-AgentValidation.ps1` only after the last `-NoBuild` restart: it
+removes the build output of stopped sessions.
+`-Telemetry` enables stage counters for a separate diagnostic window.
+It also saves world callback and transform-read contention snapshots. Set
+`XRE_WORLD_TICK_TELEMETRY=1` before session launch for world callback counters.
+Compare cumulative values over the same window. Callback identity includes
+the declaring type, method, target type, inner callback, group, and order.
+Do not add nested stage times or treat time spent waiting as CPU execution.
+The diagnostic snapshot also records rigid rest cache hits, misses, and blocked
+ranges. Six input stages use rotating 1/32 sampling: opaque dependency checks,
+owner marking, collider dependency checks, root capture, matrix/stretch
+expansion, and output publication. `sampledInputRates` uses each stage's actual
+sample count. Its sampled milliseconds are not whole-stage totals. Use the
+ordinary gather and dependency counters for time per physics update.
+`-UseExistingSession` uses the named running session and leaves it running.
+`-CaptureEvidence` writes wide and near MCP images after timing. Native
+RenderDoc exports remain necessary when MCP readback does not match the target.
+Use the [editor workflow](../ai/agent-editor-workflows.md) for session ownership,
+capture, and evidence retention.
+
+The command waits for canonical readiness. After readiness, it requires the
+physics producer epoch to advance with no new dispatch failure over one second,
+so a session with stalled physics output fails before the timed window. When
+the directional shadow lane is enabled, it also waits, within the readiness
+limit, for new accepted shadow groups with no new rejections. A late shadow
+pipeline compile otherwise retries frames inside the window and fails physics
+input markers. The summary records the final counts as `warmGate`. It rejects changed chain counts,
+new bad frame outcomes, new dispatch or input-page failures, quarantined input
+pages, new input-buffer allocations, and input writes or a producer epoch that
+do not advance. On a readiness timeout, it saves the final frame counters,
+profiler, and dispatcher. A failed active benchmark also saves profiler,
+dispatcher, and render-state snapshots before teardown. Completed Hz uses the actual elapsed window. A preallocated ring
+records completed-frame timestamps. The command calculates frame-interval p95
+from these timestamps and rejects a reset, overwritten samples, or incomplete
+coverage. The summary reports `completedHzTargetMet` for at least 100 completed
+frames per second and `frameIntervalTargetMet` for p95 at most 10 ms.
+`timingTargetsMet` requires both. `accepted` records a valid measurement with
+the required runtime checks; it does not mean that the timing targets passed.
+Native member and image checks must also confirm the visible workload.
+
+The summary's `phaseTimings` block gives the frame-loop cost of each phase over
+the timed window: `update` (one update iteration), `collect` (one collect-visible
+dispatch), `swap` (the collect thread's serial swap section: swap jobs, buffer
+swap, and generation publication), `render` (one render frame callback), and the
+`collect_wait_for_render` and `render_wait_for_collect` waits. Each phase reports
+calls, milliseconds, milliseconds per completed frame, and milliseconds per call.
+The source is `frame_lifecycle.phase_totals` in `get_render_profiler_stats`
+(`RuntimeEngine.Rendering.Stats.FrameLifecycle.CapturePhaseTotals`). These totals
+are cumulative, never reset, and independent of render statistics tracking,
+world tick telemetry, and the code profiler, so they are valid in observer-free
+acceptance windows. They use wall time and include waits inside each phase.
+The phases run on different threads and overlap, so do not add them to get the
+frame interval. The render thread normally waits for the swap section to
+publish its generation; only a late-collect reuse policy can render the previous
+visibility during it. So `render_wait_for_collect` is mostly the wait for the
+swap, not a wait inside the render phase.
+
+`get_render_profiler_stats` also reports three always-on snapshots next to
+`phase_totals` in `frame_lifecycle`:
+
+- `collect_stages` (`CollectVisibleStageTimings.Capture`): the parts of the
+  collect phase and of the serial swap, each view kind with its collection path
+  and row count, the bytes that the collect thread allocates in each phase, and
+  the frame handoff counters. `render_until_collect_release_ms` is the render
+  time until the backend releases the collect thread; Vulkan releases it just
+  after queue submit. `collect_finished_after_release` counts the frames in
+  which collect finished later than that release.
+- `pass_gate` (`TransformHierarchyStore.GetPassGateTelemetrySnapshot`): for the
+  pre-collect publication, the swap publication, and the update-thread
+  `Process`, the entries, contended entries, wait and hold times, wait-time
+  buckets, the blocking site, and the published rows and notified owners.
+- `directional_shadow_consumption` (`DirectionalShadowConsumptionTelemetry.Capture`):
+  primary and cascade collections, the reason that the primary view is
+  collected, accepted atlas requests, tile renders, legacy renders, and
+  render-thread reads of the primary package.
+
+The harness reads these snapshots and
+`GPUPhysicsChainDispatcher.CaptureStageTimings` before and after every window.
+It writes the differences to `stageDifferences` (`collectStages`, `passGate`,
+`directionalShadowConsumption`, and `dispatcher`), per completed frame and per
+call. Each value is divided by a counter from the same capture.
+`stageDifferences.collectStages.phaseCrossCheck` must be 0: the collect and swap
+totals use the same boundaries as `phase_totals`. The frame interval is about
+the longer of `render_until_collect_release_ms` and collect, plus the swap.
+Scheduled counter samples remain for rate trends only. Benchmark cleanup starts
+gradual teardown and restores the source rig when that teardown ends. For a
+restart check, wait for one source chain and its palette binding before the
+next start. The stop call alone does not prove that teardown has finished.
+The count sample calls `GPUPhysicsChainDispatcher.CaptureRegisteredComponentCount()`.
+It does not serialize the full dispatcher. The command calls `get_render_state`
+with `viewport_index: 0` before and after the timed window. This selects the
+desktop window viewport when a transient shadow viewport is active. These
+snapshots include retained draw-plan and material-resolution counts. It also
+saves the final profiler and a
+`<label>-window-start.json` marker. Set `-CpuTraceSeconds 15` with a window of
+at least 20 seconds to collect a bounded `dotnet-trace` sampled-thread trace.
+The harness starts the trace inside the timed window and saves its output
+beside the summary. This requires `dotnet-trace` on `PATH`. The command checks
+that tool before it starts a session or benchmark when `-CpuTraceSeconds` is
+greater than zero. A traced or telemetry window is diagnostic evidence.
+Run a separate unobserved acceptance
+window. Set `-RequireDirectionalShadows` to require new accepted cascade
+groups with no new rejected, unconsumed, or generic groups. These counters
+prevent a cached static atlas from passing a moving-shadow check.
+The harness temporarily disables `Debug.EnableProfilerFrameLogging`,
+`Debug.EnableProfilerComponentTiming`,
+`Debug.EnableGpuRenderPipelineProfiling`, and
+`Debug.EnableProfilerUdpSending` through session preferences. It checks these
+settings before and after the window, then restores them. It saves failure
+evidence before it checks the final frozen strategy snapshot. The
+`XRE_PROFILER_ENABLED` environment flag controls UDP sending. It does not
+disable the editor code profiler.
+Failed setup removes the partial benchmark root, resets the run state, and
+records the exception and stack.
+
+Each window records `machineState`: CPU, logical processor count, OS, GPUs and
+driver, the active power plan, and the editor process affinity and priority
+class. With `nvidia-smi` on `PATH`, the harness samples the graphics and memory
+clocks, P-state, power, temperature, and utilization at each sample second
+inside the timed window (`machineState.gpuClocks`, with a per-GPU summary). A
+window with no clock sample is rejected. Without `nvidia-smi`, the command
+stops unless `-AllowMissingGpuClocks` is set. `-CpuAffinityMask` takes a decimal
+or `0x`-prefixed hexadecimal processor mask. It sets the editor process
+affinity before the benchmark starts and restores the original mask at the
+end. The summary records the requested and the actual mask.
+
+When a window fails, the harness also saves `<label>-failure-output-pages.json`:
+the current output page states (`CaptureOutputPageStates`) and the retained
+stall snapshots (`CaptureOutputPageStallDiagnostics`).
+
+`-Ladder` measures each count in `-LadderChainCounts` (a comma-separated string;
+default `1,250,500,1000,2000`) in one session:
+
+```powershell
+pwsh Tools/Benchmarks/Measure-PhysicsChainScale.ps1 -Session physics-chain-ladder -Ladder -WindowSeconds 20 -OutputFolder "Build/_AgentValidation/<task-run>/reports"
+```
+
+Each point runs the single-window measurement in a child process with
+`-UseExistingSession` and writes `<label>-<count>-summary.json` and
+`<label>-<count>-console.log`. Before each start, the ladder waits up to 90
+seconds for gradual teardown to restore the source chain. The
+`<label>-ladder-summary.json` file lists the points and fits a line through the
+accepted points for the mean frame interval, the interval p95, and each
+`phaseTimings` phase, both per call and per completed frame. Each fit reports
+`fixedMilliseconds`, `microsecondsPerChain`, and `rSquared`. The ladder is
+accepted only when every point is accepted.
+
+## Benchmark contract and headless CPU runner
+
+`PhysicsChainBenchmarkDeterministicScenario` is a stateless input source keyed
+by the matrix case, seed, chain or segment index, and fixed simulation frame.
+It defines linear and branched topology, the collider layouts, shared or unique
+collider sets, fixed-step root motion and forces, and the activity mix. It uses
+no process-global random state, so matched runs receive identical input.
+
+`PhysicsChainBenchmarkAcceptanceValidator` accepts a matrix point only with at
+least 1,000 measured frames and 30 seconds after settle, three matched Release
+runs, raw CPU and GPU frame samples, a valid per-resource arena breakdown, and
+the required hardware-counter evidence. Strict GPU points also require a GPU
+trace and zero physics readback.
+
+`PhysicsChainCpuBenchmarkScenario` runs CPU-strict and CPU quality-tiered
+points without rendering. It rejects GPU modes and rendered mesh buckets; it
+does not synthesize GPU timings or renderer counters.
+
+```powershell
+$env:XRE_PHYSICS_CHAIN_BENCHMARK_RUN_ROOT = "Build\_AgentValidation\<run>"
+dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -c Release -- `
+  --physics-chain-cpu-benchmark-work-index=0 `
+  --physics-chain-benchmark-environment=<environment.json>
+```
+
+Work index `0` is the first CPU-strict, no-rendering steady-state point. The
+environment file is a serialized `PhysicsChainBenchmarkEnvironment` with the
+named-hardware metadata. The [validation plan](../../work/testing/physics/physics-validation.md#physics-chain-scale)
+lists the required matrix.
+
+## Rigid rest input cache
+
+`PhysicsChainComponent.EnableRigidGpuRestInputCache` retains child rest inputs
+for a supported rigid GPU chain. It defaults to false and is runtime-only.
+The Math GPU-skinned scenario enables it; benchmark copies inherit the source
+value. Compare the same Strict profile with this option off and on before
+attributing a timing change to it.
+
+Child authoring blocks reuse until explicit rearm. Finish authoring, then toggle
+the option off and on at a quiescent boundary. Disable the option before writes
+that suppress property notifications. Unsupported or blocked input keeps the
+ordinary GPU preparation route. This option does not lower simulation cadence
+or add GPU pose interpolation. See the [input ownership contract](../../architecture/physics/physics-chain-compute-backends.md#retained-rigid-rest-inputs).
 
 ## World-owned runtime architecture
 
@@ -57,6 +309,54 @@ Strict mode forbids `WaitForGpu`, blocking maps, current-frame readback, and
 hidden CPU fallback. A capability or capacity failure is a visible backend
 failure. The last valid output may remain visible according to the selected
 failure policy, but CPU simulation cannot silently become authoritative.
+
+## Vulkan asynchronous compute research
+
+Physics-chain dispatches currently enter the ordered frame-operation stream
+and run on the graphics queue. `VulkanQueueFamilySelector` can select distinct
+compute and transfer families, but the generic frame-graph multi-queue executor
+is disabled. Queue availability does not change physics submission ownership.
+The existing `VulkanCommandRuntime.AdvancedQueueOverlap` path is narrower:
+explicit `GraphicsCompute` mode forks classification from independent
+GTAO/lighting work for one presentationless mono Advanced output. It uses two
+queues in the graphics family. Physics remains before that split. See the
+[Vulkan queue contract](../../architecture/rendering/vulkan-renderer.md).
+
+Queue count does not prove parallel execution or a performance gain. Extra
+submissions and semaphore dependencies can increase cost. Select independent
+work with complementary resource demands, then inspect a GPU scheduling trace.
+Do not reduce solver occupancy to make space for other work.
+[NVIDIA synchronization guidance](https://developer.nvidia.com/blog/advanced-api-performance-synchronization/)
+supports these measurement rules; it does not predict a gain on this workload.
+
+The same-frame dependency is `solver -> palette/bounds -> skinning/culling ->
+shadows/draws`. A physics experiment must preserve this dependency and the
+simulation cadence. The first candidate is a second compute-capable queue in
+the graphics family, only when a resource-use audit finds independent work.
+This avoids queue-family ownership transfer, but still requires correct
+semaphore dependencies, resource visibility, and completion-based reuse. Do
+not add a frame of delay or use prior solved output to create artificial
+independence.
+
+Use the actual consumers to select barrier scopes: compute storage reads,
+indirect-command reads, vertex-shader storage reads, or vertex-input reads.
+Batch independent dispatches before their shared dependency where valid.
+Follow the [Vulkan synchronization examples](https://docs.vulkan.org/guide/latest/synchronization_examples.html)
+and [Synchronization2 sample](https://docs.vulkan.org/samples/latest/samples/extensions/synchronization_2/README.html).
+[Timeline semaphores](https://www.khronos.org/blog/vulkan-timeline-semaphores)
+can express completion values; they do not replace resource lifetime ownership
+or the required memory dependencies.
+
+Whole-frame timing, queue-submission counts, and overlap-candidate counters do
+not prove simultaneous GPU execution. Collect completed per-queue GPU timestamp
+ranges and a scheduling trace, plus CPU submission and completed-frame costs.
+Retrieve timestamp diagnostics asynchronously without a stall. Strict
+zero-readback forbids solved physics-data readback; it does not forbid these
+timing queries. The approximately 20 Hz full-grid result warrants further CPU
+analysis, but does not by itself identify an exclusive CPU or GPU bottleneck.
+Keep diagnostic runs separate from unobserved acceptance windows. The
+[async experiment checks](../../work/testing/physics/physics-validation.md#vulkan-asynchronous-physics-experiment)
+define the comparison and correctness evidence.
 
 ## Shared collision data
 
@@ -124,7 +424,7 @@ Physics-chain per-tree parameter updates no longer allocate through `ToArray()`,
 
 ### Transfer Bandwidth
 
-The GPU path separates static particle metadata from dynamic state more aggressively. Stable scenes avoid static-data uploads; unchanged colliders drop toward zero upload bandwidth; transform upload cost is reduced in animation-stable cases.
+The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is an open [code item](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md#physics-inputs-at-the-render-rate).
 
 Batched mode has been reevaluated around resident-buffer copy churn so combined-buffer work can be measured separately from upload and readback bandwidth.
 
@@ -154,28 +454,229 @@ Profiler scopes and bandwidth counters distinguish:
 
 Runtime bandwidth/frame metrics are available from `GPUPhysicsChainDispatcher.GetBandwidthPressureSnapshot()`.
 
+`GPUPhysicsChainDispatcher.CaptureStageTimings()` returns the cumulative
+render-thread time of each dispatcher stage and the number of
+`ProcessDispatches` calls. Capture it twice inside a timed window, for example
+through the MCP `invoke_method` tool, and divide each stage difference by the
+call difference to get milliseconds per frame. The timers are always on and
+cost a few timestamp reads per frame. Use them in place of sampled CPU traces,
+which over-attribute time to lock entry and large struct copies.
+
+`GPUPhysicsChainDispatcher.CaptureCommittedSpatialQueryDiagnostics()` counts
+committed spatial query misses by reason (epoch, page, renderer, mesh, scene
+route, material) and dispatcher spatial epoch advances by cause. A reuse is not
+counted. In a steady-state window the miss counters should not change.
+
+### Frame-loop profiling method
+
+Use these tools in this order. The 2026-10-12 work in the
+[investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+used them, and the
+[critical-path mapping](../../work/investigations/physics/physics-chain-critical-path-mapping-2026-10-12.md)
+records the code paths they point to.
+
+1. **Phase timings and stage differences.** Every harness summary has
+   `phaseTimings` and `stageDifferences`. The frame interval is the longer of
+   render until it releases the collect thread and collect, plus the swap. Read
+   the handoff counters in `stageDifferences.collectStages.handoff` to see
+   which thread is late, then read the stage parts of that thread. Decide from
+   these values, not from the frame rate alone. A live session is required; run
+   the harness with `powershell -NoProfile -File` where `pwsh` is not installed.
+2. **Stage timers.** Read a stage capture twice inside a timed window and take
+   the difference:
+
+   ```powershell
+   pwsh Tools/Benchmarks/Invoke-McpStaticMethod.ps1 -Session <name> -TypeName GPUPhysicsChainDispatcher -MethodName CaptureStageTimings
+   ```
+
+   Start the harness window with `-UseExistingSession`, wait for
+   `<label>-window-start.json`, then call the probe, wait about 10 seconds,
+   and call it again. The same method works for
+   `RenderCallbackStageTimings.Capture` (the parts of the window render
+   callback: pre-render, viewports, and the backend frame) and
+   `AdvancedSharedPreparationService.GetCurrentDiagnostics` (Advanced
+   preparation build, extraction, and lock-wait ticks in `SharedTelemetry`).
+   The dispatcher capture nests its bounds, simulation, and commit sub-stages
+   in `Detail`, because `invoke_method` serializes at most 20 properties of one
+   object. The commit parts are the backend batch, the page lock wait, the
+   fence, the page state, notification collection, notification, and the
+   remainder; `CommittedOutputPages` and `CommitNotifications` count pages and
+   notifications. For the parts of each extraction row (mesh pre-pass, route and
+   output state, geometry, mesh preparation, pose, history and arena,
+   schedule and job, payload), set `XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS=1`
+   before session launch and read
+   `AdvancedPreparationExtractor.CaptureExtractionSubStageTimings` the same
+   way. Divide by the `Builds` or `Rows` difference. The timers add about eight
+   timestamp reads to each row, so leave the variable unset for frame-rate
+   windows. To see whether steady-state frames keep their work, read
+   `VisibilityContent` in the `GetCurrentDiagnostics` result (builds whose
+   visibility columns did not change) and
+   `AdvancedVisibilityStreamReuseTelemetry.Capture` (Vulkan visibility streams
+   kept across frames, and the first reason for each reseal). Both are always on.
+3. **Sampled CPU trace.** Run a window with `-CpuTraceSeconds 15`, then
+   summarize the Speedscope export:
+
+   ```powershell
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --threads 4
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --thread "(<tid>)" --focus XRWindow.RenderCallback --depth 8
+   python Tools/Benchmarks/Summarize-SpeedscopeTrace.py <label>-cpu.speedscope.json --callers Monitor.Enter_Slowpath --caller-depth 3
+   ```
+
+   The sample profiler suspends threads at safe points, so it over-attributes
+   time to `Monitor.Enter_Slowpath` and `BulkMoveWithWriteBarrier`. Use it to
+   find call paths only.
+4. **Contention trace.** Before you act on a lock, record the real blocking
+   waits and their owners during a window:
+
+   ```powershell
+   dotnet-trace collect --process-id <pid> --providers "Microsoft-Windows-DotNETRuntime:0x4000:4,Microsoft-DotNETCore-SampleProfiler:0xF00000000000:4" --duration 00:00:00:10 -o contention.nettrace
+   ```
+
+   `ContentionStart` carries the owner thread ID. A blocking wait appears only
+   after the runtime stops spinning, so short spins are not counted. The repository does
+   not include a parser, because it would add the
+   `Microsoft.Diagnostics.Tracing.TraceEvent` package. To read the trace, create
+   a scratch console project outside the repository, add that package, and use
+   this `Program.cs`. It groups waits by waiter and owner thread, and it reports
+   what the owner thread's samples show while each wait lasts:
+
+   ```csharp
+   using Microsoft.Diagnostics.Tracing;
+   using Microsoft.Diagnostics.Tracing.Etlx;
+   using Microsoft.Diagnostics.Tracing.Parsers.Clr;
+
+   // Usage: ContentionReport <trace.nettrace> [topN]
+   string path = args[0];
+   int topN = args.Length > 1 ? int.Parse(args[1]) : 30;
+   using TraceLog log = new(TraceLog.CreateFromEventPipeDataFile(path));
+   TraceLogEventSource source = log.Events.GetSource();
+   var pending = new Dictionary<int, (double Start, int Owner, string Waiter)>();
+   var waits = new List<(double Start, double End, int Waiter, int Owner, string WaiterKey)>();
+   var samples = new Dictionary<int, List<(double Time, string Key)>>();
+   var roots = new Dictionary<int, Dictionary<string, int>>();
+
+   static string Short(string name)
+   {
+       int bang = name.IndexOf('!');
+       if (bang >= 0) name = name[(bang + 1)..];
+       int paren = name.IndexOf('(');
+       return paren >= 0 ? name[..paren] : name;
+   }
+
+   static List<string> EngineFrames(TraceCallStack? stack)
+   {
+       var frames = new List<string>();
+       for (TraceCallStack? s = stack; s is not null; s = s.Caller)
+       {
+           string n = s.CodeAddress.FullMethodName ?? "";
+           if (n.Contains("XREngine", StringComparison.Ordinal) && !n.Contains("XREvent", StringComparison.Ordinal))
+               frames.Add(Short(n));
+       }
+       return frames; // Leaf first.
+   }
+
+   source.Clr.ContentionStart += (ContentionStartTraceData e) =>
+       pending[e.ThreadID] = (e.TimeStampRelativeMSec, (int)e.LockOwnerThreadID,
+           string.Join(" < ", EngineFrames(e.CallStack()).Take(4)));
+   source.Clr.ContentionStop += (ContentionStopTraceData e) =>
+   {
+       if (pending.Remove(e.ThreadID, out var start))
+           waits.Add((start.Start, e.TimeStampRelativeMSec, e.ThreadID, start.Owner, start.Waiter));
+   };
+   source.Dynamic.All += (TraceEvent e) =>
+   {
+       if (!e.ProviderName.Contains("SampleProfiler", StringComparison.Ordinal)) return;
+       List<string> frames = EngineFrames(e.CallStack());
+       if (!samples.TryGetValue(e.ThreadID, out var list)) samples[e.ThreadID] = list = [];
+       list.Add((e.TimeStampRelativeMSec, string.Join(" < ", frames.Take(3))));
+       if (frames.Count == 0) return;
+       if (!roots.TryGetValue(e.ThreadID, out var counts)) roots[e.ThreadID] = counts = [];
+       counts[frames[^1]] = counts.GetValueOrDefault(frames[^1]) + 1;
+   };
+   source.Process();
+
+   string Role(int tid) => roots.TryGetValue(tid, out var c) && c.Count > 0
+       ? $"T{tid}[{c.OrderByDescending(kv => kv.Value).First().Key}]" : $"T{tid}";
+
+   Console.WriteLine($"contentions={waits.Count} totalWaitMs={waits.Sum(w => w.End - w.Start):F1}");
+   Console.WriteLine("== By waiter and owner thread");
+   foreach (var g in waits.GroupBy(w => (w.Waiter, w.Owner)).OrderByDescending(g => g.Sum(w => w.End - w.Start)).Take(topN))
+       Console.WriteLine($"{g.Sum(w => w.End - w.Start),9:F1} ms n={g.Count(),6} waiter={Role(g.Key.Waiter)} owner={Role(g.Key.Owner)}");
+   Console.WriteLine("== By waiter stack");
+   foreach (var g in waits.GroupBy(w => (w.Waiter, w.WaiterKey)).OrderByDescending(g => g.Sum(w => w.End - w.Start)).Take(topN))
+       Console.WriteLine($"{g.Sum(w => w.End - w.Start),9:F1} ms n={g.Count(),6} T{g.Key.Waiter} {g.Key.WaiterKey}");
+   Console.WriteLine("== Owner activity during waits");
+   var activity = new Dictionary<string, int>();
+   foreach (var w in waits)
+   {
+       if (!samples.TryGetValue(w.Owner, out var list)) continue;
+       foreach (var s in list.Where(s => s.Time >= w.Start && s.Time <= w.End))
+       {
+           string key = $"T{w.Owner} holds while T{w.Waiter} waits: owner in {s.Key}";
+           activity[key] = activity.GetValueOrDefault(key) + 1;
+       }
+   }
+   foreach (var kv in activity.OrderByDescending(kv => kv.Value).Take(topN))
+       Console.WriteLine($"{kv.Value,7} samples {kv.Key}");
+   ```
+
+5. **GC check.** `dotnet-counters collect --process-id <pid> --counters System.Runtime --duration 00:00:20 --format csv`
+   reports collections per generation, pause time, allocation rate, and lock
+   contentions per second.
+6. **GPU floor.** A CPU-limited frame lets the driver lower the GPU clocks, so
+   the GPU time grows and does not show the real floor. Lock the clocks in an
+   elevated shell (`nvidia-smi -lgc <max>,<max>` and, where supported,
+   `nvidia-smi -lmc <max>,<max>`). Then start a harness window, wait for
+   `<label>-window-start.json`, and sample the frame command buffer time:
+
+   ```powershell
+   pwsh Tools/Benchmarks/Sample-GpuFrameTime.ps1 -Session <name> -Seconds 22 -OutputPath <run>/reports/<label>-gpu-samples.json
+   ```
+
+   Reset the clocks afterwards (`nvidia-smi -rgc` and `nvidia-smi -rmc`).
+   Measure at 1, 1,000, and 2,000 chains to split a fixed cost from a cost
+   per chain.
+
+Install `dotnet-trace` and `dotnet-counters` with `dotnet tool install -g`.
+
 `PhysicsChainComponent.GetRuntimeDiagnostics()` is the allocation-free
 per-chain inspection surface. It reports the requested CPU/batched-GPU/
 standalone-GPU path, backend readiness, retained CPU and GPU kernel families,
 requested and effective quality policy, and explicit compatibility costs such
-as CPU transform mirroring, GPU bone readback, and per-chain debug rendering.
+as CPU transform mirroring, GPU bone readback, and selected chain debug rendering.
 A failed GPU status never indicates that a CPU fallback was used.
-## Key Files
 
-- `XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.cs`
-- `XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs`
-- `XREngine.Runtime.Rendering/Buffers/XRDataBuffer.cs`
-- `XREngine.UnitTests/Physics/PhysicsChainComponentTests.cs`
-- `XREngine.UnitTests/Physics/GPUPhysicsChainDispatcherTests.cs`
+Batched GPU chain debug uses one compact world batch and two indexed indirect
+draws. It selects only explicit chains, with limits of 256 chains and 16,384
+particles. It does no CPU readback and creates no debug work when selection
+is off. Read `GPUPhysicsChainDispatcher.GetGpuDebugDiagnosticsSnapshot()` for
+selected counts, the limit flag, dispatches, draw submissions, and readback
+use. A foreign renderer, a busy retained batch, or a retired native source
+rejects work with a diagnostic. Native debug and teardown checks remain in the
+[validation plan](../../work/testing/physics/physics-validation.md#gpu-skinned-chain-scale).
 
-## Related Documentation
+`GPUPhysicsChainDispatcher.Instance.GpuBoundsDiagnostics` reports GPU bounds
+slots, dispatches, copied commands, material-contract rejections, and
+compatibility-route rejections. Use `LastMaterialContractRejectionCount` and
+`LastCompatibilityRouteRejectionCount` to see each cause in the latest bounds
+publication. `CompatibilityRouteRejectionCount` counts covered chain commands
+whose GPUScene copy was rejected because the compatibility culling draw has no
+retained physics output page and source identity. The canonical Advanced route
+uses the retained atlas bound. CpuDirect still draws a rejected compatibility
+command. No CPU bound replaces the rejected GPUScene copy. Release builds do
+not write the warning text, so read the counters in Release sessions.
 
-- [Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md)
-- [GPU Physics Chain Zero-Readback Skinned Mesh Plan](../../work/design/transforms/gpu-physics-chain-zero-readback-skinned-mesh-plan.md)
-- [Physics](../../user-guide/physics.md)
+To test material vertex effects in the Math Intersections world, set
+`XRE_PHYSICS_CHAIN_TEST_VERTEX_EFFECTS=1` before the editor starts. The skinned
+chain test material then declares neutral vertex-effect parameters. Change them
+with the `set_material_uniforms` MCP tool. Do not set this variable for timing
+windows.
+Use `set_object_reference` to assign an existing material to a command override
+or an existing transform to `RootBone` or `ReferenceObject`. Supply target and
+reference object IDs and optional member paths. The action checks the reference
+type and uses the property setter. Omit the reference ID to clear it.
 
-
-### Versioned CPU input and GPU arena placement
+## Versioned CPU input and GPU arena placement
 
 The component caches particle seed state, static templates, and bone topology
 at their source version boundaries. GPU preparation does not create CPU job
@@ -198,13 +699,27 @@ CPU stalls and varying GPU clocks prevent a controlled GPU comparison.
 The rendering bridge retains one readback coordinator per physics world.
 World tracking ends after the last source leaves and outstanding work drains.
 GPU bounds routing captures renderer command indices once per scene, then
-uses indexed lookups for each palette binding.
+uses indexed lookups for each palette binding. The compatibility GPUScene copy
+writes a rejected record for covered chain commands. Its command bounds and
+cull bounds buffers do not carry the physics atlas bound. Use the canonical
+Advanced route for GPU-culled covered chains.
 
 With `XRE_WORLD_TICK_TELEMETRY=1`,
 `PhysicsChainComponent.WorldLateTickTelemetry` exposes cumulative late-tick
 stage times and gate wait in Stopwatch ticks. Compare snapshots and divide by
 `StopwatchFrequency`. These are elapsed times, not exclusive CPU use. Keep
 this observer disabled for final performance acceptance.
+
+`PhysicsChainComponent.GetGpuRestInputCompatibilityCount(reason)` reads the
+world's cumulative compatibility-input count for one reason. A compatibility
+input still uses the selected GPU solver. Compare the counter before and after
+a change; do not treat a process-lifetime total as one frame's result.
+
+`RenderableMeshStageTelemetry.Snapshot()` reports named stages as
+`stage:ticks/calls` when world tick telemetry is enabled. These counters cover
+all scene meshes. They do not isolate one covered renderer. Use the selected
+renderer's `TrackedSkinnedBoneCount`, `HasPendingRenderMatrixUpdate`, and
+`UsesCommittedWorldBounds` for focused inspection.
 
 The same flag enables `RuntimeWorldRenderer.CollectionTelemetry`. Compare
 snapshots to get collect and swap call counts and matrix, mesh, and scene time.
@@ -216,3 +731,21 @@ cumulative retry ticks, and the maximum spin count. Divide retry ticks by
 and can add time across threads; they are not one frame's critical-path time.
 Uncontended reads do not call the timer or update contention counters. Disable
 the flag for final performance acceptance.
+
+## Key Files
+
+- `XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.cs`
+- `XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs`
+- `XREngine.Runtime.Rendering/Buffers/XRDataBuffer.cs`
+- `XREngine.UnitTests/Physics/PhysicsChainComponentTests.cs`
+- `XREngine.UnitTests/Physics/GPUPhysicsChainDispatcherTests.cs`
+
+## Related Documentation
+
+- [Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md)
+- [Physics Chain Steady-State CPU Design](../../work/design/physics/physics-chain-steady-state-cpu-design.md)
+- [Skinned GPU Chain Benchmark Investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+- [Distance Cadence and GPU Pose Presentation](../../work/design/physics/distance-cadence-gpu-presentation.md)
+- [Physics-chain output and readback](../../architecture/physics/physics-chain-output-and-readback.md)
+- [Skinning](skinning.md)
+- [Physics](../../user-guide/physics.md)

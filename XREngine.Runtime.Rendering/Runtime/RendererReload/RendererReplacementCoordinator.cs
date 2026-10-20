@@ -122,13 +122,16 @@ public sealed class RendererReplacementCoordinator
                         registration, windows, detached, candidateAttached, candidateCleanupFailed, configuration,
                         configurationAttempted, failureKind, attachFailure).ConfigureAwait(false);
 
-                Publish(registration, RendererReloadState.RehydratingResources, "Logical resources rebound; awaiting a valid frame.");
+                RendererBackendRegistration activeRegistration = windows.Length > 0
+                    ? RuntimeRenderingHostServices.Factories.RendererBackends.GetRequired(windows[0].Renderer.BackendId)
+                    : registration;
+                Publish(activeRegistration, RendererReloadState.RehydratingResources, "Logical resources rebound; awaiting a valid frame.");
                 if (windows.Length > 0)
                 {
                     failureKind = RendererReloadFailureKind.FirstFrame;
-                    Publish(registration, RendererReloadState.AwaitingFirstValidFrame, "Awaiting first valid frame.");
+                    Publish(activeRegistration, RendererReloadState.AwaitingFirstValidFrame, "Awaiting first valid frame.");
                     bool firstFrame = await WaitForFirstFramesAsync(
-                        windows, registration.Metadata.Generation, firstFrameTimeout, cancellationToken)
+                        windows, activeRegistration.Metadata.Generation, firstFrameTimeout, cancellationToken)
                         .ConfigureAwait(false);
                     if (RendererReloadFailureInjection.IsEnabled(RendererReloadInjectedFailure.FirstFrame))
                         firstFrame = false;
@@ -140,10 +143,10 @@ public sealed class RendererReplacementCoordinator
                             .ConfigureAwait(false);
                 }
 
-                Publish(registration, RendererReloadState.Resuming, "Configured renderer accepted; rendering resumed.");
+                Publish(activeRegistration, RendererReloadState.Resuming, "Configured renderer accepted; rendering resumed.");
                 Interlocked.Increment(ref _successfulReloads);
-                Publish(registration, RendererReloadState.Idle, "Renderer configuration restart completed.");
-                return new(true, registration);
+                Publish(activeRegistration, RendererReloadState.Idle, "Renderer configuration restart completed.");
+                return new(true, activeRegistration);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

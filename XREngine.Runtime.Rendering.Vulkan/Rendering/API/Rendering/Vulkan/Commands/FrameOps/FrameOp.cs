@@ -7,6 +7,8 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     private FrameOpContext _context = Context;
     private FrameOpResourceUseList _resourceUses;
     private ComputeDispatchSnapshot? _ownedAuthoringSnapshot;
+    private IRenderResourceLeaseOwner? _ownedAuthoringResource;
+    internal IRenderResourceLeaseOwner? AuthoringResource => _ownedAuthoringResource;
 
     public int PassIndex
     {
@@ -70,9 +72,18 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     {
         FrameOp copy = (FrameOp)MemberwiseClone();
         copy._ownedAuthoringSnapshot = null;
-        copy._resourceUses = _resourceUses.CreateSealedCopy();
-        copy.OnSealedAuthoringCopyCreated();
-        return copy;
+        copy._ownedAuthoringResource?.RetainAuthoringUse();
+        try
+        {
+            copy._resourceUses = _resourceUses.CreateSealedCopy();
+            copy.OnSealedAuthoringCopyCreated();
+            return copy;
+        }
+        catch
+        {
+            copy.ReleaseAuthoringSnapshot();
+            throw;
+        }
     }
 
     /// <summary>Owns a detached authoring snapshot until lowering or queue discard.</summary>
@@ -87,7 +98,26 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     {
         ComputeDispatchSnapshot? snapshot = _ownedAuthoringSnapshot;
         _ownedAuthoringSnapshot = null;
-        snapshot?.ReleaseReadOnlyStorageBindings();
+        IRenderResourceLeaseOwner? owner = _ownedAuthoringResource;
+        _ownedAuthoringResource = null;
+        try
+        {
+            snapshot?.ReleaseReadOnlyStorageBindings();
+        }
+        finally
+        {
+            owner?.ReleaseAuthoringUse();
+        }
+    }
+
+    internal void AttachAuthoringResource(IRenderResourceLeaseOwner? owner)
+    {
+        if (owner is null)
+            return;
+        if (_ownedAuthoringResource is not null)
+            throw new InvalidOperationException("A frame operation already owns a resource lease.");
+        owner.RetainAuthoringUse();
+        _ownedAuthoringResource = owner;
     }
 
     /// <summary>

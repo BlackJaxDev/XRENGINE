@@ -61,7 +61,7 @@ public sealed class NativeRealtimeTlsClientTunnel : IRealtimeTlsTunnel
                 AllowRenegotiation = false,
             }, deadline.Token).ConfigureAwait(false);
             if (tls.NegotiatedApplicationProtocol != SocketTlsProtocols.Realtime)
-                throw new AuthenticationException("The server did not negotiate the realtime protocol.");
+                throw new AuthenticationException(RealtimeWireProtocol.UpdateRequiredMessage);
             return new NativeRealtimeTlsClientTunnel(tcp, tls);
         }
         catch

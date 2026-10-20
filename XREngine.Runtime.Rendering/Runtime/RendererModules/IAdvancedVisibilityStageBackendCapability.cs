@@ -7,6 +7,9 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IAdvancedVisibilityStageBackendCapability
 {
+    /// <summary>Whether this native family expands meshlets through compute without hardware task/mesh shaders or count readback.</summary>
+    bool SupportsAdvancedComputeMeshletVisibility => false;
+
     /// <summary>True when the backend can record the requested stage without CPU visibility fallback or readback.</summary>
     bool SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage);
 

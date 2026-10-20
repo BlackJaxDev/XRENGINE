@@ -79,7 +79,8 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 service._extractor.GpuDeformation.LastOutputReuseSlot,
                 service._extractor.GpuDeformation.LastOutputReuseAuthority,
                 service.GetTelemetryLocked(), service._extractor.ArenaTelemetry,
-                service._extractor.FrameUploadTelemetry);
+                service._extractor.FrameUploadTelemetry,
+                service._extractor.VisibilityContentTelemetry);
     }
 
     private AdvancedSharedPreparationTelemetry GetTelemetryLocked() => new(
@@ -97,6 +98,14 @@ public sealed class AdvancedSharedPreparationService : IDisposable
         in RenderWorldSnapshot world,
         RenderFrameViewSet? viewSet,
         EAdvancedPreparationConsumer consumers)
+        => Acquire(world, viewSet, consumers,
+            RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
+
+    public AdvancedPreparationPublication Acquire(
+        in RenderWorldSnapshot world,
+        RenderFrameViewSet? viewSet,
+        EAdvancedPreparationConsumer consumers,
+        EMeshSubmissionStrategy submissionStrategy)
     {
         long waitStarted = Stopwatch.GetTimestamp();
         lock (_sync)
@@ -155,7 +164,7 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             _rebuildCount++;
             long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
             long buildStarted = Stopwatch.GetTimestamp();
-            _publication = _extractor.Build(world, viewSet, consumers);
+            _publication = _extractor.Build(world, viewSet, consumers, submissionStrategy);
             _buildTicks += Stopwatch.GetTimestamp() - buildStarted;
             _buildAllocatedBytes +=
                 GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
@@ -201,6 +210,23 @@ public sealed class AdvancedSharedPreparationService : IDisposable
         Span<AdvancedDeformedArenaSlice> deformationSlices,
         out AdvancedIndirectPreparationResult indirect,
         out AdvancedGpuDeformationPublication deformationPublication)
+        => TryCopyVisibilityInputs(extractor, in publication, payloads, candidates, producers,
+            indirectRanges, indirectPayloadIndices, deformationSlices, default,
+            out indirect, out deformationPublication, out _);
+
+    internal bool TryCopyVisibilityInputs(
+        AdvancedPreparationExtractor extractor,
+        in AdvancedPreparationPublication publication,
+        Span<AdvancedVisibilityPayload> payloads,
+        Span<AdvancedVisibilityCandidate> candidates,
+        Span<EAdvancedGeometryProducer> producers,
+        Span<AdvancedIndirectRange> indirectRanges,
+        Span<int> indirectPayloadIndices,
+        Span<AdvancedDeformedArenaSlice> deformationSlices,
+        Span<AdvancedGpuBoundsPatchRoute> boundsRoutes,
+        out AdvancedIndirectPreparationResult indirect,
+        out AdvancedGpuDeformationPublication deformationPublication,
+        out XREngine.Rendering.Compute.PhysicsChainGpuOutputPageLease boundsPage)
     {
         long waitStarted = Stopwatch.GetTimestamp();
         lock (_sync)
@@ -214,6 +240,7 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             long copyStarted = Stopwatch.GetTimestamp();
             indirect = default;
             deformationPublication = default;
+            boundsPage = default;
             if (!ReferenceEquals(extractor, _extractor) ||
                 !_extractor.MatchesPublication(in publication))
             {
@@ -283,6 +310,19 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                     _copyFailureCount++;
                     return false;
                 }
+            }
+            if (boundsRoutes.IsEmpty && sourceCandidates.Length != 0)
+            {
+                if (_extractor.HasGpuBoundsPublication)
+                {
+                    _copyFailureCount++;
+                    return false;
+                }
+            }
+            else if (!_extractor.TryCopyGpuBoundsPublication(boundsRoutes, out boundsPage))
+            {
+                _copyFailureCount++;
+                return false;
             }
             long copyTicks = Stopwatch.GetTimestamp() - copyStarted;
             _copyTicks += copyTicks;

@@ -38,7 +38,16 @@ public class UserInterfaceRenderPipeline : RenderPipeline
     protected override Lazy<XRMaterial> InvalidMaterialFactory => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
 
     private XRMaterial MakeInvalidMaterial()
-        => XRMaterial.CreateUnlitColorMaterialForward();
+    {
+        if (RuntimeEngineMaterialConstructionServices.Target != EngineMaterialConstructionTarget.WebGpuCooked &&
+            AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+            return XRMaterial.CreateUnlitColorMaterialForward();
+
+        // Pipeline binding requests this placeholder even when no invalid draw exists.
+        // Keep it source-free; attempting to draw it still fails cooked-program admission.
+        using IDisposable suppression = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
+        return new XRMaterial(Array.Empty<XRShader>()) { Name = "Unsupported UI material" };
+    }
 
     // Legacy names remain public until the resource-lifecycle contract test is
     // updated, but this pipeline intentionally has no managed texture layout.

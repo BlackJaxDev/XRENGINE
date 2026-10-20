@@ -96,6 +96,59 @@ public sealed class AdvancedGpuDeformationResourceTests
         third.Destroy();
     }
 
+    [Test]
+    public void MeshSliceRevision_AdvancesWhenAFrameOpensOrTheStaticGenerationResets()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+        ulong initial = resources.MeshSliceRevision;
+
+        resources.TryBeginFrame(0UL, 0UL, 0u, 2u, 16u).ShouldBeTrue();
+        ulong opened = resources.MeshSliceRevision;
+        opened.ShouldBeGreaterThan(initial);
+        resources.Publish([], [], []);
+        resources.EndFrame(0UL);
+
+        resources.TryResetStaticGenerationAtBoundary().ShouldBeTrue();
+        resources.MeshSliceRevision.ShouldBeGreaterThan(opened);
+    }
+
+    [Test]
+    public void UnsupportedMesh_KeepsTheMeshSliceRevision()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+        resources.TryBeginFrame(0UL, 0UL, 0u, 2u, 16u).ShouldBeTrue();
+        ulong revision = resources.MeshSliceRevision;
+
+        resources.TryPrepareMesh(new XRMesh(), 1u, out _)
+            .ShouldBe(AdvancedGpuDeformationMeshPreparationStatus.Unsupported);
+
+        resources.MeshSliceRevision.ShouldBe(revision);
+        resources.Publish([], [], []);
+        resources.EndFrame(0UL);
+    }
+
+    [Test]
+    public void PreparedMesh_IsReusableOnlyForTheSameRevisionAndTopology()
+    {
+        XRMesh mesh = new();
+        AdvancedGpuDeformationMeshSlice slice = new(
+            SourceVertexOffset: 4u, BoneInfluenceOffset: 4u, BlendshapeRangeOffset: 0u,
+            VertexCount: (uint)mesh.VertexCount, BlendshapeCount: 0u, TopologyGeneration: 7u);
+        AdvancedPreparedDeformationMesh prepared = new(slice, SliceRevision: 3UL,
+            mesh.GeometryRevision, Ready: true);
+
+        prepared.IsReusable(3UL, mesh, 7u).ShouldBeTrue();
+        prepared.IsReusable(4UL, mesh, 7u).ShouldBeFalse();
+        prepared.IsReusable(3UL, mesh, 8u).ShouldBeFalse();
+        (prepared with { Ready = false }).IsReusable(3UL, mesh, 7u).ShouldBeFalse();
+        (prepared with { GeometryRevision = mesh.GeometryRevision + 1 }).IsReusable(3UL, mesh, 7u)
+            .ShouldBeFalse();
+        (prepared with { Slice = slice with { VertexCount = slice.VertexCount + 1u } })
+            .IsReusable(3UL, mesh, 7u).ShouldBeFalse();
+    }
+
     private static AdvancedPreparationOptions CreateOptions(
         uint initialVertexCapacity)
     {

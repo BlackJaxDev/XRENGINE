@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using YamlDotNet.Serialization;
 using System;
 using System.Collections;
 using System.ComponentModel;
@@ -27,7 +28,7 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider
 {
-    internal override bool RequiresCanonicalGpuScenePublication => true;
+    internal override bool RequiresCanonicalGpuScenePublication => !UsesWebOutputTier;
 
     public enum DeferredDebugViewMode
     {
@@ -67,6 +68,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     [Category("Forward Pre-Pass")]
     [DisplayName("Forward Depth Pre-Pass")]
     [Description("Allows contact-shadow consumers to request the complete-scene depth+normal pre-pass. Ambient occlusion always includes forward geometry when enabled.")]
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public bool ForwardDepthPrePassEnabled
     {
         get => _forwardDepthPrePassEnabled;
@@ -78,6 +80,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     [Category("Forward Pre-Pass")]
     [DisplayName("Share GBuffer Targets")]
     [Description("Retained for camera-settings compatibility. The default pipeline now preserves deferred material attachments and uses a separate complete-scene depth+normal surface.")]
+    [DefaultValue(true)]
     public bool ForwardPrePassSharesGBufferTargets
     {
         get => _forwardPrePassSharesGBufferTargets;
@@ -112,8 +115,10 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         DefaultGlobalIlluminationHostAdapter.Instance);
 
     /// <summary>Immutable registry-resolved GI selection for this host.</summary>
+    [YamlIgnore]
     public GlobalIlluminationPlan GlobalIlluminationPlan => _globalIlluminationPlan;
 
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public EGlobalIlluminationMode GlobalIlluminationMode
     {
         get => _globalIlluminationMode;
@@ -131,8 +136,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
             DefaultGlobalIlluminationHostAdapter.Instance);
 
     // Light probe debug accessors (for editor/state panels)
+    [YamlIgnore]
     public XRTexture2DArray? ProbeIrradianceArray => CurrentProbeResources?.IrradianceArray;
+    [YamlIgnore]
     public XRTexture2DArray? ProbePrefilterArray => CurrentProbeResources?.PrefilterArray;
+    [YamlIgnore]
     public int ProbeCount => CurrentProbeResources?.PositionBuffer is { } positions
         ? (int)positions.ElementCount
         : 0;
@@ -502,6 +510,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     [Category("Debug")]
     [DisplayName("Deferred Debug View")]
     [Description("Overrides DeferredLightCombine output for diagnostics. Disabled = normal shaded output; other modes show raw deferred inputs.")]
+    [YamlMember(DefaultValuesHandling = DefaultValuesHandling.Preserve)]
     public DeferredDebugViewMode DeferredDebugView
     {
         get => _deferredDebugView;
@@ -1406,6 +1415,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     /// When true the deferred GBuffer renders into an MSAA FBO and deferred lighting
     /// runs with per-sample shading so geometric edges in the deferred path get anti-aliased.
     /// </summary>
+    [DefaultValue(true)]
     public bool EnableDeferredMsaa { get; set; } = true;
 
     private string BrightPassShaderName() => 
@@ -1436,7 +1446,16 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     /// <summary>
     /// Affects how textures and FBOs are created for single-pass stereo rendering.
     /// </summary>
-    public bool Stereo { get; }
+    private bool _stereo;
+    public bool Stereo
+    {
+        get => _stereo;
+        private set
+        {
+            if (SetField(ref _stereo, value) && CommandChain.Count != 0)
+                RebuildCommandChain();
+        }
+    }
 
     internal override bool UsesStereoResources(XRRenderPipelineInstance instance, XRViewport? viewport)
         => Stereo;
@@ -1662,8 +1681,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         if (debugMode >= 0 && debugMode <= 18)
             _deferredDebugView = (DeferredDebugViewMode)debugMode;
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
-        WarmDeferredLightingShaders();
-        WarmFirstRenderShaders();
+        if (!OperatingSystem.IsBrowser() && AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+        {
+            WarmDeferredLightingShaders();
+            WarmFirstRenderShaders();
+        }
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -1762,6 +1784,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
 
     protected override void OnDestroying()
     {
+        DestroyWebDepthNormalPrePassMaterial();
         RuntimeEngine.Rendering.SettingsChanged -= HandleRenderingSettingsChanged;
         RuntimeEngine.Rendering.AntiAliasingSettingsChanged -= HandleAntiAliasingSettingsChanged;
         foreach (XRRenderPipelineInstance instance in Instances)
@@ -1890,7 +1913,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         => _motionVectorsMaterial.Value;
 
     public XRMaterial GetDepthNormalPrePassMaterial()
-        => _depthNormalPrePassMaterial.Value;
+        => UsesWebOutputTier ? GetWebDepthNormalPrePassMaterial() : _depthNormalPrePassMaterial.Value;
 
     public XRMaterial GetFullOverdrawCountMaterial()
         => _fullOverdrawCountMaterial.Value;
@@ -1912,6 +1935,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     protected override void DescribeRenderPasses(RenderPassMetadataCollection metadata)
     {
         base.DescribeRenderPasses(metadata);
+        if (UsesWebOutputTier)
+        {
+            DescribeWebRenderPasses(metadata);
+            return;
+        }
 
         static RenderPassBuilder Chain(RenderPassMetadataCollection collection, EDefaultRenderPass pass, params EDefaultRenderPass[] dependencies)
         {
@@ -2578,6 +2606,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     private const uint DeferredLightProbeGridIndexBufferBinding = 24u;
     private bool _useProbeGridAcceleration = true;
 
+    [DefaultValue(true)]
     public bool UseProbeGridAcceleration
     {
         get => _useProbeGridAcceleration;
@@ -3206,22 +3235,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
                 parameters[index] = CreateProbeParamData(probe);
             }
 
-            irradiance = new XRTexture2DArray(irradianceSources)
-            {
-                Name = LightProbeIrradianceArrayName,
-                CopyGpuLayerSources = true,
-                MinFilter = ETexMinFilter.Linear,
-                MagFilter = ETexMagFilter.Linear,
-                SizedInternalFormat = ESizedInternalFormat.Rgb16f,
-            };
-            prefilter = new XRTexture2DArray(prefilterSources)
-            {
-                Name = LightProbePrefilterArrayName,
-                CopyGpuLayerSources = true,
-                MinFilter = ETexMinFilter.LinearMipmapLinear,
-                MagFilter = ETexMagFilter.Linear,
-                SizedInternalFormat = ESizedInternalFormat.Rgb16f,
-            };
+            ESizedInternalFormat irradianceFormat = ForwardLightProbeArrayFormat.Resolve(renderer, irradianceSources, prefilter: false);
+            ESizedInternalFormat prefilterFormat = ForwardLightProbeArrayFormat.Resolve(renderer, prefilterSources, prefilter: true);
+            irradiance = ForwardLightProbeArrayFormat.Create(renderer, irradianceSources, prefilter: false,
+                LightProbeIrradianceArrayName, irradianceFormat);
+            prefilter = ForwardLightProbeArrayFormat.Create(renderer, prefilterSources, prefilter: true,
+                LightProbePrefilterArrayName, prefilterFormat);
             PushProbeTextureArray(renderer, irradiance);
             PushProbeTextureArray(renderer, prefilter);
 

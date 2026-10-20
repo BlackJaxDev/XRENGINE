@@ -10,6 +10,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_RenderDebugShapes : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("debug-shapes");
+
         public string? RenderGraphPassName { get; set; }
         public bool DepthTested { get; set; }
 
@@ -47,7 +50,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
             finally
             {
-                ResetStencilState();
+                // The cooked WebGPU display route has no stencil attachment. Desktop
+                // gizmo materials keep their stencil write/reset behavior unchanged.
+                if (AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+                    ResetStencilState();
             }
         }
 

@@ -1,0 +1,21 @@
+diff --git a/src/JoltPhysicsSharp/JoltApi.cs b/src/JoltPhysicsSharp/JoltApi.cs
+--- a/src/JoltPhysicsSharp/JoltApi.cs
++++ b/src/JoltPhysicsSharp/JoltApi.cs
+@@ -1020,7 +1020,7 @@
+     [LibraryImport(LibName)]
+     public static partial MotionQuality JPH_BodyCreationSettings_GetMotionQuality(nint settings);
+     [LibraryImport(LibName)]
+-    public static partial void JPH_BodyCreationSettings_SetMotionQuality(nint settings, in MotionQuality value);
++    public static partial void JPH_BodyCreationSettings_SetMotionQuality(nint settings, MotionQuality value);
+ 
+     [LibraryImport(LibName)]
+ 
+@@ -2206,7 +2206,7 @@
+     public static partial float JPH_MotionProperties_GetInverseMassUnchecked(nint properties);
+ 
+     [LibraryImport(LibName)]
+-    public static partial float JPH_MotionProperties_SetMassProperties(nint properties, AllowedDOFs allowedDOFs, in MassProperties massProperties);
++    public static partial void JPH_MotionProperties_SetMassProperties(nint properties, AllowedDOFs allowedDOFs, in MassProperties massProperties);
+ 
+     [LibraryImport(LibName)]
+     public static partial void JPH_MotionProperties_SetInverseMass(nint properties, float inverseMass);

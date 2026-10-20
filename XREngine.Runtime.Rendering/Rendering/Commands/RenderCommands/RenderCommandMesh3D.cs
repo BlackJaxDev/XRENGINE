@@ -6,6 +6,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Occlusion;
 using YamlDotNet.Serialization;
@@ -68,6 +69,9 @@ namespace XREngine.Rendering.Commands
         private int _renderPass;
         private uint _renderEditorHighlightBits;
         private GpuSceneOwnerSnapshot _renderGpuSceneOwner;
+        private bool _renderBasePassEnabled = true;
+        private bool _renderShadowPassEnabled = true;
+        private GpuMeshSubmissionLodTransforms? _renderLodTransforms;
         private AABB? _renderWorldCullingVolumeOverride;
         private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
         private bool _renderHasPrevWorldMatrix;
@@ -158,6 +162,13 @@ namespace XREngine.Rendering.Commands
                 ClearObservedMaterials();
                 ClearObservedMeshes();
             }
+            // The observers no longer report renderer changes. Advance the
+            // mutation version, so that a prepared canonical gate verdict that
+            // sampled it while the observers were bound stops trusting them.
+            // The advance is not a render-state change, so it records no dirty
+            // notification. Without the prepared gate, no reader needs it.
+            if (AdvancedGpuScenePublisher.PreparedGateEnabled)
+                AdvanceMutationVersion();
         }
 
         private void BindRendererMutations(XRMeshRenderer? renderer)
@@ -201,7 +212,13 @@ namespace XREngine.Rendering.Commands
         private void InvalidateRendererMutationBinding()
             => System.Threading.Volatile.Write(ref _currentRendererMutationBinding, null);
 
-        private bool HasCurrentRendererMutationBinding(XRMeshRenderer? renderer)
+        /// <summary>
+        /// Returns true when the mutation observers of this command are bound to
+        /// <paramref name="renderer"/> and to the current material and options
+        /// overrides. Then each observed change of that renderer, its submeshes,
+        /// meshes, materials, and options advances <see cref="RenderCommand.MutationVersion"/>.
+        /// </summary>
+        internal bool HasCurrentRendererMutationBinding(XRMeshRenderer? renderer)
         {
             if (renderer is null
                 || !ReferenceEquals(System.Threading.Volatile.Read(ref _currentRendererMutationBinding), renderer)
@@ -252,6 +269,7 @@ namespace XREngine.Rendering.Commands
             _observedSubmeshes = submeshes;
             submeshes.PostAnythingAdded += ObservedSubmeshAdded;
             submeshes.PostAnythingRemoved += ObservedSubmeshRemoved;
+            submeshes.PostModified += ObservedSubmeshesModified;
             foreach (XRMeshRenderer.SubMesh submesh in submeshes)
                 ObserveSubmesh(submesh);
             _rendererSubscriptionsCurrent = true;
@@ -265,6 +283,7 @@ namespace XREngine.Rendering.Commands
             {
                 _observedSubmeshes.PostAnythingAdded -= ObservedSubmeshAdded;
                 _observedSubmeshes.PostAnythingRemoved -= ObservedSubmeshRemoved;
+                _observedSubmeshes.PostModified -= ObservedSubmeshesModified;
                 _observedSubmeshes = null;
             }
 
@@ -321,6 +340,32 @@ namespace XREngine.Rendering.Commands
                 RefreshObservedMaterials();
                 RefreshObservedMeshes();
                 _rendererSubscriptionsCurrent = wasCurrent;
+            }
+            MarkDirty();
+        }
+
+        /// <summary>
+        /// Handles each change of the observed submesh list. A sort, a reverse,
+        /// or an add or remove without its item report changes the submesh at
+        /// an index with no add or remove event. The handler observes the
+        /// current submeshes, materials, and meshes again, removes the current
+        /// binding, and marks the command dirty after the change.
+        /// </summary>
+        /// <remarks>
+        /// A list in update mode raises no event, so its changes are not
+        /// observed. Do not change an observed submesh list in update mode.
+        /// </remarks>
+        private void ObservedSubmeshesModified()
+        {
+            lock (_rendererSubscriptionsGate)
+            {
+                if (_observedSubmeshes is { } submeshes)
+                {
+                    UnbindSubmeshMutations();
+                    BindSubmeshMutations(submeshes);
+                    RefreshObservedMaterials();
+                    RefreshObservedMeshes();
+                }
             }
             MarkDirty();
         }
@@ -532,7 +577,11 @@ namespace XREngine.Rendering.Commands
                 nameof(XRMaterial.TransparencyMode) or
                 nameof(XRMaterial.TransparentTechniqueOverride) or
                 nameof(XRMaterial.AlphaCutoff) or
-                nameof(XRMaterial.TransparentSortPriority))
+                nameof(XRMaterial.TransparentSortPriority) or
+                nameof(XRMaterial.RenderPass) or
+                nameof(XRMaterial.PassSet) or
+                nameof(XRMaterial.ShaderStateRevision) or
+                nameof(XRMaterial.UberStateRevision))
                 MarkDirty();
         }
 
@@ -700,22 +749,35 @@ namespace XREngine.Rendering.Commands
         }
 
         internal override float CaptureSortDistance(IRuntimeRenderCamera? camera)
+            => CaptureSortDistance(camera, out _, out _);
+
+        /// <summary>Captures the same bound or fallback point used by this command's CPU sort distance.</summary>
+        internal float CaptureSortDistance(IRuntimeRenderCamera? camera, out AABB? sortBounds, out Vector3 fallbackPosition)
         {
+            sortBounds = null;
+            fallbackPosition = default;
             if (camera is null)
                 return base.CaptureSortDistance(camera);
 
-            return CullingVolume is AABB bounds && bounds.IsValid
-                ? CalculateRenderDistance(bounds, camera)
-                : Vector3.DistanceSquared(camera.Transform.RenderTranslation, _renderWorldMatrix.Translation);
+            if (CullingVolume is AABB bounds && bounds.IsValid)
+            {
+                sortBounds = bounds;
+                return CalculateRenderDistance(bounds, camera);
+            }
+            fallbackPosition = _renderWorldMatrix.Translation;
+            return Vector3.DistanceSquared(camera.Transform.RenderTranslation, fallbackPosition);
         }
 
         public override void SwapBuffers()
         {
             ulong swapFrameId = RuntimeRenderingHostServices.FrameTiming.SwapFrameId;
+            Matrix4x4? componentWorld = GetLodComponentWorldMatrix();
             // A second collection may reach this command during the same swap boundary.
             // Keep the moving snapshot until the next frame unless a real mutation arrived.
             if (_temporalSettlementPending && !base._dirty &&
-                swapFrameId != 0UL && swapFrameId == _temporalSettlementFrameId)
+                swapFrameId != 0UL && swapFrameId == _temporalSettlementFrameId &&
+                _renderLodTransforms?.CurrentComponentWorld == componentWorld &&
+                (componentWorld is null || _renderLodTransforms?.SkinningEnabled == RuntimeEngine.Rendering.Settings.AllowSkinning))
                 return;
 
             if (System.Threading.Interlocked.CompareExchange(
@@ -723,7 +785,7 @@ namespace XREngine.Rendering.Commands
                 throw new InvalidOperationException("A mesh command swap is already in progress.");
             try
             {
-                SwapBuffersCore(swapFrameId);
+                SwapBuffersCore(swapFrameId, componentWorld);
             }
             finally
             {
@@ -731,7 +793,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void SwapBuffersCore(ulong swapFrameId)
+        private void SwapBuffersCore(ulong swapFrameId, Matrix4x4? componentWorld)
         {
             long capturedVersion = BeginSwapBuffers();
             _renderMesh = Mesh;
@@ -744,10 +806,31 @@ namespace XREngine.Rendering.Commands
             _renderPass = RenderPass;
             _renderEditorHighlightBits = EditorHighlightBits;
             _renderGpuSceneOwner = GpuSceneOwnerSnapshot.CaptureLive(OwnerRenderInfo);
+            XRMaterial? effectiveMaterial = _renderMaterialOverride ?? _renderMesh?.Material;
+            bool authoredEnabled = Enabled && (OwnerRenderInfo?.ShouldRender ?? true);
+            bool isPrimary = OwnerRenderInfo is RenderInfo3D { OwnerRenderableMesh: { } ownerMesh } &&
+                ownerMesh.IsPrimaryCommand(this);
+            _renderBasePassEnabled = authoredEnabled &&
+                (!isPrimary || XREngine.Components.Scene.Mesh.RenderableMesh.IsPrimaryMaterialPassEnabled(effectiveMaterial, false));
+            _renderShadowPassEnabled = authoredEnabled &&
+                (!isPrimary || XREngine.Components.Scene.Mesh.RenderableMesh.IsPrimaryMaterialPassEnabled(effectiveMaterial, true));
             _renderWorldCullingVolumeOverride = WorldCullingVolumeOverride;
             _renderGpuCommandIndex = GPUCommandIndex;
             _renderCanonicalDrawIdentitySnapshot = _canonicalDrawIdentitySnapshot;
             bool settleModelHistory = false;
+            if (componentWorld is { } currentComponentWorld)
+            {
+                GpuMeshSubmissionLodTransforms? prior = _renderLodTransforms;
+                bool sameFrame = swapFrameId != 0UL && _lastSubmittedSwapFrameId == swapFrameId;
+                Matrix4x4 previousComponentWorld = prior is { } history
+                    ? sameFrame ? history.PreviousComponentWorld : history.CurrentComponentWorld : currentComponentWorld;
+                bool skinningEnabled = RuntimeEngine.Rendering.Settings.AllowSkinning;
+                bool previousSkinningEnabled = prior is { } settingsHistory
+                    ? sameFrame ? settingsHistory.PreviousSkinningEnabled : settingsHistory.SkinningEnabled : skinningEnabled;
+                _renderLodTransforms = new(currentComponentWorld, previousComponentWorld, skinningEnabled, previousSkinningEnabled);
+                settleModelHistory = currentComponentWorld != previousComponentWorld || skinningEnabled != previousSkinningEnabled;
+            }
+            else _renderLodTransforms = null;
             bool hadPreviousModelMatrix = _lastSubmittedModelMatrixValid;
             if (_renderWorldMatrixIsModelMatrix)
             {
@@ -756,7 +839,7 @@ namespace XREngine.Rendering.Commands
                         ? _previousModelMatrixForSwapFrame
                         : _lastSubmittedModelMatrix
                     : _renderWorldMatrix;
-                settleModelHistory = !hadPreviousModelMatrix ||
+                settleModelHistory |= !hadPreviousModelMatrix ||
                     _renderPrevWorldMatrix != _renderWorldMatrix;
                 _renderHasPrevWorldMatrix = true;
                 _renderModelHistoryReason = hadPreviousModelMatrix
@@ -860,7 +943,35 @@ namespace XREngine.Rendering.Commands
             => new(_renderMesh, _renderWorldMatrix, _renderWorldMatrixIsModelMatrix,
                 _renderMaterialOverride, _renderInstances, _renderPass,
                 _renderForceCpuRendering, _renderEditorHighlightBits, StableQueryKey,
-                _renderGpuSceneOwner);
+                _renderGpuSceneOwner, _renderBasePassEnabled, _renderShadowPassEnabled,
+                _renderRenderOptionsOverride, _renderWorldCullingVolumeOverride.HasValue, _renderLodTransforms);
+
+        private Matrix4x4? GetLodComponentWorldMatrix()
+        {
+            var owner = (OwnerRenderInfo as XREngine.Rendering.Info.RenderInfo3D)?.OwnerRenderableMesh;
+            return owner?.IsPrimaryMeshCommand(this) == true ? owner.GetLodComponentWorldMatrix() : null;
+        }
+
+        internal GpuMeshSubmissionLodTransforms? GetLodTransformsForLiveCapture()
+        {
+            if (GetLodComponentWorldMatrix() is not { } world) return null;
+            bool skinningEnabled = RuntimeEngine.Rendering.Settings.AllowSkinning;
+            // GPUScene supplies the previous component image from its last
+            // publication, just as it does for the live source model matrix.
+            return new(world, world, skinningEnabled, skinningEnabled);
+        }
+
+        // Advances after each late render-thread world write of any mesh command.
+        // A reader that samples it before and after it reads the render-side
+        // matrices detects a late write that overlapped the read.
+        private static long s_lateRenderWorldWriteEpoch;
+
+        /// <summary>
+        /// Gets the number of late render-thread world writes in all mesh commands.
+        /// Each write advances it after the render-side matrices change.
+        /// </summary>
+        internal static long LateRenderWorldWriteEpoch
+            => System.Threading.Interlocked.Read(ref s_lateRenderWorldWriteEpoch);
 
         internal void ApplyLateRenderThreadWorldMatrix(Matrix4x4 worldMatrix)
         {
@@ -874,6 +985,9 @@ namespace XREngine.Rendering.Commands
                     ? EAdvancedVelocityValidityReason.Valid
                     : EAdvancedVelocityValidityReason.HistoryReset;
             }
+
+            // The full fence keeps the matrix writes above before this advance.
+            System.Threading.Interlocked.Increment(ref s_lateRenderWorldWriteEpoch);
         }
 
         private Matrix4x4 GetModelMatrix()
@@ -967,6 +1081,12 @@ namespace XREngine.Rendering.Commands
             {
                 if (RenderDiagnosticsFlags.ForceSkinnedUnbounded && UsesDeformedMesh(_renderMesh ?? _mesh))
                     return null;
+
+                XRMeshRenderer? commandRenderer = _dirty ? _mesh : _renderMesh ?? _mesh;
+                if (OwnerRenderInfo is XREngine.Rendering.Info.RenderInfo3D owner &&
+                    ReferenceEquals(commandRenderer, owner.OwnerRenderableMesh?.CurrentLODRenderer) &&
+                    owner.TryGetCommittedWorldBounds(out AABB committedBounds, out _))
+                    return committedBounds;
 
                 if (TryGetWorldCullingVolumeOverride(out AABB overrideBounds))
                     return overrideBounds;

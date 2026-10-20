@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Meshlets;
 internal static class NativeMeshOptimizer
 {
     private const string NativeLibraryName = "meshoptimizer";
-    private const int InteropVersion = 2;
+    private const int InteropVersion = 3;
     private const uint SimplifyPermissiveWithSeamsMask = (uint)MeshOptimizerSimplifyOptions.Permissive;
     private static readonly Lazy<nint> s_nativeLibraryHandle = new(LoadNativeLibraryHandle, LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<MeshoptVersionDelegate?> s_version = new(() => TryLoadExport<MeshoptVersionDelegate>("meshopt_version"), LazyThreadSafetyMode.ExecutionAndPublication);
@@ -125,6 +125,12 @@ internal static class NativeMeshOptimizer
 
     public static unsafe nuint BuildNativeMeshletClusters(MeshletBuildMode buildMode, MeshOptimizerMeshlet[] meshlets, uint[] meshletVertices, byte[] meshletTriangles, uint[] indices, float[] vertexPositions, nuint vertexCount, uint maxVertices, uint minTriangles, uint maxTriangles, float coneWeight, float splitFactor, float fillWeight)
     {
+        ArgumentNullException.ThrowIfNull(indices);
+        ArgumentNullException.ThrowIfNull(vertexPositions);
+        if ((indices.Length != 0 && vertexCount == 0) ||
+            vertexCount > (nuint)(int.MaxValue / 3) || vertexPositions.Length != (int)vertexCount * 3)
+            throw new ArgumentException("Meshlet positions must contain exactly three floats for every native vertex.", nameof(vertexPositions));
+
         fixed (MeshOptimizerMeshlet* meshletPtr = meshlets)
         fixed (uint* meshletVerticesPtr = meshletVertices)
         fixed (byte* meshletTrianglesPtr = meshletTriangles)

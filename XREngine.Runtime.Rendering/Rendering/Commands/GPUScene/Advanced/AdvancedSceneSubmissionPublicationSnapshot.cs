@@ -1,6 +1,7 @@
 namespace XREngine.Rendering.Commands;
 
 using XREngine.Rendering.Info;
+using XREngine.Rendering.Compute;
 
 /// <summary>Ring-owned submission sidecar captured alongside the canonical table images.</summary>
 public sealed class AdvancedSceneSubmissionPublicationSnapshot
@@ -47,4 +48,16 @@ public readonly record struct AdvancedManagedDeformationSourceRow(
     XRMesh? Mesh,
     uint MeshVertexCount,
     ulong SourceVersion,
-    ulong MeshVersion);
+    ulong MeshVersion,
+    PhysicsChainGpuBoundsSource? GpuBoundsSource = null,
+    PhysicsChainDrawMaterialSnapshot MaterialSnapshot = default)
+{
+    /// <summary>Immutable source facts retained before canonical packing repairs missing or degenerate bases.</summary>
+    public AdvancedBrowserGeometryBasisSource? BrowserBasisSource { get; init; }
+    /// <summary>Full-float source UV/color image associated with this exact geometry producer.</summary>
+    public AdvancedBrowserUberAttributeSource? BrowserUberAttributesSource { get; init; }
+    /// <summary>Identifies a producer whose UV/color output lacks a retained browser source companion.</summary>
+    public string? BrowserUberAttributesProducerRejection { get; init; }
+    /// <summary>Identifies a producer whose output lacks a retained browser basis contract.</summary>
+    public string? BrowserBasisProducerRejection { get; init; }
+}

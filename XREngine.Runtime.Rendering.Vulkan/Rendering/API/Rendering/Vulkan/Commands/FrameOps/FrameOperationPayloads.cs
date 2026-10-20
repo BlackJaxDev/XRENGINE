@@ -41,6 +41,9 @@ internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
     VulkanAdvancedVisibilityLateTargetClosure? LateTargetClosure,
     VulkanAdvancedNativeComputeClosure? NativeComputeClosure,
     DescriptorSet NativeComputeDescriptorSet,
+    VkRenderProgram? BoundsPatchProgram,
+    Pipeline BoundsPatchPipeline,
+    ulong BoundsPatchLinkGeneration,
     VkRenderProgram? EarlyVisibilityProgram,
     Pipeline EarlyVisibilityPipeline,
     ulong EarlyVisibilityLinkGeneration,
@@ -54,7 +57,20 @@ internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
     Pipeline LateVisibilityPipeline,
     ulong LateVisibilityLinkGeneration,
     VulkanAdvancedNativeComputePipelines NativeComputePipelines = default,
-    VulkanAdvancedMsaaResolvePipeline MultisampleResolvePipeline = default);
+    VulkanAdvancedMsaaResolvePipeline MultisampleResolvePipeline = default,
+    VkRenderProgram? EarlyIndexedGroupFinalizeProgram = null,
+    Pipeline EarlyIndexedGroupFinalizePipeline = default,
+    ulong EarlyIndexedGroupFinalizeLinkGeneration = 0UL,
+    VkRenderProgram? LateIndexedGroupFinalizeProgram = null,
+    Pipeline LateIndexedGroupFinalizePipeline = default,
+    ulong LateIndexedGroupFinalizeLinkGeneration = 0UL,
+    VulkanAdvancedDirectionalShadowResourceState DirectionalShadowResources = default,
+    VkRenderProgram? DirectionalShadowCullProgram = null,
+    Pipeline DirectionalShadowCullPipeline = default,
+    ulong DirectionalShadowCullLinkGeneration = 0UL,
+    VkRenderProgram? DirectionalShadowFinalizeProgram = null,
+    Pipeline DirectionalShadowFinalizePipeline = default,
+    ulong DirectionalShadowFinalizeLinkGeneration = 0UL);
 
 /// <summary>
 /// Per-opcode dense storage owned exclusively by a sealed operation stream.
@@ -107,6 +123,7 @@ internal sealed class FrameOperationPayloadStore
     internal DlssUpscalePayload[] DlssUpscales;
     internal DlssFrameGenerationPayload[] DlssFrameGenerations;
     internal VulkanAdvancedVisibilityOperationPayload[] AdvancedVisibilities;
+    private VulkanAdvancedDirectionalShadowLaneStorage?[] _advancedDirectionalShadowLanes = [];
     internal VulkanAdvancedVisibilityLateClosureStorage[] AdvancedVisibilityLateClosures;
     internal VulkanAdvancedNativeComputeClosureStorage[] AdvancedVisibilityNativeComputeClosures;
     private readonly int _advancedVisibilityDrawCapacity;
@@ -120,6 +137,12 @@ internal sealed class FrameOperationPayloadStore
     private ComputeDispatchSnapshot?[] _sealedMeshTaskSnapshots = [];
     private ComputeDispatchSnapshot?[] _sealedComputeDispatchSnapshots = [];
     private ComputeDispatchSnapshot?[] _sealedComputeDispatchIndirectSnapshots = [];
+    private VulkanProgramInterfaceEntry?[] _meshDrawInterfaces = [];
+    private VulkanProgramInterfaceEntry?[] _indirectDrawInterfaces = [];
+    private IRenderResourceLeaseOwner?[] _indirectDrawAuthoringOwners = [];
+    private IRenderResourceLeaseOwner?[] _computeDispatchAuthoringOwners = [];
+    private IRenderResourceLeaseOwner?[] _bufferCopyAuthoringOwners = [];
+    private VulkanProgramInterfaceEntry?[] _meshTaskInterfaces = [];
 
     internal FrameOperationPayloadStore()
         : this(
@@ -165,10 +188,13 @@ internal sealed class FrameOperationPayloadStore
         Queries = new QueryPayload[initialGeneral];
         MeshDraws = new MeshDrawPayload[Math.Min(meshCapacity, InitialMeshPayloadCapacity)];
         IndirectDraws = new IndirectDrawPayload[initialGeneral];
+        _indirectDrawAuthoringOwners = new IRenderResourceLeaseOwner?[initialGeneral];
         MeshTasks = new MeshTaskDispatchIndirectCountPayload[initialGeneral];
         ComputeDispatches = new ComputeDispatchPayload[initialGeneral];
+        _computeDispatchAuthoringOwners = new IRenderResourceLeaseOwner?[initialGeneral];
         ComputeDispatchIndirects = new ComputeDispatchIndirectPayload[initialGeneral];
         BufferCopies = new BufferCopyPayload[initialGeneral];
+        _bufferCopyAuthoringOwners = new IRenderResourceLeaseOwner?[initialGeneral];
         SubmissionMarkers = new SubmissionMarkerPayload[initialGeneral];
         MemoryBarriers = new MemoryBarrierPayload[initialGeneral];
         PublishedFramebuffers = new PublishFramebufferPayload[initialGeneral];
@@ -233,10 +259,87 @@ internal sealed class FrameOperationPayloadStore
         EVulkanPrimaryPlanNodeKind kind,
         int row,
         in PendingMeshDraw draw)
-        => draw.CreateSealedCopy(
+    {
+        if (kind == EVulkanPrimaryPlanNodeKind.IndirectDraw &&
+            draw.IndexedIndirectAuthoringLease is { } owner)
+        {
+            if (_indirectDrawAuthoringOwners[row] is not null)
+                throw new InvalidOperationException("An indirect draw row still owns an authoring lease.");
+            owner.RetainAuthoringUse();
+            _indirectDrawAuthoringOwners[row] = owner;
+        }
+        ref VulkanProgramInterfaceEntry? lease = ref GetDrawInterfaceLease(kind, row);
+        ReplaceInterfaceLease(ref lease, draw.PreparedProgram, draw.PreparedProgramLinkGeneration);
+        return draw.CreateSealedCopy(
             draw.ProgramBindingSnapshot is { } snapshot
                 ? SealBindingSnapshot(kind, row, snapshot)
                 : null);
+    }
+
+    internal void RetainComputeDispatchAuthoringOwner(
+        int row, IRenderResourceLeaseOwner? owner)
+    {
+        if (owner is null)
+            return;
+        if (_computeDispatchAuthoringOwners[row] is not null)
+            throw new InvalidOperationException("A compute dispatch row still owns an authoring lease.");
+        owner.RetainAuthoringUse();
+        _computeDispatchAuthoringOwners[row] = owner;
+    }
+
+    internal void RetainBufferCopyAuthoringOwner(
+        int row, IRenderResourceLeaseOwner? owner)
+    {
+        if (owner is null)
+            return;
+        if (_bufferCopyAuthoringOwners[row] is not null)
+            throw new InvalidOperationException("A buffer copy row still owns an authoring lease.");
+        owner.RetainAuthoringUse();
+        _bufferCopyAuthoringOwners[row] = owner;
+    }
+
+    private ref VulkanProgramInterfaceEntry? GetDrawInterfaceLease(
+        EVulkanPrimaryPlanNodeKind kind,
+        int row)
+    {
+        if (kind == EVulkanPrimaryPlanNodeKind.MeshDraw)
+            return ref GetInterfaceLease(ref _meshDrawInterfaces, row, MeshDraws.Length);
+        if (kind == EVulkanPrimaryPlanNodeKind.IndirectDraw)
+            return ref GetInterfaceLease(ref _indirectDrawInterfaces, row, IndirectDraws.Length);
+        throw new ArgumentOutOfRangeException(nameof(kind), kind, "The opcode has no draw interface row.");
+    }
+
+    internal void SealMeshTaskInterface(int row, VkRenderProgram program, ulong linkGeneration)
+    {
+        ref VulkanProgramInterfaceEntry? lease = ref GetInterfaceLease(
+            ref _meshTaskInterfaces, row, MeshTasks.Length);
+        ReplaceInterfaceLease(ref lease, program, linkGeneration);
+    }
+
+    private static ref VulkanProgramInterfaceEntry? GetInterfaceLease(
+        ref VulkanProgramInterfaceEntry?[] leases,
+        int row,
+        int columnLength)
+    {
+        if (row >= leases.Length)
+            Array.Resize(ref leases, Math.Max(row + 1, columnLength));
+        return ref leases[row];
+    }
+
+    private static void ReplaceInterfaceLease(
+        ref VulkanProgramInterfaceEntry? owned,
+        VkRenderProgram? program,
+        ulong linkGeneration)
+    {
+        VulkanProgramInterfaceEntry? successor = null;
+        if (program is not null && linkGeneration != 0UL &&
+            !program.TryRetainProgramInterface(linkGeneration, out successor))
+            throw new VulkanPlanPreconditionException("The draw's linked Vulkan interface changed before frame sealing.");
+        VulkanProgramInterfaceEntry? previous = owned;
+        owned = successor;
+        if (previous is not null)
+            previous.Context.Resources.ProgramInterfaces.Release(previous);
+    }
 
     /// <summary>
     /// Returns the row's reusable snapshot, growing the pool to the payload
@@ -291,6 +394,27 @@ internal sealed class FrameOperationPayloadStore
         return empty;
     }
 
+    internal VulkanAdvancedDirectionalShadowLaneStorage CaptureDirectionalShadowLane(
+        int row,
+        VulkanAdvancedDirectionalShadowLaneStorage source)
+    {
+        if ((uint)row >= (uint)_advancedDirectionalShadowLanes.Length)
+            Array.Resize(ref _advancedDirectionalShadowLanes,
+                Math.Max(row + 1, AdvancedVisibilities.Length));
+        VulkanAdvancedDirectionalShadowLaneStorage destination =
+            _advancedDirectionalShadowLanes[row] ??= new VulkanAdvancedDirectionalShadowLaneStorage();
+        if (!destination.TryCopyFrom(source))
+            throw new VulkanPlanPreconditionException(
+                "The authored directional shadow lane has no stable physical copy.");
+        return destination;
+    }
+
+    internal void ClearDirectionalShadowLanes()
+    {
+        for (int index = 0; index < _advancedDirectionalShadowLanes.Length; ++index)
+            _advancedDirectionalShadowLanes[index]?.Clear();
+    }
+
     private VulkanPlanPreconditionException CreateAdvancedInputCapacityFailure(
         in VulkanAdvancedVisibilityStageRequest request)
     {
@@ -329,11 +453,20 @@ internal sealed class FrameOperationPayloadStore
             case EVulkanPrimaryPlanNodeKind.TransformFeedback: Ensure(ref TransformFeedbacks, count); break;
             case EVulkanPrimaryPlanNodeKind.Query: Ensure(ref Queries, count); break;
             case EVulkanPrimaryPlanNodeKind.MeshDraw: Ensure(ref MeshDraws, count, _meshCapacity); break;
-            case EVulkanPrimaryPlanNodeKind.IndirectDraw: Ensure(ref IndirectDraws, count); break;
+            case EVulkanPrimaryPlanNodeKind.IndirectDraw:
+                Ensure(ref IndirectDraws, count);
+                Ensure(ref _indirectDrawAuthoringOwners, count);
+                break;
             case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount: Ensure(ref MeshTasks, count); break;
-            case EVulkanPrimaryPlanNodeKind.ComputeDispatch: Ensure(ref ComputeDispatches, count); break;
+            case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
+                Ensure(ref ComputeDispatches, count);
+                Ensure(ref _computeDispatchAuthoringOwners, count);
+                break;
             case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect: Ensure(ref ComputeDispatchIndirects, count); break;
-            case EVulkanPrimaryPlanNodeKind.BufferCopy: Ensure(ref BufferCopies, count); break;
+            case EVulkanPrimaryPlanNodeKind.BufferCopy:
+                Ensure(ref BufferCopies, count);
+                Ensure(ref _bufferCopyAuthoringOwners, count);
+                break;
             case EVulkanPrimaryPlanNodeKind.SubmissionMarker: Ensure(ref SubmissionMarkers, count); break;
             case EVulkanPrimaryPlanNodeKind.MemoryBarrier: Ensure(ref MemoryBarriers, count); break;
             case EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling: Ensure(ref PublishedFramebuffers, count); break;
@@ -352,6 +485,27 @@ internal sealed class FrameOperationPayloadStore
     /// </summary>
     internal void ReleaseReadOnlyStorageBindings()
     {
+        for (int index = 0; index < _indirectDrawAuthoringOwners.Length; ++index)
+        {
+            IRenderResourceLeaseOwner? owner = _indirectDrawAuthoringOwners[index];
+            _indirectDrawAuthoringOwners[index] = null;
+            owner?.ReleaseAuthoringUse();
+        }
+        for (int index = 0; index < _computeDispatchAuthoringOwners.Length; ++index)
+        {
+            IRenderResourceLeaseOwner? owner = _computeDispatchAuthoringOwners[index];
+            _computeDispatchAuthoringOwners[index] = null;
+            owner?.ReleaseAuthoringUse();
+        }
+        for (int index = 0; index < _bufferCopyAuthoringOwners.Length; ++index)
+        {
+            IRenderResourceLeaseOwner? owner = _bufferCopyAuthoringOwners[index];
+            _bufferCopyAuthoringOwners[index] = null;
+            owner?.ReleaseAuthoringUse();
+        }
+        ReleaseInterfaces(_meshDrawInterfaces);
+        ReleaseInterfaces(_indirectDrawInterfaces);
+        ReleaseInterfaces(_meshTaskInterfaces);
         for (int index = 0; index < MeshDraws.Length; ++index)
             MeshDraws[index].Draw.ProgramBindingSnapshot?.ReleaseReadOnlyStorageBindings();
         for (int index = 0; index < IndirectDraws.Length; ++index)
@@ -375,6 +529,18 @@ internal sealed class FrameOperationPayloadStore
             MeshTaskDispatchIndirectCountPayload payload = MeshTasks[index];
             payload.BindlessMaterialTextures?.Dispose();
             MeshTasks[index] = payload with { BindlessMaterialTextures = null };
+        }
+    }
+
+    private static void ReleaseInterfaces(VulkanProgramInterfaceEntry?[] entries)
+    {
+        for (int index = 0; index < entries.Length; ++index)
+        {
+            VulkanProgramInterfaceEntry? entry = entries[index];
+            if (entry is null)
+                continue;
+            entries[index] = null;
+            entry.Context.Resources.ProgramInterfaces.Release(entry);
         }
     }
 

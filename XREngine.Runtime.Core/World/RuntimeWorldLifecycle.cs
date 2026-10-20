@@ -13,6 +13,13 @@ namespace XREngine;
 public sealed partial class RuntimeWorldLifecycle
 {
     private readonly Dictionary<ETickGroup, TickGroupQueues> _ticks = [];
+    private volatile bool _ticksReleased;
+
+    // The lifecycle whose tick group this thread dispatches, and the actions that
+    // must run after that dispatch ends. Both are per thread, because the fixed
+    // and normal groups of one world can dispatch on different threads.
+    [ThreadStatic] private static RuntimeWorldLifecycle? t_dispatchingLifecycle;
+    [ThreadStatic] private static Action? t_afterDispatch;
 
     public RuntimeWorldLifecycle(
         IRuntimeWorldContext worldContext,
@@ -44,13 +51,24 @@ public sealed partial class RuntimeWorldLifecycle
     public void RegisterTick(ETickGroup group, int order, WorldTick callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
-        GetTickQueue(group, order).Enqueue(add: true, callback);
+        GetTickQueue(group, order)?.Enqueue(add: true, callback);
     }
 
     public void UnregisterTick(ETickGroup group, int order, WorldTick callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
-        GetTickQueue(group, order).Enqueue(add: false, callback);
+        GetTickQueue(group, order)?.Enqueue(add: false, callback);
+    }
+
+    /// <summary>
+    /// Ends callback ownership without dispatching pending changes. Existing
+    /// dispatch snapshots may finish, but additions cannot reopen these queues.
+    /// </summary>
+    internal void ReleaseTicks()
+    {
+        _ticksReleased = true;
+        foreach (TickGroupQueues queues in _ticks.Values)
+            queues.Release();
     }
 
     /// <summary>
@@ -61,9 +79,43 @@ public sealed partial class RuntimeWorldLifecycle
     /// </summary>
     public void TickGroup(ETickGroup group)
     {
+        RuntimeWorldLifecycle? previous = t_dispatchingLifecycle;
+        t_dispatchingLifecycle = this;
+        try
+        {
+            TickGroupCore(group);
+        }
+        finally
+        {
+            t_dispatchingLifecycle = previous;
+            if (previous is null && t_afterDispatch is { } after)
+            {
+                t_afterDispatch = null;
+                after();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Runs the action after the outermost tick-group dispatch on this thread ends,
+    /// or at once when this thread is not dispatching this world. Use it for work
+    /// that must not run while later callbacks of the same dispatch can still run,
+    /// such as disposing the world.
+    /// </summary>
+    internal void RunAfterTickDispatch(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        if (ReferenceEquals(t_dispatchingLifecycle, this))
+            t_afterDispatch += action;
+        else
+            action();
+    }
+
+    private void TickGroupCore(ETickGroup group)
+    {
         using var parityScope = IsPlaySessionActive
             ? AotParityDiagnostics.EnterSynchronousPlayerPath(EAotParityPlayerPathKind.PlayMode) : default;
-        if (!_ticks.TryGetValue(group, out TickGroupQueues? queues))
+        if (_ticksReleased || !_ticks.TryGetValue(group, out TickGroupQueues? queues))
             return;
 
         if (RuntimeWorldTickTelemetry.Enabled)
@@ -73,12 +125,12 @@ public sealed partial class RuntimeWorldLifecycle
         }
 
         TickQueue[] ordered = queues.Ordered;
-        for (int index = 0; index < ordered.Length; ++index)
+        for (int index = 0; index < ordered.Length && !_ticksReleased; ++index)
             ordered[index].Dispatch();
     }
 
     /// <summary>The same dispatch as <see cref="TickGroup"/>, timed for the tick counters.</summary>
-    private static void DispatchObserved(ETickGroup group, TickGroupQueues queues)
+    private void DispatchObserved(ETickGroup group, TickGroupQueues queues)
     {
         long started = Stopwatch.GetTimestamp();
         long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
@@ -86,7 +138,7 @@ public sealed partial class RuntimeWorldLifecycle
         long snapshotFinished = Stopwatch.GetTimestamp();
         try
         {
-            for (int index = 0; index < ordered.Length; ++index)
+            for (int index = 0; index < ordered.Length && !_ticksReleased; ++index)
                 ordered[index].Dispatch();
         }
         finally
@@ -100,10 +152,12 @@ public sealed partial class RuntimeWorldLifecycle
         }
     }
 
-    private TickQueue GetTickQueue(ETickGroup group, int order)
+    private TickQueue? GetTickQueue(ETickGroup group, int order)
     {
+        if (_ticksReleased)
+            return null;
         if (!_ticks.TryGetValue(group, out TickGroupQueues? queues))
-            _ticks[group] = queues = new TickGroupQueues(group);
+            throw new ArgumentOutOfRangeException(nameof(group));
 
         return queues.GetOrAdd(order);
     }
@@ -118,14 +172,17 @@ public sealed partial class RuntimeWorldLifecycle
     {
         private readonly SortedDictionary<int, TickQueue> _byOrder = [];
         private TickQueue[] _ordered = [];
+        private bool _released;
 
         /// <summary>The queues in ascending order value; replaced, never mutated.</summary>
         public TickQueue[] Ordered => Volatile.Read(ref _ordered);
 
-        public TickQueue GetOrAdd(int order)
+        public TickQueue? GetOrAdd(int order)
         {
             lock (_byOrder)
             {
+                if (_released)
+                    return null;
                 if (_byOrder.TryGetValue(order, out TickQueue? queue))
                     return queue;
 
@@ -135,6 +192,16 @@ public sealed partial class RuntimeWorldLifecycle
                 _byOrder.Values.CopyTo(ordered, 0);
                 Volatile.Write(ref _ordered, ordered);
                 return queue;
+            }
+        }
+
+        public void Release()
+        {
+            lock (_byOrder)
+            {
+                _released = true;
+                _byOrder.Clear();
+                Volatile.Write(ref _ordered, []);
             }
         }
     }

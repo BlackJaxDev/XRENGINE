@@ -56,7 +56,7 @@ internal static class VulkanDirectionalShadowPipelineFactory
             0UL,
             target.DynamicRenderingFormats,
             program.ComputeGraphicsPipelineFingerprint(),
-            program.LinkGeneration,
+            program.InterfaceGeneration,
             s_vertexInput.LayoutHash,
             program.DescriptorSchemaFingerprint,
             program.PipelineLayout.Handle,

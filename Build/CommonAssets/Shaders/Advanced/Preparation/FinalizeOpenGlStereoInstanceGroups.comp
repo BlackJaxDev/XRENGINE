@@ -1,0 +1,79 @@
+#version 450
+
+layout(push_constant, std430) uniform XRAdvancedStereoGroupPush
+{
+    uint payloadCapacity;
+    uint rangeCapacity;
+    uint late;
+    uint reserved;
+} XR_ADV_StereoGroupPush;
+
+#define XR_ADV_VISIBILITY_COUNTER_INDEX 0u
+#include "../Visibility/VisibilityInterface.glslinc"
+
+layout(std430, binding = 75) writeonly buffer StereoArguments { uint words[]; } XR_ADV_StereoArguments;
+layout(std430, binding = 76) buffer StereoRangeCounts { uint counts[]; } XR_ADV_StereoRangeCounts;
+layout(std430, binding = 81) readonly buffer StereoGroupCounts { uint counts[]; } XR_ADV_StereoGroupCounts;
+layout(local_size_x = 256) in;
+
+void main()
+{
+    uint groupIndex = gl_GlobalInvocationID.x;
+    if (groupIndex >= uint(XR_ADV_VisibilityInstanceGroups.records.length()) ||
+        groupIndex >= uint(XR_ADV_StereoGroupCounts.counts.length()))
+        return;
+
+    uint memberCount = XR_ADV_StereoGroupCounts.counts[groupIndex];
+    if (memberCount == 0u)
+        return;
+
+    XRAdvancedIndexedInstanceGroup group = XR_ADV_VisibilityInstanceGroups.records[groupIndex];
+    uint rangeCount = uint(XR_ADV_VisibilityRangeOffsets.records.length());
+    if (memberCount > group.memberCapacity ||
+        group.rangeIndex >= rangeCount || group.rangeIndex >= XR_ADV_StereoGroupPush.rangeCapacity ||
+        group.rangeIndex >= uint(XR_ADV_StereoRangeCounts.counts.length()) ||
+        group.representativePayloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()) ||
+        group.firstMember > XR_ADV_StereoGroupPush.payloadCapacity ||
+        group.memberCapacity > XR_ADV_StereoGroupPush.payloadCapacity - group.firstMember)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return;
+    }
+
+    uint rangeBegin = XR_ADV_VisibilityRangeOffsets.records[group.rangeIndex];
+    uint rangeEnd = group.rangeIndex + 1u < rangeCount
+        ? XR_ADV_VisibilityRangeOffsets.records[group.rangeIndex + 1u]
+        : XR_ADV_StereoGroupPush.payloadCapacity;
+    if (rangeBegin > rangeEnd || rangeEnd > uint(XR_ADV_StereoArguments.words.length()) / 5u)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        return;
+    }
+    uint capacity = rangeEnd - rangeBegin;
+    uint local = atomicAdd(XR_ADV_StereoRangeCounts.counts[group.rangeIndex], 0u);
+    while (local < capacity)
+    {
+        uint prior = atomicCompSwap(
+            XR_ADV_StereoRangeCounts.counts[group.rangeIndex], local, local + 1u);
+        if (prior == local)
+            break;
+        local = prior;
+    }
+    if (local >= capacity)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+        return;
+    }
+
+    XRAdvancedVisibilityPayload representative =
+        XR_ADV_VisibilityPayloads.records[group.representativePayloadIndex];
+    uint argument = (rangeBegin + local) * 5u;
+    uint instanceCount = group.memberCapacity == 1u
+        ? memberCount * max(representative.instanceCount, 1u)
+        : memberCount;
+    XR_ADV_StereoArguments.words[argument] = representative.indexCount;
+    XR_ADV_StereoArguments.words[argument + 1u] = instanceCount;
+    XR_ADV_StereoArguments.words[argument + 2u] = representative.firstIndex;
+    XR_ADV_StereoArguments.words[argument + 3u] = 0u;
+    XR_ADV_StereoArguments.words[argument + 4u] = group.firstMember;
+}

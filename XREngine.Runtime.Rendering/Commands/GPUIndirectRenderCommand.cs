@@ -200,7 +200,9 @@ namespace XREngine.Rendering.Commands
         EditorHovered = 1 << 22,
         /// <summary>Editor selection metadata; native visibility keeps the mesh GPU-resident.</summary>
         EditorSelected = 1 << 23,
-        EditorHighlightMask = EditorHovered | EditorSelected
+        EditorHighlightMask = EditorHovered | EditorSelected,
+        /// <summary>The authored command or primary material pass is disabled.</summary>
+        PrimaryDisabled = 1u << 24,
     }
 
     public enum GPUSortAlgorithm

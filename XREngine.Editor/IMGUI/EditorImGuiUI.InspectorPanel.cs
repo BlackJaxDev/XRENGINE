@@ -2287,6 +2287,8 @@ public static partial class EditorImGuiUI
             if (editor is null)
             {
                 DrawDefaultComponentInspector(component, visited);
+                if (component is PhysicsChainComponent chain)
+                    DrawPhysicsChainRuntimeDiagnostics(chain);
                 return;
             }
 
@@ -2300,6 +2302,8 @@ public static partial class EditorImGuiUI
                 Debug.LogException(ex, $"Custom component editor '{editor.GetType().FullName}' failed for '{component.GetType().FullName}'");
                 DrawDefaultComponentInspector(component, visited);
             }
+            if (component is PhysicsChainComponent physicsChain)
+                DrawPhysicsChainRuntimeDiagnostics(physicsChain);
         }
 
         private static void DrawPawnPossessButton(PawnComponent pawn)
@@ -2604,6 +2608,9 @@ public static partial class EditorImGuiUI
             var baseType = typeof(XRComponent);
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (!XREngine.Core.XRLoadableTypeCatalog.ShouldScanAssemblyForEngineTypes(assembly))
+                    continue;
+
                 foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
                     if (!baseType.IsAssignableFrom(type))

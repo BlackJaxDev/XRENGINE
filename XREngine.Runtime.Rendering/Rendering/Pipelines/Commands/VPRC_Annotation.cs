@@ -7,6 +7,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_Annotation : ViewportRenderCommand
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements) { }
+
         public string Label { get; set; } = "Annotation";
 
         public override string GpuProfilingName
