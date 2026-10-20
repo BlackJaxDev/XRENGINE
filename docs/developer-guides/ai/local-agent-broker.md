@@ -189,6 +189,21 @@ the full message history, including thinking blocks and signatures. Tool
 results use their original call IDs. Incomplete streams and invalid terminal
 states fail before the orchestrator can execute their tool calls.
 
+MCP version `0.11.2` retains native `message_stop` telemetry and stores the native
+reason separately as `provider_stop_reason`. Successful attempts use
+`outcome: "completed"` and `terminal_status: "completed"`; token exhaustion uses
+`incomplete`, and other errors use `failed`. Text-only completion uses
+`provider_stop_reason: "end_turn"`. Partial failed or cancelled turns retain only
+visible text and reported usage in the terminal result and history. Provisional
+tools and thinking remain unavailable as failed-turn outputs.
+
+Stream progress publishes the actual model at `message_start`, then bounded
+event diagnostics. Accepted stream errors and uncertain transport delivery are
+not automatically reissued. Explicit HTTP rejections can still use the configured
+retry allowance. Cancellation closes the owned stream without claiming provider
+cancellation acceptance. Usage includes ordinary plus cache-write and cache-read
+input counters, along with cumulative output tokens.
+
 The four approved Claude models accept `low`, `medium`, `high`, `xhigh`, and
 `max` effort through `output_config.effort`. They use adaptive thinking.
 `text_verbosity` becomes a prompt instruction. Claude runs reject background
