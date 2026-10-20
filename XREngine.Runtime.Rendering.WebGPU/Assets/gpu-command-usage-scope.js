@@ -16,19 +16,21 @@ export class GpuCommandUsageScope {
     texture(view, writable, role) {
         if (!view.texture) return; // Canvas textures cannot be supplied in binding groups.
         const start = view.baseMip ?? 0, end = start + (view.mipCount ?? 1);
+        const firstLayer = view.baseArrayLayer ?? 0, afterLastLayer = firstLayer + (view.arrayLayerCount ?? 1);
         for (const previous of this.textures) {
-            if (previous.texture === view.texture && start < previous.end && previous.start < end
+            if (previous.texture === view.texture && start < previous.end && previous.start < end &&
+                firstLayer < previous.afterLastLayer && previous.firstLayer < afterLastLayer
                 && (previous.writable || writable))
                 throw new Error(`Texture aliases incompatible ${previous.role} and ${role} usages in one pass.`);
         }
-        this.textures.push({ texture: view.texture, start, end, writable, role });
+        this.textures.push({ texture: view.texture, start, end, firstLayer, afterLastLayer, writable, role });
     }
 
     bindings(bindings) {
         for (const binding of bindings) {
             for (const resource of binding.resources) {
                 if (resource.kind === 'buffer') this.buffer(resource.value, resource.writable, resource.role);
-                else this.texture(resource.value, false, 'sampled texture');
+                else this.texture(resource.value, resource.writable, resource.role ?? 'sampled texture');
             }
         }
     }

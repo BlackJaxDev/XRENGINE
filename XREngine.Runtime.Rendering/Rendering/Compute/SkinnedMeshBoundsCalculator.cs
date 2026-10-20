@@ -432,6 +432,8 @@ internal sealed class SkinnedMeshBoundsCalculator : IDisposable
         var xrMesh = renderer?.Mesh;
         if (renderer is null || xrMesh is null)
             return false;
+        if (targetScene.IsRendererOwnsGpuCopiedAabb(renderer))
+            return false;
         if (!MeshSupportsGpuSkinning(xrMesh))
             return false;
 

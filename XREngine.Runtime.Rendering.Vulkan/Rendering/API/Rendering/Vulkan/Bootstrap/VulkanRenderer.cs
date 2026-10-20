@@ -363,10 +363,10 @@ public sealed partial class VulkanRenderer :
     internal VulkanFrameLoop OpenXrFrameLoop => _frameLoop;
 
     public override bool IsRenderingExternalSwapchainTarget
-        => _frameLoop.IsRenderingExternalSwapchainTarget;
+        => AcceptsBackendWork && _frameLoop.IsRenderingExternalSwapchainTarget;
 
     public override bool AllowSynchronousResourceUploads
-        => _frameLoop.AllowSynchronousResourceUploads;
+        => AcceptsBackendWork && _frameLoop.AllowSynchronousResourceUploads;
 
     public override bool TryGetExternalSwapchainTargetRegion(out BoundingRectangle region)
         => _frameLoop.TryGetExternalSwapchainTargetRegion(out region);
@@ -856,6 +856,17 @@ public sealed partial class VulkanRenderer :
 
         return _frameLoop.TryEnqueueBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
     }
+    internal ERendererComputeEnqueueStatus TryEnqueuePhysicsChainBufferCopy(
+        XRDataBuffer source, nint sourceOffset, XRDataBuffer destination,
+        nint destinationOffset, nuint byteCount, string label,
+        IRenderResourceLeaseOwner? authoringLease)
+    {
+        if (GetOrCreateAPIRenderObject(source) is not VkDataBuffer ||
+            GetOrCreateAPIRenderObject(destination) is not VkDataBuffer)
+            return ERendererComputeEnqueueStatus.InvalidResource;
+        return _frameLoop.TryEnqueueBufferCopy(source, sourceOffset, destination,
+            destinationOffset, byteCount, label, authoringLease);
+    }
     public override ERendererComputeEnqueueStatus TryEnqueueGpuBufferCopy(XRDataBuffer source, nint sourceOffset, XRDataBuffer destination, nint destinationOffset, nuint byteCount, string label) => _frameLoop.TryEnqueueGpuBufferCopy(source, sourceOffset, destination, destinationOffset, byteCount, label);
     public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, XRDataBuffer destination, nuint byteCount, string label)
         => _frameLoop.TryEnqueueGpuDiagnosticBufferSnapshot(source, destination, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
@@ -1056,6 +1067,11 @@ public sealed partial class VulkanRenderer :
         => TryDispatchCompute(program, checked((uint)Math.Max(numGroupsX, 1)), checked((uint)Math.Max(numGroupsY, 1)), checked((uint)Math.Max(numGroupsZ, 1)));
     public override ERendererComputeEnqueueStatus TryDispatchCompute(XRRenderProgram program, uint groupsX, uint groupsY, uint groupsZ)
         => _frameLoop.TryDispatchCompute(program, groupsX, groupsY, groupsZ);
+    internal ERendererComputeEnqueueStatus TryDispatchPhysicsChainCompute(
+        XRRenderProgram program, uint groupsX, uint groupsY, uint groupsZ,
+        IRenderResourceLeaseOwner? authoringLease)
+        => _frameLoop.TryDispatchCompute(program, groupsX, groupsY, groupsZ,
+            authoringLease);
     public override void WaitForGpu() => _frameLoop.WaitForDeviceIdle();
     public override bool TryWaitForGpu(TimeSpan timeout) => _frameLoop.TryWaitForDeviceIdle(timeout);
     public override void SetReadBuffer(EReadBufferMode mode) => _frameLoop.SetReadBuffer(mode);

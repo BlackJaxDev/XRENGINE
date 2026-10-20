@@ -188,10 +188,15 @@ internal sealed partial class FramePlan
         return _advancedFamilyBins[empty]!;
     }
 
+    /// <summary>
+    /// Ends this plan's use of its family bins. A sealed visibility stream keeps
+    /// its content for the next frame of this plan, which keeps it only when
+    /// every seal input is equal; other streams are thawed.
+    /// </summary>
     private void ResetAdvancedVisibilityFamilyBins()
     {
         Array.Clear(_advancedBinReservations);
         for (int i = 0; i < _advancedFamilyBins.Length; i++)
-            Volatile.Read(ref _advancedFamilyBins[i])?.ThawForReuse();
+            Volatile.Read(ref _advancedFamilyBins[i])?.RetainForNextPlan();
     }
 }

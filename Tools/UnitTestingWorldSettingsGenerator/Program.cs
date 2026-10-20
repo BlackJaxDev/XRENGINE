@@ -603,7 +603,7 @@ static class SchemaGenerator
                 "}\n" +
                 "```\n\n" +
                 "`Kind` is `Static` or `Animated`; `MaterialMode` is `Deferred`, `Forward`, or `Uber`; " +
-                "`ImporterBackend` is `PreferNativeThenAssimp` or `AssimpOnly`. " +
+                "`ImporterBackend` is `PreferNativeThenAssimp`, `AssimpOnly`, or `NativeOnly`. `NativeOnly` does not fall back to Assimp. " +
                 "A `.prefab` path uses the Unity project converter; use `Kind: Animated` for avatar setup. " +
                 "The Unity converter ignores the generic material factory and converts recognized Poiyomi materials to the native Uber shader. " +
                 "`UnityProjectRoot` optionally identifies the Unity project root or Assets directory when it cannot be inferred from the prefab path. " +

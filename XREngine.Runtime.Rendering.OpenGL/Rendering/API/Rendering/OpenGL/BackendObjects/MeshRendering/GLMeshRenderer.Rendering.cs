@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using System.Numerics;
+using Silk.NET.OpenGL;
 using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -496,6 +497,84 @@ namespace XREngine.Rendering.OpenGL
                 LogModelDrawDiagnostic("Render programs-missing", instances);
             }
 
+            /// <summary>
+            /// Submit one indexed point draw from a GPU command buffer.
+            /// </summary>
+            public bool RenderIndexedIndirect(
+                Matrix4x4 modelMatrix,
+                Matrix4x4 previousModelMatrix,
+                XRMaterial? materialOverride,
+                RenderingParameters? renderOptionsOverride,
+                XRDataBuffer arguments,
+                nuint byteOffset,
+                EPrimitiveType topology,
+                EMeshBillboardMode billboardMode,
+                bool forceNoStereo,
+                IRenderResourceLeaseOwner? authoringLease,
+                out string failureReason)
+            {
+                if (topology != EPrimitiveType.Points)
+                {
+                    failureReason = "OpenGL indexed indirect mesh draw supports points only.";
+                    return false;
+                }
+
+                if (arguments.Target != EBufferTarget.DrawIndirectBuffer
+                    || (byteOffset & 3u) != 0
+                    || (ulong)byteOffset > arguments.Length
+                    || arguments.Length - (ulong)byteOffset < 20u)
+                {
+                    failureReason = "OpenGL indexed indirect argument range is invalid.";
+                    return false;
+                }
+
+                if (Data is null || Data.IsDestroyed || IsRetired || !Renderer.Active)
+                {
+                    failureReason = "OpenGL mesh renderer is not active.";
+                    return false;
+                }
+
+                if (!IsGenerated || !IsPreparedForRendering)
+                {
+                    Renderer.MeshGenerationQueue.EnqueueGeneration(this);
+                    failureReason = "OpenGL mesh resources are not ready.";
+                    return false;
+                }
+
+                if (Renderer.SuppressDrawsForOomRecovery)
+                {
+                    failureReason = "OpenGL draw submission is suppressed during memory recovery.";
+                    return false;
+                }
+
+                ValidateOwnerGeneration();
+                EnsureProgramsMatchRenderSettings();
+                EnsureProgramsMatchMaterialShaderState();
+
+                GLMaterial material = GetRenderMaterial(materialOverride);
+                if (ShouldSkipShadowDrawForProgramBuild(material))
+                {
+                    failureReason = "OpenGL shadow program is still building.";
+                    return false;
+                }
+
+                if (TryRenderWithMaterialProgramsCore(
+                    material, modelMatrix, previousModelMatrix, materialOverride,
+                    renderOptionsOverride, 1u, billboardMode, forceNoStereo,
+                    arguments, byteOffset, out failureReason))
+                    return true;
+
+                if (TryResolvePendingUberFallbackMaterial(material, out GLMaterial? fallbackMaterial)
+                    && fallbackMaterial is not null
+                    && TryRenderWithMaterialProgramsCore(
+                        fallbackMaterial, modelMatrix, previousModelMatrix, materialOverride,
+                        renderOptionsOverride, 1u, billboardMode, forceNoStereo,
+                        arguments, byteOffset, out failureReason, material))
+                    return true;
+
+                return false;
+            }
+
             private bool TryRenderWithMaterialPrograms(
                 GLMaterial material,
                 Matrix4x4 modelMatrix,
@@ -506,9 +585,31 @@ namespace XREngine.Rendering.OpenGL
                 EMeshBillboardMode billboardMode,
                 bool forceNoStereo,
                 GLMaterial? uniformSourceMaterial = null)
+                => TryRenderWithMaterialProgramsCore(
+                    material, modelMatrix, prevModelMatrix, materialOverride,
+                    renderOptionsOverride, instances, billboardMode, forceNoStereo,
+                    null, 0, out _, uniformSourceMaterial);
+
+            private bool TryRenderWithMaterialProgramsCore(
+                GLMaterial material,
+                Matrix4x4 modelMatrix,
+                Matrix4x4 prevModelMatrix,
+                XRMaterial? materialOverride,
+                RenderingParameters? renderOptionsOverride,
+                uint instances,
+                EMeshBillboardMode billboardMode,
+                bool forceNoStereo,
+                XRDataBuffer? indirectArguments,
+                nuint indirectByteOffset,
+                out string failureReason,
+                GLMaterial? uniformSourceMaterial = null)
             {
+                failureReason = string.Empty;
                 if (!GetPrograms(material, out var vtx, out var mat))
+                {
+                    failureReason = "OpenGL mesh programs are not ready.";
                     return false;
+                }
 
                 GLMaterial bindingMaterial = uniformSourceMaterial ?? material;
 
@@ -530,7 +631,8 @@ namespace XREngine.Rendering.OpenGL
                     Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                     LogBatchedTextDraw("Render buffers-not-bound", instances);
                     LogModelDrawDiagnostic("Render buffers-not-bound", instances);
-                    return true;
+                    failureReason = "OpenGL mesh buffers are not bound.";
+                    return indirectArguments is null;
                 }
 
                 PrepareDynamicRenderData();
@@ -597,8 +699,19 @@ namespace XREngine.Rendering.OpenGL
                             LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{bindingMaterial.Data.Name}'");
                         if (ShouldLogModelDrawDiagnostic())
                             LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{bindingMaterial.Data.Name}'");
-                        RecordSceneAssetCost(bindingMaterial.Data, drawInstances);
-                        Renderer.RenderMesh(this, false, drawInstances);
+                        if (indirectArguments is null)
+                        {
+                            RecordSceneAssetCost(bindingMaterial.Data, drawInstances);
+                            Renderer.RenderMesh(this, false, drawInstances);
+                        }
+                        else if (!TrySubmitIndexedPointIndirect(indirectArguments, indirectByteOffset, out failureReason))
+                        {
+                            return false;
+                        }
+                        else
+                        {
+                            RecordSceneAssetCost(bindingMaterial.Data, drawInstances);
+                        }
                     }
                 }
                 finally
@@ -608,6 +721,74 @@ namespace XREngine.Rendering.OpenGL
 
                 Dbg("Render mesh submitted", "Render");
                 return true;
+            }
+
+            private bool TrySubmitIndexedPointIndirect(
+                XRDataBuffer arguments,
+                nuint byteOffset,
+                out string failureReason)
+            {
+                failureReason = string.Empty;
+                GLDataBuffer? pointIndices = PointIndicesBuffer;
+                if (pointIndices is null || !pointIndices.IsGenerated || !pointIndices.IsReadyForRendering
+                    || !pointIndices.TryGetBindingId(out uint pointEbo) || pointEbo == 0)
+                {
+                    failureReason = "OpenGL point index buffer is not ready.";
+                    return false;
+                }
+
+                if (Renderer.GetOrCreateAPIRenderObject(arguments, generateNow: true) is not GLDataBuffer indirectBuffer)
+                {
+                    failureReason = "OpenGL indirect argument buffer is unavailable.";
+                    return false;
+                }
+
+                indirectBuffer.EnsureStorageAllocatedForGpuCopy();
+                if (!indirectBuffer.IsGenerated || !indirectBuffer.IsReadyForRendering
+                    || !indirectBuffer.TryGetBindingId(out uint indirectId) || indirectId == 0)
+                {
+                    failureReason = "OpenGL indirect argument buffer is not ready.";
+                    return false;
+                }
+
+                if (!AreBuffersReadyForRendering())
+                {
+                    failureReason = "OpenGL mesh buffers are not ready for the indirect draw.";
+                    return false;
+                }
+
+                GLMeshRenderer? previousMesh = Renderer.ActiveMeshRenderer;
+                Renderer.BindMeshRenderer(this);
+                if (!ReferenceEquals(Renderer.ActiveMeshRenderer, this))
+                {
+                    Renderer.BindMeshRenderer(previousMesh);
+                    failureReason = "OpenGL mesh vertex array is unavailable.";
+                    return false;
+                }
+
+                uint previousElementBuffer = unchecked((uint)Api.GetInteger(GLEnum.ElementArrayBufferBinding));
+                uint previousIndirectBuffer = unchecked((uint)Api.GetInteger(GLEnum.DrawIndirectBufferBinding));
+                try
+                {
+                    Api.VertexArrayElementBuffer(BindingId, pointEbo);
+                    Api.BindBuffer(GLEnum.DrawIndirectBuffer, indirectId);
+                    Api.MultiDrawElementsIndirect(
+                        PrimitiveType.Points,
+                        (DrawElementsType)OpenGLRenderer.ToGLEnum(PointIndicesElementType),
+                        (void*)byteOffset,
+                        1u,
+                        20u);
+                    Renderer.RecordActiveDrawCoverage(indirect: true, instances: 1u, instancingKnown: false);
+                    RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
+                    RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
+                    return true;
+                }
+                finally
+                {
+                    Api.BindBuffer(GLEnum.DrawIndirectBuffer, previousIndirectBuffer);
+                    Api.VertexArrayElementBuffer(BindingId, previousElementBuffer);
+                    Renderer.BindMeshRenderer(previousMesh);
+                }
             }
 
             private void BindPendingUberFallbackTextures(GLMaterial sourceMaterial, GLRenderProgram fallbackProgram)

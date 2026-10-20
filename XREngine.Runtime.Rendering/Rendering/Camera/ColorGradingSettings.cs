@@ -457,6 +457,10 @@ uniform ColorGradeStruct ColorGrade;";
         }
 
         public void UpdateExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, bool generateMipmapsNow)
+            => UpdateExposureGpu(sourceTex, exposureTex, generateMipmapsNow, null);
+
+        /// <summary>Updates exposure using an explicitly selected cooked program on backends that require one.</summary>
+        public void UpdateExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, bool generateMipmapsNow, string? gpuProgramBinding)
         {
             _gpuAutoExposureReadyThisFrame = false;
 
@@ -478,7 +482,7 @@ uniform ColorGradeStruct ColorGrade;";
             double rawRenderDeltaSeconds = RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds;
             float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : SanitizeGpuAutoExposureDeltaSeconds(rawRenderDeltaSeconds);
 
-            bool success = renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow);
+            bool success = renderer.UpdateAutoExposureGpu(sourceTex, exposureTex, this, deltaTime, generateMipmapsNow, gpuProgramBinding);
             _gpuAutoExposureReadyThisFrame = success;
 
             // Only consume the timestamp budget when the GPU dispatch actually succeeded.

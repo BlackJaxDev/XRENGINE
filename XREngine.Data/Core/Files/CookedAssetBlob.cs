@@ -8,6 +8,8 @@ namespace XREngine.Core.Files
     {
         BinaryV1 = 1,
         RuntimeBinaryV1 = 2,
+        /// <summary>Generic cooked payload with identity-based graph references.</summary>
+        BinaryV2 = 3,
     }
 
     /// <summary>
@@ -37,15 +39,18 @@ namespace XREngine.Core.Files
 
         [RequiresUnreferencedCode(ReflectionWarningMessage)]
         [RequiresDynamicCode(ReflectionWarningMessage)]
-        public static object? LoadAsset(ReadOnlySpan<byte> cookedData, Type? expectedType = null)
+        public static object? LoadAsset(ReadOnlySpan<byte> cookedData, Type? expectedType = null, bool requireReferenceGraph = false)
         {
             if (cookedData.IsEmpty)
                 throw new ArgumentException("Cooked data is empty.", nameof(cookedData));
 
             CookedAssetEnvelopeHeader header = CookedAssetEnvelope.ParseHeader(cookedData);
+            if (requireReferenceGraph && header.Format == CookedAssetFormat.BinaryV1)
+                throw new InvalidDataException("CookedBinary.ReferenceGraphMissing: this older derived cache cannot preserve shared authored object references; recook the source world or scene.");
+
             return header.Format switch
             {
-                CookedAssetFormat.BinaryV1 => DeserializeBinary(cookedData, header, expectedType),
+                CookedAssetFormat.BinaryV1 or CookedAssetFormat.BinaryV2 => DeserializeBinary(cookedData, header, expectedType),
                 CookedAssetFormat.RuntimeBinaryV1 => PublishedCookedAssetReader.LoadAsset(cookedData, header, expectedType),
                 _ => throw new NotSupportedException($"Unsupported cooked asset format '{header.Format}'."),
             };
@@ -61,16 +66,21 @@ namespace XREngine.Core.Files
             if (XRRuntimeEnvironment.IsAotRuntimeBuild)
             {
                 throw new NotSupportedException(
-                    $"Cooked asset type '{resolvedType}' was published with legacy '{CookedAssetFormat.BinaryV1}', which is not supported in published AOT runtime builds. Register the asset type with {nameof(PublishedCookedAssetRegistry)} and republish content so it uses '{CookedAssetFormat.RuntimeBinaryV1}'.");
+                    $"Cooked asset type '{resolvedType}' was published with generic '{header.Format}', which is not supported in published AOT runtime builds. Register the asset type with {nameof(PublishedCookedAssetRegistry)} and republish content so it uses '{CookedAssetFormat.RuntimeBinaryV1}'.");
             }
 
             AotParityDiagnostics.Report(
                 resolvedType,
                 EAotParityCategory.ReflectiveCookedDeserialization,
                 $"{nameof(CookedAssetReader)}.{nameof(DeserializeBinary)}",
-                $"Register the asset type with {nameof(PublishedCookedAssetRegistry)} so it cooks and loads as '{CookedAssetFormat.RuntimeBinaryV1}' instead of the reflective '{CookedAssetFormat.BinaryV1}' reader.");
+                $"Register the asset type with {nameof(PublishedCookedAssetRegistry)} so it cooks and loads as '{CookedAssetFormat.RuntimeBinaryV1}' instead of the reflective '{header.Format}' reader.");
 
-            return CookedBinarySerializer.Deserialize(resolvedType, header.Payload(envelope));
+            ReadOnlySpan<byte> payload = header.Payload(envelope);
+            if (header.Format == CookedAssetFormat.BinaryV2 &&
+                (payload.IsEmpty || payload[0] != (byte)CookedBinaryTypeMarker.ReferenceDefinition))
+                throw new InvalidDataException("CookedBinary.ReferenceGraphMissing: generic cooked asset has an invalid reference-graph payload; recook the source asset.");
+
+            return CookedBinarySerializer.Deserialize(resolvedType, payload);
         }
 
         [RequiresUnreferencedCode(ReflectionWarningMessage)]

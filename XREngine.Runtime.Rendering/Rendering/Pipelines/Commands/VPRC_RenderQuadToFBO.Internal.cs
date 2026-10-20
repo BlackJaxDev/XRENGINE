@@ -153,6 +153,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             int passIndex = ResolvePassIndex(passName, out bool hasRenderGraphMetadata);
             if (passIndex == int.MinValue && hasRenderGraphMetadata)
             {
+                if (RequiredForOutput)
+                    throw new InvalidOperationException($"RenderPipeline.RequiredOutputPassMissing: '{passName}'.");
                 Debug.RenderingWarningEvery(
                     $"QuadBlit.MissingRenderGraphPass.{passName}",
                     TimeSpan.FromSeconds(2),
@@ -168,6 +170,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRQuadFrameBuffer? sourceFBO = activeInstance.GetFBO<XRQuadFrameBuffer>(SourceQuadFBOName);
             if (sourceFBO is null)
             {
+                if (RequiredForOutput)
+                    throw new InvalidOperationException($"RenderPipeline.RequiredOutputSourceMissing: '{SourceQuadFBOName}'.");
                 if (DiagnosticsEnabled)
                     Debug.RenderingWarning($"[QuadBlitDiag] Source FBO '{SourceQuadFBOName}' not found as XRQuadFrameBuffer.");
                 return;
@@ -426,13 +430,21 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? context.CurrentRenderTarget?.Name
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
-            var builder = context.GetOrCreateSyntheticPass(BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant));
+            string passName = BuildQuadBlitPassName(SourceQuadFBOName, destination, RenderGraphPassVariant);
+            if (RequiredDeclaredResourceName is not null && context.ResourceLayout is not null &&
+                !context.HasResource(RequiredDeclaredResourceName))
+            {
+                context.ReserveSyntheticPassIndex(passName);
+                return;
+            }
+
+            var builder = context.GetOrCreateSyntheticPass(passName);
             RenderGraphResourceDescriptor? resources = RenderGraphResources;
             builder.WithStage(resources?.Stage ?? ERenderGraphPassStage.Graphics);
             if (resources is not null)
             {
                 resources.DescribeDependencies(context, builder);
-                resources.DescribeInputs(builder);
+                resources.DescribeInputs(context, builder);
             }
             else
             {
@@ -456,7 +468,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             else
                 DescribeInferredColorOutput(builder, destination, access, colorLoad, colorStore);
 
-            if (resources?.UseDestinationDepthStencil == true)
+            if (resources?.DestinationDepthAccess is { } depthAccess)
+                builder.UseDepthAttachment(MakeFboDepthResource(destination), depthAccess,
+                    ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+            else if (resources?.UseDestinationDepthStencil == true)
             {
                 builder.UseDepthAttachment(
                     MakeFboDepthResource(destination),

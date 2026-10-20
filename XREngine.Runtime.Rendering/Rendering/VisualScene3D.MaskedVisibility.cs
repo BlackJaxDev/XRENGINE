@@ -58,11 +58,12 @@ public partial class VisualScene3D
         IRuntimeCullingCamera? camera,
         bool collectMirrors,
         XRRenderPipelineInstance.RenderingState state,
+        bool allowGpuCollection,
         out int visibleRenderables)
     {
         visibleRenderables = 0;
         if (_cpuSceneCullingStructureActive != ECpuSceneCullingStructure.Bvh ||
-            IsGpuCulling ||
+            IsGpuCulling || commands.RequiresFullResidentAuthoredCollection ||
             commands.IsOwnedByShadowPipeline ||
             state.ShadowPass ||
             state.CapturePolicy.IsCapture ||
@@ -106,6 +107,7 @@ public partial class VisualScene3D
         if (!entry.Valid)
             return false;
 
+        commands.InvalidateFullResidentMeshOrderCollection();
         state.PublishVisibilityBatchDiagnostics(entry.SplitDecision, entry.ContentPolicy);
         ulong requestedViewMask = ResolveRequestedViewMask(viewSet, camera, collectionVolume is not null);
         bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
@@ -113,6 +115,8 @@ public partial class VisualScene3D
         {
             ref readonly CpuBvhMaskedResult<Rendering.Info.RenderInfo3D> candidate = ref entry.Results.Get(i);
             Rendering.Info.RenderInfo3D renderable = candidate.Item;
+            if (IsCollectedByCanonicalGpu(renderable, allowGpuCollection))
+                continue;
             ulong exactRequestedMask = candidate.ExactViewMask & requestedViewMask;
             if (exactRequestedMask == 0UL)
                 continue;

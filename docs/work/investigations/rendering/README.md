@@ -7,6 +7,13 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Current focus
 
+- [Math selection AOT exception and frozen view](2026-10-13-math-selection-aot-and-blank-view.md)
+  records the gizmo asset fixes, Vulkan review, and live checks of a view that
+  showed one new frame per resize.
+- [Jax2031 Unity and Advanced Vulkan parity](2026-10-08-jax2031-unity-advanced-parity.md)
+  records the repaired Assimp root import, remaining visible deformation,
+  native FBX normalization guard, Pro 9.3.66 material evidence, native Uber
+  contract gaps, and separate Release shader readiness failure.
 - [OpenXR stereo flicker and render-target duplication](2026-10-04-openxr-stereo-flicker-and-target-duplication.md)
   records the stale descriptor sets behind the alternating HUD, the stereo
   pipeline target set held three times by the resource planner, the
@@ -47,6 +54,13 @@ sections describe the historical point-in-time state, not the current backlog.
 
 ## Other open investigations
 
+- [Browser Attachment-Clear Scope Unwind](browser-scissored-clear-unwind-2026-10-04.md):
+  pending command preparation leaked viewport crops and framebuffer scopes;
+  bounded restoration is implemented and exact-source browser validation remains.
+- [Browser Canonical Shader Staging](browser-canonical-shader-staging-2026-10-04.md):
+  canonical source closure, portable provenance and manifest-capacity corrections
+  for the complete browser shader inventory; fresh Windows publication remains
+  the integration acceptance check.
 - [Vulkan DLSS, Engine AA, And Frame Generation](2026-09-24-vulkan-dlss-aa-frame-generation.md):
   Default/Advanced AA selection, TSR with frame generation, and native DLSS
   dispatch/presentation revalidation.

@@ -27,12 +27,12 @@ public partial class OpenGLRenderer : IAdvancedVisibilityStageBackendCapability
             return new(EAdvancedProductionExecutionState.Unsupported, "OpenGL Advanced requires indirect-count submission and bindless texture/sampler handles.");
         if (RawGL.GetInteger(GLEnum.MaxShaderStorageBufferBindings) < 90 ||
             RawGL.GetInteger(GLEnum.MaxComputeShaderStorageBlocks) < 15 ||
-            RawGL.GetInteger(GLEnum.MaxVertexShaderStorageBlocks) < 8 ||
+            RawGL.GetInteger(GLEnum.MaxVertexShaderStorageBlocks) < 10 ||
             RawGL.GetInteger(GLEnum.MaxFragmentShaderStorageBlocks) < 2 ||
             RawGL.GetInteger(GLEnum.MaxUniformBufferBindings) < 3 ||
             RawGL.GetInteger(GLEnum.MaxImageUnits) < 6 ||
             RawGL.GetInteger(GLEnum.MaxComputeTextureImageUnits) < 5)
-            return new(EAdvancedProductionExecutionState.Unsupported, "OpenGL Advanced requires 90 SSBO bindings, 15 compute/8 vertex/2 fragment storage blocks, 3 UBO bindings, 6 image units, and 5 compute texture units.");
+            return new(EAdvancedProductionExecutionState.Unsupported, "OpenGL Advanced requires 90 SSBO bindings, 15 compute/10 vertex/2 fragment storage blocks, 3 UBO bindings, 6 image units, and 5 compute texture units.");
         if (!TryEnsureAdvancedRuntime(out string reason) || !TryEnsureAdvancedStagePrograms(out reason))
             return new(EAdvancedProductionExecutionState.PendingResources, reason);
         _advancedAdmissionReady = true;

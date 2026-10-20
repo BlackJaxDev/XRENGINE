@@ -7,12 +7,12 @@ namespace XREngine.Scene.Physics.Jolt
     // Jolt Static Rigid Body
     public class JoltStaticRigidBody : JoltRigidActor, IAbstractStaticRigidBody, IStaticRigidBodySettingsSink
     {
-        internal JoltStaticRigidBody(BodyID bodyId)
+        internal JoltStaticRigidBody(JoltScene allocationOwner, BodyID bodyId)
+            : base(allocationOwner, bodyId)
         {
-            BodyID = bodyId;
         }
 
-        public XRComponent? OwningComponent { get; set; }
+        public override XRComponent? OwningComponent { get; set; }
 
         public override XRComponent? GetOwningComponent() => OwningComponent;
 

@@ -22,7 +22,7 @@ namespace XREngine.Rendering.Vulkan;
 /// scratch columns are rewritten by each build step that uses them and grow
 /// in that step.
 /// </remarks>
-internal sealed class VulkanPreparedStableBinStream
+internal sealed partial class VulkanPreparedStableBinStream
 {
     /// <summary>Rows allocated per column when a stream is created.</summary>
     internal const int InitialRowCapacity = 256;
@@ -250,6 +250,7 @@ internal sealed class VulkanPreparedStableBinStream
     internal bool TryBuildVisibilityGeometryStream(
         VulkanResourceRuntime resources,
         ReadOnlySpan<AdvancedVisibilityPayload> payloads,
+        ReadOnlySpan<EAdvancedGeometryProducer> producersByPayload,
         ReadOnlySpan<AdvancedDeformedArenaSlice> deformationSlices,
         in AdvancedGpuDeformationPublication deformationPublication,
         BackendReadyFramePackage package,
@@ -270,7 +271,8 @@ internal sealed class VulkanPreparedStableBinStream
             reason = "the package does not retain the exact canonical geometry publication";
             return false;
         }
-        if (deformationSlices.Length != payloads.Length)
+        if (deformationSlices.Length != payloads.Length ||
+            producersByPayload.Length != payloads.Length)
         {
             reason = "the canonical visibility payload or deformation column is incomplete";
             return false;
@@ -296,6 +298,7 @@ internal sealed class VulkanPreparedStableBinStream
 
             // A zero-draw publication is a complete logical family. Freeze and seal
             // it so later ownership and submission-plan checks retain that identity.
+            _boundSceneNativeGeneration = sceneState.NativeGeneration;
             Freeze();
             _submissionPlansSealed = true;
             return true;
@@ -324,6 +327,7 @@ internal sealed class VulkanPreparedStableBinStream
             return false;
 
         ThawForReuse();
+        _boundSceneNativeGeneration = sceneState.NativeGeneration;
         _deformationOverlayCount = canonicalDraws.Length;
         _deformationOverlay.AsSpan(0, _deformationOverlayCount).Clear();
         _deformationOverlayWrites.AsSpan(0, _deformationOverlayCount).Clear();
@@ -345,9 +349,17 @@ internal sealed class VulkanPreparedStableBinStream
 
         S13aPublicationTelemetry.StepProbe payloadProbe =
             S13aPublicationTelemetry.BeginAdvancedFamilyStep();
+        // The native state and the bin key are a function of a few payload inputs
+        // (VisibilityRecordInputs) and of values that are fixed for this call. Payloads
+        // of one instanced family usually share those inputs, so the last result is
+        // reused while the inputs of the next payload are equal.
+        bool hasLastRecordInputs = false;
+        VisibilityRecordInputs lastRecordInputs = default;
+        VulkanResidentDrawTemplateNativeState lastNative = default;
+        VulkanRenderBinKey lastKey = default;
         for (int payloadIndex = 0; payloadIndex < payloads.Length; ++payloadIndex)
         {
-            AdvancedVisibilityPayload payload = payloads[payloadIndex];
+            ref readonly AdvancedVisibilityPayload payload = ref payloads[payloadIndex];
             if (!payload.Draw.IsValid)
                 continue;
             if (!publication.Draws.TryGetDenseIndex(
@@ -360,8 +372,8 @@ internal sealed class VulkanPreparedStableBinStream
                 return false;
             }
 
-            AdvancedDrawRecord canonicalDraw =
-                canonicalDraws[checked((int)drawDenseIndex)];
+            ref readonly AdvancedDrawRecord canonicalDraw =
+                ref canonicalDraws[checked((int)drawDenseIndex)];
             if (canonicalDraw.Geometry != payload.Geometry)
             {
                 reason = $"canonical visibility payload {payloadIndex} changed its draw-to-geometry association";
@@ -497,8 +509,14 @@ internal sealed class VulkanPreparedStableBinStream
                 }
                 _deformationOverlay[overlayIndex] = overlay;
                 _deformationOverlayWrites[overlayIndex] = 1;
-                preparedVertices = currentVertices;
+                // The deformation output buffer is a frame binding. The record keeps
+                // only its vertex base, and each frame's output must cover the extent.
+                preparedVertices = default;
                 preparedVertexBase = slice.CurrentVertexOffset;
+                ulong sliceLength = (ulong)slice.VertexCount * slice.VertexStride;
+                _deformedVertexExtent = Math.Max(_deformedVertexExtent, Math.Max(
+                    (ulong)slice.CurrentVertexOffset * slice.VertexStride + sliceLength,
+                    (ulong)slice.PreviousVertexOffset * slice.VertexStride + sliceLength));
             }
             else
             {
@@ -538,10 +556,11 @@ internal sealed class VulkanPreparedStableBinStream
                 sceneState.Indices,
                 preparedVertices,
                 preparedVertexBase,
-                sceneState.NativeGeneration);
+                payload.Skinned);
             if (!geometryClosure.TryValidate(
                     resources,
                     in sceneState,
+                    in currentVertices,
                     out reason))
             {
                 reason = $"canonical visibility payload {payloadIndex}: {reason}";
@@ -549,54 +568,77 @@ internal sealed class VulkanPreparedStableBinStream
                 return false;
             }
 
-            VkBufferHandle vertices = preparedVertices.Buffer;
-            VkBufferHandle indices = sceneState.Indices.Buffer;
-            ulong vertexSignature = MixVisibilityKey(
-                vertices.Handle,
-                preparedVertices.Generation,
-                preparedVertices.Offset,
-                preparedVertices.Length,
-                preparedVertices.ElementStride);
-            PendingMeshDraw draw = default(PendingMeshDraw) with
-            {
-                Renderer = null!,
-                RasterizationSamples = SampleCountFlags.Count1Bit,
-                DepthTestEnabled = true,
-                DepthWriteEnabled = true,
-                DepthCompareOp = CompareOp.LessOrEqual,
-                CullMode = payload.CullMode == 0u
-                    ? CullModeFlags.None
-                    : CullModeFlags.BackBit,
-                FrontFace = FrontFace.CounterClockwise,
-                ColorWriteMask = ColorComponentFlags.RBit |
-                    ColorComponentFlags.GBit |
-                    ColorComponentFlags.BBit |
-                    ColorComponentFlags.ABit,
-                Instances = Math.Max(1u, payload.InstanceCount),
-            };
-            VulkanPreparedMeshPrimitive primitive = new(
-                default,
-                PrimitiveTopology.TriangleList,
-                indices,
-                IndexType.Uint32,
+            EAdvancedGeometryProducer producer = producersByPayload[payloadIndex];
+            VisibilityRecordInputs recordInputs = new(
+                payload.CullMode,
+                Math.Max(1u, payload.InstanceCount),
                 payload.IndexCount,
-                Indexed: true);
-            VulkanResidentDrawTemplateNativeState native = new(
-                default,
-                in primitive,
-                vertices,
-                0u,
-                vertexSignature,
-                in draw);
-            VulkanRenderBinKey key = VulkanRenderBinKey.CreateVisibilityGeometry(
-                passIndex,
-                viewMask,
-                in payload,
-                sceneState.NativeGeneration,
-                in preparedVertices,
-                sceneState.Indices,
-                in native,
-                in context);
+                payload.RasterStateClass,
+                payload.Coverage,
+                payload.PrimitiveTopology,
+                payload.Skinned,
+                producer,
+                producer == EAdvancedGeometryProducer.IndirectIndexed ? default : payload.Geometry,
+                preparedVertices);
+            if (!hasLastRecordInputs || recordInputs != lastRecordInputs)
+            {
+                // A deformed record has no vertex buffer: the raster pipeline step
+                // binds the deformation output of the frame into the bin header.
+                VkBufferHandle vertices = preparedVertices.Buffer;
+                VkBufferHandle indices = sceneState.Indices.Buffer;
+                ulong vertexSignature = payload.Skinned
+                    ? MixVisibilityKey(
+                        DeformedVertexSourceSignatureTag,
+                        VulkanVisibilityGeometryRecordClosure.DeformedVertexStride)
+                    : MixVisibilityKey(
+                        vertices.Handle,
+                        preparedVertices.Generation,
+                        preparedVertices.Offset,
+                        preparedVertices.Length,
+                        preparedVertices.ElementStride);
+                PendingMeshDraw draw = default(PendingMeshDraw) with
+                {
+                    Renderer = null!,
+                    RasterizationSamples = SampleCountFlags.Count1Bit,
+                    DepthTestEnabled = true,
+                    DepthWriteEnabled = true,
+                    DepthCompareOp = CompareOp.LessOrEqual,
+                    CullMode = payload.CullMode == 0u
+                        ? CullModeFlags.None
+                        : CullModeFlags.BackBit,
+                    FrontFace = FrontFace.CounterClockwise,
+                    ColorWriteMask = ColorComponentFlags.RBit |
+                        ColorComponentFlags.GBit |
+                        ColorComponentFlags.BBit |
+                        ColorComponentFlags.ABit,
+                    Instances = recordInputs.Instances,
+                };
+                VulkanPreparedMeshPrimitive primitive = new(
+                    default,
+                    PrimitiveTopology.TriangleList,
+                    indices,
+                    IndexType.Uint32,
+                    payload.IndexCount,
+                    Indexed: true);
+                lastNative = new VulkanResidentDrawTemplateNativeState(
+                    default,
+                    in primitive,
+                    vertices,
+                    0u,
+                    vertexSignature,
+                    in draw);
+                lastKey = VulkanRenderBinKey.CreateVisibilityGeometry(
+                    passIndex,
+                    viewMask,
+                    in payload,
+                    producer,
+                    in preparedVertices,
+                    sceneState.Indices,
+                    in lastNative,
+                    in context);
+                lastRecordInputs = recordInputs;
+                hasLastRecordInputs = true;
+            }
             // Skipped payloads do not consume a row. Grow the compact row
             // before its manifest is accessed, not after it is built.
             int recordIndex = _recordCount;
@@ -614,7 +656,7 @@ internal sealed class VulkanPreparedStableBinStream
                 sceneState.Indices);
             if (!TryAppend(
                     new VulkanPreparedStableBinRecord(
-                        key,
+                        lastKey,
                         default,
                         payloadIndex,
                         0,
@@ -629,7 +671,7 @@ internal sealed class VulkanPreparedStableBinStream
                             checked((uint)payloadIndex)),
                         payload.Material.Index,
                         payload.Draw.Index,
-                        native,
+                        lastNative,
                         geometryClosure,
                         canonicalDraw.Flags),
                     ReadOnlySpan<FrameOpResourceUse>.Empty))
@@ -647,6 +689,24 @@ internal sealed class VulkanPreparedStableBinStream
         freezeProbe.End(S13aAdvancedFamilyStep.BinGeometryFreeze);
         return true;
     }
+
+    /// <summary>
+    /// The payload inputs of a visibility record's native state and bin key, other than
+    /// the values that are fixed for one geometry stream build (pass, view mask, scene
+    /// native generation, index slice, and frame-op context). The binding geometry is
+    /// empty for indexed instance producers, as in <see cref="VulkanRenderBinKey.CreateVisibilityGeometry"/>.
+    /// </summary>
+    private readonly record struct VisibilityRecordInputs(
+        uint CullMode,
+        uint Instances,
+        uint IndexCount,
+        uint RasterStateClass,
+        EAdvancedMaterialCoverageMode Coverage,
+        uint PrimitiveTopology,
+        bool Skinned,
+        EAdvancedGeometryProducer Producer,
+        AdvancedGpuHandle BindingGeometry,
+        VulkanVisibilityPreparedVertexSource VertexSource);
 
     private static bool TryCaptureDeformationSources(
         VulkanResourceRuntime resources,
@@ -826,6 +886,9 @@ internal sealed class VulkanPreparedStableBinStream
     internal void ThawForReuse()
     {
         ReleaseRetainedTemplates();
+        InvalidateRetainedVisibilitySeal();
+        _boundSceneNativeGeneration = 0u;
+        _deformedVertexExtent = 0u;
         _frozen = false;
         _recordCount = 0;
         _lateResourceUseCount = 0;
@@ -864,7 +927,7 @@ internal sealed class VulkanPreparedStableBinStream
 
         for (int index = 0; index < _recordCount; ++index)
         {
-            VulkanPreparedStableBinRecord record = _records[index];
+            ref readonly VulkanPreparedStableBinRecord record = ref _records[index];
             VulkanResidentDrawTemplateHandle handle = record.Template;
             if (!handle.IsValid)
             {
@@ -1047,7 +1110,7 @@ internal sealed class VulkanPreparedStableBinStream
             bool canonicalVisibility = true;
             for (int index = 0; index < templateCount; ++index)
             {
-                VulkanPreparedStableBinRecord record = _records[start + index];
+                ref readonly VulkanPreparedStableBinRecord record = ref _records[start + index];
                 _manifestTemplates[index] = record.TemplateManifest;
                 canonicalVisibility &= !record.Template.IsValid;
             }
@@ -1159,7 +1222,7 @@ internal sealed class VulkanPreparedStableBinStream
         _sealScratchRangeOwners.AsSpan(0, indirectRanges.Length).Fill(-1);
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
         {
-            VulkanPreparedStableBinHeader header = _headers[headerIndex];
+            ref readonly VulkanPreparedStableBinHeader header = ref _headers[headerIndex];
             if (!TryResolveExactRange(
                     in header,
                     payloadIndexByIngressIndex,
@@ -1187,6 +1250,17 @@ internal sealed class VulkanPreparedStableBinStream
             if (rangeStrategy != EMeshSubmissionStrategy.CpuDirect &&
                 _sealScratchRangeOwners[rangeIndex] >= 0)
             {
+                int ownerIndex = _sealScratchRangeOwners[rangeIndex];
+                VulkanRenderBinKey ownerKey = _headers[ownerIndex].Key;
+                // A shared GPU counter can bind only one exact native source.
+                // Reject another bin before its members enter that range.
+                if ((header.Key.VisibilityBinding.IsVisibilityBin ||
+                     ownerKey.VisibilityBinding.IsVisibilityBin) &&
+                    header.Key != ownerKey)
+                {
+                    rejection = VulkanSubmissionPlanRejectionReason.CompositeIndirectRange;
+                    return false;
+                }
                 _sealScratchRanges[headerIndex] = range;
                 continue;
             }
@@ -1365,7 +1439,7 @@ internal sealed class VulkanPreparedStableBinStream
         _payloadIndexByIngressScratch.AsSpan().Fill(-1);
         for (int recordIndex = 0; recordIndex < _recordCount; ++recordIndex)
         {
-            VulkanPreparedStableBinRecord record = _records[recordIndex];
+            ref readonly VulkanPreparedStableBinRecord record = ref _records[recordIndex];
             if (record.IngressIndex < 0 ||
                 !EnsurePayloadCapacity(record.IngressIndex + 1))
             {
@@ -1532,7 +1606,7 @@ internal sealed class VulkanPreparedStableBinStream
         _visibilityRasterPayloadWrites.AsSpan(0, sourcePayloads.Length).Clear();
         for (int recordIndex = 0; recordIndex < _recordCount; ++recordIndex)
         {
-            VulkanPreparedStableBinRecord record = _records[recordIndex];
+            ref readonly VulkanPreparedStableBinRecord record = ref _records[recordIndex];
             int payloadIndex = record.VisibilityPayloadIndex;
             if ((uint)payloadIndex >= (uint)sourcePayloads.Length)
             {
@@ -1590,7 +1664,7 @@ internal sealed class VulkanPreparedStableBinStream
     private VulkanResidentDrawTemplateNativeState ResolveVisibilityNativeState(
         int recordIndex)
     {
-        VulkanPreparedStableBinRecord record = _records[recordIndex];
+        ref readonly VulkanPreparedStableBinRecord record = ref _records[recordIndex];
         return _retainedTemplates[recordIndex] is
             VulkanResidentDrawTemplate template
                 ? template.NativeState
@@ -1626,9 +1700,10 @@ internal sealed class VulkanPreparedStableBinStream
         bool multiview = target.DynamicRenderingFormats.ViewMask != 0u;
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
         {
-            VulkanPreparedStableBinHeader header = _headers[headerIndex];
+            ref readonly VulkanPreparedStableBinHeader header = ref _headers[headerIndex];
             if (!header.HasSealedSubmission)
                 continue;
+            bool reusePreparedRaster = false;
             if (header.RasterPipeline.IsValid)
             {
                 if (header.RasterPipeline.TargetClosure != target)
@@ -1638,11 +1713,9 @@ internal sealed class VulkanPreparedStableBinStream
                 }
                 if (header.RasterPipeline.ProgramLinkGeneration ==
                     header.RasterPipeline.Program.LinkGeneration)
-                {
-                    continue;
-                }
-                // The program relinked after this header was prepared (a retry
-                // across a shader reload): prepare it again below.
+                    reusePreparedRaster = true;
+                // A relink makes the retained pipeline stale. Validate the
+                // range again before this call reuses or replaces it.
             }
             if (header.RecordCount <= 0)
             {
@@ -1667,9 +1740,28 @@ internal sealed class VulkanPreparedStableBinStream
 
             EAdvancedMaterialCoverageMode coverage = header.IndirectRange.Key.Coverage;
             uint cullMode = header.IndirectRange.Key.CullMode;
+            VulkanVisibilityBindingCompatibility rangeBinding =
+                header.Key.VisibilityBinding;
+            if (canonicalAtlas &&
+                (rangeBinding.Geometry != header.IndirectRange.Key.Geometry ||
+                 rangeBinding.Producer != header.IndirectRange.Key.Producer ||
+                 rangeBinding.RasterStateClass != header.IndirectRange.Key.RasterStateClass ||
+                 rangeBinding.Coverage != coverage ||
+                 rangeBinding.CullMode != cullMode ||
+                 rangeBinding.PrimitiveTopology != header.IndirectRange.Key.PrimitiveTopology ||
+                 rangeBinding.UsesDeformedVertexSource !=
+                     header.IndirectRange.Key.UsesDeformedVertexSource))
+            {
+                reason = "a visibility range changed its frozen execution partition";
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+            }
             int scratchIndex = ResolveRasterPipelineScratchIndex(coverage, meshlet, cullMode);
             VulkanVisibilityRasterPipeline raster;
-            if (scratchIndex >= 0 && _rasterPipelineScratchValid[scratchIndex])
+            if (reusePreparedRaster)
+            {
+                raster = header.RasterPipeline;
+            }
+            else if (scratchIndex >= 0 && _rasterPipelineScratchValid[scratchIndex])
             {
                 raster = _rasterPipelineScratch[scratchIndex];
             }
@@ -1717,17 +1809,39 @@ internal sealed class VulkanPreparedStableBinStream
 
             S13aPublicationTelemetry.StepProbe validationProbe =
                 S13aPublicationTelemetry.BeginAdvancedFamilyStep();
-            int recordEnd = header.RecordOffset + header.RecordCount;
+            // Records and headers are frozen, and a kept seal has equal payloads,
+            // so the members need validation once for each sealed content.
+            int recordEnd = _rasterMembersValidated
+                ? header.RecordOffset
+                : header.RecordOffset + header.RecordCount;
             for (int recordIndex = header.RecordOffset;
                  recordIndex < recordEnd;
                  ++recordIndex)
             {
-                VulkanPreparedStableBinRecord record = _records[recordIndex];
-                if ((uint)record.VisibilityPayloadIndex >= (uint)payloads.Length ||
-                    payloads[record.VisibilityPayloadIndex].Geometry !=
-                        header.IndirectRange.Key.Geometry)
+                ref readonly VulkanPreparedStableBinRecord record = ref _records[recordIndex];
+                if ((uint)record.VisibilityPayloadIndex >= (uint)payloads.Length)
                 {
-                    continue;
+                    reason = "a visibility range member has no canonical payload";
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                }
+                ref readonly AdvancedVisibilityPayload memberPayload =
+                    ref payloads[record.VisibilityPayloadIndex];
+                if (!memberPayload.Geometry.IsValid ||
+                    (header.IndirectRange.Key.Geometry.IsValid &&
+                     memberPayload.Geometry != header.IndirectRange.Key.Geometry) ||
+                    memberPayload.RasterStateClass != header.IndirectRange.Key.RasterStateClass ||
+                    memberPayload.Coverage != coverage ||
+                    memberPayload.CullMode != cullMode ||
+                    memberPayload.PrimitiveTopology != header.IndirectRange.Key.PrimitiveTopology ||
+                    memberPayload.Skinned != header.IndirectRange.Key.UsesDeformedVertexSource ||
+                    (canonicalAtlas &&
+                     header.Key.VisibilityBinding.Producer !=
+                         header.IndirectRange.Key.Producer) ||
+                    record.Key != header.Key ||
+                    record.Template.IsValid == canonicalAtlas)
+                {
+                    reason = "a visibility range member changed its geometry or raster class";
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
                 }
                 VulkanResidentDrawTemplateNativeState member =
                     ResolveVisibilityNativeState(recordIndex);
@@ -1739,21 +1853,59 @@ internal sealed class VulkanPreparedStableBinStream
                     member.Primitive0.Topology !=
                         native.Primitive0.Topology ||
                     member.VertexBindingSignature !=
-                        native.VertexBindingSignature)
+                        native.VertexBindingSignature ||
+                    !new VulkanRenderBinNativeCompatibility(in member,
+                        ignoreDrawCounts: true).Equals(header.Key.NativeCompatibility))
                 {
                     reason = "a visibility range spans incompatible native geometry bindings";
                     return VulkanAdvancedVisibilityPipelineReadiness.Failed;
                 }
+                if (canonicalAtlas)
+                {
+                    VulkanVisibilityGeometryRecordClosure geometry =
+                        record.VisibilityGeometryClosure;
+                    VulkanVisibilityBindingCompatibility binding =
+                        header.Key.VisibilityBinding;
+                    if (!geometry.IsValid ||
+                        geometry.Geometry != memberPayload.Geometry ||
+                        geometry.UsesDeformedVertexSource != binding.UsesDeformedVertexSource ||
+                        !geometry.IndexSlice.Matches(binding.IndexSlice) ||
+                        !geometry.StaticVertexSource.Matches(binding.VertexSource) ||
+                        record.VisibilityDirectDraw.VertexOffset < 0 ||
+                        geometry.PreparedVertexBase !=
+                            (uint)record.VisibilityDirectDraw.VertexOffset ||
+                        record.VisibilityDirectDraw.FirstIndex != memberPayload.FirstIndex ||
+                        record.VisibilityDirectDraw.IndexCount != memberPayload.IndexCount ||
+                        member.Primitive0.ElementCount != memberPayload.IndexCount)
+                    {
+                        reason = "a visibility range member lost its exact atlas or deformation offset";
+                        return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+                    }
+                }
             }
+            validationProbe.End(S13aAdvancedFamilyStep.RasterHeaderValidation);
+            if (reusePreparedRaster)
+                continue;
 
             PendingMeshDraw drawTemplate = native.DrawTemplate;
             VulkanPreparedMeshPrimitive rasterPrimitive =
                 native.Primitive0 with { Pipeline = raster.Pipeline };
+            // A deformed bin reads the deformation output that this frame bound to
+            // the stream; its records hold no vertex buffer.
+            bool deformedBin = canonicalAtlas &&
+                header.Key.VisibilityBinding.UsesDeformedVertexSource;
+            if (deformedBin && !_visibilityGeometrySources.CurrentVertices.UsesNativeRange)
+            {
+                reason = "the deformation output of this frame is not bound to the visibility stream";
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+            }
             VulkanResidentDrawTemplateNativeState rasterNative = canonicalAtlas
                 ? new VulkanResidentDrawTemplateNativeState(
                     raster.PipelineLayout,
                     in rasterPrimitive,
-                    native.GetVertexBuffer(0),
+                    deformedBin
+                        ? _visibilityGeometrySources.CurrentVertices.Buffer
+                        : native.GetVertexBuffer(0),
                     native.GetVertexBinding(0),
                     native.VertexBindingSignature,
                     in drawTemplate)
@@ -1772,9 +1924,9 @@ internal sealed class VulkanPreparedStableBinStream
                 RasterPipeline = raster,
                 NativeState = rasterNative,
             };
-            validationProbe.End(S13aAdvancedFamilyStep.RasterHeaderValidation);
         }
 
+        _rasterMembersValidated = true;
         reason = "Ready";
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
@@ -1789,6 +1941,7 @@ internal sealed class VulkanPreparedStableBinStream
     internal VulkanAdvancedVisibilityPipelineReadiness TryPrepareDirectionalShadowRasterPipelines(
         VulkanAdvancedVisibilityPipelineRuntime visibilityPipelines,
         in VulkanAdvancedVisibilityTargetClosure target,
+        EMeshSubmissionStrategy strategy,
         out string reason)
     {
         ArgumentNullException.ThrowIfNull(visibilityPipelines);
@@ -1804,12 +1957,20 @@ internal sealed class VulkanPreparedStableBinStream
         VulkanVisibilityRasterPipeline masked = default;
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
         {
-            VulkanPreparedStableBinHeader header = _headers[headerIndex];
+            ref readonly VulkanPreparedStableBinHeader header = ref _headers[headerIndex];
             if (!header.IsRasterReady)
                 continue;
-            if (header.SubmissionPlan!.ResolvedStrategy != EMeshSubmissionStrategy.CpuDirect)
+            if (header.SubmissionPlan!.ResolvedStrategy != strategy ||
+                strategy is not (EMeshSubmissionStrategy.CpuDirect or
+                    EMeshSubmissionStrategy.GpuIndirectZeroReadback))
             {
-                reason = "the directional shadow lane records CPU-direct bins only";
+                reason = "the directional shadow bin does not match the frozen CPU-direct or strict indexed strategy";
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+            }
+            if (strategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback &&
+                header.IndirectRange.Key.Producer != EAdvancedGeometryProducer.IndirectIndexed)
+            {
+                reason = "strict directional shadows require indexed canonical range producers";
                 return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
             if (header.ShadowRasterPipeline.IsValid)

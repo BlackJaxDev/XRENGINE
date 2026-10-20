@@ -71,6 +71,17 @@ public sealed class LocalServiceOptions
             || !IPAddress.TryParse(RealtimeTls.ListenAddress, out IPAddress? tlsListen)
             || !IPAddress.IsLoopback(tlsListen) && AdmissionSigning is null))
             throw new InvalidOperationException("Remote TLS requires an advertised DNS/IP name and explicit admission signing trust.");
+
+        if (RealtimeTls is { UseWebSocket: true } webSocket)
+        {
+            if (webSocket.AllowedWebSocketOrigins.Count is < 1 or > 32)
+                throw new InvalidOperationException("WebSocket ingress requires one to 32 explicit allowed page origins.");
+            foreach (string origin in webSocket.AllowedWebSocketOrigins)
+                if (!Uri.TryCreate(origin, UriKind.Absolute, out Uri? page)
+                    || (page.Scheme != "https" && !(page.Scheme == "http" && page.IsLoopback))
+                    || origin != page.GetLeftPart(UriPartial.Authority) || page.UserInfo.Length != 0)
+                    throw new InvalidOperationException("WebSocket origins must be exact HTTPS origins without paths, credentials, or wildcards; HTTP is limited to loopback.");
+        }
         
         if (FirstUdpPort < 1024 || LastUdpPort > 65535 || LastUdpPort < FirstUdpPort
             || MaxInstances < 1 || MaxInstances > 64 || MaxPlayerSlots < 1

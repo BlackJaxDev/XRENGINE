@@ -18,6 +18,7 @@ public sealed class LightProbeIblOutputGeneration : IAdvancedGpuPublicationSourc
     private bool _retirementScheduled;
     private bool _outputValid;
     private int _publicationReferences;
+    private RetainedLightProbeDataGuard? _retainedData;
 
     public LightProbeIblOutputGeneration(uint generation, XRTexture2D irradiance, XRTexture2D prefilteredRadiance)
     {
@@ -30,6 +31,22 @@ public sealed class LightProbeIblOutputGeneration : IAdvancedGpuPublicationSourc
     public XRTexture2D Irradiance { get; }
     public XRTexture2D PrefilteredRadiance { get; }
     public bool OutputValid => _outputValid;
+    public ELightProbeIblProvenance Provenance { get; private init; }
+
+    /// <summary>Retains decoded asset images without manufacturing a GPU completion receipt or taking their destruction ownership.</summary>
+    internal static LightProbeIblOutputGeneration RetainCookedData(RetainedLightProbeIblProfile profile)
+        => new(profile.SourceGeneration, profile.Irradiance, profile.Prefilter)
+        {
+            Provenance = ELightProbeIblProvenance.RetainedCookedData,
+            _outputValid = true,
+            _retainedData = new(profile),
+        };
+
+    internal void ValidateRetainedData()
+    {
+        if (Provenance == ELightProbeIblProvenance.RetainedCookedData && _retainedData?.IsCurrent != true)
+            throw new NotSupportedException("WebGPU.RetainedProbe.SourceChanged: retained source or target image data/sampling changed; replace the complete target-cooked probe generation before publication.");
+    }
 
     public void MarkOutputValid()
         => _outputValid = true;
@@ -38,6 +55,8 @@ public sealed class LightProbeIblOutputGeneration : IAdvancedGpuPublicationSourc
     {
         lock (_sync)
         {
+            if (Provenance != ELightProbeIblProvenance.GpuCapture)
+                throw new InvalidOperationException("Retained cooked IBL data has no GPU writer fence.");
             if (_writerFence is not null)
                 throw new InvalidOperationException("An IBL output generation already has a writer fence.");
             _writerFence = fence;
@@ -74,7 +93,9 @@ public sealed class LightProbeIblOutputGeneration : IAdvancedGpuPublicationSourc
     {
         lock (_sync)
         {
-            if (_destroyQueued)
+            ValidateRetainedData();
+            if (_destroyQueued || Provenance == ELightProbeIblProvenance.RetainedCookedData &&
+                (Irradiance.IsDestroyed || PrefilteredRadiance.IsDestroyed))
                 return false;
             if (_publicationReferences == int.MaxValue)
                 return false;
@@ -90,6 +111,11 @@ public sealed class LightProbeIblOutputGeneration : IAdvancedGpuPublicationSourc
             if (_publicationReferences == 0)
                 throw new InvalidOperationException("IBL publication reference underflow.");
             --_publicationReferences;
+            if (Provenance == ELightProbeIblProvenance.RetainedCookedData && !_producerOwned && _publicationReferences == 0)
+            {
+                _destroyQueued = true;
+                _retainedData?.Dispose();
+            }
         }
     }
 
@@ -98,6 +124,12 @@ public sealed class LightProbeIblOutputGeneration : IAdvancedGpuPublicationSourc
         lock (_sync)
         {
             _producerOwned = false;
+            if (Provenance == ELightProbeIblProvenance.RetainedCookedData)
+            {
+                _destroyQueued = _publicationReferences == 0;
+                if (_destroyQueued) _retainedData?.Dispose();
+                return;
+            }
             if (_retirementScheduled)
                 return;
             _retirementScheduled = true;
@@ -140,6 +172,8 @@ public sealed class LightProbeIblOutputGeneration : IAdvancedGpuPublicationSourc
     {
         lock (_sync)
         {
+            if (Provenance != ELightProbeIblProvenance.GpuCapture)
+                throw new InvalidOperationException("Retained cooked IBL images are borrowed and cannot be discarded as GPU output.");
             if (_writerFence is not null || _publicationReferences != 0)
                 throw new InvalidOperationException("A written or published IBL generation cannot be discarded as unwritten.");
             _producerOwned = false;

@@ -124,7 +124,12 @@ internal sealed class FrameOperationStream
     internal void Reset()
     {
         if (_ownsPayloads)
+        {
             _payloads.ReleaseReadOnlyStorageBindings();
+            _payloads.ClearDirectionalShadowLanes();
+            for (int index = 0; index < _payloads.AdvancedVisibilityInputs.Length; ++index)
+                Volatile.Read(ref _payloads.AdvancedVisibilityInputs[index])?.Reset();
+        }
         if (_count > 0)
         {
             Array.Clear(_headers, 0, _count);
@@ -272,8 +277,6 @@ internal sealed class FrameOperationStream
     {
         ThrowIfLogicalViewMutation();
         Reset();
-        for (int index = 0; index < _payloads.AdvancedVisibilityInputs.Length; index++)
-            Volatile.Read(ref _payloads.AdvancedVisibilityInputs[index])?.Reset();
         int sourceCount = source.Count;
         bool borrowed = source.IsBorrowedLogicalCohort;
         try
@@ -318,6 +321,11 @@ internal sealed class FrameOperationStream
             }
             _count = sourceCount;
             _meshPayloadCount = meshPayloadCount;
+        }
+        catch
+        {
+            Reset();
+            throw;
         }
         finally
         {
@@ -634,8 +642,10 @@ internal sealed class FrameOperationStream
         int index,
         in VulkanAdvancedVisibilityStageRequest request,
         in VulkanAdvancedVisibilityResourceState state,
+        VkRenderProgram boundsPatchProgram,
         VkRenderProgram earlyVisibilityProgram,
         VkRenderProgram buildIndirectProgram,
+        VkRenderProgram earlyIndexedGroupFinalizeProgram,
         out string reason)
     {
         reason = "Ready";
@@ -666,6 +676,12 @@ internal sealed class FrameOperationStream
             return VulkanAdvancedVisibilityPipelineReadiness.Ready;
         }
 
+        VulkanComputePipelineReadiness patchReadiness = boundsPatchProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null, out Pipeline patchPipeline, out string patchReason);
+        if (patchReadiness != VulkanComputePipelineReadiness.Ready)
+            return DescribeAdvancedVisibilityPipelineReadiness(
+                patchReadiness, "physics-chain bounds patch", patchReason, out reason);
+
         VulkanComputePipelineReadiness earlyReadiness = earlyVisibilityProgram
             .TryGetOrRequestComputePipeline(int.MinValue, null, out Pipeline earlyPipeline, out string earlyReason);
         if (earlyReadiness != VulkanComputePipelineReadiness.Ready)
@@ -678,8 +694,17 @@ internal sealed class FrameOperationStream
             return DescribeAdvancedVisibilityPipelineReadiness(
                 indirectReadiness, "visibility indirect", indirectReason, out reason);
 
-        if (earlyVisibilityProgram.PipelineLayout.Handle == 0 ||
-            buildIndirectProgram.PipelineLayout.Handle == 0)
+        VulkanComputePipelineReadiness groupReadiness = earlyIndexedGroupFinalizeProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null,
+                out Pipeline groupPipeline, out string groupReason);
+        if (groupReadiness != VulkanComputePipelineReadiness.Ready)
+            return DescribeAdvancedVisibilityPipelineReadiness(
+                groupReadiness, "early indexed group finalizer", groupReason, out reason);
+
+        if (boundsPatchProgram.PipelineLayout.Handle == 0 ||
+            earlyVisibilityProgram.PipelineLayout.Handle == 0 ||
+            buildIndirectProgram.PipelineLayout.Handle == 0 ||
+            earlyIndexedGroupFinalizeProgram.PipelineLayout.Handle == 0)
         {
             reason = "advanced visibility compute pipeline layout is unavailable";
             return VulkanAdvancedVisibilityPipelineReadiness.Failed;
@@ -688,12 +713,18 @@ internal sealed class FrameOperationStream
         _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
         {
             State = state,
+            BoundsPatchProgram = boundsPatchProgram,
+            BoundsPatchPipeline = patchPipeline,
+            BoundsPatchLinkGeneration = boundsPatchProgram.LinkGeneration,
             EarlyVisibilityProgram = earlyVisibilityProgram,
             EarlyVisibilityPipeline = earlyPipeline,
             EarlyVisibilityLinkGeneration = earlyVisibilityProgram.LinkGeneration,
             BuildIndirectProgram = buildIndirectProgram,
             BuildIndirectPipeline = indirectPipeline,
             BuildIndirectLinkGeneration = buildIndirectProgram.LinkGeneration,
+            EarlyIndexedGroupFinalizeProgram = earlyIndexedGroupFinalizeProgram,
+            EarlyIndexedGroupFinalizePipeline = groupPipeline,
+            EarlyIndexedGroupFinalizeLinkGeneration = earlyIndexedGroupFinalizeProgram.LinkGeneration,
         };
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
@@ -717,6 +748,65 @@ internal sealed class FrameOperationStream
             SceneState = sceneState,
         };
         return true;
+    }
+
+    /// <summary>Seals one strict indexed shadow operation before recording.</summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness TryAssociateDirectionalShadowResources(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        in VulkanAdvancedDirectionalShadowResourceState shadow,
+        VkRenderProgram cullProgram,
+        VkRenderProgram finalizeProgram,
+        out string reason)
+    {
+        reason = "Ready";
+        if (!shadow.IsValid || (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility ||
+            request.Stage != EAdvancedRenderStage.DirectionalShadowRaster)
+        {
+            reason = "The directional shadow resource state has no matching physical operation.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request) ||
+            payload.State.FrameSlot != shadow.FrameSlot ||
+            payload.State.FrameGeneration != shadow.FrameGeneration ||
+            shadow.OperationKey != header.PayloadIndex)
+        {
+            reason = "The directional shadow resource state changed after operation sealing.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        VulkanComputePipelineReadiness cullReadiness = cullProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null,
+                out Pipeline cullPipeline, out string cullReason);
+        if (cullReadiness != VulkanComputePipelineReadiness.Ready)
+            return DescribeAdvancedVisibilityPipelineReadiness(cullReadiness,
+                "directional shadow caster cull", cullReason, out reason);
+        VulkanComputePipelineReadiness finalizeReadiness = finalizeProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null,
+                out Pipeline finalizePipeline, out string finalizeReason);
+        if (finalizeReadiness != VulkanComputePipelineReadiness.Ready)
+            return DescribeAdvancedVisibilityPipelineReadiness(finalizeReadiness,
+                "directional shadow indexed group finalizer", finalizeReason, out reason);
+        if (cullProgram.PipelineLayout.Handle == 0 ||
+            finalizeProgram.PipelineLayout.Handle == 0)
+        {
+            reason = "The directional shadow compute pipeline layouts are unavailable.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            DirectionalShadowResources = shadow,
+            DirectionalShadowCullProgram = cullProgram,
+            DirectionalShadowCullPipeline = cullPipeline,
+            DirectionalShadowCullLinkGeneration = cullProgram.LinkGeneration,
+            DirectionalShadowFinalizeProgram = finalizeProgram,
+            DirectionalShadowFinalizePipeline = finalizePipeline,
+            DirectionalShadowFinalizeLinkGeneration = finalizeProgram.LinkGeneration,
+        };
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
     internal bool TryAssociateAdvancedVisibilityTarget(
@@ -777,6 +867,7 @@ internal sealed class FrameOperationStream
         in VulkanAdvancedVisibilityLateTargetClosure closure,
         VkRenderProgram buildDepthPyramidProgram,
         VkRenderProgram lateVisibilityProgram,
+        VkRenderProgram lateIndexedGroupFinalizeProgram,
         out string reason)
     {
         reason = "Ready";
@@ -812,8 +903,16 @@ internal sealed class FrameOperationStream
                 lateReadiness, "late visibility", lateReason, out reason);
         }
 
+        VulkanComputePipelineReadiness groupReadiness = lateIndexedGroupFinalizeProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null,
+                out Pipeline groupPipeline, out string groupReason);
+        if (groupReadiness != VulkanComputePipelineReadiness.Ready)
+            return DescribeAdvancedVisibilityPipelineReadiness(
+                groupReadiness, "late indexed group finalizer", groupReason, out reason);
+
         if (buildDepthPyramidProgram.PipelineLayout.Handle == 0 ||
-            lateVisibilityProgram.PipelineLayout.Handle == 0)
+            lateVisibilityProgram.PipelineLayout.Handle == 0 ||
+            lateIndexedGroupFinalizeProgram.PipelineLayout.Handle == 0)
         {
             reason = "advanced visibility late compute pipeline layout is unavailable";
             return VulkanAdvancedVisibilityPipelineReadiness.Failed;
@@ -828,6 +927,9 @@ internal sealed class FrameOperationStream
             LateVisibilityProgram = lateVisibilityProgram,
             LateVisibilityPipeline = latePipeline,
             LateVisibilityLinkGeneration = lateVisibilityProgram.LinkGeneration,
+            LateIndexedGroupFinalizeProgram = lateIndexedGroupFinalizeProgram,
+            LateIndexedGroupFinalizePipeline = groupPipeline,
+            LateIndexedGroupFinalizeLinkGeneration = lateIndexedGroupFinalizeProgram.LinkGeneration,
         };
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
@@ -969,14 +1071,33 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
             {
                 var p = (MeshTaskDispatchIndirectCountOp)op;
+                _payloads.SealMeshTaskInterface(i, p.Program, p.ProgramLinkGeneration);
                 ComputeDispatchSnapshot snapshot = _payloads.SealBindingSnapshot(kind, i, p.ProgramBindingSnapshot);
                 snapshot.SetMaterialTablePublication(p.BindlessMaterialTextures?.Publication);
                 _payloads.MeshTasks[i] = new(p.Program, p.ProgramLinkGeneration, snapshot, p.ProducerSnapshot, p.Pipeline, p.IndirectBuffer, p.CountBuffer, p.MaxDrawCount, p.Stride, p.ByteOffset, p.CountByteOffset, p.BindlessMaterialTextures);
                 break;
             }
-            case EVulkanPrimaryPlanNodeKind.ComputeDispatch: { var p=(ComputeDispatchOp)op; _payloads.ComputeDispatches[i]=new(p.Program,p.GroupsX,p.GroupsY,p.GroupsZ,_payloads.SealBindingSnapshot(kind,i,p.Snapshot)); break; }
+            case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
+            {
+                var p = (ComputeDispatchOp)op;
+                _payloads.RetainComputeDispatchAuthoringOwner(i, p.AuthoringResource);
+                _payloads.ComputeDispatches[i] = new(
+                    p.Program, p.GroupsX, p.GroupsY, p.GroupsZ,
+                    _payloads.SealBindingSnapshot(kind, i, p.Snapshot));
+                break;
+            }
             case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect: { var p=(ComputeDispatchIndirectOp)op; _payloads.ComputeDispatchIndirects[i]=new(p.Program,_payloads.SealBindingSnapshot(kind,i,p.Snapshot),p.ArgumentOwner,p.ArgumentBuffer,p.ArgumentOffset,p.Label); break; }
-            case EVulkanPrimaryPlanNodeKind.BufferCopy: { var p=(BufferCopyOp)op; _payloads.BufferCopies[i]=new(p.SourceOwner,p.SourceBuffer,p.SourceOffset,p.DestinationOwner,p.DestinationBuffer,p.DestinationOffset,p.ByteCount,p.RequireGpuWriteVisibility,p.DiagnosticReceipt,p.Label); break; }
+            case EVulkanPrimaryPlanNodeKind.BufferCopy:
+            {
+                var p = (BufferCopyOp)op;
+                _payloads.RetainBufferCopyAuthoringOwner(i, p.AuthoringResource);
+                _payloads.BufferCopies[i] = new(
+                    p.SourceOwner, p.SourceBuffer, p.SourceOffset,
+                    p.DestinationOwner, p.DestinationBuffer, p.DestinationOffset,
+                    p.ByteCount, p.RequireGpuWriteVisibility,
+                    p.DiagnosticReceipt, p.Label);
+                break;
+            }
             case EVulkanPrimaryPlanNodeKind.SubmissionMarker: { var p=(SubmissionMarkerOp)op; _payloads.SubmissionMarkers[i]=new(p.Fence,p.Label,p.RequiredOperationCount); break; }
             case EVulkanPrimaryPlanNodeKind.MemoryBarrier: _payloads.MemoryBarriers[i]=new(((MemoryBarrierOp)op).Mask); break;
             case EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling: _payloads.PublishedFramebuffers[i]=new(((PublishFramebufferForSamplingOp)op).FrameBuffer); break;
@@ -988,6 +1109,18 @@ internal sealed class FrameOperationStream
                     ((AdvancedVisibilityOp)op).Request;
                 VulkanAdvancedVisibilityInputStorage authoringInput =
                     ((AdvancedVisibilityOp)op).InputLease.Input;
+                if (request.IsDirectionalShadowStage)
+                {
+                    VulkanAdvancedDirectionalShadowLaneStorage authoringLane =
+                        authoringInput.DirectionalShadowLane ??
+                        throw new VulkanPlanPreconditionException(
+                            "The directional shadow operation has no authored cascade copy.");
+                    request = request with
+                    {
+                        DirectionalShadowLane = _payloads.CaptureDirectionalShadowLane(
+                            i, authoringLane),
+                    };
+                }
                 VulkanAdvancedVisibilityInputStorage familyInput = _payloads.CaptureAdvancedVisibilityInput(
                     in request,
                     authoringInput);
@@ -1000,6 +1133,9 @@ internal sealed class FrameOperationStream
                     null,
                     null,
                     default,
+                    null,
+                    default,
+                    0u,
                     null,
                     default,
                     0u,

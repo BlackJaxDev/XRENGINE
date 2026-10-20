@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-unlit-alpha-texture-authored-order",
+  "pass": "forward-unlit",
+  "source": "UnlitAlphaTextureAuthoredOrder.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "unlitVertex",
+    "fragment": "unlitFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 3,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 32,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 4,
+    "maxUniformBufferBindingSize": 128,
+    "maxDynamicUniformBuffersPerPipelineLayout": 4,
+    "maxUniformBuffersPerShaderStage": 4,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxSamplersPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 1,
+    "maxStorageBufferBindingSize": 4
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.unlit-order-gate.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 32,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          },
+          {
+            "location": 1,
+            "offset": 12,
+            "format": "float32x3",
+            "semantic": "normal"
+          },
+          {
+            "location": 2,
+            "offset": 24,
+            "format": "float32x2",
+            "semantic": "uv0"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "View",
+        "physicalName": "view_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "View",
+        "bytes": 64,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "viewProjection_0",
+            "provider": "ViewProjection",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "Object",
+        "physicalName": "object_0",
+        "group": 0,
+        "binding": 1,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 128,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "modelMatrix_0",
+            "provider": "ModelMatrix",
+            "offset": 0,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          },
+          {
+            "name": "normalMatrix_0",
+            "provider": "NormalMatrix",
+            "offset": 64,
+            "bytes": 64,
+            "type": "mat4x4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "UnlitMaterial",
+        "physicalName": "material_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "alphaControls_0",
+            "provider": "UnlitAlphaControls",
+            "offset": 0,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          }
+        ]
+      },
+      {
+        "name": "Texture0",
+        "physicalName": "texture0_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "Texture0",
+        "physicalName": "texture0Sampler_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AuthoredSourceRanks",
+        "physicalName": "authoredSourceRanks_0",
+        "group": 0,
+        "binding": 2,
+        "kind": "read-only-storage",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Frame",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": []
+      },
+      {
+        "name": "AuthoredOrderGate",
+        "physicalName": "authoredOrderGate_0",
+        "group": 0,
+        "binding": 3,
+        "kind": "uniform",
+        "visibility": [
+          "vertex"
+        ],
+        "owner": "Engine",
+        "frequency": "Object",
+        "bytes": 16,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "sourceIndex_0",
+            "provider": "AuthoredSourceIndex",
+            "offset": 0,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "activeRank_0",
+            "provider": "AuthoredActiveRank",
+            "offset": 4,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "sourceCount_0",
+            "provider": "AuthoredSourceCount",
+            "offset": 8,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "enabled_0",
+            "provider": "AuthoredOrderEnabled",
+            "offset": 12,
+            "bytes": 4,
+            "type": "u32"
+          }
+        ]
+      }
+    ]
+  },
+  "pipeline": {},
+  "materialVariant": {
+    "semantic": "Unlit",
+    "semanticVersion": 4,
+    "vertexProfile": "position-normal-uv-order-gate-v1",
+    "outputProfile": "linear-hdr-rgba-v1"
+  }
+}

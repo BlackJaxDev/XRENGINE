@@ -152,13 +152,38 @@ struct XRAdvancedVisibilityPayload
     uint cullMode;
     uint primitiveTopology;
     uint flags;
-    // The managed payload reserves 96 bytes. Handles contain scalar uints,
-    // so std430 would otherwise use a 92-byte array stride.
-    uint reserved;
+    uint instanceGroupIndexPlusOne;
 };
 
+#ifndef XR_ADV_BINDING_VISIBILITY_INSTANCE_GROUPS
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_BINDING_VISIBILITY_INSTANCE_GROUPS 63
+#else
+#define XR_ADV_BINDING_VISIBILITY_INSTANCE_GROUPS 78
+#endif
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_EARLY_GROUP_COUNTS
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_BINDING_VISIBILITY_EARLY_GROUP_COUNTS 64
+#else
+#define XR_ADV_BINDING_VISIBILITY_EARLY_GROUP_COUNTS 79
+#endif
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_LATE_GROUP_COUNTS
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_BINDING_VISIBILITY_LATE_GROUP_COUNTS 65
+#else
+#define XR_ADV_BINDING_VISIBILITY_LATE_GROUP_COUNTS 80
+#endif
+#endif
+
+#if defined(XR_ADV_VISIBILITY_WRITABLE_CANDIDATES)
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_CANDIDATES)
+buffer XRAdvancedVisibilityCandidates { uint records[]; } XR_ADV_VisibilityCandidates;
+#else
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_CANDIDATES)
 readonly buffer XRAdvancedVisibilityCandidates { uint records[]; } XR_ADV_VisibilityCandidates;
+#endif
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_PERSISTENT_STATE)
 buffer XRAdvancedVisibilityPersistentState { uint records[]; } XR_ADV_VisibilityPersistentState;
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_DEFERRED_INDICES)
@@ -227,6 +252,23 @@ XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESH_ARGUMENTS)
 buffer XRAdvancedVisibilityMeshArguments { uint records[]; } XR_ADV_VisibilityMeshArguments;
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESH_PAYLOADS)
 buffer XRAdvancedVisibilityMeshPayloads { uint records[]; } XR_ADV_VisibilityMeshPayloads;
+
+struct XRAdvancedIndexedInstanceGroup
+{
+    uint rangeIndex;
+    uint firstMember;
+    uint memberCapacity;
+    uint representativePayloadIndex;
+};
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_INSTANCE_GROUPS)
+readonly buffer XRAdvancedVisibilityInstanceGroups
+{
+    XRAdvancedIndexedInstanceGroup records[];
+} XR_ADV_VisibilityInstanceGroups;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_EARLY_GROUP_COUNTS)
+buffer XRAdvancedVisibilityEarlyGroupCounts { uint records[]; } XR_ADV_VisibilityEarlyGroupCounts;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_LATE_GROUP_COUNTS)
+buffer XRAdvancedVisibilityLateGroupCounts { uint records[]; } XR_ADV_VisibilityLateGroupCounts;
 
 // These layouts mirror AdvancedDeformedVertex (64 bytes) and
 // AdvancedMeshletDescriptor (80 bytes) exactly. They are declared here rather
@@ -455,6 +497,26 @@ uint XR_ADV_ResolveVisibilityStableIndex(
     }
 
     return XR_ADV_HandleLookups.records[segment.x + stableIndex].denseIndex;
+}
+
+bool XR_ADV_SelectedViewExcludesInstance(uint candidateIndex, uint viewIndex)
+{
+    if (candidateIndex >= uint(XR_ADV_VisibilityPayloads.records.length()) ||
+        viewIndex >= uint(XR_ADV_Views.records.length()))
+        return true;
+    XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[candidateIndex];
+    uint drawDense = XR_ADV_ResolveVisibilityHandle(payload.draw,
+        VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    if (drawDense == XR_ADV_INVALID_DENSE_INDEX || drawDense >= uint(XR_ADV_Draws.records.length()))
+        return true;
+    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    uint instanceDense = XR_ADV_ResolveVisibilityHandle(draw.instance,
+        VisibilityInstanceLookupSegment, XR_ADV_DIAGNOSTIC_INSTANCE);
+    if (instanceDense == XR_ADV_INVALID_DENSE_INDEX || instanceDense >= uint(XR_ADV_Instances.records.length()))
+        return true;
+    XRAdvancedInstanceRecord instance = XR_ADV_LoadInstance(instanceDense);
+    return (instance.visibilityFlags & 1u) == 0u ||
+        (instance.layerMask & XR_ADV_LoadView(viewIndex).cullingLayerMask) == 0u;
 }
 
 bool XR_ADV_ProjectiveMirrorEntryMatchesView(XRAdvancedMaterialRecord material,

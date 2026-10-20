@@ -270,8 +270,11 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
                     .Append(codec.Type).Append(")asset, writer), static (payload, assetType) => global::XREngine.Core.Files.RuntimeCookedBinarySerializer.Deserialize(assetType, payload)");
             else
                 AppendAnimationCodec(source, codec);
-            source.Append(", ").Append(Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(compilation.Assembly.Identity.Name, true))
-                .Append("));\n");
+            source.Append(", ").Append(Microsoft.CodeAnalysis.CSharp.SymbolDisplay.FormatLiteral(compilation.Assembly.Identity.Name, true));
+            source.Append(HasAuditedEmptyDependencySet(compilation.Assembly.Identity.Name, codec)
+                ? ", static _ => global::System.Array.Empty<global::XREngine.Core.Files.PublishedCookedAssetDependency>()"
+                : ", dependencies: null");
+            source.Append("));\n");
         }
         foreach (var formatter in formatters)
         {
@@ -312,6 +315,22 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
         source.Append("        });\n}\n");
         context.AddSource("GeneratedRuntimeContracts.g.cs", SourceText.From(source.ToString(), Encoding.UTF8));
     }
+
+    /// <summary>Declares no external files only for the reviewed engine codec and type pairs.</summary>
+    private static bool HasAuditedEmptyDependencySet(string assemblyName, CookedCodec codec)
+        => (assemblyName, codec.Type, codec.Kind) switch
+        {
+            ("XREngine.Data", "global::XREngine.UserSettings", 0) => true,
+            ("XREngine.Data", "global::XREngine.BuildSettings", 0) => true,
+            ("XREngine.Animation", "global::XREngine.Animation.AnimationClip", 2) => true,
+            ("XREngine.Animation", "global::XREngine.Animation.BlendTree1D", 3) => true,
+            ("XREngine.Animation", "global::XREngine.Animation.BlendTree2D", 4) => true,
+            ("XREngine.Animation", "global::XREngine.Animation.BlendTreeDirect", 5) => true,
+            ("XREngine.Animation", "global::XREngine.Animation.AnimStateMachine", 6) => true,
+            ("XREngine.Runtime.Rendering", "global::XREngine.Rendering.XRMesh", 7) => true,
+            ("XREngine.Runtime.Rendering", "global::XREngine.Rendering.XRTexture2D", 1) => true,
+            _ => false,
+        };
 
     private static bool Supported(ITypeSymbol type)
     {

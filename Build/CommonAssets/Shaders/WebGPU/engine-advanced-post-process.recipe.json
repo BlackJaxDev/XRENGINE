@@ -1,0 +1,496 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-post-process",
+  "pass": "post-process",
+  "source": "AdvancedPostProcess.slang",
+  "sourceLanguage": "Slang",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "vertex": "outputVertex",
+    "fragment": "outputFragment"
+  },
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxVertexAttributes": 1,
+    "maxVertexBuffers": 1,
+    "maxVertexBufferArrayStride": 12,
+    "maxBindGroups": 2,
+    "maxBindingsPerBindGroup": 13,
+    "maxUniformBufferBindingSize": 256,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 8,
+    "maxSamplersPerShaderStage": 4
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.raster.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [
+      {
+        "slot": 0,
+        "stride": 12,
+        "stepMode": "vertex",
+        "attributes": [
+          {
+            "location": 0,
+            "offset": 0,
+            "format": "float32x3",
+            "semantic": "position"
+          }
+        ]
+      }
+    ],
+    "bindings": [
+      {
+        "name": "OutputUniforms",
+        "physicalName": "outputUniforms_0",
+        "group": 0,
+        "binding": 0,
+        "kind": "uniform",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 256,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "ScreenWidth_0",
+            "provider": "ScreenWidth",
+            "offset": 0,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenHeight_0",
+            "provider": "ScreenHeight",
+            "offset": 4,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ScreenOrigin_0",
+            "provider": "ScreenOrigin",
+            "offset": 8,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "UseGpuAutoExposure_0",
+            "provider": "UseGpuAutoExposure",
+            "offset": 16,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "HoverOutlineColor_0",
+            "provider": "HoverOutlineColor",
+            "offset": 32,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "SelectionOutlineColor_0",
+            "provider": "SelectionOutlineColor",
+            "offset": 48,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "EnableEditorOutline_0",
+            "provider": "EnableEditorOutline",
+            "offset": 60,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "OutputHDR_0",
+            "provider": "OutputHDR",
+            "offset": 64,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "VignetteColor_0",
+            "provider": "Vignette.Color",
+            "offset": 80,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "VignetteIntensity_0",
+            "provider": "Vignette.Intensity",
+            "offset": 92,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "VignettePower_0",
+            "provider": "Vignette.Power",
+            "offset": 96,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ColorGradeTint_0",
+            "provider": "ColorGrade.Tint",
+            "offset": 112,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "ColorGradeExposure_0",
+            "provider": "ColorGrade.Exposure",
+            "offset": 124,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ColorGradeContrast_0",
+            "provider": "ColorGrade.Contrast",
+            "offset": 128,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ColorGradeGamma_0",
+            "provider": "ColorGrade.Gamma",
+            "offset": 132,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ColorGradeHue_0",
+            "provider": "ColorGrade.Hue",
+            "offset": 136,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ColorGradeSaturation_0",
+            "provider": "ColorGrade.Saturation",
+            "offset": 140,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ColorGradeBrightness_0",
+            "provider": "ColorGrade.Brightness",
+            "offset": 144,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "ChromaticAberrationIntensity_0",
+            "provider": "ChromaticAberrationIntensity",
+            "offset": 148,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DepthFogIntensity_0",
+            "provider": "DepthFog.Intensity",
+            "offset": 152,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DepthFogStart_0",
+            "provider": "DepthFog.Start",
+            "offset": 156,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DepthFogEnd_0",
+            "provider": "DepthFog.End",
+            "offset": 160,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DepthFogColor_0",
+            "provider": "DepthFog.Color",
+            "offset": 176,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "LensDistortionCenter_0",
+            "provider": "LensDistortionCenter",
+            "offset": 192,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "BloomStrength_0",
+            "provider": "BloomStrength",
+            "offset": 200,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "BloomStartMip_0",
+            "provider": "BloomStartMip",
+            "offset": 204,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "BloomEndMip_0",
+            "provider": "BloomEndMip",
+            "offset": 208,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "BloomLodWeight0_0",
+            "provider": "BloomLodWeight0",
+            "offset": 212,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "BloomLodWeight1_0",
+            "provider": "BloomLodWeight1",
+            "offset": 216,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "BloomLodWeight2_0",
+            "provider": "BloomLodWeight2",
+            "offset": 220,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "BloomLodWeight3_0",
+            "provider": "BloomLodWeight3",
+            "offset": 224,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "BloomLodWeight4_0",
+            "provider": "BloomLodWeight4",
+            "offset": 228,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "DebugBloomOnly_0",
+            "provider": "DebugBloomOnly",
+            "offset": 232,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "TonemapType_0",
+            "provider": "TonemapType",
+            "offset": 236,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "MobiusTransition_0",
+            "provider": "MobiusTransition",
+            "offset": 240,
+            "bytes": 4,
+            "type": "f32"
+          }
+        ]
+      },
+      {
+        "name": "HDRSceneTex",
+        "physicalName": "HDRSceneTex_0",
+        "group": 1,
+        "binding": 0,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "HDRSceneTex",
+        "physicalName": "HDRSceneTexSampler_0",
+        "group": 1,
+        "binding": 1,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomBlurTexture",
+        "physicalName": "BloomBlurTexture_0",
+        "group": 1,
+        "binding": 2,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "BloomBlurTexture",
+        "physicalName": "BloomBlurTextureSampler_0",
+        "group": 1,
+        "binding": 3,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "DepthView",
+        "physicalName": "DepthView_0",
+        "group": 1,
+        "binding": 4,
+        "kind": "texture-depth-2d",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "StencilView",
+        "physicalName": "StencilView_0",
+        "group": 1,
+        "binding": 5,
+        "kind": "texture-2d-uint",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AutoExposureTex",
+        "physicalName": "AutoExposureTex_0",
+        "group": 1,
+        "binding": 6,
+        "kind": "texture-2d-unfilterable-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AtmosphereColor",
+        "physicalName": "AtmosphereColor_0",
+        "group": 1,
+        "binding": 8,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AtmosphereColor",
+        "physicalName": "AtmosphereColorSampler_0",
+        "group": 1,
+        "binding": 9,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "VolumetricFogColor",
+        "physicalName": "VolumetricFogColor_0",
+        "group": 1,
+        "binding": 10,
+        "kind": "texture-2d-float",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "VolumetricFogColor",
+        "physicalName": "VolumetricFogColorSampler_0",
+        "group": 1,
+        "binding": 11,
+        "kind": "filtering-sampler",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      },
+      {
+        "name": "AdvancedVisibilityMetadata",
+        "physicalName": "AdvancedVisibilityMetadata_0",
+        "group": 1,
+        "binding": 12,
+        "kind": "texture-2d-uint",
+        "visibility": [
+          "fragment"
+        ],
+        "owner": "Material",
+        "frequency": "Material",
+        "bytes": 0,
+        "dynamic": false,
+        "members": []
+      }
+    ]
+  },
+  "pipeline": {},
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "post-process"
+  }
+}

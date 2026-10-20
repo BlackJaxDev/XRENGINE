@@ -15,8 +15,13 @@ public static partial class CookedBinarySerializer
 
             if (value is ICookedBinarySerializable custom)
             {
+                using var loopScope = EnterReflectionScope(value, out bool isCycle);
+                if (isCycle)
+                    throw new NotSupportedException($"CookedBinary.CustomReferenceCycleUnsupported: '{runtimeType}' has a cycle through its custom payload.");
                 writer.Write((byte)CookedBinaryTypeMarker.CustomObject);
                 WriteTypeName(writer, runtimeType);
+                // Custom size calculations start a separate graph; keep their wire IDs local too.
+                using var referenceScope = writer.EnterIndependentReferenceScope();
                 custom.WriteCookedBinary(writer);
                 return true;
             }
@@ -52,6 +57,9 @@ public static partial class CookedBinarySerializer
 
             if (value is ICookedBinarySerializable custom)
             {
+                using var loopScope = EnterReflectionScope(value, out bool isCycle);
+                if (isCycle)
+                    throw new NotSupportedException($"CookedBinary.CustomReferenceCycleUnsupported: '{runtimeType}' has a cycle through its custom payload.");
                 calculator.AddBytes(SizeOfTypeName(runtimeType) + custom.CalculateCookedBinarySize());
                 return true;
             }

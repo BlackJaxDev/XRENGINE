@@ -3,6 +3,9 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_PushOutputFBORenderArea : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
+        public override void DescribeRequirements(RenderPipelineRequirements requirements)
+            => requirements.RequireOperation("render-area");
+
         protected override void Execute()
         {
             var fbo = ActivePipelineInstance.RenderState.OutputFBO;

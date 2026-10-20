@@ -16,10 +16,10 @@ public static partial class EditorImGuiUI
     private const int ToolbarIconMaxInputBytes = 512 * 1024;
     private const int ToolbarIconMaxCpuReadAttempts = 2;
     private const int ToolbarIconMaxUploadAttempts = 3;
-    private const int ToolbarIconCompletionsPerFrame = 4;
-    private const int ToolbarIconTexturesPerFrame = 2;
-    private const int ToolbarIconUploadsPerFrame = 1;
-    private const double ToolbarIconOwnerBudgetMilliseconds = 1.0;
+    private const int ToolbarIconCompletionsPerFrame = 12;
+    private const int ToolbarIconTexturesPerFrame = 12;
+    private const int ToolbarIconUploadsPerFrame = 12;
+    private const double ToolbarIconOwnerBudgetMilliseconds = 2.0;
 
     private static readonly string[] ToolbarIconManifest =
     [
@@ -128,6 +128,9 @@ public static partial class EditorImGuiUI
         }
     }
 
+    private const uint ToolbarIconBinaryCacheMagic = 0x49434F4Eu;
+    private const int ToolbarIconBinaryCacheVersion = 1;
+
     private static async Task<ToolbarIconPreparationResult> PrepareToolbarIconAsync(
         ToolbarIconCacheEntry entry,
         long sessionId,
@@ -144,6 +147,25 @@ public static partial class EditorImGuiUI
                 entry.RequestRevision,
                 preparedPixels: null,
                 $"SVG icon was not found in {entry.CandidatePaths.Length} configured location(s).");
+        }
+
+        long cacheReadStart = Stopwatch.GetTimestamp();
+        if (TryReadCachedToolbarIconPixels(sourcePath, entry.Key.Size, out byte[]? cachedPixels, out int sourceByteLength))
+        {
+            double cacheReadMs = Stopwatch.GetElapsedTime(cacheReadStart).TotalMilliseconds;
+            var prepared = new ToolbarIconPreparedPixels(
+                cachedPixels,
+                sourcePath,
+                sourceByteLength,
+                pathMilliseconds,
+                cacheReadMs,
+                rasterMilliseconds: 0.0);
+            return new ToolbarIconPreparationResult(
+                entry.Key,
+                sessionId,
+                entry.RequestRevision,
+                prepared,
+                failureReason: null);
         }
 
         double readMilliseconds = 0.0;
@@ -187,6 +209,87 @@ public static partial class EditorImGuiUI
             entry.RequestRevision,
             preparedPixels: null,
             lastReadException?.Message ?? "The SVG icon could not be read.");
+    }
+
+    private static string GetToolbarIconBinaryCachePath(string sourcePath, int size)
+    {
+        string? gameCachePath = Engine.Assets?.GameCachePath;
+        string baseCacheDir = !string.IsNullOrWhiteSpace(gameCachePath)
+            ? gameCachePath
+            : Path.Combine(Path.GetTempPath(), "XREngine");
+        string safeFileName = Path.GetFileNameWithoutExtension(sourcePath);
+        return Path.Combine(baseCacheDir, "EditorToolbarIcons", $"{safeFileName}_{size}x{size}.rgba.bin");
+    }
+
+    private static bool TryReadCachedToolbarIconPixels(
+        string sourcePath,
+        int size,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out byte[]? pixels,
+        out int sourceByteLength)
+    {
+        pixels = null;
+        sourceByteLength = 0;
+        try
+        {
+            string cachePath = GetToolbarIconBinaryCachePath(sourcePath, size);
+            if (!File.Exists(cachePath))
+                return false;
+
+            var sourceInfo = new FileInfo(sourcePath);
+            int expectedPixelBytes = checked(size * size * 4);
+            using var stream = new FileStream(cachePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
+            using var reader = new BinaryReader(stream);
+            if (reader.ReadUInt32() != ToolbarIconBinaryCacheMagic ||
+                reader.ReadInt32() != ToolbarIconBinaryCacheVersion ||
+                reader.ReadInt32() != size ||
+                reader.ReadInt64() != sourceInfo.Length ||
+                reader.ReadInt64() != sourceInfo.LastWriteTimeUtc.Ticks)
+            {
+                return false;
+            }
+
+            byte[] data = reader.ReadBytes(expectedPixelBytes);
+            if (data.Length != expectedPixelBytes)
+                return false;
+
+            pixels = data;
+            sourceByteLength = (int)Math.Min(int.MaxValue, sourceInfo.Length);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void TryWriteCachedToolbarIconPixels(string sourcePath, int size, byte[] pixels)
+    {
+        try
+        {
+            string cachePath = GetToolbarIconBinaryCachePath(sourcePath, size);
+            string? directory = Path.GetDirectoryName(cachePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            var sourceInfo = new FileInfo(sourcePath);
+            string tempPath = $"{cachePath}.{Environment.ProcessId}.tmp";
+            using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096))
+            using (var writer = new BinaryWriter(stream))
+            {
+                writer.Write(ToolbarIconBinaryCacheMagic);
+                writer.Write(ToolbarIconBinaryCacheVersion);
+                writer.Write(size);
+                writer.Write(sourceInfo.Length);
+                writer.Write(sourceInfo.LastWriteTimeUtc.Ticks);
+                writer.Write(pixels);
+            }
+
+            File.Move(tempPath, cachePath, overwrite: true);
+        }
+        catch
+        {
+            // Best-effort toolbar icon binary cache write.
+        }
     }
 
     private static byte[] ReadToolbarIconBytes(string sourcePath)
@@ -246,6 +349,7 @@ public static partial class EditorImGuiUI
             canvas.Flush();
 
             byte[] pixels = CopyPackedRgbaPixels(bitmap, size);
+            TryWriteCachedToolbarIconPixels(sourcePath, size, pixels);
             double rasterMilliseconds = Stopwatch.GetElapsedTime(rasterStart).TotalMilliseconds;
             ToolbarIconPreparedPixels prepared = new(
                 pixels,
@@ -394,21 +498,7 @@ public static partial class EditorImGuiUI
 
             try
             {
-                XRTexture2D texture = new(
-                    (uint)entry.Key.Size,
-                    (uint)entry.Key.Size,
-                    prepared.Pixels)
-                {
-                    Name = $"ToolbarIcon.{Path.GetFileNameWithoutExtension(entry.Key.Name)}",
-                    FilePath = prepared.SourcePath,
-                    AutoGenerateMipmaps = false,
-                    Resizable = false,
-                    MinFilter = ETexMinFilter.Linear,
-                    MagFilter = ETexMagFilter.Linear,
-                    UWrap = ETexWrapMode.ClampToEdge,
-                    VWrap = ETexWrapMode.ClampToEdge,
-                };
-                entry.Texture = texture;
+                entry.Texture = CreateToolbarIconTexture(entry.Key, prepared);
                 entry.Status = ToolbarIconPreparationStatus.TextureReady;
                 count++;
             }
@@ -425,6 +515,22 @@ public static partial class EditorImGuiUI
         return count;
     }
 
+    private static XRTexture2D CreateToolbarIconTexture(ToolbarIconCacheKey key, ToolbarIconPreparedPixels prepared)
+        => new(
+            (uint)key.Size,
+            (uint)key.Size,
+            prepared.Pixels)
+        {
+            Name = $"ToolbarIcon.{Path.GetFileNameWithoutExtension(key.Name)}",
+            FilePath = prepared.SourcePath,
+            AutoGenerateMipmaps = false,
+            Resizable = false,
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
+        };
+
     private static int UploadToolbarIconsForRenderer(
         AbstractRenderer renderer,
         ulong frameId,
@@ -438,7 +544,13 @@ public static partial class EditorImGuiUI
             if (entry.Status != ToolbarIconPreparationStatus.TextureReady || entry.Texture is not { } texture)
                 continue;
 
-            ToolbarIconRendererState rendererState = entry.GetOrCreateRendererState(renderer);
+            if (!entry.TryGetRendererState(renderer, out ToolbarIconRendererState rendererState))
+            {
+                if (entry.PreparedPixels is { } prepared)
+                    texture = entry.Texture = CreateToolbarIconTexture(entry.Key, prepared);
+                rendererState = entry.GetOrCreateRendererState(renderer);
+            }
+
             if (rendererState.IsReady || rendererState.AttemptCount >= ToolbarIconMaxUploadAttempts ||
                 frameId < rendererState.NextRetryFrame)
             {

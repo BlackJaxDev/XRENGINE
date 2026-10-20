@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 3,
+  "name": "engine-advanced-auto-exposure",
+  "pass": "auto-exposure",
+  "source": "AutoExposure.wgsl",
+  "sourceLanguage": "WGSL",
+  "target": "WebGPUWgsl",
+  "entryPoints": {
+    "compute": "autoExposure"
+  },
+  "pipelineArtifact": {
+    "scope": "advanced",
+    "pass": "auto-exposure"
+  },
+  "workgroupSize": [
+    256,
+    1,
+    1
+  ],
+  "defines": [],
+  "includes": [],
+  "specialization": {},
+  "requiredFeatures": [],
+  "requiredLimits": {
+    "maxBindGroups": 1,
+    "maxBindingsPerBindGroup": 4,
+    "maxUniformBufferBindingSize": 64,
+    "maxDynamicUniformBuffersPerPipelineLayout": 1,
+    "maxUniformBuffersPerShaderStage": 1,
+    "maxSampledTexturesPerShaderStage": 1,
+    "maxStorageTexturesPerShaderStage": 1,
+    "maxStorageBuffersPerShaderStage": 1,
+    "maxStorageBufferBindingSize": 16,
+    "maxComputeWorkgroupSizeX": 256,
+    "maxComputeWorkgroupSizeY": 1,
+    "maxComputeWorkgroupSizeZ": 1,
+    "maxComputeInvocationsPerWorkgroup": 256,
+    "maxComputeWorkgroupStorageSize": 2048
+  },
+  "matrixLayout": "column-major",
+  "semanticSchemaIdentity": "xrengine.engine.compute.v1",
+  "coordinates": "xrengine.webgpu.coordinates.v1",
+  "layout": {
+    "vertexBuffers": [],
+    "bindings": [
+      {
+        "name": "SourceTex",
+        "physicalName": "sourceTexture",
+        "binding": 0,
+        "kind": "texture-2d-unfilterable-float",
+        "bytes": 0,
+        "dynamic": false,
+        "members": [],
+        "group": 0,
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View"
+      },
+      {
+        "name": "ExposureOut",
+        "physicalName": "exposureOutput",
+        "binding": 1,
+        "kind": "storage-texture-2d-write-r32float",
+        "bytes": 0,
+        "dynamic": false,
+        "members": [],
+        "group": 0,
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View"
+      },
+      {
+        "name": "History",
+        "physicalName": "history",
+        "binding": 2,
+        "kind": "storage",
+        "bytes": 4,
+        "dynamic": false,
+        "runtimeArray": true,
+        "members": [],
+        "group": 0,
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View"
+      },
+      {
+        "name": "Parameters",
+        "physicalName": "parameters",
+        "binding": 3,
+        "kind": "uniform",
+        "bytes": 64,
+        "dynamic": true,
+        "members": [
+          {
+            "name": "luminanceWeights",
+            "provider": "LuminanceWeights",
+            "offset": 0,
+            "bytes": 12,
+            "type": "vec3<f32>"
+          },
+          {
+            "name": "bias",
+            "provider": "AutoExposureBias",
+            "offset": 12,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "scale",
+            "provider": "AutoExposureScale",
+            "offset": 16,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "dividend",
+            "provider": "ExposureDividend",
+            "offset": 20,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "minimum",
+            "provider": "MinExposure",
+            "offset": 24,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "maximum",
+            "provider": "MaxExposure",
+            "offset": 28,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "exposureBase",
+            "provider": "ExposureBase",
+            "offset": 32,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "fallback",
+            "provider": "FallbackExposure",
+            "offset": 36,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "alpha",
+            "provider": "ExposureTransitionSpeed",
+            "offset": 40,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "mode",
+            "provider": "MeteringMode",
+            "offset": 44,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "targetSize",
+            "provider": "MeteringTargetSize",
+            "offset": 48,
+            "bytes": 4,
+            "type": "u32"
+          },
+          {
+            "name": "ignoreTopPercent",
+            "provider": "IgnoreTopPercent",
+            "offset": 52,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "centerStrength",
+            "provider": "CenterWeightStrength",
+            "offset": 56,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "centerPower",
+            "provider": "CenterWeightPower",
+            "offset": 60,
+            "bytes": 4,
+            "type": "f32"
+          }
+        ],
+        "group": 0,
+        "visibility": [
+          "compute"
+        ],
+        "owner": "Engine",
+        "frequency": "View"
+      }
+    ]
+  },
+  "pipeline": {}
+}

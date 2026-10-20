@@ -13,7 +13,19 @@ public sealed record AdvancedGpuCounterReadback(
     ulong OutputId,
     int ResourceGeneration,
     uint ViewId,
-    uint[] Values);
+    uint[] Values)
+{
+    /// <summary>Gets rejected chain-bound routes from a completed visibility receipt.</summary>
+    public uint PhysicsChainBoundsRouteRejected
+        => IsVisibilityReceipt && Values.Length > 11 ? Values[11] : 0u;
+
+    /// <summary>Gets invalid chain bounds from a completed visibility receipt.</summary>
+    public uint PhysicsChainBoundsNumericRejected
+        => IsVisibilityReceipt && Values.Length > 12 ? Values[12] : 0u;
+
+    private bool IsVisibilityReceipt
+        => Source.StartsWith("AdvancedVisibilityCounters", StringComparison.Ordinal);
+}
 
 /// <summary>Immutable producer identity sealed with an Advanced counter copy.</summary>
 public readonly record struct AdvancedGpuCounterReadbackIdentity(

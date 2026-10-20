@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 
@@ -34,6 +35,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private ulong _lookupGeneration;
     private int _topologyDeltaCount;
     private int _contentDeltaCount;
+    private int _reusedStaticDrawPlanCount;
+    private int _materialResolveAttemptCount;
     private int _lastGeometryCompactionReplacementCount;
     private ulong _lastGeometryCompactionReclaimedBytes;
     private ulong _geometryCompactionCount;
@@ -43,6 +46,15 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private AdvancedGpuScenePublicationReference _currentPublication;
     private bool _identityDeliveryIncomplete;
     private int _publishInProgress;
+    // Advances in the finally block of each Publish call, before the call
+    // clears _publishInProgress. A value read while no publication runs stays
+    // equal until the next Publish call completes.
+    private long _publisherEpoch;
+    // The frame id of the most recent publication that stamped its rows. Each
+    // stamp site sets it after its row loop, also when no row has a
+    // registration, so it equals LastSeenFrameId of each row that the loop
+    // stamped. A rejection clears it to zero, and it is zero before the first stamp.
+    private ulong _lastStampedFrameId;
     private int _dirtyOwnerRangeCount;
     private uint _registrationLookupGeneration;
     private uint _preflightSeenGeneration;
@@ -82,6 +94,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     public int ContentDeltaCount => _contentDeltaCount;
 
+    /// <summary>Covered draw plans reused in the most recent preflight.</summary>
+    public int ReusedStaticDrawPlanCount => _reusedStaticDrawPlanCount;
+
+    /// <summary>Material resolver calls in the most recent preflight.</summary>
+    public int MaterialResolveAttemptCount => _materialResolveAttemptCount;
+
     /// <summary>Geometry rows rebound by the most recently applied compaction.</summary>
     public int LastGeometryCompactionReplacementCount
         => _lastGeometryCompactionReplacementCount;
@@ -107,6 +125,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     public string? LastPublicationFailure => _lastPublicationFailure;
 
     public bool PublicationFaulted => Database.PublicationFaulted;
+
+    /// <summary>
+    /// Gets the number of completed <see cref="Publish"/> calls. Each call
+    /// advances it at its end, so two equal reads prove that no publication
+    /// completed between them.
+    /// </summary>
+    internal long PublisherEpoch => System.Threading.Interlocked.Read(ref _publisherEpoch);
 
     public AdvancedGpuScenePublicationReference CurrentPublication
         => _identityDeliveryIncomplete ? default : _currentPublication;
@@ -135,9 +160,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // the publisher. A nested publication would overwrite the outer plan.
         if (System.Threading.Interlocked.CompareExchange(ref _publishInProgress, 1, 0) != 0)
             throw new InvalidOperationException("Canonical scene publication is already in progress.");
+        // PublishCore sets this mark at the gate decision. It stays 0 when the
+        // publication stops before that point, or when the world swap section
+        // is not open on this thread.
+        long stageMark = 0L;
         try
         {
-            PublishCore(scene, frameId, in globalResources);
+            PublishCore(scene, frameId, in globalResources, ref stageMark);
         }
         finally
         {
@@ -147,42 +176,76 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             }
             finally
             {
+                // Boundary sizing can retain source payloads when a later stage
+                // rejects. Only copied arena bytes belong to a publication.
+                Array.Clear(_stagedGeometry, 0, Math.Min(_stagedGeometry.Length, _plannedCommandCount));
+                // PublishCore took the prepared verdict. Its witnesses must not
+                // keep materials or options reachable after this publication.
+                ReleasePreparedWitnesses();
+                // Advance the epoch before the in-progress flag clears, so a
+                // reader that sees no publication in progress also sees the epoch
+                // of every completed publication.
+                System.Threading.Interlocked.Increment(ref _publisherEpoch);
                 System.Threading.Volatile.Write(ref _publishInProgress, 0);
             }
         }
+        // The commit stage ends after the scratch release, so that it holds all
+        // of the work after the gate decision.
+        CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedCommit, stageMark);
     }
 
-    private void PublishCore(GPUScene scene, ulong frameId, in AdvancedGlobalResourceCapture globalResources)
+    /// <summary>
+    /// Runs one publication. <paramref name="stageMark"/> receives the swap stage
+    /// mark at the gate decision, and it stays 0 outside the world swap section.
+    /// </summary>
+    private void PublishCore(
+        GPUScene scene,
+        ulong frameId,
+        in AdvancedGlobalResourceCapture globalResources,
+        ref long stageMark)
     {
-        // Plans and submission sources are scratch closures, not publication leases.
-        // Release the prior frame's references even if this boundary rejects early.
-        Array.Clear(_plannedCommands, 0, _plannedCommandCount);
-        Array.Clear(_plannedDeformationSources, 0, _legacyMappingCount);
-        _plannedCommandCount = 0;
+        // A prepared verdict is single use. Take it before any check, so that
+        // no exit path leaves it for a later publication.
+        AdvancedPreparedUnchangedRowGate prepared = TakePreparedUnchangedRowGate();
+        // Every global-resource preflight rebuilds the authored decal rows.
+        Array.Clear(_plannedDecals, 0, _plannedDecalCount);
+        _plannedDecalCount = 0;
         _topologyDeltaCount = 0;
         _contentDeltaCount = 0;
         _lastGeometryCompactionReplacementCount = 0;
         _lastGeometryCompactionReclaimedBytes = 0u;
-        _legacyMappingCount = 0;
         _dirtyOwnerRangeCount = 0;
         _publicationRejected = false;
+        _lastRegistrationIdentityReuseCount = 0;
+        _lastRegistrationLookupRebuildCount = 0;
+        _validatedOrderedRegistrationRowCount = 0;
+        _lastSourceGroupReuseCount = 0;
+        _lastSourceGroupRebuildCount = 0;
+        _lastUnchangedRowGateHitCount = 0;
+        _lastPublicationCommittedRetainedRows = false;
+        _publicationStartMembershipGeneration = _registrationMembershipGeneration;
+        _useRetainedIdentityGroups = false;
 
         if (Database.PublicationFaulted)
         {
+            ReleasePlanScratch();
             RejectPublication("The canonical scene publication database is faulted.");
             return;
         }
 
         int capturedGlobalResourceCount = globalResources.FrameId == frameId
-            ? Math.Max(globalResources.Lights.Length, globalResources.Probes.Length)
+            ? Math.Max(Math.Max(globalResources.Lights.Length, globalResources.Probes.Length), globalResources.AuthoredDecals.Count)
             : 0;
         bool hasBoundaryCapacity;
+        bool boundaryGrew;
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.BoundaryCapacity"))
             hasBoundaryCapacity = EnsureBoundaryCapacity(
                 scene.TotalCommandCount,
-                checked((uint)capturedGlobalResourceCount));
+                checked((uint)capturedGlobalResourceCount),
+                out boundaryGrew);
         if (!hasBoundaryCapacity)
         {
+            ReleasePlanScratch();
             RejectPublication("The canonical resident tables cannot grow at this frame boundary.");
             return;
         }
@@ -190,6 +253,53 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // the next publication. Reclaim acknowledged deltas here so a full
         // journal cannot prevent the transaction that would normally reclaim it.
         Database.ReclaimAcknowledgedTombstones();
+        AdvancedGlobalResourceCapture acceptedGlobalResources =
+            globalResources.FrameId == frameId
+                ? globalResources
+                : AdvancedGlobalResourceCapture.Empty(frameId);
+
+        // The swap stage timers split the publication here. Only the collect
+        // thread in the world swap section gets a nonzero mark, the same gate
+        // as the parent publication stage of the GPU-scene swap.
+        stageMark = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
+
+        // The retained plan, rows, and draw handles describe the current
+        // publication. When every row input is unchanged, skip the whole-scene plan.
+        // A verdict that the collect thread prepared replaces the row walk; any
+        // miss runs the swap-time gate. The verify mode runs the swap-time gate
+        // inside the consume, so the gate then does not run a second time.
+        if (!boundaryGrew)
+        {
+            bool rowsUnchanged;
+            int reusedStaticPlans;
+            int materialResolveAttempts;
+            using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.UnchangedRowGate"))
+            {
+                rowsUnchanged = TryConsumePreparedUnchangedRowGate(
+                    scene,
+                    frameId,
+                    in prepared,
+                    recordTelemetry: stageMark != 0L,
+                    out bool gateDecided,
+                    out reusedStaticPlans,
+                    out materialResolveAttempts);
+                if (!gateDecided)
+                    rowsUnchanged = TryPassUnchangedRowGate(
+                        scene, frameId, out reusedStaticPlans, out materialResolveAttempts);
+            }
+            CollectVisibleStageTimings.MarkAdvancedRowGate(ref stageMark, rowsUnchanged);
+            if (rowsUnchanged && TryPublishUnchangedRows(
+                    frameId, in acceptedGlobalResources, reusedStaticPlans, materialResolveAttempts))
+            {
+                CollectVisibleStageTimings.CountAdvancedUnchangedRowPublication(stageMark);
+                return;
+            }
+        }
+
+        // Plans and submission sources are scratch closures, not publication leases.
+        // Release the prior frame's references even if this boundary rejects early.
+        ReleasePlanScratch();
+        _useRetainedIdentityGroups = false;
         Array.Clear(
             _commandDrawHandles,
             0,
@@ -198,7 +308,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         string planFailure;
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ScenePlan"))
         {
-            RebuildRegistrationLookup();
+            if (_registrationLookupNeedsRebuild)
+                RebuildRegistrationLookup();
             hasScenePlan = TryBuildAndPreflightWholeScenePlan(scene, frameId, out planFailure);
         }
         if (!hasScenePlan)
@@ -226,10 +337,6 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             RejectPublication(geometryCaptureFailure);
             return;
         }
-        AdvancedGlobalResourceCapture acceptedGlobalResources =
-            globalResources.FrameId == frameId
-                ? globalResources
-                : AdvancedGlobalResourceCapture.Empty(frameId);
         bool hasGlobalResources;
         string globalResourceFailure;
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.GlobalPreflight"))
@@ -245,6 +352,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         if (reusedPublication)
         {
             ClearPublicationFailure();
+            // A reuse writes no submission rows, so only the plan is retained.
+            MarkUnchangedRowBaseline(submissionRowsValid: false);
             return;
         }
         if (AdvancedPublicationFaultInjection.TryConsumePreflightRejection())
@@ -357,8 +466,34 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         plan.Renderer,
                         plan.Mesh,
                         checked((uint)Math.Max(0, plan.MeshVertexCount)),
-                        plan.ContentSignature, plan.StructuralSignature);
+                        plan.ContentSignature, plan.StructuralSignature, plan.GpuBoundsSource,
+                        new PhysicsChainDrawMaterialSnapshot(plan.MaterialSource,
+                            plan.MaterialBindingLayoutVersion,
+                            plan.MaterialBindingValueVersion,
+                            plan.MaterialBindingResourceVersion,
+                            plan.MaterialShaderStateRevision,
+                            plan.MaterialUberStateRevision))
+                    {
+                        BrowserBasisSource = (_plannedMaterialRequests[plan.MaterialPlanIndex].EngineSurface.SurfaceKind == AdvancedEngineSurfaceRecord.AuthoredTexturedKind ||
+                            _plannedMaterialRequests[plan.MaterialPlanIndex].UberBaseSurface.SchemaVersion != 0)
+                            ? AdvancedBrowserGeometryBasisSource.Capture(plan.Mesh, plan.MeshGeometryRevision) : null,
+                        BrowserUberAttributesSource = _plannedMaterialRequests[plan.MaterialPlanIndex].UberBaseSurface.SchemaVersion != 0
+                            ? AdvancedBrowserUberAttributeSource.Capture(plan.Mesh, plan.MeshGeometryRevision) : null,
+                        BrowserUberAttributesProducerRejection = plan.Renderer is { } attributeRenderer &&
+                            (attributeRenderer.HasSettingUniformsHandlers || attributeRenderer.HasRenderDataPreparation || attributeRenderer.BindingPublishers.Count != 0 ||
+                             attributeRenderer.Buffers.ContainsKey("TexCoord0") || attributeRenderer.Buffers.ContainsKey("TexCoord1") ||
+                             attributeRenderer.Buffers.ContainsKey("TexCoord2") || attributeRenderer.Buffers.ContainsKey("TexCoord3") ||
+                             attributeRenderer.Buffers.ContainsKey("Color0"))
+                            ? "WebGPU.Advanced.UberAttributeOverrideUnsupported: renderer callbacks, publishers or UV/color overrides require their own frozen source companion." : null,
+                        BrowserBasisProducerRejection = plan.Renderer is { } basisRenderer &&
+                            (basisRenderer.Buffers.ContainsKey("Normal") || basisRenderer.Buffers.ContainsKey("Tangent"))
+                            ? "WebGPU.Advanced.AuthoredBasisExternalStreamMetadataMissing: renderer normal/tangent overrides require a frozen basis-validity companion from that producer."
+                            : null,
+                    };
                 }
+                // Record the frame also when no row has a registration, so that
+                // the next prepare expects the frame after this publication.
+                _lastStampedFrameId = frameId;
 
                 TombstoneMissingRegistrations();
                 CompletePreflightedMaterialTransitions();
@@ -367,103 +502,150 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     AdvanceNonZero(ref _lookupGeneration);
             }
 
-            AdvancedGpuScenePublicationReference committed;
-            using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.CaptureAndCommit"))
+            SealAndDeliverPublication(
+                in transaction,
+                frameId,
+                ref provisional,
+                ref publicationCommitted);
+            CaptureCommittedMaterialPlans();
+            _identityDeliveryIncomplete = false;
+            ClearPendingIdentityRecipients();
+            PromoteSourceGroups();
+            PromoteOrderedRegistrations();
+            ClearPublicationFailure();
+            MarkUnchangedRowBaseline(submissionRowsValid: true);
+        }
+        catch (Exception exception)
+        {
+            HandleOpenTransactionFailure(
+                exception,
+                in transaction,
+                in provisional,
+                publicationCommitted);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Seals the prepared transaction with the planned submission rows and
+    /// delivers the accepted publication to every source identity group.
+    /// </summary>
+    private void SealAndDeliverPublication(
+        in AdvancedGpuScenePublicationTransaction transaction,
+        ulong frameId,
+        ref AdvancedGpuScenePublicationReference provisional,
+        ref bool publicationCommitted)
+    {
+        AdvancedGpuScenePublicationReference committed;
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.CaptureAndCommit"))
+        {
+            if (!Database.TryPreparePublication(
+                    in transaction,
+                    frameId,
+                    _topologyGeneration,
+                    _contentGeneration,
+                    _lookupGeneration,
+                    out provisional))
             {
-                if (!Database.TryPreparePublication(
-                        in transaction,
-                        frameId,
-                        _topologyGeneration,
-                        _contentGeneration,
-                        _lookupGeneration,
-                        out provisional))
-                {
-                    Database.FaultActivePublication(
-                        in transaction,
-                        EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
-                    throw new InvalidOperationException(
-                        $"Canonical scene snapshot capture failed after a successful whole-frame preflight: {Database.LastPreparationFailure ?? "unknown stage"}.");
-                }
-
-                if (!_resourcePublisher.TryCapturePublication(
-                        provisional.Sequence,
-                        provisional.Snapshot!.ResourcePayloads,
-                        _plannedMirrorSnapshots.AsSpan(0, _plannedMirrorSnapshotCount)))
-                {
-                    provisional.Snapshot.ResourcePayloads.AbortSourceCapture();
-                    Database.FaultActivePublication(
-                        in transaction,
-                        EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
-                    throw new InvalidOperationException(
-                        "Canonical resource source capture failed after sealing the logical resource image.");
-                }
-
-                if (!Database.TryCaptureSubmissionPublication(
-                        in transaction,
-                        _plannedSubmissionRecords.AsSpan(0, _legacyMappingCount),
-                        _plannedDeformationSources.AsSpan(0, _legacyMappingCount)))
-                {
-                    provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
-                    Database.FaultActivePublication(in transaction, EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
-                    throw new InvalidOperationException("Canonical submission sidecar capture failed after table sealing.");
-                }
-
-                if (!Database.TryCommitPreparedPublication(
-                        in transaction,
-                        out committed))
-                {
-                    provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
-                    Database.FaultActivePublication(
-                        in transaction,
-                        EAdvancedGpuScenePublicationFault.InvariantFailure);
-                    throw new InvalidOperationException(
-                        "Canonical scene commit failed after preparing a complete publication.");
-                }
+                Database.FaultActivePublication(
+                    in transaction,
+                    EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                throw new InvalidOperationException(
+                    $"Canonical scene snapshot capture failed after a successful whole-frame preflight: {Database.LastPreparationFailure ?? "unknown stage"}.");
             }
 
+            if (!_resourcePublisher.TryCapturePublication(
+                    provisional.Sequence,
+                    provisional.Snapshot!.ResourcePayloads,
+                    _plannedMirrorSnapshots.AsSpan(0, _plannedMirrorSnapshotCount)))
+            {
+                provisional.Snapshot.ResourcePayloads.AbortSourceCapture();
+                Database.FaultActivePublication(
+                    in transaction,
+                    EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                throw new InvalidOperationException(
+                    "Canonical resource source capture failed after sealing the logical resource image.");
+            }
+
+            if (!Database.TryCaptureSubmissionPublication(
+                    in transaction,
+                    _plannedSubmissionRecords.AsSpan(0, _legacyMappingCount),
+                    _plannedDeformationSources.AsSpan(0, _legacyMappingCount)))
+            {
+                provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
+                Database.FaultActivePublication(in transaction, EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                throw new InvalidOperationException("Canonical submission sidecar capture failed after table sealing.");
+            }
+
+            if (!Database.TryCommitPreparedPublication(
+                    in transaction,
+                    out committed))
+            {
+                provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
+                Database.FaultActivePublication(
+                    in transaction,
+                    EAdvancedGpuScenePublicationFault.InvariantFailure);
+                throw new InvalidOperationException(
+                    "Canonical scene commit failed after preparing a complete publication.");
+            }
+            // Record acceptance before a host profiler scope can throw on disposal.
             publicationCommitted = true;
             // Hide the accepted image until every command has received its
             // corresponding identity. Notifications can call back into readers.
             _identityDeliveryIncomplete = true;
             _currentPublication = committed;
-            // Command snapshots become consumable only after the exact scene
-            // publication has been accepted by the database.
-            using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.IdentityDelivery"))
-            {
-                CaptureAndClearDirtyOwnerRanges();
-                // Report only accepted database publications, after the commit has
-                // installed the exact tuple consumed by subsequent scene readers.
-                S13aPublicationTelemetry.TracePublicationCommitted(
-                    committed.Publication, frameId);
-                PublishSourceDrawIdentities(in committed);
-            }
-            _identityDeliveryIncomplete = false;
-            ClearPublicationFailure();
         }
-        catch (Exception exception)
+
+        // Command snapshots become consumable only after the exact scene
+        // publication has been accepted by the database.
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.IdentityDelivery"))
         {
-            if (!publicationCommitted)
-            {
-                provisional.Snapshot?.ResourcePayloads.AbortSourceCapture();
-                Database.FaultActivePublication(
-                    in transaction,
-                    EAdvancedGpuScenePublicationFault.InvariantFailure);
-            }
-            else
-            {
-                // The database has accepted this publication. Hide it from
-                // frame-package consumers until a later retry delivers every
-                // command identity; it cannot be aborted as an active transaction.
-                _identityDeliveryIncomplete = true;
-            }
-            RejectPublication(exception.Message);
-            throw;
+            CaptureAndClearDirtyOwnerRanges();
+            // Report only accepted database publications, after the commit has
+            // installed the exact tuple consumed by subsequent scene readers.
+            S13aPublicationTelemetry.TracePublicationCommitted(
+                committed.Publication, frameId);
+            PublishSourceDrawIdentities(in committed);
         }
+    }
+
+    /// <summary>
+    /// Aborts an open transaction, or hides an accepted publication whose
+    /// identity delivery did not complete, and then rejects the publication.
+    /// </summary>
+    private void HandleOpenTransactionFailure(
+        Exception exception,
+        in AdvancedGpuScenePublicationTransaction transaction,
+        in AdvancedGpuScenePublicationReference provisional,
+        bool publicationCommitted)
+    {
+        _committedMaterialPlanCacheValid = false;
+        if (!publicationCommitted)
+        {
+            provisional.Snapshot?.ResourcePayloads.AbortSourceCapture();
+            Database.FaultActivePublication(
+                in transaction,
+                EAdvancedGpuScenePublicationFault.InvariantFailure);
+        }
+        else
+        {
+            // The database has accepted this publication. Hide it from
+            // frame-package consumers until a later retry delivers every
+            // command identity; it cannot be aborted as an active transaction.
+            _identityDeliveryIncomplete = true;
+            RetainFailedIdentityRecipients();
+        }
+        RejectPublication(exception.Message);
     }
 
     private void RejectPublication(string reason)
     {
         _publicationRejected = true;
+        // A rejected boundary does not describe the current publication.
+        _unchangedRowBaselineValid = false;
+        _committedSubmissionRowsValid = false;
+        _lastStampedFrameId = 0UL;
+        InvalidateRegistrationIdentityCache();
         if (string.Equals(_lastPublicationFailure, reason, StringComparison.Ordinal))
             return;
 
@@ -476,9 +658,6 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private void ClearPublicationFailure()
         => _lastPublicationFailure = null;
 
-    private AdvancedGpuHandle[] _identityHandleScratch =
-        new AdvancedGpuHandle[InitialCapacity];
-
     /// <summary>
     /// Assigns renderer-facing identities only after the database sealed the
     /// publication. Primitive zero is the primary identity while the immutable
@@ -486,30 +665,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     /// </summary>
     private void PublishSourceDrawIdentities(
         in AdvancedGpuScenePublicationReference publication)
-    {
-        for (int sourceIndex = 0;
-             sourceIndex < _plannedIdentitySourceCount;
-             ++sourceIndex)
-        {
-            if (_plannedIdentitySources[sourceIndex] is not RenderCommandMesh3D command)
-                continue;
-
-            int primitiveCount = _plannedIdentityPrimitiveCounts[sourceIndex];
-            Array.Clear(_identityHandleScratch, 0, primitiveCount);
-            for (int primitiveIndex = 0; primitiveIndex < primitiveCount; ++primitiveIndex)
-            {
-                int candidateIndex = FindRegistration(command, primitiveIndex);
-                if (candidateIndex >= 0)
-                    _identityHandleScratch[primitiveIndex] =
-                        _registrations[candidateIndex].Draw;
-            }
-
-            command.PublishCanonicalDrawIdentities(
-                Database,
-                publication,
-                _identityHandleScratch.AsSpan(0, primitiveCount));
-        }
-    }
+        => PublishPreparedSourceDrawIdentities(in publication);
 
     private void CaptureAndClearDirtyOwnerRanges()
     {
@@ -777,6 +933,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             World = world,
             StructuralSignature = plan.StructuralSignature,
             ContentSignature = plan.ContentSignature,
+            MaterialSource = plan.MaterialSource,
+            MaterialBindingLayoutVersion = plan.MaterialBindingLayoutVersion,
+            MaterialBindingValueVersion = plan.MaterialBindingValueVersion,
+            MaterialBindingResourceVersion = plan.MaterialBindingResourceVersion,
+            MaterialShaderStateRevision = plan.MaterialShaderStateRevision,
+            MaterialUberStateRevision = plan.MaterialUberStateRevision,
             TemporalMesh = plan.Mesh,
             TemporalGeometryRevision = plan.MeshGeometryRevision,
             TemporalVertexCount = plan.MeshVertexCount,
@@ -799,9 +961,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             _registrations[index] = default;
             if (index == _registrationCount - 1)
                 --_registrationCount;
+            InvalidateRegistrationIdentityCache();
             failureReason = $"Registration lookup rejected index {index}; registrations={_registrationCount}/{_registrations.Length}, slots={_registrationLookupIndices.Length}, generation={_registrationLookupGeneration}";
             return -1;
         }
+        MarkRegistrationMembershipChanged();
         ++_topologyDeltaCount;
         AdvanceNonZero(ref _topologyGeneration);
         AdvanceNonZero(ref _contentGeneration);
@@ -879,6 +1043,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         registration.TemporalIndexCount = plan.MeshIndexCount;
         registration.TemporalPrimitiveTopology = plan.MeshPrimitiveTopology;
         registration.TemporalSkinned = plan.MeshIsSkinned;
+        registration.MaterialSource = plan.MaterialSource;
+        registration.MaterialBindingLayoutVersion = plan.MaterialBindingLayoutVersion;
+        registration.MaterialBindingValueVersion = plan.MaterialBindingValueVersion;
+        registration.MaterialBindingResourceVersion = plan.MaterialBindingResourceVersion;
+        registration.MaterialShaderStateRevision = plan.MaterialShaderStateRevision;
+        registration.MaterialUberStateRevision = plan.MaterialUberStateRevision;
         if (content == registration.ContentSignature)
             return;
 
@@ -944,6 +1114,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
             registration.Active = false;
             registration.TombstoneSequence = _sequence;
+            MarkRegistrationMembershipChanged();
             ++_topologyDeltaCount;
             AdvanceNonZero(ref _topologyGeneration);
             AdvanceNonZero(ref _contentGeneration);
@@ -970,23 +1141,31 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 registration.ContentSignature));
     }
 
-    private bool EnsureBoundaryCapacity(uint commandCount, uint globalResourceCount)
+    /// <summary>
+    /// Grows the boundary-sized storage. <paramref name="grew"/> is true when
+    /// the required boundary changed or any owner grew; the retained plan
+    /// lookups can then be stale, so the caller must run the whole-scene plan.
+    /// </summary>
+    private bool EnsureBoundaryCapacity(uint commandCount, uint globalResourceCount, out bool grew)
     {
-        uint required = Math.Max(
-            InitialCapacity,
-            NextPowerOfTwo(Math.Max(
-                Math.Max(commandCount + 1u, globalResourceCount + 1u),
-                checked((uint)_registrationCount + 1u))));
+        uint required = ComputeBoundaryRequirement(commandCount, globalResourceCount);
+        // Every boundary-sized scratch array grows only from this value, so an
+        // unchanged value leaves the retained plan lookups intact.
+        grew = required != _lastBoundaryRequired;
+        _lastBoundaryRequired = required;
+        _lastBoundaryGlobalResourceCount = globalResourceCount;
         if (required > (uint)_commandDrawHandles.Length)
         {
             Array.Resize(ref _commandDrawHandles, checked((int)required));
             Array.Resize(ref _legacyMappings, checked((int)required));
-            Array.Resize(ref _identityHandleScratch, checked((int)required));
+            Array.Resize(ref _orderedRegistrationIdentities, checked((int)required));
+            grew = true;
         }
         if (required > (uint)_registrations.Length)
         {
             Array.Resize(ref _registrations, checked((int)required));
             Array.Resize(ref _preflightSeenStamps, checked((int)required));
+            grew = true;
         }
 
         uint lookupCapacity = NextPowerOfTwo(checked(required * 2u));
@@ -996,14 +1175,19 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             Array.Resize(ref _registrationLookupStamps, checked((int)lookupCapacity));
             Array.Clear(_registrationLookupStamps);
             _registrationLookupGeneration = 0u;
+            InvalidateRegistrationIdentityCache();
+            grew = true;
         }
 
         AdvancedSharedGpuSceneCapacityProfile profile = CreateCapacityProfile(required);
         // Independent scene or material growth can leave resource tables below
         // this boundary profile. Grow all required database owners before their registries.
-        if (RequiresBoundaryGrowth(Database.Capacities, profile) &&
-            !Database.TryGrowAtFrameBoundary(profile))
-            return false;
+        if (RequiresBoundaryGrowth(Database.Capacities, profile))
+        {
+            grew = true;
+            if (!Database.TryGrowAtFrameBoundary(profile))
+                return false;
+        }
 
         _resourcePublisher.GrowRegistryAtFrameBoundary(
             profile.TextureRecords,
@@ -1072,6 +1256,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private void RebuildRegistrationLookup()
     {
+        _registrationLookupNeedsRebuild = true;
         ++_registrationLookupGeneration;
         if (_registrationLookupGeneration == 0u)
         {
@@ -1082,6 +1267,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         for (int index = 0; index < _registrationCount; ++index)
             if (_registrations[index].Active && !TryInsertRegistrationLookup(index))
                 throw new InvalidOperationException("The fixed resident-registration lookup table is undersized.");
+        _registrationLookupNeedsRebuild = false;
+        ++_lastRegistrationLookupRebuildCount;
     }
 
     private bool TryInsertRegistrationLookup(int registrationIndex)
@@ -1136,9 +1323,25 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         out XRMeshRenderer? capturedRenderer,
         out XRMesh? mesh,
         out XRMaterial? material,
+        out RenderingParameters? renderOptions,
         out int sourcePrimitiveCount)
     {
-        AdvancedMeshRenderSnapshot snapshot = source is RenderCommandMesh3D mesh3D
+        AdvancedMeshRenderSnapshot snapshot = CaptureSourceSnapshot(source);
+        world = snapshot.WorldMatrixIsModelMatrix
+            ? snapshot.CurrentWorld
+            : Matrix4x4.Identity;
+        previousWorld = snapshot.WorldMatrixIsModelMatrix
+            ? snapshot.PreviousWorld
+            : Matrix4x4.Identity;
+        bounds = ReadCullBounds(scene, in command);
+        capturedRenderer = snapshot.Renderer;
+        sourcePrimitiveCount = Math.Max(1, snapshot.Renderer?.Submeshes.Count ?? 0);
+        ResolveSourcePrimitive(in snapshot, primitiveIndex, out mesh, out material, out renderOptions);
+    }
+
+    /// <summary>Captures the render-buffer state of one source command.</summary>
+    private static AdvancedMeshRenderSnapshot CaptureSourceSnapshot(IRenderCommandMesh source)
+        => source is RenderCommandMesh3D mesh3D
             ? mesh3D.CaptureAdvancedPreparationSnapshot()
             : new AdvancedMeshRenderSnapshot(
                 source.Mesh,
@@ -1150,17 +1353,15 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 source.ForceCpuRendering,
                 source.MaterialOverride,
                 source.RenderOptionsOverride);
-        world = snapshot.WorldMatrixIsModelMatrix
-            ? snapshot.CurrentWorld
-            : Matrix4x4.Identity;
-        previousWorld = snapshot.WorldMatrixIsModelMatrix
-            ? snapshot.PreviousWorld
-            : Matrix4x4.Identity;
-        bounds = command.BoundsID < scene.CullBoundsBuffer.ElementCount
-            ? scene.CullBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(command.BoundsID)
-            : default;
-        capturedRenderer = snapshot.Renderer;
-        sourcePrimitiveCount = Math.Max(1, snapshot.Renderer?.Submeshes.Count ?? 0);
+
+    /// <summary>Resolves the mesh, effective material, and raster options of one source primitive.</summary>
+    private static void ResolveSourcePrimitive(
+        in AdvancedMeshRenderSnapshot snapshot,
+        int primitiveIndex,
+        out XRMesh? mesh,
+        out XRMaterial? material,
+        out RenderingParameters? renderOptions)
+    {
         if (snapshot.Renderer is not { } renderer ||
             !renderer.TryGetMesh(primitiveIndex, out mesh, out material))
         {
@@ -1168,7 +1369,14 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             material = null;
         }
         material = snapshot.MaterialOverride ?? material;
+        renderOptions = snapshot.RenderOptionsOverride ?? material?.RenderOptions;
     }
+
+    /// <summary>Reads the published CPU cull bounds row of one command.</summary>
+    private static BoundsGpu ReadCullBounds(GPUScene scene, in DrawMetadata command)
+        => command.BoundsID < scene.CullBoundsBuffer.ElementCount
+            ? scene.CullBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(command.BoundsID)
+            : default;
 
     private bool CanAddRegistration(AdvancedGpuSceneDatabase tables)
         => tables.Transforms.CanApply(2, 0, 0) &&
@@ -1290,9 +1498,17 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             BoundsSphere = bounds.BoundingSphere,
             BoundsMin = bounds.AabbMin,
             BoundsMax = bounds.AabbMax,
-            VisibilityFlags = EAdvancedInstanceVisibilityFlags.Enabled,
+            VisibilityFlags =
+                ((command.Flags & (uint)GPUIndirectRenderFlags.PrimaryDisabled) == 0u
+                    ? EAdvancedInstanceVisibilityFlags.Enabled : EAdvancedInstanceVisibilityFlags.None) |
+                ((command.Flags & (uint)GPUIndirectRenderFlags.CastShadow) != 0u
+                    ? EAdvancedInstanceVisibilityFlags.CastsShadows : EAdvancedInstanceVisibilityFlags.None) |
+                ((command.Flags & (uint)GPUIndirectRenderFlags.ReceiveShadows) != 0u
+                    ? EAdvancedInstanceVisibilityFlags.ReceivesShadows : EAdvancedInstanceVisibilityFlags.None),
             LayerMask = command.LayerMask,
             RenderPassMask = command.RenderPassMask,
+            Reserved0 = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked
+                ? command.RenderPass : 0u,
         };
 
     private static AdvancedDeformationRecord CreateDeformation(
@@ -1360,14 +1576,19 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private static AdvancedRenderStateRecord CreateRenderState(
         XRMesh? mesh,
+        RenderingParameters? renderOptions,
         in DrawMetadata command)
         => new()
         {
             StateClass = command.StateClassID,
             PrimitiveTopology = checked((uint)(mesh?.Type ?? EPrimitiveType.Triangles)),
             CoverageMode = (command.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0u ? 1u : 0u,
-            CullMode = (command.Flags & (uint)GPUIndirectRenderFlags.DoubleSided) != 0u ? 0u : 1u,
-            Flags = StructuralDrawFlags(command.Flags),
+            CullMode = checked((uint)(renderOptions?.CullMode ?? ECullMode.Back)),
+            // Existing GPU draw flags occupy the low 24 bits. Native admission
+            // retains the actual command override's unsupported raster features.
+            // StructuralDrawFlags removes PrimaryDisabled (bit 24), so that draw
+            // flag cannot alias a raster-state flag in the high byte.
+            Flags = StructuralDrawFlags(command.Flags) | (uint)WebGpuAdvancedRasterStateContract.Capture(renderOptions),
         };
 
     private static AdvancedEditorIdentityRecord CreateEditorIdentity(
@@ -1392,6 +1613,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private static uint StructuralDrawFlags(uint flags)
         => flags & ~((uint)GPUIndirectRenderFlags.EditorHighlightMask |
+            (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
             (uint)GPUIndirectRenderFlags.ReceiveShadows);
 
@@ -1421,23 +1643,53 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         return hash;
     }
 
+    private bool TryCaptureGpuBoundsSource(XRMeshRenderer? renderer,
+        out PhysicsChainGpuBoundsSource? boundsSource)
+    {
+        boundsSource = null;
+        if (renderer is null || !renderer.HasCompleteGpuDrivenBoneCoverage)
+            return true;
+        GPUPhysicsChainDispatcher dispatcher = GPUPhysicsChainDispatcher.Instance;
+        if (!_planBoundsEpochCaptured)
+        {
+            // Read the epoch before the first capture. A later change to the
+            // committed bounds sources advances it, so the unchanged-row gate fails.
+            _planBoundsEpoch = dispatcher.CommittedSpatialEpoch;
+            _planBoundsEpochCaptured = true;
+        }
+        if (!dispatcher.TryCaptureGpuBoundsSource(renderer, out PhysicsChainGpuBoundsSource source))
+            return false;
+        boundsSource = source;
+        return true;
+    }
+
     private static ulong ComputeContentSignature(
         in DrawMetadata command,
         in BoundsGpu bounds,
         in Matrix4x4 world,
         in Matrix4x4 previousWorld,
-        XRMaterial? material)
+        XRMaterial? material,
+        bool gpuOwnedBounds)
     {
         ulong hash = Mix(command.TransformID, command.InstanceCount);
         hash = Mix(hash, command.Flags & ((uint)GPUIndirectRenderFlags.EditorHighlightMask |
+            (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
             (uint)GPUIndirectRenderFlags.ReceiveShadows));
         hash = Mix(hash, command.LayerMask);
-        hash = Mix(hash, bounds.BoundsVersion);
+        hash = Mix(hash, gpuOwnedBounds ? 1u : 0u);
+        if (!gpuOwnedBounds)
+            hash = Mix(hash, bounds.BoundsVersion);
         hash = Mix(hash, material?.BindingValueVersion ?? 0u);
         hash = Mix(hash, material?.BindingResourceVersion ?? 0u);
-        hash = MixMatrix(hash, in world);
-        hash = MixMatrix(hash, in previousWorld);
+        // A covered draw with identity transforms gets its motion from the
+        // current physics output page. Nonidentity transforms remain content.
+        if (!gpuOwnedBounds || world != Matrix4x4.Identity ||
+            previousWorld != Matrix4x4.Identity)
+        {
+            hash = MixMatrix(hash, in world);
+            hash = MixMatrix(hash, in previousWorld);
+        }
         return hash;
     }
 
@@ -1485,6 +1737,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     MaterialBindingLayouts.ProjectiveMirror.Textures.Count))));
         uint materialConstantWords = checked(capacity * maximumConstantWords);
         uint materialTextureBindings = checked(capacity * maximumTextureBindings);
+        uint materialResourceReferences = checked(capacity * (maximumTextureBindings + AdvancedEngineSurfaceRecord.RoleCount));
 
         return new(
             new AdvancedGpuSceneCapacityProfile(
@@ -1509,8 +1762,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             materialLayoutMemberCapacity,
             materialConstantWords,
             materialTextureBindings,
-            materialTextureBindings,
-            materialTextureBindings,
+            materialResourceReferences,
+            materialResourceReferences,
             capacity,
             capacity,
             capacity,
@@ -1557,6 +1810,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         public Matrix4x4 World;
         public ulong StructuralSignature;
         public ulong ContentSignature;
+        public XRMaterial? MaterialSource;
+        public ulong MaterialBindingLayoutVersion;
+        public ulong MaterialBindingValueVersion;
+        public ulong MaterialBindingResourceVersion;
+        public long MaterialShaderStateRevision;
+        public long MaterialUberStateRevision;
+        public AdvancedCommittedMaterialPlan CommittedMaterialPlan;
         public ulong LastSeenSequence;
         public ulong LastSeenFrameId;
         public ulong TombstoneSequence;

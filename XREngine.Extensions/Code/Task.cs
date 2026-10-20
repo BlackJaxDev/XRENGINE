@@ -12,12 +12,22 @@ namespace XREngine.Extensions
         /// Runs an async method synchronously.
         /// </summary>
         public static TResult RunSync<TResult>(this Func<Task<TResult>> func)
-            => Factory.StartNew(func).Unwrap().GetAwaiter().GetResult();
+        {
+            ArgumentNullException.ThrowIfNull(func);
+            if (OperatingSystem.IsBrowser())
+                throw new NotSupportedException("Runtime.AsyncOperationRequired: browser callbacks cannot synchronously wait for asynchronous work.");
+            return Factory.StartNew(func).Unwrap().GetAwaiter().GetResult();
+        }
         /// <summary>
         /// Runs an async method synchronously.
         /// </summary>
-        public static void RunSync(this Func<Task> func) 
-            => Factory.StartNew(func).Unwrap().GetAwaiter().GetResult();
+        public static void RunSync(this Func<Task> func)
+        {
+            ArgumentNullException.ThrowIfNull(func);
+            if (OperatingSystem.IsBrowser())
+                throw new NotSupportedException("Runtime.AsyncOperationRequired: browser callbacks cannot synchronously wait for asynchronous work.");
+            Factory.StartNew(func).Unwrap().GetAwaiter().GetResult();
+        }
         
         public static async Task<TBase> Generalized<TBase, TDerived>(this Task<TDerived> task) where TDerived : TBase => await task;
     }

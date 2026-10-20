@@ -15,20 +15,32 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(GameMetadataPath))
                 return;
 
+            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
+
             string assetsRoot = Path.GetFullPath(GameAssetsPath);
             string metadataRoot = Path.GetFullPath(GameMetadataPath);
-            if (!Directory.Exists(assetsRoot))
+            if (!files.DirectoryExists(assetsRoot))
                 return;
 
-            Directory.CreateDirectory(metadataRoot);
+            files.CreateDirectory(metadataRoot);
 
-            PruneStaleMetadataEntries(assetsRoot, metadataRoot);
+            PruneStaleMetadataEntries(assetsRoot, metadataRoot, fileSystem, files);
 
-            foreach (string directory in AssetFileSystemServices.Required.EnumerateDirectories(assetsRoot, "*", SearchOption.AllDirectories))
-                EnsureMetadataForAssetPath(directory, true);
+            foreach (string directory in fileSystem.EnumerateDirectories(assetsRoot, "*", SearchOption.AllDirectories))
+                EnsureMetadataForAssetPath(directory, true, fileSystem, files);
 
-            foreach (string file in AssetFileSystemServices.Required.EnumerateFiles(assetsRoot, "*", SearchOption.AllDirectories))
-                EnsureMetadataForAssetPath(file, false);
+            foreach (string file in fileSystem.EnumerateFiles(assetsRoot, "*", SearchOption.AllDirectories))
+                EnsureMetadataForAssetPath(file, false, fileSystem, files);
+        }
+
+        private (IAssetFileSystem FileSystem, IAssetMetadataFileBackend Files) CaptureMetadataFileBackend()
+        {
+            EnsureHostFileAssetAccess();
+            IAssetFileSystem fileSystem = AssetFileSystemServices.Required;
+            if (fileSystem is not IAssetMetadataFileBackend files)
+                throw new NotSupportedException("AssetSource.MetadataFileUnavailable: the installed asset file system does not provide metadata file operations.");
+
+            return (fileSystem, files);
         }
 
         /// <summary>
@@ -37,19 +49,19 @@ namespace XREngine
         /// </summary>
         /// <param name="assetsRoot">The root directory of the assets.</param>
         /// <param name="metadataRoot">The root directory of the metadata.</param>
-        private void PruneStaleMetadataEntries(string assetsRoot, string metadataRoot)
+        private void PruneStaleMetadataEntries(string assetsRoot, string metadataRoot, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
         {
             lock (_metadataLock)
             {
-                foreach (string metaFile in AssetFileSystemServices.Required.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories).ToArray())
+                foreach (string metaFile in fileSystem.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories).ToArray())
                 {
-                    if (!ShouldDeleteMetadataFile(metaFile, assetsRoot))
+                    if (!ShouldDeleteMetadataFile(metaFile, assetsRoot, files))
                         continue;
 
-                    if (!TryDeleteMetadataFile(metaFile))
+                    if (!TryDeleteMetadataFile(metaFile, files))
                         continue;
 
-                    TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaFile));
+                    TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaFile), fileSystem, files);
                 }
             }
         }
@@ -63,7 +75,8 @@ namespace XREngine
             if (!IsPathUnderGameAssets(path))
                 return;
 
-            EnsureMetadataForAssetPath(path, SafeIsDirectory(path));
+            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
+            EnsureMetadataForAssetPath(path, SafeIsDirectory(path, files), fileSystem, files);
         }
 
         /// <summary>
@@ -75,7 +88,8 @@ namespace XREngine
             if (!IsPathUnderGameAssets(path))
                 return;
 
-            EnsureMetadataForAssetPath(path, SafeIsDirectory(path));
+            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
+            EnsureMetadataForAssetPath(path, SafeIsDirectory(path, files), fileSystem, files);
         }
 
         /// <summary>
@@ -86,7 +100,8 @@ namespace XREngine
         /// <param name="path">The path of the asset.</param>
         private void HandleMetadataDeleted(string path)
         {
-            RemoveMetadataForPath(path, SafeIsDirectory(path));
+            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
+            RemoveMetadataForPath(path, fileSystem, files);
         }
 
         /// <summary>
@@ -97,8 +112,9 @@ namespace XREngine
         /// <param name="newPath">The new path of the asset.</param>
         private void HandleMetadataRenamed(string oldPath, string newPath)
         {
-            bool isDirectory = SafeIsDirectory(newPath) || SafeIsDirectory(oldPath);
-            MoveMetadataForPath(oldPath, newPath, isDirectory);
+            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
+            bool isDirectory = SafeIsDirectory(newPath, files) || SafeIsDirectory(oldPath, files);
+            MoveMetadataForPath(oldPath, newPath, isDirectory, fileSystem, files);
         }
 
         /// <summary>
@@ -133,18 +149,22 @@ namespace XREngine
         /// </summary>
         /// <param name="path">The path to check.</param>
         /// <returns>True if the path is a directory; otherwise, false.</returns>
-        private static bool SafeIsDirectory(string path)
+        private static bool SafeIsDirectory(string path, IAssetMetadataFileBackend files)
         {
             try
             {
-                if (Directory.Exists(path))
+                if (files.DirectoryExists(path))
                     return true;
-                if (File.Exists(path))
+                if (files.FileExists(path))
                     return false;
 
                 // For deleted/renamed watcher events, the path may no longer exist. Avoid File.GetAttributes,
                 // which throws for missing paths and can spam first-chance exceptions under a debugger.
                 return !Path.HasExtension(path);
+            }
+            catch (NotSupportedException)
+            {
+                throw;
             }
             catch
             {
@@ -164,7 +184,7 @@ namespace XREngine
             metadataPath = string.Empty;
             relativePath = string.Empty;
 
-            if (!IsPathUnderGameAssets(assetPath))
+            if (string.IsNullOrWhiteSpace(GameMetadataPath) || !IsPathUnderGameAssets(assetPath))
                 return false;
 
             string assetsRoot = Path.GetFullPath(GameAssetsPath);
@@ -190,16 +210,33 @@ namespace XREngine
             if (!TryGetMetadataPath(assetPath, out string metaPath, out string relativePath))
                 return;
 
+            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
+            EnsureMetadataForAssetPath(assetPath, isDirectory, metaPath, relativePath, fileSystem, files);
+        }
+
+        private void EnsureMetadataForAssetPath(string assetPath, bool isDirectory, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+        {
+            if (!TryGetMetadataPath(assetPath, out string metaPath, out string relativePath))
+                return;
+
+            EnsureMetadataForAssetPath(assetPath, isDirectory, metaPath, relativePath, fileSystem, files);
+        }
+
+        private void EnsureMetadataForAssetPath(
+            string assetPath, bool isDirectory, string metaPath, string relativePath,
+            IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+        {
+            EnsureHostFileAssetAccess();
             lock (_metadataLock)
             {
-                if (!AssetPathExists(assetPath, isDirectory))
+                if (!AssetPathExists(assetPath, isDirectory, files))
                     return;
 
                 string? directory = Path.GetDirectoryName(metaPath);
                 if (!string.IsNullOrWhiteSpace(directory))
-                    Directory.CreateDirectory(directory);
+                    files.CreateDirectory(directory);
 
-                AssetMetadata meta = TryReadMetadata(metaPath) ?? new AssetMetadata();
+                AssetMetadata meta = TryReadMetadata(metaPath, files) ?? new AssetMetadata();
                 meta.Name = Path.GetFileName(assetPath);
                 meta.RelativePath = relativePath.Replace(Path.DirectorySeparatorChar, '/');
                 meta.IsDirectory = isDirectory;
@@ -217,7 +254,7 @@ namespace XREngine
 
                     if (isAssetFile)
                     {
-                        Guid extracted = TryExtractGuidFromAsset(assetPath);
+                        Guid extracted = files.TryExtractAssetGuid(assetPath);
                         if (extracted != Guid.Empty)
                             meta.Guid = extracted;
                         else if (meta.Guid == Guid.Empty)
@@ -232,7 +269,7 @@ namespace XREngine
 
                         meta.Import ??= new AssetImportMetadata();
                         meta.Import.SourceExtension = ext.StartsWith(".", StringComparison.Ordinal) ? ext[1..] : ext;
-                        meta.Import.SourceLastWriteTimeUtc = SafeGetLastWriteTimeUtc(assetPath);
+                        meta.Import.SourceLastWriteTimeUtc = SafeGetLastWriteTimeUtc(assetPath, files);
                         meta.Import.ImporterType = ResolveImporterNameForExtension(ext);
                     }
                 }
@@ -240,40 +277,44 @@ namespace XREngine
                 meta.LastSyncedUtc = DateTime.UtcNow;
                 try
                 {
-                    WriteMetadataFile(metaPath, meta);
+                    WriteMetadataFile(metaPath, meta, files);
                 }
-                catch (DirectoryNotFoundException) when (!AssetPathExists(assetPath, isDirectory))
+                catch (DirectoryNotFoundException) when (!AssetPathExists(assetPath, isDirectory, files))
                 {
                     // A delayed AssetChangeMonitor create/change callback can race the
                     // corresponding delete callback. The delete owns final metadata state.
                 }
-                catch (IOException) when (!AssetPathExists(assetPath, isDirectory))
+                catch (IOException) when (!AssetPathExists(assetPath, isDirectory, files))
                 {
                     // The asset disappeared while the metadata file was being published.
                 }
             }
         }
 
-        private static bool AssetPathExists(string assetPath, bool isDirectory)
-            => isDirectory ? Directory.Exists(assetPath) : File.Exists(assetPath);
+        private static bool AssetPathExists(string assetPath, bool isDirectory, IAssetMetadataFileBackend files)
+            => isDirectory ? files.DirectoryExists(assetPath) : files.FileExists(assetPath);
 
         /// <summary>
         /// Deletes the metadata file for the given asset path if it exists.
         /// If the asset is a directory, also deletes metadata for all nested assets.
         /// </summary>
         /// <param name="assetPath">The path of the asset.</param>
-        /// <param name="isDirectory">Indicates whether the asset is a directory.</param>
-        private void RemoveMetadataForPath(string assetPath, bool isDirectory)
+        private void RemoveMetadataForPath(string assetPath, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
         {
             if (!TryGetMetadataPath(assetPath, out string metaPath, out _))
                 return;
 
+            RemoveMetadataFileAtPath(metaPath, fileSystem, files);
+        }
+
+        private void RemoveMetadataFileAtPath(string metaPath, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+        {
             lock (_metadataLock)
             {
-                if (!TryDeleteMetadataFile(metaPath))
+                if (!TryDeleteMetadataFile(metaPath, files))
                     return;
 
-                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaPath));
+                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaPath), fileSystem, files);
             }
         }
 
@@ -281,11 +322,11 @@ namespace XREngine
         /// Deletes a metadata file without allowing transient Windows file locks to escape
         /// a <see cref="AssetChangeMonitor"/> callback and terminate the process.
         /// </summary>
-        private static bool TryDeleteMetadataFile(string metaPath)
+        private static bool TryDeleteMetadataFile(string metaPath, IAssetMetadataFileBackend files)
         {
             try
             {
-                File.Delete(metaPath);
+                files.DeleteFile(metaPath);
                 return true;
             }
             catch (IOException)
@@ -305,17 +346,19 @@ namespace XREngine
         /// <param name="oldPath">The current path of the asset.</param>
         /// <param name="newPath">The new path of the asset.</param>
         /// <param name="isDirectory">Indicates whether the asset is a directory.</param>
-        private void MoveMetadataForPath(string oldPath, string newPath, bool isDirectory)
+        private void MoveMetadataForPath(
+            string oldPath, string newPath, bool isDirectory,
+            IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
         {
             if (!TryGetMetadataPath(oldPath, out string oldMeta, out _))
             {
-                EnsureMetadataForAssetPath(newPath, isDirectory);
+                EnsureMetadataForAssetPath(newPath, isDirectory, fileSystem, files);
                 return;
             }
 
             if (!TryGetMetadataPath(newPath, out string newMeta, out _))
             {
-                RemoveMetadataForPath(oldPath, isDirectory);
+                RemoveMetadataForPath(oldPath, fileSystem, files);
                 return;
             }
 
@@ -323,25 +366,25 @@ namespace XREngine
             {
                 string? newDir = Path.GetDirectoryName(newMeta);
                 if (!string.IsNullOrWhiteSpace(newDir))
-                    Directory.CreateDirectory(newDir);
+                    files.CreateDirectory(newDir);
 
-                if (File.Exists(oldMeta))
+                if (files.FileExists(oldMeta))
                 {
                     try
                     {
-                        File.Move(oldMeta, newMeta, true);
+                        files.MoveFile(oldMeta, newMeta, true);
                     }
                     catch (System.IO.IOException)
                     {
-                        File.Copy(oldMeta, newMeta, true);
-                        TryDeleteMetadataFile(oldMeta);
+                        files.CopyFile(oldMeta, newMeta, true);
+                        TryDeleteMetadataFile(oldMeta, files);
                     }
                 }
 
-                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(oldMeta));
+                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(oldMeta), fileSystem, files);
             }
 
-            EnsureMetadataForAssetPath(newPath, isDirectory);
+            EnsureMetadataForAssetPath(newPath, isDirectory, fileSystem, files);
         }
 
         /// <summary>
@@ -350,14 +393,27 @@ namespace XREngine
         /// </summary>
         /// <param name="metaPath">The path of the metadata file.</param>
         /// <returns>The deserialized metadata if it exists and is valid; otherwise, null.</returns>
-        private static AssetMetadata? TryReadMetadata(string metaPath)
+        private static AssetMetadata? TryReadMetadata(string metaPath, IAssetMetadataFileBackend files)
         {
-            if (!File.Exists(metaPath))
+            if (!files.FileExists(metaPath))
                 return null;
+
+            string text;
+            try
+            {
+                text = files.ReadAllText(metaPath);
+            }
+            catch (NotSupportedException)
+            {
+                throw;
+            }
+            catch
+            {
+                return null;
+            }
 
             try
             {
-                string text = File.ReadAllText(metaPath);
                 return Deserializer.Deserialize<AssetMetadata>(text);
             }
             catch
@@ -371,14 +427,14 @@ namespace XREngine
         /// </summary>
         /// <param name="metaPath">The path of the metadata file.</param>
         /// <param name="meta">The metadata to write.</param>
-        private static void WriteMetadataFile(string metaPath, AssetMetadata meta)
+        private static void WriteMetadataFile(string metaPath, AssetMetadata meta, IAssetMetadataFileBackend files)
         {
             string? directory = Path.GetDirectoryName(metaPath);
             if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
+                files.CreateDirectory(directory);
 
             string yaml = Serializer.Serialize(meta);
-            File.WriteAllText(metaPath, yaml);
+            files.WriteAllText(metaPath, yaml);
         }
 
         /// <summary>
@@ -389,17 +445,17 @@ namespace XREngine
         /// <param name="metaPath">The path of the metadata file.</param>
         /// <param name="assetsRoot">The root directory of the assets.</param>
         /// <returns>True if the metadata file should be deleted; otherwise, false.</returns>
-        private static bool ShouldDeleteMetadataFile(string metaPath, string assetsRoot)
+        private static bool ShouldDeleteMetadataFile(string metaPath, string assetsRoot, IAssetMetadataFileBackend files)
         {
             if (IsTransientMetadataPath(metaPath))
                 return true;
 
-            AssetMetadata? meta = TryReadMetadata(metaPath);
+            AssetMetadata? meta = TryReadMetadata(metaPath, files);
             if (meta is null || string.IsNullOrWhiteSpace(meta.RelativePath))
                 return false;
 
             string candidate = Path.Combine(assetsRoot, meta.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-            return !File.Exists(candidate) && !Directory.Exists(candidate);
+            return !files.FileExists(candidate) && !files.DirectoryExists(candidate);
         }
 
         /// <summary>
@@ -411,73 +467,16 @@ namespace XREngine
             => Path.GetFileName(metaPath).EndsWith(".tmp.meta", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
-        /// Attempts to extract a GUID from the given asset file if it is an .asset file, returning Guid.Empty if the GUID cannot be extracted.
-        /// </summary>
-        /// <param name="assetPath">The path of the asset file.</param>
-        /// <returns>The extracted GUID if successful; otherwise, Guid.Empty.</returns>
-        private static Guid TryExtractGuidFromAsset(string assetPath)
-        {
-            if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
-                return Guid.Empty;
-
-            // Asset files can be transiently locked by the editor (thumbnail generation, importers, etc).
-            // Prefer shared reads to avoid throwing IO exceptions during normal operation.
-            const int maxAttempts = 3;
-            for (int attempt = 0; attempt < maxAttempts; attempt++)
-            {
-                try
-                {
-                    using var stream = new FileStream(
-                        assetPath,
-                        FileMode.Open,
-                        FileAccess.Read,
-                        FileShare.ReadWrite | FileShare.Delete);
-
-                    using var reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
-                    string? line;
-                    while ((line = reader.ReadLine()) is not null)
-                    {
-                        if (string.IsNullOrWhiteSpace(line) || char.IsWhiteSpace(line[0]))
-                            continue;
-
-                        string trimmed = line.Trim();
-                        if (!trimmed.StartsWith("ID:", StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        string guidText = trimmed[3..].Trim();
-                        if (Guid.TryParse(guidText, out Guid guid))
-                            return guid;
-                    }
-
-                    break;
-                }
-                catch (IOException)
-                {
-                    if (attempt == maxAttempts - 1)
-                        break;
-
-                    Thread.Sleep(15 * (attempt + 1));
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    break;
-                }
-            }
-
-            return Guid.Empty;
-        }
-
-        /// <summary>
         /// Safely gets the last write time of the specified file in UTC, returning null if the file does not exist or an error occurs.
         /// </summary>
         /// <param name="path">The path of the file.</param>
         /// <returns>The last write time in UTC if available; otherwise, null.</returns>
         /// <remarks>This method accounts for the possibility that the file may be transiently locked or deleted during asset import, and avoids throwing exceptions in those cases.</remarks>
-        private static DateTime? SafeGetLastWriteTimeUtc(string path)
+        private static DateTime? SafeGetLastWriteTimeUtc(string path, IAssetMetadataFileBackend files)
         {
             try
             {
-                DateTime timestamp = File.GetLastWriteTimeUtc(path);
+                DateTime timestamp = files.GetLastWriteTimeUtc(path);
                 return timestamp == DateTime.MinValue ? null : timestamp;
             }
             catch (System.IO.IOException)
@@ -511,7 +510,8 @@ namespace XREngine
         /// Attempts to prune empty metadata directories up the hierarchy starting from the specified directory, stopping when a non-empty directory is found or the GameMetadataPath root is reached.
         /// </summary>
         /// <param name="directory">The starting directory to attempt pruning.</param>
-        private void TryPruneEmptyMetadataDirectories(string? directory)
+        private void TryPruneEmptyMetadataDirectories(
+            string? directory, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
         {
             if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(GameMetadataPath))
                 return;
@@ -521,13 +521,13 @@ namespace XREngine
 
             while (current.StartsWith(root, StringComparison.OrdinalIgnoreCase))
             {
-                if (!Directory.Exists(current))
+                if (!files.DirectoryExists(current))
                     break;
 
                 bool hasEntries;
                 try
                 {
-                    using var enumerator = AssetFileSystemServices.Required.EnumerateFileSystemEntries(current).GetEnumerator();
+                    using var enumerator = fileSystem.EnumerateFileSystemEntries(current).GetEnumerator();
                     hasEntries = enumerator.MoveNext();
                 }
                 catch (DirectoryNotFoundException)
@@ -551,7 +551,7 @@ namespace XREngine
 
                 try
                 {
-                    Directory.Delete(current);
+                    files.DeleteDirectory(current);
                 }
                 catch (DirectoryNotFoundException)
                 {

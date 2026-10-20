@@ -9,7 +9,10 @@ internal static class VulkanRecordingFailurePolicy
     internal static bool IsTransientResourceRetirement(string failureReason)
         => failureReason.Contains(
             "attempted to record retired Vulkan resource",
-            StringComparison.Ordinal);
+            StringComparison.Ordinal) ||
+           failureReason.Contains(
+               "attempted to record retired resource",
+               StringComparison.Ordinal);
 
     internal static bool IsSwapchainResourceRetirement(string failureReason)
         => IsTransientResourceRetirement(failureReason) &&

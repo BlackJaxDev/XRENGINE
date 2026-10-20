@@ -238,6 +238,46 @@ void main()
             storeVisibilityState(candidateIndex, candidate.Draw, 0u);
             return;
         }
+        XRAdvancedVisibilityPayload payload =
+            XR_ADV_VisibilityPayloads.records[candidateIndex];
+        if (producer == PRODUCER_INDIRECT_INDEXED)
+        {
+            uint groupPlusOne = payload.instanceGroupIndexPlusOne;
+            uint groupCount = uint(XR_ADV_VisibilityInstanceGroups.records.length());
+            if (groupPlusOne == 0u || groupPlusOne > groupCount)
+            {
+                atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+                storeVisibilityState(candidateIndex, candidate.Draw, 0u);
+                return;
+            }
+            uint groupIndex = groupPlusOne - 1u;
+            XRAdvancedIndexedInstanceGroup group =
+                XR_ADV_VisibilityInstanceGroups.records[groupIndex];
+            uint countIndex = XR_ADV_VisibilityPush.viewIndex * groupCount + groupIndex;
+            uint first = XR_ADV_VisibilityPush.payloadBase + group.firstMember;
+            if (group.rangeIndex != range ||
+                countIndex >= uint(XR_ADV_VisibilityLateGroupCounts.records.length()) ||
+                first < XR_ADV_VisibilityPush.payloadBase ||
+                first > uint(XR_ADV_VisibilityLateMeshPayloads.records.length()) ||
+                group.memberCapacity >
+                    uint(XR_ADV_VisibilityLateMeshPayloads.records.length()) - first)
+            {
+                atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+                storeVisibilityState(candidateIndex, candidate.Draw, 0u);
+                return;
+            }
+            uint member = atomicAdd(XR_ADV_VisibilityLateGroupCounts.records[countIndex], 1u);
+            if (member >= group.memberCapacity)
+            {
+                atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+                storeVisibilityState(candidateIndex, candidate.Draw, 0u);
+                return;
+            }
+            XR_ADV_VisibilityLateMeshPayloads.records[first + member] = candidateIndex;
+            storeVisibilityState(candidateIndex, candidate.Draw,
+                FLAG_EARLY_VISIBLE | FLAG_LATE_VISIBLE);
+            return;
+        }
         uint capacity = producer == PRODUCER_INDIRECT_INDEXED
             ? XR_ADV_VisibilityPush.payloadCapacity
             : XR_ADV_VisibilityPush.payloadCapacity;
@@ -262,18 +302,7 @@ void main()
             return;
         }
         uint drawIndex = rangeBegin + rangeLocal;
-        XRAdvancedVisibilityPayload payload =
-            XR_ADV_VisibilityPayloads.records[candidateIndex];
-        if (producer == PRODUCER_INDIRECT_INDEXED)
-        {
-            uint argumentBase = drawIndex * 5u;
-            XR_ADV_VisibilityLateIndexedArguments.records[argumentBase] = payload.indexCount;
-            XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 1u] = max(payload.instanceCount, 1u);
-            XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 2u] = payload.firstIndex;
-            XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 3u] = payload.vertexOffset;
-            XR_ADV_VisibilityLateIndexedArguments.records[argumentBase + 4u] = candidateIndex;
-        }
-        else if (producer == PRODUCER_STATIC_MESHLET ||
+        if (producer == PRODUCER_STATIC_MESHLET ||
                  producer == PRODUCER_SKINNED_MESHLET)
         {
             if (payload.meshletCount == 0u)
@@ -306,20 +335,10 @@ void main()
 bool reserveLateOutput(out uint outputIndex)
 {
     uint capacity = XR_ADV_VisibilityPush.payloadCapacity;
-    uint observed = atomicAdd(XR_ADV_VisibilityCounters.lateDraws, 0u);
-    while (observed < capacity)
-    {
-        uint prior = atomicCompSwap(
-            XR_ADV_VisibilityCounters.lateDraws,
-            observed,
-            observed + 1u);
-        if (prior == observed)
-        {
-            outputIndex = observed;
-            return true;
-        }
-        observed = prior;
-    }
+    // Each bounded deferred entry reserves at most one output.
+    outputIndex = atomicAdd(XR_ADV_VisibilityCounters.lateDraws, 1u);
+    if (outputIndex < capacity)
+        return true;
     outputIndex = 0u;
     atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
     return false;

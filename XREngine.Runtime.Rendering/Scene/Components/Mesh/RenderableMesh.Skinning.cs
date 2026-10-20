@@ -510,18 +510,18 @@ namespace XREngine.Components.Scene.Mesh
 
         private void Bone_RenderMatrixChanged(TransformBase bone, Matrix4x4 renderMatrix)
         {
-            if (!IsSkinned)
+            if (!IsSkinned || UsesCommittedWorldBounds)
                 return;
 
             long t = RenderableMeshStageTelemetry.Begin();
             if (!UpdateRelativeBoneMatrix(bone))
             {
-                RenderableMeshStageTelemetry.End(11, t);
+                RenderableMeshStageTelemetry.End(RenderableMeshStage.BoneRenderMatrixChanged, t);
                 return;
             }
 
             MarkSkinnedDataDirty();
-            RenderableMeshStageTelemetry.End(11, t);
+            RenderableMeshStageTelemetry.End(RenderableMeshStage.BoneRenderMatrixChanged, t);
         }
 
         private void MarkSkinnedDataDirty()
@@ -732,6 +732,9 @@ namespace XREngine.Components.Scene.Mesh
         {
             if (!IsSkinned)
                 return false;
+
+            if (UsesCommittedWorldBounds)
+                return true;
 
             bool hasSkinning = (CurrentLODRenderer?.Mesh?.HasSkinning ?? false) &&
                 RuntimeEngine.Rendering.Settings.AllowSkinning;
@@ -1066,7 +1069,7 @@ namespace XREngine.Components.Scene.Mesh
             // The scene tree uses the aggregate as a broad proxy; final visibility for
             // skinned meshes is "any transformed bone box intersects the collection volume."
             RenderInfo.CullingIntersectionOverride = HasAnySkinnedLod()
-                ? SkinnedBoneCullingIntersectionOverride
+                && !UsesCommittedWorldBounds ? SkinnedBoneCullingIntersectionOverride
                 : null;
         }
 

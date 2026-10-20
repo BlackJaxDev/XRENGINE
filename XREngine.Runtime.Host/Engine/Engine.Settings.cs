@@ -1119,6 +1119,16 @@ namespace XREngine
             UntrackOverrideableSettings(_trackedEditorDebugOverrideableSettings, HandleEditorPreferencesOverridesChanged);
         }
 
+        private static int _editorPreferencesCompositionDepth;
+
+        /// <summary>
+        /// True while the effective editor preferences are being composed from the global values,
+        /// overrides, and session values. A property change in this time can carry a partial value;
+        /// <see cref="EditorPreferencesChanged"/> follows when the composition is complete.
+        /// </summary>
+        public static bool IsComposingEditorPreferences
+            => Volatile.Read(ref _editorPreferencesCompositionDepth) != 0;
+
         /// <summary>
         /// Recomputes effective editor preferences by applying overrides to global preferences.
         /// </summary>
@@ -1133,15 +1143,25 @@ namespace XREngine
                 IsProfilerOnlyEditorDebugProperty(normalizedPropertyName) &&
                 TryUpdateEffectiveEditorDebugProperty(normalizedPropertyName);
 
-            if (!appliedNarrowProfilerChange)
+            // The composition sets each effective preference in several steps (global value,
+            // override, session value). Property change handlers can see the partial values.
+            Interlocked.Increment(ref _editorPreferencesCompositionDepth);
+            try
             {
-                _editorPreferences.CopyFrom(_globalEditorPreferences);
-                _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
-            }
+                if (!appliedNarrowProfilerChange)
+                {
+                    _editorPreferences.CopyFrom(_globalEditorPreferences);
+                    _editorPreferences.ApplyOverrides(_editorPreferencesOverrides);
+                }
 
-            _sessionSettings.Apply(_editorPreferences);
-            _editorPreferences.MarkAsTransientProjection();
-            _editorPreferences.ClearDirty();
+                _sessionSettings.Apply(_editorPreferences);
+                _editorPreferences.MarkAsTransientProjection();
+                _editorPreferences.ClearDirty();
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _editorPreferencesCompositionDepth);
+            }
 
             if (_suppressSettingsCascades)
             {

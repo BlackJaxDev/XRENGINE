@@ -18,17 +18,27 @@ public partial class VisualScene3D
         IRuntimeCullingCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
         IVolume? collectionVolume = collectionVolumeOverride
             ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
+        bool allowGpuCollection = cullingCameraOverride is null && collectionVolumeOverride is null &&
+            cullWithFrustum && CanCollectCoveredSourcesOnGpu(commands, visibilityState);
         int commandsBefore = commands.GetUpdatingCommandCount();
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
-        if (!TryCollectMaskedMainFamily(
-                commands,
-                collectionVolume,
-                camera,
-                collectMirrors,
-                visibilityState,
-                out int visibleRenderables))
+        long maskedPathStart = CollectVisibleStageTimings.StartPath();
+        bool maskedCollected = TryCollectMaskedMainFamily(
+            commands,
+            collectionVolume,
+            camera,
+            collectMirrors,
+            visibilityState,
+            allowGpuCollection,
+            out int visibleRenderables);
+        // A failed attempt records its time with no rows. The fallback path then opens its own path.
+        CollectVisibleStageTimings.EndPath(
+            ECollectVisiblePath.MaskedFamily,
+            maskedPathStart,
+            maskedCollected ? visibleRenderables : 0);
+        if (!maskedCollected)
         {
-            CollectRenderedItems(commands, collectionVolume, camera, collectMirrors);
+            CollectRenderedItems(commands, collectionVolume, camera, collectMirrors, allowGpuCollection);
             return;
         }
 

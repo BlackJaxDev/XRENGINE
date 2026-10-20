@@ -80,16 +80,25 @@ public sealed partial class AdvancedGpuScenePublisher
                 in plan.Command,
                 in registration);
         }
+        // Record the frame also when no row has a registration, so that the
+        // next prepare expects the frame after this publication.
+        _lastStampedFrameId = frameId;
 
         _identityDeliveryIncomplete = true;
         try
         {
             PublishSourceDrawIdentities(in _currentPublication);
             _identityDeliveryIncomplete = false;
+            ClearPendingIdentityRecipients();
+            PromoteSourceGroups();
+            PromoteOrderedRegistrations();
         }
         catch (Exception exception)
         {
+            _committedMaterialPlanCacheValid = false;
             _identityDeliveryIncomplete = true;
+            RetainFailedIdentityRecipients();
+            InvalidateRegistrationIdentityCache();
             RejectPublication(exception.Message);
             throw;
         }
@@ -106,16 +115,24 @@ public sealed partial class AdvancedGpuScenePublisher
         return true;
     }
 
-    private bool HasPlannedPublicationMutation(
-        ulong frameId,
-        ReadOnlySpan<AdvancedManagedDeformationSourceRow> retainedSources)
-    {
-        if (_plannedLightMutationCount != 0 ||
+    /// <summary>
+    /// Returns true when the planned global resources or material releases
+    /// change a canonical resource owner. Any change requires a new publication.
+    /// </summary>
+    private bool HasPlannedResourceMutation()
+        => _plannedDecalMutationCount != 0 ||
+            _plannedLightMutationCount != 0 ||
             _plannedShadowPayloadUpdateCount != 0 ||
             _plannedAmbientMutation ||
             _plannedMaterialReleaseCount != 0 ||
             _resourceAcquireCount != 0 ||
-            _resourceReleaseCount != 0)
+            _resourceReleaseCount != 0;
+
+    private bool HasPlannedPublicationMutation(
+        ulong frameId,
+        ReadOnlySpan<AdvancedManagedDeformationSourceRow> retainedSources)
+    {
+        if (HasPlannedResourceMutation())
         {
             S13aPublicationTelemetry.PublicationResourceMutation();
             S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationResourceMutation,
@@ -172,7 +189,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 registration.LegacyCommandIndex != checked((uint)commandIndex) ||
                 retainedSourceIndex >= retainedSources.Length ||
                 !ReferenceEquals(retainedSources[retainedSourceIndex].Renderer, plan.Renderer) ||
-                !ReferenceEquals(retainedSources[retainedSourceIndex].Mesh, plan.Mesh))
+                !ReferenceEquals(retainedSources[retainedSourceIndex].Mesh, plan.Mesh) ||
+                retainedSources[retainedSourceIndex].GpuBoundsSource != plan.GpuBoundsSource)
             {
                 S13aPublicationTelemetry.PublicationCommandMutation();
                 S13aPublicationTelemetry.Trace(S13aPublicationTraceEventKind.PublicationCommandMutation,

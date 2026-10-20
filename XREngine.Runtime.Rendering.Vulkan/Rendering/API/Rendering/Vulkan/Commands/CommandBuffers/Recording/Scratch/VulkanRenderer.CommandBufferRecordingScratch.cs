@@ -25,6 +25,8 @@ internal sealed partial class CommandBufferRecordingScratch
             public HashSet<ulong> AdmittedFrameDataPreparationSignatures { get; } =
                 new(MaxAdmittedFrameDataPreparationSignatures);
             public ulong PipelineDeferredManifestIdentity { get; set; }
+            public VulkanPipelineVariantManifest? CurrentPipelineVariantManifest { get; set; }
+            public long PipelineDeferredRetirementGeneration { get; set; } = -1;
             public int PipelinePrewarmRequirementCursor { get; set; }
             public bool PipelinePrewarmInitialScanComplete { get; set; }
             public HashSet<VkRenderQuery> PreparedInlineQueries { get; } = new(ReferenceEqualityComparer.Instance);

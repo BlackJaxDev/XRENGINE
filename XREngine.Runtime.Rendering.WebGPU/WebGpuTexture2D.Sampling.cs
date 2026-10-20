@@ -1,0 +1,121 @@
+using XREngine.Data.Rendering;
+
+namespace XREngine.Rendering.WebGPU;
+
+public sealed unsafe partial class WebGpuTexture2D
+{
+    private readonly record struct SampledViewKey(int BaseMip, int MipCount, bool DecodeSrgb);
+    private readonly record struct SamplerState(string AddressU, string AddressV,
+        string MinFilter, string MagFilter, string MipmapFilter, float MinLod, float MaxLod, int Anisotropy,
+        string? Compare);
+    private readonly Dictionary<SampledViewKey, int> _sampledViews = [];
+    private SamplerState _samplerState;
+    private int _samplerHandle;
+    private WebGpuResourceRequest? _samplerRequest;
+
+    internal int GetSampledView(bool depth, bool multisampled = false, bool decodeSrgb = false)
+    {
+        Generate();
+        bool depthFormat = WebGpuTextureFormat.IsDepth(Format);
+        if ((_samples > 1) != multisampled || depth != depthFormat)
+            throw Unsupported("Sample", "the shader binding requires a matching sample count and color or depth texture");
+        if (decodeSrgb && (Format != "rgba8unorm" || _samples != 1 || _storage))
+            throw Unsupported("Sample", "linear UI image filtering requires a non-storage single-sample RGBA8 texture with its retained sRGB view");
+        int baseMip = Data.LargestMipmapLevel;
+        int finalMip = Math.Min(_mipCount - 1, Data.SmallestAllowedMipmapLevel);
+        if (baseMip < 0 || baseMip > finalMip)
+            throw Unsupported("Sample", "the authored sampled mip range is empty or outside texture storage");
+        return GetSampledViewCore(baseMip, finalMip - baseMip + 1, decodeSrgb, depthFormat);
+    }
+
+    /// <summary>Resolves a publication-owned mip range without consulting mutable authored sampler settings.</summary>
+    internal int GetFrozenSampledView(uint samplingKey)
+    {
+        Generate();
+        AdvancedEngineSurfaceSamplingKey sampling = new(samplingKey);
+        if (!sampling.IsValid || sampling.StorageMipCount != _mipCount || _samples != 1 || WebGpuTextureFormat.IsDepth(Format))
+            throw Unsupported("Sample", "the frozen ordinary 2D mip view does not match current physical storage");
+        return GetSampledViewCore(sampling.BaseMip, sampling.ViewMipCount, false, false);
+    }
+
+    private int GetSampledViewCore(int baseMip, int mipCount, bool decodeSrgb, bool depthFormat)
+    {
+        SampledViewKey key = new(baseMip, mipCount, decodeSrgb);
+        if (_sampledViews.TryGetValue(key, out int view)) return view;
+        if (_sampledViews.Count >= 32)
+            throw Unsupported("Sample", "the texture exceeds 32 retained mip/color-space sampled views for its current storage generation");
+        view = Renderer.CreateEngineTextureView(this, new BrowserTextureViewDescription(_handle,
+            key.BaseMip, key.MipCount, depthFormat ? "depth-only" : "all", Data.Name ?? "Engine sampled view",
+            Format: decodeSrgb ? "rgba8unorm-srgb" : ""));
+        _sampledViews.Add(key, view);
+        return view;
+    }
+
+    internal int GetSampler(bool comparison)
+    {
+        Generate();
+        if (Data.LodBias != 0)
+            throw Unsupported("Sampler", "nonzero sampler LOD bias has no exact WebGPU encoding");
+        if (Data.EnableComparison != comparison || comparison && Data.CompareFunc != ETextureCompareFunc.LessOrEqual)
+            throw Unsupported("Sampler", "the shader binding and authored sampler must agree on ordinary or less-equal comparison sampling");
+        (string min, string mip, bool mipmapped) = Data.MinFilter switch
+        {
+            ETexMinFilter.Nearest => ("nearest", "nearest", false),
+            ETexMinFilter.Linear => ("linear", "nearest", false),
+            ETexMinFilter.NearestMipmapNearest => ("nearest", "nearest", true),
+            ETexMinFilter.LinearMipmapNearest => ("linear", "nearest", true),
+            ETexMinFilter.NearestMipmapLinear => ("nearest", "linear", true),
+            ETexMinFilter.LinearMipmapLinear => ("linear", "linear", true),
+            _ => throw Unsupported("Sampler", "the minification filter has no exact WebGPU encoding"),
+        };
+        string mag = Data.MagFilter switch
+        {
+            ETexMagFilter.Nearest => "nearest", ETexMagFilter.Linear => "linear",
+            _ => throw Unsupported("Sampler", "the magnification filter has no exact WebGPU encoding"),
+        };
+        float anisotropy = Data.MaxAnisotropy;
+        if (!float.IsFinite(anisotropy) || anisotropy < 1 || anisotropy > 16 || anisotropy != MathF.Truncate(anisotropy) ||
+            anisotropy > 1 && (min != "linear" || mag != "linear" || mip != "linear"))
+            throw Unsupported("Sampler", "anisotropy requires an integer from one to sixteen and linear minification, magnification, and mip filters");
+        float minLod = mipmapped ? Math.Max(Data.MinLOD, 0) : 0;
+        float maxLod = mipmapped ? Math.Min(Data.MaxLOD, 32) : 0;
+        if (minLod > maxLod || minLod > 32 || maxLod < 0 ||
+            !mipmapped && (Data.MinLOD > 0 || Data.MaxLOD < 0))
+            throw Unsupported("Sampler", "the authored LOD clamp range excludes available sampled levels");
+        SamplerState state = new(Address(Data.UWrap), Address(Data.VWrap), min, mag, mip, minLod, maxLod,
+            (int)anisotropy, comparison ? "less-equal" : null);
+        if (_samplerHandle != 0 && state == _samplerState)
+        {
+            if (_samplerRequest is { } obsolete) Renderer.CancelEngineResourceRequest(obsolete);
+            _samplerRequest = null;
+            return _samplerHandle;
+        }
+        int handle = Renderer.CreateEngineReplacement(this, ref _samplerRequest, 4, new BrowserSamplerDescription(state.AddressU, state.AddressV,
+            state.MinFilter, state.MagFilter, state.MipmapFilter, Data.Name ?? "Engine sampler",
+            state.MaxLod, state.Anisotropy, LodMinClamp: state.MinLod, Compare: state.Compare));
+        if (_samplerHandle != 0)
+        {
+            Renderer.ReleaseEngineDrawDependencies(this);
+            Renderer.RetireEngineResourceAfterFrame(_samplerHandle);
+            SetField(ref _samplerHandle, 0);
+        }
+        SetField(ref _samplerState, state);
+        SetField(ref _samplerHandle, handle);
+        return handle;
+    }
+
+    private void RetireSamplingResources()
+    {
+        foreach (int view in _sampledViews.Values) Renderer.RetireEngineResourceAfterFrame(view);
+        _sampledViews.Clear();
+        if (_samplerHandle != 0) Renderer.RetireEngineResourceAfterFrame(_samplerHandle);
+        SetField(ref _samplerHandle, 0);
+    }
+
+    private static string Address(ETexWrapMode mode) => mode switch
+    {
+        ETexWrapMode.Repeat => "repeat", ETexWrapMode.MirroredRepeat => "mirror-repeat",
+        ETexWrapMode.ClampToEdge => "clamp-to-edge",
+        _ => throw Unsupported("Sampler", "the wrap mode has no exact WebGPU encoding"),
+    };
+}

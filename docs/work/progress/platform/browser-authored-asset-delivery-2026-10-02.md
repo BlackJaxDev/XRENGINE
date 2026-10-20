@@ -1,0 +1,39 @@
+# Browser Authored Asset Delivery
+
+The browser publisher cooks the startup world and separately authored scene roots through one serializer-owned XRAsset dependency graph. The optional `XRProject.BrowserStreamedScenePaths` list names saved `.asset` scenes beneath project `Assets`; a `SceneStreamingVolumeComponent.SceneAssetPath` in the startup world or another streamed scene also declares a root. Relative scene paths, `game://` and `engine://` references, and `/game/` and `/engine/` catalog paths are admitted. Extensionless paths resolve to `.asset`. Arbitrary host paths, missing or linked assets, and unregistered custom dependency semantics are rejected during cooking.
+
+The existing `xrengine-assets` schema-one recipe and manifest gain paired `essentialRoots` and `streamedRoots` catalog-path arrays. These are roots, not expanded asset lists. Dependencies remain the exact serializer-owned declarations on each asset. The package builder bounds and validates the complete graph, requires every asset to be covered by at least one root closure, and prohibits a streamed scene root from entering the essential closure. A dependency shared by startup and streamed scenes remains essential. Older schema-one manifests without both arrays retain all-essential delivery.
+
+The startup world, settings, published runtime metadata, default font when used, and every packaged shader descriptor and WGSL source are essential. Authored fonts become dependencies of the world or streamed scene that uses them, with license notices retained at publication. Every streamed scene is rehydrated before publication to check preserved font and nested scene references and to run the same browser capability audit used for the startup world. The browser scene host resolves the declared virtual catalog identity and loads the scene asynchronously when its streaming volume requests it.
+
+The split delays scene and scene-only dependency hydration until requested. Catalog-only packages also defer those payload fetches. Shared native world packages still read and authenticate **every declared file** during package preflight before exposing the catalog; later runtime reads revalidate their payloads. Preflight transfer bytes are reported separately and are not presented as deferred-network savings. The split does not replace the XRAsset serializer or promise eviction of a scene after it has been loaded.
+
+## Delivery and synchronous integration
+
+The existing credential-free transport retains retry, cancellation, immutable payload identity and staging bounds. A source holds at most three payload read slots, including verified buffers waiting for their managed consumer; resolving a download does not prematurely free a slot. Released, failed and cancelled reads relinquish their buffers and slots.
+
+`IRuntimeAssetIntegrationSource` gives the shared `AssetManager` an optional admission contract. Browser hydration leaves the verified payload in JavaScript until a global FIFO admits the synchronous deserialize/publication batch. All sources share one active admission. At most two batches and 2 MiB of serialized inputs may start within a frame; after four milliseconds, additional starts wait for another animation frame. A single indivisible batch can exceed the size or time target and cannot be preempted. The snapshot records its actual interval and over-budget count. The queue is bounded to 32 pending/active items and 12 MiB of serialized inputs. Metadata installation and shader descriptor parsing use the same admission path, with shader companion bytes included in admission size and explicitly scoped managed staging.
+
+Essential roots hydrate before world activation through the existing dependency resolver. Cached dependencies retain one canonical identity. Duplicate asynchronous reads recheck the existing cache after admission and dispose their unneeded admission without publishing a duplicate graph. Deserialization scopes remain synchronous and thread-affine. The existing `ObjectCacheOwnership` batch remains the sole destruction owner; source accounting releases only after successful destruction, preserving failed cleanup records for retry.
+
+## Diagnostics and estimate boundaries
+
+`BrowserEngineAssetSource.GetDeliverySnapshotJson()`, exported `BrowserEngineExports.GetAssetDeliveryStatisticsJson()` and JavaScript `engineAssetImports.getProgress()` expose on-demand source snapshots. They separate unique verified runtime payloads, total decoded transfer including retries, preflight transfer, serialized bytes represented by retained assets, exact published object counts, JavaScript staging, managed integration/companion staging, queue state and integration timing.
+
+The **retained hydration allocation estimate** sums managed allocations measured while retained batches deserialize and publish. It includes temporary allocations and excludes subsequent mutations and metadata/shader catalog retention; it is not a measured live managed heap. The native estimate deduplicates owned texture mip and buffer `DataSource` allocation lengths at hydration using per-batch measurement tokens and weak allocation keys. It excludes allocator overhead, other native allocations and Jolt. Successful release removes those tokens and their estimate without retaining data sources or creating another lifetime owner. Arbitrary caller-owned raw reads stop being source staging when handed to that caller.
+
+Renderer `getStatistics().gpuMemory` reports descriptor-based GPU buffer/texture allocation estimates independently of asset serialization. Driver-resident memory and the complete native heap are unmeasured. Detailed snapshots are an explicit diagnostic API. The shipping player displays only active delivery progress, wakes from delivery activity, and stops polling/hides the progress line when idle; warmed gameplay has no recurring diagnostic memory poll.
+
+## Validation
+
+- Editor Release build using the existing desktop artifacts: zero warnings and errors
+- BrowserContentCooker Release build: zero warnings and errors; ignored production package probe accepted paired root closures and an old unsplit recipe, and rejected a streamed root in the essential closure
+- Production authored-world export with a saved `XRScene` containing an authored lit textured quad and a project-declared streamed path: one streamed root outside the essential closure; cooked scene hydration retained the authored material and shared texture aliases; original world and scene source bytes did not change
+- Real `RuntimeWorld`/streaming-host lifecycle probe: shared-scene and duplicate-handle attach/detach, independently owned scene/root preservation, injected unload failure with successful retry, and disposed-world invalidation passed
+- Browser build with the shared browser/Jolt source graph: zero warnings and errors
+- Production global-admission module probe: cross-source nonoverlap, shared count/byte/time admission, oversized first batch, queue overflow, cancellation and frame-ticket cleanup
+- Production `engineAssetImports` over real local HTTP and an existing cooked world package: three held payloads and a queued fourth read, queued cancellation, real SHA-256 corruption rejection, copy/retention/release, zero remaining staging, admission disposal and schema-one root compatibility
+- Shared native package over real HTTP: canonical package admission preserved, all preflight bytes counted (9,873 bytes in the probe), no remaining staging, and zero runtime-delivery verified assets before a runtime read
+- JavaScript syntax checks and whitespace checks passed
+
+These are focused production-boundary checks, not browser playback qualification. Full cold/warm/throttled delivery, browser cancel/restart, integrated scene streaming and target-device memory acceptance remain runtime checks.

@@ -17,7 +17,19 @@ public static partial class RuntimeEngine
         Debug.IsRenderThreadEvaluator = () => IsRenderThread;
     }
 
-    private static readonly EventList<XRWindow> ActiveWindows = [];
+    private static readonly EventList<XRWindow> ActiveWindows = CreateActiveWindows();
+    private static readonly object ActiveWindowsSync = new();
+    private static XRWindow[] _registeredWindowSnapshot = [];
+
+    private static EventList<XRWindow> CreateActiveWindows()
+    {
+        // The process registry can be initialized while a catalog graph is hydrating.
+        // Its lifetime is independent of that graph, including a failed load.
+        using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+        EventList<XRWindow> windows = [];
+        publication.Complete();
+        return windows;
+    }
     private static int _renderThreadId;
     private static int _windowThreadId;
 
@@ -30,7 +42,7 @@ public static partial class RuntimeEngine
     public static float Delta => Time.Timer.Update.Delta;
     public static float SmoothedDelta => (float)RuntimeRenderingHostServices.FrameTiming.SmoothedUpdateDeltaSeconds;
     public static long ElapsedTicks => RuntimeRenderingHostServices.FrameTiming.ElapsedTicks;
-    public static float ElapsedTime => RuntimeRenderingHostServices.FrameTiming.ElapsedTime;
+    public static float ElapsedTime => RenderFrameViewSetCapture.ResolveElapsedTime(RuntimeRenderingHostServices.FrameTiming.ElapsedTime);
     public static bool IsEditor => false;
     public static bool IsRenderThread
         => Environment.CurrentManagedThreadId == RenderThreadId;
@@ -60,17 +72,50 @@ public static partial class RuntimeEngine
     /// </summary>
     public static IEventListReadOnly<XRWindow> Windows => ActiveWindows;
 
+    /// <summary>Reads stable window membership without allocating during a render frame.</summary>
+    internal static ReadOnlySpan<XRWindow> RegisteredWindowSnapshot
+        => Volatile.Read(ref _registeredWindowSnapshot);
+
     public static void RegisterWindow(XRWindow window)
     {
         ArgumentNullException.ThrowIfNull(window);
-        if (!ActiveWindows.Contains(window))
-            ActiveWindows.Add(window);
+        lock (ActiveWindowsSync)
+        {
+            if (ActiveWindows.Contains(window))
+                return;
+            try
+            {
+                ActiveWindows.Add(window);
+            }
+            finally
+            {
+                PublishRegisteredWindowSnapshot();
+            }
+        }
     }
 
     public static bool UnregisterWindow(XRWindow window)
     {
         ArgumentNullException.ThrowIfNull(window);
-        return ActiveWindows.Remove(window);
+        lock (ActiveWindowsSync)
+        {
+            try
+            {
+                return ActiveWindows.Remove(window);
+            }
+            finally
+            {
+                PublishRegisteredWindowSnapshot();
+            }
+        }
+    }
+
+    private static void PublishRegisteredWindowSnapshot()
+    {
+        XRWindow[] snapshot = new XRWindow[ActiveWindows.Count];
+        for (int index = 0; index < snapshot.Length; ++index)
+            snapshot[index] = ActiveWindows[index];
+        Volatile.Write(ref _registeredWindowSnapshot, snapshot);
     }
 
     /// <summary>
@@ -99,6 +144,9 @@ public static partial class RuntimeEngine
     {
         if (IsRenderThread)
             return [.. EnumerateActiveViewports(mode)];
+        if (OperatingSystem.IsBrowser() || XREngine.Execution.RuntimeWorkScheduler.IsCallerThread)
+            throw new InvalidOperationException(
+                "Active viewport enumeration requires the render owner on a caller-thread host.");
 
         var completion = new TaskCompletionSource<IReadOnlyList<XRViewport>>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -447,6 +495,9 @@ public static partial class RuntimeEngine
         /// </summary>
         public static RenderPipeline NewRenderPipeline(RenderPipelineRequest request)
         {
+            if (TryCreateScopedRenderPipeline(request, out RenderPipeline scopedPipeline))
+                return scopedPipeline;
+
             if (request.OffscreenIntent is { } offscreenIntent)
                 return CreateAdvancedOffscreenPipeline(request, offscreenIntent);
 
@@ -578,7 +629,9 @@ public static partial class RuntimeEngine
             => RuntimeRenderingHostServices.Factories.ResolveSceneCameraDepthModePreference();
 
         public static ERenderClipDepthRange ResolveEffectiveClipDepthRange(RuntimeGraphicsApiKind backend)
-            => Settings.ClipDepthRange;
+            => backend == RuntimeGraphicsApiKind.WebGPU
+                ? ERenderClipDepthRange.ZeroToOne
+                : Settings.ClipDepthRange;
 
         public static ERenderClipDepthRange EffectiveClipDepthRange
             => ResolveEffectiveClipDepthRange(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend);
@@ -746,6 +799,9 @@ public static partial class RuntimeEngine
             bool supportsDirectMeshTaskDispatch = renderer.SupportsDirectMeshTaskDispatch();
             bool supportsIndirectCountMeshTaskDispatch = renderer.SupportsIndirectCountMeshTaskDispatch();
             bool supportsMeshletDispatch = renderer.SupportsMeshletDispatch();
+            if (!supportsMeshletDispatch && State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } &&
+                renderer is IAdvancedVisibilityStageBackendCapability nativeVisibility)
+                supportsMeshletDispatch = nativeVisibility.SupportsAdvancedComputeMeshletVisibility;
 
             // Snapshot inputs the UI uses to explain meshlet availability without re-deriving them.
             LastResolvedRendererBackend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
@@ -753,6 +809,17 @@ public static partial class RuntimeEngine
             LastResolvedSupportsMeshletDispatch = supportsMeshletDispatch;
 
             EMeshSubmissionStrategy? forced = RuntimeEngine.EffectiveSettings.ForceMeshSubmissionStrategy;
+            if (renderer.BackendId == RendererBackendId.WebGPU)
+            {
+                // Browser pipeline assets preserve the authored algorithm. Operation,
+                // device-feature and cooked-program checks reject unavailable work;
+                // selecting a different CPU or GPU algorithm would hide that failure.
+                LastMeshletDowngradeRequested = null;
+                LastMeshletDowngradeResolved = null;
+                LastMeshletDowngradeReason = null;
+                return PublishResolvedMeshSubmissionStrategy(ResolveRequestedMeshSubmissionStrategy(requestedGpuDispatch));
+            }
+
             if (forced.HasValue)
             {
                 if (forced.Value.IsAnyMeshletStrategy())
@@ -1108,11 +1175,28 @@ public static partial class RuntimeEngine
             public static void AllowDepthWrite(bool allow) => AbstractRenderer.Current?.AllowDepthWrite(allow);
             public static void DepthFunc(EComparison comparison) => AbstractRenderer.Current?.DepthFunc(MapDepthComparison(comparison));
             public static void ColorMask(bool red, bool green, bool blue, bool alpha) => AbstractRenderer.Current?.ColorMask(red, green, blue, alpha);
-            public static XRCamera.EDepthMode GetDepthMode() => RenderingCamera?.DepthMode ?? XRCamera.EDepthMode.Normal;
-            public static float GetDefaultDepthClearValue() => RenderingCamera?.GetDepthClearValue() ?? 1.0f;
-            public static EComparison MapDepthComparison(EComparison comparison)
+            public static XRCamera.EDepthMode GetDepthMode()
             {
-                if (GetDepthMode() != XRCamera.EDepthMode.Reversed)
+                XRCamera? camera = RenderingCamera;
+                AbstractRenderer? renderer = AbstractRenderer.Current;
+                if (renderer is not null && renderer.BackendId == RendererBackendId.WebGPU)
+                {
+                    if (renderer.TryGetFrozenViewDepthMode(out XRCamera.EDepthMode mode))
+                        return mode;
+                    if (camera is not null &&
+                        RenderFrameViewSetCapture.FindCapturedPassView(ActiveRenderCommandExecutionState, camera) is { } view)
+                        return view.ReversedDepth ? XRCamera.EDepthMode.Reversed : XRCamera.EDepthMode.Normal;
+                }
+                return camera?.DepthMode ?? XRCamera.EDepthMode.Normal;
+            }
+            public static float GetDefaultDepthClearValue() => GetDepthMode() == XRCamera.EDepthMode.Reversed ? 0.0f : 1.0f;
+            public static EComparison MapDepthComparison(EComparison comparison)
+                => MapDepthComparison(comparison, GetDepthMode());
+
+            /// <summary>Maps an authored comparison using an explicitly captured camera depth convention.</summary>
+            public static EComparison MapDepthComparison(EComparison comparison, XRCamera.EDepthMode depthMode)
+            {
+                if (depthMode != XRCamera.EDepthMode.Reversed)
                     return comparison;
 
                 return comparison switch

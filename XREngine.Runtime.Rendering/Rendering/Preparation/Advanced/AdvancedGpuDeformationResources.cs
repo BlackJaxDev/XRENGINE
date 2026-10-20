@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.Rendering;
 
@@ -20,14 +21,19 @@ public sealed partial class AdvancedGpuDeformationResources :
     private const float DeltaEpsilonSquared = 1.0e-20f;
 
     private readonly int _frameSlotCount;
+    private readonly int _maximumDeformationJobs;
+    private readonly EAdvancedDeformationMeshPreparationPolicy[] _slotPreparationPolicies;
+    private EAdvancedDeformationMeshPreparationPolicy _meshPreparationPolicy;
     private readonly AdvancedGpuDeformationStaticGeneration[]
         _staticGenerations;
     private readonly int[] _slotStaticGenerationIndices;
-    private readonly Dictionary<XRMeshRenderer, AdvancedGpuDeformationPoseEntry>
+    private readonly Dictionary<(XRMeshRenderer Renderer, XRMesh Mesh), AdvancedGpuDeformationPoseEntry>
         _poseEntries;
     private readonly XRGpuFence?[] _slotProducerFences;
     private readonly bool[] _slotOutputValid;
     private readonly bool[] _slotReusePoisoned;
+    private readonly AdvancedPhysicsOutputSource[] _slotPhysicsSources;
+    private AdvancedPhysicsOutputSource _pendingPhysicsSource;
     private readonly XRDataBuffer<AdvancedDeformationJobRecord>[] _jobBuffers;
     private readonly XRDataBuffer<uint>[] _jobIndexBuffers;
     private readonly XRDataBuffer<uint>[] _jobVertexOffsetBuffers;
@@ -51,6 +57,7 @@ public sealed partial class AdvancedGpuDeformationResources :
     private uint _previousFrameSlot;
     private ulong _frameId;
     private ulong _resourceGeneration = 1UL;
+    private ulong _inputPublicationGeneration;
     private RuntimeGraphicsApiKind _backend;
     private bool _frameOpen;
     private bool _previousOutputValid;
@@ -59,6 +66,7 @@ public sealed partial class AdvancedGpuDeformationResources :
     private uint _releasedStaticGenerationCount;
     private uint _outputCapacityGrowthCount;
     private uint _unsupportedMeshCount;
+    private ulong _meshSliceRevision;
 
     // These aliases keep the packing code focused on deformation payloads
     // while making the selected static generation the only mutable owner.
@@ -98,6 +106,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         in AdvancedPreparationOptions options)
     {
         _frameSlotCount = options.DeformedArena.FrameSlotCount;
+        _maximumDeformationJobs = options.MaximumDeformationJobs;
+        _slotPreparationPolicies = new EAdvancedDeformationMeshPreparationPolicy[_frameSlotCount];
         uint initialVertices = options.DeformedArena.InitialVertexCapacity;
         uint initialAuxiliary = Math.Max(1_024u, initialVertices / 4u);
         uint initialRanges = Math.Max(
@@ -136,11 +146,11 @@ public sealed partial class AdvancedGpuDeformationResources :
         _slotProducerFences = new XRGpuFence?[_frameSlotCount];
         _slotOutputValid = new bool[_frameSlotCount];
         _slotReusePoisoned = new bool[_frameSlotCount];
+        _slotPhysicsSources = new AdvancedPhysicsOutputSource[_frameSlotCount];
         _poseEntries = new Dictionary<
-            XRMeshRenderer,
+            (XRMeshRenderer Renderer, XRMesh Mesh),
             AdvancedGpuDeformationPoseEntry>(
-                options.MaximumDeformationJobs,
-                ReferenceEqualityComparer.Instance);
+                options.MaximumDeformationJobs);
 
         _jobBuffers =
             new XRDataBuffer<AdvancedDeformationJobRecord>[_frameSlotCount];
@@ -173,16 +183,31 @@ public sealed partial class AdvancedGpuDeformationResources :
     }
 
     public RuntimeGraphicsApiKind Backend => _backend;
+    internal bool UsesPackedAggregateInputs
+        => _meshPreparationPolicy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs;
+    private static EAdvancedDeformationMeshPreparationPolicy ResolveMeshPreparationPolicy()
+        => AbstractRenderer.Current is IAdvancedAggregateDeformationBackendCapability
+            ? EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs
+            : EAdvancedDeformationMeshPreparationPolicy.AuthoredVertices;
     public bool SupportsAggregateCompute
         => AbstractRenderer.Current is not null &&
-           AdvancedDeformationBackendContract
-               .SupportsProductionAggregateCompute(_backend);
+           (AbstractRenderer.Current is IAdvancedAggregateDeformationBackendCapability capability
+               ? capability.SupportsAggregateDeformation
+               : AdvancedDeformationBackendContract.SupportsProductionAggregateCompute(_backend));
     public double LastGpuMilliseconds => 0.0;
     public uint StaticCapacityGrowthCount => _staticCapacityGrowthCount;
     /// <summary>Generations freed because their scene was destroyed.</summary>
     public uint ReleasedStaticGenerationCount => _releasedStaticGenerationCount;
     public uint OutputCapacityGrowthCount => _outputCapacityGrowthCount;
     public uint UnsupportedMeshCount => _unsupportedMeshCount;
+
+    /// <summary>
+    /// Advances when a prepared mesh slice can change: a frame opens, the static generation
+    /// changes or resets, or a mesh slice is added or removed. A slice that
+    /// <see cref="TryPrepareMesh"/> returned as ready names the same source rows while this
+    /// value is unchanged and the mesh keeps its geometry revision and topology.
+    /// </summary>
+    internal ulong MeshSliceRevision => _meshSliceRevision;
     public bool PreviousOutputValid => _previousOutputValid;
     public AdvancedDeformationDispatchTelemetry LastTelemetry { get; private set; }
     public AdvancedGpuDeformationPublication Publication { get; private set; }
@@ -213,12 +238,13 @@ public sealed partial class AdvancedGpuDeformationResources :
 
         ReleaseGenerationsOfDestroyedScenes();
 
+        EAdvancedDeformationMeshPreparationPolicy preparationPolicy = ResolveMeshPreparationPolicy();
         AdvancedGpuDeformationStaticGeneration? matched = null;
         for (int index = 0; index < _staticGenerations.Length; index++)
         {
             AdvancedGpuDeformationStaticGeneration candidate =
                 _staticGenerations[index];
-            if (!candidate.Matches(scene, databaseEpoch, topologyGeneration))
+            if (!candidate.Matches(scene, databaseEpoch, topologyGeneration, preparationPolicy))
                 continue;
 
             if (matched is null || candidate.LastUse > matched.LastUse)
@@ -256,7 +282,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         if (replacement is null)
             return false;
 
-        replacement.Assign(scene, databaseEpoch, topologyGeneration);
+        replacement.Assign(scene, databaseEpoch, topologyGeneration, preparationPolicy);
         replacement.LastUse = ++_staticGenerationUse;
         _staticGeneration = replacement;
         _staticGenerationReplaced = true;
@@ -307,7 +333,9 @@ public sealed partial class AdvancedGpuDeformationResources :
 
         _staticGeneration.EnsureInitialized();
         _meshSlices.Clear();
+        _staticGeneration.InputWitnesses.Clear();
         _poseEntries.Clear();
+        _controlsByPose.Clear();
         Array.Clear(_externalPaletteCopies, 0, _externalPaletteCopyCount);
         _externalPaletteCopyCount = 0;
         _sourceVertexCount = 0u;
@@ -327,6 +355,7 @@ public sealed partial class AdvancedGpuDeformationResources :
         _activeBlendshapeCount = 0u;
         _previousOutputValid = false;
         _staticGenerationReplaced = true;
+        _meshSliceRevision++;
         AdvanceResourceGeneration();
         return true;
     }
@@ -429,11 +458,21 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         _frameId = frameId;
+        // The static generation and the preparation policy can change at a frame boundary.
+        _meshSliceRevision++;
+        _meshPreparationPolicy = ResolveMeshPreparationPolicy();
+        if (UsesPackedAggregateInputs && _controlBuffers.Length == 0)
+            InitializeJobControls(_maximumDeformationJobs);
         // Pose entries only deduplicate one frame. Keeping prior entries pins
         // renderers from unloaded worlds in the process-wide preparation owner.
         _poseEntries.Clear();
+        _controlsByPose.Clear();
         _currentFrameSlot = currentFrameSlot;
         _previousFrameSlot = previousFrameSlot;
+        if (UsesPackedAggregateInputs)
+            BeginPaletteCopies();
+        else
+            _paletteCopyCount = 0;
         _paletteCount = 0u;
         Array.Clear(_externalPaletteCopies, 0, _externalPaletteCopyCount);
         _externalPaletteCopyCount = 0;
@@ -442,13 +481,18 @@ public sealed partial class AdvancedGpuDeformationResources :
             frameId != 0UL &&
             !outputReplaced &&
             !_staticGenerationReplaced &&
-            _slotOutputValid[previousFrameSlot] &&
+            _slotPreparationPolicies[previousFrameSlot] == _meshPreparationPolicy &&
+            // HasUsableOutputHistory also requires a submitted producer fence.
+            HasUsableOutputHistory(previousFrameSlot) &&
             _slotStaticGenerationIndices[previousFrameSlot] >= 0 &&
             ReferenceEquals(
                 _staticGenerations[
                     _slotStaticGenerationIndices[previousFrameSlot]],
                 _staticGeneration);
         _slotOutputValid[currentFrameSlot] = false;
+        _slotPhysicsSources[currentFrameSlot] = default;
+        _pendingPhysicsSource = default;
+        _slotPreparationPolicies[currentFrameSlot] = _meshPreparationPolicy;
         _staticGenerationReplaced = false;
         _frameOpen = true;
         return true;
@@ -464,88 +508,181 @@ public sealed partial class AdvancedGpuDeformationResources :
     public bool TryGetOrAddPose(
         XRMeshRenderer renderer,
         XRMesh mesh,
-        out AdvancedGpuDeformationPoseSlice slice)
+        out AdvancedGpuDeformationPoseSlice slice,
+        XRDataBuffer? retainedPalette = null,
+        uint retainedPaletteBase = 0u,
+        uint retainedPaletteCount = 0u,
+        PhysicsChainMeshEnvelopeStamp? retainedEnvelope = null,
+        ReadOnlySpan<PhysicsChainMorphWeight> retainedMorphWeights = default)
     {
         ThrowIfFrameClosed();
         ArgumentNullException.ThrowIfNull(renderer);
         ArgumentNullException.ThrowIfNull(mesh);
 
-        if (_poseEntries.TryGetValue(renderer, out var entry) &&
+        renderer.EnterResourcePublicationLease();
+        try
+        {
+            return TryGetOrAddPoseCore(renderer, mesh, out slice, retainedPalette,
+                retainedPaletteBase, retainedPaletteCount, retainedEnvelope, retainedMorphWeights);
+        }
+        finally { renderer.ExitResourcePublicationLease(); }
+    }
+
+    /// <summary>
+    /// Captures one renderer/mesh pose. A retained physics palette replaces the
+    /// renderer palette, and retained morph weights replace the renderer morphs.
+    /// The retained envelope must still describe the renderer and mesh after the copy.
+    /// </summary>
+    private bool TryGetOrAddPoseCore(
+        XRMeshRenderer renderer,
+        XRMesh mesh,
+        out AdvancedGpuDeformationPoseSlice slice,
+        XRDataBuffer? retainedPalette,
+        uint retainedPaletteBase,
+        uint retainedPaletteCount,
+        PhysicsChainMeshEnvelopeStamp? retainedEnvelope,
+        ReadOnlySpan<PhysicsChainMorphWeight> retainedMorphWeights)
+    {
+        var key = (renderer, mesh);
+
+        if (_poseEntries.TryGetValue(key, out var entry) &&
             entry.FrameId == _frameId)
         {
             slice = entry.Slice;
-            return true;
+            return retainedEnvelope is not { } cachedEnvelope ||
+                (cachedEnvelope.Matches(renderer, mesh) &&
+                    (mesh.BlendshapeCount == 0u ||
+                        slice.BlendshapeVersion == cachedEnvelope.BlendshapeWeightsVersion));
         }
 
-        if (!renderer.EnsureSkinningBuffers(logWarnings: false))
+        bool packed = UsesPackedAggregateInputs;
+        bool skinning = !packed || mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
+        bool blendshapes = mesh.HasBlendshapes && (!packed || RuntimeEngine.Rendering.Settings.AllowBlendshapes);
+        // A covered renderer draws the retained physics palette, and the retained envelope
+        // proves the mesh, geometry revision, bind root, and bone layout. Without active
+        // blendshapes it needs no renderer input preparation; only its pose version is read.
+        // The renderer must already record GPU-owned bones: the full path records them, so a
+        // later loss of coverage still resets the CPU palette seed state.
+        bool coveredFastPath = retainedPalette is not null && retainedEnvelope.HasValue &&
+            !blendshapes && renderer.HasGpuOwnedDeformationPose;
+        XRMeshDeformationInputSnapshot inputs = default;
+        ulong poseVersion;
+        if (coveredFastPath)
+        {
+            if (mesh.IsDestroyed || mesh.IsDestroyQueued)
+            {
+                slice = default;
+                return false;
+            }
+            poseVersion = renderer.SkinnedOutputVersion;
+        }
+        else
+        {
+            if (!renderer.TryPrepareDeformationInputs(mesh, skinning, blendshapes, publish: false,
+                out inputs, requireMorphs: packed))
+            {
+                slice = default;
+                return false;
+            }
+            poseVersion = inputs.PoseVersion;
+        }
+        // Matches checks the renderer-wide weights version that the physics producer
+        // captured. Do not compare it with the per-mesh input version: a submesh can
+        // have its own morph version while it uses the retained renderer weights.
+        if (retainedEnvelope is { } envelope && !envelope.Matches(renderer, mesh))
         {
             slice = default;
             return false;
         }
-        if (mesh.HasBlendshapes)
-            renderer.EnsureBlendshapeBuffers(logWarnings: false);
-        if (!renderer.HasExternalSkinPaletteSource)
-        {
-            if (renderer.SkinPaletteReseedCount < 2)
-                renderer.ReseedSkinPaletteUntilPoseStable();
-            renderer.SyncDirtyBoneMatricesToClientBuffer();
-        }
 
-        XRMeshRenderer.BoneResourceSnapshot boneState = renderer.CaptureBoneResources();
-        XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
-            renderer.CaptureBlendshapeResources();
-        bool hasExternalPalette = renderer.HasExternalSkinPaletteSource;
-        XRDataBuffer? paletteSource = hasExternalPalette
-            ? renderer.ActiveSkinPaletteBuffer
-            : boneState.SkinPalette;
-        uint paletteBase = hasExternalPalette ? renderer.ActiveSkinPaletteBase : 0u;
-        uint paletteCount = hasExternalPalette
-            ? renderer.ActiveSkinPaletteCount
-            : checked((uint)mesh.GetSkinningBufferStateSnapshot().UtilizedBones.Length + 1u);
-        if (paletteSource is null ||
+        // A retained physics palette is GPU-owned. It takes the place of the
+        // renderer palette and uses the GPU copy route of the active policy.
+        bool hasRetainedPalette = retainedPalette is not null;
+        XRDataBuffer? paletteSource = hasRetainedPalette ? retainedPalette : inputs.Palette;
+        uint paletteBase = hasRetainedPalette ? retainedPaletteBase : inputs.PaletteBase;
+        uint paletteCount = hasRetainedPalette ? retainedPaletteCount : inputs.PaletteCount;
+        bool gpuPalette = packed && (hasRetainedPalette || inputs.GpuOwnedPalette);
+        if ((skinning || hasRetainedPalette) && (paletteSource is null ||
+            paletteSource.IsDestroyed || paletteSource.IsDestroyQueued ||
+            packed && (paletteSource.ComponentType != EComponentType.Float || paletteSource.ElementSize != 48) ||
+            packed && !gpuPalette && (paletteSource.GpuProduced || paletteSource.ClientSideSource is not { } paletteMemory ||
+            paletteMemory.Length < paletteSource.Length || !paletteSource.TryGetAddress(out VoidPtr paletteAddress) || paletteAddress == VoidPtr.Zero) ||
             paletteCount == 0u ||
-            paletteBase + paletteCount >
-                paletteSource.ElementCount)
+            paletteBase > paletteSource.ElementCount || paletteCount > paletteSource.ElementCount - paletteBase))
         {
             slice = default;
             return false;
         }
 
-        uint activeCount = checked((uint)Math.Max(
-            0,
-            blendshapeState.ActiveCount));
+        uint activeCount = retainedEnvelope.HasValue
+            ? checked((uint)retainedMorphWeights.Length)
+            : inputs.ActiveMorphCount;
         uint requiredPalette = checked(_paletteCount + paletteCount);
         uint requiredActive =
             checked(_activeBlendshapeCount + activeCount);
         EnsureDynamicPoseCapacity(requiredPalette, requiredActive);
 
-        if (hasExternalPalette)
-            AddExternalPaletteCopy(paletteSource, paletteBase, _paletteCount, paletteCount);
+        if (gpuPalette)
+            CapturePaletteCopy(paletteSource!, paletteBase, paletteCount);
+        else if (hasRetainedPalette)
+            AddExternalPaletteCopy(paletteSource!, paletteBase, _paletteCount, paletteCount);
+        else if (inputs.GpuOwnedPalette && paletteCount != 0)
+            CaptureDesktopPaletteCopies(renderer, paletteSource!, paletteBase, paletteCount, inputs.UsesLocalBoneOwnership);
+        else if (paletteCount != 0)
+            CopyPalette(paletteSource!, paletteBase, _paletteScratch, _paletteCount, paletteCount);
+        if (retainedEnvelope.HasValue)
+            CopyRetainedMorphWeights(retainedMorphWeights, _activeBlendshapeScratch,
+                _activeBlendshapeCount, checked((uint)mesh.BlendshapeCount), packed);
         else
-            CopyPalette(
-                paletteSource,
-                paletteBase,
-                _paletteScratch,
-                _paletteCount,
-                paletteCount);
-        CopyActiveBlendshapes(
-            blendshapeState.ActiveWeights,
-            _activeBlendshapeScratch,
-            _activeBlendshapeCount,
-            activeCount);
+            CopyActiveBlendshapes(
+                inputs.ActiveMorphs,
+                _activeBlendshapeScratch,
+                _activeBlendshapeCount,
+                activeCount,
+                checked((uint)mesh.BlendshapeCount),
+                packed);
+        if (retainedEnvelope is { } copiedEnvelope && !copiedEnvelope.Matches(renderer, mesh))
+        {
+            slice = default;
+            return false;
+        }
 
         slice = new AdvancedGpuDeformationPoseSlice(
             _paletteCount,
             paletteCount,
             _activeBlendshapeCount,
             activeCount,
-            renderer.SkinnedOutputVersion,
-            blendshapeState.WeightsVersion);
+            poseVersion,
+            retainedEnvelope?.BlendshapeWeightsVersion ?? inputs.MorphVersion);
         _paletteCount = requiredPalette;
         _activeBlendshapeCount = requiredActive;
-        _poseEntries[renderer] =
+        _poseEntries[key] =
             new AdvancedGpuDeformationPoseEntry(_frameId, slice);
         return true;
+    }
+
+    /// <summary>
+    /// Copies retained physics morph weights. The packed policy applies the same
+    /// exact-index rules as authored active morph lists.
+    /// </summary>
+    private static void CopyRetainedMorphWeights(
+        ReadOnlySpan<PhysicsChainMorphWeight> source,
+        AdvancedActiveBlendshape[] destination,
+        uint destinationOffset,
+        uint shapeCount,
+        bool requireExactAuthoredInputs)
+    {
+        long previousShape = -1;
+        for (int index = 0; index < source.Length; ++index)
+        {
+            PhysicsChainMorphWeight value = source[index];
+            if (requireExactAuthoredInputs && (!float.IsFinite(value.Weight) ||
+                value.ShapeIndex >= shapeCount || value.ShapeIndex <= previousShape))
+                throw new InvalidOperationException("Retained morph weights must contain exact in-range shape indices and finite weights.");
+            destination[destinationOffset + (uint)index] =
+                new AdvancedActiveBlendshape(value.ShapeIndex, value.Weight);
+            previousShape = value.ShapeIndex;
+        }
     }
 
     public void Publish(
@@ -565,6 +702,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         UploadStaticAppends();
+        if (UsesPackedAggregateInputs)
+            PublishJobControls(jobs);
         if (!jobs.IsEmpty)
             _jobBuffers[_currentFrameSlot].Write(0u, jobs);
         for (int i = 0; i < groupedJobIndices.Length; i++)
@@ -610,7 +749,11 @@ public sealed partial class AdvancedGpuDeformationResources :
             _jobVertexOffsetBuffers[_currentFrameSlot],
             checked((uint)jobs.Length),
             checked((uint)groupedJobIndices.Length),
-            _previousOutputValid);
+            _previousOutputValid)
+        {
+            InputGeneration = checked(++_inputPublicationGeneration),
+            GpuPaletteCopies = PublishPaletteCopies(),
+        };
     }
 
     public bool TryExecute(
@@ -689,6 +832,7 @@ public sealed partial class AdvancedGpuDeformationResources :
 
             _slotProducerFences[_currentFrameSlot] = producerFence;
             _slotOutputValid[_currentFrameSlot] = executed;
+            _slotPhysicsSources[_currentFrameSlot] = executed ? _pendingPhysicsSource : default;
             return executed;
         }
         catch
@@ -723,7 +867,14 @@ public sealed partial class AdvancedGpuDeformationResources :
         AbstractRenderer? renderer = AbstractRenderer.Current;
         if (renderer is null)
             return ERendererComputeEnqueueStatus.NoPassContext;
+        if (ResolveMeshPreparationPolicy() != _meshPreparationPolicy)
+            return ERendererComputeEnqueueStatus.InvalidResource;
 
+        if (renderer is IAdvancedAggregateDeformationBackendCapability capability)
+            return capability.TryDispatchAggregateDeformation(this, in batch);
+
+        // Desktop retains its existing 13-binding shader contract. Authored influence caps,
+        // exact morph thresholds, and morph-only admission belong to the optional packed capability.
         XRRenderProgram program = GetAggregateProgram();
         _jobBuffers[_currentFrameSlot].BindTo(program, 0u);
         _jobIndexBuffers[_currentFrameSlot].BindTo(program, 1u);
@@ -833,6 +984,8 @@ public sealed partial class AdvancedGpuDeformationResources :
             _paletteBuffers[slot].Destroy();
             _activeBlendshapeBuffers[slot].Destroy();
         }
+        for (int slot = 0; slot < _controlBuffers.Length; slot++)
+            _controlBuffers[slot].Destroy();
         for (int slot = 0; slot < _slotProducerFences.Length; slot++)
         {
             _slotProducerFences[slot]?.Dispose();
@@ -844,6 +997,8 @@ public sealed partial class AdvancedGpuDeformationResources :
             generation.ClearMeshSlices();
         }
         _poseEntries.Clear();
+        foreach (AdvancedGpuDeformationPaletteCopy[] copies in _paletteCopies)
+            Array.Clear(copies);
         Array.Clear(_externalPaletteCopies, 0, _externalPaletteCopyCount);
         _externalPaletteCopyCount = 0;
     }
@@ -952,6 +1107,8 @@ AdvancedGpuDeformationStaticBuffers replacement =
         _outputBuffers = replacement;
         previous.Destroy();
         Array.Clear(_slotOutputValid);
+        Array.Clear(_slotPhysicsSources);
+        _pendingPhysicsSource = default;
         _resourceGeneration++;
         _outputCapacityGrowthCount++;
         return true;
@@ -985,6 +1142,7 @@ AdvancedGpuDeformationStaticBuffers replacement =
             source.Scene,
             source.DatabaseEpoch,
             source.TopologyGeneration,
+            source.PreparationPolicy,
             allocateCpuMirror: false);
         // The pinned source is never written again and its GPU buffers keep
         // their own client-side rows, so the successor adopts the managed
@@ -995,6 +1153,7 @@ AdvancedGpuDeformationStaticBuffers replacement =
                  source.MeshSlices)
         {
             _meshSlices.Add(mesh, slice);
+            _staticGeneration.InputWitnesses.Add(mesh, source.InputWitnesses[mesh]);
         }
         _sourceVertexCount = source.SourceVertexCount;
         _skinInfluenceCount = source.SkinInfluenceCount;
@@ -1024,6 +1183,7 @@ AdvancedGpuDeformationStaticBuffers replacement =
         successor.LastUse = ++_staticGenerationUse;
         _staticGenerationReplaced = true;
         _previousOutputValid = false;
+        _meshSliceRevision++;
         AdvanceResourceGeneration();
         return true;
     }
@@ -1168,6 +1328,9 @@ AdvancedGpuDeformationStaticBuffers replacement =
         return _aggregateProgram = program;
     }
 
+    private static bool CanReadCanonicalVertices(XRMesh mesh)
+        => AdvancedPackedVertexCodec.CanReadMesh(mesh);
+
     private static unsafe void CopyPalette(
         XRDataBuffer source,
         uint sourceOffset,
@@ -1194,21 +1357,31 @@ AdvancedGpuDeformationStaticBuffers replacement =
         XRDataBuffer? source,
         AdvancedActiveBlendshape[] destination,
         uint destinationOffset,
-        uint count)
+        uint count,
+        uint shapeCount,
+        bool requireExactAuthoredInputs)
     {
         if (count == 0u)
             return;
-        if (source is null || count > source.ElementCount)
+        if (source is null || count > source.ElementCount ||
+            requireExactAuthoredInputs && (source.GpuProduced || source.ClientSideSource is not { } memory || memory.Length < source.Length ||
+            !source.TryGetAddress(out VoidPtr address) || address == VoidPtr.Zero ||
+            source.ComponentType != EComponentType.Float || source.ElementSize != 8))
             throw new InvalidOperationException(
                 "Active blendshape weights are unavailable.");
 
+        float previousShape = -1;
         for (uint i = 0u; i < count; i++)
         {
             Vector2 pair = source.GetVector2(i);
+            if (requireExactAuthoredInputs && (!float.IsFinite(pair.X) || !float.IsFinite(pair.Y) || pair.X < 0 ||
+                pair.X >= shapeCount || pair.X <= previousShape || pair.X != MathF.Truncate(pair.X)))
+                throw new InvalidOperationException("Active blendshape weights must contain exact in-range shape indices and finite weights.");
             destination[destinationOffset + i] =
                 new AdvancedActiveBlendshape(
                     checked((uint)Math.Max(0.0f, pair.X)),
                     pair.Y);
+            previousShape = pair.X;
         }
     }
 

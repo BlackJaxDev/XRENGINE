@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Compute;
 public enum PhysicsChainComputePassKind
 {
     ArenaGrowth,
+    InputPublication,
     ActiveWorkReset,
     ActiveWorkCompaction,
     IndirectArgumentGeneration,

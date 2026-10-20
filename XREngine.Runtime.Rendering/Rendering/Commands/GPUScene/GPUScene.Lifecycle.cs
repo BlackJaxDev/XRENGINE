@@ -35,10 +35,12 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Initialize()
         {
+            ResetMeshSubmissionPublications();
             if (_advancedScenePublisherDisposed)
             {
                 _advancedScenePublisher = new AdvancedGpuScenePublisher();
                 _advancedScenePublisherDisposed = false;
+                _advancedGlobalResources.AuthoredDecals.Release();
                 _advancedGlobalResources = default;
                 Interlocked.Exchange(ref _advancedPublicationRequested, 0);
             }
@@ -68,6 +70,10 @@ namespace XREngine.Rendering.Commands
             _lodTableBuffer = MakeLodTableBuffer();
             _lodRequestBuffer?.Destroy();
             _lodRequestBuffer = MakeLodRequestBuffer();
+            _lodTransitionBuffer?.Destroy();
+            _lodTransitionBuffer = null;
+            Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
+            _lodTransitionCpuDirtyIndices.Clear();
             _lodStreamingLastDrainFrameId = 0;
             _lodStreamingHasDrained = false;
             _lodStreamingFailedRequests.Clear();
@@ -120,6 +126,15 @@ namespace XREngine.Rendering.Commands
             _skinnedCommandCount = 0;
             _registeredMeshCommandsByRenderInfo.Clear();
             _registeredRenderInfoByMeshCommand.Clear();
+            using (_lock.EnterScope())
+            {
+                _publishedRendererCommandIndices.Clear();
+                _gpuAabbRenderers.Clear();
+                _gpuCopiedAabbRenderers.Clear();
+                _staleGpuAabbRenderers.Clear();
+                // New row storage and zero counts replace every row input.
+                MarkAllAdvancedRowInputsWritten();
+            }
         }
 
         private volatile bool _destroyed;
@@ -136,9 +151,17 @@ namespace XREngine.Rendering.Commands
         public void Destroy()
         {
             _destroyed = true;
+            ResetMeshSubmissionPublications();
             if (!_advancedScenePublisherDisposed)
             {
-                _advancedScenePublisher.Dispose();
+                try { _advancedScenePublisher.Dispose(); }
+                finally
+                {
+                    _advancedGlobalResources.AuthoredDecals.Release();
+                    _advancedGlobalResources = default;
+                    _hasAdvancedGlobalResourceCapture = false;
+                    Interlocked.Exchange(ref _advancedAuthoredDecalsRequested, 0);
+                }
                 _advancedScenePublisherDisposed = true;
             }
             UnsubscribeAllMeshletPayloadChanges();
@@ -188,6 +211,10 @@ namespace XREngine.Rendering.Commands
             _lodTableBuffer = null;
             _lodRequestBuffer?.Destroy();
             _lodRequestBuffer = null;
+            _lodTransitionBuffer?.Destroy();
+            _lodTransitionBuffer = null;
+            Interlocked.Exchange(ref _lodTransitionGpuWritePending, 0);
+            _lodTransitionCpuDirtyIndices.Clear();
             _lodStreamingLastDrainFrameId = 0;
             _lodStreamingHasDrained = false;
             _lodStreamingFailedRequests.Clear();
@@ -291,7 +318,17 @@ namespace XREngine.Rendering.Commands
             _bounds = new AABB();
             _meshlets.Clear();
             _commandIndicesPerMeshCommand.Clear();
-            _commandIndexLookup.Clear();
+            using (_lock.EnterScope())
+            {
+                _publishedRendererCommandIndices.Clear();
+                _gpuAabbRenderers.Clear();
+                _gpuCopiedAabbRenderers.Clear();
+                _staleGpuAabbRenderers.Clear();
+                // The lookup reset and the version advance share one lock scope,
+                // so a locked row reader sees both or neither.
+                _commandIndexLookup.Clear();
+                MarkAllAdvancedRowInputsWritten();
+            }
             _registeredMeshCommandsByRenderInfo.Clear();
             _registeredRenderInfoByMeshCommand.Clear();
             _meshToIndexRemap.Clear();

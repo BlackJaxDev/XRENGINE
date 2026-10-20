@@ -10,6 +10,12 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_DebugWireframe : ViewportRenderCommand
 {
+    public override void DescribeRequirements(RenderPipelineRequirements requirements)
+    {
+        base.DescribeRequirements(requirements);
+        requirements.Include(Body);
+    }
+
     private ViewportRenderCommandContainer? _body;
     public bool ExecuteBodyWhenUnsupported { get; set; } = true;
 
@@ -18,8 +24,9 @@ public sealed class VPRC_DebugWireframe : ViewportRenderCommand
         get => _body;
         set
         {
-            _body = value;
+            if (!SetField(ref _body, value)) return;
             AttachPipeline(_body);
+            ParentPipeline?.NotifyCommandChainStructureChanged();
         }
     }
 

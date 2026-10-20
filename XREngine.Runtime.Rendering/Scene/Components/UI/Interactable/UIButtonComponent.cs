@@ -5,6 +5,14 @@ namespace XREngine.Rendering.UI
 {
     public class UIButtonComponent : UIInteractableComponent
     {
+        public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.Button;
+        public override string AccessibilityName => AccessibilityLabel is { Length: > 0 } label ? label :
+            TextComponent?.Text is { Length: > 0 } text ? text : base.AccessibilityName;
+        public override bool AccessibilityActivate()
+        {
+            OnInteract();
+            return true;
+        }
         private string _backgroundColorUniformName = "MatColor";
         private ColorF4 _defaultBackgroundColor = ColorF4.Transparent;
         private ColorF4 _highlightBackgroundColor = ColorF4.DarkGray;
@@ -44,7 +52,7 @@ namespace XREngine.Rendering.UI
         }
 
         public UIMaterialComponent? BackgroundMaterialComponent => GetSiblingComponent<UIMaterialComponent>();
-        public UITextComponent? TextComponent => SceneNode.FirstChild?.GetComponent<UITextComponent>();
+        public UITextComponent? TextComponent => SceneNode?.FirstChild?.GetComponent<UITextComponent>();
 
         public ColorF4 DefaultBackgroundColor
         {

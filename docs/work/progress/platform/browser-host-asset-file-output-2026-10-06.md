@@ -1,0 +1,11 @@
+# Host asset file output
+
+`DDGIBakedAsset.Save(string)` and `TextFile.SaveTo` now select one installed host file output service after their existing host-file admission check. `TextFile.SaveToAsync` selects the service before its first await. The service contract stays in Data. The desktop implementation stays in the desktop platform assembly. Normal Editor, Server, and VRClient startup installs it through `DesktopPlatformBackend.Register`.
+
+The desktop implementation creates a DDGI parent directory only when it is absent, then uses `File.Create`. `DDGIBakedAsset.Save(Stream)` still writes the same binary format and owns payload validation. The path method still owns and closes its stream. The text methods still use `File.WriteAllText` and `File.WriteAllTextAsync` with the selected encoding. TextFile still captures its text, encoding, and mutation revision under the provenance lock. It records the saved text only after a successful write and only when that revision is current. The asynchronous method retains `ConfigureAwait(false)`. No file operation or callback was added inside the provenance lock.
+
+Browser and caller-thread hosts fail the existing host-file admission check before they select an output service. A host that permits path saves but has no output service receives `HostAssetFileOutput.BackendUnavailable`. A custom desktop host can set `HostAssetFileOutputServices.Current = new DesktopHostAssetFileOutput()` without registering window or input services. Custom output backends must implement the three methods and build against the new Data contract. Existing callers need no source changes, but external standalone hosts must install a backend before they call a path-save method.
+
+The source read paths, serializer bytes, text encoding, write scheduling, and asset-source admission contract remain unchanged. The existing admission check does not keep a source lease during a write. This move separates the physical writes in these methods. Other host file operations and blocking wrappers remain in shared assemblies.
+
+Source review verified the retained call order and the exact desktop file operations. `git diff --check` passed. The Desktop platform Release build passed with zero warnings and zero errors, using the existing local SDK and restore artifacts. Live browser and Editor behavior remain unverified.

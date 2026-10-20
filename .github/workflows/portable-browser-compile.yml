@@ -1,25 +1,40 @@
-name: Portable browser compile
+name: Portable browser build and publish
 
 on:
   push:
     branches:
       - master
+      - codex/webgpu-readiness-audit
+    paths-ignore:
+      - '.github/diagnostic-requests/network-walkthrough-20261005.json'
+      - '.github/diagnostic-activations/network-walkthrough-20261005.json'
+      - '.github/diagnostic-activations/ui-frame-trace-20261006.json'
+      - '.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json'
+      - 'docs/work/**/*.md'
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: portable-browser-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  MSBUILDDISABLENODEREUSE: '1'
+  POWERSHELL_TELEMETRY_OPTOUT: '1'
+  VALIDATION_ROOT: Build/_AgentValidation/00000000-000000-shared/browser-ci
+
 jobs:
   compile:
-    name: Compile every portable project for browser-wasm
+    name: Compile portable projects and publish the browser host
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - name: Checkout repository and submodules
+      - name: Checkout repository
         uses: actions/checkout@v7
-        with:
-          submodules: recursive
 
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
@@ -29,6 +44,1213 @@ jobs:
       - name: Install WebAssembly workload
         run: dotnet workload install wasm-tools
 
+      - name: Set up browser qualification tools
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Tools/BrowserSmoke/package-lock.json
+
+      - name: Install pinned browser tooling
+        run: |
+          npm ci --prefix Tools/BrowserSmoke
+          cd Tools/BrowserSmoke
+          npx playwright install --with-deps chromium
+
+      - name: Inspect installed diagnostic prerequisites without profiling
+        run: node Tools/BrowserSmoke/native-profile-prerequisites.mjs "$VALIDATION_ROOT/evidence/native-profile-prerequisites.json"
+
+      - name: Install pinned Slang compiler
+        shell: bash
+        run: |
+          mkdir -p "$VALIDATION_ROOT/toolchain/slang"
+          curl --fail --location --retry 3 --output "$VALIDATION_ROOT/toolchain/slang.tar.gz" https://github.com/shader-slang/slang/releases/download/v2026.8/slang-2026.8-linux-x86_64.tar.gz
+          echo "b23af8f2569e7961ca143c6ecd9abf6d7ac14a9bda739a1c6281694f774fa3eb  $VALIDATION_ROOT/toolchain/slang.tar.gz" | sha256sum --check
+          tar -xzf "$VALIDATION_ROOT/toolchain/slang.tar.gz" -C "$VALIDATION_ROOT/toolchain/slang"
+          echo "XRE_SLANGC=$GITHUB_WORKSPACE/$VALIDATION_ROOT/toolchain/slang/bin/slangc" >> "$GITHUB_ENV"
+
+      - name: Prepare pinned browser physics sources
+        shell: pwsh
+        run: |
+          ./Tools/Dependencies/Prepare-JoltBrowserManaged.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/managed"
+          ./Tools/Dependencies/Build-JoltBrowser.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/native" -DotNetRoot $env:DOTNET_ROOT
+
       - name: Compile portable projects
         shell: pwsh
-        run: ./Tools/Test-PortableBrowserCompile.ps1 -Configuration Release
+        run: ./Tools/Test-PortableBrowserCompile.ps1 -Configuration Release -JoltBrowserManagedSourceDirectory "$env:VALIDATION_ROOT/jolt/managed/staged" -JoltBrowserArchiveDirectory "$env:VALIDATION_ROOT/jolt/native/archives" -ArtifactsPath "$env:VALIDATION_ROOT/portable"
+
+      - name: Preserve pinned browser physics archives
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-jolt-native-archives
+          path: ${{ env.VALIDATION_ROOT }}/jolt/native/archives
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish browser host
+        run: dotnet publish XREngine.Browser.Standalone/XREngine.Browser.Standalone.csproj -c Release -m:1 --output "$VALIDATION_ROOT/browser" --artifacts-path "$VALIDATION_ROOT/browser-build" -p:WasmBuildNative=true -p:XREngineJoltBrowser=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
+
+      - name: Verify desktop archive dependency is absent from browser output
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+
+          function* files(root) {
+            if (!fs.existsSync(root)) return;
+            for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+              const child = path.join(root, entry.name);
+              if (entry.isDirectory()) yield* files(child);
+              else if (entry.isFile()) yield child;
+            }
+          }
+
+          const validationRoot = path.resolve(process.env.VALIDATION_ROOT);
+          const assetRoots = [path.join(validationRoot, 'browser-build'), path.resolve('XREngine.Browser/obj')];
+          const graphs = [];
+          for (const root of assetRoots) {
+            for (const file of files(root)) {
+              if (path.basename(file) !== 'project.assets.json') continue;
+              const graph = JSON.parse(fs.readFileSync(file, 'utf8'));
+              const project = graph.project?.restore?.projectUniqueName?.replaceAll('\\', '/');
+              if (project && path.posix.basename(project) === 'XREngine.Browser.csproj')
+                graphs.push({ file, graph });
+            }
+          }
+          if (graphs.length === 0) throw new Error('Browser project.assets.json was not found');
+          for (const { file, graph } of graphs) {
+            if (/sharpziplib/i.test(JSON.stringify(graph)))
+              throw new Error(`SharpZipLib is still in the Browser restore graph: ${file}`);
+          }
+
+          const published = path.join(validationRoot, 'browser/wwwroot');
+          if (!fs.existsSync(published)) throw new Error('Browser publish output was not found');
+          const leaked = [...files(published)].filter(file => /sharpziplib/i.test(path.basename(file)));
+          if (leaked.length !== 0)
+            throw new Error(`SharpZipLib is still in Browser publish output: ${leaked.join(', ')}`);
+          console.log(`Verified ${graphs.length} Browser restore graph(s) and published output without SharpZipLib`);
+          NODE
+
+      - name: Publish native physics lifecycle diagnostic
+        run: dotnet publish Tools/Dependencies/JoltBrowser/Spike/JoltBrowserSpike.csproj -c Release -m:1 --output "$VALIDATION_ROOT/jolt-spike" --artifacts-path "$VALIDATION_ROOT/jolt-spike-build" -p:WasmBuildNative=true -p:JoltBrowserManagedSourceDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/managed/staged" -p:JoltBrowserArchiveDirectory="$GITHUB_WORKSPACE/$VALIDATION_ROOT/jolt/native/archives"
+
+      - name: Cook engine raster diagnostic shaders
+        run: dotnet run --project Tools/ShaderCooker --configuration Release -- --source-root Build/CommonAssets/Shaders/WebGPU/ --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth-probe.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-texture-probe.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-directional-shadow.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-shadow-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-tonemap.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-point.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-line.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-debug-triangle.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth-normal-prepass.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-depth-normal-msaa-resolve.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-generate.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-blur-horizontal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-gtao-blur-vertical.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-copy.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-downsample.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-upsample.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-bloom-combine.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-ui-quad-batched.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-ui-text-batched-bitmap.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-directional-shadow.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-depth-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-point-shadow-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-skybox-cubemap.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-skybox-dynamic-procedural.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-skybox-equirectangular.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-skybox-gradient.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-skybox-octahedral.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-spot-shadow-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-local-shadows.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-point-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-coverage-spot-depth.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-color-local-shadows.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-texture-directional-shadow.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-texture-local-shadows.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-texture-normal-depth-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-texture-normal-directional-shadow.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-texture-normal-local-shadows.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-texture-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-standard-lit-texture.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-color.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-texture.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-opaque-texture.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-alpha-texture.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-texture-array-slice.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-color-depth-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-texture-depth-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-opaque-texture-depth-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-alpha-texture-depth-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-unlit-texture-array-slice-depth-normal.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-indirect-cull-primitive.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-meshlets-select-lod.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-authored-rank-sources.recipe.json --recipe Build/CommonAssets/Shaders/WebGPU/engine-authored-mask-ranked-arguments.recipe.json --output "$VALIDATION_ROOT/depth-shaders"
+
+      - name: Cook canonical engine deformation kernel
+        run: dotnet run --project Tools/ShaderCooker --configuration Release -- --source-root XREngine.Runtime.Rendering.WebGPU --recipe Build/CommonAssets/Shaders/WebGPU/engine-packed-skinning.recipe.json --output "$VALIDATION_ROOT/compute-shaders"
+
+      - name: Package canonical engine lifecycle world
+        run: |
+          dotnet build Tools/BrowserRuntimeMetadataCooker/BrowserRuntimeMetadataCooker.csproj -c Release -m:1 --artifacts-path "$VALIDATION_ROOT/portable"
+          dotnet "$VALIDATION_ROOT/portable/bin/BrowserRuntimeMetadataCooker/release/BrowserRuntimeMetadataCooker.dll" Tools/BrowserSmoke/Content/EngineSmokeWorld.asset "$VALIDATION_ROOT/metadata-fixture"
+          dotnet "$VALIDATION_ROOT/portable/bin/BrowserRuntimeMetadataCooker/release/BrowserRuntimeMetadataCooker.dll" --verify "$VALIDATION_ROOT/metadata-fixture"
+          node Tools/BrowserSmoke/prepare-engine-effects-assets.mjs Tools/BrowserSmoke/Content/engine-assets.recipe.json "$VALIDATION_ROOT/depth-shaders" "$VALIDATION_ROOT/metadata-fixture" "$VALIDATION_ROOT/effects-recipe"
+          dotnet run --project Tools/BrowserContentCooker --configuration Release -- "$VALIDATION_ROOT/effects-recipe/engine-effects-assets.recipe.json" "$VALIDATION_ROOT/browser/wwwroot/diagnostics/content"
+
+      - name: Verify fresh Debug metadata-cooker startup
+        timeout-minutes: 10
+        run: |
+          dotnet build Tools/BrowserRuntimeMetadataCooker/BrowserRuntimeMetadataCooker.csproj -c Debug -m:1 --artifacts-path "$VALIDATION_ROOT/metadata-debug-build"
+          dotnet "$VALIDATION_ROOT/metadata-debug-build/bin/BrowserRuntimeMetadataCooker/debug/BrowserRuntimeMetadataCooker.dll" Tools/BrowserSmoke/Content/EngineSmokeWorld.asset "$VALIDATION_ROOT/metadata-debug-fixture"
+          dotnet "$VALIDATION_ROOT/metadata-debug-build/bin/BrowserRuntimeMetadataCooker/debug/BrowserRuntimeMetadataCooker.dll" --verify "$VALIDATION_ROOT/metadata-debug-fixture"
+
+      - name: Verify static browser bundle
+        shell: pwsh
+        run: |
+          $root = "$env:VALIDATION_ROOT/browser/wwwroot"
+          foreach ($name in @('index.html', 'engine-player.html', 'engine-runtime.js', 'engine-assets.js')) {
+            if (!(Test-Path (Join-Path $root $name))) { throw "Missing browser asset: $name" }
+          }
+          $nativeLeaves = Get-ChildItem $root -File -Recurse | Where-Object {
+            $_.Name -match 'XREngine\.Runtime\.(Bootstrap|Rendering\.(OpenGL|Vulkan)|Platform\.Desktop)'
+          }
+          if ($nativeLeaves) { throw "Desktop-only assemblies leaked into the browser output: $($nativeLeaves.Name -join ', ')" }
+
+      - name: Qualify browser engine pixels and native physics
+        env:
+          DEBUG: pw:browser
+        run: |
+          mkdir -p "$VALIDATION_ROOT/evidence"
+          node Tools/BrowserSmoke/run.mjs --browser-publish "$VALIDATION_ROOT/browser/wwwroot" --shader-artifacts "$VALIDATION_ROOT/depth-shaders" --jolt-spike "$VALIDATION_ROOT/jolt-spike/wwwroot" --engine-manifest /diagnostics/content/manifest.json --require-world-play --gpu-mode software --gpu-diagnostics --output "$VALIDATION_ROOT/evidence" > >(tee "$VALIDATION_ROOT/evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/evidence/browser-process-stderr.log" >&2)
+
+      - name: Preserve qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-software-qualification
+          path: ${{ env.VALIDATION_ROOT }}/evidence
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Preserve browser build for inspection
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-static-bundle
+          path: ${{ env.VALIDATION_ROOT }}/browser/wwwroot
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-editor-browser:
+    name: Publish RollingBall with the Windows Editor CLI
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reuse: ${{ steps.reuse_selector.outcome == 'success' && steps.reuse_selector.outputs.reuse == 'true' }}
+      manifest: ${{ steps.reuse_selector.outcome == 'success' && steps.reuse_selector.outputs.reuse == 'true' && steps.reuse_selector.outputs.manifest || '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Select and preflight exact Editor bundle reuse
+        id: reuse_probe
+        continue-on-error: true
+        timeout-minutes: 7
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+        run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Select
+
+      - name: Preserve validated Editor bundle reuse provenance
+        id: reuse_provenance
+        if: ${{ steps.reuse_probe.outcome == 'success' && steps.reuse_probe.outputs.reuse == 'true' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: editor-bundle-reuse-provenance
+          path: ${{ env.VALIDATION_ROOT }}/editor-bundle-reuse-provenance.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Select validated Editor reuse decision
+        id: reuse_selector
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        env:
+          PROBE_OUTCOME: ${{ steps.reuse_probe.outcome }}
+          PROBE_REUSE: ${{ steps.reuse_probe.outputs.reuse }}
+          PROBE_MANIFEST: ${{ steps.reuse_probe.outputs.manifest }}
+          PROVENANCE_OUTCOME: ${{ steps.reuse_provenance.outcome }}
+        run: |
+          if ($env:PROBE_OUTCOME -ceq 'success' -and $env:PROBE_REUSE -ceq 'true' -and
+              $env:PROVENANCE_OUTCOME -ceq 'success' -and $env:PROBE_MANIFEST) {
+            "manifest=$env:PROBE_MANIFEST" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "reuse=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "reuse=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
+      - name: Initialize pinned Editor project submodules
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $paths = @('Build/Submodules/OscCore-NET9', 'Build/Submodules/OpenVR.NET')
+          git submodule update --init --checkout -- Build/Submodules/OscCore-NET9 Build/Submodules/OpenVR.NET
+          if ($LASTEXITCODE -ne 0) { throw 'The recorded Editor submodules could not be checked out.' }
+          foreach ($path in $paths) {
+            $entry = (& git ls-tree HEAD -- $path).Trim()
+            if ($LASTEXITCODE -ne 0 -or $entry -notmatch '^160000 commit ([0-9a-f]{40})\s+') {
+              throw "No recorded gitlink commit for $path."
+            }
+            $expected = $Matches[1]
+            $actual = (& git -C $path rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+              throw "The $path checkout does not match its recorded gitlink commit."
+            }
+          }
+          foreach ($file in @(
+            'Build/Submodules/OscCore-NET9/OscCore.csproj',
+            'Build/Submodules/OpenVR.NET/OpenVR.NET/OpenVR.NET.csproj',
+            'Build/Submodules/OpenVR.NET/OpenVR.NET/openvr_api.dll')) {
+            if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing pinned Editor dependency: $file" }
+          }
+
+      - name: Stage the pinned Editor shader compiler
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $shaderCompiler = 'XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/xr_shaderc.dll'
+          $expectedHash = 'f5753bf8c64930c6170f681ce649cc4515468b5b4fc81aa552d0d79a47b42cff'
+          $expectedBytes = 5520896
+          $pointer = (& git show "HEAD:$shaderCompiler") -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $pointer -notmatch "(?m)^oid sha256:$expectedHash$" -or
+              $pointer -notmatch "(?m)^size $expectedBytes$") {
+            throw 'The Editor shader compiler does not match the reviewed source pin.'
+          }
+          git lfs pull --include="$shaderCompiler" --exclude=""
+          if ($LASTEXITCODE -ne 0) { throw 'The pinned Editor shader compiler could not be fetched.' }
+          if ((Get-Item -LiteralPath $shaderCompiler).Length -ne $expectedBytes -or
+              (Get-FileHash -LiteralPath $shaderCompiler -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
+            throw 'The staged Editor shader compiler does not match its recorded size and hash.'
+          }
+
+      - name: Set up .NET 10
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - name: Install WebAssembly workload
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        run: dotnet workload install wasm-tools
+
+      - name: Prepare pinned browser physics sources
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          ./Tools/Dependencies/Prepare-JoltBrowserManaged.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/managed"
+          ./Tools/Dependencies/Build-JoltBrowser.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/native" -DotNetRoot $env:DOTNET_ROOT
+
+      - name: Stage canonical RollingBall inputs
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $source = 'Samples/RollingBall'
+          $project = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/project'
+          if (Test-Path -LiteralPath $project) { throw 'The CLI validation project must start empty.' }
+          New-Item -ItemType Directory -Path $project -Force | Out-Null
+          foreach ($name in @('RollingBall.xrproj', 'Assets', 'Config')) {
+            $inputPath = Join-Path $source $name
+            if (!(Test-Path -LiteralPath $inputPath)) { throw "Missing canonical RollingBall input: $inputPath" }
+            Copy-Item -LiteralPath $inputPath -Destination $project -Recurse
+          }
+          # Metadata is generated by Engine.LoadProject and is absent from a clean checkout.
+          Write-Output "Staged canonical RollingBall project: $project"
+
+      - name: Publish RollingBall through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/project/RollingBall.xrproj'
+          $log = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/editor-cli.log'
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-launch-profile -- `
+            --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "The Editor browser-publishing CLI failed; inspect $log." }
+
+      - name: Verify activated game bundle and unchanged canonical inputs
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $site = Join-Path $env:VALIDATION_ROOT 'rollingball-cli/project/Build/browser-game'
+          $descriptorFile = Join-Path $site 'browser-publish.json'
+          $manifestFile = Join-Path $site 'content/manifest.json'
+          foreach ($file in @((Join-Path $site 'index.html'), $descriptorFile, $manifestFile)) {
+            if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Editor bundle is incomplete: $file" }
+          }
+          $descriptor = Get-Content -LiteralPath $descriptorFile -Raw | ConvertFrom-Json
+          $manifest = Get-Content -LiteralPath $manifestFile -Raw | ConvertFrom-Json
+          if ($descriptor.schema -ne 2 -or $descriptor.format -ne 'xrengine-engine-launch' -or
+              $descriptor.manifest -ne './content/manifest.json' -or
+              $manifest.startupWorld -ne '/game/Worlds/RollingBallWorld.asset' -or
+              $manifest.assets.Count -lt 32 -or $manifest.shaderArtifacts.Count -lt 15 -or
+              $manifest.pipelineArtifacts.Count -lt 9) {
+            throw 'The Editor did not activate the canonical RollingBall browser content.'
+          }
+          git diff --exit-code -- Samples/RollingBall
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical RollingBall inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published game bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-rollingball-bundle
+          path: ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify dependency attribution in a disposable source copy
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $evidence = Join-Path $env:GITHUB_WORKSPACE "$env:VALIDATION_ROOT/dependency-attribution"
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          $generatorLog = Join-Path $evidence 'generator.log'
+          $reportDiff = Join-Path $evidence 'report-and-licenses.diff'
+          $reportStatus = Join-Path $evidence 'report-and-licenses.status.txt'
+          $isolated = Join-Path $env:RUNNER_TEMP "xr-dependency-attribution-$([guid]::NewGuid().ToString('N'))"
+          $previousLfsSkipSmudge = $env:GIT_LFS_SKIP_SMUDGE
+          try {
+            $env:GIT_LFS_SKIP_SMUDGE = '1'
+            git worktree add --detach $isolated HEAD
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to create the isolated dependency source copy.' }
+          }
+          finally {
+            $env:GIT_LFS_SKIP_SMUDGE = $previousLfsSkipSmudge
+          }
+          try {
+            foreach ($relative in @(
+              'XREngine.Data/XREngine.Data.csproj',
+              'XREngine.Runtime.Platform.Desktop/XREngine.Runtime.Platform.Desktop.csproj')) {
+              $workingHash = (Get-FileHash -LiteralPath (Join-Path $env:GITHUB_WORKSPACE $relative) -Algorithm SHA256).Hash
+              $isolatedHash = (Get-FileHash -LiteralPath (Join-Path $isolated $relative) -Algorithm SHA256).Hash
+              if ($workingHash -ne $isolatedHash) { throw "Isolated source differs from the checked-out project: $relative" }
+            }
+
+            & pwsh -NoProfile -File (Join-Path $isolated 'Tools/Reports/Generate-Dependencies.ps1') -NoPromptForUnknownLicenses *> $generatorLog
+            if ($LASTEXITCODE -ne 0) { throw 'Isolated dependency report generation failed; inspect generator.log.' }
+
+            $generated = Join-Path $isolated 'docs/DEPENDENCIES.md'
+            $rows = @(Select-String -LiteralPath $generated -Pattern '^\| SharpZipLib \|')
+            if ($rows.Count -ne 1) { throw 'Expected one SharpZipLib attribution row in the generated report.' }
+            $columns = $rows[0].Line.Split('|')
+            # Uninitialized submodules may change unrelated report rows in this source copy.
+            # Admit only this exact package version, desktop owner and MIT notice.
+            if ($columns[2].Trim() -ne '1.4.2' -or
+                $columns[5].Trim() -ne 'XREngine.Runtime.Platform.Desktop.csproj') {
+              throw "Unexpected SharpZipLib version or direct consumer: $($rows[0].Line)"
+            }
+            if (!(Test-Path -LiteralPath (Join-Path $isolated 'docs/licenses/nuget/SharpZipLib-1.4.2-MIT.txt') -PathType Leaf)) {
+              throw 'The generated SharpZipLib MIT notice is missing.'
+            }
+          }
+          finally {
+            try {
+              $generated = Join-Path $isolated 'docs/DEPENDENCIES.md'
+              if (Test-Path -LiteralPath $generated -PathType Leaf) {
+                Copy-Item -LiteralPath $generated -Destination (Join-Path $evidence 'DEPENDENCIES.snapshot.md')
+              }
+              git -C $isolated diff --binary -- docs/DEPENDENCIES.md docs/licenses > $reportDiff
+              git -C $isolated status --short -- docs/DEPENDENCIES.md docs/licenses > $reportStatus
+              Write-Output 'Full generated report and unrelated source-copy differences are retained as evidence, not accepted into canonical docs.'
+            }
+            finally {
+              git worktree remove --force $isolated
+            }
+          }
+
+      - name: Preserve isolated dependency attribution evidence
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-dependency-attribution
+          path: ${{ env.VALIDATION_ROOT }}/dependency-attribution
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Prepare canonical RenderingParity browser inputs
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $toolchain = Join-Path $env:VALIDATION_ROOT 'toolchain/slang-windows'
+          $archive = Join-Path $env:VALIDATION_ROOT 'toolchain/slang-windows.zip'
+          New-Item -ItemType Directory -Path (Split-Path -Parent $archive) -Force | Out-Null
+          Invoke-WebRequest -Uri 'https://github.com/shader-slang/slang/releases/download/v2026.8/slang-2026.8-windows-x86_64.zip' -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '7a3ffcbd267dbddb4818f68ade13da37e2d394dd305c7276fef964933388f184') {
+            throw 'The pinned Windows Slang archive hash does not match.'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $toolchain
+          $compilers = @(Get-ChildItem -LiteralPath $toolchain -Filter 'slangc.exe' -File -Recurse)
+          if ($compilers.Count -ne 1) { throw 'Expected one compiler in the verified Slang archive.' }
+          $env:XRE_SLANGC = $compilers[0].FullName
+          $project = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project'
+          if (Test-Path -LiteralPath $project) { throw 'The RenderingParity CLI project must start empty.' }
+          New-Item -ItemType Directory -Path $project -Force | Out-Null
+          foreach ($name in @('RenderingParity.xrproj', 'Assets')) {
+            Copy-Item -LiteralPath (Join-Path 'Samples/RenderingParity' $name) -Destination $project -Recurse
+          }
+          New-Item -ItemType Directory -Path (Join-Path $project 'Config') | Out-Null
+          ./Tools/Cook-EngineBrowserShaders.ps1 -OutputDirectory (Join-Path $project 'Assets/Shaders/WebGPU')
+
+      - name: Preserve exact native shading cook
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $shaders = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU'
+          $evidence = Join-Path $env:VALIDATION_ROOT 'advanced-shader-evidence'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          $catalog = Get-Content -LiteralPath (Join-Path $shaders 'manifest.json') -Raw | ConvertFrom-Json
+          $expected = @(
+            'engine-advanced-shade-native',
+            'engine-advanced-shade-native-depth',
+            'engine-advanced-shade-native-msaa',
+            'engine-advanced-shade-native-depth-msaa',
+            'engine-advanced-shade-surface-exports',
+            'engine-advanced-shade-surface-exports-depth',
+            'engine-advanced-shade-surface-exports-msaa',
+            'engine-advanced-shade-surface-exports-depth-msaa',
+            'engine-advanced-shade-uber-native',
+            'engine-advanced-shade-uber-native-depth',
+            'engine-advanced-shade-uber-native-msaa',
+            'engine-advanced-shade-uber-native-depth-msaa',
+            'engine-advanced-shade-uber-surface-exports',
+            'engine-advanced-shade-uber-surface-exports-depth',
+            'engine-advanced-shade-uber-surface-exports-msaa',
+            'engine-advanced-shade-uber-surface-exports-depth-msaa',
+            'engine-advanced-shade-native-no-modifiers',
+            'engine-advanced-shade-native-no-modifiers-msaa',
+            'engine-advanced-shade-surface-exports-no-modifiers',
+            'engine-advanced-shade-surface-exports-no-modifiers-msaa',
+            'engine-advanced-shade-native-no-decals',
+            'engine-advanced-shade-native-depth-no-decals',
+            'engine-advanced-shade-native-no-decals-msaa',
+            'engine-advanced-shade-native-depth-no-decals-msaa',
+            'engine-advanced-shade-surface-exports-no-decals',
+            'engine-advanced-shade-surface-exports-depth-no-decals',
+            'engine-advanced-shade-surface-exports-no-decals-msaa',
+            'engine-advanced-shade-surface-exports-depth-no-decals-msaa'
+          )
+          $selected = @($catalog.artifacts | Where-Object { $_.name -cin $expected })
+          $names = @($selected | ForEach-Object { $_.name })
+          if ($selected.Count -ne 28 -or @($names | Sort-Object -Unique).Count -ne 28 -or
+              @(Compare-Object -ReferenceObject $expected -DifferenceObject $names -CaseSensitive).Count -ne 0) {
+            throw 'Expected the exact twenty-eight native shading companions.'
+          }
+          $descriptors = @{}
+          foreach ($entry in $selected) {
+            if ($entry.descriptor -ne "$($entry.sha256).shader.json" -or $entry.sha256 -notmatch '^[0-9a-f]{64}$') {
+              throw 'Invalid native shading descriptor identity.'
+            }
+            $descriptorPath = Join-Path $shaders $entry.descriptor
+            if ((Get-FileHash -LiteralPath $descriptorPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) {
+              throw 'Native shading descriptor bytes changed after cooking.'
+            }
+            $descriptor = Get-Content -LiteralPath $descriptorPath -Raw | ConvertFrom-Json
+            if ($descriptor.source.sha256 -notmatch '^[0-9a-f]{64}$' -or $descriptor.source.url -ne "$($descriptor.source.sha256).wgsl") {
+              throw 'Invalid native shading source identity.'
+            }
+            $sourcePath = Join-Path $shaders $descriptor.source.url
+            if ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $descriptor.source.sha256 -or
+                (Get-Item -LiteralPath $sourcePath).Length -ne $descriptor.source.byteLength) {
+              throw 'Native shading WGSL bytes changed after cooking.'
+            }
+            Copy-Item -LiteralPath $descriptorPath, $sourcePath -Destination $evidence
+            $descriptors[$entry.name] = $descriptor
+          }
+          foreach ($name in @(
+            'engine-advanced-shade-native-no-modifiers',
+            'engine-advanced-shade-native-no-modifiers-msaa',
+            'engine-advanced-shade-surface-exports-no-modifiers',
+            'engine-advanced-shade-surface-exports-no-modifiers-msaa',
+            'engine-advanced-shade-native-no-decals',
+            'engine-advanced-shade-native-depth-no-decals',
+            'engine-advanced-shade-native-no-decals-msaa',
+            'engine-advanced-shade-native-depth-no-decals-msaa',
+            'engine-advanced-shade-surface-exports-no-decals',
+            'engine-advanced-shade-surface-exports-depth-no-decals',
+            'engine-advanced-shade-surface-exports-no-decals-msaa',
+            'engine-advanced-shade-surface-exports-depth-no-decals-msaa'
+          )) {
+            $optional = $descriptors[$name]
+            $noDecals = $name.Contains('-no-decals')
+            $suffix = if ($noDecals) { '-no-decals' } else { '-no-modifiers' }
+            $fullName = $name.Replace($suffix, '')
+            $full = $descriptors[$fullName]
+            $identity = if ($noDecals) { 'xrengine.engine.native-no-decals.v1' } else { 'xrengine.engine.native-unmodified.v1' }
+            $define = if ($noDecals) { 'XR_ADV_NATIVE_DECALS_ABSENT_SCHEMA_VERSION=1' } else { 'XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1' }
+            if ($null -eq $optional -or $null -eq $full -or
+                $optional.name -cne $name -or
+                $optional.pass -cne $name.Replace('engine-advanced-', '') -or
+                $full.name -cne $fullName -or $full.pass -cne $fullName.Replace('engine-advanced-', '') -or
+                $full.semanticSchemaIdentity -cne 'xrengine.engine.compute.v1' -or
+                $full.schemaVersion -ne 3 -or $full.target -cne 'WebGPUWgsl' -or
+                $optional.semanticSchemaIdentity -cne $identity -or
+                $optional.schemaVersion -ne 3 -or $optional.target -cne 'WebGPUWgsl' -or
+                $optional.sourceLanguage -cne 'Slang') {
+              throw "Invalid optional native shading descriptor: $name"
+            }
+            $expectedCount = if ($name -cin @('engine-advanced-shade-native-no-modifiers-msaa',
+                'engine-advanced-shade-native-no-decals-msaa', 'engine-advanced-shade-native-depth-no-decals-msaa')) { 40 } else { 41 }
+            if ($optional.layout.bindings.Count -ne $expectedCount -or
+                (@($optional.workgroupSize) -join ',') -cne '16,16,1' -or
+                (@($optional.defines) -join '|') -cne ((@($full.defines) + @($define)) -join '|') -or
+                ($noDecals -and (@($optional.defines) -ccontains 'XR_ADV_NATIVE_MODIFIERS_ABSENT_SCHEMA_VERSION=1')) -or
+                ($noDecals -and !(@($optional.defines) -ccontains 'XR_ADV_STANDALONE_SHADOW_SCHEMA_VERSION=1')) -or
+                ($noDecals -and $name.Contains('-depth-') -and
+                    !(@($optional.defines) -ccontains 'XR_ADV_DEPTH_COMPARISON_BANK=1'))) {
+              throw "Invalid optional native shading schema or binding count: $name"
+            }
+            foreach ($field in @('entryPoints', 'workgroupSize', 'layout', 'requiredFeatures',
+                'requiredLimits', 'compilerIdentity', 'matrixLayout', 'coordinates', 'includes',
+                'sourceMap', 'pipeline', 'specialization')) {
+              if (($optional.$field | ConvertTo-Json -Depth 100 -Compress) -cne
+                  ($full.$field | ConvertTo-Json -Depth 100 -Compress)) {
+                throw "Optional native shading $field differs from its full program: $name"
+              }
+            }
+            $optionalDependencies = @($optional.dependencies | Where-Object { $_.path -notlike '*.recipe.json' })
+            $fullDependencies = @($full.dependencies | Where-Object { $_.path -notlike '*.recipe.json' })
+            if (($optionalDependencies | ConvertTo-Json -Depth 100 -Compress) -cne
+                ($fullDependencies | ConvertTo-Json -Depth 100 -Compress)) {
+              throw "Optional native shading source dependencies differ from its full program: $name"
+            }
+          }
+          $selected | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $evidence 'artifacts.json') -Encoding utf8NoBOM
+
+      - name: Upload native shading source evidence
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-shading-cook
+          path: ${{ env.VALIDATION_ROOT }}/advanced-shader-evidence
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish RenderingParity through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/RenderingParity.xrproj'
+          $log = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/editor-cli.log'
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+            --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "The RenderingParity Editor CLI publisher failed; inspect $log." }
+          $site = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Build/browser-game'
+          $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+          if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+              $manifest.startupWorld -ne '/game/Worlds/RenderingParityWorld.asset' -or
+              !($manifest.computeArtifacts | Where-Object kernel -eq 'packed-skinning') -or
+              !($manifest.materialVariants | Where-Object semantic -eq 'StandardLitTexture')) {
+            throw 'The Editor did not activate the canonical mapped and animated world.'
+          }
+          git diff --exit-code -- Samples/RenderingParity
+          if ($LASTEXITCODE -ne 0) { throw 'Canonical RenderingParity inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published RenderingParity bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-rendering-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stage authored Advanced rendering project
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'advanced-rendering-parity-cli/project'
+          if (Test-Path -LiteralPath $project) { throw 'The Advanced CLI project must start empty.' }
+          New-Item -ItemType Directory -Path $project -Force | Out-Null
+          foreach ($name in @('AdvancedRenderingParity.xrproj', 'Assets')) {
+            Copy-Item -LiteralPath (Join-Path 'Samples/AdvancedRenderingParity' $name) -Destination $project -Recurse
+          }
+          New-Item -ItemType Directory -Path (Join-Path $project 'Config') | Out-Null
+          $shaders = Join-Path $project 'Assets/Shaders'
+          New-Item -ItemType Directory -Path $shaders -Force | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU') -Destination $shaders -Recurse
+
+      - name: Publish Advanced rendering through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'advanced-rendering-parity-cli/project/AdvancedRenderingParity.xrproj'
+          $log = Join-Path $env:VALIDATION_ROOT 'advanced-rendering-parity-cli/editor-cli.log'
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+            --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "The Advanced Editor CLI publisher failed; inspect $log." }
+          $site = Join-Path $env:VALIDATION_ROOT 'advanced-rendering-parity-cli/project/Build/browser-game'
+          $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+          if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+              $manifest.startupWorld -ne '/game/Worlds/AdvancedRenderingParityWorld.asset') {
+            throw 'The Editor did not activate the saved Advanced world.'
+          }
+          foreach ($pass in @('visibility-pull', 'depth-pyramid', 'gtao', 'shade-classify', 'shade-native', 'present')) {
+            if (!($manifest.pipelineArtifacts | Where-Object { $_.scope -eq 'advanced' -and $_.pass -eq $pass })) {
+              throw "Missing published native Advanced program: $pass"
+            }
+          }
+          git diff --exit-code -- Samples/AdvancedRenderingParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored Advanced inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published Advanced rendering bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-advanced-rendering-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Set up native package and shadow staging tools
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Stage bounded Advanced shadow comparison
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $catalog = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU'
+          $output = Join-Path $env:VALIDATION_ROOT 'advanced-shadow-parity-cli'
+          node Tools/BrowserSmoke/prepare-advanced-shadow-comparison.mjs . $catalog $output
+          if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow comparison staging failed.' }
+
+      - name: Publish Advanced shadow comparison through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          foreach ($state in @('on', 'off')) {
+            $root = Join-Path $env:VALIDATION_ROOT "advanced-shadow-parity-cli/$state"
+            $projectRoot = Join-Path $root 'project'
+            $project = Join-Path $projectRoot 'AdvancedRenderingParity.xrproj'
+            $log = Join-Path $root 'editor-cli.log'
+            dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+              --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+              --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) { throw "The Advanced shadow $state Editor CLI publisher failed; inspect $log." }
+            $site = Join-Path $projectRoot 'Build/browser-game'
+            $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+            if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+                $manifest.startupWorld -ne '/game/Worlds/AdvancedRenderingParityWorld.asset') {
+              throw "The Editor did not activate the Advanced shadow $state world."
+            }
+            foreach ($pass in @('visibility-pull', 'depth-pyramid', 'gtao', 'shade-classify', 'shade-native', 'present')) {
+              if (!($manifest.pipelineArtifacts | Where-Object { $_.scope -eq 'advanced' -and $_.pass -eq $pass })) {
+                throw "Missing published Advanced shadow $state program: $pass"
+              }
+            }
+            $expected = if ($state -eq 'on') { '8F537639AA8260D935FDA46C82A3CA4D4A983EFBB37BF9C00FB17F8738E96F9B' } else { 'B3DEE24DFCE5D5515C69CEF8DF62738547AE128ABA74A673A1AD058F6E712484' }
+            $stagedWorld = Join-Path $projectRoot 'Assets/Worlds/AdvancedRenderingParityWorld.asset'
+            if ((Get-FileHash -LiteralPath $stagedWorld -Algorithm SHA256).Hash -cne $expected) {
+              throw "The staged Advanced shadow $state world changed during Editor publishing."
+            }
+          }
+          git diff --exit-code -- Samples/AdvancedRenderingParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored Advanced inputs changed during shadow comparison publishing.' }
+
+      - name: Verify Advanced shadow startup settings through the cooked codec
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $output = Join-Path $env:VALIDATION_ROOT 'advanced-shadow-parity-cli'
+          dotnet run --project Tools/BrowserSmoke/ShadowStartupVerifier/ShadowStartupVerifier.csproj `
+            --configuration Release --no-launch-profile -- . $output
+          if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow startup settings differ outside the three transient settings asset IDs.' }
+
+      - name: Bind Advanced shadow source and published payload evidence
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          node Tools/BrowserSmoke/prepare-advanced-shadow-comparison.mjs --receipt . (Join-Path $env:VALIDATION_ROOT 'advanced-shadow-parity-cli')
+          if ($LASTEXITCODE -ne 0) { throw 'The Advanced shadow comparison publication evidence failed.' }
+
+      - name: Preserve exact Editor-published Advanced shadow ON bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-advanced-shadow-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve exact Editor-published Advanced shadow OFF reference
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-advanced-shadow-parity-off-bundle
+          path: ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Verify runtime ownership, workers, logging, project settings, shader sources, metadata, and native handoff loading
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          ALSOFT_DRIVERS: 'null'
+        run: |
+          $project = 'XREngine.UnitTests/XREngine.UnitTests.csproj'
+          dotnet restore $project
+          if ($LASTEXITCODE -ne 0) { throw 'Render scope test restore failed.' }
+          dotnet build $project --configuration Release --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'Render scope test build failed.' }
+          dotnet test $project --configuration Release --no-build --no-restore `
+            --filter 'FullyQualifiedName~RenderScopeOwnershipTests|FullyQualifiedName~XRFrameBufferBindingStackTests|FullyQualifiedName~RenderStateThreadIsolationTests|FullyQualifiedName~XRBufferClientSpillTests|FullyQualifiedName~ShaderSourceResolverCachingTests|FullyQualifiedName~ShaderSourceDependencyHotReloadTests|FullyQualifiedName~VulkanShaderPreprocessParityTests|FullyQualifiedName~PhysicsChainCpuWorkSchedulerTests|FullyQualifiedName~JobManagerTests|FullyQualifiedName~EngineWorkSchedulerTests|FullyQualifiedName~PrefabModelSerializationTests.SyncMetadataWithAssets_|FullyQualifiedName~PrefabModelSerializationTests.LoadPrefabFromSiblingBuildAssetRoot_ResolvesExternalModelGraphByLocalMetadata|FullyQualifiedName~DesktopAssetFileSystemTests|FullyQualifiedName~NetworkingContractsTests.RealtimeJoinHandoff_ReadsLocalJsonPayloadFromEnvironment|FullyQualifiedName~LogFileNamingTests|FullyQualifiedName~DebugDiagnosticsTests|FullyQualifiedName~NativeSubsystemDependencyBoundaryTests|FullyQualifiedName~RuntimeModularizationPhase4DependencyBoundaryTests.RuntimeCore_ProjectReferencesOnlyApprovedLowerAssemblies|FullyQualifiedName~XRProjectTests|FullyQualifiedName~GameSettingsProjectPersistenceTests|FullyQualifiedName~EngineDefaultsProjectPersistenceTests|FullyQualifiedName~ImportedTextureStreamingPhaseTests.AssetTextureStreamingSource_WhenCacheAssetUnreadable_FallsBackToOriginalSource|FullyQualifiedName~TransformPropagationWorkerTests|FullyQualifiedName~PrefabModelSerializationTests.PreparePrefabPartialLoadAsync_BuildsHierarchyWithoutLoadingExternalModelOrRegisteringTempObjects|FullyQualifiedName~PrefabModelSerializationTests.LoadPrefabWithReferencesAsync_HydratesExternalModelBeforeBindingRoot|FullyQualifiedName~AssetPackerTests.Pack_Repack_Compact_StaleDetection_RoundTrips|FullyQualifiedName~ProfilerStatsWorkerTests|FullyQualifiedName~XREventLinkedProfilingTests|FullyQualifiedName~RuntimeApplicationProfileTests|FullyQualifiedName~PublishedLauncherGenerationTests' `
+            --logger 'trx;LogFileName=render-scope-ownership.trx' `
+            --results-directory "$env:VALIDATION_ROOT/render-scope-tests"
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime ownership, worker, logging, project settings, shader source, metadata, or native handoff loading checks failed.' }
+
+      - name: Preserve render scope ownership evidence
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: render-scope-ownership-tests
+          path: ${{ env.VALIDATION_ROOT }}/render-scope-tests
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Verify Debug profiler workers and runtime composition
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          ALSOFT_DRIVERS: 'null'
+        run: |
+          $project = 'XREngine.UnitTests/XREngine.UnitTests.csproj'
+          $root = Join-Path $env:GITHUB_WORKSPACE (Join-Path $env:VALIDATION_ROOT 'profiler-validation-build')
+          dotnet build $project --configuration Debug -m:1 --artifacts-path $root
+          if ($LASTEXITCODE -ne 0) { throw 'Debug profiler test build failed.' }
+          dotnet test $project --configuration Debug --artifacts-path $root --no-build --no-restore `
+            --filter 'FullyQualifiedName~ProfilerStatsWorkerTests|FullyQualifiedName~XREventLinkedProfilingTests|FullyQualifiedName~JobManagerTests|FullyQualifiedName~EngineWorkSchedulerTests|FullyQualifiedName~TransformPropagationWorkerTests|FullyQualifiedName~NativeSubsystemDependencyBoundaryTests|FullyQualifiedName~RuntimeApplicationProfileTests|FullyQualifiedName~PublishedLauncherGenerationTests' `
+            --logger 'trx;LogFileName=profiler-worker-debug.trx' `
+            --results-directory "$env:VALIDATION_ROOT/profiler-worker-tests"
+          if ($LASTEXITCODE -ne 0) { throw 'Debug profiler worker or composition checks failed.' }
+
+      - name: Build fresh-process profiler startup probes
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          $project = 'XREngine.UnitTests/ProfilerStartupProbe/XREngine.ProfilerStartupProbe.csproj'
+          $root = Join-Path $env:GITHUB_WORKSPACE (Join-Path $env:VALIDATION_ROOT 'profiler-validation-build')
+          foreach ($configuration in @('Debug', 'Release')) {
+            dotnet build $project --configuration $configuration -m:1 --artifacts-path $root
+            if ($LASTEXITCODE -ne 0) { throw "The $configuration profiler startup probe build failed." }
+          }
+
+      - name: Verify fresh-process profiler registration and RenderBench startup
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          ALSOFT_DRIVERS: 'null'
+        run: |
+          $root = Join-Path $env:GITHUB_WORKSPACE (Join-Path $env:VALIDATION_ROOT 'profiler-validation-build')
+          $evidence = Join-Path $env:VALIDATION_ROOT 'profiler-worker-tests'
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          foreach ($configuration in @('Debug', 'Release')) {
+            $dll = Join-Path $root "bin/XREngine.ProfilerStartupProbe/$($configuration.ToLowerInvariant())/XREngine.ProfilerStartupProbe.dll"
+            if (!(Test-Path -LiteralPath $dll)) { throw "The $configuration startup probe output was not found." }
+            foreach ($mode in @('registered-engine', 'missing-provider', 'renderbench-scope')) {
+              dotnet $dll $mode 2>&1 | Tee-Object -FilePath (Join-Path $evidence "$configuration-$mode.log")
+              if ($LASTEXITCODE -ne 0) { throw "The $configuration $mode startup check failed." }
+            }
+          }
+
+      - name: Preserve profiler worker and startup test evidence
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: profiler-worker-startup-tests
+          path: ${{ env.VALIDATION_ROOT }}/profiler-worker-tests
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stage authored shared UI project
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/project'
+          if (Test-Path -LiteralPath $project) { throw 'The UI CLI project must start empty.' }
+          New-Item -ItemType Directory -Path $project -Force | Out-Null
+          foreach ($name in @('BrowserUiParity.xrproj', 'Assets', 'Config')) {
+            Copy-Item -LiteralPath (Join-Path 'Samples/BrowserUiParity' $name) -Destination $project -Recurse
+          }
+          $shaders = Join-Path $project 'Assets/Shaders'
+          New-Item -ItemType Directory -Path $shaders -Force | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU') -Destination $shaders -Recurse
+
+      - name: Publish shared UI through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/project/BrowserUiParity.xrproj'
+          $log = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/editor-cli.log'
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+            --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "The shared UI Editor CLI publisher failed; inspect $log." }
+          $site = Join-Path $env:VALIDATION_ROOT 'ui-parity-cli/project/Build/browser-game'
+          $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+          if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+              $manifest.startupWorld -ne '/game/Worlds/BrowserUiParityWorld.asset' -or
+              !($manifest.assets | Where-Object path -eq '/engine/Fonts/Roboto/Roboto-Regular.cooked.asset') -or
+              !(Test-Path -LiteralPath (Join-Path $site 'licenses/Roboto-LICENSE.txt'))) {
+            throw 'The Editor did not activate the saved shared UI world and its cooked font/license.'
+          }
+          foreach ($semantic in @('UIQuadBatched', 'UIQuadBatchedTexture', 'UITextBatchedBitmap', 'UICanvasSurface')) {
+            $version = if ($semantic -eq 'UICanvasSurface') { 1 } else { 2 }
+            if (!($manifest.materialVariants | Where-Object { $_.semantic -eq $semantic -and $_.semanticVersion -eq $version })) {
+              throw "Missing published shared UI variant: $semantic v$version"
+            }
+          }
+          git diff --exit-code -- Samples/BrowserUiParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored shared UI inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published shared UI bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-ui-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/ui-parity-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stage and cook authored modular pipeline project
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/project'
+          if (Test-Path -LiteralPath $project) { throw 'The modular CLI project must start empty.' }
+          New-Item -ItemType Directory -Path (Join-Path $project 'Assets/Scripts'), (Join-Path $project 'Assets/Worlds'), (Join-Path $project 'Assets/Shaders/WebGPU'), (Join-Path $project 'Config') -Force | Out-Null
+          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/ModularPipelineParity.xrproj' -Destination $project
+          Copy-Item -Path 'Samples/ModularPipelineParity/Assets/Scripts/*.cs' -Destination (Join-Path $project 'Assets/Scripts')
+          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/Assets/Worlds/ModularPipelineParityWorld.asset' -Destination (Join-Path $project 'Assets/Worlds')
+          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/Assets/startup.asset' -Destination (Join-Path $project 'Assets')
+          $compilers = @(Get-ChildItem -LiteralPath (Join-Path $env:VALIDATION_ROOT 'toolchain/slang-windows') -Filter 'slangc.exe' -File -Recurse)
+          if ($compilers.Count -ne 1) { throw 'Expected the already verified pinned Slang compiler.' }
+          $env:XRE_SLANGC = $compilers[0].FullName
+          & ./Samples/ModularPipelineParity/Prepare-BrowserShaders.ps1 -OutputDirectory (Join-Path $project 'Assets/Shaders/WebGPU')
+
+      - name: Publish modular pipeline through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $project = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/project/ModularPipelineParity.xrproj'
+          $log = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/editor-cli.log'
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+            --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { throw "The modular Editor CLI publisher failed; inspect $log." }
+          $site = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/project/Build/browser-game'
+          $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+          if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+              $manifest.startupWorld -ne '/game/Worlds/ModularPipelineParityWorld.asset' -or
+              !($manifest.pipelineArtifacts | Where-Object { $_.scope -eq 'custom' -and $_.pass -eq 'custom-pass' })) {
+            throw 'The Editor did not activate the authored modular world and scoped program.'
+          }
+          git diff --exit-code -- Samples/ModularPipelineParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored modular sample inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published modular pipeline bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-modular-pipeline-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stage identical static meshlet GPU and CPU worlds
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $original = Get-Content -LiteralPath 'Samples/RenderingParity/Assets/Worlds/RenderingParityWorld.asset' -Raw
+          $derivative = Get-Content -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Raw
+          foreach ($pattern in @('(?s)              Mesh:\r?\n.*?(?=              MinProjectedScreenRadiusPixels:)',
+              '(?s)                SurfaceTextureBindings:\r?\n.*?(?=                TransmissionColor:)')) {
+            $a = [regex]::Match($original, $pattern)
+            $b = [regex]::Match($derivative, $pattern)
+            if (!$a.Success -or !$b.Success -or $a.Value.Replace("`r", '') -ne $b.Value.Replace("`r", '')) {
+              throw 'The static meshlet source changed its original mapped panel geometry or texture bindings.'
+            }
+          }
+          foreach ($profile in @('gpu', 'cpu')) {
+            $project = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/project"
+            if (Test-Path -LiteralPath $project) { throw "The static meshlet $profile CLI project must start empty." }
+            New-Item -ItemType Directory -Path $project -Force | Out-Null
+            foreach ($name in @('StaticMeshletParity.xrproj', 'Assets')) {
+              Copy-Item -LiteralPath (Join-Path 'Samples/StaticMeshletParity' $name) -Destination $project -Recurse
+            }
+            New-Item -ItemType Directory -Path (Join-Path $project 'Config'), (Join-Path $project 'Assets/Shaders') -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU') `
+              -Destination (Join-Path $project 'Assets/Shaders') -Recurse
+            if ($profile -eq 'cpu') {
+              $startup = Join-Path $project 'Assets/startup.asset'
+              $source = Get-Content -LiteralPath $startup -Raw
+              $pattern = '(?m)(GPURenderDispatchOverride:\r?\n    HasOverride: true\r?\n    Value: )true'
+              if ([regex]::Matches($source, $pattern).Count -ne 1) { throw 'The saved GPU override was not unique.' }
+              [IO.File]::WriteAllText($startup, ([regex]::new($pattern)).Replace($source, '${1}false', 1))
+            }
+          }
+          $sourceWorld = (Get-FileHash -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Algorithm SHA256).Hash
+          foreach ($profile in @('gpu', 'cpu')) {
+            $stagedWorld = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/project/Assets/Worlds/StaticMeshletParityWorld.asset"
+            if ((Get-FileHash -LiteralPath $stagedWorld -Algorithm SHA256).Hash -ne $sourceWorld) {
+              throw "The staged static meshlet $profile world is not the exact saved source world."
+            }
+          }
+
+      - name: Publish static meshlet GPU and CPU worlds through the Editor CLI
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          foreach ($profile in @('gpu', 'cpu')) {
+            $projectRoot = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/project"
+            $project = Join-Path $projectRoot 'StaticMeshletParity.xrproj'
+            $log = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/editor-cli.log"
+            dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+              --build-project $project --build-configuration Release --build-platform BrowserWebGPU `
+              --output-subfolder browser-game 2>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) { throw "The static meshlet $profile Editor CLI publisher failed; inspect $log for BrowserCook.MeshletBackendUnavailable or its inner DLL/export error." }
+            $site = Join-Path $projectRoot 'Build/browser-game'
+            $manifest = Get-Content -LiteralPath (Join-Path $site 'content/manifest.json') -Raw | ConvertFrom-Json
+            if (!(Test-Path -LiteralPath (Join-Path $site 'index.html')) -or
+                $manifest.startupWorld -ne '/game/Worlds/StaticMeshletParityWorld.asset' -or
+                !($manifest.materialVariants | Where-Object { $_.semantic -eq 'StandardLitTexture' -and $_.semanticVersion -eq 1 })) {
+              throw "The Editor did not publish the saved static meshlet $profile world and mapped material."
+            }
+            foreach ($pass in @('select-lod', 'cull-expand', 'finalize-indexed', 'refit-bounds')) {
+              if (!($manifest.pipelineArtifacts | Where-Object { $_.scope -eq 'meshlets' -and $_.pass -eq $pass })) {
+                throw "Missing published static meshlet $profile program: $pass"
+              }
+            }
+            $stagedWorld = Join-Path $projectRoot 'Assets/Worlds/StaticMeshletParityWorld.asset'
+            if ((Get-FileHash -LiteralPath $stagedWorld -Algorithm SHA256).Hash -ne
+                (Get-FileHash -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Algorithm SHA256).Hash) {
+              throw "The static meshlet $profile source world changed during Editor publishing."
+            }
+          }
+          git diff --exit-code -- Samples/StaticMeshletParity
+          if ($LASTEXITCODE -ne 0) { throw 'Authored static meshlet sample inputs changed during CLI publishing.' }
+
+      - name: Preserve exact Editor-published static meshlet GPU bundle
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-static-meshlet-parity-bundle
+          path: ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve exact Editor-published static meshlet CPU reference
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-static-meshlet-parity-cpu-bundle
+          path: ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/project/Build/browser-game
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish the shared native networking fixture
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        env:
+          JoltBrowserManagedSourceDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/managed/staged
+          JoltBrowserArchiveDirectory: ${{ github.workspace }}/${{ env.VALIDATION_ROOT }}/jolt/native/archives
+        run: |
+          $root = Join-Path $env:VALIDATION_ROOT 'network-kinematic-cli'
+          $native = Join-Path $root 'native'
+          $projectRoot = Join-Path $root 'project'
+          if (Test-Path -LiteralPath $root) { throw 'The native networking fixture must start empty.' }
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          dotnet run --project XREngine.Server/XREngine.Server.csproj --configuration Release --no-launch-profile -- `
+            --create-world-package $native --world-name NetworkKinematicWorld --network-kinematic `
+            2>&1 | Tee-Object -FilePath (Join-Path $root 'native-package.log')
+          if ($LASTEXITCODE -ne 0) { throw 'The native network world-package generator failed.' }
+          $shaders = Join-Path $env:VALIDATION_ROOT 'rendering-parity-cli/project/Assets/Shaders/WebGPU'
+          node Tools/BrowserSmoke/prepare-network-kinematic-project.mjs $native $shaders $projectRoot
+          if ($LASTEXITCODE -ne 0) { throw 'The native network project staging failed.' }
+          dotnet run --project XREngine.Editor/XREngine.Editor.csproj --configuration Release --no-build --no-launch-profile -- `
+            --build-project (Join-Path $projectRoot 'NetworkKinematic.xrproj') --build-configuration Release --build-platform BrowserWebGPU `
+            --output-subfolder browser-game 2>&1 | Tee-Object -FilePath (Join-Path $root 'editor-cli.log')
+          if ($LASTEXITCODE -ne 0) { throw 'The shared native network browser publisher failed.' }
+          node Tools/BrowserSmoke/verify-network-kinematic-publication.mjs $native (Join-Path $projectRoot 'Build/browser-game')
+          if ($LASTEXITCODE -ne 0) { throw 'The shared native world publication failed canonical identity or byte verification.' }
+
+      - name: Preserve the shared native networking fixture
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-network-kinematic-bundle
+          path: ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/project/Build/browser-game
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Compile both benchmark executable modes
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: |
+          $project = 'XREngine.Benchmarks/XREngine.Benchmarks.csproj'
+          $root = Join-Path $env:GITHUB_WORKSPACE (Join-Path $env:VALIDATION_ROOT 'benchmark-build')
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          dotnet build $project --configuration Release -m:1 `
+            --artifacts-path "$root/vulkan-tool" -p:VulkanPerformanceToolOnly=true `
+            -p:BaseOutputPath="$root/vulkan-tool/bin/" 2>&1 | Tee-Object -FilePath "$root/vulkan-tool.log"
+          if ($LASTEXITCODE -ne 0) { throw 'The standalone Vulkan performance tool build failed.' }
+          dotnet build $project --configuration Release -m:1 `
+            --artifacts-path "$root/normal" 2>&1 | Tee-Object -FilePath "$root/normal.log"
+          if ($LASTEXITCODE -ne 0) { throw 'The normal benchmark executable build failed.' }
+
+      - name: Preserve Windows Editor CLI evidence
+        if: ${{ always() && (steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-editor-rollingball-qualification
+          path: |
+            ${{ env.VALIDATION_ROOT }}/benchmark-build/vulkan-tool.log
+            ${{ env.VALIDATION_ROOT }}/benchmark-build/normal.log
+            ${{ env.VALIDATION_ROOT }}/rollingball-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/staged-inputs.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/postpublish-inputs-on.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/postpublish-inputs-off.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/published-startup-on.bin
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/published-startup-off.bin
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/startup-verification.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Assets/Worlds/AdvancedRenderingParityWorld.asset
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Assets/Worlds/AdvancedRenderingParityWorld.asset
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/on/project/Build/browser-game/shadow-comparison.json
+            ${{ env.VALIDATION_ROOT }}/advanced-shadow-parity-cli/off/project/Build/browser-game/shadow-comparison.json
+            ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/native-package.log
+            ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/network-kinematic-cli/project/Build/browser-game/content/world-package.json
+            ${{ env.VALIDATION_ROOT }}/static-meshlet-gpu-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/static-meshlet-cpu-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/project/Build/browser-game/browser-publish.json
+            ${{ env.VALIDATION_ROOT }}/modular-pipeline-parity-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/ui-parity-cli/editor-cli.log
+            ${{ env.VALIDATION_ROOT }}/ui-parity-cli/project/Build/browser-game/browser-publish.json
+            ${{ env.VALIDATION_ROOT }}/ui-parity-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/advanced-rendering-parity-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/project/Build/browser-game/browser-publish.json
+            ${{ env.VALIDATION_ROOT }}/rendering-parity-cli/project/Build/browser-game/content/manifest.json
+            ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game/browser-publish.json
+            ${{ env.VALIDATION_ROOT }}/rollingball-cli/project/Build/browser-game/content/manifest.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  published-game:
+    name: Qualify ${{ matrix.kind }} in Linux Chromium
+    needs: windows-editor-browser
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [rollingball, rendering-parity, advanced-rendering-parity, advanced-shadow-parity, ui-parity, modular-pipeline-parity, static-meshlet-parity]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download exact Editor-published game bundle
+        if: needs.windows-editor-browser.outputs.reuse != 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-editor-${{ matrix.kind }}-bundle
+          path: ${{ env.VALIDATION_ROOT }}/published-game
+
+      - name: Download exact same-world CPU reference
+        if: needs.windows-editor-browser.outputs.reuse != 'true' && matrix.kind == 'static-meshlet-parity'
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-editor-static-meshlet-parity-cpu-bundle
+          path: ${{ env.VALIDATION_ROOT }}/published-cpu-baseline
+
+      - name: Download exact same-world shadow OFF reference
+        if: needs.windows-editor-browser.outputs.reuse != 'true' && matrix.kind == 'advanced-shadow-parity'
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-editor-advanced-shadow-parity-off-bundle
+          path: ${{ env.VALIDATION_ROOT }}/published-cpu-baseline
+
+      - name: Download and verify original reused Editor bundle
+        if: needs.windows-editor-browser.outputs.reuse == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          REUSE_MANIFEST: ${{ needs.windows-editor-browser.outputs.manifest }}
+          GAME_KIND: ${{ matrix.kind }}
+        run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Download -Kind "windows-editor-$env:GAME_KIND-bundle" -Destination "$env:VALIDATION_ROOT/published-game"
+
+      - name: Download and verify original reused static meshlet CPU reference
+        if: needs.windows-editor-browser.outputs.reuse == 'true' && matrix.kind == 'static-meshlet-parity'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          REUSE_MANIFEST: ${{ needs.windows-editor-browser.outputs.manifest }}
+        run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Download -Kind windows-editor-static-meshlet-parity-cpu-bundle -Destination "$env:VALIDATION_ROOT/published-cpu-baseline"
+
+      - name: Download and verify original reused shadow OFF reference
+        if: needs.windows-editor-browser.outputs.reuse == 'true' && matrix.kind == 'advanced-shadow-parity'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          REUSE_MANIFEST: ${{ needs.windows-editor-browser.outputs.manifest }}
+        run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Download -Kind windows-editor-advanced-shadow-parity-off-bundle -Destination "$env:VALIDATION_ROOT/published-cpu-baseline"
+
+      - name: Set up browser qualification tools
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Tools/BrowserSmoke/package-lock.json
+
+      - name: Install pinned browser tooling
+        run: |
+          npm ci --prefix Tools/BrowserSmoke
+          cd Tools/BrowserSmoke
+          npx playwright install --with-deps chromium
+
+      - name: Prepare approved UI frame trace
+        id: ui_frame_trace
+        if: github.event_name == 'push' && github.repository == 'BlackJaxDev/XRENGINE' && github.ref == 'refs/heads/codex/webgpu-readiness-audit' && github.run_attempt == 1 && matrix.kind == 'ui-parity'
+        env:
+          GAME_KIND: ${{ matrix.kind }}
+          GH_TOKEN: ${{ github.token }}
+        run: node Tools/BrowserSmoke/prepare-ui-frame-trace.mjs
+
+      - name: Qualify the Editor-published game in Chromium
+        env:
+          DEBUG: pw:browser
+          GAME_KIND: ${{ matrix.kind }}
+        run: |
+          mkdir -p "$VALIDATION_ROOT/game-evidence"
+          trace_args=()
+          if [[ "$GAME_KIND" == "static-meshlet-parity" || "$GAME_KIND" == "advanced-shadow-parity" ]]; then
+            trace_args+=(--baseline-publish "$VALIDATION_ROOT/published-cpu-baseline")
+          fi
+          if [[ "${{ steps.ui_frame_trace.outputs.armed }}" == "true" ]]; then
+            export DEBUG=''
+            trace_args+=(--ui-frame-trace)
+          fi
+          node Tools/BrowserSmoke/run.mjs --game-only --game-kind "$GAME_KIND" --game-publish "$VALIDATION_ROOT/published-game" --gpu-mode software --output "$VALIDATION_ROOT/game-evidence" "${trace_args[@]}" > >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stderr.log" >&2)
+
+      - name: Preserve published game qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: editor-${{ matrix.kind }}-browser-qualification
+          path: ${{ env.VALIDATION_ROOT }}/game-evidence
+          if-no-files-found: warn
+          retention-days: 14

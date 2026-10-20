@@ -10,6 +10,8 @@ internal sealed class ObjectCachePublicationBatch
     public List<XRObjectBase> Objects { get; } = [];
     public bool IsAborted { get; set; }
 
+    public bool Contains(XRObjectBase value) => _objectSet.Contains(value);
+
     public void Enlist(XRObjectBase value)
     {
         if (_objectSet.Add(value))

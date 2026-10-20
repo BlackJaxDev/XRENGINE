@@ -106,7 +106,7 @@ internal unsafe partial class VkMeshRenderer
                 useDynamicRendering ? 0UL : targetClosure.RenderPass.Handle,
                 useDynamicRendering ? targetClosure.DynamicRenderingFormats : default,
                 programPipelineHash,
-                visibilityProgram.LinkGeneration,
+                visibilityProgram.InterfaceGeneration,
                 meshlet ? 0UL : vertexInput.LayoutHash,
                 descriptorLayoutHash,
                 visibilityProgram.PipelineLayout.Handle,

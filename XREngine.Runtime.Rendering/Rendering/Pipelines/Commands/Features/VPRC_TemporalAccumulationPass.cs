@@ -1408,7 +1408,8 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
 
         BindStrictHistoryBegin(instance, state);
         PublishTemporalUniformData(state, captureResolve: true);
-        if (instance.Pipeline is IAdvancedRenderStageFamilyHost &&
+        if ((instance.Pipeline is IAdvancedRenderStageFamilyHost ||
+             RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.WebGPU) &&
             instance.RenderState.FrameViewSet is { } logicalViews)
         {
             TemporalUniformData data = CreateTemporalUniformData(state.Key, state);

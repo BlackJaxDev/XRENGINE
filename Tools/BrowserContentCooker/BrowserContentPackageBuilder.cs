@@ -23,6 +23,11 @@ public static partial class BrowserContentPackageBuilder
         using JsonDocument recipeDocument = ReadJson(ReadBounded(recipePath, JsonLimit));
         JsonElement recipe = recipeDocument.RootElement;
         Require(recipe.ValueKind == JsonValueKind.Object, "Recipe must be an object.");
+        if (recipe.TryGetProperty("format", out JsonElement format) && format.GetString() == "xrengine-assets")
+        {
+            BuildEngineAssets(recipe, Path.GetDirectoryName(recipePath)!, outputDirectory, cancellationToken);
+            return;
+        }
         int schema = Integer(recipe.GetProperty("schema"), 1, 3);
         if (schema == 1)
             Members(recipe, "schema", "entrypoints", "streamed", "assets");

@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
+using XREngine.Execution;
 
 namespace XREngine.Components;
 
@@ -9,7 +12,7 @@ namespace XREngine.Components;
 /// remain authoring facades; the world contributes only one callback to each
 /// required engine tick phase regardless of chain count.
 /// </summary>
-public sealed partial class PhysicsChainWorld
+public sealed partial class PhysicsChainWorld : IDisposable
 {
     private enum CommandKind : byte
     {
@@ -26,9 +29,16 @@ public sealed partial class PhysicsChainWorld
         PhysicsChainComponent Component,
         long Version);
 
+    private readonly record struct DeferredTransfer(
+        PhysicsChainComponent Component,
+        PhysicsChainWorld ExpectedOwner,
+        PhysicsChainRuntimeHandle ExpectedHandle,
+        PhysicsChainWorld Destination);
+
     private struct RuntimeSlot
     {
         public PhysicsChainComponent? Component;
+        public PhysicsChainRuntimeGraph? Graph;
         public uint Generation;
         public int DenseIndex;
         public QualityRuntimeState QualityState;
@@ -39,9 +49,12 @@ public sealed partial class PhysicsChainWorld
         public PhysicsChainArenaHandle OutputArenaHandle;
     }
 
-    private sealed class BatchWorkItem
+    private sealed class BatchWorkItem(PhysicsChainWorld owner) : IDisposable
     {
+        private readonly PhysicsChainWorld _owner = owner;
         private readonly ManualResetEventSlim _completed = new(initialState: true);
+        private readonly Lock _completionGate = new();
+        private PhysicsChainWorld? _outerTickContext;
         private List<PhysicsChainComponent>? _components;
         private PhysicsChainCpuBackend? _cpuBackend;
         private PhysicsChainArenaHandle[]? _cpuHandles;
@@ -55,8 +68,9 @@ public sealed partial class PhysicsChainWorld
 
         public Exception? Fault { get; private set; }
 
-        public void Configure(List<PhysicsChainComponent> components, int startInclusive, int endExclusive)
+        public void Configure(PhysicsChainWorld owner, List<PhysicsChainComponent> components, int startInclusive, int endExclusive)
         {
+            _outerTickContext = s_outerTickWorld ?? owner;
             _components = components;
             _cpuBackend = null;
             _cpuHandles = null;
@@ -68,16 +82,18 @@ public sealed partial class PhysicsChainWorld
             _startInclusive = startInclusive;
             _endExclusive = endExclusive;
             Fault = null;
-            _completed.Reset();
+            ResetCompletion();
         }
 
         public void ConfigureCpuBatch(
+            PhysicsChainWorld owner,
             PhysicsChainCpuBackend backend,
             PhysicsChainArenaHandle[] handles,
             PhysicsChainComponent[] components,
             int startInclusive,
             int endExclusive)
         {
+            _outerTickContext = s_outerTickWorld ?? owner;
             _prepareComponents = null;
             _prepareEligible = null;
             _prepareResults = null;
@@ -89,10 +105,11 @@ public sealed partial class PhysicsChainWorld
             _startInclusive = startInclusive;
             _endExclusive = endExclusive;
             Fault = null;
-            _completed.Reset();
+            ResetCompletion();
         }
 
         public void ConfigurePrepare(
+            PhysicsChainWorld owner,
             PhysicsChainComponent[] components,
             bool[] eligible,
             bool[] results,
@@ -100,6 +117,7 @@ public sealed partial class PhysicsChainWorld
             int startInclusive,
             int endExclusive)
         {
+            _outerTickContext = s_outerTickWorld ?? owner;
             _components = null;
             _cpuBackend = null;
             _cpuHandles = null;
@@ -111,11 +129,23 @@ public sealed partial class PhysicsChainWorld
             _startInclusive = startInclusive;
             _endExclusive = endExclusive;
             Fault = null;
-            _completed.Reset();
+            ResetCompletion();
+        }
+
+        private void ResetCompletion()
+        {
+            using (_completionGate.EnterScope())
+                _completed.Reset();
         }
 
         public void Run()
         {
+            // The outer-tick context keeps scene-mutation and readback admission rules.
+            // The executing-worker owner stops a worker from waiting on its own world.
+            PhysicsChainWorld? previousContext = s_outerTickWorld;
+            PhysicsChainWorld? previousOwner = s_executingWorkerWorld;
+            s_outerTickWorld = _outerTickContext;
+            s_executingWorkerWorld = _owner;
             try
             {
                 List<PhysicsChainComponent>? components = _components;
@@ -146,29 +176,77 @@ public sealed partial class PhysicsChainWorld
             }
             finally
             {
-                _completed.Set();
+                s_outerTickWorld = previousContext;
+                s_executingWorkerWorld = previousOwner;
+                using (_completionGate.EnterScope())
+                    _completed.Set();
             }
         }
 
         public void Wait()
             => _completed.Wait();
+
+        public void Dispose()
+        {
+            // Wait can observe the signal before Set itself returns. Serialize
+            // event destruction with that final worker operation as well.
+            using (_completionGate.EnterScope())
+                _completed.Dispose();
+            _components = null;
+            _cpuBackend = null;
+            _cpuHandles = null;
+            _cpuComponents = null;
+            _prepareComponents = null;
+            _prepareEligible = null;
+            _prepareResults = null;
+            _prepareFaults = null;
+            Fault = null;
+        }
     }
 
     private static readonly Lock RegistryLock = new();
-    private static readonly Dictionary<IRuntimeWorldContext, PhysicsChainWorld> Worlds =
-        new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+    private static readonly ConditionalWeakTable<PhysicsChainComponent, PhysicsChainRuntimeGraph> PendingRuntimeGraphs = new();
+    private static readonly ConditionalWeakTable<IRuntimeWorldContext, PhysicsChainWorld> Worlds = new();
+    private static readonly ConditionalWeakTable<IRuntimeWorldContext, object> ReleasedWorlds = new();
+    private static readonly object ReleasedWorld = new();
 
     // Fixed updates run on their own timer thread and can overlap normal/late updates.
     // All three phases touch the same slot registries and component simulation state, so
     // serialize them at the world boundary instead of allowing concurrent collection access.
     private readonly Lock _tickGate = new();
+    [ThreadStatic] private static PhysicsChainWorld? s_outerTickWorld;
+    [ThreadStatic] private static PhysicsChainWorld? s_executingWorkerWorld;
+    [ThreadStatic] private static bool s_drainingTransfers;
+    [ThreadStatic] private static Queue<PhysicsChainWorld>? s_transferDrainQueue;
+    [ThreadStatic] private static HashSet<PhysicsChainWorld>? s_transferDrainSet;
+    private readonly ConcurrentQueue<DeferredTransfer> _deferredTransfers = [];
     private readonly IRuntimeWorldContext _world;
+    private readonly Lock _commandGate = new();
+    private int _disposeRequested;
+    private bool _disposed;
+    private int _tickDepth;
+    private bool _attachingCallbacks;
+    private volatile bool _ownerDisposalPending;
+    private volatile bool _deferredOwnerDisposal;
     private readonly ConcurrentQueue<StructuralCommand> _commands = [];
     private readonly ConcurrentDictionary<PhysicsChainComponent, long> _latestCommandVersion =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
     private long _nextCommandVersion;
     private readonly Dictionary<PhysicsChainComponent, int> _slotByComponent =
         new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Binds the first rest graph before structural registration is applied.
+    /// The weak key keeps a disabled component's rest pose without retaining it.
+    /// </summary>
+    internal static PhysicsChainRuntimeGraph BindPendingRuntimeGraph(PhysicsChainComponent component)
+    {
+        PhysicsChainRuntimeGraph graph = PendingRuntimeGraphs.GetValue(
+            component, static _ => new PhysicsChainRuntimeGraph());
+        component.BindRuntimeGraph(graph);
+        return graph;
+    }
     private readonly List<RuntimeSlot> _slots = [];
     private readonly List<int> _liveSlots = [];
     private readonly Stack<int> _freeSlots = [];
@@ -186,9 +264,8 @@ public sealed partial class PhysicsChainWorld
     private PhysicsChainWorld(IRuntimeWorldContext world)
     {
         _world = world;
-        world.RegisterTick(ETickGroup.PostPhysics, (int)ETickOrder.Animation, FixedTick);
-        world.RegisterTick(ETickGroup.Normal, (int)ETickOrder.Animation, UpdateTick);
-        world.RegisterTick(ETickGroup.Late, (int)ETickOrder.Animation, LateTick);
+        if (world is RuntimeWorld runtimeWorld)
+            runtimeWorld.Disposing += OnWorldDisposing;
     }
 
     /// <summary>
@@ -223,53 +300,123 @@ public sealed partial class PhysicsChainWorld
         return true;
     }
 
+    internal bool TryCaptureReadbackSource(PhysicsChainRuntimeHandle handle,
+        out PhysicsChainComponent? component, out long generation, out PhysicsChainReadbackRejection rejection)
+    {
+        rejection = PhysicsChainReadbackRejection.InvalidInstance;
+        if (ReferenceEquals(s_outerTickWorld, this))
+            return CaptureReadbackSourceAtBoundary(handle, out component, out generation, out rejection);
+        if (s_outerTickWorld is not null)
+        {
+            if (!_tickGate.TryEnter())
+            {
+                component = null;
+                generation = 0L;
+                rejection = PhysicsChainReadbackRejection.SourceBusy;
+                return false;
+            }
+            try { return CaptureReadbackSourceAtBoundary(handle, out component, out generation, out rejection); }
+            finally { _tickGate.Exit(); }
+        }
+        using (_tickGate.EnterScope())
+            return CaptureReadbackSourceAtBoundary(handle, out component, out generation, out rejection);
+    }
+
+    private bool CaptureReadbackSourceAtBoundary(PhysicsChainRuntimeHandle handle,
+        out PhysicsChainComponent? component, out long generation, out PhysicsChainReadbackRejection rejection)
+    {
+        rejection = PhysicsChainReadbackRejection.InvalidInstance;
+        generation = 0L;
+        if (!TryResolveRuntimeHandle(handle, out component) || component is null)
+            return false;
+        generation = component.ReadbackSourceGeneration;
+        if (!component.MatchesReadbackSource(this, handle, generation))
+            return false;
+        rejection = PhysicsChainReadbackRejection.None;
+        return true;
+    }
+
     /// <summary>
     /// Registers a component with the scheduler for its current world.
     /// </summary>
     public static void Register(PhysicsChainComponent component)
     {
         ArgumentNullException.ThrowIfNull(component);
+        if (s_activeWorldMutation is { } mutation)
+        {
+            mutation.AddParticipant(component);
+            return;
+        }
+        if (component.IsWorldMutationPending)
+            return;
         IRuntimeWorldContext? world = component.World;
         if (world is null)
             return;
 
         PhysicsChainWorld scheduler;
+        bool created = false;
         using (RegistryLock.EnterScope())
         {
+            if (ReleasedWorlds.TryGetValue(world, out _) || world is RuntimeWorld { IsDisposing: true })
+                return;
             if (!Worlds.TryGetValue(world, out scheduler!))
             {
                 scheduler = new PhysicsChainWorld(world);
                 Worlds.Add(world, scheduler);
+                created = true;
             }
         }
 
+        if (created)
+            scheduler.AttachCallbacks();
+
+        // Disposal can have started before the constructor subscribed to the event.
+        // Never enter the tick gate while holding the registry lock.
+        if (world is RuntimeWorld { IsDisposing: true })
+        {
+            // Only the creator disposes here. An existing scheduler is released by
+            // the disposal event, and this caller can hold another world's gate.
+            if (created)
+                scheduler.Dispose();
+            return;
+        }
+
+        component.CaptureRuntimeBinding(out PhysicsChainWorld? previousOwner, out PhysicsChainRuntimeHandle previousHandle);
+        if (previousOwner is not null && !ReferenceEquals(previousOwner, scheduler))
+        {
+            var transfer = new DeferredTransfer(component, previousOwner, previousHandle, scheduler);
+            if (s_outerTickWorld is { } outerTick)
+            {
+                outerTick._deferredTransfers.Enqueue(transfer);
+                return;
+            }
+            CompleteDeferredTransfer(transfer);
+            return;
+        }
         scheduler.EnqueueStructuralCommand(CommandKind.Add, component);
     }
 
     /// <summary>
-    /// Removes a component from the scheduler for its current world.
+    /// Removes the registration from the world that owns it.
     /// </summary>
     public static void Unregister(PhysicsChainComponent component)
     {
         ArgumentNullException.ThrowIfNull(component);
-        IRuntimeWorldContext? world = component.World;
-        if (world is null)
+        PhysicsChainWorld? owner = component.CaptureRuntimeOwner();
+        if (owner is not null)
         {
-            component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
+            owner.EnqueueStructuralCommand(CommandKind.Remove, component);
             return;
         }
 
-        PhysicsChainWorld? scheduler;
+        // A pending add can have no owner yet. Cancel it in its source world.
+        if (component.World is not IRuntimeWorldContext world)
+            return;
         using (RegistryLock.EnterScope())
-            Worlds.TryGetValue(world, out scheduler);
-
-        if (scheduler is null)
         {
-            component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
-            return;
+            if (Worlds.TryGetValue(world, out PhysicsChainWorld? scheduler))
+                scheduler.EnqueueStructuralCommand(CommandKind.Remove, component);
         }
-
-        scheduler.EnqueueStructuralCommand(CommandKind.Remove, component);
     }
 
     internal static bool TryGet(IRuntimeWorldContext world, out PhysicsChainWorld? scheduler)
@@ -280,8 +427,26 @@ public sealed partial class PhysicsChainWorld
 
     private void FixedTick()
     {
-        using (_tickGate.EnterScope())
-            FixedTickExclusive();
+        PhysicsChainWorld? previousContext = s_outerTickWorld;
+        bool disposeOwner = false;
+        try
+        {
+            using var admission = new TickAdmissionScope(rejectNestedTick: true);
+            using (_tickGate.EnterScope())
+            {
+                if (IsDisposed)
+                    return;
+                ++_tickDepth;
+                s_outerTickWorld ??= this;
+                try { FixedTickExclusive(); }
+                finally
+                {
+                    s_outerTickWorld = previousContext;
+                    disposeOwner = CompleteTick();
+                }
+            }
+        }
+        finally { FinishOuterTick(previousContext, disposeOwner); }
     }
 
     private void FixedTickExclusive()
@@ -297,8 +462,26 @@ public sealed partial class PhysicsChainWorld
 
     private void UpdateTick()
     {
-        using (_tickGate.EnterScope())
-            UpdateTickExclusive();
+        PhysicsChainWorld? previousContext = s_outerTickWorld;
+        bool disposeOwner = false;
+        try
+        {
+            using var admission = new TickAdmissionScope(rejectNestedTick: true);
+            using (_tickGate.EnterScope())
+            {
+                if (IsDisposed)
+                    return;
+                ++_tickDepth;
+                s_outerTickWorld ??= this;
+                try { UpdateTickExclusive(); }
+                finally
+                {
+                    s_outerTickWorld = previousContext;
+                    disposeOwner = CompleteTick();
+                }
+            }
+        }
+        finally { FinishOuterTick(previousContext, disposeOwner); }
     }
 
     private void UpdateTickExclusive()
@@ -316,28 +499,41 @@ public sealed partial class PhysicsChainWorld
     {
         bool observe = RuntimeWorldTickTelemetry.Enabled;
         long gateStart = observe ? Stopwatch.GetTimestamp() : 0L;
-        using (_tickGate.EnterScope())
+        PhysicsChainWorld? previousContext = s_outerTickWorld;
+        bool disposeOwner = false;
+        try
         {
-            long bodyStart = observe ? Stopwatch.GetTimestamp() : 0L;
-            if (observe)
-                Interlocked.Add(ref _lateTickGateWaitTicks, bodyStart - gateStart);
-            PhysicsChainWorld? previous = s_activeLateTick;
-            if (observe)
-                s_activeLateTick = this;
-            try
+            using var admission = new TickAdmissionScope(rejectNestedTick: true);
+            using (_tickGate.EnterScope())
             {
-                LateTickExclusive();
-            }
-            finally
-            {
+                if (IsDisposed)
+                    return;
+                ++_tickDepth;
+                long bodyStart = observe ? Stopwatch.GetTimestamp() : 0L;
                 if (observe)
+                    Interlocked.Add(ref _lateTickGateWaitTicks, bodyStart - gateStart);
+                PhysicsChainWorld? previous = s_activeLateTick;
+                s_outerTickWorld ??= this;
+                if (observe)
+                    s_activeLateTick = this;
+                try
                 {
-                    s_activeLateTick = previous;
-                    Interlocked.Add(ref _lateTickBodyTicks, Stopwatch.GetTimestamp() - bodyStart);
-                    Interlocked.Increment(ref _lateTickCount);
+                    LateTickExclusive();
+                }
+                finally
+                {
+                    s_outerTickWorld = previousContext;
+                    if (observe)
+                    {
+                        s_activeLateTick = previous;
+                        Interlocked.Add(ref _lateTickBodyTicks, Stopwatch.GetTimestamp() - bodyStart);
+                        Interlocked.Increment(ref _lateTickCount);
+                    }
+                    disposeOwner = CompleteTick();
                 }
             }
         }
+        finally { FinishOuterTick(previousContext, disposeOwner); }
     }
 
     private void LateTickExclusive()
@@ -350,8 +546,20 @@ public sealed partial class PhysicsChainWorld
         PhysicsChainComponent.AdvancePreparedColliderFrame();
         long qualityStart = observe ? Stopwatch.GetTimestamp() : 0L;
         AssignQualityTiers();
+        long dependencyStart = observe ? Stopwatch.GetTimestamp() : 0L;
         if (observe)
-            Interlocked.Add(ref _lateQualityBudgetTicks, Stopwatch.GetTimestamp() - qualityStart);
+            Interlocked.Add(ref _lateQualityAssignmentTicks, dependencyStart - qualityStart);
+        PrepareGpuRestInputPhase();
+        if (observe)
+        {
+            long qualityEnd = Stopwatch.GetTimestamp();
+            Interlocked.Add(ref _lateGpuRestDependencyPreparationTicks, qualityEnd - dependencyStart);
+            Interlocked.Add(ref _lateQualityBudgetTicks, qualityEnd - qualityStart);
+        }
+        long inputGatherStart = observe ? Stopwatch.GetTimestamp() : 0L;
+        CaptureGpuRestInputsForWorldPhase();
+        if (observe)
+            Interlocked.Add(ref _lateGpuWorldInputGatherTicks, Stopwatch.GetTimestamp() - inputGatherStart);
         _parallelComponents.Clear();
         if (observe)
         {
@@ -523,9 +731,115 @@ public sealed partial class PhysicsChainWorld
 
     private void EnqueueStructuralCommand(CommandKind kind, PhysicsChainComponent component)
     {
-        long version = Interlocked.Increment(ref _nextCommandVersion);
-        _latestCommandVersion.AddOrUpdate(component, version, (_, current) => Math.Max(current, version));
-        _commands.Enqueue(new StructuralCommand(kind, component, version));
+        using (_commandGate.EnterScope())
+        {
+            if (IsDisposed)
+                return;
+            long version = Interlocked.Increment(ref _nextCommandVersion);
+            _latestCommandVersion.AddOrUpdate(component, version, (_, current) => Math.Max(current, version));
+            _commands.Enqueue(new StructuralCommand(kind, component, version));
+        }
+    }
+
+    /// <summary>
+    /// Releases an exact old registration after its tick and worker jobs finish.
+    /// </summary>
+    private bool ReleaseForTransfer(in DeferredTransfer transfer)
+    {
+        PhysicsChainComponent component = transfer.Component;
+        PhysicsChainWorld? previousContext = s_outerTickWorld;
+        bool disposeOwner = false;
+        try
+        {
+            using var admission = new TickAdmissionScope(rejectNestedTick: false);
+            using (_tickGate.EnterScope())
+            {
+                // A closed world releases its components in teardown, which forwards
+                // moved components to their destination.
+                if (IsDisposed)
+                    return false;
+                // Count this frame as a tick: property callbacks can request disposal,
+                // and teardown must wait until this frame stops using world state.
+                ++_tickDepth;
+                s_outerTickWorld ??= this;
+                try
+                {
+                    using var bindingScope = component.RuntimeBindingSync.EnterScope();
+                    component.CaptureRuntimeBinding(out PhysicsChainWorld? owner, out PhysicsChainRuntimeHandle handle);
+                    if (!ReferenceEquals(owner, this)
+                        || handle != transfer.ExpectedHandle
+                        || component.IsDestroyed
+                        || !component.IsActiveInHierarchy
+                        || !ReferenceEquals(component.World, transfer.Destination._world))
+                        return false;
+                    if (!_slotByComponent.TryGetValue(component, out int slotIndex)
+                        || slotIndex != handle.Slot
+                        || !ReferenceEquals(_slots[slotIndex].Component, component)
+                        || _slots[slotIndex].Generation != handle.Generation)
+                        throw new InvalidOperationException("The physics chain transfer lost its source registration.");
+
+                    RemoveComponent(component, registerCurrentWorld: false);
+                    return true;
+                }
+                finally
+                {
+                    s_outerTickWorld = previousContext;
+                    disposeOwner = CompleteTick();
+                }
+            }
+        }
+        finally { FinishOuterTick(previousContext, disposeOwner); }
+    }
+
+    private static void CompleteDeferredTransfer(in DeferredTransfer transfer)
+    {
+        if (!transfer.ExpectedOwner.ReleaseForTransfer(transfer))
+            return;
+        PhysicsChainComponent component = transfer.Component;
+        if (component.IsDestroyed || !component.IsActiveInHierarchy)
+            return;
+        if (ReferenceEquals(component.World, transfer.Destination._world))
+            transfer.Destination.EnqueueStructuralCommand(CommandKind.Add, component);
+        else
+            Register(component);
+    }
+
+    private void DrainDeferredTransfers()
+    {
+        if (_deferredTransfers.IsEmpty)
+            return;
+
+        Queue<PhysicsChainWorld> queue = s_transferDrainQueue ??= new Queue<PhysicsChainWorld>();
+        HashSet<PhysicsChainWorld> queued = s_transferDrainSet ??= new HashSet<PhysicsChainWorld>();
+        if (queued.Add(this))
+            queue.Enqueue(this);
+        if (s_drainingTransfers)
+            return;
+
+        s_drainingTransfers = true;
+        try
+        {
+            while (queue.TryDequeue(out PhysicsChainWorld? world))
+            {
+                if (world is null)
+                    continue;
+                queued.Remove(world);
+                while (world._deferredTransfers.TryDequeue(out DeferredTransfer transfer))
+                {
+                    try { CompleteDeferredTransfer(transfer); }
+                    catch (Exception ex)
+                    {
+                        Debug.PhysicsWarning($"[PhysicsChain] Deferred world transfer failed: {ex}");
+                    }
+                }
+            }
+        }
+        finally
+        {
+            queue.Clear();
+            queued.Clear();
+            s_drainingTransfers = false;
+        }
     }
 
     private void DrainStructuralCommands()
@@ -535,7 +849,14 @@ public sealed partial class PhysicsChainWorld
         {
             if (!_latestCommandVersion.TryGetValue(command.Component, out long latestVersion)
                 || latestVersion != command.Version)
+            {
+                if (command.Kind is not CommandKind.Add and not CommandKind.Remove
+                    && !command.Component.IsDestroyed
+                    && command.Component.IsActiveInHierarchy
+                    && ReferenceEquals(command.Component.World, _world))
+                    RetainDeferredStructuralMutation(command.Component, command.Kind);
                 continue;
+            }
 
             if (command.Kind == CommandKind.Add)
                 AddComponent(command.Component);
@@ -553,20 +874,30 @@ public sealed partial class PhysicsChainWorld
 
     private void AddComponent(PhysicsChainComponent component)
     {
+        using var bindingScope = component.RuntimeBindingSync.EnterScope();
+        if (component.IsWorldMutationPending)
+            return;
         if (component.IsDestroyed
             || !ReferenceEquals(component.World, _world)
             || !component.IsActiveInHierarchy)
         {
-            component.DetachCpuBackend();
-            component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
+            if (_slotByComponent.ContainsKey(component))
+                RemoveComponent(component);
+            _deferredStructuralMutations.Remove(component);
             return;
         }
+
+        PhysicsChainWorld? owner = component.CaptureRuntimeOwner();
+        if (owner is not null && !ReferenceEquals(owner, this))
+            return;
 
         if (_slotByComponent.TryGetValue(component, out int existingSlot))
         {
             RuntimeSlot existing = _slots[existingSlot];
+            if (!component.TryBindRuntimeOwner(this, new PhysicsChainRuntimeHandle(existingSlot, existing.Generation)))
+                return;
             component.AttachCpuBackend(this, _cpuBackend);
-            component.SetRuntimeHandle(new PhysicsChainRuntimeHandle(existingSlot, existing.Generation));
+            ReplayDeferredStructuralMutations(component);
             return;
         }
 
@@ -600,31 +931,45 @@ public sealed partial class PhysicsChainWorld
             slotIndex = _slots.Count;
             slot = new RuntimeSlot { Generation = 1u };
             _slots.Add(default);
+            _gpuRestInputRanges.Add(null);
         }
 
         slot.Component = component;
+        slot.Graph = BindPendingRuntimeGraph(component);
         slot.DenseIndex = _liveSlots.Count;
         slot.QualityState = CreateInitialQualityState(component);
         slot.WasSleeping = component.IsRuntimeSleeping;
         slot.ObservedWakeCount = component.WakeCount;
+        float cadencePhase = PhysicsChainComponent.ComputeDeterministicQualityPhase(slotIndex, slot.Generation);
+        if (slotIndex == _clocks.Count)
+            _clocks.Add(default);
+        CollectionsMarshal.AsSpan(_clocks)[slotIndex].Initialize(
+            cadencePhase, component.EffectiveQualityPolicy.SimulationRateHz);
         var runtimeHandle = new PhysicsChainRuntimeHandle(slotIndex, slot.Generation);
         AllocateRegistrationArenas(ref slot, runtimeHandle);
         _slots[slotIndex] = slot;
         _liveSlots.Add(slotIndex);
         _slotByComponent.Add(component, slotIndex);
+        MarkGpuRestOwnershipDirty();
+        if (!component.TryBindRuntimeOwner(this, runtimeHandle))
+            throw new InvalidOperationException("The physics chain world owner changed during registration.");
         component.AttachCpuBackend(this, _cpuBackend);
-        component.SetRuntimeHandle(runtimeHandle);
+        ReplayDeferredStructuralMutations(component);
     }
 
-    private void RemoveComponent(PhysicsChainComponent component)
+    private void RemoveComponent(PhysicsChainComponent component, bool registerCurrentWorld = true)
     {
+        using var bindingScope = component.RuntimeBindingSync.EnterScope();
+        bool registerInCurrentWorld = false;
         if (!_slotByComponent.Remove(component, out int slotIndex))
         {
-            component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
+            _deferredStructuralMutations.Remove(component);
             return;
         }
+        _deferredStructuralMutations.Remove(component);
 
         RuntimeSlot slot = _slots[slotIndex];
+        PhysicsChainRuntimeHandle removedHandle = new(slotIndex, slot.Generation);
         int removedDenseIndex = slot.DenseIndex;
         int lastDenseIndex = _liveSlots.Count - 1;
         if (removedDenseIndex != lastDenseIndex)
@@ -639,12 +984,23 @@ public sealed partial class PhysicsChainWorld
         _liveSlots.RemoveAt(lastDenseIndex);
         RetireRegistrationArenas(slot);
         slot.Component = null;
+        slot.Graph = null;
+        _clocks[slotIndex] = default;
+        _gpuRestInputRanges[slotIndex]?.RigidCache.Clear();
+        _gpuRestInputRanges[slotIndex] = null;
+        MarkGpuRestOwnershipDirty();
         slot.DenseIndex = -1;
         slot.Generation = NextGeneration(slot.Generation);
         _slots[slotIndex] = slot;
         _freeSlots.Push(slotIndex);
-        component.DetachCpuBackend();
-        component.SetRuntimeHandle(PhysicsChainRuntimeHandle.Invalid);
+        if (component.TryReleaseRuntimeOwner(this, removedHandle))
+            registerInCurrentWorld = component.IsActiveInHierarchy
+                && !component.IsDestroyed
+                && component.World is not null
+                && !ReferenceEquals(component.World, _world);
+
+        if (registerCurrentWorld && registerInCurrentWorld)
+            Register(component);
     }
 
     private static uint NextGeneration(uint generation)
@@ -673,7 +1029,7 @@ public sealed partial class PhysicsChainWorld
     {
         const int minimumComponentsPerSlice = 32;
         int processorCount = Math.Max(Environment.ProcessorCount, 1);
-        int sliceCount = JobManager.IsJobWorkerThread
+        int sliceCount = OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread || JobManager.IsJobWorkerThread
             ? 1
             : Math.Min(processorCount, Math.Max(1, (count + minimumComponentsPerSlice - 1) / minimumComponentsPerSlice));
         if (sliceCount <= 1)
@@ -687,31 +1043,43 @@ public sealed partial class PhysicsChainWorld
         int localEnd = _parallelRangeEnds[0];
         int start = localEnd;
         int workItemCount = 0;
+        Exception? firstFault = null;
         for (int slice = 1; slice < sliceCount; ++slice)
         {
             int end = _parallelRangeEnds[slice];
             if (end <= start)
                 continue;
-            BatchWorkItem workItem = _parallelWorkItems[workItemCount++];
+            BatchWorkItem workItem = _parallelWorkItems[workItemCount];
             workItem.ConfigurePrepare(
+                this,
                 _prepareComponents,
                 _prepareEligible,
                 _prepareResults,
                 _prepareFaults,
                 start,
                 end);
-            ThreadPool.UnsafeQueueUserWorkItem(static state => state.Run(), workItem, preferLocal: false);
+            try
+            {
+                if (!ThreadPool.UnsafeQueueUserWorkItem(static state => state.Run(), workItem, preferLocal: false))
+                    throw new InvalidOperationException("A physics chain prepare worker could not start.");
+                ++workItemCount;
+            }
+            catch (Exception ex)
+            {
+                firstFault = ex;
+                break;
+            }
             start = end;
         }
 
-        Exception? firstFault = null;
         try
         {
-            RunPrepareRange(_prepareComponents, _prepareEligible, _prepareResults, _prepareFaults, 0, localEnd);
+            if (firstFault is null)
+                RunPrepareRange(_prepareComponents, _prepareEligible, _prepareResults, _prepareFaults, 0, localEnd);
         }
         catch (Exception ex)
         {
-            firstFault = ex;
+            firstFault ??= ex;
         }
         for (int workItemIndex = 0; workItemIndex < workItemCount; ++workItemIndex)
         {
@@ -749,7 +1117,7 @@ public sealed partial class PhysicsChainWorld
     {
         int workCount = components.Count;
         int sliceCount = Math.Min(workCount, Math.Max(Environment.ProcessorCount, 1));
-        if (sliceCount <= 1 || JobManager.IsJobWorkerThread)
+        if (sliceCount <= 1 || OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread || JobManager.IsJobWorkerThread)
         {
             RunPreparedRange(components, 0, workCount);
             return;
@@ -760,6 +1128,7 @@ public sealed partial class PhysicsChainWorld
 
         int start = 0;
         int workItemCount = 0;
+        Exception? firstFault = null;
         for (int slice = 0; slice < sliceCount; ++slice)
         {
             int end = _parallelRangeEnds[slice];
@@ -767,18 +1136,30 @@ public sealed partial class PhysicsChainWorld
                 continue;
 
             if (slice == 0)
-                RunPreparedRange(components, start, end);
+            {
+                try { RunPreparedRange(components, start, end); }
+                catch (Exception ex) { firstFault = ex; }
+            }
             else
             {
-                BatchWorkItem workItem = _parallelWorkItems[workItemCount++];
-                workItem.Configure(components, start, end);
-                ThreadPool.UnsafeQueueUserWorkItem(static state => state.Run(), workItem, preferLocal: false);
+                BatchWorkItem workItem = _parallelWorkItems[workItemCount];
+                workItem.Configure(this, components, start, end);
+                try
+                {
+                    if (!ThreadPool.UnsafeQueueUserWorkItem(static state => state.Run(), workItem, preferLocal: false))
+                        throw new InvalidOperationException("A physics chain solve worker could not start.");
+                    ++workItemCount;
+                }
+                catch (Exception ex)
+                {
+                    firstFault ??= ex;
+                    break;
+                }
             }
 
             start = end;
         }
 
-        Exception? firstFault = null;
         for (int i = 0; i < workItemCount; ++i)
         {
             BatchWorkItem workItem = _parallelWorkItems[i];
@@ -802,7 +1183,7 @@ public sealed partial class PhysicsChainWorld
         int previousLength = _parallelWorkItems.Length;
         Array.Resize(ref _parallelWorkItems, requiredWorkItems);
         for (int i = previousLength; i < requiredWorkItems; ++i)
-            _parallelWorkItems[i] = new BatchWorkItem();
+            _parallelWorkItems[i] = new BatchWorkItem(this);
     }
 
     private void BuildWeightedRanges(List<PhysicsChainComponent> components, int sliceCount)
@@ -856,7 +1237,7 @@ public sealed partial class PhysicsChainWorld
 
         const int minimumHandlesPerSlice = 32;
         int processorCount = Math.Max(Environment.ProcessorCount, 1);
-        int sliceCount = JobManager.IsJobWorkerThread
+        int sliceCount = OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread || JobManager.IsJobWorkerThread
             ? 1
             : Math.Min(processorCount, Math.Max(1, (count + minimumHandlesPerSlice - 1) / minimumHandlesPerSlice));
         if (sliceCount <= 1)
@@ -870,27 +1251,39 @@ public sealed partial class PhysicsChainWorld
         int handlesPerSlice = (count + sliceCount - 1) / sliceCount;
         int localEnd = Math.Min(handlesPerSlice, count);
         int workItemCount = 0;
+        Exception? firstFault = null;
         for (int start = localEnd; start < count; start += handlesPerSlice)
         {
             int end = Math.Min(start + handlesPerSlice, count);
-            BatchWorkItem workItem = _parallelWorkItems[workItemCount++];
+            BatchWorkItem workItem = _parallelWorkItems[workItemCount];
             workItem.ConfigureCpuBatch(
+                this,
                 _cpuBackend,
                 _cpuBatchHandles,
                 _cpuBatchComponents,
                 start,
                 end);
-            ThreadPool.UnsafeQueueUserWorkItem(static state => state.Run(), workItem, preferLocal: false);
+            try
+            {
+                if (!ThreadPool.UnsafeQueueUserWorkItem(static state => state.Run(), workItem, preferLocal: false))
+                    throw new InvalidOperationException("A physics chain CPU worker could not start.");
+                ++workItemCount;
+            }
+            catch (Exception ex)
+            {
+                firstFault = ex;
+                break;
+            }
         }
 
-        Exception? firstFault = null;
         try
         {
-            RunCpuBatchRange(_cpuBackend, _cpuBatchHandles, _cpuBatchComponents, 0, localEnd);
+            if (firstFault is null)
+                RunCpuBatchRange(_cpuBackend, _cpuBatchHandles, _cpuBatchComponents, 0, localEnd);
         }
         catch (Exception ex)
         {
-            firstFault = ex;
+            firstFault ??= ex;
         }
 
         for (int workItemIndex = 0; workItemIndex < workItemCount; ++workItemIndex)

@@ -58,11 +58,15 @@ namespace XREngine.Scene.Physics.Jolt
         private Dictionary<BodyID, JoltRigidActor> _rigidActors = new();
         private Dictionary<BodyID, JoltStaticRigidBody> _staticBodies = new();
         private Dictionary<BodyID, JoltDynamicRigidBody> _dynamicBodies = new();
+        private readonly Dictionary<BodyID, JoltActor> _allocatedActors = new();
         private readonly HashSet<IAbstractJoint> _joints = [];
         private BodyID _worldAnchorBodyID = BodyID.Invalid;
 
         public PhysicsSystem? PhysicsSystem => _physicsSystem;
         public JobSystem? JobSystem => _jobSystem;
+
+        /// <summary>Native actor allocations owned by this scene, including temporarily detached bodies.</summary>
+        public int AllocatedActorCount => _allocatedActors.Count;
 
         public JoltStaticRigidBody? CreateStaticRigidBody(
             IPhysicsGeometry geometry,
@@ -168,8 +172,9 @@ namespace XREngine.Scene.Physics.Jolt
                     return null;
                 }
 
-                JoltStaticRigidBody joltBody = new(bodyID);
+                JoltStaticRigidBody joltBody = new(this, bodyID);
                 joltBody.AttachShapeMetadata(metadata);
+                _allocatedActors.Add(bodyID, joltBody);
                 AddActor(joltBody);
                 return joltBody;
             }
@@ -210,8 +215,9 @@ namespace XREngine.Scene.Physics.Jolt
                     return null;
                 }
 
-                JoltDynamicRigidBody joltBody = new(bodyID, createInfo?.GravityEnabled ?? true);
+                JoltDynamicRigidBody joltBody = new(this, bodyID, createInfo?.GravityEnabled ?? true);
                 joltBody.AttachShapeMetadata(metadata);
+                _allocatedActors.Add(bodyID, joltBody);
                 AddActor(joltBody);
                 return joltBody;
             }
@@ -390,6 +396,10 @@ namespace XREngine.Scene.Physics.Jolt
         {
             if (actor is not JoltActor joltActor)
                 return;
+
+            ObjectDisposedException.ThrowIf(joltActor.IsDestroyed, joltActor);
+            if (!ReferenceEquals(joltActor.AllocationOwner, this))
+                throw new InvalidOperationException("A Jolt body can only be attached to the physics system that allocated it.");
             
             if (_physicsSystem is null)
                 return;
@@ -432,7 +442,10 @@ namespace XREngine.Scene.Physics.Jolt
         public override void Destroy()
         {
             if (_physicsSystem is null)
+            {
+                DisposeNativeSceneResources();
                 return;
+            }
 
             _physicsSystem.OnContactAdded -= OnContactAdded;
             _physicsSystem.OnContactPersisted -= OnContactPersisted;
@@ -443,10 +456,11 @@ namespace XREngine.Scene.Physics.Jolt
             foreach (IJoltCharacterController controller in _characterControllers.ToArray())
                 controller.RequestRelease();
 
-            // Remove all actors
-            foreach (var actor in _actors.Values.ToArray())
+            // Allocation ownership survives deactivation and temporary scene detachment.
+            foreach (var actor in _allocatedActors.Values.ToArray())
                 actor.Destroy();
             
+            _allocatedActors.Clear();
             _actors.Clear();
             _rigidActors.Clear();
             _staticBodies.Clear();
@@ -462,11 +476,21 @@ namespace XREngine.Scene.Physics.Jolt
             _debugRenderer?.Dispose();
             _debugRenderer = null;
 
-            (_physicsSystem as IDisposable)?.Dispose();
-            _physicsSystem = null;
+            DisposeNativeSceneResources();
+        }
 
-            (_jobSystem as IDisposable)?.Dispose();
+        private void DisposeNativeSceneResources()
+        {
+            _physicsSystem?.Dispose();
+            _physicsSystem = null;
+            _jobSystem?.Dispose();
             _jobSystem = null;
+            _objectVsBroadPhaseLayerFilter?.Dispose();
+            _objectVsBroadPhaseLayerFilter = null;
+            _broadPhaseLayerInterface?.Dispose();
+            _broadPhaseLayerInterface = null;
+            _objectLayerPairFilter?.Dispose();
+            _objectLayerPairFilter = null;
         }
 
         // Collision filtering based on Jolt object-layer masks.
@@ -477,25 +501,15 @@ namespace XREngine.Scene.Physics.Jolt
 
         public override void Initialize()
         {
-            var logPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jolt_init.log");
-            
+            if (_physicsSystem is not null)
+                throw new InvalidOperationException("This Jolt scene is already initialized.");
+
             try
             {
-                Console.WriteLine("[JoltScene] Initialize() starting...");
-                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JoltScene.Initialize() starting...{Environment.NewLine}"); } catch { }
-                
                 JoltBootstrap.EnsureInitialized();
-                Console.WriteLine("[JoltScene] JoltBootstrap.EnsureInitialized() completed.");
-                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JoltBootstrap.EnsureInitialized() completed.{Environment.NewLine}"); } catch { }
-
-                // Create job system with default config (simpler, less likely to fail)
-                Console.WriteLine("[JoltScene] Creating JobSystemThreadPool...");
-                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] Creating JobSystemThreadPool...{Environment.NewLine}"); } catch { }
-                
-                _jobSystem = new JobSystemThreadPool();
-                
-                Console.WriteLine("[JoltScene] JobSystemThreadPool created successfully.");
-                try { System.IO.File.AppendAllText(logPath, $"[{DateTime.Now:O}] JobSystemThreadPool created successfully.{Environment.NewLine}"); } catch { }
+                _jobSystem = OperatingSystem.IsBrowser()
+                    ? JoltBrowserJobSystem.Create()
+                    : new JobSystemThreadPool();
 
                 // Set up collision filtering (required by PhysicsSystem)
                 _objectLayerPairFilter = new ObjectLayerPairFilterMask();
@@ -519,6 +533,7 @@ namespace XREngine.Scene.Physics.Jolt
 
                 System.Diagnostics.Debug.WriteLine("[JoltScene] Creating PhysicsSystem...");
                 PhysicsSystem system = new(settings);
+                _physicsSystem = system;
                 System.Diagnostics.Debug.WriteLine("[JoltScene] PhysicsSystem created successfully.");
 
                 system.Gravity = new Vector3(0, -9.81f, 0);
@@ -551,7 +566,6 @@ namespace XREngine.Scene.Physics.Jolt
                     UseBodyPairContactCache = true,
                     UseManifoldReduction = true,
                 };
-                _physicsSystem = system;
                 system.OnContactAdded += OnContactAdded;
                 system.OnContactPersisted += OnContactPersisted;
                 System.Diagnostics.Debug.WriteLine("[JoltScene] Initialize() completed successfully.");
@@ -560,6 +574,7 @@ namespace XREngine.Scene.Physics.Jolt
             {
                 System.Diagnostics.Debug.WriteLine($"[JoltScene] Initialize() FAILED: {ex.GetType().Name}: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"[JoltScene] Stack trace: {ex.StackTrace}");
+                Destroy();
                 throw;
             }
         }
@@ -1018,7 +1033,9 @@ namespace XREngine.Scene.Physics.Jolt
             if (actor is not JoltActor joltActor)
                 return;
             
-            if (_physicsSystem is null)
+            if (_physicsSystem is null || joltActor.IsDestroyed
+                || !_actors.TryGetValue(joltActor.BodyID, out JoltActor? attached)
+                || !ReferenceEquals(attached, joltActor))
                 return;
 
             _physicsSystem.BodyInterface.RemoveBody(joltActor.BodyID);
@@ -1034,7 +1051,7 @@ namespace XREngine.Scene.Physics.Jolt
         {
             ArgumentNullException.ThrowIfNull(actor);
 
-            if (_physicsSystem is null || actor.Scene != this || actor.BodyID.IsInvalid)
+            if (_physicsSystem is null || !ReferenceEquals(actor.AllocationOwner, this) || actor.BodyID.IsInvalid)
                 return;
 
             BodyID bodyID = actor.BodyID;
@@ -1047,9 +1064,17 @@ namespace XREngine.Scene.Physics.Jolt
             _rigidActors.Remove(bodyID);
             _staticBodies.Remove(bodyID);
             _dynamicBodies.Remove(bodyID);
+            _allocatedActors.Remove(bodyID);
             if (actor is JoltRigidActor rigidActor)
                 rigidActor.ReleaseShapeMetadata();
-            actor.OnRemovedFromScene(this);
+            XRComponent? component = actor.GetOwningComponent();
+            actor.OnNativeBodyDestroyed();
+            if (actor is JoltRigidActor ownedBody)
+                ownedBody.OwningComponent = null;
+            if (component is DynamicRigidBodyComponent dynamicComponent && ReferenceEquals(dynamicComponent.RigidBody, actor))
+                dynamicComponent.RigidBody = null;
+            else if (component is StaticRigidBodyComponent staticComponent && ReferenceEquals(staticComponent.RigidBody, actor))
+                staticComponent.RigidBody = null;
         }
 
         public static ObjectLayer GetObjectLayer(uint group, uint mask)
@@ -1175,10 +1200,19 @@ namespace XREngine.Scene.Physics.Jolt
             if (_physicsSystem is null || _jobSystem is null)
                 return;
 
-            // Mirror PhysX behavior: consume queued character controller movement on the fixed step
-            // so movement + collision resolution happen deterministically with the physics update.
             float dt = RuntimePhysicsServices.Current.FixedDeltaSeconds;
-            if (dt > 0.0f && _characterControllers.Count > 0)
+            if (!float.IsFinite(dt) || dt <= 0.0f)
+                throw new InvalidOperationException("Jolt simulation requires a finite, positive fixed delta.");
+
+            // Publish kinematic velocities before controllers query moving ground, and use exactly
+            // the same duration for target motion and native integration.
+            BodyInterface bodies = _physicsSystem.BodyInterface;
+            foreach (JoltDynamicRigidBody body in _dynamicBodies.Values)
+                body.ApplyKinematicTarget(bodies, dt);
+
+            // Consume queued character controller movement on the fixed step so movement and
+            // collision resolution happen deterministically with the physics update.
+            if (_characterControllers.Count > 0)
             {
                 foreach (var controller in _characterControllers)
                     controller.ConsumeInputBuffer(dt);
@@ -1192,7 +1226,9 @@ namespace XREngine.Scene.Physics.Jolt
                     _debugContactCount = 0;
             }
 
-            _physicsSystem.Update(RuntimePhysicsServices.Current.FixedDeltaSeconds, 3, _jobSystem);
+            PhysicsUpdateError updateError = _physicsSystem.Update(dt, 3, _jobSystem);
+            if (updateError != PhysicsUpdateError.None)
+                throw new InvalidOperationException($"Jolt fixed-step simulation failed: {updateError}.");
             PublishDebugFrame();
 
             foreach (JoltDynamicRigidBody body in _dynamicBodies.Values)

@@ -11,6 +11,9 @@ namespace XREngine.Rendering.Info
 {
     public class RenderInfo2D : RenderInfo, IQuadtreeItem, IComparable<RenderInfo2D>, IRuntimeRenderInfo2DRegistrationItem
     {
+        private IRuntimeRenderInfo2DRegistrationTarget? _registeredCanvas;
+        private bool _reconcilingCanvasRegistration;
+
         private int _layerIndex = 0;
         private int _indexWithinLayer = 0;
         private BoundingRectangleF? _cullingVolume;
@@ -99,27 +102,59 @@ namespace XREngine.Rendering.Info
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            base.OnPropertyChanged(propName, prev, field);
+            try { base.OnPropertyChanged(propName, prev, field); }
+            finally
+            {
+                if (propName is nameof(UserInterfaceCanvas) or nameof(IsVisible))
+                    ReconcileCanvasRegistration(disposing: false);
+            }
             switch (propName)
             {
-                case nameof(UserInterfaceCanvas):
-                    if (IsVisible)
-                    {
-                        if (prev is IRuntimeRenderInfo2DRegistrationTarget prevInstance)
-                            prevInstance.RemoveRenderable2D(this);
-                        if (field is IRuntimeRenderInfo2DRegistrationTarget newInstance)
-                            newInstance.AddRenderable2D(this);
-                    }
-                    break;
-                case (nameof(IsVisible)):
-                    if (IsVisible)
-                        UserInterfaceCanvas?.AddRenderable2D(this);
-                    else
-                        UserInterfaceCanvas?.RemoveRenderable2D(this);
-                    break;
                 case nameof(CullingVolume):
                     QuadtreeNode?.QueueItemMoved(this);
                     break;
+            }
+        }
+
+        protected override void ReleaseCanvasRegistration()
+        {
+            ReconcileCanvasRegistration(disposing: true);
+            ClearCanvasRegistrationField();
+        }
+
+        private void ReconcileCanvasRegistration(bool disposing)
+        {
+            if (_reconcilingCanvasRegistration)
+                return;
+            _reconcilingCanvasRegistration = true;
+            try
+            {
+                for (int attempt = 0; attempt < 16; attempt++)
+                {
+                    IRuntimeRenderInfo2DRegistrationTarget? desired =
+                        !disposing && !IsDisposalRequested && IsVisible ? UserInterfaceCanvas : null;
+                    IRuntimeRenderInfo2DRegistrationTarget? registered = _registeredCanvas;
+                    if (ReferenceEquals(registered, desired))
+                        return;
+                    if (registered is not null)
+                    {
+                        registered.RemoveRenderable2D(this);
+                        _registeredCanvas = null;
+                        continue;
+                    }
+                    if (desired is not null)
+                    {
+                        // Preserve an attempted add for cleanup if the target
+                        // publishes the item and then reports a failure.
+                        _registeredCanvas = desired;
+                        desired.AddRenderable2D(this);
+                    }
+                }
+                throw new InvalidOperationException("Render info canvas registration did not settle.");
+            }
+            finally
+            {
+                _reconcilingCanvasRegistration = false;
             }
         }
 

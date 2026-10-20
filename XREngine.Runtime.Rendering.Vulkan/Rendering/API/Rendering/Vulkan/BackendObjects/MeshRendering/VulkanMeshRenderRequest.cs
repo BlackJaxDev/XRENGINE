@@ -33,4 +33,26 @@ internal readonly record struct VulkanMeshRenderRequest(
     bool ForceNoStereo,
     AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
     VulkanResidentDrawTemplateHandle ResidentTemplateHandle,
-    WindowPresentationSourceMarker WindowPresentationSourceMarker);
+    WindowPresentationSourceMarker WindowPresentationSourceMarker)
+{
+    internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
+
+    internal static void ReleaseAuthoringLease(ref VulkanMeshRenderRequest request)
+    {
+        if (request.IndexedIndirect is not { AuthoringLease: { } owner } payload)
+            return;
+        request = request with
+        {
+            IndexedIndirect = payload with { AuthoringLease = null },
+        };
+        owner.ReleaseAuthoringUse();
+    }
+
+    internal static void ReleaseAuthoringLeasesAndClear(
+        Span<VulkanMeshRenderRequest> requests)
+    {
+        for (int index = 0; index < requests.Length; ++index)
+            ReleaseAuthoringLease(ref requests[index]);
+        requests.Clear();
+    }
+}

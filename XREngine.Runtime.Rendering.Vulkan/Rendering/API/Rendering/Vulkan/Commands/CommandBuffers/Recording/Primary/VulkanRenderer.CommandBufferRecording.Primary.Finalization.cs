@@ -495,7 +495,8 @@ namespace XREngine.Rendering.Vulkan
 
                 if (!hasRequiredOperation || !complete)
                 {
-                    fence.Fail();
+                    fence.Fail(EGpuFenceFailureSite.OutputCohortIncomplete,
+                        EGpuFenceNativeSubmission.NotCalled);
                     throw new VulkanPlanPreconditionException(
                         $"Output-completion receipt {receipt.ReceiptId} did not record its complete exact producer cohort and terminal output. Bound={bound}, terminal={terminalAttested}, hasOperations={hasRequiredOperation}, firstMissingOperation={firstMissingOperation}.");
                 }
@@ -535,12 +536,15 @@ namespace XREngine.Rendering.Vulkan
                 Result endResult = EndCommandBufferTracked(
                     recordingState.CommandBuffer,
                     cacheVariant: true,
-                    out string trackingFailure);
+                    out string trackingFailure,
+                    out EVulkanCommandBufferTrackingFailureKind trackingFailureKind);
                 if (endResult != Result.Success)
                     throw new Exception("Failed to record command buffer.");
                 if (!string.IsNullOrEmpty(trackingFailure))
                 {
                     recordingState.RecordingDeferredReason = trackingFailure;
+                    if (trackingFailureKind == EVulkanCommandBufferTrackingFailureKind.RetiredDependency)
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
                     return false;
                 }
             }

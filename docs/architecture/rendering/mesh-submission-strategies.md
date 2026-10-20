@@ -15,6 +15,31 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
+WebGPU preserves the requested authored strategy, including instrumented modes
+when diagnostics are disabled. Generic traditional indirect and compute-meshlet
+routes share a material-independent resident `GPUScene` publication and exact
+authored raster preparation. Traditional indirect uses a cooked GPU producer to
+refit current position bounds and publish one whole-primitive argument record
+over the frozen original index stream; it requires no meshlet payload. The
+generic meshlet route uses cooked GPU
+cull/expand and bounds-refit companions, and GPU-written uint32 indices and
+`drawIndexedIndirect` arguments. It reuses the original authored raster program
+and does not require Advanced native material eligibility or hardware task/mesh
+stages. Pending or rejected meshlet work never falls through to original
+indexed replay. Both routes use the shared GPU-selected resident LOD candidates. Runtime instance
+publishers provide exact current/previous transforms and bounds under the authored
+raster ABI; conservative GPU union visibility preserves the full native instance
+count and first-instance zero without optional instance remapping.
+Bounded transparent GPU ordering uses the actual full-resident collection's
+frozen insertion tokens, GPU source ranks and candidate-owned raster input
+copies. Explicit CPU-owned V2 color/coverage sources retain direct draws through
+verified vertex rank gates in the same ordered replay. Unproven raster programs,
+non-mesh commands and other unavailable selected profiles report specific
+diagnostics. The [authored meshlet lowering
+record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
+describes ownership, conservative bounds, capacities, and pending runtime
+acceptance.
+
 Zero-readback passes execute from configured GPU-pass topology even when CPU
 visibility collection publishes no mesh commands. The GPU scene and the pass
 culling mask own mesh membership; CPU visibility must not suppress a default,
@@ -73,7 +98,18 @@ Diagnostics profiles resolve to `GpuIndirectInstrumented`. `ShippingFast` resolv
 
 `SupportsMeshletDispatch()` means the backend can run the production zero-readback meshlet path: matching shader dialect, production task/mesh shaders, and indirect-count mesh-task dispatch from GPU-written counts.
 
-The lower-level probes describe partial backend support:
+The browser's native Advanced stage family has a separate compute/indirect
+meshlet capability. It consumes canonical resident meshlet records, compacts
+triangle identities on the GPU, and issues vertex-pulled indirect raster work
+without reading visibility or counts back to the CPU. This does not advertise
+hardware task/mesh shader extensions. The separate generic Default/custom
+compute-meshlet route preserves authored raster programs and has its own
+residency, deformation and indirect-index contracts described above. WebGPU
+preserves an explicitly requested submission strategy and reports unsupported
+operations instead of applying the desktop fallback policy described below. See
+[WebGPU indirect submission](webgpu-indirect-submission.md).
+
+The lower-level hardware probes describe partial backend support:
 
 - `MeshShaderDialect` reports `None`, `OpenGLNV`, `OpenGLEXT`, or `VulkanEXT`.
 - `SupportsDirectMeshTaskDispatch()` covers CPU-specified task counts and is diagnostic-only.
@@ -272,3 +308,76 @@ Current-depth two-pass Hi-Z occlusion is implemented by `GPURenderPassCollection
 The Vulkan scene-database buffer-device-address prototype is an optional geometry-fetch mode. When the active profile enables it and the renderer reports `ISceneDatabaseDeviceAddressBackendCapability`, generated shader code can consume scene database buffer addresses instead of descriptor bindings for supported records. Unsupported backends must report a downgrade reason.
 
 OpenGL sparse mesh residency is not implemented. OpenGL uses arena allocation and explicit fallback diagnostics for this contract until a separate feature lands.
+
+## Canonical Indexed Instance Groups
+
+`AdvancedVisibilityInputVariant` builds ranges from each consumer's frozen
+submission strategy after it copies the shared preparation. Shared deformation
+runs once per world, scene, and frame. A second consumer can use another strategy
+without reopening the shared output slot.
+
+`AdvancedIndexedInstanceGroupPlanner` combines single-instance indexed payloads
+only when their retained index and vertex bytes, primitive section, vertex
+layout, material constants, texture and sampler references, coverage, and raster
+range agree. Hash matches require full equality. The planner caches proven
+content classes under exact database, table, and arena generations. Warm frames
+scan draw witnesses without scanning immutable geometry bytes again. Authored
+multi-instance payloads keep a separate group and their original instance count.
+
+Each group has a fixed member segment. GPU visibility appends visible payload IDs
+to that segment. A finalizer writes one indexed argument per nonempty group.
+`BuildVisibilityIndirect`, `LateVisibility`, and
+`CullDirectionalShadowCasters` use one atomic increment per group-member
+reservation. Their counters record attempted reservations. A capacity check
+rejects excess writes and increments the overflow diagnostic.
+`FinalizeIndexedInstanceGroups` clamps member counts to the reserved segment
+capacity, so an overflow cannot discard the valid prefix or expose unwritten
+payloads. Each candidate belongs to one group. Member segments do not overlap.
+Counters start at zero for each view or cascade, and a storage barrier separates
+member writes from finalization. Member reservations have no retry loop; range
+reservations retain their existing bounded compare-and-swap loops.
+
+`LateVisibility` also uses one atomic increment for its visible-output
+reservation. It bounds the deferred input count by the payload capacity and
+checks each output index before a write. The `lateDraws` counter is diagnostic
+data; it does not supply an indirect draw count.
+
+The argument uses `VertexOffset=0` and `FirstInstance` as the member-table base.
+The vertex shader selects each member's draw, material, transform, current and
+previous deformation offsets, selection ID, and primitive base. Shared indexed
+topology does not share pose or temporal state.
+
+Early and late visibility use separate member tables and counters. The sealed
+raster phase selects the matching table for indexed and meshlet consumers.
+OpenGL stereo first combines the eye masks, then appends each visible payload
+once. Vulkan retains its packed vertex binding for pipeline compatibility; the
+indexed shader reads member vertices through the canonical storage buffers.
+
+## Vulkan Visibility Memory Placement
+
+`VulkanFrameDataArena` requests mapped device-local memory only for
+`AdvancedVisibilityStorage`. `VulkanMappedFrameArenaBackend` tries compatible
+memory types in this order:
+
+1. Host-visible, device-local, and host-coherent.
+2. Host-visible and device-local, including noncoherent memory.
+3. Host-visible and host-coherent.
+4. Host-visible.
+
+Each memory type is attempted at most once. Only `ErrorOutOfDeviceMemory`
+permits another allocation attempt. Device loss closes admission, and other
+native errors stop the allocation. A successful retry increments the existing
+Vulkan OOM fallback counter. Other frame-data lanes, including scene storage,
+upload, and readback, retain their existing memory selection policy.
+
+All choices remain mapped. The selected memory type's actual flags control
+coherent writes and noncoherent flushes. Flush alignment, slot fences, buffer
+usage, and device-address allocation flags remain in force.
+
+The existing allocation registry retains the actual `MemoryTypeIndex` and
+memory property flags for each chunk. A cold Vulkan allocation log records the
+visibility chunk's owner, buffer and memory handles, allocated bytes, type
+index, numeric and named property flags, and whether allocation was retried.
+This record is emitted once per chunk allocation, not each frame. Use the
+selected flags to verify placement; the requested preference alone does not
+prove device-local storage.

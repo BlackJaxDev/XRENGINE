@@ -15,6 +15,7 @@ internal sealed class AutoUniformMaterialWritePlan(
     byte[] staticBytes,
     VulkanAutoUniformBindingOperation[] dynamicOperations)
 {
+    internal MaterialUniformBindingPayload? MaterialPayload { get; init; }
     private readonly VulkanAutoUniformFrequencyPlan[] _frequencyPlans =
         BuildFrequencyPlans(dynamicOperations);
 

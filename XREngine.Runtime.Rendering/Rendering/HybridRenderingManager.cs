@@ -195,6 +195,10 @@ namespace XREngine.Rendering
         private static XRMaterial? ResolveEffectiveGpuMaterial(XRMaterial? sourceMaterial, XRMaterial? overrideMaterial)
         {
             XRRenderPipelineInstance.RenderingState? renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
+            if (renderState?.ShadowPass == true &&
+                RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
+                return CookedShadowMaterialResolver.Resolve(sourceMaterial, renderState.GlobalMaterialOverride).Material;
+
             if (renderState?.ShadowPass == true && renderState.GlobalMaterialOverride is { } shadowMaterial)
             {
                 if (sourceMaterial?.CanUseSharedOpaqueShadowMaterial() == false &&
@@ -2405,7 +2409,10 @@ namespace XREngine.Rendering
             if (generatedVertexShader.TryGetResolvedSource(out string resolvedSource, logFailures: false))
                 return XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(resolvedSource);
 
-            return XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(generatedVertexShader.Source?.Text);
+            if (!ShaderSourceResolver.CanAccessHostShaderFiles)
+                _ = generatedVertexShader.GetResolvedShaderSource();
+
+            throw new NotSupportedException("ShaderSource.ProgramIdentityUnavailable: generated GPU-driven vertex source could not be resolved.");
         }
 
         private static bool IsProgramReadyForCurrentRenderer(XRRenderProgram program)

@@ -6,12 +6,14 @@ namespace XREngine.Rendering
 {
     /// <summary>
     /// Moves the client bytes of uploaded <see cref="EXRBufferClientCopyPolicy.ReleaseAfterUpload"/>
-    /// buffers out of private memory into copy-on-write mappings of delete-on-close
-    /// session spill files. A background timer drains the queue, so no render or
-    /// upload thread writes files. The private copy a spill replaces is not freed
-    /// here: buffer clones may share it and worker threads may still read through a
-    /// raw pointer, so it is only dropped after a grace period and left to its
-    /// finalizer (which <see cref="DataSourceMemoryStatistics"/> pressure makes prompt).
+    /// buffers to host copy-on-write mappings of delete-on-close session files.
+    /// Desktop mappings can move bytes out of private memory. Browser MEMFS can
+    /// retain copies in JS and WASM memory. A timer drains the queue after upload;
+    /// its callback can run on the browser event loop. The private copy a spill
+    /// replaces is not freed here: buffer clones may share it and worker threads
+    /// may still read through a raw pointer. It is dropped after a grace period
+    /// and left to its finalizer, which <see cref="DataSourceMemoryStatistics"/>
+    /// pressure makes prompt.
     /// </summary>
     internal static class XRBufferClientSpill
     {
@@ -26,7 +28,6 @@ namespace XREngine.Rendering
         private static readonly Queue<(DataSource Replaced, long SpilledTimestamp)> s_retired = new();
         private static readonly object s_drainSync = new();
         private static Timer? s_timer;
-        private static string? s_directory;
         private static long s_spilledBytes;
         private static long s_spilledBuffers;
         private static long s_failedSpills;
@@ -99,7 +100,7 @@ namespace XREngine.Rendering
             }
         }
 
-        private static void TrySpill(XRDataBuffer buffer, long now)
+        private static unsafe void TrySpill(XRDataBuffer buffer, long now)
         {
             if (!buffer.TryBeginClientSpill(out DataSource? source, out ulong revision, out ulong writeActivity))
                 return;
@@ -110,7 +111,9 @@ namespace XREngine.Rendering
             bool swapped = false;
             try
             {
-                spilled = WriteSpillFile(source);
+                IXRBufferSpillStorage storage = XRBufferSpillStorageServices.Required;
+                spilled = XRBufferSpilledDataSource.FromLease(
+                    storage.WriteAndMap(new ReadOnlySpan<byte>(source.Address.Pointer, checked((int)source.Length))));
             }
             catch (Exception ex)
             {
@@ -135,79 +138,11 @@ namespace XREngine.Rendering
             Interlocked.Increment(ref s_spilledBuffers);
         }
 
-        private static unsafe XRBufferSpilledDataSource WriteSpillFile(DataSource source)
-        {
-            uint length = source.Length;
-            // Another session may have removed this folder while it was empty.
-            string directory = Directory.CreateDirectory(ResolveDirectory()).FullName;
-            FileStream? file = new(
-                Path.Combine(directory, $"{Guid.NewGuid():N}.bin"),
-                FileMode.CreateNew,
-                FileAccess.ReadWrite,
-                FileShare.None,
-                bufferSize: 1,
-                FileOptions.DeleteOnClose);
-            try
-            {
-                file.Write(new ReadOnlySpan<byte>(source.Address.Pointer, checked((int)length)));
-                file.Flush();
-                XRBufferSpilledDataSource spilled = XRBufferSpilledDataSource.Map(file, length);
-                file = null;
-                return spilled;
-            }
-            finally
-            {
-                file?.Dispose();
-            }
-        }
-
         private static void RecordFailure(Exception ex)
         {
             Interlocked.Increment(ref s_failedSpills);
             s_lastFailure = $"{ex.GetType().Name}: {ex.Message}";
         }
 
-        private static string ResolveDirectory()
-        {
-            if (s_directory is { } existing)
-                return existing;
-
-            string? root = null;
-            try
-            {
-                root = RuntimeRenderingHostServices.Assets.GameCachePath;
-            }
-            catch (InvalidOperationException)
-            {
-            }
-
-            string spillRoot = Path.Combine(string.IsNullOrWhiteSpace(root) ? Path.GetTempPath() : root, "BufferSpill");
-            string directory = Path.Combine(spillRoot, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            Directory.CreateDirectory(directory);
-            s_directory = directory;
-            RemoveDirectoriesOfExitedProcesses(spillRoot);
-            return directory;
-        }
-
-        /// <summary>
-        /// Spill files delete themselves when their handle closes, which the OS also
-        /// does for a process that exits or crashes, so exited sessions leave empty
-        /// folders. Deleting a non-empty folder fails, which skips live sessions.
-        /// </summary>
-        private static void RemoveDirectoriesOfExitedProcesses(string spillRoot)
-        {
-            foreach (string folder in Directory.EnumerateDirectories(spillRoot))
-            {
-                if (string.Equals(folder, s_directory, StringComparison.OrdinalIgnoreCase))
-                    continue;
-                try
-                {
-                    Directory.Delete(folder, recursive: false);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                }
-            }
-        }
     }
 }

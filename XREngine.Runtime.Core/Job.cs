@@ -89,6 +89,7 @@ namespace XREngine
         public SynchronizationContext? CallbackContext { get; set; }
         public CancellationToken CancellationToken => _cts?.Token ?? CancellationToken.None;
         internal Task? PendingTask => _pendingTask;
+        internal bool UsesCallerThreadExecutor { get; set; }
         internal Task TerminalNotificationTask
             => _terminalNotificationCompletion?.Task ?? Task.CompletedTask;
         public JobHandle Handle { get; internal set; }
@@ -242,6 +243,29 @@ namespace XREngine
             catch (ObjectDisposedException)
             {
             }
+        }
+
+        /// <summary>
+        /// Requests cancellation on the owning caller-thread pump without
+        /// dispatching token callbacks or finalization to the thread pool.
+        /// </summary>
+        internal void RequestCancellationOnCallerThread()
+        {
+            try
+            {
+                Cancel();
+            }
+            catch (Exception exception)
+            {
+                LogShutdownCancellationFault(exception);
+            }
+        }
+
+        internal void CompleteCancellationOnCallerThread()
+        {
+            RequestCancellationOnCallerThread();
+            if (IsRunning)
+                _ = CancelInternal();
         }
 
         /// <summary>
@@ -739,7 +763,10 @@ namespace XREngine
         {
             if (_hasExternalCancellation)
             {
-                _externalCancellation.Dispose();
+                if (UsesCallerThreadExecutor)
+                    _externalCancellation.Unregister();
+                else
+                    _externalCancellation.Dispose();
                 _externalCancellation = default;
                 _hasExternalCancellation = false;
             }

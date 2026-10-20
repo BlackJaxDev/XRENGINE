@@ -16,6 +16,7 @@ public static class AdvancedVisibilityResourceNames
     public const string FrameBuffer = "Advanced.Visibility.FrameBuffer";
     public const string IdentityMultisample = Identity + ".Multisample";
     public const string MetadataMultisample = Metadata + ".Multisample";
+    public const string MetadataSelectionMultisample = "Advanced.Visibility.MetadataSelection.Multisample";
     public const string SelectionMultisample = Selection + ".Multisample";
     public const string DepthStencilMultisample = DepthStencil + ".Multisample";
     public const string FrameBufferMultisample = FrameBuffer + ".Multisample";

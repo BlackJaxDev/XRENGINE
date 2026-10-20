@@ -68,15 +68,23 @@ namespace XREngine.Scene
             return Matches(RuntimeEngine.VRState.LeftEyeViewport) || Matches(RuntimeEngine.VRState.RightEyeViewport);
         }
 
-        internal bool NeedsPrimaryDirectionalShadowMap()
+        /// <summary>
+        /// Returns true when an active window or VR eye viewport that targets this world reads the primary shadow map of
+        /// <paramref name="light"/>. A viewport reads it when its camera does not prefer cascades, or when
+        /// <paramref name="light"/> has no published cascades for the cascade source of that camera. It also returns
+        /// true when no such viewport with a camera exists. <paramref name="noRelevantViewport"/> is true only in that
+        /// second case.
+        /// </summary>
+        internal bool NeedsPrimaryDirectionalShadowMap(DirectionalLightComponent light, out bool noRelevantViewport)
         {
             bool sawRelevantViewport = false;
+            noRelevantViewport = false;
 
             bool PrefersPrimary(XRViewport? viewport)
             {
                 if (viewport is null ||
                     !ViewportTargetsWorld(viewport, World) ||
-                    viewport.ActiveCamera is null)
+                    viewport.ActiveCamera is not XRCamera camera)
                     return false;
 
                 // A suppressed viewport still displays its cached 3D frame. Keep
@@ -86,7 +94,12 @@ namespace XREngine.Scene
                 if (!ViewportPrefersCascadedDirectionalShadows(viewport))
                     return true;
 
-                return false;
+                // The lighting passes use cascades only for a camera whose cascade source has published cascades.
+                // Otherwise they read the primary shadow map, for example while only the other source has cascades. A
+                // suppressed viewport does not light a new frame, and its source gets cascades in the pass in which it
+                // renders again, so it does not count here.
+                return !viewport.Suppress3DSceneRendering &&
+                    !light.PublishedCascadesMatchCamera(camera);
             }
 
             foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports())
@@ -96,7 +109,8 @@ namespace XREngine.Scene
             if (PrefersPrimary(RuntimeEngine.VRState.LeftEyeViewport) || PrefersPrimary(RuntimeEngine.VRState.RightEyeViewport))
                 return true;
 
-            return !sawRelevantViewport;
+            noRelevantViewport = !sawRelevantViewport;
+            return noRelevantViewport;
         }
 
         private XRCamera? ResolveDirectionalShadowSourceCamera(ShadowRequestSource source)

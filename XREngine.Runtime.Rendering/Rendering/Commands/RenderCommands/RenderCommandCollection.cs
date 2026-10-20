@@ -14,6 +14,7 @@ using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
+using XREngine.Components;
 
 namespace XREngine.Rendering.Commands
 {
@@ -120,12 +121,18 @@ namespace XREngine.Rendering.Commands
             => Add(item, sortOrderKey, item.CaptureSortDistance(camera: null));
 
         public void Add(RenderCommand item, long sortOrderKey, float renderDistance)
-        {
-            if (!_membership.Add(item))
-                return;
+            => TryAdd(item, sortOrderKey, renderDistance, out _);
 
-            _entries.Add(Entry.Capture(item, renderDistance, sortOrderKey));
+        internal bool TryAdd(RenderCommand item, long sortOrderKey, float renderDistance, out Entry entry)
+        {
+            entry = default;
+            if (!_membership.Add(item))
+                return false;
+
+            entry = Entry.Capture(item, renderDistance, sortOrderKey);
+            _entries.Add(entry);
             _sortDirty = true;
+            return true;
         }
 
         public void Clear()
@@ -185,6 +192,14 @@ namespace XREngine.Rendering.Commands
 
         private int CompareEntries(Entry x, Entry y)
         {
+            if (_farToNear)
+            {
+                // Higher authored priority draws later. Capture it with distance
+                // so another viewport or material edit cannot mutate this ordering.
+                int priority = x.TransparentSortPriority.CompareTo(y.TransparentSortPriority);
+                if (priority != 0)
+                    return priority;
+            }
             int result = x.RenderDistance.CompareTo(y.RenderDistance);
             if (_bucketOpaqueState)
             {
@@ -205,7 +220,8 @@ namespace XREngine.Rendering.Commands
             float RenderDistance,
             long SortOrderKey,
             int IdentityHash,
-            OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey StateBucket)
+            OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey StateBucket,
+            int TransparentSortPriority)
         {
             public static Entry Capture(RenderCommand command, float renderDistance, long sortOrderKey)
                 => new(
@@ -213,7 +229,8 @@ namespace XREngine.Rendering.Commands
                     renderDistance,
                     sortOrderKey,
                     RuntimeHelpers.GetHashCode(command),
-                    OpaqueStateBucketRenderCommandSorter.ResolveStateBucket(command));
+                    OpaqueStateBucketRenderCommandSorter.ResolveStateBucket(command),
+                    RenderCommandSortPriority.Capture(command));
         }
 
         private sealed class ReferenceRenderCommandComparer : IEqualityComparer<RenderCommand>
@@ -353,6 +370,7 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         private void ClearPipelineTransitionPublicationsNoLock()
         {
+            ResetMeshOrderCollectionNoLock();
             CancelCollectedResourcesNoLock();
             foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
                 pass.Clear();
@@ -516,6 +534,7 @@ namespace XREngine.Rendering.Commands
         private BackendReadyFramePackageIdentity _updatingBackendReadyIdentity =
             BackendReadyFramePackageIdentity.Unspecified;
         private bool _updatingExcludeProjectiveMirrors;
+        private EMeshSubmissionStrategy _updatingMeshSubmissionStrategy;
         private long _updatingRevision;
         private long _backendReadyPackageGeneration;
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
@@ -611,10 +630,23 @@ namespace XREngine.Rendering.Commands
         internal bool IsOwnedByShadowPipeline
             => _ownerPipeline?.IsShadowPipeline == true;
 
+        /// <summary>Gets whether this viewport requests the canonical indexed GPU route.</summary>
+        internal bool UsesCanonicalGpuCollection(XRViewport? viewport)
+            => viewport is not null &&
+                _ownerPipeline is XRRenderPipelineInstance
+                {
+                    AssignedPipeline: AdvancedRenderPipeline,
+                    ActiveGeneration: not null,
+                } &&
+                (viewport.MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) ==
+                EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+
         private readonly Lock _lock = new();
         private readonly ReaderWriterLockSlim _renderingBufferLock = new(LockRecursionPolicy.SupportsRecursion);
 
-        internal RenderingBufferReadScope EnterRenderingBufferReadScope()
+        /// <summary>Holds the published command buffer while a reader copies its state.</summary>
+        public RenderingBufferReadScope EnterRenderingBufferReadScope()
         {
             _renderingBufferLock.EnterReadLock();
             return new RenderingBufferReadScope(_renderingBufferLock);
@@ -626,7 +658,7 @@ namespace XREngine.Rendering.Commands
             return new RenderingBufferWriteScope(_renderingBufferLock);
         }
 
-        internal readonly ref struct RenderingBufferReadScope(ReaderWriterLockSlim gate)
+        public readonly ref struct RenderingBufferReadScope(ReaderWriterLockSlim gate)
         {
             public void Dispose()
                 => gate.ExitReadLock();
@@ -638,10 +670,20 @@ namespace XREngine.Rendering.Commands
                 => gate.ExitWriteLock();
         }
 
+        /// <summary>
+        /// Gets the total number of commands in all updating passes.
+        /// The loop uses the struct enumerator of the dictionary value collection, so the call does not allocate.
+        /// Checked adds throw <see cref="OverflowException"/> when the total is larger than <see cref="int.MaxValue"/>.
+        /// </summary>
         public int GetUpdatingCommandCount()
         {
             using (_lock.EnterScope())
-                return _updatingPasses.Values.Sum(static pass => pass.Count);
+            {
+                int count = 0;
+                foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
+                    count = checked(count + pass.Count);
+                return count;
+            }
         }
 
         public int GetUpdatingPassCount()
@@ -685,7 +727,8 @@ namespace XREngine.Rendering.Commands
             XRCamera? camera,
             int viewportWidth,
             int viewportHeight,
-            bool excludeProjectiveMirrors)
+            bool excludeProjectiveMirrors,
+            EMeshSubmissionStrategy? submissionStrategy = null)
         {
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
 
@@ -693,6 +736,8 @@ namespace XREngine.Rendering.Commands
             {
                 _updatingBackendReadyIdentity = identity;
                 _updatingExcludeProjectiveMirrors = excludeProjectiveMirrors;
+                _updatingMeshSubmissionStrategy = submissionStrategy ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
                 PrepareBackendReadyFramePackageNoLock(
                     scene,
                     camera,
@@ -715,12 +760,24 @@ namespace XREngine.Rendering.Commands
             RenderPipeline? pipeline = ownerPipeline?.Pipeline;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata =
                 ownerPipeline?.ActiveGeneration?.PassMetadata ?? pipeline?.PassMetadata;
+            bool nativeAuthoredDecals = RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                pipeline?.RequiresCanonicalGpuScenePublication == true &&
+                pipeline.RequiresNativeAuthoredDecals;
             _updatingBackendReadyPackage.Prepare(
                 _updatingBackendReadyIdentity,
                 Interlocked.Increment(ref _backendReadyPackageGeneration),
                 _updatingRevision,
                 _updatingPasses,
-                passMetadata);
+                passMetadata,
+                nativeAuthoredDecals);
+            PrepareMeshOrderPublicationNoLock(scene, camera);
+
+            XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
+            if (pipeline?.RequiresGpuMeshSubmissionPublication == true ||
+                submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented ||
+                RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
+                submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuIndirectZeroReadback or EMeshSubmissionStrategy.GpuIndirectInstrumented)
+                scene?.RequestMeshSubmissionPublication();
 
             if (pipeline?.RequiresCanonicalGpuScenePublication != true)
             {
@@ -729,12 +786,14 @@ namespace XREngine.Rendering.Commands
             }
 
             scene?.RequestAdvancedResidentPublication();
+            if (nativeAuthoredDecals) scene?.RequestAdvancedAuthoredDecalPublication();
             _updatingBackendReadyPackage.PrepareCanonicalFromScene(
                 scene,
                 camera,
                 viewportWidth,
                 viewportHeight,
-                _updatingExcludeProjectiveMirrors);
+                _updatingExcludeProjectiveMirrors,
+                _updatingMeshSubmissionStrategy);
         }
 
         /// <summary>
@@ -769,7 +828,8 @@ namespace XREngine.Rendering.Commands
                     camera,
                     viewportWidth,
                     viewportHeight,
-                    _updatingExcludeProjectiveMirrors);
+                    _updatingExcludeProjectiveMirrors,
+                    _updatingMeshSubmissionStrategy);
                 return _updatingBackendReadyPackage.TryGetCanonicalPublication(
                            out _, out _) &&
                        !_updatingBackendReadyPackage.CanonicalViews.IsEmpty;
@@ -787,6 +847,7 @@ namespace XREngine.Rendering.Commands
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
                 _updatingBackendReadyPackage.Cancel();
                 _renderingBackendReadyPackage.Cancel();
+                ResetMeshOrderCollectionNoLock();
                 CancelCollectedResourcesNoLock();
             }
         }
@@ -894,7 +955,11 @@ namespace XREngine.Rendering.Commands
         public void AddCPU(RenderCommand item, IRuntimeRenderCamera? camera)
         {
             int pass = item.RenderPass;
-            float renderDistance = item.CaptureSortDistance(camera);
+            AABB? sortBounds = null;
+            Vector3 fallbackPosition = default;
+            float renderDistance = _updatingOrderScopeDepth == 1 && item.GetType() == typeof(RenderCommandMesh3D)
+                ? ((RenderCommandMesh3D)item).CaptureSortDistance(camera, out sortBounds, out fallbackPosition)
+                : item.CaptureSortDistance(camera);
 
             using (_lock.EnterScope())
             {
@@ -914,9 +979,12 @@ namespace XREngine.Rendering.Commands
 
                 long sortOrderKey = GetSortOrderKey(pass);
                 int beforeCount = set.Count;
+                int sortPriority = 0;
                 if (set is SnapshotSortedRenderCommandCollection snapshotSet)
                 {
-                    snapshotSet.Add(item, sortOrderKey, renderDistance);
+                    if (snapshotSet.TryAdd(item, sortOrderKey, renderDistance,
+                        out SnapshotSortedRenderCommandCollection.Entry entry))
+                        sortPriority = entry.TransparentSortPriority;
                 }
                 else
                 {
@@ -924,6 +992,8 @@ namespace XREngine.Rendering.Commands
                     set.Add(item);
                 }
                 int afterCount = set.Count;
+                if (afterCount > beforeCount)
+                    ObserveMeshOrderInsertionNoLock(item, camera, pass, sortOrderKey, sortBounds, fallbackPosition, sortPriority);
                 ++_numCommandsRecentlyAddedToUpdate;
                 _updatingRevision++;
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
@@ -1893,6 +1963,60 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        /// <summary>Preserves explicit CPU ownership without consulting native material admission for generic authored GPU meshes.</summary>
+        public void RenderCPUNonMeshAndExplicitlyExcluded(int renderPass)
+            => RenderCPUExplicitlyExcludedCore(renderPass, includeNonMesh: true);
+
+        /// <summary>Auxiliary generic meshlet passes replay only explicitly CPU-owned meshes, never late callbacks.</summary>
+        public void RenderCPUExplicitlyExcludedMeshes(int renderPass)
+            => RenderCPUExplicitlyExcludedCore(renderPass, includeNonMesh: false);
+
+        private void RenderCPUExplicitlyExcludedCore(int renderPass, bool includeNonMesh)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> commands)) return;
+            IRuntimeRenderCommandExecutionState? execution = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
+            if (execution?.WorldSnapshot is not { } world ||
+                !world.GpuScene.TryAcquireMeshSubmissionPublication(out GpuMeshSubmissionPublicationLease lease))
+                return; // The immediately following GPU request marks the atomic frame pending.
+            using (lease)
+            {
+                GpuMeshSubmissionPublication publication = lease.Publication;
+                if (publication.FrameId != world.FrameId) return;
+                if (RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass != true &&
+                    publication.RequiresLodAuxiliaryPassPublication())
+                    throw new NotSupportedException("WebGPU.Meshlets.LodAuxiliaryPassPublication: authored LOD outline geometry requires a GPU-selected auxiliary pass publication before CPU replay.");
+                if (publication.TryGetInvalidSourceOwnership(renderPass, out EGpuMeshSubmissionSourceOwnership invalidOwnership))
+                    throw new NotSupportedException(invalidOwnership == EGpuMeshSubmissionSourceOwnership.MixedExplicitOwnership
+                        ? "WebGPU.Meshlets.MixedExplicitOwnership: one selected source mixes CPU-exempt and GPU-owned primitives; exact primitive replay is required."
+                        : "WebGPU.Meshlets.IncompleteSource: the selected resident publication omits an authored primitive; whole-source replay is forbidden.");
+                // Establish all source ownership before executing callbacks or any CPU mesh.
+                for (int index = 0; index < commands.Count; index++)
+                {
+                    RenderCommand command = GetCommandAt(commands, index);
+                    if (command is not IRenderCommandMesh mesh || HasZeroAuthoredMeshInstances(command, mesh)) continue;
+                    if (publication.IsGpuOwnedMaterialAuxiliary(mesh)) continue;
+                    if (publication.GetSourceOwnership(mesh) == EGpuMeshSubmissionSourceOwnership.Missing)
+                        throw new NotSupportedException("WebGPU.Meshlets.SourceOwnershipMissing: a visible source has no frozen resident primitive ownership; implicit CPU replay is forbidden.");
+                }
+                for (int index = 0; index < commands.Count; index++)
+                {
+                    RenderCommand command = GetCommandAt(commands, index);
+                    if (command is not IRenderCommandMesh mesh)
+                    {
+                        if (includeNonMesh) RenderWithGpuScope(command, renderPass);
+                    }
+                    else if (!HasZeroAuthoredMeshInstances(command, mesh) &&
+                        publication.GetSourceOwnership(mesh) == EGpuMeshSubmissionSourceOwnership.ExplicitCpu &&
+                        !publication.IsGpuOwnedMaterialAuxiliary(mesh))
+                        RenderWithGpuScope(command, renderPass);
+                }
+            }
+        }
+
+        private static bool HasZeroAuthoredMeshInstances(RenderCommand command, IRenderCommandMesh mesh)
+            => command is RenderCommandMesh3D frozen ? frozen.CaptureGpuSceneSnapshot().Instances == 0 : mesh.Instances == 0;
+
         /// <summary>
         /// Renders only commands in the specified pass that satisfy the given predicate.
         /// </summary>
@@ -2112,26 +2236,53 @@ namespace XREngine.Rendering.Commands
         public void RenderGPU(
             int renderPass,
             EMeshSubmissionStrategy meshSubmissionStrategy,
-            int renderGraphPassIndex)
+            int renderGraphPassIndex,
+            EAuthoredIndexedCpuReplayPolicy cpuReplayPolicy = EAuthoredIndexedCpuReplayPolicy.None)
             => RenderGPU(
                 renderPass,
                 meshSubmissionStrategy.ToSubmissionMode(),
                 meshSubmissionStrategy.ToPrimitivePathPreference(),
-                renderGraphPassIndex);
-
-        public void RenderGPU(
-            int renderPass,
-            EMeshSubmissionStrategy meshSubmissionMode,
-            EMeshPrimitivePathPreference primitivePathPreference)
-            => RenderGPU(renderPass, meshSubmissionMode, primitivePathPreference, int.MinValue);
+                renderGraphPassIndex,
+                cpuReplayPolicy);
 
         public void RenderGPU(
             int renderPass,
             EMeshSubmissionStrategy meshSubmissionMode,
             EMeshPrimitivePathPreference primitivePathPreference,
-            int renderGraphPassIndex)
+            EAuthoredIndexedCpuReplayPolicy cpuReplayPolicy = EAuthoredIndexedCpuReplayPolicy.None)
+            => RenderGPU(renderPass, meshSubmissionMode, primitivePathPreference, int.MinValue, cpuReplayPolicy);
+
+        public void RenderGPU(
+            int renderPass,
+            EMeshSubmissionStrategy meshSubmissionMode,
+            EMeshPrimitivePathPreference primitivePathPreference,
+            int renderGraphPassIndex,
+            EAuthoredIndexedCpuReplayPolicy cpuReplayPolicy = EAuthoredIndexedCpuReplayPolicy.None)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
+
+            if (AbstractRenderer.Current is IAuthoredIndexedBackendCapability authoredIndexed)
+            {
+                IRuntimeRenderCommandExecutionState? execution = RuntimeRenderingHostServices.FrameTiming.ActiveRenderCommandExecutionState;
+                if (execution?.WorldSnapshot is not { } publishedWorld ||
+                    (execution.RenderingCamera ?? execution.SceneCamera) is not XRCamera meshletCamera)
+                    throw new NotSupportedException("RenderMeshes.IndexedPublicationUnavailable: authored GPU indexed submission requires its frozen world publication and camera.");
+                var renderArea = RuntimeEngine.Rendering.State.RenderArea;
+                RenderFrameViewSelection view = RenderFrameViewSetCapture.SelectForDraw(execution, meshletCamera,
+                    RuntimeEngine.Rendering.State.RenderingPipelineState?.UseUnjitteredProjection == true,
+                    new Vector2(renderArea.Width, renderArea.Height), RuntimeRenderingHostServices.FrameTiming.ElapsedTime);
+                EMeshSubmissionStrategy authoredStrategy = primitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly
+                    ? meshSubmissionMode : meshSubmissionMode.IsGpuZeroReadbackStrategy()
+                        ? EMeshSubmissionStrategy.GpuMeshletZeroReadback : EMeshSubmissionStrategy.GpuMeshletInstrumented;
+                AuthoredIndexedBackendRequest request = new(publishedWorld.GpuScene, publishedWorld.FrameId, renderPass,
+                    renderGraphPassIndex, meshletCamera, view, authoredStrategy, _renderingBackendReadyPackage,
+                    cpuReplayPolicy == EAuthoredIndexedCpuReplayPolicy.None ? null : this, cpuReplayPolicy);
+                EAuthoredIndexedSubmissionStatus status = authoredIndexed.EnqueueAuthoredIndexed(in request, out string reason);
+                if (status == EAuthoredIndexedSubmissionStatus.Rejected)
+                    XREngine.Debug.RenderingWarningEvery("RenderMeshes.AuthoredIndexedRejected", TimeSpan.FromSeconds(2),
+                        "[RenderDispatch] Authored indexed pass {0} rejected: {1}", renderPass, reason);
+                return;
+            }
 
             if (!_gpuPasses.TryGetValue(renderPass, out GPURenderPassCollection? gpuPass))
                 return;
@@ -2203,6 +2354,42 @@ namespace XREngine.Rendering.Commands
             using var renderingBufferScope = EnterRenderingBufferReadScope();
             return _renderingPassCommandCounts.TryGetValue(renderPass, out int count) && count > 0;
         }
+
+        /// <summary>
+        /// The WebGPU display overlay admits only the shared debug-draw callback from a
+        /// published scene component. Other late callbacks and meshes need their own
+        /// explicit cooked route and must fail before executing any draw in this pass.
+        /// </summary>
+        internal void ValidatePublishedDebugDrawCallbacks()
+        {
+            const int pass = (int)EDefaultRenderPass.OnTopForward;
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            if (!TryGetPublishedPassCommandsNoLock(pass, out ICollection<RenderCommand> commands))
+                return;
+            for (int index = 0; index < commands.Count; index++)
+                if (!IsPublishedDebugDrawCallback(GetCommandAt(commands, index), pass))
+                    throw new NotSupportedException("WebGPU.DefaultPipeline.PassUnsupported: OnTopForward contains a command outside the published DebugDrawComponent callback cohort.");
+        }
+
+        /// <summary>Runs the validated debug component callbacks in published pass order.</summary>
+        internal void RenderPublishedDebugDrawCallbacks()
+        {
+            const int pass = (int)EDefaultRenderPass.OnTopForward;
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            if (!TryGetPublishedPassCommandsNoLock(pass, out ICollection<RenderCommand> commands))
+                return;
+            for (int index = 0; index < commands.Count; index++)
+            {
+                RenderCommand command = GetCommandAt(commands, index);
+                if (!IsPublishedDebugDrawCallback(command, pass))
+                    throw new NotSupportedException("WebGPU.DefaultPipeline.PassUnsupported: the published debug callback cohort changed before execution.");
+                RenderWithGpuScope(command, pass);
+            }
+        }
+
+        private static bool IsPublishedDebugDrawCallback(RenderCommand command, int pass)
+            => command.RenderPass == pass && command is RenderCommandMethod3D &&
+                command.OwnerRenderInfo?.Owner is DebugDrawComponent;
 
         public bool HasAnyRenderingCommands(ReadOnlySpan<int> renderPasses)
         {
@@ -2498,6 +2685,7 @@ namespace XREngine.Rendering.Commands
                 _numCommandsRecentlyAddedToUpdate = 0;
                 _updatingRevision++;
                 _updatingBackendReadyPackage.Reset();
+                ResetMeshOrderCollectionNoLock();
             }
         }
 

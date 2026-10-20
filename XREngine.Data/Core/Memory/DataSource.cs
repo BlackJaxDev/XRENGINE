@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
 using MemoryPack;
 using XREngine.Data.Core;
 using YamlDotNet.Serialization;
@@ -24,6 +25,11 @@ namespace XREngine.Data
         /// </summary>
         public bool External { get; }
         public uint Length { get; set; }
+
+        /// <summary>Whether this wrapper has been disposed, including when its memory is externally owned.</summary>
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public bool IsDisposed => Volatile.Read(ref _disposedValue);
 
         /// <summary>
         /// Controls whether YAML serialization should store this payload compressed.

@@ -16,7 +16,8 @@ internal readonly record struct VulkanRenderBinKey(
     uint ViewMask,
     VulkanRenderBinOrderingClass OrderingClass,
     VulkanRenderBinNativeCompatibility NativeCompatibility,
-    VulkanRenderBinContextCompatibility ContextCompatibility)
+    VulkanRenderBinContextCompatibility ContextCompatibility,
+    VulkanVisibilityBindingCompatibility VisibilityBinding)
 {
     internal bool IsValid => PassCompatibility != 0u &&
         PipelineVariant != 0u && GeometryPage != 0u &&
@@ -110,15 +111,21 @@ internal readonly record struct VulkanRenderBinKey(
             viewMask,
             orderingClass,
             new VulkanRenderBinNativeCompatibility(in nativeState),
-            contextCompatibility);
+            contextCompatibility,
+            default);
     }
 
-    /// <summary>Builds an exact canonical packed-geometry visibility key.</summary>
+    /// <summary>
+    /// Builds an exact canonical packed-geometry visibility key. The key holds no
+    /// frame binding: a deformed payload passes an empty vertex source, and the
+    /// scene publication generation is not part of the key, so the key of an
+    /// unchanged payload is the same in each frame.
+    /// </summary>
     internal static VulkanRenderBinKey CreateVisibilityGeometry(
         int passIndex,
         uint viewMask,
         in AdvancedVisibilityPayload payload,
-        ulong sceneNativeGeneration,
+        EAdvancedGeometryProducer producer,
         in VulkanVisibilityPreparedVertexSource vertexSource,
         VulkanFrameDataSlice indexSlice,
         in VulkanResidentDrawTemplateNativeState nativeState,
@@ -126,28 +133,48 @@ internal readonly record struct VulkanRenderBinKey(
     {
         VulkanPreparedMeshPrimitive primitive = nativeState.Primitive0;
         uint acceptedViewMask = viewMask == 0u ? 1u : viewMask;
+        var bindingGeometry = producer == EAdvancedGeometryProducer.IndirectIndexed
+            ? default
+            : payload.Geometry;
         return new(
             Mix(unchecked((ulong)(uint)(passIndex + 1)), acceptedViewMask),
             Mix(payload.RasterStateClass, checked((ulong)payload.Coverage),
                 payload.CullMode, payload.PrimitiveTopology),
             Mix(
-                payload.Geometry.Index,
-                payload.Geometry.Generation,
-                sceneNativeGeneration,
+                bindingGeometry.Index,
+                bindingGeometry.Generation,
+                checked((ulong)producer),
+                payload.RasterStateClass,
+                checked((ulong)payload.Coverage),
+                payload.CullMode,
+                payload.PrimitiveTopology,
+                payload.Skinned ? 1u : 0u,
                 vertexSource.Buffer.Handle,
                 vertexSource.Generation,
                 vertexSource.Offset,
                 vertexSource.Length,
                 vertexSource.ElementStride,
                 indexSlice.Generation,
+                indexSlice.Offset,
+                indexSlice.Length,
                 primitive.IndexBuffer.Handle,
                 nativeState.VertexBindingSignature),
             unchecked(((uint)primitive.Topology << 16) | (uint)primitive.IndexType),
             1u,
             acceptedViewMask,
             VulkanRenderBinOrderingClass.Opaque,
-            new VulkanRenderBinNativeCompatibility(in nativeState),
-            VulkanRenderBinContextCompatibility.Create(in context));
+            new VulkanRenderBinNativeCompatibility(in nativeState, ignoreDrawCounts: true),
+            VulkanRenderBinContextCompatibility.Create(in context),
+            new VulkanVisibilityBindingCompatibility(
+                bindingGeometry,
+                producer,
+                payload.RasterStateClass,
+                payload.Coverage,
+                payload.CullMode,
+                payload.PrimitiveTopology,
+                payload.Skinned,
+                indexSlice,
+                vertexSource));
     }
     private static ulong Mix(params ReadOnlySpan<ulong> values)
     {

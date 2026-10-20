@@ -374,7 +374,8 @@ namespace XREngine.Rendering.Commands
             // transform, which would just be overwritten by the reducer.
             if (IsCommandOwnedByGpuAabb(commandIndex))
             {
-                WriteCommandAabbSentinel(commandIndex);
+                if (!IsCommandOwnedByGpuCopiedAabb(commandIndex))
+                    WriteCommandAabbSentinel(commandIndex);
                 return;
             }
 
@@ -459,6 +460,8 @@ namespace XREngine.Rendering.Commands
         // per element = 32 bytes), so slotIndex == commandIndex directly.
 
         private readonly HashSet<XRMeshRenderer> _gpuAabbRenderers = [];
+        private readonly HashSet<XRMeshRenderer> _gpuCopiedAabbRenderers = [];
+        private readonly List<XRMeshRenderer> _staleGpuAabbRenderers = [];
         private static readonly Vector4 _gpuAabbSentinelMin = new(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity, 0f);
         private static readonly Vector4 _gpuAabbSentinelMax = new(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity, 0f);
 
@@ -474,6 +477,18 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void EnsureCommandAabbCapacity(uint minCount)
             => EnsureCommandAabbBuffer(Math.Max(minCount, UpdatingCommandCount));
+
+        /// <summary>Ensures that the GPU-owned culling bounds can hold each command slot.</summary>
+        public void EnsureGpuCullBoundsCapacity(uint minCount)
+            => EnsureBufferCapacity(BoundsBuffer, Math.Max(minCount, UpdatingCommandCount));
+
+        /// <summary>Marks a GPU bounds copy as a new BVH leaf revision.</summary>
+        public void MarkGpuCommandBoundsPublished()
+        {
+            Interlocked.Increment(ref _commandAabbRevision);
+            if (_bvhReady && !_bvhDirty && _bvhPrimitiveCount == UpdatingCommandCount)
+                _bvhRefitPending = true;
+        }
 
         /// <summary>
         /// Writes a +inf/-inf sentinel into the supplied slot so a subsequent atomic
@@ -506,24 +521,87 @@ namespace XREngine.Rendering.Commands
             if (renderer is null)
                 return;
 
-            if (enabled)
-                _gpuAabbRenderers.Add(renderer);
-            else
-                _gpuAabbRenderers.Remove(renderer);
+            using (_lock.EnterScope())
+            {
+                if (enabled && _destroyed)
+                    return;
+                if (enabled)
+                    _gpuAabbRenderers.Add(renderer);
+                else
+                {
+                    _gpuAabbRenderers.Remove(renderer);
+                    _gpuCopiedAabbRenderers.Remove(renderer);
+                }
+            }
+        }
+
+        /// <summary>Marks a renderer whose bounds are copied by a GPU producer.</summary>
+        public void SetRendererOwnsGpuCopiedAabb(XRMeshRenderer renderer, bool enabled)
+        {
+            if (renderer is null)
+                return;
+
+            using (_lock.EnterScope())
+            {
+                if (enabled && _destroyed)
+                    return;
+                if (enabled)
+                {
+                    _gpuAabbRenderers.Add(renderer);
+                    _gpuCopiedAabbRenderers.Add(renderer);
+                }
+                else
+                {
+                    _gpuAabbRenderers.Remove(renderer);
+                    _gpuCopiedAabbRenderers.Remove(renderer);
+                }
+            }
         }
 
         /// <summary>True when the given renderer's command AABBs are produced on the GPU.</summary>
         public bool IsRendererOwnsGpuAabb(XRMeshRenderer renderer)
-            => renderer is not null && _gpuAabbRenderers.Contains(renderer);
+        {
+            if (renderer is null)
+                return false;
+            using (_lock.EnterScope())
+                return _gpuAabbRenderers.Contains(renderer);
+        }
 
+        /// <summary>True when a renderer has direct-copy GPU command bounds.</summary>
+        public bool IsRendererOwnsGpuCopiedAabb(XRMeshRenderer renderer)
+        {
+            if (renderer is null)
+                return false;
+            using (_lock.EnterScope())
+                return _gpuCopiedAabbRenderers.Contains(renderer);
+        }
+
+        /// <summary>
+        /// True when the renderer of the accepted command capture produces this
+        /// slot's AABB on the GPU. The live command can select another renderer
+        /// before its scene update runs, so ownership never reads the live mesh.
+        /// </summary>
         private bool IsCommandOwnedByGpuAabb(uint commandIndex)
         {
             if (_gpuAabbRenderers.Count == 0)
                 return false;
             if (!_commandIndexLookup.TryGetValue(commandIndex, out var entry))
                 return false;
-            var renderer = entry.command?.Mesh;
+            XRMeshRenderer? renderer = entry.snapshot.Renderer;
             return renderer is not null && _gpuAabbRenderers.Contains(renderer);
+        }
+
+        /// <summary>
+        /// True when the renderer of the accepted command capture copies this
+        /// slot's bounds directly on the GPU.
+        /// </summary>
+        private bool IsCommandOwnedByGpuCopiedAabb(uint commandIndex)
+        {
+            if (_gpuCopiedAabbRenderers.Count == 0
+                || !_commandIndexLookup.TryGetValue(commandIndex, out var entry))
+                return false;
+            XRMeshRenderer? renderer = entry.snapshot.Renderer;
+            return renderer is not null && _gpuCopiedAabbRenderers.Contains(renderer);
         }
 
         private const float BvhConfiguredBoundsMaxAxisDilution = 2.0f;
@@ -597,22 +675,115 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Captures renderer routes in one scene scan. The caller owns the reusable
-        /// snapshot and must consume it before the next scene command mutation.
+        /// Captures renderer routes from the current render publication.
         /// </summary>
         internal void CaptureRendererCommandIndices(GpuSceneRendererCommandIndexSnapshot snapshot)
         {
             ArgumentNullException.ThrowIfNull(snapshot);
-            snapshot.Clear();
             using (_lock.EnterScope())
-                foreach (var entry in _commandIndicesPerMeshCommand)
-                    if (entry.Key.Mesh is { } renderer)
-                        snapshot.Append(renderer, entry.Value);
+                _publishedRendererCommandIndices.CopyTo(snapshot);
+        }
+
+        /// <summary>Captures only the published draw materials of one renderer.</summary>
+        internal bool TryCaptureRendererCommandMaterialSnapshots(XRMeshRenderer renderer,
+            List<PhysicsChainDrawMaterialSnapshot> materials)
+        {
+            using (_lock.EnterScope())
+                return _publishedRendererCommandIndices.TryGetCommandMaterialSnapshots(renderer, materials);
+        }
+
+        /// <summary>Gets the publication that owns a renderer's drawn materials.</summary>
+        internal bool TryGetRendererCommandMaterialGeneration(XRMeshRenderer renderer,
+            out long generation)
+        {
+            using (_lock.EnterScope())
+            {
+                generation = _publishedRendererCommandIndices.PublicationGeneration;
+                return generation >= 0 &&
+                    _publishedRendererCommandIndices.ContainsRenderer(renderer);
+            }
         }
 
         /// <summary>
-        /// Fills <paramref name="output"/> with every active GPU command index that
-        /// belongs to <paramref name="renderer"/>. Returns true if at least one was found.
+        /// Reads the current renderer-command material publication without the scene lock.
+        /// The value is a change witness: a reader that saw a generation through a locked
+        /// read can reuse what it read while this value is unchanged.
+        /// </summary>
+        internal long RendererCommandMaterialPublicationGeneration
+            => _publishedRendererCommandIndices.PublicationGeneration;
+
+        /// <summary>Captures drawn materials and their publication as one scene read.</summary>
+        internal bool TryCaptureRendererCommandMaterialSnapshots(XRMeshRenderer renderer,
+            List<PhysicsChainDrawMaterialSnapshot> materials, out long generation)
+        {
+            using (_lock.EnterScope())
+            {
+                generation = _publishedRendererCommandIndices.PublicationGeneration;
+                return generation >= 0 &&
+                    _publishedRendererCommandIndices.TryGetCommandMaterialSnapshots(renderer, materials);
+            }
+        }
+
+        private readonly GpuSceneRendererCommandIndexSnapshot _publishedRendererCommandIndices = new();
+        private long _rendererCommandMaterialPublicationGeneration;
+
+        /// <summary>
+        /// Publishes renderer routes with the material of each published draw.
+        /// Each slot routes through the renderer of its accepted command capture,
+        /// because the live command can select a replacement renderer before its
+        /// scene update runs. The material comes from the draw metadata, so it
+        /// includes command overrides. Call this under the scene lock at
+        /// command-buffer swap.
+        /// </summary>
+        private void PublishRendererCommandIndices()
+        {
+            _publishedRendererCommandIndices.Clear();
+            XRDataBuffer metadata = UpdatingDrawMetadataBuffer;
+            foreach (KeyValuePair<IRenderCommandMesh, List<uint>> entry in _commandIndicesPerMeshCommand)
+            {
+                List<uint> indices = entry.Value;
+                for (int index = 0; index < indices.Count; ++index)
+                {
+                    uint commandIndex = indices[index];
+                    if (!_commandIndexLookup.TryGetValue(commandIndex, out var lookup)
+                        || lookup.snapshot.Renderer is not { } renderer)
+                        continue;
+
+                    XRMaterial? material = null;
+                    if (commandIndex < metadata.ElementCount
+                        && _idToMaterial.TryGetValue(
+                            metadata.GetDataRawAtIndex<DrawMetadata>(commandIndex).MaterialID,
+                            out XRMaterial? drawnMaterial))
+                        material = drawnMaterial;
+                    _publishedRendererCommandIndices.Append(renderer, commandIndex, material);
+                }
+            }
+            _rendererCommandMaterialPublicationGeneration = checked(
+                _rendererCommandMaterialPublicationGeneration + 1);
+            _publishedRendererCommandIndices.SetPublicationGeneration(
+                _rendererCommandMaterialPublicationGeneration);
+            PruneGpuAabbOwnersWithoutPublishedCommands();
+        }
+
+        private void PruneGpuAabbOwnersWithoutPublishedCommands()
+        {
+            _staleGpuAabbRenderers.Clear();
+            foreach (XRMeshRenderer renderer in _gpuAabbRenderers)
+                if (!_publishedRendererCommandIndices.ContainsRenderer(renderer))
+                    _staleGpuAabbRenderers.Add(renderer);
+
+            foreach (XRMeshRenderer renderer in _staleGpuAabbRenderers)
+            {
+                _gpuAabbRenderers.Remove(renderer);
+                _gpuCopiedAabbRenderers.Remove(renderer);
+            }
+            _staleGpuAabbRenderers.Clear();
+        }
+
+        /// <summary>
+        /// Fills <paramref name="output"/> with every active GPU command index whose
+        /// accepted command capture uses <paramref name="renderer"/>. Returns true if
+        /// at least one was found.
         /// </summary>
         public bool TryGetCommandIndicesForRenderer(XRMeshRenderer renderer, List<uint> output)
         {
@@ -620,19 +791,20 @@ namespace XREngine.Rendering.Commands
             if (renderer is null || output is null || _commandIndicesPerMeshCommand.Count == 0)
                 return false;
 
-            bool any = false;
+            // Match the renderer of each accepted command capture, not the live
+            // command mesh, so these slots agree with GPU AABB ownership.
             foreach (var kvp in _commandIndicesPerMeshCommand)
             {
-                if (!ReferenceEquals(kvp.Key.Mesh, renderer))
-                    continue;
-
                 var list = kvp.Value;
                 for (int i = 0; i < list.Count; i++)
-                    output.Add(list[i]);
-
-                any |= list.Count > 0;
+                {
+                    uint commandIndex = list[i];
+                    if (_commandIndexLookup.TryGetValue(commandIndex, out var entry)
+                        && ReferenceEquals(entry.snapshot.Renderer, renderer))
+                        output.Add(commandIndex);
+                }
             }
-            return any;
+            return output.Count > 0;
         }
 
         /// <summary>
@@ -656,19 +828,14 @@ namespace XREngine.Rendering.Commands
                 if (!_commandIndexLookup.TryGetValue(commandIndex, out var entry))
                     continue;
 
-                IRenderCommandMesh command = entry.command;
-                (XRMesh? mesh, XRMaterial? material)[]? subMeshes = command.Mesh?.GetMeshes();
-                if (subMeshes is null || (uint)entry.subMeshIndex >= (uint)subMeshes.Length)
+                // Use the accepted capture that published this slot, not the
+                // live command state.
+                if (entry.snapshot.Renderer is not { } acceptedRenderer
+                    || !acceptedRenderer.TryGetMesh(entry.subMeshIndex, out XRMesh? mesh, out _)
+                    || mesh is null)
                     continue;
 
-                XRMesh? mesh = subMeshes[entry.subMeshIndex].mesh;
-                if (mesh is null)
-                    continue;
-
-                Matrix4x4 modelMatrix = command.WorldMatrixIsModelMatrix
-                    ? command.WorldMatrix
-                    : Matrix4x4.Identity;
-                WriteTightCommandAabb(commandIndex, renderInfo, mesh.Bounds, modelMatrix);
+                WriteTightCommandAabb(commandIndex, renderInfo, mesh.Bounds, entry.snapshot.ModelMatrix);
             }
         }
 

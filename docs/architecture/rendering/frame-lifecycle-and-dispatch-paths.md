@@ -109,6 +109,30 @@ gameplay/editor possession binds snapshot-backed keyboard and mouse adapters
 instead of native input devices. Cursor capture requests flow back through the
 viewport/window wrapper, preserving native window-thread ownership.
 
+Snapshot-backed keyboard and mouse mappings replay ordered down/up transitions
+before reconciling the final held mask. A complete press/release between updates
+therefore emits both mapped events. Transitions consume no simulation time;
+only unchanged channels accrue the frame delta toward a held event. A snapshot
+sequence is applied once, and each adapter retains at most 512 pending edges in
+reusable storage. Overflow abandons the whole batch rather than losing a release.
+
+Mapping changes, pawn/viewport ownership changes, UI capture, and input-source
+cancellation retire buffered edges. Abandoned held channels become neutral
+without invoking replacement mappings and remain suppressed until their next
+up. Device dispatch revisions stop remaining raw, button, cursor, and wheel
+callbacks when a callback changes ownership or resets the source. A nested newer
+snapshot from the same owner supersedes the old batch and retains its fresh edges
+for the next tick. Physical mouse-button transitions select the physical cursor
+even when their final held mask is empty; touch remains a separate left-button
+contribution. Gamepad and virtual-control source ledgers retain their existing
+dispatch policy.
+
+UI capture and a reset generation from the same source retain channels already
+accepted by that consumer. Their hold timers do not advance while captured, and
+their ordinary release remains deliverable afterward. This prevents a pawn's
+state-change consumer from retaining a previously delivered true value forever.
+Never-delivered held channels stay suppressed until up.
+
 Use `IRuntimeRenderingHostServices.EnqueueWindowThreadTask` or
 `InvokeWindowThreadTask<T>` for native window operations that require the window
 owner. Use `EnqueueRenderThreadTask` or `InvokeRenderThreadTask<T>` for
@@ -170,6 +194,15 @@ needed for bounded validation. It contains no mutable backend handles. Two retai
 package instances follow the same producer/consumer ownership split as the
 command buffers, so preparation can overlap the previous render without
 overwriting in-flight data.
+
+After `PostCollectVisible`, `EngineTimer.DispatchCollectVisible()` raises
+`PrepareSwapPublications` on the collect thread, inside the same fault
+boundary. `RuntimeWorldHost` links it to
+`RuntimeWorldRenderer.GlobalPrepareSwapPublications`, which prepares the
+unchanged-row verdict of the Advanced scene publication before the serial swap
+(see the [Advanced render pipeline](advanced-render-pipeline.md#prepared-unchanged-row-verdict)).
+The prepare catches its own exceptions. The `PrepareSwapPublicationEvent`
+collect stage times it.
 
 ### 4. SwapBuffers
 
@@ -397,6 +430,19 @@ XRViewport.CollectVisible()
 ```
 
 That method is currently a linear snapshot/filter over tracked renderables. The actual per-command visibility reduction then occurs inside the GPU pass pipeline, not in `VisualScene3D` itself.
+
+A main view (a collection that is not a shadow pass) also counts shadow-only caster candidates in this loop. Under a zero-readback strategy, the directional shadow atlas planning reads this census (`VisualScene3D.MayHaveShadowOnlyCasters`) to decide whether the primary directional shadow views must still collect. A candidate is a shadow-casting render info with a mesh command that a shadow camera can collect but this main view does not collect with its primary command:
+
+- `AllowRender` rejects it (layer, mirror filter, volume, or a subclass rule), and its disposal or retirement was not requested.
+- `RenderInfo.TryCollectCommands` returns `CallbackRejected`: the pre-collection callback rejected this camera and can accept a different camera (HLOD, light probe preview, mirror display).
+- The main view collects it without the primary command, because the material enables only the shadow pass.
+
+The results `Disposed`, `Retired` (a retiring `RenderableMesh`) and `RejectedForEveryCamera` do not count, because the shadow cameras reject the render info too. An owner declares a callback camera independent with `RenderInfo.SetCameraIndependentPreCollectCommandsCallback`. The callback must read only owner state, never the camera or the pass collection. A different delegate assigned to `PreCollectCommandsCallback` ends the declaration. Two owners use the declaration:
+
+- `UIRenderableComponent` declares a private callback that calls the virtual `ShouldRender3D()`. This hook gets no camera and no pass collection, so an override cannot make the result camera dependent through the arguments. The 3D render info of a screen-space or offscreen UI item is therefore not a candidate when `AllowRender` accepts it.
+- `HLODGroupComponent` declares a callback that rejects every camera while the group is disabled or has no built proxy. While the proxy can draw, it installs the camera-dependent distance callback. Each change of `Enabled`, the build state or the proxy renderer installs the callback again.
+
+The main view sees a callback result only when `AllowRender` accepts the render info. When `AllowRender` rejects a render info with a declared callback first, for example by layer, the render info still counts. The MCP tool `get_shadow_caster_census` reads the census and captures the candidates of one main-view collection. It requests a capture only for a world with GPU dispatch and a main-view GPU collection in the previous or current pass.
 
 So there are two distinct collection layers in GPU mode:
 

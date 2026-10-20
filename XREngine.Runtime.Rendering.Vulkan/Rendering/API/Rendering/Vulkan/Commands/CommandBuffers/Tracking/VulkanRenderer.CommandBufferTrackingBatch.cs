@@ -379,9 +379,17 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffer commandBuffer,
         bool cacheVariant,
         out string trackingFailure)
+        => EndCommandBufferTracked(commandBuffer, cacheVariant, out trackingFailure, out _);
+
+    internal Result EndCommandBufferTracked(
+        CommandBuffer commandBuffer,
+        bool cacheVariant,
+        out string trackingFailure,
+        out EVulkanCommandBufferTrackingFailureKind trackingFailureKind)
     {
         Result result = Api!.EndCommandBuffer(commandBuffer);
         trackingFailure = string.Empty;
+        trackingFailureKind = EVulkanCommandBufferTrackingFailureKind.None;
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (LaneRecordingContexts.TryGetActiveContext(commandBuffer, CommandBuffers.ResolveRecordingGeneration(commandBuffer), out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
@@ -410,7 +418,8 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         bool trackingPublished = result != Result.Success ||
-            TryFlushCommandBufferTrackingBatch(commandBuffer, out trackingFailure);
+            TryFlushCommandBufferTrackingBatch(commandBuffer, out trackingFailure,
+                out trackingFailureKind);
 
         if (handle == 0)
             return result;
@@ -441,8 +450,15 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     private bool TryFlushCommandBufferTrackingBatch(CommandBuffer commandBuffer, out string failureReason)
+        => TryFlushCommandBufferTrackingBatch(commandBuffer, out failureReason, out _);
+
+    private bool TryFlushCommandBufferTrackingBatch(
+        CommandBuffer commandBuffer,
+        out string failureReason,
+        out EVulkanCommandBufferTrackingFailureKind failureKind)
     {
         failureReason = string.Empty;
+        failureKind = EVulkanCommandBufferTrackingFailureKind.None;
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (handle == 0 || !CommandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
             return true;
@@ -469,6 +485,7 @@ internal sealed partial class VulkanCommandRuntime
                 commandBuffer,
                 batch,
                 out failureReason,
+                out failureKind,
                 out long lifetimeLockWaitTicks))
             return false;
 

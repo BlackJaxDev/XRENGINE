@@ -1,6 +1,7 @@
 
 using System;
 using System.Numerics;
+using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering
@@ -113,6 +114,11 @@ namespace XREngine.Rendering
             => SetUniforms(program, texelSize, null, 0.0f);
 
         public void SetUniforms(XRRenderProgram program, Vector2 texelSize, XRCamera? camera, float renderHeightPx = 0.0f)
+            => SetUniforms(program, texelSize, camera, renderHeightPx, null);
+
+        /// <summary>Publishes depth thresholds using the same captured camera as the depth producer.</summary>
+        public void SetUniforms(XRRenderProgram program, Vector2 texelSize, XRCamera? camera,
+            float renderHeightPx, RenderFrameViewSelection? frozenView)
         {
             camera ??= RenderPipelineCameraResolver.ResolveCurrentSettingsCamera()
                 ?? RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera;
@@ -124,7 +130,9 @@ namespace XREngine.Rendering
             if (_mode == DepthOfFieldControlMode.TargetTransform && _focusTarget != null && camera != null)
             {
                 Vector3 targetPos = _focusTarget.WorldTranslation + _focusTargetOffset;
-                Vector3 cameraPos = camera.Transform.WorldTranslation;
+                Vector3 cameraPos = frozenView is { } view
+                    ? new Vector3(view.View.CameraPositionAndNear.X, view.View.CameraPositionAndNear.Y, view.View.CameraPositionAndNear.Z)
+                    : camera.Transform.WorldTranslation;
                 focusDist = MathF.Max(0.01f, Vector3.Distance(cameraPos, targetPos));
             }
             else
@@ -134,9 +142,9 @@ namespace XREngine.Rendering
             float focusRange = MathF.Max(0.01f, _focusRange);
 
             // Convert world-space distances to the camera's depth buffer space so DOF matches the actual depth encoding.
-            float focusDepth = camera?.DistanceToDepth(focusDist) ?? 1.0f;
-            float nearDepth = camera?.DistanceToDepth(MathF.Max(0.01f, focusDist - focusRange * 0.5f)) ?? focusDepth;
-            float farDepth = camera?.DistanceToDepth(focusDist + focusRange * 0.5f) ?? focusDepth;
+            float focusDepth = GetDepth(focusDist, camera, frozenView, 1.0f);
+            float nearDepth = GetDepth(MathF.Max(0.01f, focusDist - focusRange * 0.5f), camera, frozenView, focusDepth);
+            float farDepth = GetDepth(focusDist + focusRange * 0.5f, camera, frozenView, focusDepth);
             float focusRangeDepth = MathF.Max(1e-4f, MathF.Abs(farDepth - nearDepth));
 
             program.Uniform("TexelSize", texelSize);
@@ -170,12 +178,18 @@ namespace XREngine.Rendering
             program.Uniform("Aperture", MathF.Max(0.1f, _aperture));
 
             // Physical DOF uniforms
-            program.Uniform("CameraNearZ", camera.NearZ);
-            program.Uniform("CameraFarZ", camera.FarZ);
+            program.Uniform("CameraNearZ", frozenView?.View.CameraPositionAndNear.W ?? camera.NearZ);
+            program.Uniform("CameraFarZ", frozenView?.View.CameraForwardAndFar.W ?? camera.FarZ);
             program.Uniform("DoFPhysicalFocalLengthMm", fMm);
             program.Uniform("DoFPhysicalFocusDistanceMm", focusDistMm);
             program.Uniform("DoFPhysicalCoCRefMm", cocRefMm);
             program.Uniform("DoFPhysicalPixelsPerMm", pixelsPerMm);
         }
+
+        private static float GetDepth(float distance, XRCamera? camera, RenderFrameViewSelection? frozenView, float fallback)
+            => frozenView is { } view
+                ? XRMath.DistanceToDepth(distance, view.View.CameraPositionAndNear.W,
+                    view.View.CameraForwardAndFar.W, view.View.ReversedDepth)
+                : camera?.DistanceToDepth(distance) ?? fallback;
     }
 }

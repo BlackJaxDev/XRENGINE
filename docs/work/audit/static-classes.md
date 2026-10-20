@@ -229,7 +229,7 @@ Nested: 91
 | XREngine.Data.Core | PersistentObjectID | XREngine.Data/Core/Objects/PersistentObjectID.cs | 9 |  |
 | XREngine.Data.Core | SpatialCoordinateConversion | XREngine.Data/Core/SpatialCoordinateConversion.cs | 98 |  |
 | XREngine.Data.Core | XRMath | XREngine.Data/Core/XRMath.cs | 10 |  |
-| XREngine.Data.Core.Files | OpenExrWriter | XREngine.Data/Core/Files/OpenExrWriter.cs | 11 |  |
+| XREngine.Data.Core.Files | OpenExrWriter | XREngine.Runtime.Platform.Desktop/OpenExrWriter.cs | 11 |  |
 | XREngine.Data.Geometry | GeoUtil | XREngine.Data/Geometry/GeoUtil.ContainmentOf.cs | 6 | 5 |
 | XREngine.Data.Geometry | PlaneHelper | XREngine.Data/Geometry/Plane.cs | 7 |  |
 | XREngine.Data.MMD | VMDUtils | XREngine.Data/MMD/VMD/VMDUtils.cs | 5 |  |

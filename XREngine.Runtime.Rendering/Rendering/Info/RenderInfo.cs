@@ -16,9 +16,16 @@ namespace XREngine.Rendering.Info
     /// If the culling volume is null, the object is always rendered.
     /// When this render info is visible, all render commands are added to the rendering passes.
     /// </summary>
-    public abstract class RenderInfo : XRBase, ITreeItem
+    public abstract class RenderInfo : XRBase, ITreeItem, IDisposable
     {
         private static long s_nextStableInstanceId;
+        private bool _disposeRequested;
+        private bool _disposeInProgress;
+        private bool _disposed;
+        private readonly EventList<RenderCommand> _ownedRenderCommands;
+        private EventList<RenderCommand>? _attachedRenderCommands;
+        private bool _renderCommandHooksComplete;
+        private int _renderCommandsSetDepth;
 
         /// <summary>
         /// Process-stable identity used by frame visibility candidates and diagnostics.
@@ -29,6 +36,8 @@ namespace XREngine.Rendering.Info
         public abstract ITreeNode? TreeNode { get; }
 
         public IRenderable? Owner { get; set; }
+        /// <summary>Gets whether disposal of this render info was requested. No camera collects it after this point.</summary>
+        protected internal bool IsDisposalRequested => _disposeRequested;
 
         public override string ToString()
             => $"{Owner?.ToString() ?? "Unknown"}";
@@ -39,11 +48,25 @@ namespace XREngine.Rendering.Info
         /// </summary>
         public event DelPreRenderCallback? CollectedForRenderCallback;
 
+        internal bool HasCollectedForRenderCallback => CollectedForRenderCallback is not null;
+
         public delegate void DelSwapBuffersCallback(RenderInfo info, RenderCommand command);
         /// <summary>
         /// This callback is called when the engine is swapping buffers - both the collect and render threads are currently in sync and waiting.
         /// </summary>
         public event DelSwapBuffersCallback? SwapBuffersCallback;
+
+        private RenderCommand.DelPreRender? _defaultCollectedHandler;
+        private RenderCommand.DelSwapBuffers? _defaultSwapHandler;
+
+        internal bool HasDefaultCommandCallbacks(RenderCommand command, DelSwapBuffersCallback? sceneSwapHandler)
+        {
+            if (CollectedForRenderCallback is not null ||
+                (SwapBuffersCallback is not null && SwapBuffersCallback != sceneSwapHandler)) return false;
+            if (_defaultCollectedHandler is null) SetField(ref _defaultCollectedHandler, CollectedForRender, publishNotifications: false);
+            if (_defaultSwapHandler is null) SetField(ref _defaultSwapHandler, SwapBuffers, publishNotifications: false);
+            return command.HasOnlyOwnerLifecycleCallbacks(_defaultCollectedHandler!, _defaultSwapHandler!);
+        }
 
         public delegate bool DelAddRenderCommandsCallback(RenderInfo info, RenderCommandCollection passes, IRuntimeRenderCamera? camera);
         /// <summary>
@@ -53,12 +76,73 @@ namespace XREngine.Rendering.Info
         [YamlIgnore]
         public DelAddRenderCommandsCallback? PreCollectCommandsCallback;
 
+        // The callback that the owner declared camera independent. The declaration applies only while
+        // PreCollectCommandsCallback holds this same delegate instance, so a callback that replaces or wraps it is
+        // camera dependent until the owner declares it again.
+        private DelAddRenderCommandsCallback? _cameraIndependentPreCollectCommandsCallback;
+
+        /// <summary>
+        /// Sets <see cref="PreCollectCommandsCallback"/> to <paramref name="callback"/> and declares that the callback
+        /// gives the same result for every camera and every pass collection.
+        /// </summary>
+        /// <remarks>
+        /// Use this method only for a callback that reads owner state, for example the draw space of a canvas, and
+        /// ignores its camera and pass collection arguments. When such a callback rejects a main view, it also rejects
+        /// every shadow camera, so the scene does not count the render info as a shadow-only caster. The declaration
+        /// stops when other code assigns a different delegate to <see cref="PreCollectCommandsCallback"/>.
+        /// </remarks>
+        public void SetCameraIndependentPreCollectCommandsCallback(DelAddRenderCommandsCallback? callback)
+        {
+            // The release write of the callback publishes the declaration before it. A collect thread reads the
+            // callback with acquire semantics before the declaration, so it cannot pair the new callback with an old
+            // declaration.
+            _cameraIndependentPreCollectCommandsCallback = callback;
+            Volatile.Write(ref PreCollectCommandsCallback, callback);
+        }
+
+        /// <summary>
+        /// Returns whether <paramref name="callback"/> is the callback that the owner declared camera independent through
+        /// <see cref="SetCameraIndependentPreCollectCommandsCallback"/>.
+        /// </summary>
+        internal bool IsCameraIndependentPreCollectCommandsCallback(DelAddRenderCommandsCallback? callback)
+            => callback is not null && ReferenceEquals(callback, _cameraIndependentPreCollectCommandsCallback);
+
         protected RenderInfo(IRenderable? owner, params RenderCommand[] renderCommands)
         {
             Owner = owner;
-            RenderCommands.PostAnythingAdded += Added;
-            RenderCommands.PostAnythingRemoved += Removed;
+            _ownedRenderCommands = _renderCommands;
+            AttachRenderCommands(RenderCommands);
+            _attachedRenderCommands = RenderCommands;
+            _renderCommandHooksComplete = true;
             RenderCommands.AddRange(renderCommands);
+        }
+
+        private void AttachRenderCommands(EventList<RenderCommand> commands)
+        {
+            commands.PostAnythingAdded += Added;
+            commands.PostAnythingRemoved += Removed;
+            for (int i = 0; i < commands.Count; i++)
+                Added(commands[i]);
+        }
+
+        private void DetachRenderCommands(EventList<RenderCommand> commands)
+        {
+            commands.PostAnythingAdded -= Added;
+            commands.PostAnythingRemoved -= Removed;
+            List<Exception>? failures = null;
+            for (int i = 0; i < commands.Count; i++)
+            {
+                try
+                {
+                    Removed(commands[i]);
+                }
+                catch (Exception ex)
+                {
+                    (failures ??= []).Add(ex);
+                }
+            }
+            if (failures is not null)
+                throw new AggregateException("Failed to detach render commands.", failures);
         }
 
         private void Removed(RenderCommand item)
@@ -99,10 +183,143 @@ namespace XREngine.Rendering.Info
         public DelRenderCullingVolumeDebug? RenderCullingVolumeDebugOverride;
 
         private EventList<RenderCommand> _renderCommands = [];
+        /// <summary>
+        /// Commands attached to this render info. Replacement lists remain owned by
+        /// their callers; the list created with this render info is released at disposal.
+        /// </summary>
         public EventList<RenderCommand> RenderCommands
         {
             get => _renderCommands;
-            set => SetField(ref _renderCommands, value);
+            set
+            {
+                ArgumentNullException.ThrowIfNull(value);
+                ObjectDisposedException.ThrowIf(_disposeRequested, this);
+                _renderCommandsSetDepth++;
+                try
+                {
+                    SetField(ref _renderCommands, value);
+                }
+                finally
+                {
+                    // Nested property notifications may replace the list again. Only
+                    // the outer setter reconciles the final field with actual hooks.
+                    if (--_renderCommandsSetDepth == 0 && !_disposeRequested)
+                        ReconcileRenderCommands();
+                }
+            }
+        }
+
+        private void ReconcileRenderCommands()
+        {
+            EventList<RenderCommand>? previous = _attachedRenderCommands;
+            EventList<RenderCommand> current = _renderCommands;
+            if (ReferenceEquals(previous, current) && _renderCommandHooksComplete)
+                return;
+            if (previous is not null)
+            {
+                DetachRenderCommands(previous);
+                _attachedRenderCommands = null;
+                _renderCommandHooksComplete = false;
+            }
+            _attachedRenderCommands = current;
+            try
+            {
+                AttachRenderCommands(current);
+                _renderCommandHooksComplete = true;
+            }
+            catch
+            {
+                // Track a partial attachment until every command is detached.
+                // A later setter or terminal disposal can retry the cleanup.
+                try
+                {
+                    DetachRenderCommands(current);
+                    _attachedRenderCommands = null;
+                }
+                catch { }
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Releases the command list created by this render info and detaches commands
+        /// from any caller-supplied replacement list without destroying that list.
+        /// </summary>
+        public void Dispose()
+        {
+            if (_disposed || _disposeInProgress)
+                return;
+            _disposeRequested = true;
+            _disposeInProgress = true;
+
+            try
+            {
+                List<Exception>? failures = null;
+                try { ReleaseWorldRegistration(); }
+                catch (Exception ex) { (failures ??= []).Add(ex); }
+                try { ReleaseCanvasRegistration(); }
+                catch (Exception ex) { (failures ??= []).Add(ex); }
+                if (_attachedRenderCommands is { } attached)
+                {
+                    try
+                    {
+                        DetachRenderCommands(attached);
+                        _attachedRenderCommands = null;
+                    }
+                    catch (Exception ex) { (failures ??= []).Add(ex); }
+                }
+                if (!_ownedRenderCommands.IsDestroyed)
+                {
+                    try
+                    {
+                        _ownedRenderCommands.Destroy(true);
+                        if (!_ownedRenderCommands.IsDestroyed)
+                            throw new InvalidOperationException("Render command list destruction was vetoed.");
+                    }
+                    catch (Exception ex) { (failures ??= []).Add(ex); }
+                }
+                CollectedForRenderCallback = null;
+                SwapBuffersCallback = null;
+                PreCollectCommandsCallback = null;
+                _cameraIndependentPreCollectCommandsCallback = null;
+                RenderCullingVolumeDebugOverride = null;
+                Owner = null;
+                if (failures is not null)
+                    throw new AggregateException("Failed to dispose render info.", failures);
+                _disposed = true;
+            }
+            finally
+            {
+                _disposeInProgress = false;
+            }
+        }
+
+        protected virtual void ReleaseWorldRegistration()
+        {
+            if (_worldInstance is not { } world)
+                return;
+            if (this is IRuntimeRenderInfo3DRegistrationItem item)
+                world.RemoveRenderable3D(item);
+            ClearWorldRegistrationField();
+        }
+
+        protected void ClearWorldRegistrationField()
+        {
+            SetField(ref _worldInstance, null, publishNotifications: false, nameof(WorldInstance));
+        }
+
+        protected virtual void ReleaseCanvasRegistration()
+        {
+            if (_userInterfaceCanvas is not { } canvas)
+                return;
+            if (this is IRuntimeRenderInfo2DRegistrationItem item)
+                canvas.RemoveRenderable2D(item);
+            ClearCanvasRegistrationField();
+        }
+
+        protected void ClearCanvasRegistrationField()
+        {
+            SetField(ref _userInterfaceCanvas, null, publishNotifications: false, nameof(UserInterfaceCanvas));
         }
 
         private bool _isVisible = true;
@@ -129,7 +346,12 @@ namespace XREngine.Rendering.Info
         public IRuntimeRenderInfo3DRegistrationTarget? WorldInstance
         {
             get => _worldInstance;
-            internal set => SetField(ref _worldInstance, value);
+            internal set
+            {
+                if (_disposeRequested && value is not null)
+                    throw new ObjectDisposedException(nameof(RenderInfo));
+                SetField(ref _worldInstance, value);
+            }
         }
 
         private IRuntimeRenderInfo2DRegistrationTarget? _userInterfaceCanvas;
@@ -141,15 +363,45 @@ namespace XREngine.Rendering.Info
         public IRuntimeRenderInfo2DRegistrationTarget? UserInterfaceCanvas
         {
             get => _userInterfaceCanvas;
-            set => SetField(ref _userInterfaceCanvas, value);
+            set
+            {
+                if (_disposeRequested && value is not null)
+                    throw new ObjectDisposedException(nameof(RenderInfo));
+                SetField(ref _userInterfaceCanvas, value);
+            }
         }
 
         IRenderableBase? ITreeItem.Owner => Owner;
 
         public void CollectCommands(RenderCommandCollection passes, IRuntimeRenderCamera? camera)
+            => TryCollectCommands(passes, camera, out _);
+
+        /// <summary>
+        /// Adds the enabled render commands of this render info to <paramref name="passes"/>.
+        /// </summary>
+        /// <param name="passes">The pass collection that receives the commands.</param>
+        /// <param name="camera">The camera of the collection, or null.</param>
+        /// <param name="invokedCallback">
+        /// The pre-collection callback that this call invoked, or null when it invoked no callback. For the result
+        /// <see cref="ERenderInfoCollectResult.CallbackRejected"/>, this is the callback that rejected the collection.
+        /// </param>
+        /// <returns>
+        /// <see cref="ERenderInfoCollectResult.Collected"/> when the commands were added. Any other value means that no
+        /// command was added, and tells whether the rejection can be different for another camera.
+        /// </returns>
+        internal ERenderInfoCollectResult TryCollectCommands(
+            RenderCommandCollection passes,
+            IRuntimeRenderCamera? camera,
+            out DelAddRenderCommandsCallback? invokedCallback)
         {
-            if (!(PreCollectCommandsCallback?.Invoke(this, passes, camera) ?? true))
-                return;
+            invokedCallback = null;
+            if (_disposeRequested)
+                return ERenderInfoCollectResult.Disposed;
+
+            DelAddRenderCommandsCallback? callback = Volatile.Read(ref PreCollectCommandsCallback);
+            invokedCallback = callback;
+            if (callback is not null && !callback(this, passes, camera))
+                return ClassifyCallbackRejection(callback);
 
             for (int i = 0; i < RenderCommands.Count; i++)
             {
@@ -157,7 +409,9 @@ namespace XREngine.Rendering.Info
                 // Use the live Enabled flag so hover stencil responds immediately.
                 // This keeps CPU-rendered debug overlays responsive even if it means
                 // a small risk of cross-thread visibility lag.
-                if (!cmd.Enabled)
+                if (!cmd.Enabled ||
+                    this is RenderInfo3D { OwnerRenderableMesh: { } mesh } &&
+                    mesh.IsPrimaryCommand(cmd) && !mesh.ShouldCollectPrimaryCommand(passes.IsShadowPass))
                     continue;
 
                 cmd.CollectedForRender(camera);
@@ -169,6 +423,23 @@ namespace XREngine.Rendering.Info
             {
                 RenderCullingVolume();
             }
+
+            return ERenderInfoCollectResult.Collected;
+        }
+
+        /// <summary>
+        /// Tells whether the rejection of <paramref name="callback"/> applies to every camera. A retiring
+        /// <see cref="XREngine.Components.Scene.Mesh.RenderableMesh"/> rejects every collection, and so does a callback
+        /// that its owner declared camera independent. Any other callback can accept a different camera.
+        /// </summary>
+        private ERenderInfoCollectResult ClassifyCallbackRejection(DelAddRenderCommandsCallback callback)
+        {
+            if (this is RenderInfo3D { OwnerRenderableMesh: { IsRetirementRequested: true } })
+                return ERenderInfoCollectResult.Retired;
+
+            return IsCameraIndependentPreCollectCommandsCallback(callback)
+                ? ERenderInfoCollectResult.RejectedForEveryCamera
+                : ERenderInfoCollectResult.CallbackRejected;
         }
     }
 }

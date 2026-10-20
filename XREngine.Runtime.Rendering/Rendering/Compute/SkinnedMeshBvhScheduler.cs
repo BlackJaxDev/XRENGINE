@@ -9,6 +9,7 @@ using XREngine;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Execution;
 
 namespace XREngine.Rendering.Compute;
 
@@ -131,6 +132,11 @@ internal sealed class SkinnedMeshBvhScheduler
         SkinnedMeshBoundsCalculator.Result boundsResult,
         TaskCompletionSource<Result> tcs)
     {
+        if (OperatingSystem.IsBrowser() || RuntimeWorkScheduler.IsCallerThread)
+        {
+            yield return (Action)(() => tcs.TrySetResult(new Result(version, BuildBvh(mesh, triangles, positions), boundsResult)));
+            yield break;
+        }
         var task = Task.Run(() => BuildBvh(mesh, triangles, positions));
         yield return task;
         tcs.TrySetResult(new Result(version, task.Result, boundsResult));

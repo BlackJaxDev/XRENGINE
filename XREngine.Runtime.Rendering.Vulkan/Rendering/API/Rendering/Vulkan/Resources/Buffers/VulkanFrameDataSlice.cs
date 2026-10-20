@@ -35,4 +35,14 @@ internal readonly record struct VulkanFrameDataSlice(
            Generation == other.Generation &&
            Buffer.Handle == other.Buffer.Handle &&
            Memory.Handle == other.Memory.Handle;
+
+    /// <summary>
+    /// Compares all fields. The check compares the native handles by value, so it does not box
+    /// the Silk.NET handle structs.
+    /// </summary>
+    public bool Equals(VulkanFrameDataSlice other) => Matches(other);
+
+    /// <summary>Combines primitive fields only, so the hash stays consistent with <see cref="Equals(VulkanFrameDataSlice)"/> and does not box.</summary>
+    public override int GetHashCode()
+        => HashCode.Combine(ArenaIdentity, BufferIdentity, MemoryIdentity, ChunkIndex, FrameSlot, Offset, Length, Generation);
 }

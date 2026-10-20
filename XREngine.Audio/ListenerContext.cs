@@ -1,5 +1,6 @@
 using XREngine.Extensions;
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 using XREngine.Core;
 using XREngine.Data.Core;
 
@@ -30,6 +31,7 @@ namespace XREngine.Audio
         /// <summary>The device used by both listener architectures.</summary>
         internal IAudioTransport ActiveTransport { get; }
         private IAudioListenerBackend? ListenerBackend => ActiveTransport as IAudioListenerBackend;
+        private IAudioSpatialTransport? SpatialTransport => ActiveTransport as IAudioSpatialTransport;
         private IAudioListenerBackend LegacyBackend => ListenerBackend
             ?? throw new InvalidOperationException("The listener transport does not support legacy spatial controls.");
 
@@ -169,9 +171,24 @@ namespace XREngine.Audio
                 return;
             if (!ReferenceEquals(buffer.ParentListener, this))
                 throw new InvalidOperationException("A buffer must be released to its owning listener.");
-            if (buffer.Handle != 0)
-                Buffers.Remove(buffer.Handle);
-            BufferPool.Release(buffer);
+            if (buffer.Handle == 0 || !ReferenceEquals(GetBufferByHandle(buffer.Handle), buffer))
+                return;
+            Exception? removalFailure = null;
+            try { Buffers.Remove(buffer.Handle); }
+            catch (Exception error) { removalFailure = error; }
+            try
+            {
+                if (_disposed || !ActiveTransport.IsOpen)
+                    buffer.Dispose();
+                else
+                    BufferPool.Release(buffer);
+            }
+            catch (Exception releaseFailure) when (removalFailure is not null)
+            {
+                throw new AggregateException("Audio buffer removal and retirement both failed.", removalFailure, releaseFailure);
+            }
+            if (removalFailure is not null)
+                ExceptionDispatchInfo.Capture(removalFailure).Throw();
             VerifyError();
         }
 
@@ -219,6 +236,8 @@ namespace XREngine.Audio
             {
                 if (IsV2 && ListenerBackend is { } backend)
                     return _dopplerFactor = backend.GetDopplerFactor();
+                if (IsV2 && SpatialTransport is { } spatial)
+                    return _dopplerFactor = spatial.GetDopplerFactor();
                 if (IsV2)
                     return _dopplerFactor;
                 return GetDopplerFactor();
@@ -228,7 +247,10 @@ namespace XREngine.Audio
                 if (IsV2 && ListenerBackend is { } backend)
                     backend.SetDopplerFactor(value);
                 else if (IsV2)
-                    _dopplerFactor = value;
+                {
+                    SpatialTransport?.SetDopplerFactor(value);
+                    SetField(ref _dopplerFactor, value);
+                }
                 else
                     SetDopplerFactor(value);
             }
@@ -239,6 +261,8 @@ namespace XREngine.Audio
             {
                 if (IsV2 && ListenerBackend is { } backend)
                     return _speedOfSound = backend.GetSpeedOfSound();
+                if (IsV2 && SpatialTransport is { } spatial)
+                    return _speedOfSound = spatial.GetSpeedOfSound();
                 if (IsV2)
                     return _speedOfSound;
                 return GetSpeedOfSound();
@@ -248,7 +272,10 @@ namespace XREngine.Audio
                 if (IsV2 && ListenerBackend is { } backend)
                     backend.SetSpeedOfSound(value);
                 else if (IsV2)
-                    _speedOfSound = value;
+                {
+                    SpatialTransport?.SetSpeedOfSound(value);
+                    SetField(ref _speedOfSound, value);
+                }
                 else
                     SetSpeedOfSound(value);
             }
@@ -481,13 +508,18 @@ namespace XREngine.Audio
         {
             if (ListenerBackend is { } backend)
                 return _distanceModel = backend.GetDistanceModel();
+            if (SpatialTransport is { } spatial)
+                return _distanceModel = spatial.GetDistanceModel();
             return _distanceModel;
         }
 
         private void SetDistanceModelV2(EDistanceModel model)
         {
-            _distanceModel = model;
-            ListenerBackend?.SetDistanceModel(model);
+            if (ListenerBackend is { } backend)
+                backend.SetDistanceModel(model);
+            else
+                SpatialTransport?.SetDistanceModel(model);
+            SetField(ref _distanceModel, model);
             UpdateDistanceGainCalculation(model);
         }
 

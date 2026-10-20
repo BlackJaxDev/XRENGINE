@@ -1,4 +1,5 @@
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.Rendering.OpenGL;
 
@@ -15,8 +16,12 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
     private const uint PersistentStateRecordByteLength = 32u;
     private readonly AdvancedVisibilityPayload[] _payloads;
     private readonly AdvancedVisibilityCandidate[] _candidates;
+    private readonly AdvancedGpuBoundsPatchRoute[] _boundsRoutes;
+    private PhysicsChainGpuOutputPageLease _boundsPage;
     private readonly EAdvancedGeometryProducer[] _producers;
     private readonly AdvancedIndirectRange[] _indirectRanges;
+    private readonly AdvancedIndexedInstanceGroup[] _indexedInstanceGroups;
+    private readonly AdvancedVisibilityInputVariant _variant;
     private readonly int[] _indirectPayloadIndices;
     private readonly AdvancedDeformedArenaSlice[] _deformationSlices;
     private readonly AdvancedPreparedDrawDeformationRecord[] _preparedDeformations;
@@ -26,6 +31,7 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
     private readonly uint[] _counters;
     private int _payloadCount;
     private int _indirectRangeCount;
+    private int _indexedInstanceGroupCount;
     private int _preparedDeformationCount;
     private uint _viewCount;
     private AdvancedPreparationPublication _publication;
@@ -39,8 +45,11 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
         ArgumentOutOfRangeException.ThrowIfNegative(indirectRangeCapacity);
         _payloads = new AdvancedVisibilityPayload[drawCapacity];
         _candidates = new AdvancedVisibilityCandidate[drawCapacity];
+        _boundsRoutes = new AdvancedGpuBoundsPatchRoute[drawCapacity];
         _producers = new EAdvancedGeometryProducer[drawCapacity];
         _indirectRanges = new AdvancedIndirectRange[indirectRangeCapacity];
+        _indexedInstanceGroups = new AdvancedIndexedInstanceGroup[drawCapacity];
+        _variant = new AdvancedVisibilityInputVariant(drawCapacity, indirectRangeCapacity);
         _indirectPayloadIndices = new int[drawCapacity];
         _deformationSlices = new AdvancedDeformedArenaSlice[drawCapacity];
         _preparedDeformations = new AdvancedPreparedDrawDeformationRecord[drawCapacity];
@@ -67,8 +76,12 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
     internal AdvancedGpuDeformationPublication Deformation => _deformation;
     internal ReadOnlySpan<AdvancedVisibilityPayload> Payloads => _payloads.AsSpan(0, _payloadCount);
     internal ReadOnlySpan<AdvancedVisibilityCandidate> Candidates => _candidates.AsSpan(0, _payloadCount);
+    internal ReadOnlySpan<AdvancedGpuBoundsPatchRoute> BoundsRoutes => _boundsRoutes.AsSpan(0, _payloadCount);
+    internal PhysicsChainGpuOutputPageLease BoundsPage => _boundsPage;
     internal ReadOnlySpan<EAdvancedGeometryProducer> Producers => _producers.AsSpan(0, _payloadCount);
     internal ReadOnlySpan<AdvancedIndirectRange> IndirectRanges => _indirectRanges.AsSpan(0, _indirectRangeCount);
+    internal ReadOnlySpan<AdvancedIndexedInstanceGroup> IndexedInstanceGroups
+        => _indexedInstanceGroups.AsSpan(0, _indexedInstanceGroupCount);
     internal ReadOnlySpan<int> IndirectPayloadIndices => _indirectPayloadIndices.AsSpan(0, _payloadCount);
     internal ReadOnlySpan<AdvancedDeformedArenaSlice> DeformationSlices => _deformationSlices.AsSpan(0, _payloadCount);
     internal ReadOnlySpan<AdvancedPreparedDrawDeformationRecord> PreparedDeformations
@@ -108,8 +121,10 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
                 _indirectRanges.AsSpan(0, rangeCount),
                 _indirectPayloadIndices.AsSpan(0, payloadCount),
                 _deformationSlices.AsSpan(0, payloadCount),
+                _boundsRoutes.AsSpan(0, payloadCount),
                 out AdvancedIndirectPreparationResult indirect,
-                out AdvancedGpuDeformationPublication deformation))
+                out AdvancedGpuDeformationPublication deformation,
+                out _boundsPage))
         {
             reason = "The canonical Advanced publication changed before GL could retain its input columns.";
             return false;
@@ -126,6 +141,23 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
             reason = "The retained GL Advanced columns do not match the canonical publication shape.";
             return false;
         }
+        if (request.BackendReadyPackage is null ||
+            !_variant.TryBuild(
+                _payloads.AsSpan(0, payloadCount),
+                _producers.AsSpan(0, payloadCount),
+                _indirectRanges,
+                _indirectPayloadIndices.AsSpan(0, payloadCount),
+                _indexedInstanceGroups,
+                request.BackendReadyPackage,
+                in publication,
+                out indirect))
+        {
+            Reset();
+            reason = "The GL Advanced submission strategy could not resolve its retained visibility inputs.";
+            return false;
+        }
+        rangeCount = checked((int)indirect.RangeCount);
+        int indexedInstanceGroupCount = _variant.GroupCount;
         if (!TryBuildRangeMetadata(payloadCount, rangeCount, out reason))
         {
             Reset();
@@ -137,6 +169,7 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
         _deformation = deformation;
         _payloadCount = payloadCount;
         _indirectRangeCount = rangeCount;
+        _indexedInstanceGroupCount = indexedInstanceGroupCount;
         _viewCount = viewCount;
         _captured = true;
         reason = "Ready";
@@ -145,11 +178,15 @@ internal sealed class OpenGLAdvancedVisibilityInputStorage
 
     internal void Reset()
     {
+        if (_boundsPage.Token.IsValid)
+            GPUPhysicsChainDispatcher.Instance.ReleaseOutputPage(_boundsPage.Token);
+        _boundsPage = default;
         _publication = default;
         _indirect = default;
         _deformation = default;
         _payloadCount = 0;
         _indirectRangeCount = 0;
+        _indexedInstanceGroupCount = 0;
         _preparedDeformationCount = 0;
         _viewCount = 0u;
         _captured = false;
