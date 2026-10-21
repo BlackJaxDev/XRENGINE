@@ -100,6 +100,18 @@ public class AgentRouteAdvisorTests
     }
 
     [Test]
+    public void StartSchemaAdvertisesOptionalSystemInstructions()
+    {
+        McpToolSpec startTool = BrokerMcpToolCatalog.Tools.Single(tool => tool.Name == "start_agent_run");
+        var instructions = startTool.InputSchema["properties"]!["system_instructions"]!;
+
+        instructions["type"]!.GetValue<string>().ShouldBe("string");
+        instructions["description"]!.GetValue<string>().ShouldContain("prepends its safety instructions");
+        startTool.InputSchema["required"]!.AsArray()
+            .Select(value => value!.GetValue<string>()).ShouldNotContain("system_instructions");
+    }
+
+    [Test]
     public void Gpt61SolCannotSelectHierarchicalSwarm()
     {
         var request = new AgentRunRequest

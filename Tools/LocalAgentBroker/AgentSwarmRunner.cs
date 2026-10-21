@@ -87,8 +87,17 @@ public sealed partial class AgentSwarmRunner(AgentOrchestrator orchestrator, Sem
 
     private static IReadOnlyList<string> Validate(AgentRunRequest request, AgentSwarmOptions options, IReadOnlyList<AgentContextFileSnapshot> snapshots)
     {
-        if (!AgentModelCatalog.SupportsSwarm(request.RequestedModel) || request.ReasoningEffort != "max")
-            return ["Swarms require requested_model 'gpt-6-luna' or 'claude-haiku-5-5' and reasoning_effort 'max'."];
+        IReadOnlyList<string> requestErrors = AgentRequestValidator.Validate(request);
+        if (requestErrors.Count > 0)
+            return requestErrors;
+        try
+        {
+            SwarmRequestValidator.Validate(request);
+        }
+        catch (ArgumentException exception)
+        {
+            return [exception.Message];
+        }
         HashSet<string> captured = snapshots.Select(static file => file.Path).ToHashSet(StringComparer.Ordinal);
         return options.AllowedPaths.All(captured.Contains) ? [] : ["Every allowed path requires an immutable admission snapshot."];
     }

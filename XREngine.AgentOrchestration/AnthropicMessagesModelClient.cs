@@ -53,6 +53,7 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
         JsonObject payload = BuildPayload(request, messages);
         Stopwatch stopwatch = Stopwatch.StartNew();
         var parser = new AnthropicMessagesStreamParser();
+        bool providerAccepted = false;
         try
         {
             using var message = new HttpRequestMessage(HttpMethod.Post, _endpoint);
@@ -71,13 +72,14 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
             catch (HttpRequestException exception)
             {
                 throw new AgentModelException(AgentFailureCategory.Transport,
-                    "The Anthropic Messages API request could not be sent.", retryable: true,
+                    "The Anthropic Messages API request could not be sent.", retryable: false,
                     diagnosticDetail: Redact(exception.Message, apiKey), innerException: exception);
             }
             using (response)
             {
                 if (!response.IsSuccessStatusCode)
                     throw await CreateHttpExceptionAsync(response, apiKey, cancellationToken);
+                providerAccepted = true;
                 if (!string.Equals(response.Content.Headers.ContentType?.MediaType,
                     "text/event-stream", StringComparison.OrdinalIgnoreCase))
                     throw new AgentModelException(AgentFailureCategory.ProviderError,
@@ -117,9 +119,10 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
                 }
                 if (eventData.Length > 0 && !parser.IsCompleted)
                     await ProcessEventAsync(eventData.ToString());
+                cancellationToken.ThrowIfCancellationRequested();
                 if (!parser.IsCompleted)
                     throw new AgentModelException(AgentFailureCategory.Transport,
-                        "The Anthropic stream ended before message_stop.", retryable: parser.Text.Length == 0);
+                        "The Anthropic stream ended before message_stop.", retryable: false);
 
                 AgentModelTurnResult result = parser.BuildResult(messages);
                 if (!string.Equals(result.ActualModel, request.Run.RequestedModel, StringComparison.Ordinal))
@@ -131,23 +134,24 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
         catch (OperationCanceledException exception)
         {
             throw new AgentModelOperationCanceledException(
-                CreateDiagnostic("cancelled"), exception, cancellationToken);
+                CreateDiagnostic("cancelled"), exception, cancellationToken, parser.BuildPartialResult());
         }
         catch (IOException exception)
         {
             var transport = new AgentModelException(AgentFailureCategory.Transport,
-                "The Anthropic stream could not be read.", retryable: parser.Text.Length == 0,
+                "The Anthropic stream could not be read.", retryable: false,
                 diagnosticDetail: Redact(exception.Message, apiKey), innerException: exception);
-            throw transport.WithProviderAttempt(CreateDiagnostic("transport_error", transport));
+            throw transport.WithProviderAttempt(CreateDiagnostic("transport_error", transport), parser.BuildPartialResult());
         }
         catch (AgentModelException exception) when (exception.ProviderAttempt is null)
         {
             var sanitized = new AgentModelException(exception.Category,
-                Redact(exception.Message, apiKey), exception.Retryable, exception.ProviderStatus,
+                Redact(exception.Message, apiKey), exception.Retryable && !providerAccepted, exception.ProviderStatus,
                 exception.RetryAfter, Redact(exception.DiagnosticDetail, apiKey));
             throw sanitized.WithProviderAttempt(CreateDiagnostic(
-                exception.Category == AgentFailureCategory.Transport ? "transport_error" : "provider_error",
-                sanitized));
+                exception.Category == AgentFailureCategory.Transport ? "transport_error"
+                    : exception.Category == AgentFailureCategory.BudgetExceeded ? "incomplete" : "provider_error",
+                sanitized), parser.BuildPartialResult());
         }
 
         async Task ProcessEventAsync(string data)
@@ -157,6 +161,16 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
                 && !string.Equals(parser.ActualModel, request.Run.RequestedModel, StringComparison.Ordinal))
                 throw new AgentModelException(AgentFailureCategory.ModelSubstitution,
                     "Anthropic returned a different model than requested.");
+            if (parser.ProviderEventCount == 1 || parser.LastProviderEventType == "message_start"
+                || parser.ProviderEventCount % 32 == 0)
+            {
+                await observer.OnEventAsync(new AgentRunEvent
+                {
+                    Kind = AgentRunEventKind.Diagnostic,
+                    Message = "Streaming Messages response is in progress.",
+                    ProviderAttempt = CreateDiagnostic("in_progress"),
+                }, cancellationToken);
+            }
             if (hasText)
                 await observer.OnEventAsync(new AgentRunEvent
                 {
@@ -174,8 +188,13 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
                 ResponseId = parser.ResponseId,
                 ActualModel = parser.ActualModel,
                 ProviderEventCount = parser.ProviderEventCount,
+                MalformedEventCount = parser.MalformedEventCount,
                 LastProviderEventType = parser.LastProviderEventType,
-                TerminalStatus = parser.IsCompleted ? parser.StopReason : string.Empty,
+                ProviderStopReason = parser.StopReason,
+                TerminalStatus = outcome == "in_progress" ? string.Empty
+                    : outcome == "completed" ? "completed"
+                    : outcome == "cancelled" ? "cancelled"
+                    : parser.StopReason == "max_tokens" ? "incomplete" : "failed",
                 IncompleteReason = parser.StopReason == "max_tokens" ? "max_tokens" : string.Empty,
                 ElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
                 FailureCategory = error?.Category,

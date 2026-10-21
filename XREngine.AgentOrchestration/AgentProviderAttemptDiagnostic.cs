@@ -23,6 +23,9 @@ public sealed record AgentProviderAttemptDiagnostic
 
     public string LastProviderEventType { get; init; } = string.Empty;
 
+    /// <summary>Native terminal reason, when reported by the provider.</summary>
+    public string ProviderStopReason { get; init; } = string.Empty;
+
     public long? LastSequenceNumber { get; init; }
 
     public string TerminalStatus { get; init; } = string.Empty;
