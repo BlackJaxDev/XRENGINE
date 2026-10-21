@@ -9,7 +9,7 @@ XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10,
 - Fix easy, low-risk nearby validation failures; report larger unrelated failures.
 - Never silently substitute CPU fallback for a requested GPU/accelerated path; expose failures diagnostically unless fallback was requested.
 - Update docs for behavior, flags, environment variables, tasks, setup, or workflow changes.
-- Explicit user requests override this file; note deviations. Use simple imperative commit messages when asked to commit. PRs explain what changed, why, validation, risks, and follow-ups.
+- Explicit user requests override this file; note deviations. Follow the Git Writing And Authorship rules below for commits, branches, and pull requests.
 - Never put local machine paths or user profile names in code, comments, docstrings, tracked docs, or their links. Use repository-relative paths or placeholders such as `<repo-root>`, `<user-profile>`, `<desktop>`, `<downloads>`, or `%LOCALAPPDATA%`.
 
 ## Language And Writing
@@ -76,9 +76,17 @@ Temporary references are allowed **only when the associated todo document is act
 - Tests must not read or assert on Markdown docs (`docs/`, `README.md`, todo or guide files). Docs change freely; test behavior and code contracts instead.
 - Useful tasks: `Test-SurfelGi`, `Test-VulkanPhase3-Regression`.
 
+## Git Writing And Authorship
+
+- Write commit messages in simple, concise English. Use an imperative sentence that states the change, such as `Fix broker history persistence` or `Update OpenVR.NET to .NET 10`. Start with a capital letter and omit the final period. Match the maintainer's direct style.
+- Use a short subject by default. Add a body only when it is needed to explain the change. Do not add conventional-commit prefixes, emojis, promotional text, or automatic signatures unless the user explicitly requests them.
+- Use the user's configured Git identity for both the author and committer of new commits. Before committing, check `git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT`. Do not change Git identity settings, invent an identity, or set an assistant as the author, committer, or co-author.
+- Do not add assistant attribution, `Co-authored-by` trailers for assistants, or generated-by statements. Keep assistant, agent, model, and provider names or branding out of commit messages, branch names, tag names and messages, pull request titles and descriptions, and Git notes. This includes names such as Codex, Claude, ChatGPT, OpenAI, and Anthropic, and equivalent labels from other tools.
+- Use short, descriptive branch names based on the work, in lowercase with hyphens, such as `fix-broker-history` or `update-openvr-net10`. Do not add assistant names, model names, tool names, or agent prefixes or suffixes.
+- Pull requests explain what changed, why, validation, risks, and necessary follow-ups in plain English. Describe the work without crediting the assistant. Keep any required contribution disclosure in the separate contribution acceptance record.
+
 ## Repository And Commands
 
-- Use descriptive branch names without the `codex/` prefix for new branches.
 - Runtime: `XREngine.Runtime.Core/`, `XREngine.Runtime.Rendering/`, feature libraries, and integration adapters; desktop composition: `XREngine.Runtime.Bootstrap/`; native APIs: subsystem leaf projects. See [project organization](docs/architecture/runtime/project-organization.md). Editor/unit-world bootstrap: `XREngine.Editor/`; executables: `XREngine.Server/`, `XREngine.VRClient/`, `XREngine.Browser/`; tests: `XREngine.UnitTests/`; submodules: `Build/Submodules/`.
 - Canonical tasks/debug profiles: `.vscode/tasks.json`, `.vscode/launch.json`. Build tasks: `Build-Editor`, `Build-Server`, `Build-VRClient`. Script menu: `ExecTool.bat`.
 - Agent builds: from PowerShell, use `& ./Tools/Invoke-AgentBuild.ps1 -DotnetArguments @('restore')`, then `& ./Tools/Invoke-AgentBuild.ps1 -DotnetArguments @('build', 'XREngine.Editor/XREngine.Editor.csproj')` (or `XRENGINE.slnx` when required). Route agent `test`, `publish`, and `msbuild` commands through the same wrapper. Pass all dotnet arguments as strings in this array. It serializes builds across checkouts in the Windows session, caps MSBuild at two workers, uses low priority, and disables node reuse and shared compilation. Do not start parallel raw `dotnet` builds or use `dotnet run` with an implicit build; build through the wrapper first, then run with `--no-build`. See [build workflow](docs/developer-guides/ai/agent-editor-workflows.md#build-run-debug).

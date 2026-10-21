@@ -10,11 +10,14 @@ namespace XREngine.LocalAgentBroker;
 internal sealed class BrokerHistoryPublisher : IAsyncDisposable
 {
     private static readonly TimeSpan s_coalesceDelay = TimeSpan.FromMilliseconds(75);
+    private static readonly TimeSpan s_retryDelay = TimeSpan.FromSeconds(1);
 
     private readonly BrokerHistoryStore _store;
+    private readonly object _publishSync = new();
     private readonly ConcurrentDictionary<string, BrokerRunRecord> _records = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _promptTexts = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte> _pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _failedWrites = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _signal = new(0);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Task _writerTask;
@@ -51,17 +54,20 @@ internal sealed class BrokerHistoryPublisher : IAsyncDisposable
     public void PublishNow(BrokerRunRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        _pending.TryRemove(record.RunId, out _);
-        try
+        lock (_publishSync)
         {
-            _store.SaveRecord(CreateHistoryRecord(record));
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            // History is supplemental. A file lock must not change the provider result.
-            Console.Error.WriteLine("Broker history could not be saved. The run result remains available through MCP.");
-            if (!_shutdown.IsCancellationRequested)
-                QueueUpdate(record);
+            _pending.TryRemove(record.RunId, out _);
+            try
+            {
+                // Capture inside the publication lock so an older streaming snapshot cannot replace a terminal one.
+                _store.SaveRecord(CreateHistoryRecord(record));
+                _failedWrites.TryRemove(record.RunId, out _);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                _pending.TryAdd(record.RunId, 0);
+                ReportDeferredWrite(record.RunId, exception);
+            }
         }
     }
 
@@ -87,7 +93,7 @@ internal sealed class BrokerHistoryPublisher : IAsyncDisposable
     {
         while (!_shutdown.IsCancellationRequested)
         {
-            await _signal.WaitAsync(_shutdown.Token);
+            await _signal.WaitAsync(s_retryDelay, _shutdown.Token);
             await Task.Delay(s_coalesceDelay, _shutdown.Token);
 
             foreach (string runId in _pending.Keys)
@@ -98,15 +104,26 @@ internal sealed class BrokerHistoryPublisher : IAsyncDisposable
                     continue;
                 }
 
-                try
-                {
-                    _store.SaveRecord(CreateHistoryRecord(record));
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    // A later observer event or terminal flush retries the durable snapshot.
-                }
+                PublishNow(record);
             }
+        }
+    }
+
+    private void ReportDeferredWrite(string runId, Exception exception)
+    {
+        if (!_failedWrites.TryAdd(runId, 0))
+            return;
+
+        try
+        {
+            string path = Path.Combine(_store.Paths.RunsDirectory, $"{runId}.json");
+            Console.Error.WriteLine(
+                $"Local agent broker history write deferred: run {runId}, " +
+                $"{exception.GetType().Name}, HResult 0x{exception.HResult:x8}, path '{path}'.");
+        }
+        catch (IOException)
+        {
+            // An unavailable diagnostics stream must not change the authoritative run result.
         }
     }
 

@@ -13,7 +13,8 @@ public sealed class AgentModelException : Exception
         TimeSpan? retryAfter = null,
         string? diagnosticDetail = null,
         AgentProviderAttemptDiagnostic? providerAttempt = null,
-        Exception? innerException = null)
+        Exception? innerException = null,
+        AgentModelTurnResult? partialResult = null)
         : base(message, innerException)
     {
         Category = category;
@@ -22,6 +23,7 @@ public sealed class AgentModelException : Exception
         RetryAfter = retryAfter;
         DiagnosticDetail = diagnosticDetail ?? string.Empty;
         ProviderAttempt = providerAttempt;
+        PartialResult = partialResult;
     }
 
     public AgentFailureCategory Category { get; }
@@ -36,7 +38,12 @@ public sealed class AgentModelException : Exception
 
     public AgentProviderAttemptDiagnostic? ProviderAttempt { get; }
 
-    public AgentModelException WithProviderAttempt(AgentProviderAttemptDiagnostic providerAttempt)
+    /// <summary>Observed text and usage from a failed turn. This is never an accepted proposal.</summary>
+    public AgentModelTurnResult? PartialResult { get; }
+
+    public AgentModelException WithProviderAttempt(
+        AgentProviderAttemptDiagnostic providerAttempt,
+        AgentModelTurnResult? partialResult = null)
         => new(
             Category,
             Message,
@@ -45,5 +52,6 @@ public sealed class AgentModelException : Exception
             RetryAfter,
             DiagnosticDetail,
             providerAttempt,
-            this);
+            this,
+            partialResult ?? PartialResult);
 }

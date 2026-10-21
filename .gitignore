@@ -524,3 +524,11 @@ Samples/BrowserUiParity/Assets/*
 !Samples/BrowserUiParity/Assets/Worlds/
 !Samples/BrowserUiParity/Assets/Worlds/**
 !Samples/BrowserUiParity/Assets/startup.asset
+
+# Local dependency checkouts
+/Build/Dependencies/vcpkg/
+/Build/Submodules/Flyleaf/
+
+# Build output from the former MonkeyBallVR sample.
+/Samples/MonkeyBallVR/Build/
+/Samples/MonkeyBallVR/Intermediate/

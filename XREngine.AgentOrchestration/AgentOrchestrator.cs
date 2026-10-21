@@ -351,7 +351,14 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
         catch (OperationCanceledException exception)
         {
             if (exception is AgentModelOperationCanceledException providerCancellation)
+            {
                 AddOrReplaceProviderAttempt(providerAttempts, providerCancellation.ProviderAttempt);
+                if (providerCancellation.PartialResult is { } partial)
+                {
+                    usage += partial.Usage;
+                    finalText.Append(partial.OutputText);
+                }
+            }
             bool callerCancelled = cancellationToken.IsCancellationRequested;
             bool elapsedTimeExceeded = !callerCancelled
                 && request.Budget.MaxElapsedSeconds > 0
@@ -383,6 +390,11 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
         }
         catch (AgentModelException exception)
         {
+            if (exception.PartialResult is { } partial)
+            {
+                usage += partial.Usage;
+                finalText.Append(partial.OutputText);
+            }
             actualModel = LatestActualModel(actualModel, providerAttempts);
             return FailureResult(
                 runId,
