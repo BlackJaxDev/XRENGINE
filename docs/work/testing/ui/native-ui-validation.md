@@ -19,16 +19,27 @@ remain open. See [the current contract](../../../architecture/ui/04-Change-Track
 | Journal and transform contract tests | Passed: 23/23, zero warnings, failures, or skipped tests. | Deterministic headless runtime checks, including child-index replacement. |
 | Full headless regression suite | Passed: 167/167 with one test worker, zero warnings, failures, or skipped tests. Repeated after editor restore against the same final test binary. | Covers the tests linked by the existing headless project; not the full Windows test project. |
 | Declared editor NuGet restore | Passed through the build wrapper. | No tracked package declarations or lockfiles changed. No separate native dependency or Windows workload installation was performed. |
-| Full editor build after restore | Blocked: missing OpenVR.NET and OscCore submodule projects; `MSB9008` and downstream `CS0246`. The build ended with 4 warnings and 207 errors. | Restore resolved the earlier `NETSDK1004`. The editor did not finish compilation. The small `NativeUIElements` notification edits have static review only. |
+| Pinned submodule initialization | Passed for OpenVR.NET and OscCore. Both submodules and their engine adapters compiled. | Exact tracked gitlink commits were used. No submodule bumps or declarations changed. |
+| Full editor build after prerequisite recovery | Blocked: `NETSDK1073` in `XREngine.Runtime.Bootstrap`: `Microsoft.WindowsDesktop.App.WindowsForms` was not recognized. Final build: 0 warnings, 1 error. | Linux SDK/framework-reference blocker. No Windows workload installation or framework override was attempted. The editor did not finish compilation; the small `NativeUIElements` edits have static review only. |
 | Windows editor, OpenGL/Vulkan, visual input, GPU uploads, performance comparison | Not run. | This environment provides headless Linux validation. No live visual or speed result is claimed. |
 
-Final verification ran on 2026-10-23. The editor retry uses `restore XREngine.Editor/XREngine.Editor.csproj` and then
-`build XREngine.Editor/XREngine.Editor.csproj --no-restore`, both through
-`Tools/Invoke-AgentBuild.ps1`. `Build/Submodules/OpenVR.NET` and
-`Build/Submodules/OscCore-NET9` are uninitialized. Their missing projects prevent
-`XREngine.Runtime.XR.OpenVR` and `XREngine.Runtime.Net.Osc` from compiling.
-No submodule changes were made. This is an environment/source-checkout blocker,
-not a successful editor validation.
+Final verification ran on 2026-10-23. Normal editor restore resolved the initial
+`NETSDK1004`. The next editor build exposed two uninitialized submodules. The
+repository README supports `git submodule sync` and `git submodule update --init`.
+Those commands were scoped to these two existing paths:
+
+| Submodule | Verified tracked commit |
+|---|---|
+| `Build/Submodules/OpenVR.NET` | `660933f65beb34384ede7b61b9f21e77614ed6a6` |
+| `Build/Submodules/OscCore-NET9` | `2be09497ffa8560b700d4793c3e4d344c49caf49` |
+
+After initialization, `restore XREngine.Editor/XREngine.Editor.csproj` and
+`build XREngine.Editor/XREngine.Editor.csproj --no-restore` ran through
+`Tools/Invoke-AgentBuild.ps1`. OpenVR.NET, OscCore, `XREngine.Runtime.XR.OpenVR`,
+and `XREngine.Runtime.Net.Osc` compiled. The final editor build stopped at the
+Windows Forms framework reference in `XREngine.Runtime.Bootstrap`. This platform
+prerequisite remains unresolved. No installer, credential change, native build
+setup, or dependency declaration change was used to bypass it.
 
 The first contract run found a lazy-construction error: an optional constructor
 argument did not provide the parameterless constructor required by the default
