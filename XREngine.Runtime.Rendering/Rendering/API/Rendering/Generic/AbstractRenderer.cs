@@ -85,9 +85,9 @@ namespace XREngine.Rendering
         private readonly Dictionary<ulong, (UI.UIPublication Publication, XRGpuFence? Fence,
             long BackendGeneration)> _uiPublicationFallbackFences = [];
         private readonly object _uiPublicationFallbackGate = new();
+        private readonly Dictionary<ulong, string?> _uiPublicationAuthoring = [];
+        private readonly object _uiPublicationAuthoringGate = new();
         [ThreadStatic] private static ulong _currentUiPublicationReceiptId;
-        [ThreadStatic] private static bool _currentUiPublicationAuthoringFailed;
-        [ThreadStatic] private static string? _currentUiPublicationFailureReason;
 
         /// <summary>The independently owned UI draw cohort on this render thread.</summary>
         public ulong CurrentUiPublicationReceiptId => _currentUiPublicationReceiptId;
@@ -111,18 +111,38 @@ namespace XREngine.Rendering
                 receiptId = 0UL;
                 return false;
             }
+            lock (_uiPublicationAuthoringGate)
+                _uiPublicationAuthoring.Add(receiptId, null);
             _currentUiPublicationReceiptId = receiptId;
-            _currentUiPublicationAuthoringFailed = false;
-            _currentUiPublicationFailureReason = null;
             return true;
+        }
+
+        /// <summary>Stops tagging unrelated operations while a multipass UI receipt remains reserved.</summary>
+        internal void SuspendUiPublicationReceipt(ulong receiptId)
+        {
+            if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
+                throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
+            _currentUiPublicationReceiptId = 0UL;
+        }
+
+        /// <summary>Tags only the operations authored by the next published UI draw.</summary>
+        internal void ResumeUiPublicationReceipt(ulong receiptId)
+        {
+            if (receiptId == 0UL || _currentUiPublicationReceiptId != 0UL)
+                throw new InvalidOperationException("Another UI publication receipt is active on this render thread.");
+            lock (_uiPublicationAuthoringGate)
+                if (!_uiPublicationAuthoring.ContainsKey(receiptId))
+                    throw new InvalidOperationException("The UI publication receipt has already ended.");
+            _currentUiPublicationReceiptId = receiptId;
         }
 
         internal void FailCurrentUiPublicationAuthoring(string reason)
         {
             if (_currentUiPublicationReceiptId == 0UL)
                 return;
-            _currentUiPublicationAuthoringFailed = true;
-            _currentUiPublicationFailureReason ??= reason;
+            lock (_uiPublicationAuthoringGate)
+                if (_uiPublicationAuthoring.TryGetValue(_currentUiPublicationReceiptId, out string? previous))
+                    _uiPublicationAuthoring[_currentUiPublicationReceiptId] = previous ?? reason;
             OnUiPublicationAuthoringFailed(_currentUiPublicationReceiptId, reason);
         }
 
@@ -131,11 +151,12 @@ namespace XREngine.Rendering
         {
             if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
                 throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
-            bool complete = succeeded && !_currentUiPublicationAuthoringFailed;
-            string? failureReason = _currentUiPublicationFailureReason;
+            string? failureReason;
+            lock (_uiPublicationAuthoringGate)
+                if (!_uiPublicationAuthoring.Remove(receiptId, out failureReason))
+                    throw new InvalidOperationException("The UI publication receipt has already ended.");
+            bool complete = succeeded && failureReason is null;
             _currentUiPublicationReceiptId = 0UL;
-            _currentUiPublicationAuthoringFailed = false;
-            _currentUiPublicationFailureReason = null;
             return CompleteUiPublicationReceiptCore(receiptId, complete, failureReason, out completionFence);
         }
 
@@ -145,8 +166,8 @@ namespace XREngine.Rendering
             if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
                 throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
             _currentUiPublicationReceiptId = 0UL;
-            _currentUiPublicationAuthoringFailed = false;
-            _currentUiPublicationFailureReason = null;
+            lock (_uiPublicationAuthoringGate)
+                _uiPublicationAuthoring.Remove(receiptId);
             CancelUiPublicationReceiptBeforeAuthoringCore(receiptId);
         }
 

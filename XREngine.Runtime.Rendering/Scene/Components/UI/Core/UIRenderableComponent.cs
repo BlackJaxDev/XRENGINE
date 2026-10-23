@@ -48,9 +48,57 @@ namespace XREngine.Rendering.UI
         private readonly UIDrawCommandObserver _publicationCommandObserver;
         private UIDrawPayloadBuilder? _publicationPayloadBuilder;
         private RenderCommandMesh2D? _publicationFrozenCommand;
+        private UIBatchCollector? _registeredBatchCollector;
+        private ulong _registeredPrimitiveHandle;
+        private UIElementIdentity _registeredPrimitiveIdentity;
+
+        /// <summary>Synchronizes the stable batch slot with this component's active canvas membership.</summary>
+        internal void SyncBatchPrimitiveRegistration()
+        {
+            UITransform? transform = SceneNode is not null && !SceneNode.IsTransformNull
+                ? Transform as UITransform
+                : null;
+            UIBatchCollector? collector = IsActiveInHierarchy && transform is not null
+                ? transform?.GetCanvasComponent()?.BatchCollector
+                : null;
+            UIElementIdentity identity = transform?.ElementIdentity ?? default;
+            if (collector?.Enabled != true || !identity.IsValid)
+                collector = null;
+
+            long membershipId = RenderInfo2D.MembershipId;
+            if (ReferenceEquals(collector, _registeredBatchCollector) &&
+                collector is not null &&
+                identity == _registeredPrimitiveIdentity &&
+                collector.GetRetainedPrimitiveHandle(membershipId, identity) == _registeredPrimitiveHandle)
+                return;
+
+            ReleaseBatchPrimitiveRegistration();
+            if (collector is not null)
+            {
+                _registeredPrimitiveHandle = collector.RegisterPrimitiveMembership(membershipId, identity);
+                _registeredBatchCollector = collector;
+                _registeredPrimitiveIdentity = identity;
+            }
+        }
+
+        private void ReleaseBatchPrimitiveRegistration()
+        {
+            _registeredBatchCollector?.UnregisterPrimitiveMembership(
+                RenderInfo2D.MembershipId, _registeredPrimitiveHandle);
+            _registeredBatchCollector = null;
+            _registeredPrimitiveHandle = 0;
+            _registeredPrimitiveIdentity = default;
+        }
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            SyncBatchPrimitiveRegistration();
+        }
 
         protected override void OnComponentDeactivated()
         {
+            ReleaseBatchPrimitiveRegistration();
             _publicationPayloadBuilder?.Dispose();
             _publicationFrozenCommand = null;
             base.OnComponentDeactivated();
@@ -58,6 +106,7 @@ namespace XREngine.Rendering.UI
 
         protected override void OnDestroying()
         {
+            ReleaseBatchPrimitiveRegistration();
             _publicationCommandObserver.Dispose();
             try
             {
@@ -234,6 +283,7 @@ namespace XREngine.Rendering.UI
         /// <summary>Captures draw values on the canvas owner for one publication.</summary>
         public virtual UIRenderRecord CapturePublicationRenderRecord(in UILayoutNodeOutput output)
         {
+            SyncBatchPrimitiveRegistration();
             UIBoundableTransform bounds = BoundableTransform;
             Vector2 bottomLeft = bounds.ActualLocalBottomLeftTranslation;
             Matrix4x4 worldMatrix = bounds.WorldMatrix *
@@ -434,6 +484,27 @@ namespace XREngine.Rendering.UI
                     _material?.SettingUniforms += OnMaterialSettingUniforms;
                     break;
             }
+            if (propName is nameof(Material) or nameof(UIMaterialComponent.DisableBatching))
+                SyncBatchPrimitiveRegistration();
+        }
+
+        protected override void OnTransformChanging()
+        {
+            ReleaseBatchPrimitiveRegistration();
+            base.OnTransformChanging();
+        }
+
+        protected override void OnTransformChanged()
+        {
+            base.OnTransformChanged();
+            SyncBatchPrimitiveRegistration();
+        }
+
+        protected override void UITransformPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
+        {
+            if (e.PropertyName == nameof(UITransform.ParentCanvas))
+                ReleaseBatchPrimitiveRegistration();
+            base.UITransformPropertyChanging(sender, e);
         }
 
         private Vector4 _lastBounds = Vector4.Zero;
@@ -473,6 +544,8 @@ namespace XREngine.Rendering.UI
         protected override void UITransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             base.UITransformPropertyChanged(sender, e);
+            if (e.PropertyName == nameof(UITransform.ParentCanvas))
+                SyncBatchPrimitiveRegistration();
             switch (e.PropertyName)
             {
                 case nameof(UIBoundableTransform.ActualSize):

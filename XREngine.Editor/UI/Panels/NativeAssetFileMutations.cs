@@ -15,8 +15,21 @@ internal static class NativeAssetFileMutations
         using var interaction = Undo.BeginUserInteraction();
         using var scope = Undo.BeginChange("Create Asset Folder");
         Undo.RecordStructuralChange("Create Asset Folder",
-            undoAction: () => Directory.Delete(child, recursive: false),
-            redoAction: () => Directory.CreateDirectory(child));
+            undoAction: () =>
+            {
+                string checkedChild = RequireUnderRoot(root, child, allowRoot: false);
+                Directory.Delete(checkedChild, recursive: false);
+            },
+            redoAction: () =>
+            {
+                string checkedParent = RequireUnderRoot(root, parent, allowRoot: true);
+                string checkedChild = RequireUnderRoot(root, child, allowRoot: false);
+                if (!Directory.Exists(checkedParent))
+                    throw new DirectoryNotFoundException("The parent asset folder no longer exists.");
+                if (File.Exists(checkedChild) || Directory.Exists(checkedChild))
+                    throw new IOException($"'{Path.GetFileName(checkedChild)}' already exists.");
+                Directory.CreateDirectory(checkedChild);
+            });
         return child;
     }
 
@@ -32,30 +45,75 @@ internal static class NativeAssetFileMutations
             return oldPath;
         if (File.Exists(newPath) || Directory.Exists(newPath))
             throw new IOException($"'{Path.GetFileName(newPath)}' already exists.");
-        Move(oldPath, newPath, isDirectory);
+        MoveWithinRoots(root, root, oldPath, newPath, isDirectory);
         using var interaction = Undo.BeginUserInteraction();
         using var scope = Undo.BeginChange("Rename Asset Path");
         Undo.RecordStructuralChange("Rename Asset Path",
             undoAction: () =>
             {
-                Move(newPath, oldPath, isDirectory);
-                if (string.Equals(NativeAssetSelection.SelectedPath, newPath, StringComparison.OrdinalIgnoreCase))
+                MoveWithinRoots(root, root, newPath, oldPath, isDirectory);
+                if (NativeAssetSelection.SelectedPath is { } selected && NativeAssetPathPolicy.PathsEqual(selected, newPath))
                     NativeAssetSelection.Select(oldPath);
             },
             redoAction: () =>
             {
-                Move(oldPath, newPath, isDirectory);
-                if (string.Equals(NativeAssetSelection.SelectedPath, oldPath, StringComparison.OrdinalIgnoreCase))
+                MoveWithinRoots(root, root, oldPath, newPath, isDirectory);
+                if (NativeAssetSelection.SelectedPath is { } selected && NativeAssetPathPolicy.PathsEqual(selected, oldPath))
                     NativeAssetSelection.Select(newPath);
             });
         return newPath;
     }
 
+    public static string MoveFileToDirectory(string sourceRoot, string destinationRoot,
+        string sourceFile, string destinationDirectory)
+    {
+        if (!NativeAssetPathPolicy.PathsEqual(Path.GetFullPath(sourceRoot), Path.GetFullPath(destinationRoot)))
+            throw new InvalidOperationException("Move files within one asset root so asset metadata remains associated with the file.");
+        string source = RequireUnderRoot(sourceRoot, sourceFile, allowRoot: false);
+        string directory = RequireUnderRoot(destinationRoot, destinationDirectory, allowRoot: true);
+        if (!File.Exists(source))
+            throw new FileNotFoundException("The dragged file no longer exists.", source);
+        if (!Directory.Exists(directory))
+            throw new DirectoryNotFoundException($"The destination folder no longer exists: '{directory}'.");
+        string destination = RequireUnderRoot(destinationRoot,
+            Path.Combine(directory, Path.GetFileName(source)), allowRoot: false);
+        if (NativeAssetPathPolicy.PathsEqual(source, destination))
+            return source;
+        MoveWithinRoots(sourceRoot, destinationRoot, source, destination, isDirectory: false);
+        if (NativeAssetSelection.SelectedPath is { } selected && NativeAssetPathPolicy.PathsEqual(selected, source))
+            NativeAssetSelection.Select(destination);
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Move Asset File");
+        Undo.RecordStructuralChange("Move Asset File",
+            undoAction: () =>
+            {
+                MoveWithinRoots(destinationRoot, sourceRoot, destination, source, isDirectory: false);
+                if (NativeAssetSelection.SelectedPath is { } selected && NativeAssetPathPolicy.PathsEqual(selected, destination))
+                    NativeAssetSelection.Select(source);
+            },
+            redoAction: () =>
+            {
+                MoveWithinRoots(sourceRoot, destinationRoot, source, destination, isDirectory: false);
+                if (NativeAssetSelection.SelectedPath is { } selected && NativeAssetPathPolicy.PathsEqual(selected, source))
+                    NativeAssetSelection.Select(destination);
+            });
+        return destination;
+    }
+
     public static string RequireUnderRoot(string root, string path, bool allowRoot)
         => NativeAssetPathPolicy.RequireUnderRoot(root, path, allowRoot);
 
-    private static void Move(string source, string destination, bool isDirectory)
+    private static void MoveWithinRoots(string sourceRoot, string destinationRoot,
+        string source, string destination, bool isDirectory)
     {
+        source = RequireUnderRoot(sourceRoot, source, allowRoot: false);
+        destination = RequireUnderRoot(destinationRoot, destination, allowRoot: false);
+        string destinationParent = RequireUnderRoot(destinationRoot,
+            Path.GetDirectoryName(destination)!, allowRoot: true);
+        if (!Directory.Exists(destinationParent))
+            throw new DirectoryNotFoundException("The destination asset folder no longer exists.");
+        if (!(isDirectory ? Directory.Exists(source) : File.Exists(source)))
+            throw new FileNotFoundException("The source asset path no longer exists.", source);
         if (File.Exists(destination) || Directory.Exists(destination))
             throw new IOException($"'{Path.GetFileName(destination)}' already exists.");
         if (isDirectory)

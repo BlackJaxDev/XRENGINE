@@ -47,6 +47,37 @@ public class NativeAssetPathPolicyTests
     }
 
     [Test]
+    public void MutationPath_RecheckRejectsDirectoryChangedToLink()
+    {
+        string sandbox = Path.Combine(Path.GetTempPath(), "NativeAssetPathPolicy", Guid.NewGuid().ToString("N"));
+        string root = Path.Combine(sandbox, "Assets");
+        string outside = Path.Combine(sandbox, "Outside");
+        string folder = Path.Combine(root, "Destination");
+        string path = Path.Combine(folder, "item.asset");
+        Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(outside);
+        try
+        {
+            NativeAssetPathPolicy.RequireUnderRoot(root, path, allowRoot: false).ShouldBe(Path.GetFullPath(path));
+            Directory.Delete(folder);
+            try { Directory.CreateSymbolicLink(folder, outside); }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or PlatformNotSupportedException or IOException)
+            {
+                Assert.Ignore($"Directory links are unavailable: {exception.Message}");
+                return;
+            }
+            Should.Throw<InvalidOperationException>(() =>
+                NativeAssetPathPolicy.RequireUnderRoot(root, path, allowRoot: false));
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+                Directory.Delete(folder);
+            Directory.Delete(sandbox, recursive: true);
+        }
+    }
+
+    [Test]
     public void RenameEquality_UsesPlatformCaseRules()
     {
         bool equal = NativeAssetPathPolicy.PathsEqual("/Assets/Item.asset", "/Assets/item.asset");

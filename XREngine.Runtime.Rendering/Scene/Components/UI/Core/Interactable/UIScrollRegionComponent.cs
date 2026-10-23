@@ -12,6 +12,26 @@ public class UIScrollRegionComponent : UIInteractableComponent, IUIScrollReceive
 
     public UIScrollableTransform ScrollTransform => TransformAs<UIScrollableTransform>(true)!;
     public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.ScrollRegion;
+    public override string? AccessibilityValue
+    {
+        get
+        {
+            Vector2 offset = ScrollTransform.ScrollOffset;
+            return FormattableString.Invariant($"{offset.X:0.##}, {offset.Y:0.##} pixels");
+        }
+    }
+
+    public override bool AccessibilityAdjust(int direction)
+        => direction != 0 && ScrollBy(new Vector2(0, Math.Sign(direction) * WheelStepPixels));
+
+    public override bool TryConsumeFocusDirection(Vector2 direction)
+    {
+        if (!float.IsFinite(direction.X) || !float.IsFinite(direction.Y) || direction == Vector2.Zero)
+            return false;
+        return MathF.Abs(direction.Y) >= MathF.Abs(direction.X)
+            ? ScrollBy(new Vector2(0, -Math.Sign(direction.Y) * WheelStepPixels))
+            : ScrollBy(new Vector2(Math.Sign(direction.X) * WheelStepPixels, 0));
+    }
 
     public float WheelStepPixels
     {
@@ -35,9 +55,21 @@ public class UIScrollRegionComponent : UIInteractableComponent, IUIScrollReceive
     {
         if (!CanInteract || !float.IsFinite(diff) || diff == 0)
             return false;
-        Vector2 previous = ScrollTransform.ScrollOffset;
-        ScrollTransform.ScrollOffset = new Vector2(previous.X, previous.Y - diff * WheelStepPixels);
-        return ScrollTransform.ScrollOffset != previous || ConsumeWheelAtBoundary;
+        return ScrollBy(new Vector2(0, -diff * WheelStepPixels)) || ConsumeWheelAtBoundary;
+    }
+
+    private bool ScrollBy(Vector2 delta)
+    {
+        if (!CanInteract || IsReadOnly || !ScrollTransform.Scrollable ||
+            delta.X != 0 && !ScrollTransform.ScrollableX ||
+            delta.Y != 0 && !ScrollTransform.ScrollableY)
+            return false;
+        UIScrollableTransform scroll = ScrollTransform;
+        if (scroll.ViewportExtent.X <= 0 || scroll.ViewportExtent.Y <= 0)
+            return false;
+        Vector2 previous = scroll.ScrollOffset;
+        scroll.ScrollOffset = previous + delta;
+        return scroll.ScrollOffset != previous;
     }
 
     public void ScrollIntoView(Vector2 contentStart, Vector2 contentEnd)

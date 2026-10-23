@@ -420,56 +420,126 @@ public sealed class UIBatchCollector : IDisposable
     internal ulong RetainedRunReuseCount { get; private set; }
     private sealed class RetainedPrimitiveSlot
     {
-        public UIRenderRecord Record;
+        public long MembershipId;
+        public UIElementIdentity Identity;
         public uint Generation;
         public ulong SeenEpoch;
         public bool Occupied;
+        public bool Registered;
     }
+    private readonly object _primitiveSlotGate = new();
     private readonly List<RetainedPrimitiveSlot> _primitiveSlots = [];
     private readonly Stack<int> _freePrimitiveSlots = [];
-    private readonly Dictionary<long, int> _slotByMembership = [];
+    private readonly Dictionary<(long MembershipId, UIElementIdentity Identity), int> _slotByIdentity = [];
+    private readonly Dictionary<long, int> _registeredSlotByMembership = [];
     private ulong _membershipEpoch;
     private uint _nextPrimitiveGeneration;
 
     internal ulong GetRetainedPrimitiveHandle(long membershipId)
-        => _slotByMembership.TryGetValue(membershipId, out int slot)
-            ? ((ulong)_primitiveSlots[slot].Generation << 32) | (uint)slot
-            : 0;
+    {
+        lock (_primitiveSlotGate)
+        {
+            if (_registeredSlotByMembership.TryGetValue(membershipId, out int registered))
+                return PrimitiveHandle(registered);
+            foreach (var entry in _slotByIdentity)
+                if (entry.Key.MembershipId == membershipId)
+                    return PrimitiveHandle(entry.Value);
+            return 0;
+        }
+    }
+
+    internal ulong GetRetainedPrimitiveHandle(long membershipId, UIElementIdentity identity)
+    {
+        lock (_primitiveSlotGate)
+            return _slotByIdentity.TryGetValue((membershipId, identity), out int index)
+                ? PrimitiveHandle(index) : 0;
+    }
+
+    private ulong PrimitiveHandle(int index)
+        => ((ulong)_primitiveSlots[index].Generation << 32) | (uint)index;
+
+    /// <summary>Reserves one stable primitive slot for an active UI membership.</summary>
+    internal ulong RegisterPrimitiveMembership(long membershipId, UIElementIdentity identity)
+    {
+        if (membershipId <= 0 || !identity.IsValid)
+            throw new ArgumentException("A batch primitive requires a valid membership and element identity.");
+        lock (_primitiveSlotGate)
+        {
+            ulong handle = RetainPrimitiveLocked(membershipId, identity);
+            int index = (int)(uint)handle;
+            if (_registeredSlotByMembership.TryGetValue(membershipId, out int previous) && previous != index)
+                _primitiveSlots[previous].Registered = false;
+            _registeredSlotByMembership[membershipId] = index;
+            _primitiveSlots[index].Registered = true;
+            return handle;
+        }
+    }
+
+    /// <summary>Ends owner registration without invalidating an older published GPU cohort.</summary>
+    internal void UnregisterPrimitiveMembership(long membershipId, ulong handle)
+    {
+        lock (_primitiveSlotGate)
+        {
+            if (!_registeredSlotByMembership.TryGetValue(membershipId, out int index) ||
+                PrimitiveHandle(index) != handle)
+                return;
+            ReleasePrimitiveSlotLocked(index);
+        }
+    }
 
     private ulong RetainPrimitive(in UIRenderRecord record)
     {
-        if (!_slotByMembership.TryGetValue(record.MembershipId, out int index))
+        lock (_primitiveSlotGate)
+            return RetainPrimitiveLocked(record.MembershipId, record.Identity);
+    }
+
+    private ulong RetainPrimitiveLocked(long membershipId, UIElementIdentity identity)
+    {
+        if (!_slotByIdentity.TryGetValue((membershipId, identity), out int index))
         {
             index = _freePrimitiveSlots.Count != 0 ? _freePrimitiveSlots.Pop() : _primitiveSlots.Count;
             if (index == _primitiveSlots.Count)
                 _primitiveSlots.Add(new RetainedPrimitiveSlot());
-            _slotByMembership.Add(record.MembershipId, index);
+            _slotByIdentity.Add((membershipId, identity), index);
         }
         RetainedPrimitiveSlot slot = _primitiveSlots[index];
-        if (!slot.Occupied || slot.Record.Identity != record.Identity)
+        if (!slot.Occupied)
         {
             uint next = ++_nextPrimitiveGeneration;
             slot.Generation = next == 0 ? ++_nextPrimitiveGeneration : next;
         }
-        if (!slot.Occupied || slot.Record != record)
-            slot.Record = record;
+        slot.MembershipId = membershipId;
+        slot.Identity = identity;
         slot.Occupied = true;
-        slot.SeenEpoch = _membershipEpoch;
-        return ((ulong)slot.Generation << 32) | (uint)index;
+        slot.SeenEpoch = Math.Max(slot.SeenEpoch, _membershipEpoch);
+        return PrimitiveHandle(index);
     }
 
     private void RetireMissingPrimitives()
     {
-        for (int index = 0; index < _primitiveSlots.Count; index++)
+        lock (_primitiveSlotGate)
         {
-            RetainedPrimitiveSlot slot = _primitiveSlots[index];
-            if (!slot.Occupied || slot.SeenEpoch == _membershipEpoch)
-                continue;
-            _slotByMembership.Remove(slot.Record.MembershipId);
-            slot.Occupied = false;
-            slot.Record = default;
-            _freePrimitiveSlots.Push(index);
+            for (int index = 0; index < _primitiveSlots.Count; index++)
+            {
+                RetainedPrimitiveSlot slot = _primitiveSlots[index];
+                if (!slot.Occupied || slot.Registered || slot.SeenEpoch == _membershipEpoch)
+                    continue;
+                ReleasePrimitiveSlotLocked(index);
+            }
         }
+    }
+
+    private void ReleasePrimitiveSlotLocked(int index)
+    {
+        RetainedPrimitiveSlot slot = _primitiveSlots[index];
+        _slotByIdentity.Remove((slot.MembershipId, slot.Identity));
+        if (slot.Registered && _registeredSlotByMembership.TryGetValue(slot.MembershipId, out int registered) && registered == index)
+            _registeredSlotByMembership.Remove(slot.MembershipId);
+        slot.Occupied = false;
+        slot.Registered = false;
+        slot.MembershipId = 0;
+        slot.Identity = default;
+        _freePrimitiveSlots.Push(index);
     }
 
     #endregion
@@ -917,7 +987,8 @@ public sealed class UIBatchCollector : IDisposable
 
         _collectPublishedStorage = publication.RenderStorage;
         _collectPublishedMarkers.Clear();
-        _membershipEpoch++;
+        lock (_primitiveSlotGate)
+            _membershipEpoch++;
         for (int index = 0; index < records.Length; index++)
         {
             _collectPublishedRecordIndex = index;
@@ -1232,9 +1303,13 @@ public sealed class UIBatchCollector : IDisposable
         _renderPublishedStorage = null;
         _collectPublishedMarkers.Clear();
         _renderPublishedMarkers.Clear();
-        _slotByMembership.Clear();
-        _primitiveSlots.Clear();
-        _freePrimitiveSlots.Clear();
+        lock (_primitiveSlotGate)
+        {
+            _slotByIdentity.Clear();
+            _registeredSlotByMembership.Clear();
+            _primitiveSlots.Clear();
+            _freePrimitiveSlots.Clear();
+        }
         foreach (var groups in _collectMaterialGroups.Values)
             groups.Reset(static batch => batch.Clear());
         foreach (var groups in _renderMaterialGroups.Values)

@@ -14,6 +14,9 @@ public interface IUICanvasInputSource
     Vector2 CursorPositionWorld2D { get; }
     UIInteractableComponent? FocusedComponent { get; set; }
 
+    /// <summary>Focuses a control only when its current row and scope are in the presented input packet.</summary>
+    bool TryFocusPresented(UIInteractableComponent target);
+
     event Action<UIInteractableComponent?>? LeftClickDown;
     event Action<UIInteractableComponent>? RightClick;
     event Action? EscapePressed;

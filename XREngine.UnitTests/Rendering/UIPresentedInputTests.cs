@@ -3,6 +3,7 @@ using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
 using XREngine.Data.Geometry;
+using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.UI.State;
@@ -172,6 +173,180 @@ public sealed class UIPresentedInputTests
     }
 
     [Test]
+    public void RegisteredGamepad_EditsSliderBeforeDirectionalFocusMoves()
+    {
+        var root = new SceneNode("Gamepad navigation", new UICanvasTransform());
+        root.SetWorldContext(new TestWorldContext());
+        var viewport = new XRViewport(null)
+        {
+            AutomaticallyCollectVisible = false,
+            AutomaticallySwapBuffers = false,
+            SetRenderPipelineFromCamera = false,
+        };
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UICanvasInputComponent input = root.AddComponent<UICanvasInputComponent>()!;
+            PawnComponent pawn = root.NewChild("Pawn").AddComponent<PawnComponent>()!;
+            LocalPlayerController controller = new() { Viewport = viewport };
+            pawn.Controller = controller;
+            input.OwningPawn = pawn;
+            WindowSnapshotGamepad gamepad = new(0);
+            controller.Input.UpdateDevices(null, null, gamepad);
+            input.RegisterInput(controller.Input);
+
+            SceneNode sliderNode = root.NewChild("Slider");
+            sliderNode.SetTransform<UIBoundableTransform>();
+            UIRangeSliderComponent slider = sliderNode.AddComponent<UIRangeSliderComponent>()!;
+            slider.Step = 0.25;
+            SceneNode belowNode = root.NewChild("Below");
+            belowNode.SetTransform<UIBoundableTransform>();
+            UIButtonComponent below = belowNode.AddComponent<UIButtonComponent>()!;
+            UIElementIdentity scope = canvas.CanvasTransform.ElementIdentity;
+            Present(1, Hit(slider, 0, Vector2.Zero, scope),
+                Hit(below, 1, new Vector2(0, -40), scope));
+            input.FocusedComponent = slider;
+
+            Press(EGamePadButton.DPadRight);
+            slider.Value.ShouldBe(0.25);
+            input.FocusedComponent.ShouldBeSameAs(slider);
+            Release(EGamePadButton.DPadRight);
+            Press(EGamePadButton.DPadDown);
+            input.FocusedComponent.ShouldBeSameAs(below);
+
+            void Present(ulong generation, params UIHitRecord[] hits)
+            {
+                BoundingRectangleF bounds = new(new Vector2(-100), new Vector2(300));
+                UIPublication packet = new(generation, canvas.PublicationLifetime, generation, generation,
+                    canvas.CanvasTransform.ChangeJournal.Revision, default,
+                    new UIElementIdentity[] { scope }, hits, [], bounds,
+                    Matrix4x4.Identity, Matrix4x4.Identity);
+                canvas.MarkPresented(viewport, packet);
+                packet.Release();
+                RefreshPresentedInput(input);
+            }
+
+            void Press(EGamePadButton button)
+            {
+                ushort mask = (ushort)(1 << (int)button);
+                gamepad.ApplySnapshot(new WindowInputSnapshotAccumulator().Publish(1, 0, 1, true, false,
+                    primaryGamepad: new WindowGamepadSnapshot(true, mask, 0, 0, 0, 0, 0, 0)));
+                controller.Input.TickStates(1f / 60f);
+            }
+
+            void Release(EGamePadButton button)
+            {
+                gamepad.ApplySnapshot(new WindowInputSnapshotAccumulator().Publish(1, 0, 1, true, false,
+                    primaryGamepad: new WindowGamepadSnapshot(true, 0, 0, 0, 0, 0, 0, 0)));
+                controller.Input.TickStates(1f / 60f);
+            }
+        }
+        finally
+        {
+            root.Destroy(true);
+            viewport.Destroy();
+        }
+    }
+
+    [Test]
+    public void RegisteredTab_NestedPopupScopesTrapAndRestoreFocusOnDismiss()
+    {
+        var root = new SceneNode("Nested popup focus", new UICanvasTransform());
+        root.SetWorldContext(new TestWorldContext());
+        var viewport = new XRViewport(null)
+        {
+            AutomaticallyCollectVisible = false,
+            AutomaticallySwapBuffers = false,
+            SetRenderPipelineFromCamera = false,
+        };
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UICanvasInputComponent input = root.AddComponent<UICanvasInputComponent>()!;
+            PawnComponent pawn = root.NewChild("Pawn").AddComponent<PawnComponent>()!;
+            LocalPlayerController controller = new() { Viewport = viewport };
+            pawn.Controller = controller;
+            input.OwningPawn = pawn;
+            WindowSnapshotKeyboard keyboard = new(0);
+            controller.Input.UpdateDevices(keyboard, null, null);
+            input.RegisterInput(controller.Input);
+            UIButtonComponent outside = root.NewChild("Outside").AddComponent<UIButtonComponent>()!;
+            SceneNode outerNode = root.NewChild("Outer popup");
+            outerNode.SetTransform<UIBoundableTransform>();
+            UIContextMenuComponent outer = outerNode.AddComponent<UIContextMenuComponent>()!;
+            SceneNode innerNode = root.NewChild("Inner popup");
+            innerNode.SetTransform<UIBoundableTransform>();
+            UIContextMenuComponent inner = innerNode.AddComponent<UIContextMenuComponent>()!;
+            UIElementIdentity rootScope = canvas.CanvasTransform.ElementIdentity;
+            WindowInputSnapshotAccumulator frames = new();
+
+            Present(1, [Hit(outside, 0, Vector2.Zero, rootScope)], []);
+            input.FocusedComponent = outside;
+            outer.Show(Vector2.Zero, new ContextMenuItem("Outer", () => { }));
+            outerNode.GetTransformAs<UIBoundableTransform>(true)!.Visibility = EVisibility.Visible;
+            UIButtonComponent outerButton = outerNode.FirstChild!.FirstChild!.GetComponent<UIButtonComponent>()!;
+            UIElementIdentity outerScope = outerNode.GetTransformAs<UIBoundableTransform>(true)!.ElementIdentity;
+            Present(2,
+                [Hit(outside, 0, Vector2.Zero, rootScope), Hit(outerButton, 1, new Vector2(30, 0), outerScope)],
+                [new UIFocusScopeRecord(outerScope, 1, 2, 1, 10)]);
+            input.FocusedComponent.ShouldBeSameAs(outerButton);
+            Tab(true);
+            input.FocusedComponent.ShouldBeSameAs(outerButton);
+            Tab(false);
+
+            inner.Show(Vector2.Zero, new ContextMenuItem("Inner", () => { }));
+            innerNode.GetTransformAs<UIBoundableTransform>(true)!.Visibility = EVisibility.Visible;
+            UIButtonComponent innerButton = innerNode.FirstChild!.FirstChild!.GetComponent<UIButtonComponent>()!;
+            UIElementIdentity innerScope = innerNode.GetTransformAs<UIBoundableTransform>(true)!.ElementIdentity;
+            Present(3,
+                [Hit(outside, 0, Vector2.Zero, rootScope), Hit(outerButton, 1, new Vector2(30, 0), outerScope),
+                    Hit(innerButton, 2, new Vector2(60, 0), innerScope)],
+                [new UIFocusScopeRecord(outerScope, 1, 3, 1, 10),
+                    new UIFocusScopeRecord(innerScope, 2, 3, 2, 20)]);
+            input.FocusedComponent.ShouldBeSameAs(innerButton);
+            Tab(true);
+            input.FocusedComponent.ShouldBeSameAs(innerButton);
+            Tab(false);
+
+            inner.Hide();
+            Present(4,
+                [Hit(outside, 0, Vector2.Zero, rootScope), Hit(outerButton, 1, new Vector2(30, 0), outerScope)],
+                [new UIFocusScopeRecord(outerScope, 1, 2, 1, 10)]);
+            input.FocusedComponent.ShouldBeSameAs(outerButton);
+            outer.Hide();
+            Present(5, [Hit(outside, 0, Vector2.Zero, rootScope)], []);
+            input.FocusedComponent.ShouldBeSameAs(outside);
+
+            void Present(ulong generation, UIHitRecord[] hits, UIFocusScopeRecord[] scopes)
+            {
+                BoundingRectangleF bounds = new(new Vector2(-100), new Vector2(300));
+                UIPublication packet = new(generation, canvas.PublicationLifetime, generation, generation,
+                    canvas.CanvasTransform.ChangeJournal.Revision, default,
+                    new UIElementIdentity[] { rootScope }, hits, [], bounds,
+                    Matrix4x4.Identity, Matrix4x4.Identity, focusScopes: scopes);
+                canvas.MarkPresented(viewport, packet);
+                packet.Release();
+                RefreshPresentedInput(input);
+            }
+
+            void Tab(bool pressed)
+            {
+                if (pressed)
+                    frames.RecordKeyDown(EKey.Tab);
+                else
+                    frames.RecordKeyUp(EKey.Tab);
+                keyboard.ApplySnapshot(frames.Publish(1, 0, 0, true, false));
+                controller.Input.TickStates(1f / 60f);
+            }
+        }
+        finally
+        {
+            root.Destroy(true);
+            viewport.Destroy();
+        }
+    }
+
+    [Test]
     public void VirtualItemFocus_WaitsForPresentedLeaseAndRejectsRecycledRow()
     {
         var root = new SceneNode("Virtual focus", new UICanvasTransform());
@@ -255,4 +430,13 @@ public sealed class UIPresentedInputTests
         UIPublication? publication = (UIPublication?)method.Invoke(input, null);
         publication?.Release();
     }
+
+    private static UIHitRecord Hit(UIInteractableComponent control, int index, Vector2 position,
+        UIElementIdentity scope)
+        => new(control.RenderInfo2D, control.RenderInfo2D.MembershipId,
+            control.UITransform.ElementIdentity, control.InteractionRevision,
+            Matrix4x4.CreateTranslation(-position.X, -position.Y, 0), new Vector2(20),
+            new BoundingRectangleF(position, new Vector2(20)), null,
+            index, -1, index + 1, 0, 0, index, true, false,
+            FocusScopeIdentity: scope);
 }

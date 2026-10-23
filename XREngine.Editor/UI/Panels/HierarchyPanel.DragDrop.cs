@@ -22,7 +22,7 @@ public partial class HierarchyPanel
 {
     private static bool HandleRootDrop(EditorDragDropUtility.DragPayload payload)
     {
-        if (EditorDragDropUtility.TryGetAssetPath(payload, out var assetPath) && !string.IsNullOrWhiteSpace(assetPath))
+        if (EditorDragDropUtility.TryGetAssetOrFilePath(payload, out var assetPath) && !string.IsNullOrWhiteSpace(assetPath))
             return TryGetActiveWorld() is { } world && TryHandleDroppedSpawnableAsset(world, null, assetPath);
 
         return false;

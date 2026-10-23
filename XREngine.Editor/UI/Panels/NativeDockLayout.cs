@@ -12,6 +12,7 @@ public sealed class NativeDockLayout
     public bool UseEngineAssets { get; set; }
     public string AssetSearch { get; set; } = string.Empty;
     public string ConsoleFilter { get; set; } = string.Empty;
+    public NativeDockTree? DockTree { get; set; }
 
     public NativeDockLayout Sanitize()
     {
@@ -32,6 +33,15 @@ public sealed class NativeDockLayout
         {
             int firstOpenSlot = Array.FindIndex(TabOrder, i => (OpenMask & (1 << i)) != 0);
             SelectedTab = firstOpenSlot >= 0 ? TabOrder[firstOpenSlot] : -1;
+        }
+        try
+        {
+            DockTree = (DockTree ?? NativeDockTree.FromLegacy(this)).Sanitize();
+        }
+        catch (InvalidOperationException exception)
+        {
+            Debug.UI($"[NativeDock] Saved dock tree is invalid: {exception.Message}");
+            DockTree = NativeDockTree.FromLegacy(this).Sanitize();
         }
         return this;
     }

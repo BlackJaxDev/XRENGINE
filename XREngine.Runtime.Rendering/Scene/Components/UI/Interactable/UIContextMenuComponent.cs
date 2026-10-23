@@ -377,8 +377,16 @@ namespace XREngine.Rendering.UI
 
         private void ClearMenuItems()
         {
-            // Remove all children created for menu items
-            SceneNode.Transform.Clear();
+            // Menu content owns its nodes. Destroy them through the scene hierarchy so
+            // their components unsubscribe before the guarded child list is changed.
+            while (SceneNode.Transform.Children.Count > 0)
+            {
+                var child = SceneNode.Transform.Children[^1];
+                if (child.SceneNode is { } node)
+                    node.Destroy(true);
+                else
+                    child.Parent = null;
+            }
         }
 
         // --- Auto-dismiss logic ---

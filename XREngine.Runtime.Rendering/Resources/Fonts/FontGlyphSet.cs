@@ -525,6 +525,7 @@ namespace XREngine.Rendering
             DistanceRange = 0.0f;
             DistanceRangeMiddle = DefaultMsdfDistanceRangeMiddle;
             LayoutEmSize = textSize > 0.0f ? textSize : DefaultBitmapFontDrawSize;
+            InstallBitmapRuntimeShapingFace(result);
         }
 
         public enum EWrapMode

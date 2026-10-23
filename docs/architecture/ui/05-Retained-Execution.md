@@ -68,6 +68,14 @@ of authored glyph maps. Reassign an edited map to publish a new metric revision.
 Unchanged captures reuse the immutable metric page. Full shaping, bidirectional text,
 and fallback-font behavior are not established by the basic rune-layout kernel.
 
+`UIFontFaceSnapshot` owns font bytes and frozen glyph-ID metrics. The optional
+`SkiaTextShapingBackend` uses the existing HarfBuzz dependency to return glyph IDs,
+advances, offsets, and UTF-16 clusters. Rasterization and shaping use the same
+owned bytes. Missing atlas coverage produces a named failure. This backend is
+not yet connected to the production layout kernel. Full shaping, bidi, fallback,
+and shaped caret behavior remain open. Runtime face data does not change the
+serialized font format.
+
 ## Owned custom draws
 
 Unbatched records use `UIDrawPayload` with the existing mesh command path.
@@ -85,9 +93,11 @@ the shared byte budget once; geometry owners do not consume draw-payload slots.
 The component writer reads accepted glyph spans, freezes animation overrides
 when `MarkGlyphTransformsChanged` is called, and commits changed used ranges.
 Storage resize and writes share one lock and validate actual byte lengths.
-Explicit raw-buffer invalidation forces byte validation before reuse. The separate
-`UIText` helper still has a legacy writer; changed immutable buffer captures can
-still copy their allocated capacity.
+Explicit raw-buffer invalidation forces byte validation before reuse. The standalone `UIText` helper uses the same immutable layout kernel and used-span
+writer. Its font observer only marks dirtiness. The render/preparation owner
+consumes that mark under the same gate used for mesh changes and draw admission.
+Pool return and destruction detach observers; Math label owners call the full
+teardown path. Changed immutable buffer captures can still copy allocated capacity.
 
 `TryCapturePublicationPayload` is the explicit adapter boundary. Derived custom
 components must declare `CanCapturePublicationUniforms` only when capture owns
@@ -172,7 +182,16 @@ headless packet tests.
 ## Batch storage
 
 `UIBatchCollector` distinguishes owned solid, border, image, and text semantics.
-Unknown custom shaders retain normal draw commands. Common editor borders use
+Unknown custom shaders retain normal draw commands. Batch eligibility fixes
+shader, sampler, blend/depth, and feature contracts. Cohort and painter-run keys
+include primitive type, atlas or image snapshot, shader mode, clip values, pass,
+and material features. An unsupported profile uses an owned draw.
+
+Primitive slots use membership plus element incarnation. Activation registers
+the current owner; deactivation unregisters it. Old packets retain distinct
+historical slots. A shared slot lock prevents collector and owner races. A stale
+unregister cannot remove the new owner.
+ Common editor borders use
 `SetBatchBorderStyle`; solid backgrounds use `SetBatchSolidColor`. Per-control
 outline values do not require a new shader source.
 
@@ -190,7 +209,8 @@ native submission occurred and the buffers are free. Unknown failures keep their
 storage unavailable. The cohort count is bounded; inactive cohorts retire only
 with completion evidence.
 
-Unchanged render storage can reuse collected runs. Material fields use coalesced
+Unchanged render storage reuses collected runs without logical clear/re-add.
+Changed storage still traverses records; a sparse operation queue remains open. Material fields use coalesced
 dirty upload ranges. Text instance edits leave glyph buffers unchanged. Stable
 glyph ranges retain unchanged runs when another run changes length; an index
 stream selects each run without moving unrelated glyph payloads. These mechanisms
@@ -241,6 +261,23 @@ scene mutation path. Add/remove operations group structural Undo and dirty state
 including automatically added required components. Failed creation removes its
 partial component delta. Deferred completion callbacks reject rebuilt or changed
 inspector targets.
+
+Radio groups request focus through the presented packet before selecting the
+next item. Binding callbacks cannot resume a stale commit after replacement or
+disposal. Scroll controls consume directional input only while they can move.
+Popup teardown destroys owned child nodes through their normal lifecycle.
+
+Native asset file moves and rename/folder Undo operations check root boundaries
+and linked paths at execution time, including Undo and Redo. Moves stay within
+one watched asset root. Inspector component drops use the canonical property
+mutation path. Windows watcher ordering and complete workflow parity remain
+unverified. `NativeDockTree` provides a bounded, versioned split/tab model with
+move, resize, close, reopen, and malformed-state checks. The live editor host is
+not yet connected to that model.
+
+Render-command publication claims and receipt suspend/resume boundaries are
+prepared for world-space integration. No world command uses that interface yet.
+Direct world UI and sampled offscreen consumer receipts remain open.
 
 ## Opt-in fixtures
 

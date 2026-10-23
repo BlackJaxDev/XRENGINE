@@ -1358,11 +1358,7 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             Text.Render();
         }
 
-        public void Destroy()
-        {
-            if (Text.Mesh is not null)
-                Text.Mesh.Destroy();
-        }
+        public void Destroy() => Text.OnPoolableDestroyed();
     }
 
     private sealed record MathIntersectionsWorldLabelSet(UIText Title, UIText Description)
@@ -1381,10 +1377,6 @@ public sealed class MathIntersectionsWorldControllerComponent : XRComponent, IRe
             DestroyText(Description);
         }
 
-        private static void DestroyText(UIText text)
-        {
-            if (text.Mesh is not null)
-                text.Mesh.Destroy();
-        }
+        private static void DestroyText(UIText text) => text.OnPoolableDestroyed();
     }
 }

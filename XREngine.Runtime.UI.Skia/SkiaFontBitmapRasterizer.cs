@@ -11,7 +11,9 @@ public sealed class SkiaFontBitmapRasterizer : IFontBitmapRasterizer
 
     public FontBitmapAtlasResult Rasterize(string fontPath, IReadOnlyList<string> characters, string outputAtlasPath, float textSize)
     {
-        using SKTypeface typeface = SKTypeface.FromFile(fontPath)
+        byte[] sourceBytes = File.ReadAllBytes(fontPath);
+        using SKData sourceData = SKData.CreateCopy(sourceBytes);
+        using SKTypeface typeface = SKTypeface.FromData(sourceData, 0)
             ?? throw new InvalidDataException($"Unable to load font '{fontPath}'.");
         using SKPaint paint = new()
         {
@@ -30,7 +32,7 @@ public sealed class SkiaFontBitmapRasterizer : IFontBitmapRasterizer
             Hinting = SKFontHinting.Full,
         };
 
-        List<(string Character, FontGlyphSet.Glyph Glyph)> glyphInfos = [];
+        List<(string Character, ushort GlyphId, FontGlyphSet.Glyph Glyph)> glyphInfos = [];
         List<SKBitmap> glyphBitmaps = [];
         try
         {
@@ -57,7 +59,7 @@ public sealed class SkiaFontBitmapRasterizer : IFontBitmapRasterizer
                 }
 
                 glyphBitmaps.Add(bitmap);
-                glyphInfos.Add((character, new FontGlyphSet.Glyph(
+                glyphInfos.Add((character, glyphIndices[0], new FontGlyphSet.Glyph(
                     new Vector2(width, height),
                     new Vector2(-glyphBounds.Left, -glyphBounds.Top))
                 {
@@ -72,7 +74,7 @@ public sealed class SkiaFontBitmapRasterizer : IFontBitmapRasterizer
             int glyphsPerRow = (int)Math.Ceiling(Math.Sqrt(glyphInfos.Count));
             int maxGlyphWidth = 0;
             int maxGlyphHeight = 0;
-            foreach (var (_, glyph) in glyphInfos)
+            foreach (var (_, _, glyph) in glyphInfos)
             {
                 maxGlyphWidth = Math.Max(maxGlyphWidth, (int)Math.Ceiling(glyph.Size.X));
                 maxGlyphHeight = Math.Max(maxGlyphHeight, (int)Math.Ceiling(glyph.Size.Y));
@@ -103,7 +105,10 @@ public sealed class SkiaFontBitmapRasterizer : IFontBitmapRasterizer
             using (FileStream stream = new(outputAtlasPath, FileMode.Create, FileAccess.Write, FileShare.Read))
                 data.SaveTo(stream);
 
-            return new FontBitmapAtlasResult(glyphInfos.ToDictionary(item => item.Character, item => item.Glyph));
+            return new FontBitmapAtlasResult(
+                glyphInfos.ToDictionary(item => item.Character, item => item.Glyph),
+                glyphInfos.ToDictionary(item => item.Character, item => item.GlyphId),
+                sourceBytes.Length <= 16 * 1024 * 1024 ? sourceBytes : null);
         }
         finally
         {

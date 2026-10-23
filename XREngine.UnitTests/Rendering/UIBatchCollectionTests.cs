@@ -136,6 +136,70 @@ public sealed class UIBatchCollectionTests
     }
 
     [Test]
+    public void ActiveMembershipKeepsItsHandleAcrossInvisiblePublications()
+    {
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = CreateCollection(pass);
+        UIElementIdentity identity = new(31, 1);
+        ulong handle = collector.RegisterPrimitiveMembership(31, identity);
+
+        collector.CollectPublishedRuns(CreatePublication([], 1), commands, _ => Assert.Fail());
+        collector.GetRetainedPrimitiveHandle(31).ShouldBe(handle);
+        collector.RegisterPrimitiveMembership(31, identity).ShouldBe(handle);
+        commands.DiscardUpdatingCommands();
+        collector.DiscardCollectedCandidate();
+        collector.CollectPublishedRuns(CreatePublication([], 2), commands, _ => Assert.Fail());
+        collector.GetRetainedPrimitiveHandle(31).ShouldBe(handle);
+
+        collector.UnregisterPrimitiveMembership(31, handle);
+        collector.GetRetainedPrimitiveHandle(31).ShouldBe(0ul);
+        ulong replacement = collector.RegisterPrimitiveMembership(32, new UIElementIdentity(32, 1));
+        ((uint)replacement).ShouldBe((uint)handle);
+        replacement.ShouldNotBe(handle);
+    }
+
+    [Test]
+    public void ClearedCollectorRequiresFreshActivationHandle()
+    {
+        using UIBatchCollector collector = new();
+        UIElementIdentity identity = new(41, 1);
+        ulong oldHandle = collector.RegisterPrimitiveMembership(41, identity);
+
+        collector.Clear();
+        ulong newHandle = collector.RegisterPrimitiveMembership(41, identity);
+        newHandle.ShouldNotBe(oldHandle);
+        collector.UnregisterPrimitiveMembership(41, oldHandle);
+        collector.GetRetainedPrimitiveHandle(41).ShouldBe(newHandle);
+    }
+
+    [Test]
+    public void OlderPublicationCannotReplaceNewAttachmentHandle()
+    {
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = CreateCollection(pass);
+        UIElementIdentity oldIdentity = new(51, 1);
+        UIElementIdentity newIdentity = new(51, 2);
+        ulong oldHandle = collector.RegisterPrimitiveMembership(51, oldIdentity);
+        collector.UnregisterPrimitiveMembership(51, oldHandle);
+        ulong newHandle = collector.RegisterPrimitiveMembership(51, newIdentity);
+        UIRenderRecord stale = new()
+        {
+            RenderInfo = null!, MembershipId = 51, Identity = oldIdentity,
+            WorldMatrix = Matrix4x4.Identity, Bounds = new Vector4(0, 0, 10, 10),
+            RenderPass = pass, ZIndex = 0, Material = null,
+            Visible = true, SupportsBatch = true, QuadColor = Vector4.One,
+        };
+
+        collector.CollectPublishedRuns(CreatePublication([stale], 1), commands, _ => Assert.Fail());
+
+        collector.GetRetainedPrimitiveHandle(51).ShouldBe(newHandle);
+        collector.GetRetainedPrimitiveHandle(51, newIdentity).ShouldBe(newHandle);
+        collector.GetRetainedPrimitiveHandle(51, oldIdentity).ShouldNotBe(newHandle);
+    }
+
+    [Test]
     public void PublishedMaterialQuadScalesUnitGeometryByFrozenLayoutSize()
     {
         PublishedQuadProbe component = new();

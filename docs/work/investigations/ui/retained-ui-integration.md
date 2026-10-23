@@ -193,3 +193,33 @@ The zero-allocation tests cover warmed idle canvas requests and bounded input
 queries with a concrete no-op profiler. They do not measure complete frames or
 all layout edits. Inspector component actions compile in the editor; Windows
 Undo execution and desktop shader validation remain pending.
+
+## Standalone Text Ownership And Control Lifetime
+
+The first build of activation-owned slots used an incomplete required render
+record. Registration now takes its scalar identity inputs directly. Review then
+found owner/collector races and historical packets replacing current membership.
+A shared slot lock and separate current-registration map fix both cases.
+
+The next test run passed 321 of 323 cases. Popup teardown used a guarded direct
+child-list clear; it now destroys owned nodes through their lifecycle. A text
+fixture supplied an element index to a byte-offset API; the fixture now uses the
+correct byte offset. No production safety check was removed.
+
+Focused review found that standalone font callbacks could run on the wrong owner
+and that Math label teardown retained strong font observers. Callbacks now only
+mark dirtiness. The preparation/render owner consumes it under the draw gate.
+Both label teardown paths invoke full text destruction. A deterministic thread
+regression covers deferred font refresh and newer text/atlas values. The follow-up
+review found no remaining high-priority issue or new deadlock in this scope.
+
+`headless-ui-integration-build-38.log` records zero warnings/errors in 1m11.89s.
+`headless-ui-tests-18.xml` records **328/328 passes**, no skips, in 8.389s.
+`editor-ui-integration-build-14.log` records zero warnings/errors in 2m49.10s.
+These checks include the repaired popup, registration, standalone text, and
+label teardown code. They do not establish desktop execution or GPU acceptance.
+
+`desktop-ui-integration-build-2.log` records a matching full desktop test-project
+build with zero warnings/errors in 49.52s. This compiles the new HarfBuzz and font
+byte-ownership tests. Their runtime remains blocked by the Windows-targeted test
+assembly on Linux. The platform check was not bypassed or reported as a pass.

@@ -18,6 +18,9 @@
     <Compile Include="../Rendering/UITestShaderScope.cs" Link="Rendering/UITestShaderScope.cs" />
     <Compile Include="../Rendering/UITestRenderingHost.cs" Link="Rendering/UITestRenderingHost.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockLayout.cs" Link="Editor/NativeDockLayout.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockNode.cs" Link="Editor/NativeDockNode.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanel.cs" Link="Editor/NativeDockPanel.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockTree.cs" Link="Editor/NativeDockTree.cs" />
     <Compile Include="../Editor/NativeDockLayoutTests.cs" Link="Editor/NativeDockLayoutTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeAssetPathPolicy.cs" Link="Editor/NativeAssetPathPolicy.cs" />
     <Compile Include="../Editor/NativeAssetPathPolicyTests.cs" Link="Editor/NativeAssetPathPolicyTests.cs" />
@@ -41,7 +44,10 @@
     <Compile Include="../Rendering/UIBatchCohortReuseTests.cs" Link="Rendering/UIBatchCohortReuseTests.cs" />
     <Compile Include="../Rendering/CountingVirtualListProvider.cs" Link="Rendering/CountingVirtualListProvider.cs" />
     <Compile Include="../Rendering/UIVirtualCollectionTests.cs" Link="Rendering/UIVirtualCollectionTests.cs" />
+    <Compile Include="../Rendering/UIVirtualScaleTests.cs" Link="Rendering/UIVirtualScaleTests.cs" />
+    <Compile Include="../Rendering/FocusVirtualListProvider.cs" Link="Rendering/FocusVirtualListProvider.cs" />
     <Compile Include="../Rendering/UITextLayoutKernelTests.cs" Link="Rendering/UITextLayoutKernelTests.cs" />
+    <Compile Include="../Rendering/UITextValueLayoutTests.cs" Link="Rendering/UITextValueLayoutTests.cs" />
     <Compile Include="../Rendering/UIRetainedControlsTests.cs" Link="Rendering/UIRetainedControlsTests.cs" />
     <Compile Include="../Rendering/UIChangeJournalTests.cs" Link="Rendering/UIChangeJournalTests.cs" />
     <Compile Include="../Rendering/UIChangeTrackingTests.cs" Link="Rendering/UIChangeTrackingTests.cs" />
