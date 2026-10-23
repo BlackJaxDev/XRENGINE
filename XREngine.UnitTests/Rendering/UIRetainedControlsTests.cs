@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using System.Globalization;
 using System.Numerics;
 using Shouldly;
 using XREngine.Data.Colors;
@@ -282,6 +283,147 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void NumericInput_UsesBoundsCultureAndCheckedStepsAtCommit()
+    {
+        SceneNode root = new("Numeric policy", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode field = new(root) { Name = "Number" };
+        field.SetTransform<UIBoundableTransform>();
+        field.AddComponent<UITextComponent>();
+        UIIntInputComponent input = field.AddComponent<UIIntInputComponent>()!;
+        UIValueState<string> binding = new("9");
+        input.Binding = binding;
+        input.Minimum = 0;
+        input.Maximum = 10;
+        input.Step = 2;
+        root.IsActiveSelf = true;
+
+        input.TryStep(1).ShouldBeTrue();
+        input.Text.ShouldBe("10");
+        binding.Value.ShouldBe("10");
+        input.TryStep(1).ShouldBeFalse();
+        input.Text = "11";
+        input.PostValidateInput(input.Text).ShouldBeFalse();
+        input.UserSubmit();
+        binding.Value.ShouldBe("10");
+        input.UserCancel();
+        input.Text.ShouldBe("10");
+        Should.Throw<ArgumentOutOfRangeException>(() => input.Minimum = 11);
+
+        UIFloatInputComponent floating = new() { Culture = CultureInfo.GetCultureInfo("fr-FR") };
+        floating.PostValidateInput("1,5").ShouldBeTrue();
+        floating.PostValidateInput("NaN").ShouldBeFalse();
+        floating.PostValidateInput("Infinity").ShouldBeFalse();
+
+        SceneNode largeField = new(root) { Name = "Large number" };
+        largeField.SetTransform<UIBoundableTransform>();
+        largeField.AddComponent<UITextComponent>();
+        UIULongInputComponent large = largeField.AddComponent<UIULongInputComponent>()!;
+        large.Text = ulong.MaxValue.ToString(CultureInfo.InvariantCulture);
+        large.TryStep(1).ShouldBeFalse();
+        large.Text.ShouldBe(ulong.MaxValue.ToString(CultureInfo.InvariantCulture));
+
+        SceneNode wideField = new(root) { Name = "Wide exponent" };
+        wideField.SetTransform<UIBoundableTransform>();
+        wideField.AddComponent<UITextComponent>();
+        UIDoubleInputComponent wide = wideField.AddComponent<UIDoubleInputComponent>()!;
+        wide.Culture = CultureInfo.InvariantCulture;
+        wide.Text = "1E+100";
+        wide.Step = 1e100;
+        wide.TryStep(1).ShouldBeTrue();
+        double.Parse(wide.Text, CultureInfo.InvariantCulture).ShouldBe(2e100);
+
+        SceneNode tinyField = new(root) { Name = "Tiny exponent" };
+        tinyField.SetTransform<UIBoundableTransform>();
+        tinyField.AddComponent<UITextComponent>();
+        UIFloatInputComponent tiny = tinyField.AddComponent<UIFloatInputComponent>()!;
+        tiny.Culture = CultureInfo.InvariantCulture;
+        tiny.Text = "1E-30";
+        tiny.Step = 1e-30f;
+        tiny.TryStep(1).ShouldBeTrue();
+        float.Parse(tiny.Text, CultureInfo.InvariantCulture).ShouldBe(2e-30f);
+    }
+
+    [Test]
+    public void NumericAltScrub_PreviewsThenCommitsOrCancelsOneBindingWrite()
+    {
+        SceneNode root = new("Numeric scrub", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        UICanvasInputComponent canvasInput = root.AddComponent<UICanvasInputComponent>()!;
+        SceneNode field = new(root) { Name = "Number" };
+        field.SetTransform<UIBoundableTransform>();
+        field.AddComponent<UITextComponent>();
+        UIIntInputComponent input = field.AddComponent<UIIntInputComponent>()!;
+        UIValueState<string> binding = new("5");
+        int writes = 0;
+        binding.ValueChanged += _ => writes++;
+        input.Binding = binding;
+        input.Minimum = 0;
+        input.Maximum = 10;
+        root.IsActiveSelf = true;
+        var alt = typeof(UICanvasInputComponent).GetMethod("OnAltLeftStateChanged",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
+        input.PointerPressed(Vector2.Zero);
+        input.MouseMoved(Vector2.Zero, new Vector2(24, 0));
+        input.IsScrubbing.ShouldBeFalse();
+        binding.Value.ShouldBe("5");
+        input.PointerReleased(new Vector2(24, 0), true);
+
+        alt.Invoke(canvasInput, [true]);
+        input.PointerPressed(Vector2.Zero);
+        input.IsScrubbing.ShouldBeTrue();
+        input.MouseMoved(Vector2.Zero, new Vector2(24, 0));
+        input.Text.ShouldBe("8");
+        binding.Value.ShouldBe("5");
+        input.PointerCancelled();
+        input.Text.ShouldBe("5");
+        writes.ShouldBe(0);
+
+        input.PointerPressed(Vector2.Zero);
+        input.MouseMoved(Vector2.Zero, new Vector2(24, 0));
+        input.UserCancel();
+        input.MouseMoved(new Vector2(24, 0), new Vector2(32, 0));
+        input.PointerReleased(new Vector2(32, 0), true);
+        input.Text.ShouldBe("5");
+        writes.ShouldBe(0);
+
+        input.PointerPressed(Vector2.Zero);
+        input.MouseMoved(Vector2.Zero, new Vector2(24, 0));
+        input.UserSubmit();
+        input.MouseMoved(new Vector2(24, 0), new Vector2(32, 0));
+        input.PointerReleased(new Vector2(32, 0), true);
+        binding.Value.ShouldBe("8");
+        writes.ShouldBe(1);
+
+        SceneNode signedField = new(root) { Name = "Signed number" };
+        signedField.SetTransform<UIBoundableTransform>();
+        signedField.AddComponent<UITextComponent>();
+        UISByteInputComponent signed = signedField.AddComponent<UISByteInputComponent>()!;
+        signed.Text = "-100";
+        signed.Step = 100;
+        signed.PointerPressed(Vector2.Zero);
+        signed.MouseMoved(Vector2.Zero, new Vector2(16, 0));
+        signed.Text.ShouldBe("100");
+        signed.EnableAltScrub = false;
+        signed.IsScrubbing.ShouldBeFalse();
+        signed.Text.ShouldBe("-100");
+
+        signed.EnableAltScrub = true;
+        signed.Text = "100";
+        signed.Step = 1;
+        signed.PointerPressed(Vector2.Zero);
+        signed.MouseMoved(Vector2.Zero, new Vector2(-1200, 0));
+        signed.Text.ShouldBe("-50");
+        signed.PointerCancelled();
+        signed.Text.ShouldBe("100");
+    }
+
+    [Test]
     public void RangeDrag_CancelsPreviewAndCommitsOnceAtRelease()
     {
         SceneNode root = new("Range test canvas", new UICanvasTransform()) { IsActiveSelf = false };
@@ -340,6 +482,38 @@ public sealed class UIRetainedControlsTests
         slider.Binding.ShouldBeSameAs(replacement);
         slider.Value.ShouldBe(0.4);
         commits.ShouldBe(0);
+    }
+
+    [Test]
+    public void RangeDrag_UsesPressedWidthAfterNewLayoutIsAccepted()
+    {
+        UICanvasTransform canvas = new();
+        canvas.SetSize(new Vector2(240, 40));
+        SceneNode root = new("Resized range", canvas) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode node = new(root) { Name = "Range" };
+        UIBoundableTransform track = node.SetTransform<UIBoundableTransform>();
+        track.MinAnchor = Vector2.Zero;
+        track.MaxAnchor = Vector2.Zero;
+        track.Width = 100;
+        track.Height = 20;
+        UIRangeSliderComponent slider = node.AddComponent<UIRangeSliderComponent>()!;
+        root.IsActiveSelf = true;
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        track.ActualWidth.ShouldBe(100);
+
+        UIPointerGeometry pressed = new(new Vector2(100, 20));
+        slider.PointerPressed(new Vector2(50, 10), pressed);
+        track.Width = 200;
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() => canvas.PumpLayoutResults() && track.ActualWidth == 200,
+            TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        slider.MouseMoved(new Vector2(50, 10), new Vector2(75, 10), pressed);
+        slider.Value.ShouldBe(0.75, 0.00001);
+        slider.PointerReleased(new Vector2(75, 10), true, pressed);
     }
 
     [Test]
@@ -632,6 +806,105 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void Scrollbar_DragsWithinAcceptedExtentAndLeavesDirectionalScrollAvailable()
+    {
+        UICanvasTransform canvas = new();
+        canvas.SetSize(new Vector2(100, 80));
+        SceneNode root = new("Scrollbar canvas", canvas) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode scrollNode = new(root) { Name = "Scroll" };
+        UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+        UIScrollRegionComponent region = scrollNode.AddComponent<UIScrollRegionComponent>()!;
+        SceneNode contentNode = new(scrollNode) { Name = "Content" };
+        UIBoundableTransform content = contentNode.SetTransform<UIBoundableTransform>();
+        content.MinAnchor = Vector2.Zero;
+        content.MaxAnchor = Vector2.Zero;
+        content.Width = 240;
+        content.Height = 80;
+        SceneNode trackNode = new(root) { Name = "Horizontal track" };
+        UIBoundableTransform track = trackNode.SetTransform<UIBoundableTransform>();
+        track.MinAnchor = Vector2.Zero;
+        track.MaxAnchor = Vector2.Zero;
+        track.Width = 100;
+        track.Height = 10;
+        UIScrollbarComponent scrollbar = trackNode.AddComponent<UIScrollbarComponent>()!;
+        scrollbar.Horizontal = true;
+        scrollbar.ScrollTarget = scroll;
+        root.IsActiveSelf = true;
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        scroll.ContentExtent.X.ShouldBe(240);
+        track.ActualWidth.ShouldBe(100);
+
+        scrollbar.PointerPressed(new Vector2(90, 5));
+        scroll.ScrollOffset.X.ShouldBeGreaterThan(0);
+        scrollbar.ThumbTransform.ShouldNotBeNull().Width!.Value.ShouldBeLessThan(100f);
+        scrollbar.MouseMoved(new Vector2(90, 5), new Vector2(0, 5));
+        scrollbar.PointerReleased(new Vector2(0, 5), true);
+        scroll.ScrollOffset.X.ShouldBe(0);
+        region.TryConsumeFocusDirection(Vector2.UnitX).ShouldBeTrue();
+        scroll.ScrollOffset.X.ShouldBe(48);
+
+        scrollbar.AccessibilityAdjust(1).ShouldBeTrue();
+        ulong beforeAcceptedThumb = canvas.CurrentLayoutGeneration;
+        canvas.UpdateLayoutAsync();
+        bool acceptedReady = SpinWait.SpinUntil(() =>
+        {
+            canvas.PumpLayoutResults();
+            UIBoundableTransform? thumb = scrollbar.ThumbTransform;
+            return canvas.CurrentLayoutGeneration > beforeAcceptedThumb && thumb is not null &&
+                scrollbar.TryCapturePointerGeometry(new Vector2(100, 10), thumb.ActualSize,
+                    thumb.ActualLocalBottomLeftTranslation, scroll.ScrollOffset,
+                    scroll.MaxScrollOffset, out _);
+        }, TimeSpan.FromSeconds(5));
+        if (!acceptedReady)
+        {
+            UIBoundableTransform? thumb = scrollbar.ThumbTransform;
+            float travel = 100 - (thumb?.ActualWidth ?? 0);
+            float expectedStart = scroll.MaxScrollOffset.X > 0
+                ? Math.Clamp(scroll.ScrollOffset.X / scroll.MaxScrollOffset.X, 0, 1) * travel
+                : float.NaN;
+            Assert.Fail($"Accepted scrollbar geometry did not settle: generation={canvas.CurrentLayoutGeneration}, " +
+                $"before={beforeAcceptedThumb}, trackActual={track.ActualSize}, thumbActual={thumb?.ActualSize}, " +
+                $"thumbActualTranslation={thumb?.ActualLocalBottomLeftTranslation}, " +
+                $"thumbRequestedTranslation={thumb?.Translation}, expectedStart={expectedStart}, " +
+                $"scrollOffset={scroll.ScrollOffset}, maxOffset={scroll.MaxScrollOffset}, " +
+                $"viewport={scroll.ViewportExtent}, content={scroll.ContentExtent}, " +
+                $"contentChildActual={content.ActualLocalBottomLeftTranslation}, " +
+                $"canInteract={scrollbar.CanInteract}, readOnly={scrollbar.IsReadOnly}, " +
+                $"scrollable={scroll.Scrollable}, scrollableX={scroll.ScrollableX}, " +
+                $"targetMatches={ReferenceEquals(scrollbar.ScrollTarget, scroll)}, thumbVisibility={thumb?.Visibility}.");
+        }
+        UIBoundableTransform acceptedThumb = scrollbar.ThumbTransform.ShouldNotBeNull();
+        scroll.ContentExtent.X.ShouldBe(240);
+        scrollbar.TryCapturePointerGeometry(new Vector2(100, 10), acceptedThumb.ActualSize,
+            acceptedThumb.ActualLocalBottomLeftTranslation, scroll.ScrollOffset, scroll.MaxScrollOffset,
+            out UIScrollbarPointerMetrics frozen).ShouldBeTrue();
+        UIPointerGeometry pressed = new(new Vector2(100, 10), frozen);
+        float grabX = frozen.ThumbStart + frozen.ThumbLength * 0.5f;
+        scrollbar.PointerPressed(new Vector2(grabX, 5), pressed);
+        track.Width = 200;
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() => canvas.PumpLayoutResults() && track.ActualWidth == 200,
+            TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        float movedX = grabX + 10;
+        scrollbar.MouseMoved(new Vector2(grabX, 5), new Vector2(movedX, 5), pressed);
+        float expected = Math.Clamp((frozen.ThumbStart + 10) /
+            (frozen.TrackLength - frozen.ThumbLength), 0, 1) * frozen.MaximumOffset;
+        scroll.ScrollOffset.X.ShouldBe(expected, 0.01f);
+        scrollbar.MinimumThumbPixels = 16;
+        float beforeInvalidMove = scroll.ScrollOffset.X;
+        scrollbar.MouseMoved(new Vector2(movedX, 5), new Vector2(movedX + 10, 5), pressed);
+        scroll.ScrollOffset.X.ShouldBe(beforeInvalidMove);
+        scrollbar.PointerReleased(new Vector2(movedX + 10, 5), true, pressed);
+        SceneNode ownedThumb = scrollbar.ThumbTransform.ShouldNotBeNull().SceneNode.ShouldNotBeNull();
+        scrollbar.Destroy(true);
+        ownedThumb.IsDestroyed.ShouldBeTrue();
+    }
+
+    [Test]
     public void ImeSnapshot_CoalescesPreeditButKeepsCommitUntilConsumed()
     {
         WindowInputSnapshotAccumulator input = new();
@@ -664,6 +937,96 @@ public sealed class UIRetainedControlsTests
         combo.AccessibilityValue.ShouldBe("Renamed");
         combo.Select(99).ShouldBeFalse();
         combo.SelectedId.ShouldBe(8UL);
+    }
+
+    [Test]
+    public void ComboTypeAhead_SkipsDisabledOptionsAndUsesVirtualPrefixIndex()
+    {
+        SceneNode root = new("Combo typeahead", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode node = new(root) { Name = "Combo" };
+        node.SetTransform<UIBoundableTransform>();
+        UIComboBoxComponent combo = node.AddComponent<UIComboBoxComponent>()!;
+        combo.SetOptions([new(1, "Alpha"), new(2, "Beta", false),
+            new(3, "Bravo"), new(4, "Birch")]);
+        root.IsActiveSelf = true;
+
+        combo.TypeAhead('b').ShouldBeTrue();
+        combo.SelectedId.ShouldBe(3UL);
+        combo.TypeAhead('i').ShouldBeTrue();
+        combo.SelectedId.ShouldBe(4UL);
+
+        SearchOnlyComboOptions virtualOptions = new();
+        combo.VirtualOptions = virtualOptions;
+        combo.TypeAhead('r').ShouldBeTrue();
+        combo.SelectedId.ShouldBe(12345UL);
+        virtualOptions.SearchCount.ShouldBe(1);
+        virtualOptions.GetCount.ShouldBe(1);
+    }
+
+    private sealed class SearchOnlyComboOptions : IUIComboOptionSource, IUIComboPrefixSearch
+    {
+        public int Count => 1_000_000;
+        public ulong Revision => 1;
+        public int SearchCount { get; private set; }
+        public int GetCount { get; private set; }
+        public int IndexOfId(ulong id) => id == 12345 ? 12345 : -1;
+        public int FindPrefix(string prefix, int startIndex)
+        {
+            SearchCount++;
+            return prefix.Equals("r", StringComparison.OrdinalIgnoreCase) ? 12345 : -1;
+        }
+        public UIComboOption GetOption(int index)
+        {
+            GetCount++;
+            if (index != 12345)
+                throw new InvalidOperationException("The combo scanned the virtual source.");
+            return new UIComboOption(12345, "Ruby");
+        }
+    }
+
+    [Test]
+    public void VirtualComboRowsUseIntrinsicBackgroundsWithoutPrivateMaterials()
+    {
+        using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        UIComboBoxComponent combo = new() { VirtualOptions = new SingleComboOptionSource() };
+        object adapter = typeof(UIComboBoxComponent)
+            .GetField("_virtualAdapter", System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(combo)!;
+        IVirtualListProvider provider = (IVirtualListProvider)adapter;
+        UIBoundableTransform first = provider.CreateRow();
+        UIBoundableTransform second = provider.CreateRow();
+        try
+        {
+            UIMaterialComponent firstBackground = first.SceneNode!.GetComponent<UIMaterialComponent>()!;
+            UIMaterialComponent secondBackground = second.SceneNode!.GetComponent<UIMaterialComponent>()!;
+            firstBackground.Mesh.ShouldBeNull();
+            secondBackground.Mesh.ShouldBeNull();
+            firstBackground.SupportsBatchedRendering.ShouldBeTrue();
+            secondBackground.SupportsBatchedRendering.ShouldBeTrue();
+            firstBackground.SetBatchSolidColor(new Vector4(1, 0, 0, 1));
+            firstBackground.Mesh.ShouldBeNull();
+            secondBackground.Mesh.ShouldBeNull();
+        }
+        finally
+        {
+            first.SceneNode!.Destroy(true);
+            second.SceneNode!.Destroy(true);
+            combo.Destroy(true);
+        }
+    }
+
+    private sealed class SingleComboOptionSource : IUIComboOptionSource
+    {
+        public int Count => 1;
+        public ulong Revision => 1;
+        public UIComboOption GetOption(int index) => index == 0
+            ? new UIComboOption(1, "First") : throw new ArgumentOutOfRangeException(nameof(index));
+        public int IndexOfId(ulong id) => id == 1 ? 0 : -1;
     }
 
     [Test]

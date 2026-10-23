@@ -520,6 +520,10 @@ namespace XREngine.Rendering.UI
         protected override void OnDestroying()
         {
             Volatile.Write(ref _viewportProducerDestroyed, 1);
+            RuntimeEngine.Time.Timer.SwapBuffers -= SwapBuffers;
+            RuntimeEngine.Time.Timer.CollectVisible -= CollectVisible;
+            if (RenderCommand3D.Mesh is { } renderer)
+                renderer.SettingUniforms -= SetUniforms;
             UnhookRenderWindow();
             Volatile.Write(ref _publishedSurface, null);
             try { base.OnDestroying(); }

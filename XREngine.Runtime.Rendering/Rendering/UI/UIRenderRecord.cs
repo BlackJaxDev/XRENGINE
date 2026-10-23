@@ -41,6 +41,8 @@ public readonly record struct UIRenderRecord
     public RenderCommandMesh2D? FrozenCommand { get; init; }
     public RenderCommandMesh3D? FrozenWorldCommand { get; init; }
     public bool WorldCastsShadows { get; init; }
+    public int WorldLayer { get; init; }
+    public Box? WorldCullingVolume { get; init; }
     public UIDrawPayload? Payload { get; init; }
     public string? CaptureFailure { get; init; }
     internal UITextureSnapshot? TextureSnapshot { get; init; }

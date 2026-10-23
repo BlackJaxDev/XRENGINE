@@ -6,8 +6,8 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **37 of 60 implementation items are complete**.
-The active TODO has 23 code items and four owner decisions. Later sections
+Latest code reconciliation: **38 of 60 implementation items are complete**.
+The active TODO has 22 code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -300,3 +300,44 @@ passed**, with no warnings or skips, in 8.269s. The matching editor build passed
 test compilation passed with zero warnings/errors in 47.18s. Source hashes
 confirmed the same snapshot. No GPU, visual,
 Windows execution, native IME, multi-window, or ImGui comparison pass is claimed.
+
+## Presented Control Geometry And Media Teardown
+
+This checkpoint closes the shared-material prototype item. The total is
+**38 of 60 implementation items**; 22 code items and four owner decisions remain.
+It adds immutable solid, border, image, and text material definitions. Mutable material state remains private to each retained draw cohort.
+Common controls keep their values in instance records. Tests check independent
+primitive values, separate raster state, and virtual combo row materials.
+
+The other changes advance open items:
+
+- Slider and scrollbar dispatch retains the displayed press packet and its
+  control geometry. Callback reentry cannot replace the old handler's geometry
+  or release a new capture. Scrollbar capture rejects stale content limits and
+  schedules a coalesced follow-up layout.
+- Numeric fields share parsing, limits, steps, and Alt-drag edits. Submit or
+  cancel ends a drag. Combo typeahead supports bounded local options and indexed
+  virtual sources. Large-provider capability reporting and bounded disabled-row
+  navigation remain open.
+- IME candidate placement uses the displayed caret record. Candidate updates
+  stop before composition cancellation. Full paragraph analysis remains pending
+  an owner decision; no new text dependency has been added.
+- The primary native scene view uses presented geometry for pointer mapping and
+  validates scene, pane, input, camera, and window ownership before delayed pick
+  results apply. It exposes canonical transform mode and space controls.
+  Detached scene input remains open.
+- Video teardown settles the old session, audio callbacks, and GPU helper even
+  when external callbacks reenter or throw. GPU helper disposal runs on its
+  render owner. Viewport callbacks and property-text polling stop on destruction.
+  Web backend teardown remains open.
+- World records freeze layer and culling values. Registration suppression now
+  preserves authored visibility. The direct-world proxy/receipt route remains
+  inactive; this does not close world publication or clipping.
+
+The final headless build passed with zero warnings/errors in 1m45.89s. All
+**437 tests passed**, with no warnings or skips, in 11.643s. The matching editor
+build passed with zero warnings/errors in 3m21.83s; desktop test compilation
+passed with zero warnings/errors in 47.16s. Hashes confirmed the same 9,882-file
+source snapshot. All 31 local document links resolve; the whitespace check
+passes. Windows execution, GPU and visual checks, IME runtime acceptance,
+multi-window workflows, and equivalent ImGui measurements remain pending.

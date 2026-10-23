@@ -17,6 +17,7 @@ namespace XREngine.Rendering.Info
     {
         private IRuntimeRenderInfo3DRegistrationTarget? _registeredWorldInstance;
         private bool _reconcilingWorldRegistration;
+        private bool _collectionSuppressed;
 
         public override ITreeNode? TreeNode => OctreeNode;
 
@@ -239,6 +240,18 @@ namespace XREngine.Rendering.Info
             return containsOnly ? containment == EContainment.Contains : containment != EContainment.Disjoint;
         }
 
+        /// <summary>Captures the resolved world bound for an owner-built render packet.</summary>
+        internal Box? CaptureWorldCullingVolume() => ((IOctreeItem)this).WorldCullingVolume;
+
+        /// <summary>Stops scene collection without changing authored visibility.</summary>
+        internal void SetCollectionSuppressed(bool suppressed)
+        {
+            if (_collectionSuppressed == suppressed)
+                return;
+            _collectionSuppressed = suppressed;
+            ReconcileWorldRegistration(disposing: false);
+        }
+
         private static EContainment ClassifyWorldCullingVolume(IVolume? cullingVolume, in Box worldCullingVolume)
         {
             if (cullingVolume is null)
@@ -297,7 +310,8 @@ namespace XREngine.Rendering.Info
                 for (int attempt = 0; attempt < 16; attempt++)
                 {
                     IRuntimeRenderInfo3DRegistrationTarget? desired =
-                        !disposing && !IsDisposalRequested && IsVisible ? WorldInstance : null;
+                        !disposing && !_collectionSuppressed && !IsDisposalRequested && IsVisible
+                            ? WorldInstance : null;
                     IRuntimeRenderInfo3DRegistrationTarget? registered = _registeredWorldInstance;
                     if (ReferenceEquals(registered, desired))
                         return;

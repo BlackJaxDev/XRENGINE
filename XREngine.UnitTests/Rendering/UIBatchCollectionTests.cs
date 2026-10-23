@@ -13,6 +13,7 @@ using XREngine.Rendering.UI;
 using XREngine.Rendering.UI.State;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.UnitTests.Rendering;
@@ -270,6 +271,78 @@ public sealed class UIBatchCollectionTests
     }
 
     [Test]
+    public void CommonSolidAndBorderCaptureIndependentValuesWithoutPrivateMaterials()
+    {
+        using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        XREngine.Scene.SceneNode root = new("Common primitives", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        root.SetWorldContext(new XREngine.UnitTests.Physics.TestWorldContext());
+        root.AddComponent<XREngine.Components.UICanvasComponent>();
+        XREngine.Scene.SceneNode solidNode = new(root) { Name = "Solid" };
+        solidNode.SetTransform<UIBoundableTransform>();
+        UIMaterialComponent solid = solidNode.AddComponent<UIMaterialComponent>()!;
+        XREngine.Scene.SceneNode borderNode = new(root) { Name = "Border" };
+        borderNode.SetTransform<UIBoundableTransform>();
+        UIMaterialComponent border = borderNode.AddComponent<UIMaterialComponent>()!;
+        try
+        {
+            root.IsActiveSelf = true;
+            Vector4 red = new(1, 0, 0, 1);
+            Vector4 blue = new(0, 0, 1, 1);
+            solid.SetBatchSolidColor(red);
+            border.SetBatchBorderStyle(blue, Vector4.One, 2);
+            UILayoutNodeOutput output = new() { Visible = true, ActualSize = new Vector2(40, 20) };
+
+            UIRenderRecord solidRecord = solid.CapturePublicationRenderRecord(in output);
+            UIRenderRecord borderRecord = border.CapturePublicationRenderRecord(in output);
+            solidRecord.Material.ShouldBeNull();
+            borderRecord.Material.ShouldBeNull();
+            solid.Mesh.ShouldBeNull();
+            border.Mesh.ShouldBeNull();
+            solidRecord.QuadColor.ShouldBe(red);
+            borderRecord.QuadColor.ShouldBe(blue);
+            solidRecord.IsBorder.ShouldBeFalse();
+            borderRecord.IsBorder.ShouldBeTrue();
+            borderRecord.BorderColor.ShouldBe(Vector4.One);
+            borderRecord.BorderWidth.ShouldBe(2);
+
+            solid.SetBatchSolidColor(new Vector4(0, 1, 0, 1));
+            solid.CapturePublicationRenderRecord(in output).QuadColor.ShouldNotBe(borderRecord.QuadColor);
+            border.Mesh.ShouldBeNull();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void SharedPrimitiveDefinitionCreatesIndependentMutableRasterState()
+    {
+        var first = UIBatchMaterialPrototype.Solid.CreateRenderOptions(false);
+        var second = UIBatchMaterialPrototype.Solid.CreateRenderOptions(false);
+        var image = UIBatchMaterialPrototype.Image.CreateRenderOptions(false);
+        var border = UIBatchMaterialPrototype.Border.CreateRenderOptions(false);
+        try
+        {
+            first.ShouldNotBeSameAs(second);
+            first.DepthTest.ShouldNotBeSameAs(second.DepthTest);
+            first.BlendModeAllDrawBuffers.ShouldNotBeSameAs(second.BlendModeAllDrawBuffers);
+            first.DepthTest.Enabled = ERenderParamUsage.Enabled;
+            second.DepthTest.IsDisabled.ShouldBeTrue();
+            image.DepthTest.UpdateDepth.ShouldBeFalse();
+            border.DepthTest.UpdateDepth.ShouldBeTrue();
+        }
+        finally
+        {
+            first.Destroy(true);
+            second.Destroy(true);
+            image.Destroy(true);
+            border.Destroy(true);
+        }
+    }
+
+    [Test]
     public void IntrinsicAtlasImageKeepsPerInstanceUvAndConditionalUnbind()
     {
         using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
@@ -382,7 +455,7 @@ public sealed class UIBatchCollectionTests
         component.RenderInfo3D.IsVisible = true;
 
         component.SetCanvasWorldCollectionSuppressed(true);
-        component.RenderInfo3D.IsVisible.ShouldBeFalse();
+        component.RenderInfo3D.IsVisible.ShouldBeTrue();
         component.SetCanvasWorldCollectionSuppressed(false);
         component.RenderInfo3D.IsVisible.ShouldBeTrue();
 
@@ -390,6 +463,43 @@ public sealed class UIBatchCollectionTests
         component.SetCanvasWorldCollectionSuppressed(true);
         component.SetCanvasWorldCollectionSuppressed(false);
         component.RenderInfo3D.IsVisible.ShouldBeFalse();
+        component.Destroy(true);
+    }
+
+    [Test]
+    public void CanvasWorldCollectionSuppressionTracksAuthoredVisibilityWithoutRegistering()
+    {
+        UIMaterialComponent component = new();
+        RegistrationTargetProbe target = new();
+        RenderInfo3D info = component.RenderInfo3D;
+        try
+        {
+            info.IsVisible = false;
+            info.WorldInstance = target;
+            target.Entries.ShouldBeEmpty();
+
+            component.SetCanvasWorldCollectionSuppressed(true);
+            info.IsVisible = false; // A repeated authored value must not restore registration.
+            component.SetCanvasWorldCollectionSuppressed(false);
+            target.Entries.ShouldBeEmpty();
+
+            info.IsVisible = true;
+            target.Entries.ShouldContain(info);
+            component.SetCanvasWorldCollectionSuppressed(true);
+            info.IsVisible.ShouldBeTrue();
+            target.Entries.ShouldBeEmpty();
+
+            info.IsVisible = false;
+            component.SetCanvasWorldCollectionSuppressed(false);
+            target.Entries.ShouldBeEmpty();
+            info.IsVisible = true;
+            target.Entries.ShouldContain(info);
+        }
+        finally
+        {
+            component.Destroy(true);
+        }
+        target.Entries.ShouldBeEmpty();
     }
 
     [Test]
@@ -764,6 +874,17 @@ public sealed class UIBatchCollectionTests
     {
         public Matrix4x4 Compose(in UILayoutNodeOutput output, in Matrix4x4 canvasMatrix)
             => CapturePublicationModelMatrix(in output, in canvasMatrix);
+    }
+
+    private sealed class RegistrationTargetProbe : IRuntimeRenderInfo3DRegistrationTarget
+    {
+        public HashSet<IRuntimeRenderInfo3DRegistrationItem> Entries { get; } = [];
+
+        public void AddRenderable3D(IRuntimeRenderInfo3DRegistrationItem renderable)
+            => Entries.Add(renderable);
+
+        public void RemoveRenderable3D(IRuntimeRenderInfo3DRegistrationItem renderable)
+            => Entries.Remove(renderable);
     }
 
     private static UIPublication CreatePublication(UIRenderRecord[] records, ulong generation)

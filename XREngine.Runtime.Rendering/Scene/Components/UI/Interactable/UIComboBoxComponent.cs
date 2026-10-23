@@ -1,10 +1,10 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Numerics;
 using XREngine.Input.Devices;
 using XREngine.Input;
 using XREngine.Rendering.UI.State;
 using XREngine.Data.Colors;
-using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.UI
@@ -21,6 +21,10 @@ namespace XREngine.Rendering.UI
         private IUIValueBinding<ulong?>? _binding;
         private bool _writingBinding;
         private bool _restoreFocusOnDismiss;
+        private string _typeAhead = string.Empty;
+        private long _lastTypeAheadTick;
+        private const int MaximumTypeAheadLength = 64;
+        private const double TypeAheadTimeoutSeconds = 1;
 
         public UIComboBoxComponent()
         {
@@ -214,6 +218,7 @@ namespace XREngine.Rendering.UI
         public void Close()
         {
             _restoreFocusOnDismiss = false;
+            _typeAhead = string.Empty;
             _popup?.Hide();
         }
 
@@ -257,11 +262,80 @@ namespace XREngine.Rendering.UI
         public override void RegisterInput(IInputRegistration input)
         {
             base.RegisterInput(input);
+            input.RegisterKeyCharacter(OnTypeAheadCharacter);
             input.RegisterKeyStateChange(EKey.Down, SelectNext);
             input.RegisterKeyStateChange(EKey.Up, SelectPrevious);
             input.RegisterKeyStateChange(EKey.Escape, Escape);
             input.RegisterKeyStateChange(EKey.Enter, OpenKey);
             input.RegisterKeyStateChange(EKey.Space, OpenKey);
+        }
+
+        private void OnTypeAheadCharacter(char character) => TypeAhead(character);
+
+        /// <summary>Selects an enabled option that starts with the entered text.</summary>
+        public bool TypeAhead(char character)
+        {
+            if (!CanInteract || IsReadOnly || char.IsControl(character) || char.IsSurrogate(character))
+                return false;
+            long now = Stopwatch.GetTimestamp();
+            bool expired = _lastTypeAheadTick == 0 ||
+                Stopwatch.GetElapsedTime(_lastTypeAheadTick, now).TotalSeconds > TypeAheadTimeoutSeconds;
+            _lastTypeAheadTick = now;
+            string prefix = expired || _typeAhead.Length >= MaximumTypeAheadLength
+                ? character.ToString() : _typeAhead + character;
+            if (TrySelectPrefix(prefix))
+            {
+                _typeAhead = prefix;
+                return true;
+            }
+            prefix = character.ToString();
+            if (TrySelectPrefix(prefix))
+            {
+                _typeAhead = prefix;
+                return true;
+            }
+            _typeAhead = string.Empty;
+            return false;
+        }
+
+        private bool TrySelectPrefix(string prefix)
+        {
+            int count = _virtualOptions?.Count ?? _options.Length;
+            if (count <= 0)
+                return false;
+            int selectedIndex = -1;
+            if (_selectedId is { } selected)
+            {
+                if (_virtualOptions is not null)
+                    selectedIndex = _virtualOptions.IndexOfId(selected);
+                else
+                    for (int i = 0; i < _options.Length; i++)
+                        if (_options[i].Id == selected)
+                        {
+                            selectedIndex = i;
+                            break;
+                        }
+            }
+            int start = (selectedIndex + 1) % count;
+            if (_virtualOptions is IUIComboPrefixSearch search)
+            {
+                int match = search.FindPrefix(prefix, start);
+                if (match < 0 || match >= count)
+                    return false;
+                UIComboOption option = _virtualOptions.GetOption(match);
+                return option.IsEnabled && option.Label.StartsWith(prefix, StringComparison.CurrentCultureIgnoreCase) &&
+                    Select(option.Id, EUIValueChangeOrigin.User);
+            }
+            if (count > MaximumPopupOptions)
+                return false;
+            for (int offset = 0; offset < count; offset++)
+            {
+                int index = (start + offset) % count;
+                UIComboOption option = _virtualOptions?.GetOption(index) ?? _options[index];
+                if (option.IsEnabled && option.Label.StartsWith(prefix, StringComparison.CurrentCultureIgnoreCase))
+                    return Select(option.Id, EUIValueChangeOrigin.User);
+            }
+            return false;
         }
 
         private void Escape(bool pressed)
@@ -346,9 +420,7 @@ namespace XREngine.Rendering.UI
                 button.DefaultBackgroundColor = ColorF4.DarkGray;
                 button.HighlightBackgroundColor = ColorF4.LightGray;
                 UIMaterialComponent background = node.AddComponent<UIMaterialComponent>()!;
-                XRMaterial material = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.DarkGray);
-                material.EnableTransparency();
-                background.Material = material;
+                background.SetBatchSolidColor(ColorF4.DarkGray);
                 node.NewChild<UITextComponent>(out var label);
                 label.FontSize = UIContextMenuComponent.FontSize;
                 label.Color = UIContextMenuComponent.ItemDefaultTextColor;

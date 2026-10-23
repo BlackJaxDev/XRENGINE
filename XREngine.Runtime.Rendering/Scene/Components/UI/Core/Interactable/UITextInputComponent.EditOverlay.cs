@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Scene;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering.UI;
 
@@ -14,6 +15,22 @@ public partial class UITextInputComponent
     private int _overlaySelectionStart = -1;
     private int _overlaySelectionEnd = -1;
     private bool _overlayTickRegistered;
+
+    /// <summary>Gets the caret overlay key for lookup in a presented UI packet.</summary>
+    public bool TryGetCaretOverlayPublicationKey(out long membershipId, out UIElementIdentity identity)
+    {
+        UIBoundableTransform? overlay = _caretOverlay;
+        UIMaterialComponent? material = overlay?.SceneNode?.GetComponent<UIMaterialComponent>();
+        if (overlay is null || overlay.IsDestroyed || material is null || material.IsDestroyed)
+        {
+            membershipId = 0;
+            identity = default;
+            return false;
+        }
+        membershipId = material.RenderInfo2D.MembershipId;
+        identity = overlay.ElementIdentity;
+        return true;
+    }
 
     private void StartEditOverlay()
     {

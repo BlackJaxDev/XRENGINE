@@ -11,6 +11,7 @@ namespace XREngine.Rendering.UI
         private PropertyInfo? _property = null;
         private object?[]? _targets = null;
         private GameTimer? _timer = null;
+        internal bool IsPolling => _timer?.IsRunning == true;
 
         public UITextComponent TextComponent => GetSiblingComponent<UITextComponent>(true)!;
         //Text input component is optional - if it exists, don't set the text value if the component is focused (aka, the user is inputting text).
@@ -36,6 +37,17 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
+            StopPolling();
+        }
+
+        protected override void OnDestroying()
+        {
+            StopPolling();
+            base.OnDestroying();
+        }
+
+        private void StopPolling()
+        {
             _timer?.Cancel();
             _timer = null;
         }

@@ -14,6 +14,7 @@ public class UIRangeSliderComponent : UIInteractableComponent
     private double _value;
     private double _dragStartValue;
     private bool _dragging;
+    private float _dragTrackWidth;
     private IUIValueBinding<double>? _binding;
 
     public UIRangeSliderComponent()
@@ -186,6 +187,7 @@ public class UIRangeSliderComponent : UIInteractableComponent
         if (!_dragging)
             return;
         _dragging = false;
+        _dragTrackWidth = 0;
         double previous = _dragStartValue;
         if (!commit || !CanInteract || IsReadOnly)
         {
@@ -211,6 +213,13 @@ public class UIRangeSliderComponent : UIInteractableComponent
             UpdateDrag(posLocal.X / BoundableTransform.ActualWidth);
     }
 
+    public override void MouseMoved(Vector2 lastPosLocal, Vector2 posLocal, in UIPointerGeometry geometry)
+    {
+        base.MouseMoved(lastPosLocal, posLocal);
+        if (_dragging && _dragTrackWidth > 0)
+            UpdateDrag(posLocal.X / _dragTrackWidth);
+    }
+
     public override void PointerPressed(Vector2 localPoint)
     {
         base.PointerPressed(localPoint);
@@ -218,11 +227,29 @@ public class UIRangeSliderComponent : UIInteractableComponent
             BeginDrag(localPoint.X / BoundableTransform.ActualWidth);
     }
 
+    public override void PointerPressed(Vector2 localPoint, in UIPointerGeometry geometry)
+    {
+        base.PointerPressed(localPoint);
+        _dragTrackWidth = geometry.LocalSize.X;
+        if (float.IsFinite(_dragTrackWidth) && _dragTrackWidth > 0)
+            BeginDrag(localPoint.X / _dragTrackWidth);
+        else
+            _dragTrackWidth = 0;
+    }
+
     public override void PointerReleased(Vector2 localPoint, bool inside)
     {
         base.PointerReleased(localPoint, inside);
         if (inside && BoundableTransform.ActualWidth > 0)
             UpdateDrag(localPoint.X / BoundableTransform.ActualWidth);
+        EndDrag(inside);
+    }
+
+    public override void PointerReleased(Vector2 localPoint, bool inside, in UIPointerGeometry geometry)
+    {
+        base.PointerReleased(localPoint, inside);
+        if (inside && _dragTrackWidth > 0)
+            UpdateDrag(localPoint.X / _dragTrackWidth);
         EndDrag(inside);
     }
 

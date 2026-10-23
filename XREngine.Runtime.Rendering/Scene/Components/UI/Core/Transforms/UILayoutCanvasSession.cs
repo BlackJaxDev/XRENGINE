@@ -36,6 +36,7 @@ internal sealed class UILayoutCanvasSession
     private uint _blockedArrangeVersion;
     private bool _blocked;
     private bool _forceFullCapture;
+    private bool _forceReapplyAll;
     private readonly List<UIElementChange> _drainedChanges = [];
 
     public UILayoutCanvasSession(UICanvasTransform canvas) => _canvas = canvas;
@@ -216,6 +217,7 @@ internal sealed class UILayoutCanvasSession
                     _lastAcceptedResolvedInput = result.ResolvedInput;
                     _lastAcceptedTargets = targets;
                     _lastAcceptedOutput = output;
+                    _forceReapplyAll = false;
                     accepted = true;
                 }
                 else
@@ -358,10 +360,17 @@ internal sealed class UILayoutCanvasSession
 
     private bool Apply(UILayoutSnapshot input, List<UITransform> targets, UILayoutOutputPageView outputs, long epoch)
     {
+        bool reapplyAll = _forceReapplyAll;
+        // Any early return or callback exception leaves this set. Clearing it
+        // requires a validated publication, not merely a completed loop.
+        _forceReapplyAll = true;
+        foreach (int i in input.OwnerSyncIndices)
+            if (targets[i] is UIScrollableTransform scroll)
+                scroll.MarkLayoutApplyPending();
         bool textApplied = true;
         for (int page = 0; page < outputs.ChangedPages.Length; page++)
         {
-            if (!outputs.ChangedPages[page])
+            if (!reapplyAll && !outputs.ChangedPages[page])
                 continue;
             int end = Math.Min((page + 1) * UILayoutOutputPageView.PageSize, targets.Count);
             for (int i = page * UILayoutOutputPageView.PageSize; i < end; i++)
@@ -435,8 +444,8 @@ internal sealed class UILayoutCanvasSession
             if (epoch != _epoch || _canvas.IsLayoutInvalidated)
                 return false;
             if (targets[i] is UIScrollableTransform scroll)
-                scroll.SynchronizeScroll(outputs[i].ActualSize - new Vector2(scroll.Padding.X + scroll.Padding.Z,
-                    scroll.Padding.Y + scroll.Padding.W));
+                scroll.SynchronizeAppliedScroll(outputs[i].ActualSize - new Vector2(scroll.Padding.X + scroll.Padding.Z,
+                    scroll.Padding.Y + scroll.Padding.W), outputs[i].AcceptedScrollOffset);
         }
         return textApplied;
     }

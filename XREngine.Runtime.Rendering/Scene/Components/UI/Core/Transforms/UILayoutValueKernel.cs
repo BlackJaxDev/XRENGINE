@@ -323,6 +323,10 @@ internal static class UILayoutValueKernel
         output.AllocatedBounds = slot;
         output.PlacementTranslation = placement;
         output.Visible = inheritedVisible && !node.Collapsed && !node.Hidden;
+        output.AcceptedScrollOffset = node.Operator == UILayoutOperator.Scrollable
+            ? new Vector2(node.OperatorValues.X, node.OperatorValues.Y) : Vector2.Zero;
+        output.AcceptedMaxScrollOffset = node.Operator == UILayoutOperator.Scrollable
+            ? new Vector2(node.OperatorValues.Z, node.OperatorValues.W) : Vector2.Zero;
 
         if (node.Operator == UILayoutOperator.Transform || node.Operator == UILayoutOperator.Rotation)
         {
