@@ -321,10 +321,13 @@ public class UIColorSelectorComponent : UIButtonComponent
         if (!_editing)
             return;
         _editing = false;
-        if (_binding is not null)
+        IUIValueBinding<ColorF4>? binding = _binding;
+        if (binding is not null)
         {
-            _binding.SetValue(_linearColor);
-            ApplyLinear(_binding.Value);
+            binding.SetValue(_linearColor);
+            if (!ReferenceEquals(_binding, binding) || !IsActiveInHierarchy)
+                return;
+            ApplyLinear(binding.Value);
         }
         if (!_editOriginal.Equals(_linearColor))
             ColorCommitted?.Invoke(new(_editOriginal, _linearColor, EUIValueChangeOrigin.User));

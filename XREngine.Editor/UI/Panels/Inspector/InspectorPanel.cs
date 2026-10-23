@@ -157,7 +157,7 @@ public partial class InspectorPanel : EditorPanel
     {
         using var sample = Engine.Profiler.Start("InspectorPanel.CreatePropertyList");
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
-        menuMat.Material = MakeBackgroundMaterial();
+        ApplyBackground(menuMat);
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = false;
         listTfm.ItemSpacing = 0.0f;

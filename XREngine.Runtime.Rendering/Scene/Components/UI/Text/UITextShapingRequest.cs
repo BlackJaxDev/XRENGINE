@@ -10,12 +10,20 @@ public sealed class UITextShapingRequest
     {
         Text = text ?? throw new ArgumentNullException(nameof(text));
         Face = face ?? throw new ArgumentNullException(nameof(face));
-        Language = !string.IsNullOrWhiteSpace(language) ? language :
-            throw new ArgumentException("A language is required.", nameof(language));
+        Language = !string.IsNullOrWhiteSpace(language) && language.Length <= 64 ? language :
+            throw new ArgumentException("A language of at most 64 characters is required.", nameof(language));
         if (!Enum.IsDefined(direction))
             throw new ArgumentOutOfRangeException(nameof(direction));
         Direction = direction;
-        Features = features?.ToImmutableArray() ?? ImmutableArray<string>.Empty;
+        ImmutableArray<string>.Builder builder = ImmutableArray.CreateBuilder<string>();
+        if (features is not null)
+            foreach (string feature in features)
+            {
+                if (builder.Count == 32 || feature.Length > 64)
+                    throw new NotSupportedException("UI.ShapingFeaturesExceeded: feature count or length exceeds its limit.");
+                builder.Add(feature);
+            }
+        Features = builder.ToImmutable();
     }
 
     public string Text { get; }

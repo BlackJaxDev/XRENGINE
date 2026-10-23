@@ -20,4 +20,7 @@ public sealed record UITextLayoutInput(
     Vector4 Margins,
     float DpiScale = 1.0f,
     bool TrimFirstBearing = true,
-    UITextShapedRunInput? ShapedRun = null);
+    UITextShapedRunInput? ShapedRun = null,
+    UITextShapingRequest? ShapingRequest = null,
+    long ShapingBackendGeneration = 0,
+    string? ShapingFeatureSource = null);

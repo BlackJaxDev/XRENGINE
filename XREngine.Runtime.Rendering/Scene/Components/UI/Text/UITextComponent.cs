@@ -510,6 +510,8 @@ namespace XREngine.Rendering.UI
             UITextLayoutInput? input = CaptureLayoutInput();
             if (input is null)
                 return Vector2.Zero;
+            if (input.ShapingRequest is not null)
+                throw new InvalidOperationException("UI.ShapedLayoutPending: use the accepted canvas layout result.");
             float width = WrapMode == FontGlyphSet.EWrapMode.None ? float.MaxValue : transform.ActualWidth;
             if (width <= 0.0f)
                 width = float.MaxValue;
@@ -542,7 +544,8 @@ namespace XREngine.Rendering.UI
             string language = ShapeLanguage;
             UITextDirection direction = ShapeDirection;
             string? featureSource = OpenTypeFeatures;
-            long backendGeneration = UITextShapingBackendRegistry.Generation;
+            UITextShapingBackendState backendState = UITextShapingBackendRegistry.State;
+            long backendGeneration = backendState.Generation;
             UITextLayoutInput? previous = _layoutInput;
             if (previous is not null && ReferenceEquals(_layoutInputFont, _font) &&
                 previous.Text == text &&
@@ -553,23 +556,23 @@ namespace XREngine.Rendering.UI
                 previous.VerticalAlignment == vertical &&
                 previous.Margins == margins && previous.AtlasSize == atlasSize &&
                 previous.EmSize == emSize && previous.DpiScale == dpiScale &&
-                (previous.ShapedRun is not null) == shapedText &&
+                (previous.ShapingRequest is not null) == shapedText &&
                 (!shapedText || _layoutInputBackendGeneration == backendGeneration &&
-                    previous.ShapedRun is { } shaped &&
-                    shaped.FaceContentIdentity == GetRequiredShapingFace(font).ContentIdentity &&
-                    shaped.Language == language && shaped.Direction == direction &&
-                    shaped.FeatureSource == featureSource) &&
+                    previous.ShapingRequest is { } request &&
+                    request.Face.ContentIdentity == GetRequiredShapingFace(font).ContentIdentity &&
+                    request.Language == language && request.Direction == direction &&
+                    previous.ShapingFeatureSource == featureSource) &&
                 (ReferenceEquals(previous.Runes, metrics) || MetricsEqual(previous.Runes, metrics)) &&
-                (!shapedText || backendGeneration == UITextShapingBackendRegistry.Generation))
+                (!shapedText || ReferenceEquals(backendState, UITextShapingBackendRegistry.State)))
                 return previous;
 
-            IUITextShapingBackend? backend = shapedText ? UITextShapingBackendRegistry.Current : null;
+            IUITextWorkerShapingBackend? backend = shapedText ?
+                backendState.Backend as IUITextWorkerShapingBackend : null;
             if (shapedText && backend is null)
-                throw new NotSupportedException("UI.ShapingBackendUnavailable: install a text shaping backend.");
-            UITextShapedRunInput? shapedRun = shapedText ? CaptureShapedRun(text, font,
-                language, direction, featureSource, backend!) : null;
-            if (shapedText && (backendGeneration != UITextShapingBackendRegistry.Generation ||
-                !ReferenceEquals(backend, UITextShapingBackendRegistry.Current) ||
+                throw new NotSupportedException("UI.WorkerShapingBackendUnavailable: install a thread-safe shaping backend.");
+            UITextShapingRequest? shapingRequest = shapedText ? CaptureShapingRequest(text, font,
+                language, direction, featureSource) : null;
+            if (shapedText && (!ReferenceEquals(backendState, UITextShapingBackendRegistry.State) ||
                 !ReferenceEquals(font, _font) || (Text ?? string.Empty) != text ||
                 FontSize != fontSize || WrapMode != wrap || ShapeLanguage != language ||
                 ShapeDirection != direction || OpenTypeFeatures != featureSource ||
@@ -586,7 +589,9 @@ namespace XREngine.Rendering.UI
             _layoutInput = new(text, metrics, ++_textRevision, fontRevision,
                 emSize, atlasSize, fontSize, wrap, spacing,
                 lineSpacing, horizontal, vertical,
-                margins, dpiScale, ShapedRun: shapedRun);
+                margins, dpiScale, ShapingRequest: shapingRequest,
+                ShapingBackendGeneration: shapedText ? backendGeneration : 0,
+                ShapingFeatureSource: featureSource);
             _layoutInputFont = _font;
             _layoutInputBackendGeneration = backendGeneration;
             return _layoutInput;
@@ -768,6 +773,8 @@ namespace XREngine.Rendering.UI
                 VerifyCreated(forceRemake, font.Atlas);
                 uint count;
                 UITextLayoutInput? input = CaptureLayoutInput();
+                if (input?.ShapingRequest is not null)
+                    return;
                 using (_glyphLock.EnterScope())
                 {
                     var tfm = BoundableTransform;

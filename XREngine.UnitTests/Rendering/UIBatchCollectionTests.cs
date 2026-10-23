@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Data.Core;
@@ -468,6 +469,116 @@ public sealed class UIBatchCollectionTests
 
         unchanged.ShouldBe(second);
         changed.ShouldNotBe(first);
+    }
+
+    [Test]
+    public void QuadSlotsKeepPayloadAddressesAcrossPainterReorderAndRecycling()
+    {
+        RetainedQuadSlots slots = new();
+        slots.BeginFrame();
+        uint first = slots.Reserve(101, 0).Index;
+        uint second = slots.Reserve(202, 1).Index;
+        uint third = slots.Reserve(303, 2).Index;
+        slots.EndFrame();
+
+        slots.BeginFrame();
+        uint reorderedThird = slots.Reserve(303, 0).Index;
+        uint inserted = slots.Reserve(404, 1).Index;
+        uint reorderedFirst = slots.Reserve(101, 2).Index;
+        uint reorderedSecond = slots.Reserve(202, 3).Index;
+        slots.EndFrame();
+
+        reorderedThird.ShouldBe(third);
+        reorderedFirst.ShouldBe(first);
+        reorderedSecond.ShouldBe(second);
+        inserted.ShouldNotBe(first);
+        inserted.ShouldNotBe(second);
+        inserted.ShouldNotBe(third);
+
+        slots.BeginFrame();
+        slots.Reserve(303, 0).Index.ShouldBe(third);
+        slots.Reserve(101, 1).Index.ShouldBe(first);
+        slots.Reserve(404, 2).Index.ShouldBe(inserted);
+        slots.EndFrame(); // Membership 202 is removed only after the current draw stream is known.
+
+        slots.BeginFrame();
+        uint recycled = slots.Reserve(505, 0).Index;
+        slots.Reserve(303, 1).Index.ShouldBe(third);
+        slots.Reserve(101, 2).Index.ShouldBe(first);
+        slots.Reserve(404, 3).Index.ShouldBe(inserted);
+        slots.EndFrame();
+        recycled.ShouldBe(second);
+        slots.HighWater.ShouldBe(4u);
+
+        // A different GPU cohort keeps its own address space and cannot inherit this upload state.
+        RetainedQuadSlots anotherCohort = new();
+        anotherCohort.BeginFrame();
+        anotherCohort.Reserve(505, 0).Index.ShouldBe(0u);
+        anotherCohort.EndFrame();
+    }
+
+    [Test]
+    public void FullQuadUploadInvalidatesClearedHoleBeforeIdenticalPayloadReusesIt()
+    {
+        using UIBatchCollector collector = new();
+        using XRDataBuffer<Vector4> transforms = new("QuadTransformBuffer", EBufferTarget.ShaderStorageBuffer, 256);
+        using XRDataBuffer<Vector4> colors = new("QuadColorBuffer", EBufferTarget.ShaderStorageBuffer, 64);
+        using XRDataBuffer<Vector4> bounds = new("QuadBoundsBuffer", EBufferTarget.ShaderStorageBuffer, 64);
+        using XRDataBuffer<Vector4> borderColors = new("QuadUvBuffer", EBufferTarget.ShaderStorageBuffer, 64);
+        using XRDataBuffer<Vector4> widths = new("QuadBorderWidthBuffer", EBufferTarget.ShaderStorageBuffer, 64);
+        using XRDataBuffer<uint> drawIndices = new("QuadDrawIndexBuffer", EBufferTarget.ShaderStorageBuffer, 64);
+        Type gpuType = typeof(UIBatchCollector).GetNestedType("MaterialGPUResources", BindingFlags.NonPublic)!;
+        object gpu = Activator.CreateInstance(gpuType, nonPublic: true)!;
+        Type collectorType = typeof(UIBatchCollector);
+        void Bind(string field, object value)
+            => collectorType.GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(collector, value);
+        Bind("_matQuadTransformBuf", transforms);
+        Bind("_matQuadColorBuf", colors);
+        Bind("_matQuadBoundsBuf", bounds);
+        Bind("_matQuadUvBuf", borderColors);
+        Bind("_matQuadBorderWidthBuf", widths);
+        Bind("_matQuadDrawIndexBuf", drawIndices);
+        Bind("_matQuadCapacity", 64u);
+        MethodInfo upload = collectorType.GetMethod("UploadRetainedMaterialData", BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+        static UIBatchCollector.MaterialQuadEntry Entry(ulong handle, int payload) => new()
+        {
+            PrimitiveHandle = handle,
+            WorldMatrix = Matrix4x4.CreateTranslation(payload, 2, 3),
+            Color = new Vector4(payload, 1, 1, 1),
+            UIXYWH = new Vector4(payload, 2, 3, 4),
+            BorderColor = new Vector4(payload, 3, 2, 1),
+            BorderWidth = payload,
+        };
+
+        void Upload(List<UIBatchCollector.MaterialQuadEntry> entries)
+        {
+            upload.Invoke(collector, [entries, false, true, gpu]);
+            gpuType.GetField("HasUploadedEntries")!.SetValue(gpu, true);
+            gpuType.GetField("UploadedVariant")!.SetValue(gpu, 2);
+        }
+
+        List<UIBatchCollector.MaterialQuadEntry> entries = [];
+        for (int value = 1; value <= 64; value++)
+            entries.Add(Entry((ulong)value, value));
+        Upload(entries);
+        colors.GetDataRawAtIndex<Vector4>(31).ShouldBe(Entry(32, 32).Color);
+
+        entries.RemoveAt(31);
+        entries.Add(Entry(65, 65));
+        Upload(entries); // New slot 64 forces growth; former slot 31 is cleared.
+        colors.GetDataRawAtIndex<Vector4>(31).ShouldBe(Vector4.Zero);
+        borderColors.GetDataRawAtIndex<Vector4>(31).ShouldBe(Vector4.Zero);
+        widths.GetDataRawAtIndex<Vector4>(31).ShouldBe(Vector4.Zero);
+
+        entries.Add(Entry(66, 32)); // Identical payload to the member removed from slot 31.
+        Upload(entries);
+        colors.GetDataRawAtIndex<Vector4>(31).ShouldBe(Entry(66, 32).Color);
+        bounds.GetDataRawAtIndex<Vector4>(31).ShouldBe(Entry(66, 32).UIXYWH);
+        borderColors.GetDataRawAtIndex<Vector4>(31).ShouldBe(Entry(66, 32).BorderColor);
+        widths.GetDataRawAtIndex<Vector4>(31).X.ShouldBe(32f);
+        transforms.GetDataRawAtIndex<Vector4>(31u * 4u + 3u).X.ShouldBe(32f);
+        drawIndices.GetDataRawAtIndex<uint>(64).ShouldBe(31u);
     }
 
     [Test]

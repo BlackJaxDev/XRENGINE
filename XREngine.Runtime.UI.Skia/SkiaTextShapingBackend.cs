@@ -7,8 +7,11 @@ using HbFont = HarfBuzzSharp.Font;
 namespace XREngine.Runtime.UI.Skia;
 
 /// <summary>Shape one analyzed run with its owned OpenType face.</summary>
-public sealed class SkiaTextShapingBackend : IUITextShapingBackend
+public sealed class SkiaTextShapingBackend : IUITextWorkerShapingBackend
 {
+    public long MaxScratchBytes(UITextShapingRequest request)
+        => checked(4L * request.Face.ByteLength + 256L * request.Text.Length);
+
     public UITextShapingResult Shape(UITextShapingRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);

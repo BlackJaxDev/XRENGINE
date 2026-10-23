@@ -14,6 +14,7 @@ public partial class InspectorPanel
     private readonly NativeTableRows<NativeComponentType> _componentTypes = new();
     private readonly Dictionary<XRComponent, ulong> _componentIds = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ulong, (SceneNode Node, XRComponent Component)> _componentsById = [];
+    private readonly Dictionary<ulong, (SceneNode Node, XRComponent Component)[]> _componentGroupsById = [];
     private readonly Dictionary<UIVirtualTableRowComponent, Vector2> _componentDragStarts = [];
     private readonly Dictionary<Type, ulong> _componentTypeIds = [];
     private readonly Dictionary<ulong, Type> _componentTypesById = [];
@@ -29,7 +30,7 @@ public partial class InspectorPanel
     private UIVirtualTableProvider<NativeComponentType>? _componentTypeTable;
     private ulong _componentGeneration;
     private UITextComponent? _componentStatusLabel;
-    private SceneNode? _observedComponentNode;
+    private readonly HashSet<SceneNode> _observedComponentNodes = new(ReferenceEqualityComparer.Instance);
 
     private void CreateComponentCommands(SceneNode toolbar)
     {
@@ -103,11 +104,12 @@ public partial class InspectorPanel
     {
         if (InspectedObjects is { Length: > 0 } targets && targets.All(target => target is SceneNode))
             _componentTargets = targets.Cast<SceneNode>().ToArray();
-        ObserveComponentNode(_componentTargets.Length == 1 ? _componentTargets[0] : null);
+        ObserveComponentNodes(_componentTargets);
         if (_componentList is null)
             return;
         List<(ulong Id, XRComponent Item)> rows = [];
         _componentsById.Clear();
+        _componentGroupsById.Clear();
         HashSet<XRComponent> current = new(ReferenceEqualityComparer.Instance);
         if (_componentTargets.Length == 1)
         {
@@ -120,7 +122,40 @@ public partial class InspectorPanel
                 if (!_componentIds.TryGetValue(component, out ulong id))
                     _componentIds.Add(component, id = ++_nextComponentId);
                 _componentsById[id] = (node, component);
+                _componentGroupsById[id] = [(node, component)];
                 rows.Add((id, component));
+            }
+        }
+        else if (_componentTargets.Length > 1)
+        {
+            Dictionary<Type, List<(SceneNode Node, XRComponent Component)>> byType = [];
+            HashSet<Type> duplicates = [];
+            foreach (SceneNode node in _componentTargets)
+            {
+                HashSet<Type> seenOnNode = [];
+                foreach (XRComponent component in node.Components)
+                {
+                    if (component.IsDestroyed)
+                        continue;
+                    Type type = component.GetType();
+                    if (!seenOnNode.Add(type))
+                        duplicates.Add(type);
+                    if (!byType.TryGetValue(type, out var group))
+                        byType[type] = group = [];
+                    group.Add((node, component));
+                }
+            }
+            foreach (var (type, group) in byType.OrderBy(pair => pair.Key.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                if (duplicates.Contains(type) || group.Count != _componentTargets.Length)
+                    continue;
+                XRComponent representative = group[0].Component;
+                current.Add(representative);
+                if (!_componentIds.TryGetValue(representative, out ulong id))
+                    _componentIds.Add(representative, id = ++_nextComponentId);
+                _componentsById[id] = group[0];
+                _componentGroupsById[id] = [.. group];
+                rows.Add((id, representative));
             }
         }
         foreach (XRComponent stale in _componentIds.Keys.Where(component => !current.Contains(component)).ToArray())
@@ -131,18 +166,19 @@ public partial class InspectorPanel
             _componentTable.SelectedId = null;
     }
 
-    private void ObserveComponentNode(SceneNode? node)
+    private void ObserveComponentNodes(IEnumerable<SceneNode> nodes)
     {
-        if (ReferenceEquals(_observedComponentNode, node))
-            return;
-        if (_observedComponentNode is not null)
+        HashSet<SceneNode> current = new(nodes, ReferenceEqualityComparer.Instance);
+        foreach (SceneNode stale in _observedComponentNodes.Where(node => !current.Contains(node)).ToArray())
         {
-            _observedComponentNode.ComponentAdded -= ComponentListChanged;
-            _observedComponentNode.ComponentRemoved -= ComponentListChanged;
+            stale.ComponentAdded -= ComponentListChanged;
+            stale.ComponentRemoved -= ComponentListChanged;
+            _observedComponentNodes.Remove(stale);
         }
-        _observedComponentNode = node;
-        if (node is not null)
+        foreach (SceneNode node in current)
         {
+            if (!_observedComponentNodes.Add(node))
+                continue;
             node.ComponentAdded += ComponentListChanged;
             node.ComponentRemoved += ComponentListChanged;
         }
@@ -171,10 +207,10 @@ public partial class InspectorPanel
 
     private void InspectComponent(ulong id)
     {
-        if (!_componentsById.TryGetValue(id, out var entry))
+        if (!_componentGroupsById.TryGetValue(id, out var group))
             return;
         _inspectorView = InspectorView.Properties;
-        InspectedObjects = [entry.Component];
+        InspectedObjects = group.Select(entry => (object?)entry.Component).ToArray();
     }
 
     private void DragComponentPointerMoved(ulong id, UIVirtualTableRowComponent source, Vector2 localPoint)
@@ -258,16 +294,16 @@ public partial class InspectorPanel
 
     private void RemoveSelectedComponent()
     {
-        if (_componentTable?.SelectedId is not ulong id || !_componentsById.TryGetValue(id, out var entry))
+        if (_componentTable?.SelectedId is not ulong id || !_componentGroupsById.TryGetValue(id, out var group))
             return;
         ulong generation = _componentGeneration;
-        EditorImGuiUI.QueueNativeComponentRemove(entry.Node, entry.Component, () =>
+        EditorImGuiUI.QueueNativeComponentRemoveMany(group, () =>
         {
             if (generation != _componentGeneration || SceneNode.IsDestroyed || _componentList is null ||
-                !_componentTargets.Contains(entry.Node))
+                group.Any(entry => !_componentTargets.Contains(entry.Node)))
                 return;
             if (_componentStatusLabel is not null)
-                _componentStatusLabel.Text = $"Removed {entry.Component.GetType().Name}";
+                _componentStatusLabel.Text = $"Removed {group[0].Component.GetType().Name}";
             ShowSceneProperties();
             SetInspectorView(InspectorView.Components);
         });
@@ -276,7 +312,7 @@ public partial class InspectorPanel
     private void ReleaseComponentViews()
     {
         _componentGeneration++;
-        ObserveComponentNode(null);
+        ObserveComponentNodes([]);
         if (_componentList is not null)
             _componentList.VirtualProvider = null;
         if (_componentPicker is not null)
@@ -290,6 +326,7 @@ public partial class InspectorPanel
         _componentTypeTable = null;
         _componentStatusLabel = null;
         _componentsById.Clear();
+        _componentGroupsById.Clear();
         _componentDragStarts.Clear();
         _componentTypesById.Clear();
     }

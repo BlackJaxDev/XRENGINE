@@ -24,15 +24,11 @@ namespace XREngine.Rendering.UI
                 return false;
             if (MathF.Abs(direction.X) > MathF.Abs(direction.Y))
             {
-                if (!IsComposing)
-                    MoveCaretByGrapheme(direction.X > 0 ? 1 : -1);
-                return true;
+                return IsComposing || TryMoveCaretByGrapheme(direction.X > 0 ? 1 : -1);
             }
             if (!SingleLineMode && direction.Y != 0)
             {
-                if (!IsComposing)
-                    MoveCaretVertically(direction.Y > 0 ? 1 : -1);
-                return true;
+                return IsComposing || MoveCaretVertically(direction.Y > 0 ? 1 : -1);
             }
             return false;
         }
@@ -858,11 +854,15 @@ namespace XREngine.Rendering.UI
             get => _cursorPosition;
             set
             {
-                if (SetField(ref _cursorPosition, SnapGraphemeBoundary(value.Clamp(0, Text.Length))) &&
-                    !_movingCaretVertically)
+                if (SetField(ref _cursorPosition, SnapGraphemeBoundary(value.Clamp(0, Text.Length))))
                 {
-                    _preferredCaretX = null;
-                    _verticalVisualLine = null;
+                    _visualCaretLayout = null;
+                    _visualCaretAffinity = UITextCaretAffinity.Downstream;
+                    if (!_movingCaretVertically)
+                    {
+                        _preferredCaretX = null;
+                        _verticalVisualLine = null;
+                    }
                 }
             }
         }
@@ -881,15 +881,7 @@ namespace XREngine.Rendering.UI
         /// <summary>Moves the caret by one displayed text element.</summary>
         public void MoveCaretByGrapheme(int direction, bool extendSelection = false)
         {
-            if (IsComposing)
-                return;
-            if (direction < 0)
-                CursorPosition = PreviousGraphemeBoundary(CursorPosition);
-            else if (direction > 0)
-                CursorPosition = NextGraphemeBoundary(CursorPosition);
-            if (!extendSelection)
-                SelectionAnchor = CursorPosition;
-            EnsureCaretVisible();
+            TryMoveCaretByGrapheme(direction, extendSelection);
         }
 
         private string? _graphemeText;
@@ -1023,7 +1015,8 @@ namespace XREngine.Rendering.UI
         {
             if (SceneNode is null || SceneNode.IsTransformNull ||
                 !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult currentLayout) ||
-                !ReferenceEquals(layout, currentLayout) || TextComponent.Text != Text)
+                !ReferenceEquals(layout, currentLayout) || TextComponent.Text != Text ||
+                !layout.HasCompleteGraphemeCaretStops)
                 return false;
             ReadOnlySpan<UITextCaretStop> stops = layout.Carets.Span;
             if (stops.IsEmpty)
@@ -1031,6 +1024,7 @@ namespace XREngine.Rendering.UI
 
             float nearest = float.PositiveInfinity;
             int nearestCaret = CursorPosition;
+            int nearestIndex = -1;
             for (int i = 0; i < stops.Length; i++)
             {
                 UITextCaretStop stop = stops[i];
@@ -1046,11 +1040,15 @@ namespace XREngine.Rendering.UI
                 {
                     nearest = distance;
                     nearestCaret = stop.Utf16Offset;
+                    nearestIndex = i;
                 }
             }
             if (!float.IsFinite(nearest))
                 return false;
             CursorPosition = nearestCaret;
+            _visualCaretLayout = layout.UsesShapedGlyphs ? layout : null;
+            _visualCaretIndex = nearestIndex;
+            _visualCaretAffinity = stops[nearestIndex].Affinity;
             SelectionAnchor = CursorPosition;
             return true;
         }
@@ -1064,7 +1062,8 @@ namespace XREngine.Rendering.UI
             bounds = default;
             if (SceneNode is null || SceneNode.IsTransformNull ||
                 !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult currentLayout) ||
-                !ReferenceEquals(layout, currentLayout) || TextComponent.Text != Text)
+                !ReferenceEquals(layout, currentLayout) || TextComponent.Text != Text ||
+                !layout.HasCompleteGraphemeCaretStops)
                 return false;
             if (!TryFindCaretStop(layout.Carets.Span, out UITextCaretStop stop))
                 return false;

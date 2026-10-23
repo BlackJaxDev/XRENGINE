@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Threading;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.UI.State;
 using XREngine.Scene.Transforms;
@@ -9,6 +10,7 @@ namespace XREngine.Rendering.UI;
 internal sealed class UILayoutSnapshot
 {
     private const int MaxLayoutNodes = 65536;
+    private const int ShapedTextBytesPerUtf16 = 2048;
     internal const long MaxWorkingBytes = 32L * 1024 * 1024;
     public UILayoutValuePageView<UILayoutNodeInput> Nodes { get; }
     public UILayoutChildInput[] Children { get; }
@@ -18,6 +20,7 @@ internal sealed class UILayoutSnapshot
     public UILayoutValuePageView<uint> ArrangeVersions { get; }
     public BoundingRectangleF RootBounds { get; }
     internal long FontGeneration { get; }
+    internal long ShapingBackendGeneration { get; }
     public long EstimatedWorkingBytes { get; }
     private readonly Dictionary<UIElementIdentity, int> _indices;
     private readonly int[] _textIndices;
@@ -25,7 +28,76 @@ internal sealed class UILayoutSnapshot
     internal int[] ValidationIndices { get; }
     private readonly HashSet<int> _dirtyIndices;
     internal bool IsDirty(int index) => _dirtyIndices.Contains(index);
+    internal bool IsDirtySince(UILayoutSnapshot previous, int index)
+        => index >= previous.Nodes.Length ||
+            FontGeneration != previous.FontGeneration ||
+            ShapingBackendGeneration != previous.ShapingBackendGeneration ||
+            Identities[index] != previous.Identities[index] ||
+            MeasureVersions[index] != previous.MeasureVersions[index] ||
+            ArrangeVersions[index] != previous.ArrangeVersions[index] ||
+            Revisions[index].Measure != previous.Revisions[index].Measure ||
+            Revisions[index].Arrange != previous.Revisions[index].Arrange ||
+            Revisions[index].Transform != previous.Revisions[index].Transform ||
+            Revisions[index].Topology != previous.Revisions[index].Topology ||
+            Revisions[index].Text != previous.Revisions[index].Text ||
+            !Nodes[index].Equals(previous.Nodes[index]);
     internal ReadOnlySpan<int> OwnerSyncIndices => _ownerSyncIndices;
+    internal ReadOnlySpan<int> TextIndices => _textIndices;
+
+    /// <summary>Resolve frozen face requests on the bounded layout worker.</summary>
+    internal UILayoutSnapshot ResolveShaping(IUITextWorkerShapingBackend backend,
+        UILayoutSnapshot? previousRaw, UILayoutSnapshot? previousResolved,
+        CancellationToken cancellation)
+    {
+        UILayoutValuePageBuilder<UILayoutNodeInput>? changed = null;
+        foreach (int index in _textIndices)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            UITextLayoutInput? raw = Nodes[index].TextInput;
+            if (raw?.ShapingRequest is not { } request)
+                continue;
+            if (previousRaw is not null && previousResolved is not null &&
+                ReferenceEquals(Identities, previousRaw.Identities) &&
+                SharesTopologyMetadataWith(previousRaw) &&
+                Nodes.SharesPageWith(previousRaw.Nodes, index) &&
+                index < previousResolved.Nodes.Length &&
+                previousResolved.Nodes[index].TextInput?.ShapedRun is not null)
+            {
+                changed ??= new UILayoutValuePageBuilder<UILayoutNodeInput>(Nodes);
+                changed.SharePage(index, previousResolved.Nodes);
+                continue;
+            }
+            UITextShapedRunInput resolved;
+            if (previousRaw is not null && previousResolved is not null &&
+                index < previousRaw.Nodes.Length && index < previousResolved.Nodes.Length &&
+                Identities[index] == previousRaw.Identities[index] &&
+                Identities[index] == previousResolved.Identities[index] &&
+                Equals(previousRaw.Nodes[index].TextInput, raw) &&
+                previousResolved.Nodes[index].TextInput?.ShapedRun is { } cached)
+                resolved = cached;
+            else
+            {
+                long scratch = backend.MaxScratchBytes(request);
+                if (scratch < 0 || scratch > MaxWorkingBytes - EstimatedWorkingBytes)
+                    throw new InvalidOperationException("Canvas shaping exceeds the 32 MiB working-page budget.");
+                UITextShapingResult shaped = backend.Shape(request);
+                if (!ReferenceEquals(shaped.Request, request))
+                    throw new InvalidOperationException("UI.ShapingRequestMismatch: the backend returned another request.");
+                resolved = new UITextShapedRunInput(shaped, raw.ShapingFeatureSource);
+            }
+            changed ??= new UILayoutValuePageBuilder<UILayoutNodeInput>(Nodes);
+            changed.Edit(index) = Nodes[index] with
+            {
+                TextInput = raw with { ShapedRun = resolved, ShapingRequest = null }
+            };
+        }
+        if (changed is null)
+            return this;
+        return new UILayoutSnapshot(changed.Freeze(), Children, Identities,
+            Revisions, MeasureVersions, ArrangeVersions, RootBounds,
+            this, EstimatedWorkingBytes, ValidationIndices, FontGeneration,
+            ShapingBackendGeneration);
+    }
 
     internal bool SharesTopologyMetadataWith(UILayoutSnapshot other)
         => ReferenceEquals(_indices, other._indices) &&
@@ -38,7 +110,7 @@ internal sealed class UILayoutSnapshot
         UILayoutValuePageView<uint> measureVersions, UILayoutValuePageView<uint> arrangeVersions,
         BoundingRectangleF rootBounds, UILayoutSnapshot? stableTopology = null,
         long? workingBytes = null, int[]? validationIndices = null,
-        long? fontGeneration = null)
+        long? fontGeneration = null, long? shapingBackendGeneration = null)
     {
         Nodes = nodes;
         Children = children;
@@ -48,6 +120,7 @@ internal sealed class UILayoutSnapshot
         ArrangeVersions = arrangeVersions;
         RootBounds = rootBounds;
         FontGeneration = fontGeneration ?? FontGlyphSet.GlobalLayoutMetricsGeneration;
+        ShapingBackendGeneration = shapingBackendGeneration ?? UITextShapingBackendRegistry.Generation;
         ValidationIndices = validationIndices ?? CreateAllIndices(nodes.Length);
         _dirtyIndices = new HashSet<int>(ValidationIndices);
         if (stableTopology is not null)
@@ -107,7 +180,9 @@ internal sealed class UILayoutSnapshot
     {
         long bytes = ((long)node.GridRows.Length + node.GridColumns.Length) * 48;
         if (node.TextInput is { } text)
-            bytes += (long)text.Text.Length * 512 + (long)text.Runes.Count * 256;
+            bytes += (long)text.Text.Length * (text.ShapingRequest is not null ? ShapedTextBytesPerUtf16 : 512) +
+                (long)text.Runes.Count * 256 + (long)(text.ShapingFeatureSource?.Length ?? 0) * 4 +
+                (long)(text.ShapingRequest?.Language.Length ?? 0) * 4;
         return bytes;
     }
 
@@ -132,6 +207,7 @@ internal sealed class UILayoutSnapshot
         List<UITransform> targets)
     {
         long fontGeneration = FontGlyphSet.GlobalLayoutMetricsGeneration;
+        long shapingBackendGeneration = UITextShapingBackendRegistry.Generation;
         List<UILayoutNodeInput> nodes = [];
         List<UILayoutChildInput> children = [];
         List<UIElementIdentity> identities = [];
@@ -147,7 +223,8 @@ internal sealed class UILayoutSnapshot
             UILayoutValuePageView<UIChangeRevisions>.CopyFrom(revisions.ToArray()),
             UILayoutValuePageView<uint>.CopyFrom(measureVersions.ToArray()),
             UILayoutValuePageView<uint>.CopyFrom(arrangeVersions.ToArray()), rootConstraint,
-            workingBytes: estimatedBytes, fontGeneration: fontGeneration);
+            workingBytes: estimatedBytes, fontGeneration: fontGeneration,
+            shapingBackendGeneration: shapingBackendGeneration);
     }
 
     /// <summary>Reuse frozen topology and unchanged value pages when the owner tree is stable.</summary>
@@ -158,6 +235,7 @@ internal sealed class UILayoutSnapshot
     {
         canvas.ChangeJournal.VerifyMutationAccess();
         long fontGeneration = FontGlyphSet.GlobalLayoutMetricsGeneration;
+        long shapingBackendGeneration = UITextShapingBackendRegistry.Generation;
         if (previousTargets.Count != previous.Nodes.Length || previousTargets.Count == 0 ||
             !ReferenceEquals(previousTargets[0], canvas))
             return Capture(canvas, targets);
@@ -187,7 +265,8 @@ internal sealed class UILayoutSnapshot
                     return Capture(canvas, targets);
             }
         }
-        if (fontGeneration != previous.FontGeneration)
+        if (fontGeneration != previous.FontGeneration ||
+            shapingBackendGeneration != previous.ShapingBackendGeneration)
         {
             for (int i = 0; i < previous._textIndices.Length; i++)
             {
@@ -205,7 +284,8 @@ internal sealed class UILayoutSnapshot
                 new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity));
             return new UILayoutSnapshot(previous.Nodes, previous.Children, previous.Identities,
                 previous.Revisions, previous.MeasureVersions, previous.ArrangeVersions,
-                unchangedRoot, previous, previous.EstimatedWorkingBytes, [0], fontGeneration);
+                unchangedRoot, previous, previous.EstimatedWorkingBytes, [0], fontGeneration,
+                shapingBackendGeneration);
         }
 
         UILayoutChildInput[] changedEdges = previous.Children;
@@ -274,7 +354,8 @@ internal sealed class UILayoutSnapshot
             new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity));
         return new UILayoutSnapshot(changedNodes.Freeze(), changedEdges, previous.Identities,
             changedRevisions.Freeze(), changedMeasureVersions.Freeze(), changedArrangeVersions.Freeze(),
-            changedRoot, stableMetadata ? previous : null, workingBytes, [.. dirty], fontGeneration);
+            changedRoot, stableMetadata ? previous : null, workingBytes, [.. dirty], fontGeneration,
+            shapingBackendGeneration);
 
         void MarkAncestors(int index)
         {
@@ -300,8 +381,11 @@ internal sealed class UILayoutSnapshot
             return;
         FontGlyphSet font = text.Font ?? FontGlyphSet.LoadDefaultUIFont();
         long candidateBytes = estimatedBytes - PayloadBytes(old);
-        Reserve(ref candidateBytes, (long)(text.Text?.Length ?? 0) * 512 +
-            (long)font.LayoutGlyphCount * 256);
+        Reserve(ref candidateBytes, (long)(text.Text?.Length ?? 0) *
+            (text.UseShapedText ? ShapedTextBytesPerUtf16 : 512) +
+            (long)font.LayoutGlyphCount * 256 +
+            (long)(text.OpenTypeFeatures?.Length ?? 0) * 4 +
+            (text.UseShapedText ? (long)text.ShapeLanguage.Length * 4 : 0));
     }
 
     private static bool EdgesChanged(UILayoutNodeInput node, UILayoutChildInput[] before, UILayoutChildInput[] now)
@@ -419,8 +503,11 @@ internal sealed class UILayoutSnapshot
         if (textComponent is not null)
         {
             FontGlyphSet font = textComponent.Font ?? FontGlyphSet.LoadDefaultUIFont();
-            Reserve(ref estimatedBytes, (long)(textComponent.Text?.Length ?? 0) * 512 +
-                (long)font.LayoutGlyphCount * 256);
+            Reserve(ref estimatedBytes, (long)(textComponent.Text?.Length ?? 0) *
+                (textComponent.UseShapedText ? ShapedTextBytesPerUtf16 : 512) +
+                (long)font.LayoutGlyphCount * 256 +
+                (long)(textComponent.OpenTypeFeatures?.Length ?? 0) * 4 +
+                (textComponent.UseShapedText ? (long)textComponent.ShapeLanguage.Length * 4 : 0));
         }
         UITextLayoutInput? textInput = textComponent?.CaptureLayoutInput();
         if (transform is UIBoundableTransform bounded)

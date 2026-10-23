@@ -83,6 +83,7 @@ namespace XREngine.Rendering.UI
         private IVirtualListProvider? _virtualProvider;
         private Action<SceneNode>? _contentBuilder;
         private float _contentHeight;
+        private float _requestedHeight;
         private UIListTransform? _virtualList;
         private bool _isOpen;
         private IUICanvasInputSource? _subscribedInput;
@@ -182,6 +183,7 @@ namespace XREngine.Rendering.UI
                 foreach (var item in items)
                     totalHeight += item.IsSeparator ? SeparatorHeight : ItemHeight;
             tfm.Height = totalHeight;
+            _requestedHeight = totalHeight;
             _pendingPosition = parentLocalPosition;
             _layoutGenerationAtRequest = canvas.CurrentLayoutGeneration;
             _awaitingPlacement = true;
@@ -218,9 +220,17 @@ namespace XREngine.Rendering.UI
                 transform.Parent is not UIBoundableTransform parent ||
                 parent.ActualWidth <= 0 || parent.ActualHeight <= 0)
                 return;
+            float boundedHeight = MathF.Min(_requestedHeight, parent.ActualHeight);
+            if (transform.Height != boundedHeight)
+            {
+                transform.Height = boundedHeight;
+                _layoutGenerationAtRequest = canvas.CurrentLayoutGeneration;
+                canvas.UpdateLayoutAsync();
+                return;
+            }
             _awaitingPlacement = false;
             UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
-            transform.Translation = ClampMenuPosition(_pendingPosition, PreferredWidth, transform.Height ?? 0);
+            transform.Translation = ClampMenuPosition(_pendingPosition, PreferredWidth, boundedHeight);
             transform.Visibility = EVisibility.Visible;
             canvas.UpdateLayoutAsync();
         }
@@ -258,6 +268,7 @@ namespace XREngine.Rendering.UI
             _virtualProvider = null;
             _contentBuilder = null;
             _contentHeight = 0;
+            _requestedHeight = 0;
             _virtualList = null;
 
             // Collapse the node so the background material stops rendering
@@ -268,7 +279,24 @@ namespace XREngine.Rendering.UI
 
         private void BuildMenuItems()
         {
-            var listNode = SceneNode.NewChild();
+            bool ordinaryItems = _contentBuilder is null && _virtualProvider is null;
+            SceneNode listParent = SceneNode;
+            if (ordinaryItems)
+            {
+                SceneNode scrollNode = SceneNode.NewChild();
+                scrollNode.Name = "ContextMenuScroll";
+                UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+                scroll.MinAnchor = Vector2.Zero;
+                scroll.MaxAnchor = Vector2.One;
+                scroll.Width = null;
+                scroll.Height = null;
+                scroll.ScrollableX = false;
+                UIScrollRegionComponent scrollInput = scrollNode.AddComponent<UIScrollRegionComponent>()!;
+                scrollInput.IsTabStop = false;
+                scrollInput.ConsumeWheelAtBoundary = true;
+                listParent = scrollNode;
+            }
+            var listNode = listParent.NewChild();
             listNode.Name = "ContextMenuList";
             var listTfm = listNode.SetTransform<UIListTransform>();
             listTfm.DisplayHorizontal = false;
@@ -281,6 +309,13 @@ namespace XREngine.Rendering.UI
             listTfm.Width = null;
             listTfm.Height = null;
             listTfm.ItemAlignment = EListAlignment.TopOrLeft;
+            if (ordinaryItems)
+            {
+                listTfm.MinAnchor = new Vector2(0, 1);
+                listTfm.MaxAnchor = Vector2.One;
+                listTfm.NormalizedPivot = new Vector2(0, 1);
+                listTfm.Height = _requestedHeight;
+            }
 
             if (_contentBuilder is not null)
             {

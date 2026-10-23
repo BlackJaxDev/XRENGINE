@@ -28,6 +28,7 @@ public sealed class UIFontFaceSnapshot
     public int FaceIndex { get; }
     public float EmSize { get; }
     public FrozenDictionary<uint, UIRuneMetrics> Glyphs { get; }
+    public int ByteLength => _fontBytes.Length;
 
     /// <summary>Give a native adapter its own copy of the face bytes.</summary>
     public byte[] CopyFontBytes() => (byte[])_fontBytes.Clone();

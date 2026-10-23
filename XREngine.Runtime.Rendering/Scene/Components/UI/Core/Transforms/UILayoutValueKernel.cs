@@ -32,8 +32,21 @@ internal static class UILayoutValueKernel
     internal static UILayoutOutputPageView RunPaged(
         UILayoutSnapshot input, UILayoutSnapshot? previous,
         UILayoutOutputPageView? previousOutputs, CancellationToken cancellation = default)
-        => RunPasses(input.Nodes, input.Children, input.RootBounds,
+    {
+        foreach (int index in input.TextIndices)
+        {
+            if (input.Nodes[index].TextInput is not { ShapingRequest: not null } text)
+                continue;
+            UITextShapingBackendState backendState = UITextShapingBackendRegistry.State;
+            if (backendState.Backend is not IUITextWorkerShapingBackend backend ||
+                text.ShapingBackendGeneration != backendState.Generation)
+                throw new NotSupportedException("UI.WorkerShapingBackendUnavailable: the captured backend changed.");
+            input = input.ResolveShaping(backend, null, null, cancellation);
+            break;
+        }
+        return RunPasses(input.Nodes, input.Children, input.RootBounds,
             input, previous, previousOutputs, cancellation);
+    }
 
     internal static void ValidateOutput(int index, in UILayoutNodeOutput output)
     {
@@ -56,6 +69,16 @@ internal static class UILayoutValueKernel
     {
         if (nodes.Length == 0)
             return new UILayoutOutputPageBuilder(0).Freeze();
+        if (current is not null)
+        {
+            foreach (int i in current.TextIndices)
+                if (nodes[i].TextInput?.ShapingRequest is not null)
+                    throw new InvalidOperationException("UI.ShapingRequestUnresolved: shape text before measuring layout.");
+        }
+        else
+            for (int i = 0; i < nodes.Length; i++)
+                if (nodes[i].TextInput?.ShapingRequest is not null)
+                    throw new InvalidOperationException("UI.ShapingRequestUnresolved: shape text before measuring layout.");
         UILayoutOutputPageView? arranged = null;
         for (int pass = 0; pass < 3; pass++)
         {
@@ -125,6 +148,7 @@ internal static class UILayoutValueKernel
         outputs.RecordVisit();
         ref readonly UILayoutNodeInput node = ref nodes[index];
         if (current is not null && previous is not null && previousOutputs is not null &&
+            !current.IsDirtySince(previous, index) &&
             index < previous.Nodes.Length && index < previousOutputs.Length &&
             current.Identities[index] == previous.Identities[index] &&
             current.MeasureVersions[index] == previous.MeasureVersions[index] &&
@@ -159,7 +183,7 @@ internal static class UILayoutValueKernel
             if (arranged is not null)
                 childConstraint = arranged[childIndex].ActualSize;
             if (current is not null && previous is not null && previousOutputs is not null &&
-                !current.IsDirty(childIndex) && childIndex < previousOutputs.Length &&
+                !current.IsDirtySince(previous, childIndex) && childIndex < previousOutputs.Length &&
                 previousOutputs[childIndex].MeasureConstraint == childConstraint)
                 continue;
             Measure(childIndex, childConstraint, nodes, children, outputs,
@@ -278,6 +302,7 @@ internal static class UILayoutValueKernel
             cache.Cancellation.ThrowIfCancellationRequested();
         outputs.RecordVisit();
         if (cache?.Previous is { } previous && cache.PreviousOutputs is { } prior &&
+            !cache.Current.IsDirtySince(previous, index) &&
             index < previous.Nodes.Length && index < prior.Length &&
             cache.Current.Identities[index] == previous.Identities[index] &&
             cache.Current.ArrangeVersions[index] == previous.ArrangeVersions[index] &&
@@ -344,7 +369,7 @@ internal static class UILayoutValueKernel
                 {
                     int childIndex = children[node.FirstChild + i].NodeIndex;
                     if (cache?.Previous is { } oldSnapshot && cache.PreviousOutputs is { } priorOutputs &&
-                        !cache.Current.IsDirty(childIndex) &&
+                        !cache.Current.IsDirtySince(oldSnapshot, childIndex) &&
                         index < priorOutputs.Length && childIndex < priorOutputs.Length &&
                         oldSnapshot.Nodes[index].Padding == node.Padding &&
                         priorOutputs[index].ActualSize == output.ActualSize &&

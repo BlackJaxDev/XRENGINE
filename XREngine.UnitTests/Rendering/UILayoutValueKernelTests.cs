@@ -119,6 +119,43 @@ public sealed class UILayoutValueKernelTests
     }
 
     [Test]
+    public void PendingCapturesRebaseBothSiblingEditsAgainstAcceptedOutput()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        UIBoundableTransform first = new() { Parent = canvas, Width = 10, Height = 10 };
+        UIBoundableTransform second = new() { Parent = canvas, Width = 20, Height = 10 };
+        try
+        {
+            List<UITransform> acceptedTargets = [];
+            UILayoutSnapshot accepted = UILayoutSnapshot.Capture(canvas, acceptedTargets);
+            UILayoutOutputPageView acceptedOutput = UILayoutValueKernel.RunPaged(accepted, null, null);
+            UIElementChange[] changes = new UIElementChange[canvas.ChangeJournal.Capacity];
+            canvas.ChangeJournal.TryDrain(changes, out _).ShouldBeTrue();
+
+            first.Width = 25;
+            canvas.ChangeJournal.TryDrain(changes, out UIChangeBatch firstBatch).ShouldBeTrue();
+            List<UITransform> firstTargets = [];
+            UILayoutSnapshot firstPending = UILayoutSnapshot.CaptureIncremental(canvas,
+                accepted, acceptedTargets, firstTargets, changes.AsSpan(0, firstBatch.Count).ToArray());
+
+            second.Width = 35;
+            canvas.ChangeJournal.TryDrain(changes, out UIChangeBatch secondBatch).ShouldBeTrue();
+            UILayoutSnapshot latest = UILayoutSnapshot.CaptureIncremental(canvas,
+                firstPending, firstTargets, [], changes.AsSpan(0, secondBatch.Count).ToArray());
+            UILayoutOutputPageView result = UILayoutValueKernel.RunPaged(latest, accepted, acceptedOutput);
+
+            result[1].RawSize.X.ShouldBe(25f);
+            result[2].RawSize.X.ShouldBe(35f);
+        }
+        finally
+        {
+            second.Destroy(true);
+            first.Destroy(true);
+            canvas.Destroy(true);
+        }
+    }
+
+    [Test]
     public void IncrementalCaptureReusesStableTopologyAndRefreshesChangedValues()
     {
         UICanvasTransform canvas = new() { Width = 100, Height = 100 };
@@ -672,6 +709,94 @@ public sealed class UILayoutValueKernelTests
         {
             font.Destroy(true);
             canvas.Destroy(true);
+        }
+    }
+
+    [Test, NonParallelizable]
+    public void BackendReplacementRejectsEveryCapturedCanvasGeneration()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        IUITextShapingBackend? original = UITextShapingBackendRegistry.Current;
+        try
+        {
+            List<UITransform> targets = [];
+            UILayoutSnapshot captured = UILayoutSnapshot.Capture(canvas, targets);
+            UILayoutCanvasSession.DependenciesMatch(canvas, captured, targets).ShouldBeTrue();
+            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ => { });
+            UILayoutCanvasSession.DependenciesMatch(canvas, captured, targets).ShouldBeFalse();
+        }
+        finally
+        {
+            UITextShapingBackendRegistry.Current = original;
+            canvas.Destroy(true);
+        }
+    }
+
+    [Test, NonParallelizable]
+    public void StaleShapingFaultDoesNotBlockNewerPendingText()
+    {
+        using UITestShaderScope scope = new();
+        XREngine.Scene.SceneNode root = new("Shaping fault canvas", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        UICanvasTransform canvas = (UICanvasTransform)root.Transform;
+        canvas.Width = 100;
+        canvas.Height = 40;
+        XREngine.Scene.SceneNode child = new(root) { Name = "Text" };
+        child.SetTransform<UIBoundableTransform>();
+        FontGlyphSet font = new()
+        {
+            Glyphs = new Dictionary<string, FontGlyphSet.Glyph>
+            {
+                ["A"] = new(new Vector2(8), Vector2.Zero),
+                ["B"] = new(new Vector2(8), Vector2.Zero)
+            },
+            Atlas = new XRTexture2D(8, 8, XREngine.Data.Rendering.EPixelInternalFormat.Rgba8,
+                XREngine.Data.Rendering.EPixelFormat.Rgba, XREngine.Data.Rendering.EPixelType.UnsignedByte, true),
+            LayoutEmSize = 8
+        };
+        UIRuneMetrics metric = new(Vector2.Zero, new(8, 8), 9, new(0, 0, 8, 8));
+        font.InstallRuntimeShapingFace(new UIFontFaceSnapshot([1], 0, 8,
+            new Dictionary<uint, UIRuneMetrics> { [51] = metric }));
+        IUITextShapingBackend? original = UITextShapingBackendRegistry.Current;
+        using ManualResetEventSlim entered = new(false);
+        using ManualResetEventSlim release = new(false);
+        try
+        {
+            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(request =>
+            {
+                if (request.Text != "A")
+                    return;
+                entered.Set();
+                if (!release.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("The stale worker was not released.");
+                throw new InvalidOperationException("Old text failed after a newer edit.");
+            });
+            UITextComponent text = child.AddComponent<UITextComponent>()!;
+            text.Font = font;
+            text.FontSize = 8;
+            text.Text = "A";
+            text.UseShapedText = true;
+            canvas.UpdateLayoutAsync();
+            entered.Wait(TimeSpan.FromSeconds(5)).ShouldBeTrue();
+
+            text.Text = "B";
+            canvas.UpdateLayoutAsync();
+            release.Set();
+            SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            canvas.IsLayoutInvalidated.ShouldBeFalse();
+            canvas.CurrentLayoutOutputs.Span[1].TextResult.ShouldNotBeNull()
+                .Glyphs.Span[0].GlyphId.ShouldBe(51u);
+        }
+        finally
+        {
+            release.Set();
+            UITextShapingBackendRegistry.Current = original;
+            canvas.CancelLayoutJob();
+            root.Destroy(true);
+            font.Atlas?.Destroy(true);
+            font.Destroy(true);
         }
     }
 

@@ -6,14 +6,17 @@ namespace XREngine.Rendering.UI;
 public sealed class UITextLayoutResult
 {
     public UITextLayoutResult(Vector2 intrinsicSize, UITextLayoutGlyph[] glyphs,
-        UITextCaretStop[] carets, long textRevision, long fontRevision, bool hasVisualCarets = false)
+        UITextCaretStop[] carets, long textRevision, long fontRevision, bool hasVisualCarets = false,
+        bool usesShapedGlyphs = false)
         : this(intrinsicSize, ((UITextLayoutGlyph[])glyphs.Clone()).AsMemory(),
-            ((UITextCaretStop[])carets.Clone()).AsMemory(), textRevision, fontRevision, hasVisualCarets)
+            ((UITextCaretStop[])carets.Clone()).AsMemory(), textRevision, fontRevision,
+            hasVisualCarets, usesShapedGlyphs)
     {
     }
 
     private UITextLayoutResult(Vector2 intrinsicSize, ReadOnlyMemory<UITextLayoutGlyph> glyphs,
-        ReadOnlyMemory<UITextCaretStop> carets, long textRevision, long fontRevision, bool hasVisualCarets)
+        ReadOnlyMemory<UITextCaretStop> carets, long textRevision, long fontRevision,
+        bool hasVisualCarets, bool usesShapedGlyphs)
     {
         IntrinsicSize = intrinsicSize;
         Glyphs = glyphs;
@@ -21,11 +24,14 @@ public sealed class UITextLayoutResult
         TextRevision = textRevision;
         FontRevision = fontRevision;
         HasVisualCarets = hasVisualCarets;
+        UsesShapedGlyphs = usesShapedGlyphs;
     }
 
     internal static UITextLayoutResult FromOwned(Vector2 intrinsicSize, UITextLayoutGlyph[] glyphs,
-        UITextCaretStop[] carets, long textRevision, long fontRevision, bool hasVisualCarets = false)
-        => new(intrinsicSize, glyphs.AsMemory(), carets.AsMemory(), textRevision, fontRevision, hasVisualCarets);
+        UITextCaretStop[] carets, long textRevision, long fontRevision, bool hasVisualCarets = false,
+        bool usesShapedGlyphs = false)
+        => new(intrinsicSize, glyphs.AsMemory(), carets.AsMemory(), textRevision, fontRevision,
+            hasVisualCarets, usesShapedGlyphs);
 
     public Vector2 IntrinsicSize { get; }
     public ReadOnlyMemory<UITextLayoutGlyph> Glyphs { get; }
@@ -33,4 +39,6 @@ public sealed class UITextLayoutResult
     public long TextRevision { get; }
     public long FontRevision { get; }
     public bool HasVisualCarets { get; }
+    public bool UsesShapedGlyphs { get; }
+    public bool HasCompleteGraphemeCaretStops => !UsesShapedGlyphs || HasVisualCarets;
 }

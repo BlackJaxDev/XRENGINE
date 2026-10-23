@@ -33,6 +33,23 @@ public sealed class NativeDockTree
         return tree;
     }
 
+    /// <summary>Migrates an old detached tool window without importing the primary scene layout.</summary>
+    public static NativeDockTree FromLegacyDetached(NativeDockLayout legacy, int fallbackPanel)
+    {
+        NativeDockNode tools = Stack();
+        foreach (int index in legacy.TabOrder)
+            if ((legacy.OpenMask & (1 << index)) != 0)
+                tools.Tabs.Add(NativeDockPanel.LegacyTools[index]);
+        string fallback = NativeDockPanel.LegacyTools[Math.Clamp(fallbackPanel, 0,
+            NativeDockPanel.LegacyTools.Length - 1)];
+        if (tools.Tabs.Count == 0)
+            tools.Tabs.Add(fallback);
+        string selected = legacy.SelectedTab is >= 0 and < 4
+            ? NativeDockPanel.LegacyTools[legacy.SelectedTab] : fallback;
+        tools.Selected = tools.Tabs.Contains(selected) ? selected : tools.Tabs[0];
+        return new NativeDockTree { Root = tools }.Sanitize();
+    }
+
     public NativeDockTree Sanitize()
     {
         if (Version != CurrentVersion || Root is null)

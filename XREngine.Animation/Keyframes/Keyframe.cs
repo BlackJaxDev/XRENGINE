@@ -194,23 +194,24 @@ namespace XREngine.Animation
 
         public void Remove(bool notifyChange = true)
         {
+            BaseKeyframeTrack? track = OwningTrack;
             _next?._prev = _prev;
             _prev?._next = _next;
 
-            if (OwningTrack != null)
+            if (track != null)
             {
                 if (IsFirst)
-                    OwningTrack.FirstKey = _next;
+                    track.FirstKey = _next;
                 if (IsLast)
-                    OwningTrack.LastKey = _prev;
+                    track.LastKey = _prev;
 
-                --OwningTrack.Count;
-                if (notifyChange)
-                    OwningTrack.OnChanged();
+                --track.Count;
             }
 
             _next = _prev = null;
             OwningTrack = null;
+            if (notifyChange)
+                track?.OnChanged();
         }
 
         public Keyframe GetFirstInSequence()

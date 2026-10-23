@@ -15,6 +15,16 @@ internal static class NativeDockLayoutStore
             ?? new NativeDockLayout()).Sanitize();
     }
 
+    public static bool HasLayout(string windowKey)
+        => ReadLayouts().TryGetValue(windowKey, out NativeDockLayout? layout) && layout is not null;
+
+    public static void MigrateLegacyDetached(string windowKey, int fallbackPanel)
+    {
+        NativeDockLayout layout = Load(windowKey);
+        layout.DockTree = NativeDockTree.FromLegacyDetached(layout, fallbackPanel);
+        Save(windowKey, layout);
+    }
+
     public static void Save(string windowKey, NativeDockLayout layout)
     {
         var layouts = ReadLayouts();

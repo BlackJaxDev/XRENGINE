@@ -5,6 +5,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -28,7 +29,7 @@ public sealed class UITextValueLayoutTests
         };
 
     [Test]
-    public void ShapingCallbackCannotInstallGlyphsForChangedText()
+    public void ShapingRunsOnlyAfterOwnerCaptureAndBackendReplacementInvalidatesInput()
     {
         FontGlyphSet font = CreateFont();
         UIRuneMetrics metric = new(Vector2.Zero, new(8, 8), 9, new(0, 0, 8, 8));
@@ -45,31 +46,97 @@ public sealed class UITextValueLayoutTests
             component.Font = font;
             component.FontSize = 8;
             component.Text = "A";
-            bool mutate = false;
+            int shapeCount = 0;
+            int captureThread = Environment.CurrentManagedThreadId;
+            int shapeThread = 0;
             UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ =>
             {
-                if (!mutate)
-                    return;
-                mutate = false;
-                component.Text = "B";
+                shapeCount++;
+                shapeThread = Environment.CurrentManagedThreadId;
             });
             component.UseShapedText = true;
-            component.CaptureLayoutInput().ShouldNotBeNull().Text.ShouldBe("A");
-            mutate = true;
-            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ =>
+            UITextLayoutInput captured = component.CaptureLayoutInput().ShouldNotBeNull();
+            captured.ShapingRequest.ShouldNotBeNull();
+            shapeCount.ShouldBe(0);
+            List<UITransform> targets = [];
+            UILayoutSnapshot snapshot = UILayoutSnapshot.CaptureRoot(root.Transform as UITransform ??
+                throw new InvalidOperationException(), new Vector2(100, 30), targets);
+            UILayoutWorkerResult result = Task.Run(() =>
             {
-                if (!mutate)
-                    return;
-                mutate = false;
-                component.Text = "B";
-            });
-
-            Should.Throw<InvalidOperationException>(() => component.CaptureLayoutInput())
-                .Message.ShouldContain("UI.ShapingInputsChanged");
-            component.CaptureLayoutInput().ShouldNotBeNull().Text.ShouldBe("B");
+                UILayoutSnapshot resolved = snapshot.ResolveShaping(
+                    (IUITextWorkerShapingBackend)UITextShapingBackendRegistry.Current!,
+                    null, null, CancellationToken.None);
+                return new UILayoutWorkerResult(resolved,
+                    UILayoutValueKernel.RunPaged(resolved, null, null));
+            }).GetAwaiter().GetResult();
+            result.ResolvedInput.Nodes[0].TextInput!.ShapedRun.ShouldNotBeNull();
+            result.Output[0].TextResult.ShouldNotBeNull().Glyphs.Span[0].GlyphId.ShouldBe(51u);
+            shapeCount.ShouldBe(1);
+            shapeThread.ShouldNotBe(captureThread);
+            UILayoutSnapshot reused = snapshot.ResolveShaping(
+                (IUITextWorkerShapingBackend)UITextShapingBackendRegistry.Current!,
+                snapshot, result.ResolvedInput, CancellationToken.None);
+            reused.Nodes[0].TextInput!.ShapedRun.ShouldBeSameAs(
+                result.ResolvedInput.Nodes[0].TextInput!.ShapedRun);
+            reused.Nodes.SharesPageWith(result.ResolvedInput.Nodes, 0).ShouldBeTrue();
+            shapeCount.ShouldBe(1);
+            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ => { });
+            component.CaptureLayoutInput().ShouldNotBeSameAs(captured);
             UITextShapingBackendRegistry.Current = null;
             Should.Throw<NotSupportedException>(() => component.CaptureLayoutInput())
-                .Message.ShouldContain("UI.ShapingBackendUnavailable");
+                .Message.ShouldContain("UI.WorkerShapingBackendUnavailable");
+        }
+        finally
+        {
+            UITextShapingBackendRegistry.Current = original;
+            root.Destroy(true);
+            font.Atlas?.Destroy(true);
+            font.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void BackendReplacementWithEmptyJournalRecalculatesTextOutput()
+    {
+        FontGlyphSet font = CreateFont();
+        UIRuneMetrics metric = new(Vector2.Zero, new(8, 8), 9, new(0, 0, 8, 8));
+        font.InstallRuntimeShapingFace(new UIFontFaceSnapshot([1], 0, 8,
+            new Dictionary<uint, UIRuneMetrics> { [51] = metric }));
+        XREngine.Scene.SceneNode root = new("Backend generation canvas", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        XREngine.Scene.SceneNode child = new(root) { Name = "Label" };
+        child.SetTransform<UIBoundableTransform>();
+        UICanvasTransform canvas = (UICanvasTransform)root.Transform;
+        canvas.Width = 100;
+        canvas.Height = 40;
+        IUITextShapingBackend? original = UITextShapingBackendRegistry.Current;
+        try
+        {
+            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ => { }, 9);
+            UITextComponent text = child.AddComponent<UITextComponent>()!;
+            text.Font = font;
+            text.FontSize = 8;
+            text.Text = "A";
+            text.UseShapedText = true;
+            List<UITransform> targets = [];
+            UILayoutSnapshot accepted = UILayoutSnapshot.Capture(canvas, targets);
+            UILayoutOutputPageView acceptedOutput = UILayoutValueKernel.RunPaged(accepted, null, null);
+            acceptedOutput[1].TextResult.ShouldNotBeNull().IntrinsicSize.X.ShouldBe(9f);
+            UIElementChange[] journal = new UIElementChange[canvas.ChangeJournal.Capacity];
+            canvas.ChangeJournal.TryDrain(journal, out _).ShouldBeTrue();
+
+            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ => { }, 17);
+            List<UITransform> latestTargets = [];
+            UILayoutSnapshot latest = UILayoutSnapshot.CaptureIncremental(canvas,
+                accepted, targets, latestTargets, Array.Empty<UIElementChange>());
+            UILayoutOutputPageView changed = UILayoutValueKernel.RunPaged(latest, accepted, acceptedOutput);
+
+            latest.MeasureVersions[1].ShouldBe(accepted.MeasureVersions[1]);
+            latest.ArrangeVersions[1].ShouldBe(accepted.ArrangeVersions[1]);
+            latest.IsDirty(1).ShouldBeTrue();
+            changed[1].TextResult.ShouldNotBeNull().IntrinsicSize.X.ShouldBe(17f);
         }
         finally
         {

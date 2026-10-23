@@ -28,6 +28,15 @@ internal sealed class UILayoutValuePageBuilder<T>
         return ref _pages[page][index % UILayoutValuePageView<T>.PageSize];
     }
 
+    internal void SharePage(int index, UILayoutValuePageView<T> source)
+    {
+        if (_frozen || (uint)index >= (uint)_length || source.Length != _length)
+            throw new InvalidOperationException("Layout input page cannot be shared.");
+        int page = index / UILayoutValuePageView<T>.PageSize;
+        _pages[page] = source.GetPage(index);
+        _owned[page] = false;
+    }
+
     internal UILayoutValuePageView<T> Freeze()
     {
         _frozen = true;

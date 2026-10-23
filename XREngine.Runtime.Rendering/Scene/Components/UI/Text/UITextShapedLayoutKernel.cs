@@ -119,7 +119,7 @@ internal static class UITextShapedLayoutKernel
         foreach (int boundary in StringInfo.ParseCombiningCharacters(input.Text))
             complete &= represented.Contains(boundary);
         return UITextLayoutResult.FromOwned(intrinsic, placed, [.. carets],
-            input.TextRevision, input.FontRevision, complete);
+            input.TextRevision, input.FontRevision, complete, usesShapedGlyphs: true);
 
         void AddCaret(int offset, UITextCaretAffinity affinity)
         {

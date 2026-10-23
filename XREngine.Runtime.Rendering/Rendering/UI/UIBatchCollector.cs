@@ -552,12 +552,14 @@ public sealed class UIBatchCollector : IDisposable
     private XRDataBuffer<Vector4>? _matQuadBoundsBuf;     // binding 2: vec4 per instance
     private XRDataBuffer<Vector4>? _matQuadUvBuf;         // textured binding 3: UV rectangle per instance
     private XRDataBuffer<Vector4>? _matQuadBorderWidthBuf; // border binding 4: width per instance
+    private XRDataBuffer<uint>? _matQuadDrawIndexBuf;      // desktop binding 5: draw order → stable slot
     private XRMeshRenderer? _matQuadBorderMesh;
     private Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> _materialTextureMeshes = [];
     private List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
     private const int MaxMaterialTextureMeshes = 64;
     private const int MaxRunCohorts = 4;
     private const int MaxCanvasGpuCohorts = 256;
+    private const uint MaxRetainedQuadSlotsPerRun = 1u << 20;
     private const uint MaxRetainedGlyphSlotsPerRun = 1u << 20;
     private uint _matQuadCapacity;
     private bool _matQuadNeedsPush;
@@ -573,15 +575,23 @@ public sealed class UIBatchCollector : IDisposable
         public XRDataBuffer<Vector4>? Bounds;
         public XRDataBuffer<Vector4>? Uv;
         public XRDataBuffer<Vector4>? BorderWidth;
+        public XRDataBuffer<uint>? DrawIndex;
         public XRMeshRenderer? BorderMesh;
         public Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> TextureMeshes = [];
         public List<(XRTexture2D Texture, bool Srgb)> StaleTextures = [];
         public uint Capacity;
         public bool NeedsPush;
         public readonly List<MaterialQuadEntry> UploadedEntries = [];
+        public readonly RetainedQuadSlots Slots = new();
+        public readonly List<MaterialQuadEntry> UploadedSlots = [];
+        public readonly List<bool> InitializedSlots = [];
+        public readonly List<uint> UploadedDrawIndices = [];
+        public readonly List<uint> CurrentDrawIndices = [];
+        public readonly List<(uint Slot, MaterialQuadEntry Entry)> ScratchSlots = [];
         public bool HasUploadedEntries;
         public bool HasUploadedBorder;
         public bool HasUploadedImage;
+        public int UploadedVariant = -1;
         public bool UsedUv;
         public bool UsedBorderWidth;
         public XRGpuFence? Fence;
@@ -1371,6 +1381,7 @@ public sealed class UIBatchCollector : IDisposable
             return HasCompletedOrAbandonedVulkanFence(gpu.Fence) &&
                 CanReuseVulkanBuffer(gpu.Transform) && CanReuseVulkanBuffer(gpu.Color) &&
                 CanReuseVulkanBuffer(gpu.Bounds) &&
+                CanReuseVulkanBuffer(gpu.DrawIndex) &&
                 (!gpu.UsedUv || CanReuseVulkanBuffer(gpu.Uv)) &&
                 (!gpu.UsedBorderWidth || CanReuseVulkanBuffer(gpu.BorderWidth));
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL)
@@ -1548,6 +1559,7 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadBoundsBuf = gpu.Bounds;
         _matQuadUvBuf = gpu.Uv;
         _matQuadBorderWidthBuf = gpu.BorderWidth;
+        _matQuadDrawIndexBuf = gpu.DrawIndex;
         _matQuadBorderMesh = gpu.BorderMesh;
         _materialTextureMeshes = gpu.TextureMeshes;
         _staleMaterialTextures = gpu.StaleTextures;
@@ -1563,6 +1575,7 @@ public sealed class UIBatchCollector : IDisposable
         gpu.Bounds = _matQuadBoundsBuf;
         gpu.Uv = _matQuadUvBuf;
         gpu.BorderWidth = _matQuadBorderWidthBuf;
+        gpu.DrawIndex = _matQuadDrawIndexBuf;
         gpu.BorderMesh = _matQuadBorderMesh;
         gpu.TextureMeshes = _materialTextureMeshes;
         gpu.StaleTextures = _staleMaterialTextures;
@@ -1657,6 +1670,7 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadBoundsBuf?.Destroy();
         _matQuadUvBuf?.Destroy();
         _matQuadBorderWidthBuf?.Destroy();
+        _matQuadDrawIndexBuf?.Destroy();
 
         // Transform buffer: 4 vec4 rows per matrix, so elementCount = capacity * 4
         _matQuadTransformBuf = new XRDataBuffer<Vector4>(
@@ -1707,6 +1721,14 @@ public sealed class UIBatchCollector : IDisposable
                 BindingIndexOverride = 4,
                 DisposeOnPush = false
             };
+            _matQuadDrawIndexBuf = new XRDataBuffer<uint>(
+                "QuadDrawIndexBuffer", EBufferTarget.ShaderStorageBuffer, _matQuadCapacity)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                BindingIndexOverride = 5,
+                DisposeOnPush = false
+            };
+            mesh.Buffers["QuadDrawIndexBuffer"] = _matQuadDrawIndexBuf;
         }
     }
 
@@ -1745,6 +1767,7 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf!;
         mesh.Buffers["QuadUvBuffer"] = _matQuadUvBuf!;
         mesh.Buffers["QuadBorderWidthBuffer"] = _matQuadBorderWidthBuf!;
+        mesh.Buffers["QuadDrawIndexBuffer"] = _matQuadDrawIndexBuf!;
         DisableShaderPipelines(mesh);
         mesh.EnsureRenderPipelineVersionsCreated();
         _matQuadBorderMesh = mesh;
@@ -1811,6 +1834,8 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["QuadColorBuffer"] = _matQuadColorBuf!;
         mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf!;
         mesh.Buffers["QuadUvBuffer"] = _matQuadUvBuf!;
+        if (!webGpu)
+            mesh.Buffers["QuadDrawIndexBuffer"] = _matQuadDrawIndexBuf!;
         mesh.BindingPublishers.Add(new UIRequiredTextureBindings(texture));
         DisableShaderPipelines(mesh);
         mesh.EnsureRenderPipelineVersionsCreated();
@@ -1832,6 +1857,11 @@ public sealed class UIBatchCollector : IDisposable
         uint count = (uint)entries.Count;
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU && count > 65536)
             throw new NotSupportedException("WebGPU.UI.QuadCapacityExceeded: one screen UI quad group admits at most 65536 instances.");
+        if (cohort is not null)
+        {
+            UploadRetainedMaterialData(entries, textured, border, cohort);
+            return;
+        }
 
         // Resize if needed
         if (count > _matQuadCapacity)
@@ -1907,6 +1937,170 @@ public sealed class UIBatchCollector : IDisposable
         UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, border ? 5 : textured ? 4 : 3);
         _matQuadNeedsPush = false;
     }
+
+    private void UploadRetainedMaterialData(List<MaterialQuadEntry> entries, bool textured, bool border,
+        MaterialGPUResources gpu)
+    {
+        List<uint> draw = gpu.CurrentDrawIndices;
+        List<(uint Slot, MaterialQuadEntry Entry)> slots = gpu.ScratchSlots;
+        draw.Clear();
+        slots.Clear();
+        gpu.Slots.BeginFrame();
+        for (int index = 0; index < entries.Count; index++)
+        {
+            MaterialQuadEntry entry = entries[index];
+            uint slot = gpu.Slots.Reserve(entry.PrimitiveHandle, index).Index;
+            draw.Add(slot);
+            slots.Add((slot, entry));
+        }
+        gpu.Slots.EndFrame();
+        uint storageCount = gpu.Slots.HighWater;
+        if (storageCount > MaxRetainedQuadSlotsPerRun)
+            throw new InvalidOperationException("A UI quad run exceeds its retained GPU slot budget.");
+        slots.Sort(static (a, b) => a.Slot.CompareTo(b.Slot));
+
+        bool full = _matQuadNeedsPush || !gpu.HasUploadedEntries ||
+            gpu.UploadedVariant != (border ? 2 : textured ? 1 : 0);
+        if (storageCount > _matQuadCapacity)
+        {
+            _matQuadCapacity = NextPowerOf2(storageCount);
+            _matQuadTransformBuf!.Resize(_matQuadCapacity * 4);
+            _matQuadColorBuf!.Resize(_matQuadCapacity);
+            _matQuadBoundsBuf!.Resize(_matQuadCapacity);
+            _matQuadUvBuf!.Resize(_matQuadCapacity);
+            _matQuadBorderWidthBuf!.Resize(_matQuadCapacity);
+            _matQuadDrawIndexBuf!.Resize(_matQuadCapacity);
+            full = true;
+        }
+        while (gpu.UploadedSlots.Count < storageCount)
+        {
+            gpu.UploadedSlots.Add(default);
+            gpu.InitializedSlots.Add(false);
+        }
+
+        if (full)
+        {
+            // The full write clears holes in the CPU/GPU buffers. Their old snapshots
+            // are no longer resident, even if a later member has identical values.
+            for (int index = 0; index < gpu.InitializedSlots.Count; index++)
+                gpu.InitializedSlots[index] = false;
+            XRBufferWriter<Vector4> transforms = _matQuadTransformBuf!.Alloc<Vector4>(storageCount * 4);
+            XRBufferWriter<Vector4> colors = _matQuadColorBuf!.Alloc<Vector4>(storageCount);
+            XRBufferWriter<Vector4> bounds = _matQuadBoundsBuf!.Alloc<Vector4>(storageCount);
+            XRBufferWriter<Vector4> uvs = textured || border
+                ? _matQuadUvBuf!.Alloc<Vector4>(storageCount) : default;
+            XRBufferWriter<Vector4> widths = border
+                ? _matQuadBorderWidthBuf!.Alloc<Vector4>(storageCount) : default;
+            XRBufferWriter<uint> indices = _matQuadDrawIndexBuf!.Alloc<uint>((uint)draw.Count);
+            transforms.Span.Clear();
+            colors.Span.Clear();
+            bounds.Span.Clear();
+            if (textured || border) uvs.Span.Clear();
+            if (border) widths.Span.Clear();
+            indices.Span.Clear();
+            foreach ((uint slot, MaterialQuadEntry entry) in slots)
+            {
+                int matrix = checked((int)slot * 4);
+                WriteMatrix4x4(transforms.Span, ref matrix, in entry.WorldMatrix);
+                colors.Span[(int)slot] = entry.Color;
+                bounds.Span[(int)slot] = entry.UIXYWH;
+                if (textured || border)
+                    uvs.Span[(int)slot] = border ? entry.BorderColor : entry.UV;
+                if (border)
+                    widths.Span[(int)slot] = new Vector4(entry.BorderWidth, 0, 0, 0);
+            }
+            for (int index = 0; index < draw.Count; index++)
+                indices.Span[index] = draw[index];
+            transforms.Commit();
+            colors.Commit();
+            bounds.Commit();
+            if (textured || border) uvs.Commit();
+            if (border) widths.Commit();
+            indices.Commit();
+            UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
+                (long)storageCount * (64L + 16L + 16L +
+                    (textured || border ? 16L : 0L) + (border ? 16L : 0L)) + draw.Count * 4L);
+            UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, border ? 6 : textured ? 5 : 4);
+        }
+        else
+        {
+            for (int field = 0; field < (border ? 5 : textured ? 4 : 3); field++)
+            {
+                int first = 0;
+                while (first < slots.Count)
+                {
+                    while (first < slots.Count && !MaterialSlotFieldChanged(slots[first], gpu, field, border))
+                        first++;
+                    if (first == slots.Count) break;
+                    int end = first + 1;
+                    while (end < slots.Count && slots[end].Slot == slots[end - 1].Slot + 1 &&
+                        MaterialSlotFieldChanged(slots[end], gpu, field, border))
+                        end++;
+                    uint offset = slots[first].Slot;
+                    uint count = (uint)(end - first);
+                    XRBufferWriter<Vector4> writer = field switch
+                    {
+                        0 => _matQuadTransformBuf!.AllocAt<Vector4>(offset * 4, count * 4),
+                        1 => _matQuadColorBuf!.AllocAt<Vector4>(offset, count),
+                        2 => _matQuadBoundsBuf!.AllocAt<Vector4>(offset, count),
+                        3 => _matQuadUvBuf!.AllocAt<Vector4>(offset, count),
+                        _ => _matQuadBorderWidthBuf!.AllocAt<Vector4>(offset, count),
+                    };
+                    for (int index = first; index < end; index++)
+                    {
+                        MaterialQuadEntry entry = slots[index].Entry;
+                        int local = index - first;
+                        switch (field)
+                        {
+                            case 0:
+                                int matrix = local * 4;
+                                WriteMatrix4x4(writer.Span, ref matrix, in entry.WorldMatrix);
+                                break;
+                            case 1: writer.Span[local] = entry.Color; break;
+                            case 2: writer.Span[local] = entry.UIXYWH; break;
+                            case 3: writer.Span[local] = border ? entry.BorderColor : entry.UV; break;
+                            default: writer.Span[local] = new Vector4(entry.BorderWidth, 0, 0, 0); break;
+                        }
+                    }
+                    writer.Commit();
+                    UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, count * (field == 0 ? 64L : 16L));
+                    UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+                    first = end;
+                }
+            }
+            List<uint> previous = gpu.UploadedDrawIndices;
+            int firstDraw = 0;
+            while (firstDraw < draw.Count)
+            {
+                while (firstDraw < draw.Count && firstDraw < previous.Count && draw[firstDraw] == previous[firstDraw])
+                    firstDraw++;
+                if (firstDraw == draw.Count) break;
+                int end = firstDraw + 1;
+                while (end < draw.Count && (end >= previous.Count || draw[end] != previous[end])) end++;
+                XRBufferWriter<uint> writer = _matQuadDrawIndexBuf!.AllocAt<uint>((uint)firstDraw, (uint)(end - firstDraw));
+                for (int index = firstDraw; index < end; index++)
+                    writer.Span[index - firstDraw] = draw[index];
+                writer.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (end - firstDraw) * 4L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+                firstDraw = end;
+            }
+        }
+
+        foreach ((uint slot, MaterialQuadEntry entry) in slots)
+        {
+            gpu.UploadedSlots[(int)slot] = entry;
+            gpu.InitializedSlots[(int)slot] = true;
+        }
+        gpu.UploadedDrawIndices.Clear();
+        gpu.UploadedDrawIndices.AddRange(draw);
+        _matQuadNeedsPush = false;
+    }
+
+    private static bool MaterialSlotFieldChanged((uint Slot, MaterialQuadEntry Entry) value,
+        MaterialGPUResources gpu, int field, bool border)
+        => !gpu.InitializedSlots[(int)value.Slot] ||
+           MaterialFieldChanged(value.Entry, gpu.UploadedSlots[(int)value.Slot], field, border);
 
     private void UploadChangedMaterialRanges(List<MaterialQuadEntry> entries,
         List<MaterialQuadEntry> previous, bool textured, bool border)
@@ -2245,7 +2439,9 @@ public sealed class UIBatchCollector : IDisposable
         using var sample = RuntimeEngine.Profiler.Start();
         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
         bool profileGpu = profiler.ShouldInstrumentCommandScopes;
-        bool uploadRequired = cohort is null || batch.Border && !cohort.HasUploadedBorder ||
+        int variant = batch.Border ? 2 : batch.Texture is not null ? 1 : 0;
+        bool uploadRequired = cohort is null || cohort.UploadedVariant != variant ||
+            batch.Border && !cohort.HasUploadedBorder ||
             batch.Texture is not null && !cohort.HasUploadedImage ||
             !MaterialEntriesMatch(cohort, batch.Entries);
 
@@ -2279,6 +2475,7 @@ public sealed class UIBatchCollector : IDisposable
             RememberMaterialEntries(cohort, batch.Entries);
             cohort.HasUploadedBorder |= batch.Border;
             cohort.HasUploadedImage |= batch.Texture is not null;
+            cohort.UploadedVariant = variant;
         }
 
         XRMeshRenderer materialQuadMesh = batch.Border ? EnsureMaterialBorderMesh() :
@@ -3232,6 +3429,7 @@ public sealed class UIBatchCollector : IDisposable
         gpu.Bounds?.Destroy();
         gpu.Uv?.Destroy();
         gpu.BorderWidth?.Destroy();
+        gpu.DrawIndex?.Destroy();
         XRMaterial? borderMaterial = gpu.BorderMesh?.Material;
         gpu.BorderMesh?.Destroy();
         borderMaterial?.Destroy();
@@ -3257,6 +3455,7 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadBoundsBuf?.Destroy();
         _matQuadUvBuf?.Destroy();
         _matQuadBorderWidthBuf?.Destroy();
+        _matQuadDrawIndexBuf?.Destroy();
         XRMaterial? borderMaterial = _matQuadBorderMesh?.Material;
         _matQuadBorderMesh?.Destroy();
         borderMaterial?.Destroy();
@@ -3276,6 +3475,7 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadBoundsBuf = null;
         _matQuadUvBuf = null;
         _matQuadBorderWidthBuf = null;
+        _matQuadDrawIndexBuf = null;
         _matQuadBorderMesh = null;
         _matQuadMesh = null;
     }

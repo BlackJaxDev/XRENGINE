@@ -213,6 +213,8 @@ public sealed class UITextLayoutKernelTests
         result.Glyphs.Span[1].GlyphId.ShouldBe(51u);
         result.Glyphs.Span[1].Transform.X.ShouldBe(9f);
         result.HasVisualCarets.ShouldBeTrue();
+        result.UsesShapedGlyphs.ShouldBeTrue();
+        result.HasCompleteGraphemeCaretStops.ShouldBeTrue();
         result.Carets.Span[0].Utf16Offset.ShouldBe(2);
         result.Carets.Span[^1].Utf16Offset.ShouldBe(0);
         for (int i = 0; i < result.Carets.Length; i++)
@@ -234,8 +236,16 @@ public sealed class UITextLayoutKernelTests
 
         result.Glyphs.Span[0].ClusterLength.ShouldBe(2);
         result.HasVisualCarets.ShouldBeFalse();
+        result.UsesShapedGlyphs.ShouldBeTrue();
+        result.HasCompleteGraphemeCaretStops.ShouldBeFalse();
         result.Carets.Span[0].Utf16Offset.ShouldBe(0);
         result.Carets.Span[^1].Utf16Offset.ShouldBe(2);
+
+        UITextLayoutResult scaled = UITextLayoutKernel.Measure(
+            Input("AB") with { ShapedRun = new UITextShapedRunInput(shaped), DpiScale = 2 },
+            new(200, 100));
+        scaled.UsesShapedGlyphs.ShouldBeTrue();
+        scaled.HasCompleteGraphemeCaretStops.ShouldBeFalse();
     }
 
     [Test]
@@ -266,5 +276,24 @@ public sealed class UITextLayoutKernelTests
         NotSupportedException error = Should.Throw<NotSupportedException>(() =>
             UITextComponent.EnsureOneDirection(text, direction));
         error.Message.ShouldContain("UI.BidiAnalysisUnavailable");
+    }
+
+    [Test]
+    public void ShapingRequestRejectsOversizedFeatureSetAndGlyphExpansion()
+    {
+        UIRuneMetrics metric = Metrics['A'];
+        UIFontFaceSnapshot face = new([1], 0, 10,
+            new Dictionary<uint, UIRuneMetrics> { [51] = metric });
+        string[] features = Enumerable.Repeat("liga=1", 33).ToArray();
+        Should.Throw<NotSupportedException>(() => new UITextShapingRequest(
+            "A", face, "en-US", UITextDirection.LeftToRight, features))
+            .Message.ShouldContain("UI.ShapingFeaturesExceeded");
+        Should.Throw<ArgumentException>(() => new UITextShapingRequest(
+            "A", face, new string('x', 65), UITextDirection.LeftToRight));
+
+        UITextShapingRequest request = new("A", face, "en-US", UITextDirection.LeftToRight);
+        UITextShapedGlyph[] glyphs = new UITextShapedGlyph[5];
+        Should.Throw<NotSupportedException>(() => new UITextShapingResult(request, glyphs))
+            .Message.ShouldContain("UI.ShapedGlyphCountExceeded");
     }
 }

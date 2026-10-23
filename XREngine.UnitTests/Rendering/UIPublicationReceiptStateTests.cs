@@ -3,6 +3,8 @@ using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
+using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI;
 
@@ -11,6 +13,100 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class UIPublicationReceiptStateTests
 {
+    [Test]
+    public void SurfacePoolBackpressuresFourRetainedGenerationsWithoutResizingReaders()
+    {
+        using var pool = new UIRenderSurfacePool(EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba, EPixelType.UnsignedByte, 4);
+        UIRenderSurface[] retained = new UIRenderSurface[4];
+        for (int index = 0; index < retained.Length; index++)
+        {
+            pool.TryReserve(16, 16, out UIRenderSurface? writer, out string? failure)
+                .ShouldBeTrue(failure);
+            writer.ShouldNotBeNull();
+            ulong generation = writer.ReservationGeneration;
+            writer.Retain(); // a packet or GPU artifact claim
+            using var fence = new TestSurfaceFence { Status = EGpuFenceStatus.Signaled };
+            pool.TryPublish(writer, generation, fence).ShouldBeTrue();
+            writer.Release(); // writer claim
+            retained[index] = writer;
+        }
+        pool.SlotCount.ShouldBe(4);
+        pool.TryReserve(32, 32, out _, out string? refusal).ShouldBeFalse();
+        refusal.ShouldNotBeNull();
+        refusal.ShouldContain("Capacity");
+        retained[0].Width.ShouldBe(16u);
+        retained[0].Height.ShouldBe(16u);
+
+        retained[1].Release();
+        pool.TryReserve(32, 32, out UIRenderSurface? resized, out string? retryFailure)
+            .ShouldBeTrue(retryFailure);
+        resized.ShouldNotBeNull();
+        resized.ShouldBeSameAs(retained[1]);
+        resized.Width.ShouldBe(32u);
+        resized.Height.ShouldBe(32u);
+        retained[0].Width.ShouldBe(16u);
+        resized.TryComplete(resized.ReservationGeneration - 1).ShouldBeFalse();
+        resized.Release();
+        retained[0].Release();
+        retained[2].Release();
+        retained[3].Release();
+    }
+
+    [Test]
+    public void MappedPacketKeepsItsReservedSurfaceUntilTheLastReaderReleases()
+    {
+        using var pool = new UIRenderSurfacePool(EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba, EPixelType.UnsignedByte, 4);
+        pool.TryReserve(8, 8, out UIRenderSurface? writer, out string? failure)
+            .ShouldBeTrue(failure);
+        writer.ShouldNotBeNull();
+        UIPublication source = new(1, 1, 1, 1, 1, default, default, [], [],
+            new BoundingRectangleF(0, 0, 8, 8), Matrix4x4.Identity,
+            Matrix4x4.Identity, offscreenSurface: writer);
+        UIPublication mapped = source.WithOutputMapping(Matrix4x4.Identity,
+            Matrix4x4.Identity, ECanvasDrawSpace.World,
+            new BoundingRectangleF(0, 0, 8, 8), Matrix4x4.Identity,
+            Matrix4x4.Identity, 0, 1);
+        writer.Release();
+        source.Release();
+        writer.IsPoolOnly.ShouldBeFalse();
+        mapped.Release();
+        writer.IsPoolOnly.ShouldBeTrue();
+    }
+
+    [Test]
+    public void SurfaceGenerationRequiresSubmittedAndSignaledProducerFence()
+    {
+        using var pool = new UIRenderSurfacePool(EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba, EPixelType.UnsignedByte, 4);
+        pool.TryReserve(8, 8, out UIRenderSurface? writer, out _).ShouldBeTrue();
+        writer.ShouldNotBeNull();
+        ulong generation = writer.ReservationGeneration;
+        writer.Generation.ShouldBe(generation);
+        writer.CompletedGeneration.ShouldBe(0UL);
+        using var fence = new TestSurfaceFence();
+        pool.TryPublish(writer, generation, fence).ShouldBeFalse();
+        fence.Status = EGpuFenceStatus.Failed;
+        pool.TryPublish(writer, generation, fence).ShouldBeFalse();
+        fence.Status = EGpuFenceStatus.Signaled;
+        fence.Submission = EGpuFenceSubmissionStatus.AwaitingSubmission;
+        pool.TryPublish(writer, generation, fence).ShouldBeFalse();
+        fence.Submission = EGpuFenceSubmissionStatus.Submitted;
+        pool.TryPublish(writer, generation, fence).ShouldBeTrue();
+        writer.CompletedGeneration.ShouldBe(generation);
+        writer.Release();
+    }
+
+    private sealed class TestSurfaceFence : XRGpuFence
+    {
+        public EGpuFenceStatus Status { get; set; } = EGpuFenceStatus.Pending;
+        public EGpuFenceSubmissionStatus Submission { get; set; } = EGpuFenceSubmissionStatus.Submitted;
+        public override EGpuFenceSubmissionStatus SubmissionStatus => Submission;
+        protected override EGpuFenceStatus PollCore() => Status;
+        protected override void DisposeCore() { }
+    }
+
     [Test]
     public void CollectedWorldCommandKeepsPacketUntilDiscardOrNextSwap()
     {

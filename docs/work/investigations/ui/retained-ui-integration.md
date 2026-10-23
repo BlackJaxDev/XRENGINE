@@ -289,3 +289,69 @@ zero warnings/errors in 47.53s; `desktop-ui-integration-build-4.log` records zer
 warnings/errors in 43.85s. The runtime and headless test source did not change
 after build 42 and the 353-test run. All review repairs are included in these
 final editor and desktop builds. No Windows or GPU execution is claimed.
+
+## Worker shaping and sparse quad integration
+
+The next snapshot moves opt-in shaping into the bounded layout worker and adds
+stable desktop quad slots with a separate painter-order index buffer. Editor
+work adds all primary detached panels, asynchronous asset-reference drops,
+shared animation mutations, and retained curve display. These changes do not
+complete world-space publication, static composition layers, or editor parity.
+
+Build 43 found a missing brace in an incomplete offscreen-route edit. The brace
+was repaired and the incomplete route was removed. The new surface pool and
+publication claims remain inactive preparation. Build 44 passed with one nullable
+test warning; the test now asserts the diagnostic exists before inspecting it.
+Build 45 passed with zero warnings/errors in 17.06s. Test run 23 passed all
+370 tests, with no skips, in 7.801s. Editor build 21 passed with zero
+warnings/errors in 2m30.74s after a local-variable shadowing repair.
+
+Review found and repaired a sparse-upload hole: full storage clearing also must
+clear slot initialization state before a removed slot is reused. A regression
+checks committed buffer fields and the draw index after growth and hole reuse.
+Layout review found pending-input changes compared against the wrong accepted
+base, stale worker faults blocking newer input, incomplete backend generation
+checks, and underestimated shaping scratch. Further review found dirty ancestor
+early returns, boxed node comparison, and an unbounded language string. Focused
+regressions cover these cases. The repaired source requires the next matching run.
+
+Editor review found stale asset completion on the render queue, deferred property
+invalidation, incomplete component rollback checks, and absent legacy layout
+records loading a default tool set. Completion now uses the scene-edit queue and
+direct property notifications. Component operations verify all targets after
+callbacks and retain inverse actions after partial rollback. Missing old layout
+records seed the requested panel. Follow-up review found toolbar destruction
+re-entry and animation mutation-before-Undo defects; these were repaired
+before publication. Windows live mutation acceptance remains pending.
+
+Build 46 passed with zero warnings/errors in 1m09.60s. Test run 24 passed
+369 of 371 tests: the added dirty guard incorrectly disabled two existing
+visual-only cache reuse cases. The guard now compares layout dependencies and
+backend/font generations without treating full-capture markers or paint revisions
+as geometry changes. The assertions were retained. Build 47 passed with zero
+warnings/errors in 1m37.01s; run 25 passed all 371 tests, no skips, in 8.883s.
+
+Animation rollback review exposed a required lower-level repair:
+`Keyframe.Remove` notified the track before clearing the detached key's links
+and ownership. A throwing listener could cause rollback to decrement the count
+twice. Removal now establishes its complete state before notification. A
+headless regression checks links, count, ownership, and enumeration after the
+throw; a desktop editor regression covers rollback. Toolbar tests cover rebuild
+from destruction, deactivation during binding, and reactivation during release.
+
+Build 48 found a test compile error: the non-generic key track required an explicit
+`Cast<Keyframe>()` before `ToArray()`. Build 49 passed after this repair with zero
+warnings/errors in 16.09s. Run 26 passed **391 of 391 tests**, no skips, in
+8.844s. The count includes the existing animation timing tests newly linked to
+the headless project, as well as the new removal regression.
+
+The final bounded review found no remaining defect in the repaired toolbar
+re-entry, animation inverse ordering, dirty marking, or key removal cases. This
+is source review evidence, not Windows workflow acceptance.
+
+Final matching builds passed: `editor-ui-integration-build-22.log` records zero
+warnings/errors in 40.30s; `desktop-ui-integration-build-5.log` records zero
+warnings/errors in 47.19s. Source hashes showed no source changes after the
+final headless build/run. All 31 local links in the five changed UI documents
+resolve, and `git diff --check` passes. No shader compiler is installed here;
+shader execution, desktop test execution, and Windows/GPU acceptance did not run.
