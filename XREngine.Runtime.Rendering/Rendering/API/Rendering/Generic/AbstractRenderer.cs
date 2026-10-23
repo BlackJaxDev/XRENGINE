@@ -82,7 +82,8 @@ namespace XREngine.Rendering
         private int _acceptsBackendWork = 1;
         private long _nextOutputCompletionReceiptId;
         private static long s_nextUiPublicationReceiptId;
-        private readonly Dictionary<ulong, XRGpuFence?> _uiPublicationFallbackFences = [];
+        private readonly Dictionary<ulong, (UI.UIPublication Publication, XRGpuFence? Fence,
+            long BackendGeneration)> _uiPublicationFallbackFences = [];
         private readonly object _uiPublicationFallbackGate = new();
         [ThreadStatic] private static ulong _currentUiPublicationReceiptId;
         [ThreadStatic] private static bool _currentUiPublicationAuthoringFailed;
@@ -138,9 +139,39 @@ namespace XREngine.Rendering
             return CompleteUiPublicationReceiptCore(receiptId, complete, failureReason, out completionFence);
         }
 
+        /// <summary>Cancel a reserved UI receipt before its first draw starts.</summary>
+        internal void CancelUiPublicationReceiptBeforeAuthoring(ulong receiptId)
+        {
+            if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
+                throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
+            _currentUiPublicationReceiptId = 0UL;
+            _currentUiPublicationAuthoringFailed = false;
+            _currentUiPublicationFailureReason = null;
+            CancelUiPublicationReceiptBeforeAuthoringCore(receiptId);
+        }
+
+        protected virtual void CancelUiPublicationReceiptBeforeAuthoringCore(ulong receiptId)
+        {
+            UI.UIPublication? publication = null;
+            lock (_uiPublicationFallbackGate)
+                if (_uiPublicationFallbackFences.Remove(receiptId, out var entry))
+                    publication = entry.Publication;
+            publication?.Release();
+        }
+
         protected virtual bool TryReserveUiPublicationReceipt(
             ulong receiptId, UI.UIPublication publication, int expectedDrawIntents,
-            bool requiresSwapchainPresentation) => true;
+            bool requiresSwapchainPresentation)
+        {
+            lock (_uiPublicationFallbackGate)
+            {
+                if (_uiPublicationFallbackFences.Count >= 512)
+                    return false;
+                publication.Retain();
+                _uiPublicationFallbackFences.Add(receiptId, (publication, null, BackendGeneration));
+                return true;
+            }
+        }
         protected virtual void OnUiPublicationAuthoringFailed(ulong receiptId, string reason) { }
         protected virtual bool CompleteUiPublicationReceiptCore(
             ulong receiptId, bool succeeded, string? failureReason, out XRGpuFence? completionFence)
@@ -149,19 +180,41 @@ namespace XREngine.Rendering
             // their cohorts behind a fence even though input cannot advance.
             completionFence = InsertGpuFence();
             lock (_uiPublicationFallbackGate)
-                _uiPublicationFallbackFences[receiptId] = completionFence;
+                if (_uiPublicationFallbackFences.TryGetValue(receiptId, out var entry))
+                    _uiPublicationFallbackFences[receiptId] =
+                        (entry.Publication, completionFence, entry.BackendGeneration);
             return succeeded && completionFence is not null;
         }
         public virtual bool IsUiPublicationReceiptRetired(ulong receiptId)
         {
             lock (_uiPublicationFallbackGate)
             {
-                if (!_uiPublicationFallbackFences.TryGetValue(receiptId, out XRGpuFence? fence) ||
-                    fence?.Poll() != EGpuFenceStatus.Signaled)
+                if (!_uiPublicationFallbackFences.TryGetValue(receiptId, out var entry) ||
+                    entry.Fence?.Poll() != EGpuFenceStatus.Signaled)
                     return false;
                 _uiPublicationFallbackFences.Remove(receiptId);
+                entry.Publication.Release();
                 return true;
             }
+        }
+        /// <summary>Release direct-backend UI packets after this renderer and GPU are idle.</summary>
+        public void RetireUiPublicationReceiptsKnownIdle(long backendGeneration)
+        {
+            List<UI.UIPublication> detached = [];
+            List<ulong> receiptIds = [];
+            lock (_uiPublicationFallbackGate)
+            {
+                foreach (var receipt in _uiPublicationFallbackFences)
+                    if (receipt.Value.BackendGeneration == backendGeneration)
+                    {
+                        receiptIds.Add(receipt.Key);
+                        detached.Add(receipt.Value.Publication);
+                    }
+                for (int index = 0; index < receiptIds.Count; index++)
+                    _uiPublicationFallbackFences.Remove(receiptIds[index]);
+            }
+            for (int index = 0; index < detached.Count; index++)
+                detached[index].Release();
         }
         internal virtual bool TryAcceptPresentedUiPublicationReceipt(
             ulong receiptId, uint imageIndex, ulong outputGeneration,

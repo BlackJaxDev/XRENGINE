@@ -27,10 +27,14 @@ public partial class UICanvasInputComponent
         if (OwningPawn?.Viewport is not XRViewport viewport || GetCameraCanvas() is not { } canvas ||
             RefreshPresentedInput() is not { } publication)
             return false;
+        try
+        {
         if (!publication.TryMapPointer(screenPosition, out canvasPosition, requireInsideViewport))
             return false;
         return float.IsFinite(canvasPosition.X) && float.IsFinite(canvasPosition.Y) &&
             (!requireInsideViewport || publication.CanvasBounds.Contains(canvasPosition));
+        }
+        finally { publication.Release(); }
     }
 
     /// <summary>Uses the same canvas coordinates, input blockers and ordering as ordinary UI hit testing.</summary>
@@ -73,6 +77,8 @@ public partial class UICanvasInputComponent
         if (OwningPawn?.Viewport is not XRViewport viewport || GetCameraCanvas() is not { } canvas ||
             RefreshPresentedInput() is not { } publication)
             return null;
+        try
+        {
         if (!publication.TryMapPointer(screenPosition, out Vector2 position) ||
             !publication.CanvasBounds.Contains(position))
             return null;
@@ -103,5 +109,7 @@ public partial class UICanvasInputComponent
         _inputRecords[selected.MembershipId] = selected;
         localPosition = Vector2.Transform(position, selected.CanvasToLocal);
         return selected.RenderInfo.Owner as UIInteractableComponent;
+        }
+        finally { publication.Release(); }
     }
 }

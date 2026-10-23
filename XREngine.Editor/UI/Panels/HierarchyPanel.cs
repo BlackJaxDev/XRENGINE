@@ -47,6 +47,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     private readonly HashSet<Guid> _collapsedNodes = new();
     private UIContextMenuComponent? _contextMenu;
     private SceneNode? _nodePendingRename;
+    private Guid? _renameFocusRestoreId;
     private SceneNode? _contextMenuTargetNode;
 
     // Scene section state.
@@ -93,13 +94,16 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
+        RestoreHierarchyState();
         Selection.SelectionChanged += OnSelectionChanged;
         SubscribeRightClick();
         RegisterTick(ETickGroup.Late, ETickOrder.Scene, PollVirtualTreeSources);
         RemakeChildren();
+        RestoreRenameFocus();
     }
     protected override void OnComponentDeactivated()
     {
+        SaveHierarchyState();
         base.OnComponentDeactivated();
         Selection.SelectionChanged -= OnSelectionChanged;
         UnsubscribeRightClick();
@@ -153,6 +157,43 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             _virtualTree.SetExpanded(id, !_collapsedNodes.Contains(node.ID));
             NotifyVirtualTreeChanged();
         }
+        SaveHierarchyState();
+    }
+
+    private void RestoreHierarchyState()
+    {
+        Guid worldId = TryGetActiveWorld()?.TargetWorld?.ID ?? Guid.Empty;
+        NativeHierarchyState? saved = NativeHierarchyStateStore.Load(worldId);
+        if (saved is null)
+            return;
+        _collapsedNodes.Clear();
+        _collapsedNodes.UnionWith(saved.CollapsedNodes ?? []);
+        _collapsedSections.Clear();
+        _collapsedSections.UnionWith(saved.CollapsedSections ?? []);
+        _scrollOffset = float.IsFinite(saved.ScrollOffset) ? MathF.Max(0, saved.ScrollOffset) : 0;
+        _showEditorScene = saved.ShowEditorScene;
+        _renameFocusRestoreId = saved.FocusedRename;
+    }
+
+    private void RestoreRenameFocus()
+    {
+        if (_renameFocusRestoreId is not { } focusId)
+            return;
+        _renameFocusRestoreId = null;
+        SceneNode? node = _hierarchyNodes.Values.FirstOrDefault(candidate => candidate.ID == focusId);
+        if (node is not null)
+        {
+            _nodePendingRename = node;
+            ShowVirtualRename(node);
+        }
+    }
+
+    private void SaveHierarchyState()
+    {
+        Guid worldId = TryGetActiveWorld()?.TargetWorld?.ID ?? Guid.Empty;
+        NativeHierarchyStateStore.Save(worldId, new NativeHierarchyState(
+            [.. _collapsedNodes], [.. _collapsedSections], _scrollOffset, _showEditorScene,
+            _nodePendingRename?.ID ?? _renameFocusRestoreId));
     }
 
     public partial class NodeWrapper(SceneNode node) : UIComponent

@@ -86,6 +86,7 @@ public sealed class UIRetainedControlsTests
     public void DirectionalNavigation_EditsFocusedControlsBeforeLeavingThem()
     {
         UITextInputComponent input = CreateFocusedInput(out _);
+        input.SingleLineMode = true;
         input.Text = "A\U0001F1FA\U0001F1F8B";
         input.CursorPosition = 1;
         input.TryConsumeFocusDirection(Vector2.UnitX).ShouldBeTrue();
@@ -111,6 +112,30 @@ public sealed class UIRetainedControlsTests
         combo.TryConsumeFocusDirection(Vector2.UnitY).ShouldBeTrue();
         combo.SelectedId.ShouldBe(1UL);
         combo.TryConsumeFocusDirection(Vector2.UnitX).ShouldBeFalse();
+    }
+
+    [Test]
+    public void MultilineCaret_MovesByPlacedLinesAndRejectsStaleTextGeometry()
+    {
+        UITextInputComponent input = CreateFocusedInput(out _);
+        input.SingleLineMode = false;
+        input.Text = "AB\nA";
+        UITextLayoutInput captured = input.TextComponent.CaptureLayoutInput().ShouldNotBeNull();
+        UITextLayoutResult layout = UITextLayoutKernel.Measure(captured, new Vector2(200, 100));
+        UITextLayoutResult changedWidth = UITextLayoutKernel.Measure(captured, new Vector2(20, 100));
+        input.CursorPosition = 2;
+
+        int[] clusters = System.Globalization.StringInfo.ParseCombiningCharacters(input.Text);
+        UITextInputComponent.FindNearestCaretOffset(layout.Carets.Span, 1, 200, clusters, input.Text.Length)
+            .ShouldBe(4);
+        UITextInputComponent.FindNearestCaretOffset(layout.Carets.Span, 0, 200, clusters, input.Text.Length)
+            .ShouldBe(2);
+        changedWidth.TextRevision.ShouldBe(layout.TextRevision);
+        input.TryMoveCaretVertically(changedWidth, 1).ShouldBeFalse();
+        input.CursorPosition.ShouldBe(2);
+
+        input.Text = "Changed";
+        input.TryMoveCaretVertically(layout, 1).ShouldBeFalse();
     }
 
     [Test]

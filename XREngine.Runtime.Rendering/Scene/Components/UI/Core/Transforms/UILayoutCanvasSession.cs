@@ -16,7 +16,7 @@ internal sealed class UILayoutCanvasSession
     private UILayoutSnapshot? _runningInput;
     private UILayoutPageLease? _runningLease;
     private List<UITransform>? _runningTargets;
-    private Task<UILayoutNodeOutput[]>? _runningTask;
+    private Task<UILayoutOutputPageView>? _runningTask;
     private CancellationTokenSource? _runningCancellation;
     private bool _runningAbandoned;
     private bool _capturing;
@@ -30,7 +30,7 @@ internal sealed class UILayoutCanvasSession
     private long _runningEpoch;
     private UILayoutSnapshot? _lastAcceptedInput;
     private List<UITransform>? _lastAcceptedTargets;
-    private UILayoutNodeOutput[]? _lastAcceptedOutput;
+    private UILayoutOutputPageView? _lastAcceptedOutput;
     private uint _blockedMeasureVersion;
     private uint _blockedArrangeVersion;
     private bool _blocked;
@@ -83,15 +83,18 @@ internal sealed class UILayoutCanvasSession
         long captureEpoch = _epoch;
         UILayoutSnapshot input;
         List<UITransform> targets = [];
+        List<UITransform>? reusedTargets = null;
         _capturing = true;
         _captureReentered = false;
         try
         {
             UILayoutSnapshot? previous = _pendingInput ?? _runningInput ?? _lastAcceptedInput;
             IReadOnlyList<UITransform>? previousTargets = _pendingTargets ?? _runningTargets ?? _lastAcceptedTargets;
+            reusedTargets = previousTargets as List<UITransform>;
             input = _forceFullCapture || changes.RequiresFullResync || previous is null || previousTargets is null
                 ? UILayoutSnapshot.Capture(_canvas, targets)
-                : UILayoutSnapshot.CaptureIncremental(_canvas, previous, previousTargets, targets, _drainedChanges);
+                : UILayoutSnapshot.CaptureIncremental(_canvas, previous, previousTargets, targets,
+                    _drainedChanges, reuseTargets: reusedTargets is not null);
         }
         catch (Exception ex)
         {
@@ -105,6 +108,9 @@ internal sealed class UILayoutCanvasSession
         {
             _capturing = false;
         }
+
+        if (targets.Count == 0 && reusedTargets is not null)
+            targets = reusedTargets;
 
         if (captureEpoch != _epoch || _captureReentered || _canvas.IsNestedCanvas ||
             !DependenciesMatch(_canvas, input, targets))
@@ -154,7 +160,7 @@ internal sealed class UILayoutCanvasSession
     {
         if (_pumping || _dispatching || _capturing)
             return false;
-        Task<UILayoutNodeOutput[]>? task = _runningTask;
+        Task<UILayoutOutputPageView>? task = _runningTask;
         if (task is null || !task.IsCompleted)
         {
             TryStart();
@@ -189,7 +195,7 @@ internal sealed class UILayoutCanvasSession
             _canvas.RaiseLayoutingFinished();
             if (task.IsCompletedSuccessfully && epoch == _epoch && DependenciesMatch(_canvas, input, targets))
             {
-                UILayoutNodeOutput[] output = task.Result;
+                UILayoutOutputPageView output = task.Result;
                 bool applied;
                 try
                 {
@@ -292,16 +298,20 @@ internal sealed class UILayoutCanvasSession
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
-    /// <summary>Checks the complete layout read set before geometry changes.</summary>
+    /// <summary>Checks the root dependency token and captured dirty branches.</summary>
     internal static bool DependenciesMatch(UICanvasTransform canvas, UILayoutSnapshot input, List<UITransform> targets)
     {
         BoundingRectangleF currentRootConstraint = new(Vector2.Zero,
             new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity));
         if (canvas.IsNestedCanvas || targets.Count != input.Nodes.Length ||
-            !currentRootConstraint.Equals(input.RootBounds))
+            !currentRootConstraint.Equals(input.RootBounds) ||
+            FontGlyphSet.GlobalLayoutMetricsGeneration != input.FontGeneration ||
+            canvas.ElementIdentity != input.Identities[0] ||
+            canvas.LayoutMeasureVersion != input.MeasureVersions[0] ||
+            canvas.LayoutArrangeVersion != input.ArrangeVersions[0])
             return false;
 
-        for (int i = 0; i < targets.Count; i++)
+        foreach (int i in input.ValidationIndices)
         {
             UITransform target = targets[i];
             if (target.ElementIdentity != input.Identities[i] ||
@@ -335,75 +345,81 @@ internal sealed class UILayoutCanvasSession
         return true;
     }
 
-    private bool Apply(UILayoutSnapshot input, List<UITransform> targets, UILayoutNodeOutput[] outputs, long epoch)
+    private bool Apply(UILayoutSnapshot input, List<UITransform> targets, UILayoutOutputPageView outputs, long epoch)
     {
         bool textApplied = true;
-        for (int i = 0; i < targets.Count; i++)
+        for (int page = 0; page < outputs.ChangedPages.Length; page++)
         {
-            if (epoch != _epoch || _canvas.IsLayoutInvalidated)
-                return false;
-            UITransform transform = targets[i];
-            Vector2 placement = outputs[i].PlacementTranslation;
-            switch (transform.PlacementInfo)
+            if (!outputs.ChangedPages[page])
+                continue;
+            int end = Math.Min((page + 1) * UILayoutOutputPageView.PageSize, targets.Count);
+            for (int i = page * UILayoutOutputPageView.PageSize; i < end; i++)
             {
-                case UIListTransform.UIListChildPlacementInfo list:
-                    if ((transform.Parent as UIListTransform)?.DisplayHorizontal == true)
-                    {
-                        list.BottomOrLeftOffset = placement.X;
-                        placement.X = 0;
-                    }
-                    else
-                    {
-                        list.BottomOrLeftOffset = placement.Y;
-                        placement.Y = 0;
-                    }
-                    break;
-                case UIDualSplitTransform.UISplitChildPlacementInfo split:
-                    if (split.Vertical)
-                    {
-                        split.Offset = placement.Y;
-                        placement.Y = 0;
-                    }
-                    else
-                    {
-                        split.Offset = placement.X;
-                        placement.X = 0;
-                    }
-                    break;
-                case UIMultiSplitTransform.UISplitChildPlacementInfo split:
-                    if (split.Vertical)
-                    {
-                        split.Offset = placement.Y;
-                        placement.Y = 0;
-                    }
-                    else
-                    {
-                        split.Offset = placement.X;
-                        placement.X = 0;
-                    }
-                    break;
-                case UIGridTransform.UIGridChildPlacementInfo grid:
-                    grid.ApplyLayoutOffset(placement);
-                    placement = Vector2.Zero;
-                    break;
-                case UIDockingPlacementInfo dock:
-                    dock.BottomLeft = placement;
-                    placement = Vector2.Zero;
-                    break;
+                if (epoch != _epoch || _canvas.IsLayoutInvalidated)
+                    return false;
+                UITransform transform = targets[i];
+                Vector2 placement = outputs[i].PlacementTranslation;
+                switch (transform.PlacementInfo)
+                {
+                    case UIListTransform.UIListChildPlacementInfo list:
+                        if ((transform.Parent as UIListTransform)?.DisplayHorizontal == true)
+                        {
+                            list.BottomOrLeftOffset = placement.X;
+                            placement.X = 0;
+                        }
+                        else
+                        {
+                            list.BottomOrLeftOffset = placement.Y;
+                            placement.Y = 0;
+                        }
+                        break;
+                    case UIDualSplitTransform.UISplitChildPlacementInfo split:
+                        if (split.Vertical)
+                        {
+                            split.Offset = placement.Y;
+                            placement.Y = 0;
+                        }
+                        else
+                        {
+                            split.Offset = placement.X;
+                            placement.X = 0;
+                        }
+                        break;
+                    case UIMultiSplitTransform.UISplitChildPlacementInfo split:
+                        if (split.Vertical)
+                        {
+                            split.Offset = placement.Y;
+                            placement.Y = 0;
+                        }
+                        else
+                        {
+                            split.Offset = placement.X;
+                            placement.X = 0;
+                        }
+                        break;
+                    case UIGridTransform.UIGridChildPlacementInfo grid:
+                        grid.ApplyLayoutOffset(placement);
+                        placement = Vector2.Zero;
+                        break;
+                    case UIDockingPlacementInfo dock:
+                        dock.BottomLeft = placement;
+                        placement = Vector2.Zero;
+                        break;
+                }
+                transform.ApplyCalculatedLayout(outputs[i], placement);
+                if (outputs[i].TextResult is { } textResult &&
+                    transform.SceneNode?.GetComponent<UITextComponent>() is { } text)
+                    textApplied &= text.ApplyLayoutResult(textResult, outputs[i].ActualSize);
             }
-            transform.ApplyCalculatedLayout(outputs[i], placement);
-            if (outputs[i].TextResult is { } textResult &&
-                transform.SceneNode?.GetComponent<UITextComponent>() is { } text)
-                textApplied &= text.ApplyLayoutResult(textResult, outputs[i].ActualSize);
         }
-        for (int i = 0; i < targets.Count; i++)
+        foreach (int i in input.OwnerSyncIndices)
         {
             if (epoch != _epoch || _canvas.IsLayoutInvalidated)
                 return false;
             if (targets[i] is UIListTransform list && list.VirtualProvider is not null)
                 list.SynchronizeVirtualRows(list.DisplayHorizontal ? outputs[i].ActualSize.X : outputs[i].ActualSize.Y);
         }
-        for (int i = 0; i < targets.Count; i++)
+        foreach (int i in input.OwnerSyncIndices)
         {
             if (epoch != _epoch || _canvas.IsLayoutInvalidated)
                 return false;
@@ -433,7 +449,7 @@ internal sealed class UILayoutCanvasSession
         UILayoutSnapshot input = _pendingInput;
         UILayoutPageLease lease = _pendingLease!;
         UILayoutSnapshot? previous = _lastAcceptedInput;
-        UILayoutNodeOutput[]? previousOutput = _lastAcceptedOutput;
+        UILayoutOutputPageView? previousOutput = _lastAcceptedOutput;
         _runningInput = input;
         _runningLease = lease;
         _runningTargets = _pendingTargets;
@@ -456,7 +472,7 @@ internal sealed class UILayoutCanvasSession
             {
                 try
                 {
-                    return UILayoutValueKernel.Run(input, previous, previousOutput, cancellation);
+                    return UILayoutValueKernel.RunPaged(input, previous, previousOutput, cancellation);
                 }
                 finally
                 {

@@ -10,8 +10,8 @@ internal static class UILayoutGridKernel
 {
     internal static void ArrangeGrid(
         in UILayoutNodeInput node, BoundingRectangleF region,
-        ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache = null)
+        UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
+        UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache = null)
     {
         ReadOnlySpan<UILayoutGridTrack> rows = node.GridRows.Span;
         ReadOnlySpan<UILayoutGridTrack> columns = node.GridColumns.Span;
@@ -65,8 +65,8 @@ internal static class UILayoutGridKernel
 
     private static void ResolveAxis(
         ReadOnlySpan<UILayoutGridTrack> tracks, float extent, bool horizontal,
-        in UILayoutNodeInput node, ReadOnlySpan<UILayoutNodeInput> nodes,
-        ReadOnlySpan<UILayoutChildInput> children, UILayoutNodeOutput[] outputs,
+        in UILayoutNodeInput node, UILayoutValuePageView<UILayoutNodeInput> nodes,
+        ReadOnlySpan<UILayoutChildInput> children, UILayoutOutputPageBuilder outputs,
         Span<float> sizes)
     {
         if (!float.IsFinite(extent) || extent < 0)

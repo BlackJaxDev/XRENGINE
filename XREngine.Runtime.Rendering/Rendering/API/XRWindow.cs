@@ -1589,6 +1589,9 @@ namespace XREngine.Rendering
                 TryRendererCleanupStep(renderer, reason,
                     "RetireUIBatchCohorts",
                     () => UIBatchCollector.NotifyRendererKnownIdle(renderer, retiringBackendGeneration));
+                TryRendererCleanupStep(renderer, reason,
+                    "RetireUIDrawPublications",
+                    () => renderer.RetireUiPublicationReceiptsKnownIdle(retiringBackendGeneration));
             }
 
             bool wrappersDestroyed = TryRendererCleanupStep(
@@ -3701,6 +3704,7 @@ namespace XREngine.Rendering
 
         private void CompleteDispose()
         {
+            ReleaseWindowUiPublications();
             Interlocked.Exchange(ref _pendingCloseRequested, 0);
             Interlocked.Exchange(ref _externalNativeEventPumpActive, 0);
             _approvedNativeCloseInProgress = false;

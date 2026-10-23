@@ -42,31 +42,56 @@ public partial class UICanvasComponent
     private ulong _nextHitGeneration;
     private long _canvasLifetime = 1;
 
-    /// <summary>Gets the complete state admitted to the render command buffers.</summary>
-    public UIPublication? CurrentPublication => Volatile.Read(ref _currentPublication);
+    /// <summary>Acquires the packet used by a render attempt. The caller must release it in a finally block.</summary>
+    private UIPublication? AcquireCurrentPublication()
+    {
+        lock (_publicationGate)
+        {
+            UIPublication? publication = _currentPublication;
+            publication?.Retain();
+            return publication;
+        }
+    }
 
-    /// <summary>Gets the last state explicitly accepted by an output.</summary>
-    public UIPublication? GetPresentedPublication(object output)
-        => _presentedPublications.TryGetValue(output, out UIPublication? publication)
-            ? publication : null;
+    /// <summary>Acquires the last packet accepted by an output. The caller must release it in a finally block.</summary>
+    public bool TryAcquirePresentedPublication(object output, out UIPublication? publication)
+    {
+        lock (_publicationGate)
+        {
+            if (_presentedPublications.TryGetValue(output, out publication))
+            {
+                publication.Retain();
+                return true;
+            }
+        }
+        publication = null;
+        return false;
+    }
 
     /// <summary>Removes an output latch when an accepted image no longer contains this canvas.</summary>
     public void ClearPresentedPublication(object output)
-        => _presentedPublications.TryRemove(output, out _);
+    {
+        lock (_publicationGate)
+            if (_presentedPublications.TryRemove(output, out UIPublication? old))
+                old.Release();
+    }
 
     /// <summary>Releases all packet references for a detached output.</summary>
     public void RemovePublicationOutput(object output)
     {
         lock (_publicationGate)
         {
-            _presentedPublications.TryRemove(output, out _);
-            _renderedPublications.TryRemove(output, out _);
-            _outputMappingCache.Remove(output);
+            if (_presentedPublications.TryRemove(output, out UIPublication? presented))
+                presented.Release();
+            if (_renderedPublications.TryRemove(output, out var rendered))
+                rendered.Publication.Release();
+            if (_outputMappingCache.Remove(output, out var mapping))
+            {
+                mapping.Source.Release();
+                mapping.Mapped.Release();
+            }
         }
     }
-
-    /// <summary>Gets the packet that a frame must retain until its output is accepted or discarded.</summary>
-    public UIPublication? CaptureRenderingPublication() => CurrentPublication;
 
     /// <summary>Gets draw values from the packet bound to the current collection.</summary>
     public bool TryGetCollectingRenderRecord(long membershipId, out UIRenderRecord record)
@@ -77,15 +102,25 @@ public partial class UICanvasComponent
         return false;
     }
 
-    /// <summary>Gets a packet only if this output finished its UI command chain in this frame.</summary>
-    public UIPublication? GetRenderedPublication(object output, ulong frameId)
-        => _renderedPublications.TryGetValue(output, out var receipt) && receipt.FrameId == frameId
-            ? receipt.Publication : null;
-
-    /// <summary>The draw receipt attached to this frame's exact rendered packet.</summary>
-    public ulong GetRenderedPublicationReceiptId(object output, ulong frameId)
-        => _renderedPublications.TryGetValue(output, out var receipt) && receipt.FrameId == frameId
-            ? receipt.ReceiptId : 0UL;
+    /// <summary>Acquires the exact rendered packet and receipt for one output frame. The caller must release the packet in a finally block.</summary>
+    public bool TryAcquireRenderedPublication(object output, ulong frameId,
+        out UIPublication? publication, out ulong receiptId)
+    {
+        lock (_publicationGate)
+        {
+            if (_renderedPublications.TryGetValue(output, out var receipt) &&
+                receipt.FrameId == frameId)
+            {
+                receipt.Publication.Retain();
+                publication = receipt.Publication;
+                receiptId = receipt.ReceiptId;
+                return true;
+            }
+        }
+        publication = null;
+        receiptId = 0;
+        return false;
+    }
 
     /// <summary>Records an output completion for the exact packet used by that output.</summary>
     public void MarkPresented(object output, UIPublication publication)
@@ -96,7 +131,10 @@ public partial class UICanvasComponent
         {
             if (!IsActive || publication.CanvasLifetime != (ulong)_canvasLifetime)
                 return;
+            publication.Retain();
+            _presentedPublications.TryGetValue(output, out UIPublication? old);
             _presentedPublications[output] = publication;
+            old?.Release();
         }
     }
 
@@ -111,15 +149,25 @@ public partial class UICanvasComponent
         long revision = canvas.ChangeJournal.Revision;
         bool painterOrderChanged = VisualScene2D.TryCopyRenderableMembershipOrder(
             ref _publicationPainterOrderRevision, _publicationPainterOrder);
-        UIPublication? previous = _candidatePublication ?? CurrentPublication;
+        UIPublication? previous;
+        lock (_publicationGate)
+        {
+            previous = _candidatePublication ?? _currentPublication;
+            previous?.Retain();
+        }
+        try
+        {
         if (previous is not null && previous.LayoutGeneration == layoutGeneration &&
             previous.ChangeRevision == revision && !painterOrderChanged)
             return;
 
         ReadOnlyMemory<UIElementIdentity> identities = canvas.CurrentLayoutIdentities;
-        ReadOnlyMemory<UILayoutNodeOutput> layout = canvas.CurrentLayoutOutputs;
-        if (identities.Length != layout.Length)
+        UILayoutOutputPageView? layoutPages = canvas.CurrentLayoutOutputPages;
+        ReadOnlyMemory<UILayoutNodeOutput> legacyLayout = layoutPages is null
+            ? canvas.CurrentLayoutOutputs : default;
+        if (identities.Length != (layoutPages?.Length ?? legacyLayout.Length))
             return;
+        layoutPages ??= UILayoutOutputPageView.CopyFrom(legacyLayout.Span);
 
         _publicationLayoutIndices.Clear();
         for (int index = 0; index < identities.Length; index++)
@@ -130,7 +178,7 @@ public partial class UICanvasComponent
         _publicationScrollScratch.Clear();
         _publicationFocusScopeScratch.Clear();
         _publicationRenderScratch.Clear();
-        CaptureHitRecords(canvas, canvas, canvas.ElementIdentity);
+        CaptureHitRecords(canvas, canvas, canvas.ElementIdentity, layoutPages);
         OrderPublicationRenders();
         OrderPublicationFocusScopes();
         for (int index = 0; index < _publicationRenderScratch.Count; index++)
@@ -181,11 +229,17 @@ public partial class UICanvasComponent
                 VisualScene2D.TryCopyRenderableMembershipOrder(
                     ref painterRevision, _publicationPainterOrder))
                 return;
-            _candidatePublication = new UIPublication(
+            UIPublication replacement = new UIPublication(
                 ++_nextPublicationGeneration, (ulong)lifetime, layoutGeneration, hitGeneration,
-                revision, layout, identities, hits, renders, canvas.GetActualBounds(),
-                Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes);
+                revision, default, identities, hits, renders, canvas.GetActualBounds(),
+                Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
+                layoutPages);
+            UIPublication? oldCandidate = _candidatePublication;
+            _candidatePublication = replacement;
+            oldCandidate?.Release();
         }
+        }
+        finally { previous?.Release(); }
     }
 
     private int CaptureSubtreeEnds(UITransform transform)
@@ -233,10 +287,10 @@ public partial class UICanvasComponent
     }
 
     private void CaptureHitRecords(UICanvasTransform canvas, UITransform transform,
-        UIElementIdentity focusScopeIdentity)
+        UIElementIdentity focusScopeIdentity, UILayoutOutputPageView layoutPages)
     {
         if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int layoutIndex) ||
-            !canvas.CurrentLayoutOutputs.Span[layoutIndex].Visible)
+            !layoutPages[layoutIndex].Visible)
             return;
 
         if (transform.SceneNode?.Components is { } nodeComponents)
@@ -278,13 +332,13 @@ public partial class UICanvasComponent
                 {
                     if (component is UIRenderableComponent hiddenRenderable)
                         _publicationRenderScratch.Add(hiddenRenderable.CapturePublicationRenderRecord(
-                            in canvas.CurrentLayoutOutputs.Span[layoutIndex]));
+                            in layoutPages[layoutIndex]));
                     continue;
                 }
 
                 if (component is UIRenderableComponent renderableComponent)
                     _publicationRenderScratch.Add(renderableComponent.CapturePublicationRenderRecord(
-                        in canvas.CurrentLayoutOutputs.Span[layoutIndex]));
+                        in layoutPages[layoutIndex]));
 
                 long interactionRevision = component is UIInteractableComponent target
                     ? target.InteractionRevision : 0;
@@ -307,7 +361,7 @@ public partial class UICanvasComponent
 
         for (int index = 0; index < transform.Children.Count; index++)
             if (transform.Children[index] is UITransform child)
-                CaptureHitRecords(canvas, child, focusScopeIdentity);
+                CaptureHitRecords(canvas, child, focusScopeIdentity, layoutPages);
     }
 
     private void BeginPublicationCollection()
@@ -318,7 +372,13 @@ public partial class UICanvasComponent
             BatchCollector.DiscardCollectedCandidate();
         }
         lock (_publicationGate)
-            _collectingPublication = _candidatePublication ?? CurrentPublication;
+        {
+            UIPublication? next = _candidatePublication ?? _currentPublication;
+            next?.Retain();
+            UIPublication? old = _collectingPublication;
+            _collectingPublication = next;
+            old?.Release();
+        }
         BatchCollector.BeginPublicationCollection(_collectingPublication?.Generation ?? 0);
     }
 
@@ -355,10 +415,15 @@ public partial class UICanvasComponent
             if (_collectingPublication is not { } candidate ||
                 candidate.CanvasLifetime != (ulong)_canvasLifetime)
                 return;
+            UIPublication? oldCurrent = _currentPublication;
             Volatile.Write(ref _currentPublication, candidate);
             if (ReferenceEquals(_candidatePublication, candidate))
+            {
                 _candidatePublication = null;
+                candidate.Release();
+            }
             _collectingPublication = null;
+            oldCurrent?.Release();
         }
     }
 
@@ -416,28 +481,65 @@ public partial class UICanvasComponent
                             new BoundingRectangleF(new Vector2(region.MinX, region.MinY),
                                 new Vector2(region.Width, region.Height)),
                             worldToCanvas, clipToWorld, nearClipZ, farClipZ);
+                        source.Retain();
+                        bool hadOldMapping = _outputMappingCache.TryGetValue(output, out var oldMapping);
                         _outputMappingCache[output] = (source, canvasToOutput,
                             worldToCanvas, clipToWorld, drawSpace, nearClipZ, farClipZ, publication);
+                        if (hadOldMapping)
+                        {
+                            oldMapping.Source.Release();
+                            oldMapping.Mapped.Release();
+                        }
                     }
+                    SetRenderedPublicationNoLock(output, publication, receiptId);
                 }
+                return;
             }
         }
         lock (_publicationGate)
-            if (publication.CanvasLifetime == (ulong)_canvasLifetime)
-                _renderedPublications[output] = (RuntimeEngine.Rendering.State.RenderFrameId, publication, receiptId);
+            SetRenderedPublicationNoLock(output, publication, receiptId);
+    }
+
+    private void SetRenderedPublicationNoLock(object output, UIPublication publication, ulong receiptId)
+    {
+        if (publication.CanvasLifetime != (ulong)_canvasLifetime)
+            return;
+        publication.Retain();
+        _renderedPublications.TryGetValue(output, out var old);
+        _renderedPublications[output] = (RuntimeEngine.Rendering.State.RenderFrameId,
+            publication, receiptId);
+        old.Publication?.Release();
     }
 
     private void ClearPublications()
     {
+        List<UIPublication> detached = [];
         lock (_publicationGate)
         {
             Interlocked.Increment(ref _canvasLifetime);
+            if (_candidatePublication is { } candidate)
+                detached.Add(candidate);
             _candidatePublication = null;
+            if (_collectingPublication is { } collecting)
+                detached.Add(collecting);
             _collectingPublication = null;
+            if (_currentPublication is { } current)
+                detached.Add(current);
             Volatile.Write(ref _currentPublication, null);
+            foreach (var entry in _presentedPublications)
+                detached.Add(entry.Value);
             _presentedPublications.Clear();
+            foreach (var entry in _renderedPublications)
+                detached.Add(entry.Value.Publication);
             _renderedPublications.Clear();
+            foreach (var entry in _outputMappingCache)
+            {
+                detached.Add(entry.Value.Source);
+                detached.Add(entry.Value.Mapped);
+            }
             _outputMappingCache.Clear();
         }
+        for (int index = 0; index < detached.Count; index++)
+            detached[index].Release();
     }
 }

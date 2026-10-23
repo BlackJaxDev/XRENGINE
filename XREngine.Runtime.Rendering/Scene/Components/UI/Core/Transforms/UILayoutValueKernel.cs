@@ -12,58 +12,55 @@ internal static class UILayoutValueKernel
         ReadOnlySpan<UILayoutChildInput> children,
         BoundingRectangleF rootBounds)
     {
-        UILayoutNodeOutput[] outputs = new UILayoutNodeOutput[nodes.Length];
-        if (nodes.IsEmpty)
-            return outputs;
-
-        RunPasses(nodes, children, rootBounds, outputs, null, null, null, CancellationToken.None);
-        ValidateOutputs(outputs);
-        return outputs;
+        return RunPasses(UILayoutValuePageView<UILayoutNodeInput>.CopyFrom(nodes), children, rootBounds, null, null, null,
+            CancellationToken.None).ToArray();
     }
+
+    internal static UILayoutNodeOutput[] Run(
+        UILayoutValuePageView<UILayoutNodeInput> nodes,
+        ReadOnlySpan<UILayoutChildInput> children, BoundingRectangleF rootBounds)
+        => RunPasses(nodes, children, rootBounds, null, null, null,
+            CancellationToken.None).ToArray();
 
     /// <summary>Reuse measured subtrees only when aggregate dependency keys and constraints match.</summary>
     internal static UILayoutNodeOutput[] Run(
         UILayoutSnapshot input, UILayoutSnapshot? previous, UILayoutNodeOutput[]? previousOutputs,
         CancellationToken cancellation = default)
-    {
-        UILayoutNodeOutput[] outputs = new UILayoutNodeOutput[input.Nodes.Length];
-        if (outputs.Length == 0)
-            return outputs;
-        RunPasses(input.Nodes, input.Children, input.RootBounds, outputs,
-            input, previous, previousOutputs, cancellation);
-        ValidateOutputs(outputs);
-        return outputs;
-    }
+        => RunPaged(input, previous, previousOutputs is null ? null :
+            UILayoutOutputPageView.CopyFrom(previousOutputs), cancellation).ToArray();
 
-    private static void ValidateOutputs(ReadOnlySpan<UILayoutNodeOutput> outputs)
+    internal static UILayoutOutputPageView RunPaged(
+        UILayoutSnapshot input, UILayoutSnapshot? previous,
+        UILayoutOutputPageView? previousOutputs, CancellationToken cancellation = default)
+        => RunPasses(input.Nodes, input.Children, input.RootBounds,
+            input, previous, previousOutputs, cancellation);
+
+    internal static void ValidateOutput(int index, in UILayoutNodeOutput output)
     {
-        for (int i = 0; i < outputs.Length; i++)
-        {
-            ref readonly UILayoutNodeOutput output = ref outputs[i];
             if (!Finite(output.RawSize) || !Finite(output.DesiredSize) ||
                 !Finite(output.ActualSize) || !Finite(output.LocalTranslation) ||
                 !Finite(output.PlacementTranslation) || !Finite(output.AllocatedBounds.Translation) ||
                 !Finite(output.AllocatedBounds.Extents) || output.ActualSize.X < 0 ||
                 output.ActualSize.Y < 0)
-                throw new InvalidOperationException($"Layout produced invalid geometry at node {i}.");
-        }
+                throw new InvalidOperationException($"Layout produced invalid geometry at node {index}.");
     }
 
     private static bool Finite(Vector2 value)
         => float.IsFinite(value.X) && float.IsFinite(value.Y);
 
-    private static void RunPasses(
-        ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        BoundingRectangleF rootBounds, UILayoutNodeOutput[] outputs,
+    private static UILayoutOutputPageView RunPasses(
+        UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
+        BoundingRectangleF rootBounds,
         UILayoutSnapshot? current, UILayoutSnapshot? previous,
-        UILayoutNodeOutput[]? previousOutputs, CancellationToken cancellation)
+        UILayoutOutputPageView? previousOutputs, CancellationToken cancellation)
     {
-        UILayoutNodeOutput[]? arranged = null;
+        if (nodes.Length == 0)
+            return new UILayoutOutputPageBuilder(0).Freeze();
+        UILayoutOutputPageView? arranged = null;
         for (int pass = 0; pass < 3; pass++)
         {
             cancellation.ThrowIfCancellationRequested();
-            if (pass != 0)
-                Array.Clear(outputs);
+            UILayoutOutputPageBuilder outputs = new(nodes.Length, pass == 0 ? previousOutputs : null);
             Measure(0, rootBounds.Extents, nodes, children, outputs,
                 pass == 0 ? current : null, previous, previousOutputs, cancellation, arranged);
             Arrange(0, ResolveRootBounds(rootBounds, outputs[0]), Vector2.Zero, true,
@@ -71,28 +68,37 @@ internal static class UILayoutValueKernel
                 pass == 0 && current is not null
                     ? new UILayoutArrangeCache(current, previous, previousOutputs, cancellation)
                     : null);
-            if (!NeedsTextRemeasure(nodes, outputs))
-                return;
+            outputs.ValidateChangedPages();
+            UILayoutOutputPageView result = outputs.Freeze();
+            if (!NeedsTextRemeasure(nodes, result))
+                return result;
             if (pass == 2)
                 throw new InvalidOperationException("Text layout did not converge within three measure passes.");
-            arranged = (UILayoutNodeOutput[])outputs.Clone();
+            arranged = result;
         }
+        throw new InvalidOperationException("Text layout pass limit was not reached correctly.");
     }
 
-    private static bool NeedsTextRemeasure(ReadOnlySpan<UILayoutNodeInput> nodes,
-        ReadOnlySpan<UILayoutNodeOutput> outputs)
+    private static bool NeedsTextRemeasure(UILayoutValuePageView<UILayoutNodeInput> nodes,
+        UILayoutOutputPageView outputs)
     {
-        for (int i = 0; i < nodes.Length; i++)
+        for (int page = 0; page < outputs.ChangedPages.Length; page++)
         {
-            ref readonly UILayoutNodeInput node = ref nodes[i];
-            if (node.Collapsed || node.TextInput is null || outputs[i].TextResult is not { } text)
+            if (!outputs.ChangedPages[page])
                 continue;
-            if (node.Width is null && node.CapturedAutoWidth is null &&
-                MathF.Abs(outputs[i].RawSize.X - text.IntrinsicSize.X) > 0.01f)
-                return true;
-            if (node.Height is null && node.CapturedAutoHeight is null &&
-                MathF.Abs(outputs[i].RawSize.Y - text.IntrinsicSize.Y) > 0.01f)
-                return true;
+            int end = Math.Min((page + 1) * UILayoutOutputPageView.PageSize, nodes.Length);
+            for (int i = page * UILayoutOutputPageView.PageSize; i < end; i++)
+            {
+                ref readonly UILayoutNodeInput node = ref nodes[i];
+                if (node.Collapsed || node.TextInput is null || outputs[i].TextResult is not { } text)
+                    continue;
+                if (node.Width is null && node.CapturedAutoWidth is null &&
+                    MathF.Abs(outputs[i].RawSize.X - text.IntrinsicSize.X) > 0.01f)
+                    return true;
+                if (node.Height is null && node.CapturedAutoHeight is null &&
+                    MathF.Abs(outputs[i].RawSize.Y - text.IntrinsicSize.Y) > 0.01f)
+                    return true;
+            }
         }
         return false;
     }
@@ -106,16 +112,17 @@ internal static class UILayoutValueKernel
     private static Vector2 Measure(
         int index,
         Vector2 constraint,
-        ReadOnlySpan<UILayoutNodeInput> nodes,
+        UILayoutValuePageView<UILayoutNodeInput> nodes,
         ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs,
+        UILayoutOutputPageBuilder outputs,
         UILayoutSnapshot? current,
         UILayoutSnapshot? previous,
-        UILayoutNodeOutput[]? previousOutputs,
+        UILayoutOutputPageView? previousOutputs,
         CancellationToken cancellation,
-        UILayoutNodeOutput[]? arranged)
+        UILayoutOutputPageView? arranged)
     {
         cancellation.ThrowIfCancellationRequested();
+        outputs.RecordVisit();
         ref readonly UILayoutNodeInput node = ref nodes[index];
         if (current is not null && previous is not null && previousOutputs is not null &&
             index < previous.Nodes.Length && index < previousOutputs.Length &&
@@ -126,12 +133,13 @@ internal static class UILayoutValueKernel
             Equals(previous.Nodes[index].TextInput, node.TextInput) &&
             previousOutputs[index].MeasureConstraint == constraint)
         {
-            CopyCachedSubtree(index, nodes, children, outputs, previousOutputs, cancellation);
             return outputs[index].DesiredSize;
         }
+        ref UILayoutNodeOutput output = ref outputs.Edit(index);
+        output = default;
         if (node.Collapsed)
         {
-            outputs[index].MeasureConstraint = constraint;
+            output.MeasureConstraint = constraint;
             return Vector2.Zero;
         }
 
@@ -150,6 +158,10 @@ internal static class UILayoutValueKernel
                 childConstraint.Y = float.IsNaN(node.OperatorValues.X) ? float.PositiveInfinity : node.OperatorValues.X;
             if (arranged is not null)
                 childConstraint = arranged[childIndex].ActualSize;
+            if (current is not null && previous is not null && previousOutputs is not null &&
+                !current.IsDirty(childIndex) && childIndex < previousOutputs.Length &&
+                previousOutputs[childIndex].MeasureConstraint == childConstraint)
+                continue;
             Measure(childIndex, childConstraint, nodes, children, outputs,
                 current, previous, previousOutputs, cancellation, arranged);
         }
@@ -165,7 +177,6 @@ internal static class UILayoutValueKernel
         float rawHeight = node.Height ?? node.CapturedAutoHeight ?? textSize?.Y ?? MeasureRawAxis(index, false, nodes, children, outputs);
         float measuredWidth = node.Width ?? node.CapturedAutoWidth ?? textSize?.X ?? MeasureAutoAxis(index, true, nodes, children, outputs);
         float measuredHeight = node.Height ?? node.CapturedAutoHeight ?? textSize?.Y ?? MeasureAutoAxis(index, false, nodes, children, outputs);
-        ref UILayoutNodeOutput output = ref outputs[index];
         output.MeasureConstraint = constraint;
         output.RawSize = new Vector2(rawWidth, rawHeight);
         Vector2 desired = new(Clamp(measuredWidth, node.MinWidth, node.MaxWidth), Clamp(measuredHeight, node.MinHeight, node.MaxHeight));
@@ -175,24 +186,12 @@ internal static class UILayoutValueKernel
         return desired;
     }
 
-    private static void CopyCachedSubtree(
-        int index, ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs, UILayoutNodeOutput[] previousOutputs,
-        CancellationToken cancellation)
-    {
-        cancellation.ThrowIfCancellationRequested();
-        outputs[index] = previousOutputs[index];
-        ref readonly UILayoutNodeInput node = ref nodes[index];
-        for (int i = 0; i < node.ChildCount; i++)
-            CopyCachedSubtree(children[node.FirstChild + i].NodeIndex, nodes, children, outputs, previousOutputs, cancellation);
-    }
-
     private static float MeasureAutoAxis(
         int index,
         bool horizontal,
-        ReadOnlySpan<UILayoutNodeInput> nodes,
+        UILayoutValuePageView<UILayoutNodeInput> nodes,
         ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs)
+        UILayoutOutputPageBuilder outputs)
     {
         ref readonly UILayoutNodeInput node = ref nodes[index];
         bool isListAxis = node.Operator == UILayoutOperator.List && ((node.OperatorFlags & 1) != 0) == horizontal;
@@ -206,7 +205,7 @@ internal static class UILayoutValueKernel
             ref readonly UILayoutNodeInput child = ref nodes[childIndex];
             if (child.Collapsed || (horizontal ? child.ExcludeAutoWidth : child.ExcludeAutoHeight))
                 continue;
-            ref UILayoutNodeOutput childOutput = ref outputs[childIndex];
+            ref readonly UILayoutNodeOutput childOutput = ref outputs[childIndex];
             if (node.Operator is UILayoutOperator.Transform or UILayoutOperator.Rotation)
             {
                 size = MathF.Max(size, horizontal ? childOutput.DesiredSize.X : childOutput.DesiredSize.Y);
@@ -231,9 +230,9 @@ internal static class UILayoutValueKernel
 
     private static float MeasureRawAxis(
         int index, bool horizontal,
-        ReadOnlySpan<UILayoutNodeInput> nodes,
+        UILayoutValuePageView<UILayoutNodeInput> nodes,
         ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs)
+        UILayoutOutputPageBuilder outputs)
     {
         ref readonly UILayoutNodeInput node = ref nodes[index];
         if (node.Operator is UILayoutOperator.Transform or UILayoutOperator.Rotation)
@@ -270,13 +269,14 @@ internal static class UILayoutValueKernel
         BoundingRectangleF slot,
         Vector2 placement,
         bool inheritedVisible,
-        ReadOnlySpan<UILayoutNodeInput> nodes,
+        UILayoutValuePageView<UILayoutNodeInput> nodes,
         ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs,
+        UILayoutOutputPageBuilder outputs,
         UILayoutArrangeCache? cache = null)
     {
         if (cache is not null)
             cache.Cancellation.ThrowIfCancellationRequested();
+        outputs.RecordVisit();
         if (cache?.Previous is { } previous && cache.PreviousOutputs is { } prior &&
             index < previous.Nodes.Length && index < prior.Length &&
             cache.Current.Identities[index] == previous.Identities[index] &&
@@ -291,11 +291,10 @@ internal static class UILayoutValueKernel
             prior[index].RawSize == outputs[index].RawSize &&
             prior[index].DesiredSize == outputs[index].DesiredSize)
         {
-            CopyCachedSubtree(index, nodes, children, outputs, prior, cache.Cancellation);
             return;
         }
         ref readonly UILayoutNodeInput node = ref nodes[index];
-        ref UILayoutNodeOutput output = ref outputs[index];
+        ref UILayoutNodeOutput output = ref outputs.Edit(index);
         output.AllocatedBounds = slot;
         output.PlacementTranslation = placement;
         output.Visible = inheritedVisible && !node.Collapsed && !node.Hidden;
@@ -342,7 +341,17 @@ internal static class UILayoutValueKernel
                 break;
             default:
                 for (int i = 0; i < node.ChildCount; i++)
-                    Arrange(children[node.FirstChild + i].NodeIndex, region, padding, output.Visible, nodes, children, outputs, cache);
+                {
+                    int childIndex = children[node.FirstChild + i].NodeIndex;
+                    if (cache?.Previous is { } oldSnapshot && cache.PreviousOutputs is { } priorOutputs &&
+                        !cache.Current.IsDirty(childIndex) &&
+                        index < priorOutputs.Length && childIndex < priorOutputs.Length &&
+                        oldSnapshot.Nodes[index].Padding == node.Padding &&
+                        priorOutputs[index].ActualSize == output.ActualSize &&
+                        priorOutputs[index].Visible == output.Visible)
+                        continue;
+                    Arrange(childIndex, region, padding, output.Visible, nodes, children, outputs, cache);
+                }
                 break;
         }
     }
@@ -400,8 +409,8 @@ internal static class UILayoutValueKernel
 
     private static void ArrangeTabs(
         in UILayoutNodeInput node, BoundingRectangleF region,
-        ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache)
+        UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
+        UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache)
     {
         for (int i = 0; i < node.ChildCount; i++)
             Arrange(children[node.FirstChild + i].NodeIndex, region, region.Translation,
@@ -410,8 +419,8 @@ internal static class UILayoutValueKernel
 
     private static void ArrangeDockingRoot(
         in UILayoutNodeInput node, BoundingRectangleF region,
-        ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache)
+        UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
+        UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache)
     {
         float left = node.OperatorValues.X;
         float right = node.OperatorValues.Y;
@@ -449,8 +458,8 @@ internal static class UILayoutValueKernel
 
     private static void ArrangeScrollable(
         in UILayoutNodeInput node, BoundingRectangleF region,
-        ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache)
+        UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
+        UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache)
     {
         Vector2 scroll = new(node.OperatorValues.X, node.OperatorValues.Y);
         for (int i = 0; i < node.ChildCount; i++)
@@ -465,8 +474,8 @@ internal static class UILayoutValueKernel
 
     private static void ArrangeList(
         in UILayoutNodeInput node, BoundingRectangleF region,
-        ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache)
+        UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
+        UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache)
     {
         bool horizontal = (node.OperatorFlags & 1) != 0;
         float itemSize = node.OperatorValues.X;
@@ -512,8 +521,8 @@ internal static class UILayoutValueKernel
 
     private static void ArrangeDualSplit(
         in UILayoutNodeInput node, BoundingRectangleF region,
-        ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache)
+        UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
+        UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache)
     {
         if (node.ChildCount == 0)
             return;

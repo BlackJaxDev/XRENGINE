@@ -74,6 +74,53 @@ namespace XREngine.Rendering.UI
         public int VirtualItemCount => _virtualItemCount;
         public float VirtualScrollOffset => _virtualScrollOffset;
 
+        /// <summary>Requests an indexed item in the viewport without realizing other rows.</summary>
+        public bool TryScrollToVirtualItem(ulong itemId, bool center = false)
+        {
+            if (itemId == 0 || _virtualProvider is not IVirtualListItemIndex lookup ||
+                ItemSize is not float size || !float.IsFinite(size) || size <= 0 ||
+                !lookup.TryGetIndexOfItemId(itemId, out int index) ||
+                (uint)index >= (uint)_virtualProvider.Count || _virtualProvider.GetItemId(index) != itemId)
+                return false;
+            GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+            double spacing = float.IsFinite(ItemSpacing) ? Math.Max(0, ItemSpacing) : 0;
+            double stride = size + spacing;
+            double start = index * stride;
+            double end = start + size;
+            double viewport = _virtualViewportExtent;
+            double scroll = float.IsFinite(ContentScrollOffset) ? Math.Max(0, ContentScrollOffset) : 0;
+            if (center && viewport > 0)
+                scroll = start - (viewport - size) * 0.5;
+            else if (start < scroll)
+                scroll = start;
+            else if (viewport <= 0 || end > scroll + viewport)
+                scroll = viewport > 0 ? end - viewport : start;
+            double maxScroll = Math.Max(0, (double)_virtualProvider.Count * stride - spacing - viewport);
+            ContentScrollOffset = (float)Math.Clamp(scroll, 0, Math.Min(maxScroll, float.MaxValue));
+            return true;
+        }
+
+        /// <summary>Gets the current lease only after owner-thread synchronization realizes this ID.</summary>
+        public bool TryGetRealizedVirtualRow(ulong itemId, out UIBoundableTransform? row,
+            out UIVirtualRowLease lease)
+        {
+            GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+            if (itemId != 0 && _virtualProvider is not null &&
+                _visibleIndicesById.TryGetValue(itemId, out int index) &&
+                _slotsByIndex.TryGetValue(index, out VirtualSlot? slot) &&
+                slot.Lease.ItemId == itemId && slot.Index == index &&
+                slot.Revision == _virtualProvider.Revision &&
+                (uint)index < (uint)_virtualProvider.Count && _virtualProvider.GetItemId(index) == itemId)
+            {
+                row = slot.Row;
+                lease = slot.Lease;
+                return true;
+            }
+            row = null;
+            lease = default;
+            return false;
+        }
+
         /// <summary>
         /// Gets extent from cached count and fixed item size. No source items are visited.
         /// </summary>

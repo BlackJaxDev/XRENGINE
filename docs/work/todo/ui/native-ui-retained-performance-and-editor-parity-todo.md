@@ -7,13 +7,12 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The branch contains bounded value-based worker layout, frozen screen-canvas input records, retained render storage, owned draw payloads, common controls, virtual collections, and native editor panel integration. The first implementation checkpoint closes 16 of the original 60 code items; 44 code items and four owner decisions remain below. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) for itemized evidence and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for ownership and limits. Sparse capture, deterministic resource retirement, exact world-space publication, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
+The branch contains bounded worker layout with shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained render storage, common controls, virtual collections, and native editor panels. Completed code accounts for 19 of the original 60 implementation items; 41 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
 
 ## Open Code Items
 
 ### Phase 2: Immutable Layout And Bounded Scheduling
 
-- [ ] Complete incremental invalidation in `UILayoutSystem` and layout transforms. Done when measure changes visit required ancestors, arrange changes visit affected branches and dependent siblings, and global bounds/DPI changes use the same kernel.
 - [ ] Remove active `OnResizeChildComponents` paths only after equivalent behavior belongs to measure and arrange. UI transform classes. Done when normal layout has one authoritative kernel.
 - [ ] Replace LINQ in `UIBoundableTransform.GetMaxChildWidth` and `GetMaxChildHeight`; audit layout hot paths for allocations. Done when steady-state visits use allocation-free iteration and measured steady-state layout allocates no managed memory.
 
@@ -24,7 +23,6 @@ The branch contains bounded value-based worker layout, frozen screen-canvas inpu
 - [ ] Replace hit transition set rebuilding with an allocation-free identity diff. `UICanvasInputComponent` and render records. Done when warmed pointer movement allocates no managed memory and enter/leave behavior remains correct.
 - [ ] Bound reusable blocker-filter capacity and cache idle hit queries by pointer state, capture state, output transform, and hit generation. Done when warmed hit queries avoid allocations and unchanged input reuses the prior result.
 - [ ] Advance hit generations only for visibility, eligibility, clip, painter order, transform, or bounds changes. Done when visual-only changes leave hit state valid.
-- [ ] Exclude decorative primitives from hit testing unless they block input. Done when only interactive or blocking elements enter hit queries.
 - [ ] Preserve pointer capture and drag behavior across publication changes. Keep `TopMostInteractable` as the camera-input blocking contract. Done when capture targets remain valid and overlapping UI/camera input tests pass.
 
 ### Phase 4: Persistent Render Data And Clipping
@@ -61,7 +59,6 @@ The branch contains bounded value-based worker layout, frozen screen-canvas inpu
 
 ### Phase 7: Editor Adoption
 
-- [ ] Replace `HierarchyPanel` full-tree construction with the virtual tree. Done when the 2,000-row cap, `Transform.Clear`, and whole-tree `RemakeChildren` do not run for routine edits, selection, or refresh.
 - [ ] Reuse hierarchy row visuals and bindings; connect real scene sections and replace debug-only asset drops. Done when sections, roots, visibility, dirty state, multi-selection, menus, rename, drag/drop, and prefab/model spawn use the shared data model.
 - [ ] Port inspector property rows to the virtual collection. Done when reusable editors, refresh, multi-object edits, and undo/redo use shared controls.
 - [ ] Complete native scene view, asset browser, console, profiler, animation, and other panels through shared controls. Done when primary panels are functional and avoid rebuilding unbounded strings or row trees.

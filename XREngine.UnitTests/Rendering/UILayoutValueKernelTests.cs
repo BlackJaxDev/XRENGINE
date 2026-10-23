@@ -199,6 +199,93 @@ public sealed class UILayoutValueKernelTests
     }
 
     [Test]
+    public void OutputPageBuilderCopiesOnlyEditedPageAndKeepsPriorViewImmutable()
+    {
+        UILayoutNodeOutput[] values = new UILayoutNodeOutput[768];
+        values[600].RawSize = new Vector2(10, 20);
+        UILayoutOutputPageView before = UILayoutOutputPageView.CopyFrom(values);
+        UILayoutOutputPageBuilder next = new(values.Length, before);
+        next.Edit(600).RawSize = new Vector2(30, 40);
+        UILayoutOutputPageView after = next.Freeze();
+
+        after.SharesPageWith(before, 0).ShouldBeTrue();
+        after.SharesPageWith(before, 300).ShouldBeTrue();
+        after.SharesPageWith(before, 600).ShouldBeFalse();
+        after.CopiedNodes.ShouldBe(256);
+        before[600].RawSize.ShouldBe(new Vector2(10, 20));
+        after[600].RawSize.ShouldBe(new Vector2(30, 40));
+    }
+
+    [Test]
+    public void PartialOutputPageRoundTripsWithoutOverrun()
+    {
+        UILayoutNodeOutput[] values = new UILayoutNodeOutput[257];
+        values[256].RawSize = new Vector2(7, 9);
+
+        UILayoutOutputPageView view = UILayoutOutputPageView.CopyFrom(values);
+
+        view.ToArray().ShouldBe(values);
+        view[256].RawSize.ShouldBe(new Vector2(7, 9));
+    }
+
+    [Test]
+    public void InputValuePagesCopyOnlyEditedPage()
+    {
+        uint[] values = new uint[768];
+        values[600] = 1;
+        UILayoutValuePageView<uint> before = UILayoutValuePageView<uint>.CopyFrom(values);
+        UILayoutValuePageBuilder<uint> builder = new(before);
+        builder.Edit(600) = 2;
+        UILayoutValuePageView<uint> after = builder.Freeze();
+
+        after.SharesPageWith(before, 0).ShouldBeTrue();
+        after.SharesPageWith(before, 300).ShouldBeTrue();
+        after.SharesPageWith(before, 600).ShouldBeFalse();
+        before[600].ShouldBe(1u);
+        after[600].ShouldBe(2u);
+    }
+
+    [Test]
+    public void LeafEditSharesUnchangedInputAndOutputPages()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        List<UIBoundableTransform> leaves = [];
+        try
+        {
+            for (int i = 0; i < 520; i++)
+                leaves.Add(new UIBoundableTransform
+                {
+                    Parent = canvas, Width = 10, Height = 10, MaxAnchor = Vector2.Zero
+                });
+            List<UITransform> beforeTargets = [];
+            UILayoutSnapshot before = UILayoutSnapshot.Capture(canvas, beforeTargets);
+            UILayoutOutputPageView prior = UILayoutValueKernel.RunPaged(before, null, null);
+            UIElementChange[] journal = new UIElementChange[canvas.ChangeJournal.Capacity];
+            canvas.ChangeJournal.TryDrain(journal, out _).ShouldBeTrue();
+
+            leaves[^1].Width = 30;
+            canvas.ChangeJournal.TryDrain(journal, out UIChangeBatch changes).ShouldBeTrue();
+            List<UITransform> afterTargets = [];
+            UILayoutSnapshot after = UILayoutSnapshot.CaptureIncremental(canvas, before,
+                beforeTargets, afterTargets, journal.AsSpan(0, changes.Count).ToArray());
+            UILayoutOutputPageView result = UILayoutValueKernel.RunPaged(after, before, prior);
+
+            after.Nodes.SharesPageWith(before.Nodes, 300).ShouldBeTrue();
+            result.SharesPageWith(prior, 300).ShouldBeTrue();
+            result[520].RawSize.X.ShouldBe(30);
+            prior[520].RawSize.X.ShouldBe(10);
+            result.VisitedNodes.ShouldBeLessThan(16);
+            result.CopiedNodes.ShouldBeLessThanOrEqualTo(512);
+        }
+        finally
+        {
+            foreach (UIBoundableTransform leaf in leaves)
+                leaf.Destroy(true);
+            canvas.Destroy(true);
+        }
+    }
+
+    [Test]
     public void CancelledWorkerStopsBeforeTraversal()
     {
         UICanvasTransform canvas = new() { Width = 100, Height = 100 };
@@ -493,6 +580,28 @@ public sealed class UILayoutValueKernelTests
         finally
         {
             child.Destroy(true);
+            canvas.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void FontMetricMutationRejectsCapturedLayoutBeforeQueuedUiNotification()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        FontGlyphSet font = new();
+        try
+        {
+            List<UITransform> targets = [];
+            UILayoutSnapshot captured = UILayoutSnapshot.Capture(canvas, targets);
+            UILayoutCanvasSession.DependenciesMatch(canvas, captured, targets).ShouldBeTrue();
+
+            font.Glyphs = new Dictionary<string, FontGlyphSet.Glyph>();
+
+            UILayoutCanvasSession.DependenciesMatch(canvas, captured, targets).ShouldBeFalse();
+        }
+        finally
+        {
+            font.Destroy(true);
             canvas.Destroy(true);
         }
     }

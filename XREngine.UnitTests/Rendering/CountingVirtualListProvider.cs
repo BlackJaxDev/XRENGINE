@@ -2,7 +2,7 @@ using XREngine.Rendering.UI;
 
 namespace XREngine.UnitTests.Rendering;
 
-internal sealed class CountingVirtualListProvider(int count) : IVirtualListProvider
+internal sealed class CountingVirtualListProvider(int count) : IVirtualListProvider, IVirtualListItemIndex
 {
     public int Count { get; } = count;
     public ulong Revision { get; private set; } = 1;
@@ -11,6 +11,12 @@ internal sealed class CountingVirtualListProvider(int count) : IVirtualListProvi
     public int Unbound { get; private set; }
 
     public ulong GetItemId(int index) => (ulong)index + 1;
+
+    public bool TryGetIndexOfItemId(ulong itemId, out int index)
+    {
+        index = itemId > 0 && itemId <= (ulong)Count ? (int)itemId - 1 : -1;
+        return index >= 0;
+    }
 
     public UIBoundableTransform CreateRow()
     {

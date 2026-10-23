@@ -50,6 +50,9 @@ See the investigation record for intermediate failures and repairs.
 
 ## Known implementation and acceptance limits
 
+The following limits describe the first published checkpoint. See the next
+section for later changes.
+
 - Capture/output work still includes full retained-array copies and scans.
 - Publication resource claims still depend on finalization. Bounded producer pools
   can stall until old packets retire. Deterministic holder and reader leases are next.
@@ -62,3 +65,36 @@ See the investigation record for intermediate failures and repairs.
   visual correctness, performance, and equivalent ImGui comparisons have not run here.
 - Variable-height virtualization, bindless policy, world-space shadows, and the
   default-editor stabilization period remain owner decisions.
+
+## Shared Pages And Explicit Packet Claims
+
+The next checkpoint closes three more original code items: incremental layout
+invalidation, decorative-item hit exclusion, and routine virtual hierarchy updates.
+The total is **19 of 60 implementation items**. The active TODO retains 41 code
+items and four owner decisions. A partially completed broad item stays open.
+
+- Layout inputs and outputs share immutable 256-node pages. Leaf-edit tests check
+  page sharing and visited/copied node counts. Global font revisions reject stale
+  capture without scanning every text node on each unchanged capture.
+- Packet holders and local readers use explicit claims. Tests cover output
+  replacement, canvas teardown, and four producer slots reused without garbage
+  collection. Backend review checks failed attempts, admission cancellation, and
+  exact-generation shutdown retirement. Full world-space publication is still open.
+- Native hierarchy updates use the virtual provider without the old 2,000-row cap.
+  Decorative render records enter hit queries only when they block input.
+- Multiline controls preserve vertical caret intent and reject stale placement.
+  Stable-ID list requests can realize an offscreen row; presented-row focus remains
+  open. Native asset mutations reject linked paths and use platform case rules.
+- Warmed idle and moving-pointer queries with an unchanged hit set allocate zero
+  bytes in the headless fixture with a concrete no-op profiler. This is not a live
+  editor or whole-frame allocation result.
+
+The final headless source at this boundary builds with zero warnings/errors and
+passes **293 of 293 tests**, with no skips. The editor also built with zero
+warnings/errors. The matching desktop test-project build, which includes the
+editor, also passed with zero warnings/errors after removal of unused borrowed
+packet getters. The editor Undo regression compiled but did not execute: NUnit
+rejects the Windows-targeted assembly on Linux with "Only supported on Windows7.0".
+Its zero-test exit code is not counted as a pass.
+No Windows execution, GPU presentation, native IME, visual acceptance, or comparison
+with ImGui is implied.

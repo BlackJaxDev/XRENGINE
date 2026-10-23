@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Linq;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.UI.State;
 using XREngine.Scene.Transforms;
@@ -10,17 +11,22 @@ internal sealed class UILayoutSnapshot
 {
     private const int MaxLayoutNodes = 65536;
     internal const long MaxWorkingBytes = 32L * 1024 * 1024;
-    public UILayoutNodeInput[] Nodes { get; }
+    public UILayoutValuePageView<UILayoutNodeInput> Nodes { get; }
     public UILayoutChildInput[] Children { get; }
     public UIElementIdentity[] Identities { get; }
-    public UIChangeRevisions[] Revisions { get; }
-    public uint[] MeasureVersions { get; }
-    public uint[] ArrangeVersions { get; }
+    public UILayoutValuePageView<UIChangeRevisions> Revisions { get; }
+    public UILayoutValuePageView<uint> MeasureVersions { get; }
+    public UILayoutValuePageView<uint> ArrangeVersions { get; }
     public BoundingRectangleF RootBounds { get; }
+    internal long FontGeneration { get; }
     public long EstimatedWorkingBytes { get; }
     private readonly Dictionary<UIElementIdentity, int> _indices;
     private readonly int[] _textIndices;
     private readonly int[] _ownerSyncIndices;
+    internal int[] ValidationIndices { get; }
+    private readonly HashSet<int> _dirtyIndices;
+    internal bool IsDirty(int index) => _dirtyIndices.Contains(index);
+    internal ReadOnlySpan<int> OwnerSyncIndices => _ownerSyncIndices;
 
     internal bool SharesTopologyMetadataWith(UILayoutSnapshot other)
         => ReferenceEquals(_indices, other._indices) &&
@@ -28,10 +34,12 @@ internal sealed class UILayoutSnapshot
             ReferenceEquals(_ownerSyncIndices, other._ownerSyncIndices);
 
     private UILayoutSnapshot(
-        UILayoutNodeInput[] nodes, UILayoutChildInput[] children,
-        UIElementIdentity[] identities, UIChangeRevisions[] revisions,
-        uint[] measureVersions, uint[] arrangeVersions, BoundingRectangleF rootBounds,
-        UILayoutSnapshot? stableTopology = null)
+        UILayoutValuePageView<UILayoutNodeInput> nodes, UILayoutChildInput[] children,
+        UIElementIdentity[] identities, UILayoutValuePageView<UIChangeRevisions> revisions,
+        UILayoutValuePageView<uint> measureVersions, UILayoutValuePageView<uint> arrangeVersions,
+        BoundingRectangleF rootBounds, UILayoutSnapshot? stableTopology = null,
+        long? workingBytes = null, int[]? validationIndices = null,
+        long? fontGeneration = null)
     {
         Nodes = nodes;
         Children = children;
@@ -40,6 +48,9 @@ internal sealed class UILayoutSnapshot
         MeasureVersions = measureVersions;
         ArrangeVersions = arrangeVersions;
         RootBounds = rootBounds;
+        FontGeneration = fontGeneration ?? FontGlyphSet.GlobalLayoutMetricsGeneration;
+        ValidationIndices = validationIndices ?? Enumerable.Range(0, nodes.Length).ToArray();
+        _dirtyIndices = new HashSet<int>(ValidationIndices);
         if (stableTopology is not null)
         {
             _indices = stableTopology._indices;
@@ -62,7 +73,7 @@ internal sealed class UILayoutSnapshot
             _textIndices = [.. textIndices];
             _ownerSyncIndices = [.. syncIndices];
         }
-        EstimatedWorkingBytes = EstimateWorkingBytes(nodes, children);
+        EstimatedWorkingBytes = workingBytes ?? EstimateWorkingBytes(nodes, children);
         if (EstimatedWorkingBytes > MaxWorkingBytes)
             throw new InvalidOperationException("Canvas layout exceeds the 32 MiB working-page budget.");
     }
@@ -71,7 +82,7 @@ internal sealed class UILayoutSnapshot
         => node.Operator is UILayoutOperator.Scrollable or UILayoutOperator.DockingRoot ||
             node.Operator == UILayoutOperator.List && (node.OperatorFlags & 16) != 0;
 
-    private static long EstimateWorkingBytes(UILayoutNodeInput[] nodes, UILayoutChildInput[] children)
+    private static long EstimateWorkingBytes(UILayoutValuePageView<UILayoutNodeInput> nodes, UILayoutChildInput[] children)
     {
         // Includes descriptor and version arrays, owner target references, output scratch,
         // and conservative per-glyph text result storage. Accepted packets own their pages.
@@ -104,6 +115,7 @@ internal sealed class UILayoutSnapshot
     public static UILayoutSnapshot Capture(UICanvasTransform canvas, List<UITransform> targets)
     {
         canvas.ChangeJournal.VerifyMutationAccess();
+        long fontGeneration = FontGlyphSet.GlobalLayoutMetricsGeneration;
         List<UILayoutNodeInput> nodes = [];
         List<UILayoutChildInput> children = [];
         List<UIElementIdentity> identities = [];
@@ -115,16 +127,22 @@ internal sealed class UILayoutSnapshot
             measureVersions, arrangeVersions, ref estimatedBytes);
         BoundingRectangleF rootConstraint = new(Vector2.Zero,
             new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity));
-        return new UILayoutSnapshot(nodes.ToArray(), children.ToArray(), identities.ToArray(),
-            revisions.ToArray(), measureVersions.ToArray(), arrangeVersions.ToArray(), rootConstraint);
+        return new UILayoutSnapshot(UILayoutValuePageView<UILayoutNodeInput>.CopyFrom(nodes.ToArray()),
+            children.ToArray(), identities.ToArray(),
+            UILayoutValuePageView<UIChangeRevisions>.CopyFrom(revisions.ToArray()),
+            UILayoutValuePageView<uint>.CopyFrom(measureVersions.ToArray()),
+            UILayoutValuePageView<uint>.CopyFrom(arrangeVersions.ToArray()), rootConstraint,
+            workingBytes: estimatedBytes, fontGeneration: fontGeneration);
     }
 
     /// <summary>Reuse frozen topology and unchanged value pages when the owner tree is stable.</summary>
     public static UILayoutSnapshot CaptureIncremental(
         UICanvasTransform canvas, UILayoutSnapshot previous, IReadOnlyList<UITransform> previousTargets,
-        List<UITransform> targets, IReadOnlyList<UIElementChange>? changes = null)
+        List<UITransform> targets, IReadOnlyList<UIElementChange>? changes = null,
+        bool reuseTargets = false)
     {
         canvas.ChangeJournal.VerifyMutationAccess();
+        long fontGeneration = FontGlyphSet.GlobalLayoutMetricsGeneration;
         if (previousTargets.Count != previous.Nodes.Length || previousTargets.Count == 0 ||
             !ReferenceEquals(previousTargets[0], canvas))
             return Capture(canvas, targets);
@@ -154,28 +172,32 @@ internal sealed class UILayoutSnapshot
                     return Capture(canvas, targets);
             }
         }
-        for (int i = 0; i < previous._textIndices.Length; i++)
+        if (fontGeneration != previous.FontGeneration)
         {
-            int index = previous._textIndices[i];
-            UITextLayoutInput? oldText = previous.Nodes[index].TextInput;
-            if (!Equals(previousTargets[index].SceneNode?.GetComponent<UITextComponent>()?.CaptureLayoutInput(), oldText))
-                MarkAncestors(index);
+            for (int i = 0; i < previous._textIndices.Length; i++)
+            {
+                int index = previous._textIndices[i];
+                UITextLayoutInput? oldText = previous.Nodes[index].TextInput;
+                if (!Equals(previousTargets[index].SceneNode?.GetComponent<UITextComponent>()?.CaptureLayoutInput(), oldText))
+                    MarkAncestors(index);
+            }
         }
-
         if (dirty.Count == 0)
         {
-            targets.AddRange(previousTargets);
+            if (!reuseTargets)
+                targets.AddRange(previousTargets);
             BoundingRectangleF unchangedRoot = new(Vector2.Zero,
                 new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity));
             return new UILayoutSnapshot(previous.Nodes, previous.Children, previous.Identities,
-                previous.Revisions, previous.MeasureVersions, previous.ArrangeVersions, unchangedRoot, previous);
+                previous.Revisions, previous.MeasureVersions, previous.ArrangeVersions,
+                unchangedRoot, previous, previous.EstimatedWorkingBytes, [0], fontGeneration);
         }
 
         UILayoutChildInput[] changedEdges = previous.Children;
-        UILayoutNodeInput[] changedNodes = (UILayoutNodeInput[])previous.Nodes.Clone();
-        UIChangeRevisions[] changedRevisions = (UIChangeRevisions[])previous.Revisions.Clone();
-        uint[] changedMeasureVersions = (uint[])previous.MeasureVersions.Clone();
-        uint[] changedArrangeVersions = (uint[])previous.ArrangeVersions.Clone();
+        UILayoutValuePageBuilder<UILayoutNodeInput> changedNodes = new(previous.Nodes);
+        UILayoutValuePageBuilder<UIChangeRevisions> changedRevisions = new(previous.Revisions);
+        UILayoutValuePageBuilder<uint> changedMeasureVersions = new(previous.MeasureVersions);
+        UILayoutValuePageBuilder<uint> changedArrangeVersions = new(previous.ArrangeVersions);
         long workingBytes = previous.EstimatedWorkingBytes;
         bool stableMetadata = true;
         foreach (int index in dirty)
@@ -218,21 +240,26 @@ internal sealed class UILayoutSnapshot
             {
                 PreflightTextCapture(target, workingBytes, old);
                 workingBytes -= PayloadBytes(old);
-                changedNodes[index] = CaptureValues(target, ResolveOperator(target), old.Parent,
+                changedNodes.Edit(index) = CaptureValues(target, ResolveOperator(target), old.Parent,
                     old.FirstChild, old.ChildCount, ref workingBytes);
-                if ((old.TextInput is null) != (changedNodes[index].TextInput is null) ||
-                    NeedsOwnerSynchronization(old) != NeedsOwnerSynchronization(changedNodes[index]))
+                if ((old.TextInput is null) != (changedNodes.Edit(index).TextInput is null) ||
+                    NeedsOwnerSynchronization(old) != NeedsOwnerSynchronization(changedNodes.Edit(index)))
                     stableMetadata = false;
             }
-            changedRevisions[index] = revision;
-            changedMeasureVersions[index] = measure;
-            changedArrangeVersions[index] = arrange;
+            if (revision != previous.Revisions[index])
+                changedRevisions.Edit(index) = revision;
+            if (measure != previous.MeasureVersions[index])
+                changedMeasureVersions.Edit(index) = measure;
+            if (arrange != previous.ArrangeVersions[index])
+                changedArrangeVersions.Edit(index) = arrange;
         }
-        targets.AddRange(previousTargets);
+        if (!reuseTargets)
+            targets.AddRange(previousTargets);
         BoundingRectangleF changedRoot = new(Vector2.Zero,
             new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity));
-        return new UILayoutSnapshot(changedNodes, changedEdges, previous.Identities, changedRevisions,
-            changedMeasureVersions, changedArrangeVersions, changedRoot, stableMetadata ? previous : null);
+        return new UILayoutSnapshot(changedNodes.Freeze(), changedEdges, previous.Identities,
+            changedRevisions.Freeze(), changedMeasureVersions.Freeze(), changedArrangeVersions.Freeze(),
+            changedRoot, stableMetadata ? previous : null, workingBytes, [.. dirty], fontGeneration);
 
         void MarkAncestors(int index)
         {
@@ -245,68 +272,8 @@ internal sealed class UILayoutSnapshot
         UICanvasTransform canvas, UILayoutSnapshot previous, IReadOnlyList<UITransform> previousTargets,
         List<UITransform> targets)
     {
-        // Provider synchronization is an owner-thread mutation and may change topology.
-        for (int i = 0; i < previousTargets.Count; i++)
-            SynchronizeOwnerState(previousTargets[i]);
-
-        UILayoutChildInput[] edges = (UILayoutChildInput[])previous.Children.Clone();
-        for (int i = 0; i < previousTargets.Count; i++)
-        {
-            UITransform target = previousTargets[i];
-            UILayoutNodeInput old = previous.Nodes[i];
-            if (target.ElementIdentity != previous.Identities[i] ||
-                (old.Parent < 0 ? !ReferenceEquals(target, canvas) :
-                    !ReferenceEquals(target.Parent, previousTargets[old.Parent])))
-                return Capture(canvas, targets);
-            int ordinal = 0;
-            for (int c = 0; c < target.Children.Count; c++)
-            {
-                if (target.Children[c] is not UITransform child)
-                    continue;
-                if (ordinal >= old.ChildCount)
-                    return Capture(canvas, targets);
-                int edgeIndex = old.FirstChild + ordinal++;
-                int childIndex = edges[edgeIndex].NodeIndex;
-                if (childIndex >= previousTargets.Count || !ReferenceEquals(child, previousTargets[childIndex]))
-                    return Capture(canvas, targets);
-                edges[edgeIndex] = CaptureEdge(target, child, childIndex);
-            }
-            if (ordinal != old.ChildCount)
-                return Capture(canvas, targets);
-        }
-
-        UILayoutNodeInput[] nodes = (UILayoutNodeInput[])previous.Nodes.Clone();
-        UIElementIdentity[] identities = (UIElementIdentity[])previous.Identities.Clone();
-        UIChangeRevisions[] revisions = (UIChangeRevisions[])previous.Revisions.Clone();
-        uint[] measureVersions = (uint[])previous.MeasureVersions.Clone();
-        uint[] arrangeVersions = (uint[])previous.ArrangeVersions.Clone();
-        long estimatedBytes = previous.EstimatedWorkingBytes;
-        for (int i = 0; i < previousTargets.Count; i++)
-        {
-            UITransform target = previousTargets[i];
-            UIChangeRevisions revision = target.ChangeRevisions;
-            uint measure = target.LayoutMeasureVersion;
-            uint arrange = target.LayoutArrangeVersion;
-            PreflightTextCapture(target, estimatedBytes, nodes[i]);
-            bool textChanged = nodes[i].TextInput is { } oldText &&
-                !Equals(target.SceneNode?.GetComponent<UITextComponent>()?.CaptureLayoutInput(), oldText);
-            if (revision != revisions[i] || measure != measureVersions[i] ||
-                arrange != arrangeVersions[i] || textChanged ||
-                EdgesChanged(previous.Nodes[i], previous.Children, edges))
-            {
-                estimatedBytes -= PayloadBytes(nodes[i]);
-                nodes[i] = CaptureValues(target, ResolveOperator(target), nodes[i].Parent,
-                    nodes[i].FirstChild, nodes[i].ChildCount, ref estimatedBytes);
-            }
-            revisions[i] = revision;
-            measureVersions[i] = measure;
-            arrangeVersions[i] = arrange;
-        }
-        targets.AddRange(previousTargets);
-        BoundingRectangleF rootConstraint = new(Vector2.Zero,
-            new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity));
-        return new UILayoutSnapshot(nodes, edges, identities, revisions, measureVersions,
-            arrangeVersions, rootConstraint);
+        // Callers without a change journal use the explicit full capture path.
+        return Capture(canvas, targets);
     }
 
     private static void PreflightTextCapture(UITransform target, long estimatedBytes, in UILayoutNodeInput old)

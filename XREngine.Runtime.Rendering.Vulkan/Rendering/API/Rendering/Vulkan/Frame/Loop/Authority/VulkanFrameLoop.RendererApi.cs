@@ -336,6 +336,7 @@ internal sealed partial class VulkanFrameLoop
             return false;
         if (_deviceContext.Device.Handle == 0)
             return true;
+        long idleCallsBefore = DeviceWaitIdleCalls;
         Exception? failure = null;
         Thread waitThread = new(() => { try { WaitForDeviceIdle(); } catch (Exception ex) { failure = ex; } })
         { Name = "XRE-VulkanShutdownWait", IsBackground = true };
@@ -344,7 +345,8 @@ internal sealed partial class VulkanFrameLoop
         bool completed = waitThread.Join(timeout > maximumJoinTimeout ? maximumJoinTimeout : timeout);
         if (failure is not null)
             throw new InvalidOperationException("Vulkan device-idle wait failed during shutdown.", failure);
-        return completed && !IsDeviceLost;
+        return completed && DeviceWaitIdleCalls > idleCallsBefore &&
+            _deviceContext.FirstNativeDeviceFault is null && !IsDeviceLost;
     }
 
     private XRFrameBuffer? ResolveWindowPresentFallbackFrameBuffer(XRTexture? colorTexture)

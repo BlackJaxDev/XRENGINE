@@ -1,6 +1,8 @@
 # Native UI Retained Rendering Design
 
-Status: Phase 1 contracts and instrumentation are implemented; final tests remain pending. The worker, publication, retained-rendering, control, and editor architecture below remains proposed. No performance result is claimed.
+Status: Historical design proposal. Implementation now follows the complete roadmap,
+including native editor adoption. See [retained execution](../../../architecture/ui/05-Retained-Execution.md)
+for current code contracts and the roadmap for remaining work. No performance result is claimed.
 
 Updated: 2026-10-23
 
@@ -23,10 +25,11 @@ large virtual list. The gallery covers buttons, checkboxes, radio groups, text
 and numeric inputs, dropdowns, range sliders, color selectors, and scroll
 regions. It must work through the existing canvas/text/batch path.
 
-Do not migrate the full editor, switch the default editor, install a UI library,
-or implement an immediate-mode facade in this work. Docking, complete panel
-parity, variable-height trees, rich text, and browser/HTML replacement are later
-work. ImGui remains the default editor. This proposal supersedes the roadmap's
+The original first-deliverable scope deferred full editor migration and docking.
+The active roadmap now includes that editor work. Switching the default editor
+still requires validation and owner review. Installing a UI library, an
+immediate-mode facade, rich text, and browser/HTML replacement are not implied by
+this proposal. ImGui remains the default editor. This proposal supersedes the roadmap's
 old synchronous-only layout direction. A serial execution mode can serve as a
 deterministic diagnostic oracle for the same layout kernel; it is not a second
 production layout algorithm.

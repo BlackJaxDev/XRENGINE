@@ -4,6 +4,7 @@ public partial class EditorPreferences
 {
     private string _nativeDockLayoutsJson = string.Empty;
     private string _nativeDetachedWindowsJson = string.Empty;
+    private string _nativeHierarchyStatesJson = string.Empty;
 
     /// <summary>Stores native panel layouts by window identity.</summary>
     public string NativeDockLayoutsJson
@@ -17,5 +18,12 @@ public partial class EditorPreferences
     {
         get => _nativeDetachedWindowsJson;
         set => SetField(ref _nativeDetachedWindowsJson, value ?? string.Empty);
+    }
+
+    /// <summary>Stores native hierarchy expansion, scroll, and rename focus by world.</summary>
+    public string NativeHierarchyStatesJson
+    {
+        get => _nativeHierarchyStatesJson;
+        set => SetField(ref _nativeHierarchyStatesJson, value ?? string.Empty);
     }
 }

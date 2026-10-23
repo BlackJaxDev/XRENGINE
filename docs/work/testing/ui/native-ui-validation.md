@@ -12,14 +12,19 @@ new headless regression tests before Windows and graphics validation on
 2026-10-23. This approval applies to this task. It does not establish live
 acceptance or change the default editor.
 
-The latest completed headless build passed with zero warnings and errors through
-`Tools/Invoke-AgentBuild.ps1`. The latest completed headless test run passed
-275 of 275 tests, with no failures, warnings, or skips. This includes wrapped text
-inside narrow parents, stale task rejection, focus callback re-entry, immutable
-owned draw data, cleanup vetoes, and exact presentation-receipt state. The latest
-completed editor build passed with zero warnings and errors, including required
-texture bindings and hierarchy command changes. The matching editor build also passed with zero warnings and errors after the review repairs.
-These editor checks compile Windows targets on Linux.
+The current checkpoint source passes the headless build with zero warnings and
+errors through `Tools/Invoke-AgentBuild.ps1`. All **293 of 293** headless tests
+pass, with no failures or skips. This includes paged layout reuse, stale font and
+placement rejection, explicit packet lifetimes, multiline navigation, stable-ID
+row realization, asset path containment, and warmed unchanged-hit-set allocation
+checks with a concrete no-op profiler.
+
+The matching desktop test-project build includes the editor and passes with zero
+warnings and errors. These checks compile Windows targets on Linux. The editor
+Undo regression compiled, but NUnit refused execution because the assembly is
+supported only on Windows7.0. Zero tests executed in that filtered run; its zero
+exit code is not a test pass. Do not bypass the assembly platform check.
+
 These are checkpoint results, not platform or performance acceptance. See the
 [integration investigation](../../investigations/ui/retained-ui-integration.md)
 for check history and remaining safety work.

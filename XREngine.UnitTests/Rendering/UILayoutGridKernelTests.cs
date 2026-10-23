@@ -28,11 +28,11 @@ public sealed class UILayoutGridKernelTests
         };
         UILayoutNodeInput[] nodes = [grid, default, default];
         UILayoutChildInput[] children = [new(1, 0, 0, 1, 2), new(2, 1, 1, 1, 1)];
-        UILayoutNodeOutput[] outputs = new UILayoutNodeOutput[3];
-        outputs[1].DesiredSize = new(50, 20);
+        UILayoutOutputPageBuilder outputs = new(3);
+        outputs.Edit(1).DesiredSize = new(50, 20);
 
         UILayoutGridKernel.ArrangeGrid(grid, new BoundingRectangleF(0, 0, 100, 60),
-            nodes, children, outputs, true);
+            UILayoutValuePageView<UILayoutNodeInput>.CopyFrom(nodes), children, outputs, true);
 
         outputs[1].AllocatedBounds.Width.ShouldBe(100f);
         outputs[1].AllocatedBounds.Height.ShouldBe(20f);
@@ -59,10 +59,11 @@ public sealed class UILayoutGridKernelTests
         };
         UILayoutNodeInput[] nodes = [grid, default, default, default];
         UILayoutChildInput[] children = [new(1, 0, 0, 1, 1), new(2, 0, 1, 1, 1), new(3, 0, 2, 1, 1)];
-        UILayoutNodeOutput[] outputs = new UILayoutNodeOutput[4];
+        UILayoutOutputPageBuilder outputs = new(4);
+        outputs.Edit(0) = default;
 
         UILayoutGridKernel.ArrangeGrid(grid, new BoundingRectangleF(0, 0, 100, 10),
-            nodes, children, outputs, true);
+            UILayoutValuePageView<UILayoutNodeInput>.CopyFrom(nodes), children, outputs, true);
 
         outputs[1].AllocatedBounds.Width.ShouldBe(50f);
         outputs[2].AllocatedBounds.Width.ShouldBe(25f);
@@ -83,7 +84,8 @@ public sealed class UILayoutGridKernelTests
         UILayoutChildInput[] children = [new(1, 0, 0, 2, 1)];
 
         Should.Throw<InvalidOperationException>(() => UILayoutGridKernel.ArrangeGrid(
-            grid, new BoundingRectangleF(0, 0, 10, 10), nodes, children,
-            new UILayoutNodeOutput[2], true));
+            grid, new BoundingRectangleF(0, 0, 10, 10),
+            UILayoutValuePageView<UILayoutNodeInput>.CopyFrom(nodes), children,
+            new UILayoutOutputPageBuilder(2), true));
     }
 }

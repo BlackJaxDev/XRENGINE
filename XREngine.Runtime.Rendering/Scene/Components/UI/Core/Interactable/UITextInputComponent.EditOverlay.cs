@@ -1,7 +1,6 @@
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;
-using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.UI;
@@ -54,6 +53,7 @@ public partial class UITextInputComponent
         _overlayCaret = CursorPosition;
         _overlaySelectionStart = SelectionStart;
         _overlaySelectionEnd = SelectionEnd;
+        EnsureCaretVisible();
 
         if (TryGetCaretLocalBounds(layout, out Vector4 caret))
             PlaceOverlay(ref _caretOverlay, caret, "Text caret", ColorF4.White, 20);
@@ -115,9 +115,7 @@ public partial class UITextInputComponent
             overlay.NormalizedPivot = Vector2.Zero;
             overlay.BlocksInputBehind = false;
             UIMaterialComponent material = visual.AddComponent<UIMaterialComponent>()!;
-            XRMaterial fill = XRMaterial.CreateUnlitColorMaterialForward(color);
-            fill.EnableTransparency();
-            material.Material = fill;
+            material.SetBatchSolidColor(color);
             material.RenderCommand2D.ZIndex = zIndex;
         }
         overlay.Translation = new Vector2(bounds.X, bounds.Y);

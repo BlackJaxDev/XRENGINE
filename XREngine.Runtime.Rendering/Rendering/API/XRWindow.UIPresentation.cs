@@ -20,18 +20,20 @@ public sealed partial class XRWindow
 
     private void CaptureWindowUiFrame(ulong renderFrameId)
     {
-        _windowUiFrame.Clear();
+        ReleaseUiFrame(_windowUiFrame);
         _windowUiFrameId = renderFrameId;
         for (int index = 0; index < Viewports.Count; index++)
         {
             XRViewport viewport = Viewports[index];
             if (!viewport.TryGetActiveScreenSpaceUserInterface(out var ui) ||
                 ui is not UICanvasComponent canvas ||
-                canvas.GetRenderedPublication(viewport, renderFrameId) is not { } publication)
+                !canvas.TryAcquireRenderedPublication(viewport, renderFrameId,
+                    out UIPublication? publication, out ulong receiptId) || publication is null)
                 continue;
-            ulong receiptId = canvas.GetRenderedPublicationReceiptId(viewport, renderFrameId);
             if (receiptId != 0UL)
                 _windowUiFrame.Add((viewport, canvas, publication, receiptId));
+            else
+                publication.Release();
         }
     }
 
@@ -49,7 +51,7 @@ public sealed partial class XRWindow
     {
         if (_vulkanUiOutputGeneration != outputGeneration)
         {
-            _vulkanUiImagePackets.Clear();
+            ReleaseVulkanUiImages();
             _vulkanUiImageSources.Clear();
             _vulkanUiOutputGeneration = outputGeneration;
         }
@@ -62,13 +64,16 @@ public sealed partial class XRWindow
 
         if (newSceneContent)
         {
-            imagePackets.Clear();
+            ReleaseUiFrame(imagePackets);
             for (int index = 0; index < _windowUiFrame.Count; index++)
             {
                 UiPublicationFrameEntry packet = _windowUiFrame[index];
                 if (Renderer.TryAcceptPresentedUiPublicationReceipt(
                         packet.ReceiptId, imageIndex, outputGeneration, sourceFrameId))
+                {
+                    packet.Publication.Retain();
                     imagePackets.Add(packet);
+                }
             }
             _vulkanUiImageSources[imageIndex] = sourceFrameId;
         }
@@ -88,20 +93,23 @@ public sealed partial class XRWindow
             if (source is null)
             {
                 Renderer.InvalidatePresentedUiPublicationImage(imageIndex, outputGeneration);
-                imagePackets.Clear();
+                ReleaseUiFrame(imagePackets);
                 _vulkanUiImageSources.Remove(imageIndex);
                 PublishWindowUiFrame(imagePackets);
                 return;
             }
             Renderer.InvalidatePresentedUiPublicationImage(imageIndex, outputGeneration);
-            imagePackets.Clear();
+            ReleaseUiFrame(imagePackets);
             for (int index = 0; index < source.Count; index++)
             {
                 UiPublicationFrameEntry packet = source[index];
                 if (Renderer.TryAcceptReplayedUiPublicationReceipt(
                         packet.ReceiptId, sourceImageIndex, outputGeneration,
                         imageIndex, outputGeneration, sourceFrameId))
+                {
+                    packet.Publication.Retain();
                     imagePackets.Add(packet);
+                }
             }
             _vulkanUiImageSources[imageIndex] = sourceFrameId;
         }
@@ -115,11 +123,12 @@ public sealed partial class XRWindow
         Renderer.InvalidatePresentedUiPublicationImage(imageIndex, outputGeneration);
         if (_vulkanUiOutputGeneration != outputGeneration)
         {
-            _vulkanUiImagePackets.Clear();
+            ReleaseVulkanUiImages();
             _vulkanUiImageSources.Clear();
             _vulkanUiOutputGeneration = outputGeneration;
         }
-        _vulkanUiImagePackets.Remove(imageIndex);
+        if (_vulkanUiImagePackets.Remove(imageIndex, out var oldImage))
+            ReleaseUiFrame(oldImage);
         _vulkanUiImageSources.Remove(imageIndex);
         PublishWindowUiFrame([]);
     }
@@ -146,7 +155,48 @@ public sealed partial class XRWindow
             var entry = packets[index];
             entry.Canvas.MarkPresented(entry.Viewport, entry.Publication);
         }
-        _lastPresentedUiFrame.Clear();
-        _lastPresentedUiFrame.AddRange(packets);
+        ReleaseUiFrame(_lastPresentedUiFrame);
+        for (int index = 0; index < packets.Count; index++)
+        {
+            UiPublicationFrameEntry packet = packets[index];
+            packet.Publication.Retain();
+            _lastPresentedUiFrame.Add(packet);
+        }
+    }
+
+    private static void ReleaseUiFrame(List<UiPublicationFrameEntry> frame)
+    {
+        while (frame.Count > 0)
+        {
+            int index = frame.Count - 1;
+            UIPublication publication = frame[index].Publication;
+            frame.RemoveAt(index);
+            publication.Release();
+        }
+    }
+
+    private void ReleaseVulkanUiImages()
+    {
+        while (_vulkanUiImagePackets.Count > 0)
+        {
+            uint imageIndex = 0;
+            List<UiPublicationFrameEntry>? frame = null;
+            foreach (var image in _vulkanUiImagePackets)
+            {
+                imageIndex = image.Key;
+                frame = image.Value;
+                break;
+            }
+            _vulkanUiImagePackets.Remove(imageIndex);
+            ReleaseUiFrame(frame!);
+        }
+    }
+
+    private void ReleaseWindowUiPublications()
+    {
+        ReleaseUiFrame(_windowUiFrame);
+        ReleaseUiFrame(_lastPresentedUiFrame);
+        ReleaseVulkanUiImages();
+        _vulkanUiImageSources.Clear();
     }
 }

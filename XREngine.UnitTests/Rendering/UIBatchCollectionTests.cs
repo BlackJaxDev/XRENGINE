@@ -178,6 +178,25 @@ public sealed class UIBatchCollectionTests
     }
 
     [Test]
+    public void CommonQuadColorsStayIndependentAcrossComponents()
+    {
+        using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        UIMaterialComponent first = new();
+        UIMaterialComponent second = new();
+        Vector4 red = new(1, 0, 0, 1);
+        Vector4 blue = new(0, 0, 1, 1);
+
+        first.SetQuadColor("MatColor", red);
+        second.SetQuadColor("MatColor", blue);
+
+        first.Material!.Parameter<ShaderVector4>("MatColor")!.Value.ShouldBe(red);
+        second.Material!.Parameter<ShaderVector4>("MatColor")!.Value.ShouldBe(blue);
+        first.SupportsBatchedRendering.ShouldBeTrue();
+        second.SupportsBatchedRendering.ShouldBeTrue();
+    }
+
+    [Test]
     public void ChangingOneTextLengthKeepsOtherGlyphStorageStable()
     {
         RetainedGlyphRanges ranges = new();

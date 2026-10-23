@@ -102,6 +102,7 @@ namespace XREngine.Rendering.UI
         private readonly List<(Vector4 transform, Vector4 uvs)> _glyphs = [];
         private UITextLayoutInput? _layoutInput;
         private UITextLayoutResult? _layoutResult;
+        private Vector2 _layoutResultActualSize;
         private UITextureSnapshot? _publicationAtlasSnapshot;
         private FontGlyphSet? _layoutInputFont;
         private long _textRevision;
@@ -694,6 +695,7 @@ namespace XREngine.Rendering.UI
                         h = float.MaxValue;
                     _glyphs.Clear();
                     _layoutResult = input is null ? null : UITextLayoutKernel.Measure(input, new(w, h));
+                    _layoutResultActualSize = tfm.ActualSize;
                     if (_layoutResult is not null)
                         foreach (UITextLayoutGlyph glyph in _layoutResult.Glyphs.Span)
                             _glyphs.Add((glyph.Transform, glyph.Uvs));
@@ -720,6 +722,7 @@ namespace XREngine.Rendering.UI
                 foreach (UITextLayoutGlyph glyph in result.Glyphs.Span)
                     _glyphs.Add((glyph.Transform, glyph.Uvs));
                 _layoutResult = result;
+                _layoutResultActualSize = actualSize;
                 ResizeGlyphCount((uint)_glyphs.Count, invalidateLayout: false);
             }
             return true;
@@ -731,7 +734,8 @@ namespace XREngine.Rendering.UI
             UITextLayoutInput? input = CaptureLayoutInput();
             UITextLayoutResult? current = _layoutResult;
             if (input is not null && current is not null &&
-                current.TextRevision == input.TextRevision && current.FontRevision == input.FontRevision)
+                current.TextRevision == input.TextRevision && current.FontRevision == input.FontRevision &&
+                _layoutResultActualSize == BoundableTransform.ActualSize)
             {
                 result = current;
                 return true;
