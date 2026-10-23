@@ -79,6 +79,11 @@ public static class Undo
     /// </summary>
     private static readonly Stack<UndoAction> _redoStack = new();
 
+    // A replay holds its source entry until the action succeeds. Other history
+    // edits can invalidate that transfer while the action runs outside the lock.
+    private static long _historyRevision;
+    private static bool _replayInProgress;
+
     /// <summary>
     /// Maps input interfaces to their registered keyboard shortcut handlers.
     /// Used to properly unregister handlers when input interfaces are destroyed.
@@ -361,6 +366,7 @@ public static class Undo
             var action = new UndoAction(description, [step], DateTime.UtcNow);
             _undoStack.Push(action);
             _redoStack.Clear();
+            _historyRevision++;
             addedImmediate = true;
         }
 
@@ -416,8 +422,8 @@ public static class Undo
     /// </returns>
     /// <remarks>
     /// <para>
-    /// This method first flushes any pending change scopes, then pops the most recent action
-    /// from the undo stack, applies the old values, and pushes the action to the redo stack.
+    /// This method flushes pending scopes and applies the most recent action. It moves
+    /// the action to the redo stack only after the action succeeds and history stays current.
     /// </para>
     /// <para>
     /// Property change recording is suppressed during the undo operation to prevent the
@@ -428,27 +434,7 @@ public static class Undo
     /// </para>
     /// </remarks>
     public static bool TryUndo()
-    {
-        // Ensure any open change scopes are committed before undoing
-        FlushPendingScopes();
-
-        UndoAction? action;
-        lock (_sync)
-        {
-            if (_undoStack.Count == 0)
-                return false;
-
-            // Move action from undo stack to redo stack
-            action = _undoStack.Pop();
-            _redoStack.Push(action);
-        }
-
-        // Apply the undo operation with recording suppressed
-        ApplyUndo(action);
-        ProcessPendingTransformRefresh();
-        RaiseHistoryChanged();
-        return true;
-    }
+        => TryReplay(undo: true);
 
     /// <summary>
     /// Attempts to redo the most recently undone action from the redo stack.
@@ -458,8 +444,8 @@ public static class Undo
     /// </returns>
     /// <remarks>
     /// <para>
-    /// This method first flushes any pending change scopes, then pops the most recent action
-    /// from the redo stack, applies the new values, and pushes the action back to the undo stack.
+    /// This method flushes pending scopes and applies the most recent action. It moves
+    /// the action to the undo stack only after the action succeeds and history stays current.
     /// </para>
     /// <para>
     /// Property change recording is suppressed during the redo operation to prevent the
@@ -470,26 +456,59 @@ public static class Undo
     /// </para>
     /// </remarks>
     public static bool TryRedo()
-    {
-        // Ensure any open change scopes are committed before redoing
-        FlushPendingScopes();
+        => TryReplay(undo: false);
 
-        UndoAction? action;
+    private static bool TryReplay(bool undo)
+    {
         lock (_sync)
         {
-            if (_redoStack.Count == 0)
+            if (_replayInProgress)
                 return false;
-
-            // Move action from redo stack back to undo stack
-            action = _redoStack.Pop();
-            _undoStack.Push(action);
+            _replayInProgress = true;
         }
 
-        // Apply the redo operation with recording suppressed
-        ApplyRedo(action);
-        ProcessPendingTransformRefresh();
-        RaiseHistoryChanged();
-        return true;
+        try
+        {
+            FlushPendingScopes();
+
+            UndoAction action;
+            long revision;
+            lock (_sync)
+            {
+                Stack<UndoAction> source = undo ? _undoStack : _redoStack;
+                if (source.Count == 0)
+                    return false;
+                action = source.Peek();
+                revision = _historyRevision;
+            }
+
+            if (undo)
+                ApplyUndo(action);
+            else
+                ApplyRedo(action);
+
+            lock (_sync)
+            {
+                Stack<UndoAction> source = undo ? _undoStack : _redoStack;
+                Stack<UndoAction> destination = undo ? _redoStack : _undoStack;
+                if (_historyRevision != revision || source.Count == 0 ||
+                    !ReferenceEquals(source.Peek(), action))
+                    return false;
+
+                source.Pop();
+                destination.Push(action);
+                _historyRevision++;
+            }
+
+            ProcessPendingTransformRefresh();
+            RaiseHistoryChanged();
+            return true;
+        }
+        finally
+        {
+            lock (_sync)
+                _replayInProgress = false;
+        }
     }
 
     /// <summary>
@@ -506,6 +525,7 @@ public static class Undo
         {
             _undoStack.Clear();
             _redoStack.Clear();
+            _historyRevision++;
         }
 
         RaiseHistoryChanged();
@@ -985,6 +1005,7 @@ public static class Undo
             var action = new UndoAction(BuildDescription(step), [step], DateTime.UtcNow);
             _undoStack.Push(action);
             _redoStack.Clear(); // Clear redo stack when new changes are made
+            _historyRevision++;
             addedImmediate = true;
         }
 
@@ -1082,6 +1103,7 @@ public static class Undo
             committedAction = new UndoAction(scope.Description, steps, scope.TimestampUtc);
             _undoStack.Push(committedAction);
             _redoStack.Clear();
+            _historyRevision++;
         }
 
         if (committedAction is not null)

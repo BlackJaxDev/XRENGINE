@@ -6,6 +6,10 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
+Latest code reconciliation: **37 of 60 implementation items are complete**.
+The active TODO has 23 code items and four owner decisions. Later sections
+record each checkpoint; earlier counts describe their historical source state.
+
 The first checkpoint closes **16 of the original 60 implementation items**.
 The active TODO retains 44 implementation items and four owner decisions, for
 48 open boxes. This count does not mark platform or performance acceptance complete.
@@ -259,3 +263,40 @@ zero warnings/errors in 40.30s, and the desktop test project compiled with zero
 warnings/errors in 47.19s. Source hashes confirmed the matching snapshot. The
 desktop regression tests did not execute on Linux. All 31 local document links
 resolve, and the diff whitespace check passes.
+
+## Offscreen Frames, Sparse Text Slots, And Editor State
+
+This checkpoint closes three original implementation items: desktop stable
+instance slots and coalesced uploads, identity-safe recycled-row interaction,
+and consistent retained focus/navigation state. The total is **37 of 60**.
+The TODO retains 23 code items and four owner decisions.
+
+| Completed contract | Evidence |
+|---|---|
+| Stable quad and text slots | `UIBatchCollectionTests` verifies inserted painter runs, reused slots, growth, glyph indices, and coalesced ranges. GPU run identity is independent of painter position. |
+| Recycled interaction identity | Virtual collection/presented-input tests and `EditorDragDropUtilityTests` reject old row identity before drop; capture and focus do not transfer to its replacement. |
+| Retained navigation state | Focus, popup, radio, scroll, gamepad, clipping, disabled-state, and stale-visibility tests use the presented identity contracts. |
+
+Other changes advance open items:
+
+- Offscreen world canvases own reserved color targets and frozen sampled quads.
+  Separate producer and output receipts preserve the displayed packet. Tests
+  reject stale backend completion, late fence reuse, and backward promotion.
+  Direct-world frozen draw/shadow collection remains open.
+- Eligible canvas text avoids private renderer/material/buffer allocation.
+  Standalone resources retire on the render owner. Reattachment, callback veto,
+  external mesh replacement, and borrowed resources have deterministic regressions.
+  The full shared-material prototype item remains open.
+- Popups scroll within accepted bounds. Tests verify actual vertical and
+  horizontal content movement and stable extents. Owner deactivation avoids
+  child destruction inside a parent world transfer.
+- The play controller restores global selection once; Inspectors restore their
+  own targets and property focus. Keep-changes mode preserves play-time state.
+  Failed Undo replay retains its source entry and rejects stale history transfer.
+  These editor behaviors require Windows runtime acceptance.
+
+The final headless build passed with zero warnings/errors in 16.15s. All **410 tests
+passed**, with no warnings or skips, in 8.269s. The matching editor build passed with zero warnings/errors in 52.46s; desktop
+test compilation passed with zero warnings/errors in 47.18s. Source hashes
+confirmed the same snapshot. No GPU, visual,
+Windows execution, native IME, multi-window, or ImGui comparison pass is claimed.

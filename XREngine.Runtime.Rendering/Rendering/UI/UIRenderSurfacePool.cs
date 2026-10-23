@@ -115,7 +115,8 @@ internal sealed class UIRenderSurfacePool : IDisposable
     /// for the exact required producer batch that wrote this surface. The pool
     /// cannot infer fence provenance from a backend fence alone.
     /// </summary>
-    internal bool TryPublish(UIRenderSurface surface, ulong generation, XRGpuFence? producerFence)
+    internal bool TryPublish(UIRenderSurface surface, ulong generation, XRGpuFence? producerFence,
+        AbstractRenderer? renderer = null)
     {
         if (producerFence is null || producerFence.IsDisposed ||
             producerFence.SubmissionStatus != EGpuFenceSubmissionStatus.Submitted ||
@@ -123,7 +124,25 @@ internal sealed class UIRenderSurfacePool : IDisposable
             return false;
         lock (_gate)
         {
-            if (_disposed || !_surfaces.Contains(surface) || !surface.TryComplete(generation))
+            renderer ??= AbstractRenderer.Current;
+            if (_disposed || !_surfaces.Contains(surface) ||
+                !surface.TryComplete(generation, renderer, renderer?.BackendGeneration ?? 0))
+                return false;
+            _published = surface;
+            return true;
+        }
+    }
+
+    /// <summary>Promotes the exact UI receipt after its authoring, artifact, and GPU use retire.</summary>
+    internal bool TryPublish(UIRenderSurface surface, ulong generation,
+        UIReceiptCompletionProbe producer)
+    {
+        if (!producer.IsCompleted)
+            return false;
+        lock (_gate)
+        {
+            if (_disposed || !_surfaces.Contains(surface) ||
+                !surface.TryComplete(generation, producer.Renderer, producer.BackendGeneration))
                 return false;
             _published = surface;
             return true;

@@ -35,6 +35,7 @@ public static class EditorPlayModeController
     /// Must survive snapshot restore (which can replace scene nodes/components).
     /// </summary>
     private static readonly Dictionary<ELocalPlayerIndex, PlayerPossessionSnapshot> _editorPossessionSnapshot = [];
+    private static EditorSelectionSnapshot[]? _editSelectionSnapshot;
 
     /// <summary>
     /// Initializes the editor play mode controller.
@@ -96,6 +97,12 @@ public static class EditorPlayModeController
         // This is saved BEFORE any snapshot operations so we have the original editor pawn references.
         SaveEditorPawnSnapshot();
 
+        // Snapshot stable identities before clearing; serialize/restore may replace every node.
+        _editSelectionSnapshot = Selection.SceneNodes
+            .Where(node => !node.IsDestroyed && node.World is RuntimeWorld { TargetWorld: { } })
+            .Select(node => new EditorSelectionSnapshot(((RuntimeWorld)node.World!).TargetWorld!.ID, node.ID))
+            .ToArray();
+
         // Clear selection to avoid editing during play
         Selection.Clear();
 
@@ -143,6 +150,46 @@ public static class EditorPlayModeController
         if (_editorPossessionSnapshot.Count > 0)
             RestoreEditorPawnSnapshot();
 
+        RestoreEditSelection();
+
+    }
+
+    private static void RestoreEditSelection()
+    {
+        EditorSelectionSnapshot[]? snapshot = _editSelectionSnapshot;
+        _editSelectionSnapshot = null;
+        if (snapshot is null || Engine.PlayMode.Configuration.StateRestorationMode == EStateRestorationMode.PersistChanges)
+            return;
+
+        var worlds = RuntimeWorldRegistryServices.Current?.Snapshot().Values
+            .Where(world => !world.IsDisposing && world.TargetWorld is not null)
+            .GroupBy(world => world.TargetWorld!.ID)
+            .ToDictionary(group => group.Key, group => group.First());
+        Dictionary<Guid, Dictionary<Guid, SceneNode>> indexedWorlds = [];
+        List<SceneNode> restored = [];
+        foreach (EditorSelectionSnapshot entry in snapshot)
+        {
+            if (worlds is null || !worlds.TryGetValue(entry.WorldId, out RuntimeWorld? world))
+                continue;
+            if (!indexedWorlds.TryGetValue(entry.WorldId, out Dictionary<Guid, SceneNode>? nodes))
+            {
+                nodes = [];
+                Stack<SceneNode> pending = new(world.RootNodes);
+                while (pending.TryPop(out SceneNode? node))
+                {
+                    if (node.IsDestroyed || !ReferenceEquals(node.World, world))
+                        continue;
+                    nodes[node.ID] = node;
+                    foreach (var child in node.Transform.Children)
+                        if (child.SceneNode is { } childNode)
+                            pending.Push(childNode);
+                }
+                indexedWorlds.Add(entry.WorldId, nodes);
+            }
+            if (nodes.TryGetValue(entry.NodeId, out SceneNode? selected))
+                restored.Add(selected);
+        }
+        Selection.SceneNodes = restored.ToArray();
     }
 
     /// <summary>

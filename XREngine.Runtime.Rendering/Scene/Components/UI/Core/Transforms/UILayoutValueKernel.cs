@@ -492,7 +492,8 @@ internal static class UILayoutValueKernel
             int childIndex = children[node.FirstChild + i].NodeIndex;
             bool providerList = nodes[childIndex].Operator == UILayoutOperator.List &&
                 (nodes[childIndex].OperatorFlags & 16) != 0;
-            Vector2 placement = providerList ? region.Translation : region.Translation - scroll;
+            Vector2 placement = providerList ? region.Translation :
+                region.Translation + new Vector2(-scroll.X, scroll.Y);
             Arrange(childIndex, region, placement, visible, nodes, children, outputs, cache);
         }
     }

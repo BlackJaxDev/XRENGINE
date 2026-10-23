@@ -4,7 +4,9 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Input.Devices;
+using XREngine.Rendering;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.UI.State;
 using XREngine.Scene;
 
 namespace XREngine.Editor.UI;
@@ -23,12 +25,14 @@ public static class EditorDragDropUtility
 
     private static UICanvasInputComponent? _inputComponent;
     private static readonly Dictionary<UICanvasInputComponent, DragSession> _sessions = [];
+    private static readonly List<DragSession> _sessionScratch = [];
     private static readonly List<DropTargetRegistration> _dropTargets = [];
     private static bool _tickSubscribed;
+    private static bool _updatingSessions;
 
     public static bool IsInitialized => _inputComponent is not null;
     public static bool IsDragging => _sessions.Count != 0;
-    public static bool IsLeftMouseButtonHeld => TryGetInput()?.GetMouseButtonState(EMouseButton.LeftClick, EButtonInputType.Held) ?? false;
+    public static bool IsLeftMouseButtonHeld => TryGetInput()?.GetMouseButtonState(EMouseButton.LeftClick, EButtonInputType.Pressed) ?? false;
     public static bool IsLeftMouseButtonHeldFor(UIInteractableComponent source)
         => IsLeftMouseButtonHeldFor(ResolveCanvasInput(source));
 
@@ -40,6 +44,8 @@ public static class EditorDragDropUtility
         _inputComponent = input;
         if (input is not null)
             EnsureTickSubscribed();
+        else
+            StopTickIfUnused();
     }
 
     // --- Scene node payloads ---
@@ -50,7 +56,7 @@ public static class EditorDragDropUtility
     public static bool IsSceneNodePayload(in DragPayload payload)
         => payload.TypeId == SceneNodePayloadType && payload.Data is SceneNode;
 
-    // --- Asset path payloads (Phase 8B) ---
+    // --- Asset path payloads ---
 
     public static DragPayload CreateAssetPayload(string path)
         => new(AssetPathPayloadType, path);
@@ -141,14 +147,17 @@ public static class EditorDragDropUtility
             throw new ArgumentNullException(nameof(source));
 
         UICanvasInputComponent? input = ResolveCanvasInput(source);
-        if (input is null || !IsLeftMouseButtonHeldFor(input))
+        if (input is null || !source.CanInteract || !IsLeftMouseButtonHeldFor(input))
             return false;
 
         if (_sessions.ContainsKey(input))
             return false;
 
+        UICanvasComponent? canvas = source.BoundableTransform.GetCanvasComponent();
+        if (canvas is null)
+            return false;
         EnsureTickSubscribed();
-        _sessions.Add(input, new DragSession(source, input, source.BoundableTransform.GetCanvasComponent(), payload, startCanvasPosition));
+        _sessions.Add(input, new DragSession(source, input, canvas, payload, startCanvasPosition));
         return true;
     }
 
@@ -170,29 +179,77 @@ public static class EditorDragDropUtility
 
     private static void OnPostUpdateFrame()
     {
-        using var sample = Engine.Profiler.Start("EditorDragDropUtility.OnPostUpdateFrame");
-        
-        CleanupTargets();
-
-        foreach (DragSession session in _sessions.Values.ToArray())
+        if (_updatingSessions)
+            return;
+        _updatingSessions = true;
+        try
         {
-            UpdateHoveredTarget(session);
-            if (!IsLeftMouseButtonHeldFor(session.Input))
-                CompleteDrag(session);
+            using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("EditorDragDropUtility.OnPostUpdateFrame");
+            CleanupTargets();
+            _sessionScratch.Clear();
+            foreach (DragSession session in _sessions.Values)
+                _sessionScratch.Add(session);
+
+            for (int i = 0; i < _sessionScratch.Count; i++)
+            {
+                DragSession session = _sessionScratch[i];
+                if (!IsRegisteredSession(session))
+                    continue;
+                if (!session.IsCurrent)
+                {
+                    CancelDrag(session);
+                    continue;
+                }
+                UpdateHoveredTarget(session);
+                if (!IsRegisteredSession(session) || !session.IsCurrent)
+                {
+                    CancelDrag(session);
+                    continue;
+                }
+                if (!IsLeftMouseButtonHeldFor(session.Input))
+                    CompleteDrag(session);
+            }
+        }
+        finally
+        {
+            _sessionScratch.Clear();
+            _updatingSessions = false;
+            StopTickIfUnused();
         }
     }
 
     private static void CompleteDrag(DragSession session)
     {
-        if (!_sessions.Remove(session.Input))
+        if (!IsRegisteredSession(session) || !session.IsCurrent)
+        {
+            CancelDrag(session);
+            return;
+        }
+        if (!RemoveSession(session))
             return;
 
         DragPayload payload = session.Payload;
         DropTargetRegistration? target = session.HoveredTarget;
         SetHoveredTarget(session, null);
-        if (target is not null && target.IsValid && target.CanAccept(payload))
+        if (target is not null && target.IsValid && session.IsCurrent &&
+            target.CanAccept(payload) && session.IsCurrent && target.IsValid)
             target.TryDrop(payload);
+        StopTickIfUnused();
     }
+
+    private static void CancelDrag(DragSession session)
+    {
+        RemoveSession(session);
+        SetHoveredTarget(session, null);
+        StopTickIfUnused();
+    }
+
+    private static bool IsRegisteredSession(DragSession session)
+        => _sessions.TryGetValue(session.Input, out DragSession? current) &&
+            ReferenceEquals(current, session);
+
+    private static bool RemoveSession(DragSession session)
+        => IsRegisteredSession(session) && _sessions.Remove(session.Input);
 
     private static void UpdateHoveredTarget(DragSession session)
     {
@@ -202,6 +259,8 @@ public static class EditorDragDropUtility
 
         for (int i = _dropTargets.Count - 1; i >= 0; i--)
         {
+            if (i >= _dropTargets.Count)
+                continue;
             var registration = _dropTargets[i];
             if (!registration.IsValid || !ReferenceEquals(registration.Canvas, session.Canvas))
                 continue;
@@ -209,7 +268,8 @@ public static class EditorDragDropUtility
             if (!registration.CanAccept(payload))
                 continue;
 
-            if (registration.Contains(cursor))
+            if (registration.IsValid && _dropTargets.Contains(registration) &&
+                registration.Contains(cursor))
             {
                 candidate = registration;
                 break;
@@ -224,23 +284,34 @@ public static class EditorDragDropUtility
         if (session.HoveredTarget == target)
             return;
 
-        session.HoveredTarget?.SetHover(false);
+        DropTargetRegistration? previous = session.HoveredTarget;
         session.HoveredTarget = target;
-        session.HoveredTarget?.SetHover(true);
+        previous?.SetHover(false);
+        if (ReferenceEquals(session.HoveredTarget, target))
+            target?.SetHover(true);
     }
 
     private static void CleanupTargets()
     {
         for (int i = _dropTargets.Count - 1; i >= 0; i--)
         {
-            if (!_dropTargets[i].IsValid)
-            {
-                foreach (DragSession session in _sessions.Values)
-                    if (session.HoveredTarget == _dropTargets[i])
-                        SetHoveredTarget(session, null);
-                _dropTargets.RemoveAt(i);
-            }
+            if (i >= _dropTargets.Count)
+                continue;
+            DropTargetRegistration registration = _dropTargets[i];
+            if (registration.IsValid)
+                continue;
+            while (FindSessionHovering(registration) is { } session)
+                SetHoveredTarget(session, null);
+            _dropTargets.Remove(registration);
         }
+    }
+
+    private static DragSession? FindSessionHovering(DropTargetRegistration target)
+    {
+        foreach (DragSession session in _sessions.Values)
+            if (ReferenceEquals(session.HoveredTarget, target))
+                return session;
+        return null;
     }
 
     private static InputInterface? TryGetInput()
@@ -248,9 +319,28 @@ public static class EditorDragDropUtility
 
     private static DragSession? GetPreferredSession()
     {
-        if (_inputComponent is not null && _sessions.TryGetValue(_inputComponent, out DragSession? primary))
-            return primary;
-        return _sessions.Values.FirstOrDefault();
+        while (true)
+        {
+            if (_inputComponent is not null &&
+                _sessions.TryGetValue(_inputComponent, out DragSession? primary))
+            {
+                if (primary.IsCurrent)
+                    return primary;
+                CancelDrag(primary);
+                continue;
+            }
+            DragSession? invalid = null;
+            foreach (DragSession session in _sessions.Values)
+            {
+                if (session.IsCurrent)
+                    return session;
+                invalid = session;
+                break;
+            }
+            if (invalid is null)
+                return null;
+            CancelDrag(invalid);
+        }
     }
 
     private static UICanvasInputComponent? ResolveCanvasInput(UIInteractableComponent source)
@@ -261,26 +351,50 @@ public static class EditorDragDropUtility
 
     private static bool IsLeftMouseButtonHeldFor(UICanvasInputComponent? input)
         => (input?.OwningPawn?.Controller?.InputDevice as InputInterface)?
-            .GetMouseButtonState(EMouseButton.LeftClick, EButtonInputType.Held) ?? false;
+            .GetMouseButtonState(EMouseButton.LeftClick, EButtonInputType.Pressed) ?? false;
 
     private static void EnsureTickSubscribed()
     {
         if (_tickSubscribed)
             return;
-        Engine.Time.Timer.PostUpdateFrame += OnPostUpdateFrame;
+        RuntimeRenderingHostServices.Scheduling.SubscribePostUpdateFrame(OnPostUpdateFrame);
         _tickSubscribed = true;
     }
 
+    private static void StopTickIfUnused()
+    {
+        if (!_tickSubscribed || _inputComponent is not null || _sessions.Count != 0)
+            return;
+        CleanupTargets();
+        if (_inputComponent is not null || _sessions.Count != 0)
+            return;
+        RuntimeRenderingHostServices.Scheduling.UnsubscribePostUpdateFrame(OnPostUpdateFrame);
+        _tickSubscribed = false;
+    }
+
     private sealed class DragSession(UIInteractableComponent source, UICanvasInputComponent input,
-        UICanvasComponent? canvas, DragPayload payload, Vector2 startPosition)
+        UICanvasComponent canvas, DragPayload payload, Vector2 startPosition)
     {
         public UIInteractableComponent Source { get; } = source;
         public UICanvasInputComponent Input { get; } = input;
-        public UICanvasComponent? Canvas { get; } = canvas;
+        public UICanvasComponent Canvas { get; } = canvas;
+        public long SourceRevision { get; } = source.InteractionRevision;
+        public UIElementIdentity SourceIdentity { get; } = source.AccessibilityIdentity;
+        public bool IsCurrent => IsCurrentDragSource(Source, Input, Canvas,
+            SourceRevision, SourceIdentity);
         public DragPayload Payload { get; } = payload;
         public Vector2 StartPosition { get; } = startPosition;
         public DropTargetRegistration? HoveredTarget { get; set; }
     }
+
+    internal static bool IsCurrentDragSource(UIInteractableComponent source,
+        UICanvasInputComponent input, UICanvasComponent canvas,
+        long revision, UIElementIdentity identity)
+        => source.SceneNode is { IsActiveInHierarchy: true } && source.CanInteract &&
+            input.IsActiveInHierarchy && canvas.IsActiveInHierarchy &&
+            source.InteractionRevision == revision && source.AccessibilityIdentity == identity &&
+            ReferenceEquals(source.BoundableTransform.GetCanvasComponent(), canvas) &&
+            ReferenceEquals(canvas.GetInputComponent(), input);
 
     public readonly struct DragPayload
     {

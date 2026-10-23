@@ -85,11 +85,15 @@ public sealed class UIBatchCollector : IDisposable
                 _staleMaterialRunKeys.Add(pair.Key);
         foreach (var key in _staleMaterialRunKeys)
         {
-            foreach (MaterialGPUResources gpu in _materialRunGPU[key])
+            List<MaterialGPUResources> cohorts = _materialRunGPU[key];
+            while (cohorts.Count != 0)
             {
+                MaterialGPUResources gpu = cohorts[^1];
                 ForceReleaseReceipt(gpu.Receipt);
                 gpu.Receipt = null;
                 DestroyMaterialGPU(gpu);
+                cohorts.RemoveAt(cohorts.Count - 1);
+                _gpuCohortCount--;
             }
             _materialRunGPU.Remove(key);
         }
@@ -99,11 +103,15 @@ public sealed class UIBatchCollector : IDisposable
                 _staleTextRunKeys.Add(pair.Key);
         foreach (var key in _staleTextRunKeys)
         {
-            foreach (TextGPUResources gpu in _textGPU[key])
+            List<TextGPUResources> cohorts = _textGPU[key];
+            while (cohorts.Count != 0)
             {
+                TextGPUResources gpu = cohorts[^1];
                 ForceReleaseReceipt(gpu.Receipt);
                 gpu.Receipt = null;
                 gpu.Dispose();
+                cohorts.RemoveAt(cohorts.Count - 1);
+                _gpuCohortCount--;
             }
             _textGPU.Remove(key);
         }
@@ -177,6 +185,7 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class TextBatchData
     {
+        public ulong RunId;
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Atlas;
         public int AtlasType;
@@ -208,6 +217,7 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class MaterialQuadBatchData
     {
+        public ulong RunId;
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Texture;
         public bool ImageSrgb;
@@ -382,6 +392,96 @@ public sealed class UIBatchCollector : IDisposable
     // Rendering side (read on render thread)
     private Dictionary<int, BatchPool<MaterialQuadBatchData>> _renderMaterialGroups = [];
     private Dictionary<int, BatchPool<TextBatchData>> _renderTextGroups = [];
+    private ulong _nextRunId;
+    private readonly HashSet<ulong> _claimedPreviousRunIds = [];
+    private readonly Dictionary<ulong, (int Pass, MaterialQuadBatchData Run)> _oldMaterialRunByHandle = [];
+    private readonly Dictionary<ulong, (int Pass, TextBatchData Run)> _oldTextRunByHandle = [];
+    internal int LastRunReconcileVisitCount { get; private set; }
+
+    private ulong AllocateRunId()
+    {
+        ulong id = ++_nextRunId;
+        return id == 0 ? ++_nextRunId : id;
+    }
+
+    // Markers retain their ordinal position in the painter stream. GPU cohorts use
+    // this separate identity so an inserted earlier run cannot rebase later storage.
+    private void ReconcileCollectedRunIds()
+    {
+        _claimedPreviousRunIds.Clear();
+        _oldMaterialRunByHandle.Clear();
+        _oldTextRunByHandle.Clear();
+        LastRunReconcileVisitCount = 0;
+        foreach (var pass in _renderMaterialGroups)
+            for (int group = 0; group < pass.Value.Count; group++)
+            {
+                MaterialQuadBatchData old = pass.Value[group];
+                foreach (MaterialQuadEntry entry in old.Entries)
+                {
+                    LastRunReconcileVisitCount++;
+                    if (entry.PrimitiveHandle != 0)
+                        _oldMaterialRunByHandle.TryAdd(entry.PrimitiveHandle, (pass.Key, old));
+                }
+            }
+        foreach (var pass in _renderTextGroups)
+            for (int group = 0; group < pass.Value.Count; group++)
+            {
+                TextBatchData old = pass.Value[group];
+                foreach (TextEntry entry in old.Entries)
+                {
+                    LastRunReconcileVisitCount++;
+                    if (entry.PrimitiveHandle != 0)
+                        _oldTextRunByHandle.TryAdd(entry.PrimitiveHandle, (pass.Key, old));
+                }
+            }
+        foreach (var pass in _collectMaterialGroups)
+        {
+            for (int index = 0; index < pass.Value.Count; index++)
+            {
+                MaterialQuadBatchData current = pass.Value[index];
+                foreach (MaterialQuadEntry entry in current.Entries)
+                {
+                    LastRunReconcileVisitCount++;
+                    if (entry.PrimitiveHandle == 0 ||
+                        !_oldMaterialRunByHandle.TryGetValue(entry.PrimitiveHandle, out var match) ||
+                        match.Pass != pass.Key) continue;
+                    MaterialQuadBatchData old = match.Run;
+                    if (_claimedPreviousRunIds.Contains(old.RunId) || current.CropRegion != old.CropRegion ||
+                        !ReferenceEquals(current.Texture, old.Texture) ||
+                        current.ImageSrgb != old.ImageSrgb || current.Border != old.Border) continue;
+                    current.RunId = old.RunId;
+                    _claimedPreviousRunIds.Add(old.RunId);
+                    break;
+                }
+            }
+        }
+        foreach (var pass in _collectTextGroups)
+        {
+            for (int index = 0; index < pass.Value.Count; index++)
+            {
+                TextBatchData current = pass.Value[index];
+                foreach (TextEntry entry in current.Entries)
+                {
+                    LastRunReconcileVisitCount++;
+                    if (entry.PrimitiveHandle == 0 ||
+                        !_oldTextRunByHandle.TryGetValue(entry.PrimitiveHandle, out var match) ||
+                        match.Pass != pass.Key) continue;
+                    TextBatchData old = match.Run;
+                    if (_claimedPreviousRunIds.Contains(old.RunId) || current.CropRegion != old.CropRegion ||
+                        !ReferenceEquals(current.Atlas, old.Atlas) || current.AtlasType != old.AtlasType ||
+                        current.DistanceRange != old.DistanceRange ||
+                        current.DistanceRangeMiddle != old.DistanceRangeMiddle ||
+                        current.MsdfFillBias != old.MsdfFillBias || current.DebugMode != old.DebugMode) continue;
+                    current.RunId = old.RunId;
+                    _claimedPreviousRunIds.Add(old.RunId);
+                    break;
+                }
+            }
+        }
+        _oldMaterialRunByHandle.Clear();
+        _oldTextRunByHandle.Clear();
+        _claimedPreviousRunIds.Clear();
+    }
 
     private readonly Dictionary<int, MarkerPool> _markerPools = [];
     private readonly record struct PublishedMarker(int RecordIndex, int Pass, int ZIndex,
@@ -564,8 +664,10 @@ public sealed class UIBatchCollector : IDisposable
     private uint _matQuadCapacity;
     private bool _matQuadNeedsPush;
     private bool _legacyMaterialGpuCreated;
-    private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration, int Pass, int Group), List<MaterialGPUResources>> _materialRunGPU = [];
-    private readonly List<(AbstractRenderer Renderer, long BackendGeneration, int Pass, int Group)> _staleMaterialRunKeys = [];
+    private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration, int Pass, ulong RunId), List<MaterialGPUResources>> _materialRunGPU = [];
+    private readonly List<(AbstractRenderer Renderer, long BackendGeneration, int Pass, ulong RunId)> _staleMaterialRunKeys = [];
+    private readonly HashSet<(int Pass, ulong RunId)> _activeMaterialRunKeys = [];
+    private int _gpuCohortCount;
 
     private sealed class MaterialGPUResources
     {
@@ -615,7 +717,13 @@ public sealed class UIBatchCollector : IDisposable
         public uint DrawCapacity;
         public uint TextCapacity;
         public readonly RetainedGlyphRanges GlyphRanges = new();
+        public readonly RetainedQuadSlots TextSlots = new();
         public readonly List<RetainedGlyphRanges.Allocation?> ActiveGlyphRanges = [];
+        public readonly List<uint> ActiveTextSlots = [];
+        public readonly List<(uint Slot, TextEntry Entry)> SortedTextSlots = [];
+        public readonly List<(uint Offset, uint Count, int EntryIndex)> DirtyGlyphRanges = [];
+        public readonly List<TextEntry> UploadedTextSlots = [];
+        public readonly List<bool> InitializedTextSlots = [];
         public readonly List<uint> UploadedDrawIndices = [];
         public readonly List<uint> CurrentDrawIndices = [];
         public bool NeedsPush;
@@ -649,8 +757,10 @@ public sealed class UIBatchCollector : IDisposable
         }
     }
 
-    private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas, int Pass, int Group), List<TextGPUResources>> _textGPU = [];
-    private readonly List<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas, int Pass, int Group)> _staleTextRunKeys = [];
+    private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas, int Pass, ulong RunId), List<TextGPUResources>> _textGPU = [];
+    private readonly List<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas, int Pass, ulong RunId)> _staleTextRunKeys = [];
+    private readonly HashSet<(XRTexture2D Atlas, int Pass, ulong RunId)> _activeTextRunKeys = [];
+    internal int LastActiveRunBuildVisitCount { get; private set; }
     private bool _disposed;
 
     private sealed class ReceiptLease(AbstractRenderer renderer, ulong id)
@@ -662,7 +772,7 @@ public sealed class UIBatchCollector : IDisposable
         public bool Sealed;
         public bool Authored;
         public int Claims;
-        private UIReceiptRetirementLatch _retirement;
+        public readonly UIReceiptCompletionProbe Completion = new(renderer, id);
 
         // The fallback renderer consumes its retirement entry on the first
         // successful query. All cohorts sharing this receipt must observe that
@@ -671,9 +781,7 @@ public sealed class UIBatchCollector : IDisposable
         {
             get
             {
-                if (Sealed && _retirement.ShouldQuery)
-                    _retirement.Observe(Renderer.IsUiPublicationReceiptRetired(Id));
-                return _retirement.IsRetired;
+                return Sealed && Completion.IsRetired;
             }
         }
 
@@ -689,7 +797,7 @@ public sealed class UIBatchCollector : IDisposable
 
     private ReceiptLease? _activeReceipt;
 
-    public void BeginPublicationReceipt(ulong receiptId)
+    internal UIReceiptCompletionProbe BeginPublicationReceipt(ulong receiptId)
     {
         if (receiptId == 0 || _activeReceipt is not null)
             throw new InvalidOperationException("A UI publication receipt is already active or has no identity.");
@@ -703,6 +811,7 @@ public sealed class UIBatchCollector : IDisposable
             s_pendingReceiptReservations++;
         }
         _activeReceipt = new ReceiptLease(renderer, receiptId);
+        return _activeReceipt.Completion;
     }
 
     public void FailCurrentUiPublicationAuthoring(string reason)
@@ -718,6 +827,7 @@ public sealed class UIBatchCollector : IDisposable
         lease.Fence = completionFence;
         lease.Sealed = true;
         lease.Authored = authored;
+        lease.Completion.Seal(authored, completionFence);
         lock (CollectorRegistryGate)
         {
             s_pendingReceiptReservations--;
@@ -864,7 +974,7 @@ public sealed class UIBatchCollector : IDisposable
         {
             for (int group = 0; group < passGroups.Value.Count; group++)
             {
-                var key = (renderer, renderer.BackendGeneration, passGroups.Key, group);
+                var key = (renderer, renderer.BackendGeneration, passGroups.Key, passGroups.Value[group].RunId);
                 if (!_materialRunGPU.TryGetValue(key, out var cohorts) || cohorts.Count < MaxRunCohorts)
                     continue;
                 bool ready = false;
@@ -886,7 +996,7 @@ public sealed class UIBatchCollector : IDisposable
                 TextBatchData batch = passGroups.Value[group];
                 if (batch.Atlas is null || batch.TotalGlyphs == 0)
                     continue;
-                var key = (renderer, renderer.BackendGeneration, batch.Atlas, passGroups.Key, group);
+                var key = (renderer, renderer.BackendGeneration, batch.Atlas, passGroups.Key, batch.RunId);
                 if (!_textGPU.TryGetValue(key, out var cohorts) || cohorts.Count < MaxRunCohorts)
                     continue;
                 bool ready = false;
@@ -924,7 +1034,7 @@ public sealed class UIBatchCollector : IDisposable
             {
                 if (passGroups.Value[group].Entries.Count == 0)
                     continue;
-                var key = (renderer, renderer.BackendGeneration, passGroups.Key, group);
+                var key = (renderer, renderer.BackendGeneration, passGroups.Key, passGroups.Value[group].RunId);
                 if (_materialRunGPU.TryGetValue(key, out var cohorts))
                 {
                     bool ready = false;
@@ -943,7 +1053,7 @@ public sealed class UIBatchCollector : IDisposable
                 TextBatchData batch = passGroups.Value[group];
                 if (batch.Atlas is null || batch.TotalGlyphs == 0)
                     continue;
-                var key = (renderer, renderer.BackendGeneration, batch.Atlas, passGroups.Key, group);
+                var key = (renderer, renderer.BackendGeneration, batch.Atlas, passGroups.Key, batch.RunId);
                 if (_textGPU.TryGetValue(key, out var cohorts))
                 {
                     bool ready = false;
@@ -1037,6 +1147,7 @@ public sealed class UIBatchCollector : IDisposable
             }
         }
         _collectPublishedRecordIndex = -1;
+        ReconcileCollectedRunIds();
         RetireMissingPrimitives();
     }
 
@@ -1078,6 +1189,7 @@ public sealed class UIBatchCollector : IDisposable
         {
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
+            batch.RunId = AllocateRunId();
             batch.CropRegion = cropRegion;
             batch.Texture = texture;
             batch.ImageSrgb = imageSrgb;
@@ -1153,6 +1265,7 @@ public sealed class UIBatchCollector : IDisposable
         {
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
+            batch.RunId = AllocateRunId();
             batch.CropRegion = cropRegion;
             batch.Atlas = fontAtlas;
             batch.AtlasType = atlasType;
@@ -1443,12 +1556,13 @@ public sealed class UIBatchCollector : IDisposable
     private void RetireInactiveGpuCohorts(AbstractRenderer renderer)
     {
         SweepDeferredCohorts(renderer);
+        BuildActiveGpuRunKeys();
         _staleMaterialRunKeys.Clear();
         foreach (var pair in _materialRunGPU)
         {
             var key = pair.Key;
             if (!ReferenceEquals(key.Renderer, renderer) || key.BackendGeneration != renderer.BackendGeneration ||
-                _renderMaterialGroups.TryGetValue(key.Pass, out var active) && key.Group < active.Count)
+                _activeMaterialRunKeys.Contains((key.Pass, key.RunId)))
                 continue;
             bool ready = true;
             foreach (MaterialGPUResources gpu in pair.Value)
@@ -1462,8 +1576,14 @@ public sealed class UIBatchCollector : IDisposable
         }
         foreach (var key in _staleMaterialRunKeys)
         {
-            foreach (MaterialGPUResources gpu in _materialRunGPU[key])
+            List<MaterialGPUResources> cohorts = _materialRunGPU[key];
+            while (cohorts.Count != 0)
+            {
+                MaterialGPUResources gpu = cohorts[^1];
                 DestroyMaterialGPU(gpu);
+                cohorts.RemoveAt(cohorts.Count - 1);
+                _gpuCohortCount--;
+            }
             _materialRunGPU.Remove(key);
         }
 
@@ -1471,8 +1591,7 @@ public sealed class UIBatchCollector : IDisposable
         foreach (var pair in _textGPU)
         {
             var key = pair.Key;
-            bool active = _renderTextGroups.TryGetValue(key.Pass, out var groups) &&
-                key.Group < groups.Count && ReferenceEquals(groups[key.Group].Atlas, key.Atlas);
+            bool active = _activeTextRunKeys.Contains((key.Atlas, key.Pass, key.RunId));
             if (!ReferenceEquals(key.Renderer, renderer) || key.BackendGeneration != renderer.BackendGeneration || active)
                 continue;
             bool ready = true;
@@ -1487,8 +1606,14 @@ public sealed class UIBatchCollector : IDisposable
         }
         foreach (var key in _staleTextRunKeys)
         {
-            foreach (TextGPUResources gpu in _textGPU[key])
+            List<TextGPUResources> cohorts = _textGPU[key];
+            while (cohorts.Count != 0)
+            {
+                TextGPUResources gpu = cohorts[^1];
                 gpu.Dispose();
+                cohorts.RemoveAt(cohorts.Count - 1);
+                _gpuCohortCount--;
+            }
             _textGPU.Remove(key);
         }
     }
@@ -1521,33 +1646,48 @@ public sealed class UIBatchCollector : IDisposable
         }
     }
 
-    private int CountGpuCohorts()
+    private int CountGpuCohorts() => _gpuCohortCount;
+
+    private void BuildActiveGpuRunKeys()
     {
-        int count = 0;
-        foreach (var cohorts in _materialRunGPU.Values)
-            count += cohorts.Count;
-        foreach (var cohorts in _textGPU.Values)
-            count += cohorts.Count;
-        return count;
+        _activeMaterialRunKeys.Clear();
+        _activeTextRunKeys.Clear();
+        LastActiveRunBuildVisitCount = 0;
+        foreach (var pass in _renderMaterialGroups)
+            for (int index = 0; index < pass.Value.Count; index++)
+            {
+                LastActiveRunBuildVisitCount++;
+                _activeMaterialRunKeys.Add((pass.Key, pass.Value[index].RunId));
+            }
+        foreach (var pass in _renderTextGroups)
+            for (int index = 0; index < pass.Value.Count; index++)
+            {
+                LastActiveRunBuildVisitCount++;
+                TextBatchData batch = pass.Value[index];
+                if (batch.Atlas is not null)
+                    _activeTextRunKeys.Add((batch.Atlas, pass.Key, batch.RunId));
+            }
     }
 
-    private MaterialGPUResources AcquireMaterialGPU(AbstractRenderer renderer, int renderPass, int groupIndex)
+    private MaterialGPUResources AcquireMaterialGPU(AbstractRenderer renderer, int renderPass, ulong runId)
     {
-        var key = (renderer, renderer.BackendGeneration, renderPass, groupIndex);
+        var key = (renderer, renderer.BackendGeneration, renderPass, runId);
         if (!_materialRunGPU.TryGetValue(key, out var cohorts))
             cohorts = [];
         for (int i = 0; i < cohorts.Count; i++)
             if (CanReuseMaterialGPU(cohorts[i]))
                 return cohorts[i];
-        RetireInactiveGpuCohorts(renderer);
         if (cohorts.Count >= MaxRunCohorts)
-            throw new InvalidOperationException($"UI material run ({renderPass}, {groupIndex}) has no retired GPU cohort.");
+            throw new InvalidOperationException($"UI material run ({renderPass}, {runId}) has no retired GPU cohort.");
+        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+            RetireInactiveGpuCohorts(renderer);
         if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
             throw new InvalidOperationException("UI GPU cohort budget is full while earlier draws remain in use.");
         MaterialGPUResources gpu = new();
         if (!_materialRunGPU.ContainsKey(key))
             _materialRunGPU.Add(key, cohorts);
         cohorts.Add(gpu);
+        _gpuCohortCount++;
         return gpu;
     }
 
@@ -2167,17 +2307,18 @@ public sealed class UIBatchCollector : IDisposable
 
     #region GPU Resource Management — Text Quads
 
-    private TextGPUResources EnsureTextGPUResources(AbstractRenderer renderer, XRTexture2D fontAtlas, int renderPass, int groupIndex)
+    private TextGPUResources EnsureTextGPUResources(AbstractRenderer renderer, XRTexture2D fontAtlas, int renderPass, ulong runId)
     {
-        var key = (renderer, renderer.BackendGeneration, fontAtlas, renderPass, groupIndex);
+        var key = (renderer, renderer.BackendGeneration, fontAtlas, renderPass, runId);
         if (!_textGPU.TryGetValue(key, out var cohorts))
             cohorts = [];
         for (int i = 0; i < cohorts.Count; i++)
             if (CanReuseTextGPU(cohorts[i]))
                 return cohorts[i];
-        RetireInactiveGpuCohorts(renderer);
         if (cohorts.Count >= MaxRunCohorts)
-            throw new InvalidOperationException($"UI text run ({renderPass}, {groupIndex}) has no retired GPU cohort.");
+            throw new InvalidOperationException($"UI text run ({renderPass}, {runId}) has no retired GPU cohort.");
+        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+            RetireInactiveGpuCohorts(renderer);
         if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
             throw new InvalidOperationException("UI GPU cohort budget is full while earlier draws remain in use.");
 
@@ -2247,6 +2388,7 @@ public sealed class UIBatchCollector : IDisposable
         if (!_textGPU.ContainsKey(key))
             _textGPU.Add(key, cohorts);
         cohorts.Add(gpu);
+        _gpuCohortCount++;
         return gpu;
     }
 
@@ -2425,7 +2567,7 @@ public sealed class UIBatchCollector : IDisposable
             throw new InvalidOperationException("UI batching requires an active renderer.");
         RendererBackendId backendId = renderer.BackendId;
         bool isolatedCohort = backendId == RendererBackendId.Vulkan || backendId == RendererBackendId.OpenGL;
-        MaterialGPUResources? cohort = isolatedCohort ? AcquireMaterialGPU(renderer, renderPass, groupIndex) : null;
+        MaterialGPUResources? cohort = isolatedCohort ? AcquireMaterialGPU(renderer, renderPass, batch.RunId) : null;
         if (cohort is not null)
         {
             Claim(cohort);
@@ -2611,11 +2753,11 @@ public sealed class UIBatchCollector : IDisposable
         if (profileGpu)
         {
             using (profiler.StartScope($"UIBatchTextEnsureResources[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
-                gpu = EnsureTextGPUResources(renderer, batchData.Atlas, renderPass, groupIndex);
+                gpu = EnsureTextGPUResources(renderer, batchData.Atlas, renderPass, batchData.RunId);
         }
         else
         {
-            gpu = EnsureTextGPUResources(renderer, batchData.Atlas, renderPass, groupIndex);
+            gpu = EnsureTextGPUResources(renderer, batchData.Atlas, renderPass, batchData.RunId);
         }
         Claim(gpu);
 
@@ -2956,13 +3098,21 @@ public sealed class UIBatchCollector : IDisposable
     private static void UploadRetainedTextData(TextBatchData batch, TextGPUResources gpu)
     {
         List<RetainedGlyphRanges.Allocation?> allocations = gpu.ActiveGlyphRanges;
+        List<uint> textSlots = gpu.ActiveTextSlots;
+        List<(uint Slot, TextEntry Entry)> sortedTextSlots = gpu.SortedTextSlots;
         List<uint> drawIndices = gpu.CurrentDrawIndices;
         allocations.Clear();
+        textSlots.Clear();
+        sortedTextSlots.Clear();
         drawIndices.Clear();
         gpu.GlyphRanges.BeginFrame();
+        gpu.TextSlots.BeginFrame();
         for (int textIndex = 0; textIndex < batch.Entries.Count; textIndex++)
         {
             TextEntry entry = batch.Entries[textIndex];
+            uint textSlot = gpu.TextSlots.Reserve(entry.PrimitiveHandle, textIndex).Index;
+            textSlots.Add(textSlot);
+            sortedTextSlots.Add((textSlot, entry));
             RetainedGlyphRanges.Allocation? allocation = entry.GlyphCount == 0 ? null :
                 gpu.GlyphRanges.Reserve(entry.PrimitiveHandle, textIndex, entry.GlyphCount);
             allocations.Add(allocation);
@@ -2972,12 +3122,16 @@ public sealed class UIBatchCollector : IDisposable
                 drawIndices.Add(checked(allocation.Offset + (uint)glyph));
         }
         gpu.GlyphRanges.EndFrame();
+        gpu.TextSlots.EndFrame();
+        sortedTextSlots.Sort(static (a, b) => a.Slot.CompareTo(b.Slot));
 
         uint storageCount = gpu.GlyphRanges.HighWater;
         uint drawCount = (uint)drawIndices.Count;
-        uint textCount = (uint)batch.Entries.Count;
+        uint textCount = gpu.TextSlots.HighWater;
         if (storageCount > MaxRetainedGlyphSlotsPerRun || drawCount > MaxRetainedGlyphSlotsPerRun)
             throw new InvalidOperationException("A UI text run exceeds its retained GPU glyph budget.");
+        if (textCount > MaxRetainedQuadSlotsPerRun)
+            throw new InvalidOperationException("A UI text run exceeds its retained GPU instance budget.");
         bool full = gpu.NeedsPush;
         if (storageCount > gpu.GlyphCapacity)
         {
@@ -2999,14 +3153,21 @@ public sealed class UIBatchCollector : IDisposable
             gpu.TextInstanceBuf!.Resize(gpu.TextCapacity * TextInstanceVec4Count);
             full = true;
         }
+        while (gpu.UploadedTextSlots.Count < textCount)
+        {
+            gpu.UploadedTextSlots.Add(default);
+            gpu.InitializedTextSlots.Add(false);
+        }
 
         if (full)
         {
-            XRBufferWriter<Vector4> transforms = gpu.GlyphTransformsBuf!.Alloc<Vector4>(gpu.GlyphCapacity);
-            XRBufferWriter<Vector4> uvs = gpu.GlyphTexCoordsBuf!.Alloc<Vector4>(gpu.GlyphCapacity);
-            XRBufferWriter<uint> textIndices = gpu.GlyphTextIndexBuf!.Alloc<uint>(gpu.GlyphCapacity);
-            XRBufferWriter<uint> draw = gpu.GlyphDrawIndexBuf!.Alloc<uint>(gpu.DrawCapacity);
-            XRBufferWriter<Vector4> instances = gpu.TextInstanceBuf!.Alloc<Vector4>(gpu.TextCapacity * TextInstanceVec4Count);
+            for (int index = 0; index < gpu.InitializedTextSlots.Count; index++)
+                gpu.InitializedTextSlots[index] = false;
+            XRBufferWriter<Vector4> transforms = gpu.GlyphTransformsBuf!.Alloc<Vector4>(storageCount);
+            XRBufferWriter<Vector4> uvs = gpu.GlyphTexCoordsBuf!.Alloc<Vector4>(storageCount);
+            XRBufferWriter<uint> textIndices = gpu.GlyphTextIndexBuf!.Alloc<uint>(storageCount);
+            XRBufferWriter<uint> draw = gpu.GlyphDrawIndexBuf!.Alloc<uint>(drawCount);
+            XRBufferWriter<Vector4> instances = gpu.TextInstanceBuf!.Alloc<Vector4>(textCount * TextInstanceVec4Count);
             transforms.Span.Clear();
             uvs.Span.Clear();
             textIndices.Span.Clear();
@@ -3023,69 +3184,48 @@ public sealed class UIBatchCollector : IDisposable
                     UITextLayoutGlyph value = entry.Layout.Glyphs.Span[glyph];
                     transforms.Span[(int)slot] = value.Transform;
                     uvs.Span[(int)slot] = value.Uvs;
-                    textIndices.Span[(int)slot] = (uint)textIndex;
+                    textIndices.Span[(int)slot] = textSlots[textIndex];
                 }
             }
             for (int index = 0; index < drawIndices.Count; index++)
                 draw.Span[index] = drawIndices[index];
-            WriteRetainedTextInstances(batch.Entries, 0, batch.Entries.Count, instances.Span);
+            foreach ((uint slot, TextEntry entry) in sortedTextSlots)
+                WriteRetainedTextInstance(entry,
+                    instances.Span.Slice(checked((int)slot * (int)TextInstanceVec4Count), (int)TextInstanceVec4Count));
             transforms.Commit();
             uvs.Commit();
             textIndices.Commit();
             draw.Commit();
             instances.Commit();
             UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
-                (long)gpu.GlyphCapacity * 36L + (long)gpu.DrawCapacity * 4L +
-                (long)gpu.TextCapacity * TextInstanceVec4Count * 16L);
+                (long)storageCount * 36L + (long)drawCount * 4L +
+                (long)textCount * TextInstanceVec4Count * 16L);
             UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, 5);
         }
         else
         {
-            for (int textIndex = 0; textIndex < batch.Entries.Count; textIndex++)
-            {
-                TextEntry entry = batch.Entries[textIndex];
-                RetainedGlyphRanges.Allocation? allocation = allocations[textIndex];
-                if (allocation is null) continue;
-                uint count = (uint)entry.GlyphCount;
-                if (!ReferenceEquals(allocation.Layout, entry.Layout))
-                {
-                    XRBufferWriter<Vector4> transforms = gpu.GlyphTransformsBuf!.AllocAt<Vector4>(allocation.Offset, count);
-                    XRBufferWriter<Vector4> uvs = gpu.GlyphTexCoordsBuf!.AllocAt<Vector4>(allocation.Offset, count);
-                    for (int glyph = 0; glyph < entry.GlyphCount; glyph++)
-                    {
-                        UITextLayoutGlyph value = entry.Layout.Glyphs.Span[glyph];
-                        transforms.Span[glyph] = value.Transform;
-                        uvs.Span[glyph] = value.Uvs;
-                    }
-                    transforms.Commit();
-                    uvs.Commit();
-                    UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 32L);
-                    UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, 2);
-                }
-                if (allocation.TextIndex != textIndex)
-                {
-                    XRBufferWriter<uint> indices = gpu.GlyphTextIndexBuf!.AllocAt<uint>(allocation.Offset, count);
-                    indices.Span.Fill((uint)textIndex);
-                    indices.Commit();
-                    UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 4L);
-                    UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
-                }
-            }
-            List<TextEntry> previousEntries = gpu.UploadedEntries;
+            UploadChangedGlyphRanges(batch, gpu, geometry: true);
+            UploadChangedGlyphRanges(batch, gpu, geometry: false);
             int firstText = 0;
-            while (firstText < batch.Entries.Count)
+            while (firstText < sortedTextSlots.Count)
             {
-                while (firstText < batch.Entries.Count && firstText < previousEntries.Count &&
-                    !TextInstanceChanged(batch.Entries[firstText], previousEntries[firstText])) firstText++;
-                if (firstText == batch.Entries.Count) break;
+                while (firstText < sortedTextSlots.Count &&
+                    gpu.InitializedTextSlots[(int)sortedTextSlots[firstText].Slot] &&
+                    !TextInstanceChanged(sortedTextSlots[firstText].Entry,
+                        gpu.UploadedTextSlots[(int)sortedTextSlots[firstText].Slot])) firstText++;
+                if (firstText == sortedTextSlots.Count) break;
                 int endText = firstText + 1;
-                while (endText < batch.Entries.Count &&
-                    (endText >= previousEntries.Count ||
-                     TextInstanceChanged(batch.Entries[endText], previousEntries[endText]))) endText++;
-                uint offset = (uint)firstText * TextInstanceVec4Count;
+                while (endText < sortedTextSlots.Count &&
+                    sortedTextSlots[endText].Slot == sortedTextSlots[endText - 1].Slot + 1 &&
+                    (!gpu.InitializedTextSlots[(int)sortedTextSlots[endText].Slot] ||
+                     TextInstanceChanged(sortedTextSlots[endText].Entry,
+                         gpu.UploadedTextSlots[(int)sortedTextSlots[endText].Slot]))) endText++;
+                uint offset = sortedTextSlots[firstText].Slot * TextInstanceVec4Count;
                 uint count = (uint)(endText - firstText) * TextInstanceVec4Count;
                 XRBufferWriter<Vector4> instances = gpu.TextInstanceBuf!.AllocAt<Vector4>(offset, count);
-                WriteRetainedTextInstances(batch.Entries, firstText, endText, instances.Span);
+                for (int index = firstText; index < endText; index++)
+                    WriteRetainedTextInstance(sortedTextSlots[index].Entry,
+                        instances.Span.Slice((index - firstText) * (int)TextInstanceVec4Count, (int)TextInstanceVec4Count));
                 instances.Commit();
                 UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 16L);
                 UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
@@ -3116,11 +3256,75 @@ public sealed class UIBatchCollector : IDisposable
             RetainedGlyphRanges.Allocation? allocation = allocations[textIndex];
             if (allocation is null) continue;
             allocation.Layout = batch.Entries[textIndex].Layout;
-            allocation.TextIndex = textIndex;
+            allocation.TextIndex = checked((int)textSlots[textIndex]);
+        }
+        foreach ((uint slot, TextEntry entry) in sortedTextSlots)
+        {
+            gpu.UploadedTextSlots[(int)slot] = entry;
+            gpu.InitializedTextSlots[(int)slot] = true;
         }
         gpu.UploadedDrawIndices.Clear();
         gpu.UploadedDrawIndices.AddRange(drawIndices);
         gpu.NeedsPush = false;
+    }
+
+    private static void UploadChangedGlyphRanges(TextBatchData batch, TextGPUResources gpu, bool geometry)
+    {
+        List<(uint Offset, uint Count, int EntryIndex)> dirty = gpu.DirtyGlyphRanges;
+        dirty.Clear();
+        for (int index = 0; index < batch.Entries.Count; index++)
+        {
+            RetainedGlyphRanges.Allocation? allocation = gpu.ActiveGlyphRanges[index];
+            if (allocation is null) continue;
+            bool changed = geometry
+                ? !ReferenceEquals(allocation.Layout, batch.Entries[index].Layout)
+                : allocation.TextIndex != checked((int)gpu.ActiveTextSlots[index]);
+            if (changed)
+                dirty.Add((allocation.Offset, (uint)batch.Entries[index].GlyphCount, index));
+        }
+        dirty.Sort(static (a, b) => a.Offset.CompareTo(b.Offset));
+        for (int first = 0; first < dirty.Count;)
+        {
+            int end = first + 1;
+            uint last = checked(dirty[first].Offset + dirty[first].Count);
+            while (end < dirty.Count && dirty[end].Offset == last)
+                last = checked(last + dirty[end++].Count);
+            uint count = last - dirty[first].Offset;
+            if (geometry)
+            {
+                XRBufferWriter<Vector4> transforms = gpu.GlyphTransformsBuf!.AllocAt<Vector4>(dirty[first].Offset, count);
+                XRBufferWriter<Vector4> uvs = gpu.GlyphTexCoordsBuf!.AllocAt<Vector4>(dirty[first].Offset, count);
+                for (int index = first; index < end; index++)
+                {
+                    UITextLayoutResult layout = batch.Entries[dirty[index].EntryIndex].Layout;
+                    int baseIndex = checked((int)(dirty[index].Offset - dirty[first].Offset));
+                    for (int glyph = 0; glyph < dirty[index].Count; glyph++)
+                    {
+                        UITextLayoutGlyph value = layout.Glyphs.Span[glyph];
+                        transforms.Span[baseIndex + glyph] = value.Transform;
+                        uvs.Span[baseIndex + glyph] = value.Uvs;
+                    }
+                }
+                transforms.Commit();
+                uvs.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 32L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, 2);
+            }
+            else
+            {
+                XRBufferWriter<uint> indices = gpu.GlyphTextIndexBuf!.AllocAt<uint>(dirty[first].Offset, count);
+                for (int index = first; index < end; index++)
+                {
+                    int baseIndex = checked((int)(dirty[index].Offset - dirty[first].Offset));
+                    indices.Span.Slice(baseIndex, checked((int)dirty[index].Count))
+                        .Fill(gpu.ActiveTextSlots[dirty[index].EntryIndex]);
+                }
+                indices.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 4L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+            }
+            first = end;
+        }
     }
 
     private static void WriteRetainedTextInstances(List<TextEntry> entries, int first, int end,
@@ -3136,6 +3340,16 @@ public sealed class UIBatchCollector : IDisposable
             destination[index++] = entry.OutlineColor;
             destination[index++] = new Vector4(entry.OutlineThickness, 0, 0, 0);
         }
+    }
+
+    private static void WriteRetainedTextInstance(TextEntry entry, Span<Vector4> destination)
+    {
+        int index = 0;
+        WriteMatrix4x4(destination, ref index, in entry.WorldMatrix);
+        destination[index++] = entry.TextColor;
+        destination[index++] = entry.UIXYWH;
+        destination[index++] = entry.OutlineColor;
+        destination[index] = new Vector4(entry.OutlineThickness, 0, 0, 0);
     }
 
     private static bool HaveSameGlyphCounts(List<TextEntry> previous, List<TextEntry> current)
@@ -3415,6 +3629,7 @@ public sealed class UIBatchCollector : IDisposable
                 gpu.Dispose();
             }
         _textGPU.Clear();
+        _gpuCohortCount = 0;
     }
 
     private static void DestroyMaterialGPU(MaterialGPUResources gpu)

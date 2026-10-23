@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using NUnit.Framework;
@@ -472,6 +474,83 @@ public sealed class UIBatchCollectionTests
     }
 
     [Test]
+    public void EarlierPainterRunInsertionKeepsLaterGpuRunIdentities()
+    {
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = CreateCollection(pass);
+        static UIRenderRecord Quad(long id, int z) => new()
+        {
+            RenderInfo = null!, MembershipId = id, Identity = new UIElementIdentity(id, 1),
+            WorldMatrix = Matrix4x4.Identity, Bounds = new Vector4(0, 0, 8, 8),
+            RenderPass = pass, ZIndex = z, Material = null, Visible = true,
+            SupportsBatch = true, QuadColor = Vector4.One,
+        };
+        collector.CollectPublishedRuns(CreatePublication([Quad(1, 1), Quad(2, 2)], 1), commands, _ => Assert.Fail());
+        ulong[] before = ReadCollectedMaterialRunIds(collector, pass);
+        collector.SwapBuffers();
+        commands.DiscardUpdatingCommands();
+        collector.CollectPublishedRuns(CreatePublication([Quad(3, 0), Quad(1, 1), Quad(2, 2)], 2), commands,
+            _ => Assert.Fail());
+        ulong[] after = ReadCollectedMaterialRunIds(collector, pass);
+
+        after.Length.ShouldBe(3);
+        after[0].ShouldNotBe(before[0]);
+        after[1].ShouldBe(before[0]);
+        after[2].ShouldBe(before[1]);
+    }
+
+    [Test]
+    public void AlternatingRunInsertionReconcilesWithLinearHandleVisits()
+    {
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        const int count = 256;
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = CreateCollection(pass);
+        static UIRenderRecord Quad(long id, int z) => new()
+        {
+            RenderInfo = null!, MembershipId = id, Identity = new UIElementIdentity(id, 1),
+            WorldMatrix = Matrix4x4.Identity, Bounds = new Vector4(0, 0, 8, 8),
+            RenderPass = pass, ZIndex = z, Material = null, Visible = true,
+            SupportsBatch = true, QuadColor = Vector4.One,
+        };
+        UIRenderRecord[] original = Enumerable.Range(0, count)
+            .Select(index => Quad(index + 1, index & 1)).ToArray();
+        collector.CollectPublishedRuns(CreatePublication(original, 1), commands, _ => Assert.Fail());
+        ulong[] before = ReadCollectedMaterialRunIds(collector, pass);
+        before.Length.ShouldBe(count);
+        collector.SwapBuffers();
+        commands.DiscardUpdatingCommands();
+
+        UIRenderRecord[] inserted = [Quad(1000, 2), .. original];
+        collector.CollectPublishedRuns(CreatePublication(inserted, 2), commands, _ => Assert.Fail());
+        ulong[] after = ReadCollectedMaterialRunIds(collector, pass);
+        for (int index = 0; index < count; index++)
+            after[index + 1].ShouldBe(before[index]);
+        collector.LastRunReconcileVisitCount.ShouldBeLessThanOrEqualTo(count * 2 + 1);
+
+        MethodInfo buildActive = typeof(UIBatchCollector).GetMethod("BuildActiveGpuRunKeys",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var active = (HashSet<(int Pass, ulong RunId)>)typeof(UIBatchCollector)
+            .GetField("_activeMaterialRunKeys", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(collector)!;
+        collector.SwapBuffers();
+        buildActive.Invoke(collector, null);
+        collector.LastActiveRunBuildVisitCount.ShouldBe(count + 1);
+        active.Count.ShouldBe(count + 1);
+        foreach (ulong id in after)
+            active.Contains((pass, id)).ShouldBeTrue();
+
+        commands.DiscardUpdatingCommands();
+        collector.CollectPublishedRuns(CreatePublication(original, 3), commands, _ => Assert.Fail());
+        collector.SwapBuffers();
+        buildActive.Invoke(collector, null);
+        collector.LastActiveRunBuildVisitCount.ShouldBe(count);
+        active.Count.ShouldBe(count);
+        active.Contains((pass, after[0])).ShouldBeFalse();
+    }
+
+    [Test]
     public void QuadSlotsKeepPayloadAddressesAcrossPainterReorderAndRecycling()
     {
         RetainedQuadSlots slots = new();
@@ -582,6 +661,85 @@ public sealed class UIBatchCollectionTests
     }
 
     [Test]
+    public void TextInsertionAndGlyphGrowthKeepExistingInstanceAndGlyphAddresses()
+    {
+        using XRDataBuffer<Vector4> transforms = new("GlyphTransforms", EBufferTarget.ShaderStorageBuffer, 64);
+        using XRDataBuffer<Vector4> uvs = new("GlyphUvs", EBufferTarget.ShaderStorageBuffer, 64);
+        using XRDataBuffer<Vector4> instances = new("TextInstances", EBufferTarget.ShaderStorageBuffer, 64);
+        using XRDataBuffer<uint> textIndices = new("GlyphTextIndices", EBufferTarget.ShaderStorageBuffer, 64);
+        using XRDataBuffer<uint> drawIndices = new("GlyphDrawIndices", EBufferTarget.ShaderStorageBuffer, 64);
+        Type collectorType = typeof(UIBatchCollector);
+        Type gpuType = collectorType.GetNestedType("TextGPUResources", BindingFlags.NonPublic)!;
+        Type batchType = collectorType.GetNestedType("TextBatchData", BindingFlags.NonPublic)!;
+        object gpu = Activator.CreateInstance(gpuType, nonPublic: true)!;
+        object batch = Activator.CreateInstance(batchType, nonPublic: true)!;
+        void Set(string name, object value) => gpuType.GetField(name)!.SetValue(gpu, value);
+        Set("GlyphTransformsBuf", transforms);
+        Set("GlyphTexCoordsBuf", uvs);
+        Set("TextInstanceBuf", instances);
+        Set("GlyphTextIndexBuf", textIndices);
+        Set("GlyphDrawIndexBuf", drawIndices);
+        Set("GlyphCapacity", 64u);
+        Set("DrawCapacity", 64u);
+        Set("TextCapacity", 8u);
+        Set("NeedsPush", true);
+        XRBufferWriter<Vector4> untouchedCapacity = instances.AllocAt<Vector4>(24, 1);
+        untouchedCapacity.Span[0] = new Vector4(99, 98, 97, 96);
+        untouchedCapacity.Commit();
+        var entries = (List<UIBatchCollector.TextEntry>)batchType.GetField("Entries")!.GetValue(batch)!;
+        MethodInfo upload = collectorType.GetMethod("UploadRetainedTextData", BindingFlags.Static | BindingFlags.NonPublic)!;
+        static UIBatchCollector.TextEntry Entry(ulong handle, int glyphs) => new()
+        {
+            PrimitiveHandle = handle,
+            WorldMatrix = Matrix4x4.CreateTranslation((float)handle, 0, 0),
+            TextColor = new Vector4((float)handle, 1, 1, 1),
+            GlyphCount = glyphs,
+            Layout = new UITextLayoutResult(Vector2.One,
+                Enumerable.Range(0, glyphs).Select(index => new UITextLayoutGlyph(
+                    new Vector4((float)handle, index, 1, 1), Vector4.One, index, 1, 0)).ToArray(),
+                [], 1, 1),
+        };
+        entries.Add(Entry(10, 2));
+        entries.Add(Entry(20, 2));
+        upload.Invoke(null, [batch, gpu]);
+        var slots = (List<uint>)gpuType.GetField("ActiveTextSlots")!.GetValue(gpu)!;
+        uint firstSlot = slots[0], secondSlot = slots[1];
+        var ranges = (List<RetainedGlyphRanges.Allocation?>)gpuType.GetField("ActiveGlyphRanges")!.GetValue(gpu)!;
+        uint secondGlyphOffset = ranges[1]!.Offset;
+        instances.GetDataRawAtIndex<Vector4>(24).ShouldBe(new Vector4(99, 98, 97, 96));
+
+        bool previousCounting = UIRuntimeCounters.Enabled;
+        try
+        {
+            UIRuntimeCounters.Enabled = true;
+            long beforeRanges = UIRuntimeCounters.Read(UIWorkCounter.BufferCommitRanges);
+            entries[0] = Entry(10, 2); // Both adjacent layouts change together.
+            entries[1] = Entry(20, 2);
+            upload.Invoke(null, [batch, gpu]);
+            (UIRuntimeCounters.Read(UIWorkCounter.BufferCommitRanges) - beforeRanges).ShouldBe(2L);
+        }
+        finally
+        {
+            UIRuntimeCounters.Enabled = previousCounting;
+        }
+
+        entries.Insert(0, Entry(30, 1));
+        upload.Invoke(null, [batch, gpu]);
+        slots[1].ShouldBe(firstSlot);
+        slots[2].ShouldBe(secondSlot);
+        ranges[2]!.Offset.ShouldBe(secondGlyphOffset);
+        textIndices.GetDataRawAtIndex<uint>(secondGlyphOffset).ShouldBe(secondSlot);
+        instances.GetDataRawAtIndex<Vector4>(secondSlot * 8u + 4u).X.ShouldBe(20f);
+
+        entries[1] = Entry(10, 9); // Reallocate only this glyph range.
+        upload.Invoke(null, [batch, gpu]);
+        slots[2].ShouldBe(secondSlot);
+        ranges[2]!.Offset.ShouldBe(secondGlyphOffset);
+        textIndices.GetDataRawAtIndex<uint>(secondGlyphOffset).ShouldBe(secondSlot);
+        transforms.GetDataRawAtIndex<Vector4>(secondGlyphOffset).X.ShouldBe(20f);
+    }
+
+    [Test]
     public void ConsumedReceiptRetirementProofRemainsValidForEveryCohort()
     {
         UIReceiptRetirementLatch sharedReceipt = new();
@@ -613,6 +771,20 @@ public sealed class UIBatchCollectionTests
             ReadOnlyMemory<UILayoutNodeOutput>.Empty, ReadOnlyMemory<UIElementIdentity>.Empty,
             [], records, new BoundingRectangleF(0, 0, 100, 100),
             Matrix4x4.Identity, Matrix4x4.Identity);
+
+    private static ulong[] ReadCollectedMaterialRunIds(UIBatchCollector collector, int pass)
+    {
+        var pools = (IDictionary)typeof(UIBatchCollector)
+            .GetField("_collectMaterialGroups", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(collector)!;
+        object pool = pools[pass]!;
+        int count = (int)pool.GetType().GetField("Count")!.GetValue(pool)!;
+        var items = (IList)pool.GetType().GetField("Items")!.GetValue(pool)!;
+        ulong[] ids = new ulong[count];
+        for (int index = 0; index < count; index++)
+            ids[index] = (ulong)items[index]!.GetType().GetField("RunId")!.GetValue(items[index])!;
+        return ids;
+    }
 
     private static void AddSolid(UIBatchCollector collector, RenderCommandCollection commands, int pass, int zIndex)
     {

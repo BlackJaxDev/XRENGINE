@@ -3036,6 +3036,11 @@ public static partial class EditorImGuiUI
             return _assetTypeDescriptors;
         }
 
+        internal static IReadOnlyList<(Type Type, string DisplayName, string Category)> GetNativeAssetTypeChoices()
+            => EnsureAssetTypeCache()
+                .Select(descriptor => (descriptor.Type, descriptor.DisplayName, descriptor.Category))
+                .ToArray();
+
         private sealed class PrefabHierarchyPreview(PrefabHierarchyPreviewNode rootNode, int nodeCount)
         {
             public PrefabHierarchyPreviewNode RootNode { get; } = rootNode;

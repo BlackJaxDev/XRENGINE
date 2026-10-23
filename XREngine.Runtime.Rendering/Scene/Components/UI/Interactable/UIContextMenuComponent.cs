@@ -150,6 +150,7 @@ namespace XREngine.Rendering.UI
             UICanvasTransform canvas = BoundableTransform.GetCanvasTransform() ??
                 throw new InvalidOperationException("A context menu needs an attached UI canvas.");
             Hide(); // Dismiss any existing menu first
+            ClearMenuItems(); // Remove content retained when the owner deactivated.
 
             if ((items.Length == 0 && provider is null && contentBuilder is null) || provider is { Count: <= 0 })
                 return;
@@ -255,6 +256,9 @@ namespace XREngine.Rendering.UI
         /// Hides and cleans up the context menu.
         /// </summary>
         public void Hide()
+            => HideCore(clearMenuItems: true);
+
+        private void HideCore(bool clearMenuItems)
         {
             if (!_isOpen)
                 return;
@@ -263,7 +267,8 @@ namespace XREngine.Rendering.UI
             _awaitingPlacement = false;
             UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
             UnsubscribeForDismiss();
-            ClearMenuItems();
+            if (clearMenuItems)
+                ClearMenuItems();
             _items = [];
             _virtualProvider = null;
             _contentBuilder = null;
@@ -547,7 +552,7 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentDeactivated();
             if (_isOpen)
-                Hide();
+                HideCore(clearMenuItems: false);
         }
 
         private UIBoundableTransform BoundableTransform => TransformAs<UIBoundableTransform>(true)!;

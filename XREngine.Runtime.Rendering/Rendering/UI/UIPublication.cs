@@ -40,6 +40,7 @@ public sealed class UIPublication
         Matrix4x4? offscreenQuadWorldMatrix = null)
     {
         Generation = generation;
+        RenderGeneration = generation;
         CanvasLifetime = canvasLifetime;
         LayoutGeneration = layoutGeneration;
         HitGeneration = hitGeneration;
@@ -91,6 +92,8 @@ public sealed class UIPublication
     }
 
     public ulong Generation { get; }
+    /// <summary>Identifies the immutable render-record set independently of shared hit/layout data.</summary>
+    public ulong RenderGeneration { get; }
     public ulong CanvasLifetime { get; }
     public ulong LayoutGeneration { get; }
     public ulong HitGeneration { get; }
@@ -117,13 +120,31 @@ public sealed class UIPublication
 
     internal void BuildWorldCommands(XREngine.Components.UICanvasComponent canvas)
     {
-        if (AuthoringDrawSpace == ECanvasDrawSpace.Screen || AuthoringOffscreen)
+        if (AuthoringDrawSpace == ECanvasDrawSpace.Screen)
             return;
         lock (_worldCommandGate)
         {
             if (_worldCommands is not null)
                 return;
             List<UIPublishedWorldMeshCommand> commands = [];
+            if (AuthoringOffscreen)
+            {
+                UIDrawPayload payload = OffscreenQuadPayload ??
+                    throw new InvalidOperationException("An offscreen publication has no owned quad payload.");
+                if (OffscreenSurface is null || OffscreenReservationGeneration == 0)
+                    throw new InvalidOperationException("An offscreen publication has no reserved surface.");
+                RenderCommandMesh3D quad = new(EDefaultRenderPass.TransparentForward)
+                {
+                    Mesh = payload.Renderer,
+                    MaterialOverride = payload.Material,
+                    RenderOptionsOverride = payload.RenderOptions,
+                    WorldMatrix = OffscreenQuadWorldMatrix,
+                    Instances = 1,
+                };
+                commands.Add(new UIPublishedWorldMeshCommand(canvas, this, quad, castsShadows: false));
+                _worldCommands = commands.ToArray();
+                return;
+            }
             for (int index = 0; index < _renders.Length; index++)
             {
                 UIRenderRecord record = _renders[index];
@@ -161,11 +182,29 @@ public sealed class UIPublication
         => new(this, canvasToOutput, outputToCanvas, drawSpace, outputRegion,
             worldToCanvas, clipToWorld, nearClipZ, farClipZ);
 
+    /// <summary>
+    /// Creates an output-specific visual packet while sharing the base hit and
+    /// layout generation. The caller supplies a complete frozen record set.
+    /// </summary>
+    internal UIPublication WithOutputVariant(UIRenderRecord[] outputRenders,
+        ulong renderGeneration, Matrix4x4 canvasToOutput, Matrix4x4 outputToCanvas,
+        BoundingRectangleF outputRegion)
+    {
+        ArgumentNullException.ThrowIfNull(outputRenders);
+        if (AuthoringDrawSpace != ECanvasDrawSpace.Screen || renderGeneration == 0)
+            throw new InvalidOperationException("Output visual variants require a screen canvas and a generation.");
+        return new UIPublication(this, canvasToOutput, outputToCanvas,
+            ECanvasDrawSpace.Screen, outputRegion, Matrix4x4.Identity,
+            Matrix4x4.Identity, 0, 1, outputRenders, renderGeneration);
+    }
+
     private UIPublication(UIPublication source, Matrix4x4 canvasToOutput, Matrix4x4 outputToCanvas,
         ECanvasDrawSpace drawSpace, BoundingRectangleF outputRegion, Matrix4x4 worldToCanvas,
-        Matrix4x4 clipToWorld, float nearClipZ, float farClipZ)
+        Matrix4x4 clipToWorld, float nearClipZ, float farClipZ,
+        UIRenderRecord[]? outputRenders = null, ulong? renderGeneration = null)
     {
         Generation = source.Generation;
+        RenderGeneration = renderGeneration ?? source.RenderGeneration;
         CanvasLifetime = source.CanvasLifetime;
         LayoutGeneration = source.LayoutGeneration;
         HitGeneration = source.HitGeneration;
@@ -174,7 +213,7 @@ public sealed class UIPublication
         LayoutPages = source.LayoutPages;
         Identities = source.Identities;
         _hits = source._hits;
-        _renders = source._renders;
+        _renders = outputRenders ?? source._renders;
         OffscreenSurface = source.OffscreenSurface;
         OffscreenReservationGeneration = source.OffscreenReservationGeneration;
         OffscreenQuadPayload = source.OffscreenQuadPayload;
@@ -182,7 +221,14 @@ public sealed class UIPublication
         _scrollReceivers = source._scrollReceivers;
         _focusScopes = source._focusScopes;
         ActiveFocusScopeIdentity = source.ActiveFocusScopeIdentity;
-        _renderByMembership = source._renderByMembership;
+        if (ReferenceEquals(_renders, source._renders))
+            _renderByMembership = source._renderByMembership;
+        else
+        {
+            _renderByMembership = new Dictionary<long, UIRenderRecord>(_renders.Length);
+            for (int index = 0; index < _renders.Length; index++)
+                _renderByMembership.Add(_renders[index].MembershipId, _renders[index]);
+        }
         try { RetainDrawPayloads(); }
         catch
         {

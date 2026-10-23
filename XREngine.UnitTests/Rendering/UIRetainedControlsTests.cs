@@ -531,6 +531,107 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void OrdinaryContextMenu_WaitsForBoundedAcceptedHeightThenScrolls()
+    {
+        UICanvasTransform canvas = new();
+        canvas.SetSize(new Vector2(200, 80));
+        SceneNode root = new("Short popup canvas", canvas) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode popupNode = new(root) { Name = "Popup" };
+        UIBoundableTransform popupTransform = popupNode.SetTransform<UIBoundableTransform>();
+        UIContextMenuComponent popup = popupNode.AddComponent<UIContextMenuComponent>()!;
+        root.IsActiveSelf = true;
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() =>
+        {
+            canvas.PumpLayoutResults();
+            return canvas.ActualHeight == 80;
+        }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        ContextMenuItem[] items = Enumerable.Range(0, 12)
+            .Select(index => new ContextMenuItem($"Item {index}", () => { })).ToArray();
+
+        popup.Show(Vector2.Zero, items);
+        SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        var completePlacement = typeof(UIContextMenuComponent).GetMethod("CompletePlacement",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        completePlacement.Invoke(popup, null);
+        popupTransform.Height.ShouldBe(80);
+        popupTransform.Visibility.ShouldBe(EVisibility.Hidden);
+
+        SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        completePlacement.Invoke(popup, null);
+        popupTransform.Visibility.ShouldBe(EVisibility.Visible);
+        ulong visibleGeneration = canvas.CurrentLayoutGeneration;
+        SpinWait.SpinUntil(() =>
+        {
+            canvas.PumpLayoutResults();
+            return canvas.CurrentLayoutGeneration > visibleGeneration;
+        }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        SceneNode scrollNode = popupNode.FirstChild.ShouldNotBeNull();
+        UIScrollableTransform scroll = scrollNode.GetTransformAs<UIScrollableTransform>(true)!;
+        UIScrollRegionComponent region = scrollNode.GetComponent<UIScrollRegionComponent>()!;
+        UIListTransform list = scrollNode.FirstChild.ShouldNotBeNull()
+            .GetTransformAs<UIListTransform>(true)!;
+        scroll.ViewportExtent.Y.ShouldBe(80);
+        float contentHeight = UIContextMenuComponent.ItemHeight * items.Length;
+        scroll.ContentExtent.Y.ShouldBe(contentHeight);
+        float previousY = list.ActualLocalBottomLeftTranslation.Y;
+        ulong previousGeneration = canvas.CurrentLayoutGeneration;
+        region.HandleMouseScroll(-1).ShouldBeTrue();
+        scroll.ScrollOffset.Y.ShouldBeGreaterThan(0);
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() =>
+        {
+            canvas.PumpLayoutResults();
+            return canvas.CurrentLayoutGeneration > previousGeneration;
+        }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        list.ActualLocalBottomLeftTranslation.Y.ShouldBeGreaterThan(previousY);
+        scroll.ContentExtent.Y.ShouldBe(contentHeight);
+    }
+
+    [Test]
+    public void ScrollRegion_PositiveHorizontalOffsetMovesContentLeftWithinExtent()
+    {
+        UICanvasTransform canvas = new();
+        canvas.SetSize(new Vector2(100, 80));
+        SceneNode root = new("Horizontal scroll canvas", canvas) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode scrollNode = new(root) { Name = "Scroll region" };
+        UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+        scrollNode.AddComponent<UIScrollRegionComponent>();
+        SceneNode contentNode = new(scrollNode) { Name = "Wide content" };
+        UIBoundableTransform content = contentNode.SetTransform<UIBoundableTransform>();
+        content.MinAnchor = Vector2.Zero;
+        content.MaxAnchor = Vector2.Zero;
+        content.NormalizedPivot = Vector2.Zero;
+        content.Width = 240;
+        content.Height = 80;
+        root.IsActiveSelf = true;
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        scroll.ViewportExtent.X.ShouldBe(100);
+        scroll.ContentExtent.X.ShouldBe(240);
+        float previousX = content.ActualLocalBottomLeftTranslation.X;
+        ulong previousGeneration = canvas.CurrentLayoutGeneration;
+
+        scroll.ScrollOffset = new Vector2(20, 0);
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() =>
+        {
+            canvas.PumpLayoutResults();
+            return canvas.CurrentLayoutGeneration > previousGeneration;
+        }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        content.ActualLocalBottomLeftTranslation.X.ShouldBe(previousX - 20);
+        scroll.ContentExtent.X.ShouldBe(240);
+        scroll.ScrollOffset = new Vector2(500, 0);
+        scroll.ScrollOffset.X.ShouldBe(140);
+    }
+
+    [Test]
     public void ImeSnapshot_CoalescesPreeditButKeepsCommitUntilConsumed()
     {
         WindowInputSnapshotAccumulator input = new();

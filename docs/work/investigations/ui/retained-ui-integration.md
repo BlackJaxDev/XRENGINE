@@ -355,3 +355,76 @@ warnings/errors in 47.19s. Source hashes showed no source changes after the
 final headless build/run. All 31 local links in the five changed UI documents
 resolve, and `git diff --check` passes. No shader compiler is installed here;
 shader execution, desktop test execution, and Windows/GPU acceptance did not run.
+
+## Offscreen Receipts, Sparse Text Slots, And Editor State
+
+The next slice separates persistent GPU run identity from painter order and adds
+stable text-instance slots. Review removed quadratic run matching and retirement
+scans. Cohort counts change only after successful destruction, so a failed
+retirement remains owned and counted.
+
+The offscreen route captures a reserved surface and immutable sampled quad.
+Review repaired four defects before validation: newer authoring could starve
+completed packets, renderer replacement could reuse invalid surface content,
+successful non-window consumers could report atomic failure, and a pooled fence
+could incorrectly complete an earlier failed producer. Deterministic tests cover
+these state contracts. This does not validate GPU presentation.
+
+Editor changes cancel drags when their source row identity changes, restore global
+selection through the play controller, and restore each Inspector's own view.
+Deferred focus checks stable target/property identity and yields to user focus.
+Undo retains failed replay entries on their source stack. Its regressions are in
+the desktop project and require Windows execution.
+
+Headless build 50 failed in 1m50.43s with three errors from a missing component
+namespace import and one nullable offscreen diagnostic warning. The imports and
+diagnostic were repaired. Text lifetime review also found queued renderer
+reattachment and detached-owned-renderer replacement gaps. Those require repair
+before the next matching build and test run. No result from this slice is yet a
+published or platform-accepted checkpoint.
+
+Build 51 passed with zero warnings/errors in 1m43.14s. Run 27 passed 406 of
+408 tests in 17.042s, with no skips. The drag test exposed use of the delayed
+`Held` input state; dragging now checks the current `Pressed` state. The popup
+fixture now waits for the root canvas's accepted size. Its teardown also exposed
+child destruction inside a parent world transfer. Deactivation now closes the
+popup and removes input callbacks without starting a nested child destruction;
+normal Hide or the next Show clears those owned children.
+
+Text retirement now handles queued reattachment, actual deferred-destruction
+veto, and externally cleared source meshes. A final guard prevents requeueing
+after a destruction callback transfers the renderer back to the caller. Focused
+tests cover all four cases. Build 52 validates the combined repairs.
+
+Build 52 passed with zero warnings/errors in 1m22.37s. Run 28 passed 408 of
+409 tests in 12.549s, with no skips. The remaining popup assertion exposed a
+fixture contract error: stretch anchors add the explicit height to the parent
+span. The fixture now uses `UICanvasTransform.SetSize`, which sets point anchors
+for the requested 200-by-80 canvas. The production layout rule is unchanged.
+
+Build 53 passed with zero warnings/errors in 14.29s. Run 29 passed 408 of
+409 tests in 9.468s. The remaining assertion exposed a production scroll defect:
+extent calculation ignored content below a top-anchored viewport. The repair
+measures the full unscrolled extent, removes padding and accepted scroll movement,
+and makes positive vertical offsets move content upward for top-down scrolling.
+The popup test now verifies actual content movement and stable extent after a
+wheel event. A horizontal regression verifies leftward movement and clamping.
+
+The next headless build (`headless-ui-integration-build-54.log`) passed with
+zero warnings/errors in 1m07.66s. All 410 tests passed in 8.605s
+(`headless-ui-tests-30.xml`). Editor build 23 then found one Inspector target
+type-inference error and three drag utility references to the wrong
+`RuntimeEngine` facade. The headless compile has a different namespace closure,
+so it did not expose those editor errors. The repair uses explicit runtime
+services and an object-typed target projection. Matching builds must pass before
+publication.
+
+After the facade and projection repairs, headless build 55 passed with zero
+warnings/errors in 16.15s. Test run 31 passed all 410 tests, with no warnings
+or skips, in 8.269s. Editor build 24 passed with zero warnings/errors in 52.46s.
+
+Desktop test-project build 6 passed with zero warnings/errors in 47.18s.
+A hash comparison of 9,865 source/project/shader files confirms that no source
+changed between headless build 55, test run 31, editor build 24, and desktop
+build 6. The 31 local links in the five updated UI documents resolve. The diff
+whitespace check passes. Windows-only desktop tests were compiled, not run.

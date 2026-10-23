@@ -7,12 +7,14 @@ namespace XREngine.Rendering.UI;
 internal sealed class UIPublishedWorldMeshCommand : RenderCommandMesh3D, IUiPublicationRenderCommand
 {
     private readonly WeakReference<UICanvasComponent> _canvas;
+    private readonly Action _renderFrozen;
 
     internal UIPublishedWorldMeshCommand(UICanvasComponent canvas, UIPublication publication,
         RenderCommandMesh3D frozen, bool castsShadows)
         : base(frozen.RenderPass)
     {
         _canvas = new WeakReference<UICanvasComponent>(canvas);
+        _renderFrozen = RenderFrozen;
         Publication = publication;
         CastsShadows = castsShadows;
         Mesh = frozen.Mesh;
@@ -34,7 +36,7 @@ internal sealed class UIPublishedWorldMeshCommand : RenderCommandMesh3D, IUiPubl
     public override void Render()
     {
         if (_canvas.TryGetTarget(out UICanvasComponent? canvas))
-            canvas.RenderPublishedWorldCommand(this, RenderFrozen);
+            canvas.RenderPublishedWorldCommand(this, _renderFrozen);
     }
 
     private void RenderFrozen() => base.Render();
