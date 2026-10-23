@@ -17,11 +17,20 @@ remain open. See [the current contract](../../../architecture/ui/04-Change-Track
 | Runtime rendering and input integration builds | Passed, zero warnings and errors, through `Tools/Invoke-AgentBuild.ps1`, `build`, `--no-restore`. | Uses the installed environment dependencies. |
 | Headless test build | Passed, zero warnings and errors, through the build wrapper with `--no-restore`. | Final source state compiled on Linux/.NET 10. |
 | Journal and transform contract tests | Passed: 23/23, zero warnings, failures, or skipped tests. | Deterministic headless runtime checks, including child-index replacement. |
-| Full headless regression suite | Passed: 167/167 with one test worker, zero warnings, failures, or skipped tests. | Covers the tests linked by the existing headless project; not the full Windows test project. |
-| Full editor build | Blocked: `NETSDK1004`, missing `XREngine.Editor/obj/project.assets.json`. | No restore or dependency installation was performed. The small `NativeUIElements` notification edits have static review only. |
+| Full headless regression suite | Passed: 167/167 with one test worker, zero warnings, failures, or skipped tests. Repeated after editor restore against the same final test binary. | Covers the tests linked by the existing headless project; not the full Windows test project. |
+| Declared editor NuGet restore | Passed through the build wrapper. | No tracked package declarations or lockfiles changed. No separate native dependency or Windows workload installation was performed. |
+| Full editor build after restore | Blocked: missing OpenVR.NET and OscCore submodule projects; `MSB9008` and downstream `CS0246`. The build ended with 4 warnings and 207 errors. | Restore resolved the earlier `NETSDK1004`. The editor did not finish compilation. The small `NativeUIElements` notification edits have static review only. |
 | Windows editor, OpenGL/Vulkan, visual input, GPU uploads, performance comparison | Not run. | This environment provides headless Linux validation. No live visual or speed result is claimed. |
 
-Final verification ran on 2026-10-23. The first contract run found a lazy-construction error: an optional constructor
+Final verification ran on 2026-10-23. The editor retry uses `restore XREngine.Editor/XREngine.Editor.csproj` and then
+`build XREngine.Editor/XREngine.Editor.csproj --no-restore`, both through
+`Tools/Invoke-AgentBuild.ps1`. `Build/Submodules/OpenVR.NET` and
+`Build/Submodules/OscCore-NET9` are uninitialized. Their missing projects prevent
+`XREngine.Runtime.XR.OpenVR` and `XREngine.Runtime.Net.Osc` from compiling.
+No submodule changes were made. This is an environment/source-checkout blocker,
+not a successful editor validation.
+
+The first contract run found a lazy-construction error: an optional constructor
 argument did not provide the parameterless constructor required by the default
 `LazyInitializer` overload. An explicit static factory fixed it. Review also found
 preflight and identity-retirement gaps for direct child-list edits and nested
