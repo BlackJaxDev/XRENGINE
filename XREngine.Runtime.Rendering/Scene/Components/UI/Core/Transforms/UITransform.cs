@@ -1,4 +1,5 @@
 using System.Collections;
+using XREngine.Rendering.UI.State;
 using System.Drawing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -38,7 +39,7 @@ namespace XREngine.Rendering.UI
     /// Represents a UI transform in 2D space.
     /// </summary>
     [XRTransformEditor("XREngine.Editor.TransformEditors.UITransformEditor")]
-    public class UITransform : TransformBase, IRenderable
+    public partial class UITransform : TransformBase, IRenderable
     {
         private UICanvasTransform? _parentCanvas;
         public UICanvasTransform? ParentCanvas
@@ -121,7 +122,8 @@ namespace XREngine.Rendering.UI
         /// Version number that increments each time layout properties change.
         /// Used for dirty checking to avoid redundant layout passes.
         /// </summary>
-        protected volatile uint _layoutVersion = 0;
+        protected volatile uint _layoutVersion = 1;
+        private uint _arrangeVersion = 1;
 
         /// <summary>
         /// The layout version when this transform was last measured.
@@ -149,7 +151,7 @@ namespace XREngine.Rendering.UI
         public bool NeedsArrange
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => _lastArrangedVersion != _layoutVersion;
+            get => _lastArrangedVersion != _arrangeVersion;
         }
 
         /// <summary>
@@ -160,6 +162,7 @@ namespace XREngine.Rendering.UI
         protected void IncrementLayoutVersion()
         {
             Interlocked.Increment(ref _layoutVersion);
+            Interlocked.Increment(ref _arrangeVersion);
         }
 
         /// <summary>
@@ -190,11 +193,12 @@ namespace XREngine.Rendering.UI
         public BoundingRectangleF LastArrangeBounds => _lastArrangeBounds;
 
         internal void IncrementLayoutVersionInternal() => IncrementLayoutVersion();
+        internal void IncrementArrangeVersionInternal() => Interlocked.Increment(ref _arrangeVersion);
         internal void SetDesiredSize(Vector2 size) => _desiredSize = size;
         internal void SetLastMeasureConstraint(Vector2 constraint) => _lastMeasureConstraint = constraint;
         internal void SetLastArrangeBounds(BoundingRectangleF bounds) => _lastArrangeBounds = bounds;
         internal void SetLastMeasuredVersion() => _lastMeasuredVersion = _layoutVersion;
-        internal void SetLastArrangedVersion() => _lastArrangedVersion = _layoutVersion;
+        internal void SetLastArrangedVersion() => _lastArrangedVersion = _arrangeVersion;
         internal void OnResizeActualInternal(BoundingRectangleF parentBounds) => OnResizeActual(parentBounds);
         internal void RaiseLayoutInvalidated() => OnLayoutInvalidated();
         internal new void MarkLocalModified(bool deferred = false) => base.MarkLocalModified(deferred);
@@ -215,20 +219,21 @@ namespace XREngine.Rendering.UI
                 DebugRenderInfo2D = RenderInfo2D.New(this, _debugRC = new RenderCommandMethod2D((int)EDefaultRenderPass.OnTopForward, RenderDebug))
             ];
             DebugRenderInfo2D.PreCollectCommandsCallback = ShouldRenderDebug2D;
-            Children.PostAnythingAdded += OnChildAdded;
-            Children.PostAnythingRemoved += OnChildRemoved;
+            AttachUIChildListHandlers();
         }
 
         protected override void OnDestroying()
         {
+            RetireAttachment();
+            _retired = true;
+            DetachUIChildListHandlers(Children);
             try { base.OnDestroying(); }
             finally { DebugRenderInfo2D?.Dispose(); }
         }
 
         ~UITransform()
         {
-            Children.PostAnythingAdded -= OnChildAdded;
-            Children.PostAnythingRemoved -= OnChildRemoved;
+            DetachUIChildListHandlers(Children);
         }
 
         private RenderCommandMethod2D _debugRC;
@@ -325,7 +330,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public void ForceInvalidateArrange()
         {
-            IncrementLayoutVersion();
+            IncrementArrangeVersionInternal();
         }
 
         #region Measure/Arrange Phase Methods
@@ -490,18 +495,83 @@ namespace XREngine.Rendering.UI
 
         protected virtual void OnChildAdded(TransformBase item)
         {
-            //if (item is IRenderable c && c.RenderedObjects is RenderInfo2D r2D)
-            //{
-            //    r2D.LayerIndex = RenderInfo2D.LayerIndex;
-            //    r2D.IndexWithinLayer = RenderInfo2D.IndexWithinLayer + 1;
-            //}
-
-            if (item is UITransform uic)
-                uic.InvalidateLayout();
+            _childListReportedItemChange = true;
+            RecordUIChange(UIChangeDomain.Topology | UIChangeDomain.HitTest);
+            InvalidateMeasure();
+            if (item is UITransform child)
+                child.InvalidateLayout();
         }
+
         protected virtual void OnChildRemoved(TransformBase item)
         {
+            _childListReportedItemChange = true;
+            RecordUIChange(UIChangeDomain.Topology | UIChangeDomain.HitTest);
+            InvalidateMeasure();
+        }
 
+        private bool _childListReportedItemChange;
+
+        private void AttachUIChildListHandlers()
+        {
+            DetachUIChildListHandlers(Children);
+            Children.PostAnythingAdded += OnChildAdded;
+            Children.PostAnythingRemoved += OnChildRemoved;
+            Children.PreModified += OnChildListPreModified;
+            Children.PostModified += OnChildListModified;
+            Children.PreIndexSet += OnChildIndexSet;
+            Children.PostIndexSet += OnChildIndexSetComplete;
+        }
+
+        private void DetachUIChildListHandlers(EventList<TransformBase> children)
+        {
+            children.PostAnythingAdded -= OnChildAdded;
+            children.PostAnythingRemoved -= OnChildRemoved;
+            children.PreModified -= OnChildListPreModified;
+            children.PostModified -= OnChildListModified;
+            children.PreIndexSet -= OnChildIndexSet;
+            children.PostIndexSet -= OnChildIndexSetComplete;
+        }
+
+        protected override void OnChildListRestored()
+            => AttachUIChildListHandlers();
+
+        private bool OnChildIndexSet(int index, TransformBase newChild)
+        {
+            if ((uint)index < (uint)Children.Count)
+            {
+                TransformBase previousChild = Children[index];
+                if (previousChild is UITransform uiChild)
+                    uiChild.VerifyAttachmentMutationAccess();
+                if (ReferenceEquals(previousChild, newChild))
+                    return false;
+            }
+            return true;
+        }
+
+        private void OnChildIndexSetComplete(int index, TransformBase previousChild)
+        {
+            if (previousChild is null || Children.Contains(previousChild))
+                return;
+            if (ReferenceEquals(previousChild.Parent, this))
+                previousChild.Parent = null;
+            OnChildRemoved(previousChild);
+        }
+
+        private bool OnChildListPreModified()
+        {
+            VerifyAttachmentMutationAccess();
+            _childListReportedItemChange = false;
+            return true;
+        }
+
+        private void OnChildListModified()
+        {
+            if (!_childListReportedItemChange)
+            {
+                RecordUIChange(UIChangeDomain.Topology | UIChangeDomain.HitTest);
+                InvalidateMeasure();
+            }
+            _childListReportedItemChange = false;
         }
 
         protected virtual void OnResizeActual(BoundingRectangleF parentBounds)
@@ -537,21 +607,43 @@ namespace XREngine.Rendering.UI
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            if (propName == nameof(Children))
+            {
+                if (prev is EventList<TransformBase> oldChildren)
+                    DetachUIChildListHandlers(oldChildren);
+                AttachUIChildListHandlers();
+                RecordUIChange(UIChangeDomain.Topology | UIChangeDomain.HitTest);
+                InvalidateMeasure();
+            }
             switch (propName)
             {
                 case nameof(Translation):
+                    InvalidateArrange();
+                    MarkLocalModified(true);
+                    break;
                 case nameof(DepthTranslation):
                 case nameof(Scale):
-                    InvalidateLayout();
+                case nameof(RotationRadians):
+                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
                     // These properties directly affect CreateLocalMatrix,
                     // so the matrix must be marked dirty independently of layout.
                     MarkLocalModified(true);
                     break;
                 case nameof(Visibility):
-                    // Visibility affects layout but not the transform matrix directly.
+                    RecordUIChange(UIChangeDomain.Visual | UIChangeDomain.HitTest | UIChangeDomain.Clip);
                     InvalidateLayout();
                     break;
+                case nameof(StylingClass):
+                case nameof(StylingID):
+                    RecordUIChange(UIChangeDomain.All);
+                    InvalidateLayout();
+                    break;
+                case nameof(ActualLocalBottomLeftTranslation):
+                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
+                    break;
                 case nameof(ParentCanvas):
+                    RetireAttachment();
+                    RecordUIChange(UIChangeDomain.All);
                     if (this is IRenderable r)
                         foreach (var rc in r.RenderedObjects)
                             rc.UserInterfaceCanvas = ParentCanvas?.SceneNode?.GetComponent<UICanvasComponent>();
@@ -564,9 +656,11 @@ namespace XREngine.Rendering.UI
                     InvalidateLayout();
                     break;
                 case nameof(PlacementInfo):
+                    RecordUIChange(UIChangeDomain.Topology);
                     InvalidateLayout();
                     break;
                 case nameof(Parent):
+                    RecordUIChange(UIChangeDomain.Topology | UIChangeDomain.HitTest);
                     ParentCanvas = Parent switch
                     {
                         UICanvasTransform uiCanvas => uiCanvas,

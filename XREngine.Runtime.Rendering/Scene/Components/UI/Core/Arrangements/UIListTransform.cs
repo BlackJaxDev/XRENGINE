@@ -79,9 +79,9 @@ namespace XREngine.Rendering.UI
         {
             if (_upperVirtualBound == upper && _lowerVirtualBound == lower)
                 return;
-            _upperVirtualBound = upper;
-            _lowerVirtualBound = lower;
-            InvalidateArrange();
+            GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+            UpperVirtualBound = upper;
+            LowerVirtualBound = lower;
         }
 
         /// <summary>

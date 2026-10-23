@@ -1,6 +1,6 @@
 # Native UI Retained Rendering Design
 
-Status: Proposal; documentation only. No runtime or performance result is claimed.
+Status: Phase 1 contracts and instrumentation are implemented; final tests remain pending. The worker, publication, retained-rendering, control, and editor architecture below remains proposed. No performance result is claimed.
 
 Updated: 2026-10-23
 
@@ -288,19 +288,20 @@ the same viewport capacity.
 
 ## Work sequence and decisions
 
-All work below is proposed. The linked roadmap owns open code items; the linked
-validation document owns procedures and results. No implementation item is
-complete because this design was written.
+The [roadmap](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
+is the canonical list of open code items and their exit conditions. The
+[validation plan](../../testing/ui/native-ui-validation.md) owns test procedures
+and results. Phase 1 contracts and instrumentation now provide stable IDs and
+incarnations, eight dirty domains, a bounded coalescing journal with tombstones,
+local ancestor invalidation, and work counters; final targeted tests remain
+pending.
 
-| Order | Work and integration points | Exit condition |
-|---|---|---|
-| 1. Contracts and instrumentation | `UILayoutSystem`, transforms, input, text, batch collector: stable IDs, dirty domains, transaction journal, counters. | Each mutation has a defined owner/domain; local edits do not require a full snapshot or canvas walk. |
-| 2. Worker kernel | Extract pure measure/arrange from live transforms; implement immutable pages, bounded scheduling, dependency validation, and serial oracle. | Worker and serial output match for deterministic inputs; stale/cancelled results cannot mutate a live canvas. |
-| 3. Coherent publication | Canvas/input/clip/render integration: complete packet, presented-generation latch, lifetime leases and teardown. | Hit/render/clip state always refers to one accepted generation; stress removal/reparent/resize is safe. |
-| 4. Retained render data | `UIBatchCollector`, `UITextComponent`, renderer upload path: stable slots, glyph ranges, dirty uploads, prototype materials. | Idle UI causes no logical reconstruction or upload; a changed text run leaves unrelated ranges intact. |
-| 5. Common controls and list | Runtime controls, typed bindings, input/IME adapters, provider-based fixed-height virtual list. | All gallery interactions pass; realized rows stay bounded and stable focus survives recycling. |
-| 6. First milestone acceptance | Opt-in FPS/gallery/list fixture on OpenGL; separate Vulkan qualification. | Correct visuals/input, measured latency/CPU/allocations, and equal-workload ImGui comparison. Publish limitations. |
-| 7. Later editor work | Reuse accepted controls for hierarchy, inspector, console and other panels. | Separate owner-approved scope and panel validation; no default switch in the first milestone. |
+The remaining work proceeds through immutable worker layout, coherent publication
+and input, retained rendering, reusable controls and virtual collections, then
+first-milestone validation. Editor adoption follows as a separate phase. This
+order establishes mutation ownership before workers, publishes one consistent
+state before input/render readers depend on it, and proves reusable controls on
+the FPS/gallery/list fixture before editor panels adopt them.
 
 Decisions fixed here: retained control state; asynchronous immutable layout;
 independent dirty domains; bounded work; coherent publication; persistent drawing;

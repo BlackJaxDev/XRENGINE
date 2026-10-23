@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using XREngine.Rendering.UI.State;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
@@ -13,6 +14,43 @@ namespace XREngine.Rendering.UI
 
         [Browsable(false)]
         public UICanvasComponent? UserInterfaceCanvas => UITransform.GetCanvasComponent();
+
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T value)
+        {
+            if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                transform.GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+            return base.OnPropertyChanging(propName, field, value);
+        }
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            if (SceneNode is null || SceneNode.IsTransformNull || Transform is not UITransform transform)
+                return;
+            transform.RecordUIChange(GetUIChangeDomain(propName));
+        }
+
+        /// <summary>Classifies component state. Custom controls override this for layout or topology inputs.</summary>
+        protected virtual UIChangeDomain GetUIChangeDomain(string? propertyName)
+            => propertyName switch
+            {
+                "ClipToBounds" => UIChangeDomain.Clip | UIChangeDomain.HitTest | UIChangeDomain.Topology,
+                "IsActive" or "IsActiveInHierarchy" => UIChangeDomain.Visual | UIChangeDomain.HitTest,
+                "Material" or "RenderPass" or "RenderParameters" or "DisableBatching" => UIChangeDomain.Visual | UIChangeDomain.Topology,
+                _ => UIChangeDomain.Visual,
+            };
+
+        protected override void OnComponentActivated()
+        {
+            base.OnComponentActivated();
+            UITransform.RecordUIChange(UIChangeDomain.Topology | UIChangeDomain.Visual | UIChangeDomain.HitTest);
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            UITransform.RecordUIChange(UIChangeDomain.Topology | UIChangeDomain.Visual | UIChangeDomain.HitTest);
+            base.OnComponentDeactivated();
+        }
 
         protected override void VerifyInterfacesOnStart()
         {

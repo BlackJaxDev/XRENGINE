@@ -1,4 +1,5 @@
 using System;
+using XREngine.Rendering.UI.State;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
@@ -393,6 +394,7 @@ public sealed class UIBatchCollector : IDisposable
         Vector4 uv = default,
         bool imageSrgb = false)
     {
+        UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
 
@@ -459,6 +461,7 @@ public sealed class UIBatchCollector : IDisposable
         List<(Vector4 transform, Vector4 uvs)> glyphs,
         BoundingRectangle? cropRegion = null)
     {
+        UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
 
@@ -491,6 +494,8 @@ public sealed class UIBatchCollector : IDisposable
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Text, groupIndex));
         }
 
+        UIRuntimeCounters.Add(UIWorkCounter.GlyphCopies);
+        UIRuntimeCounters.Add(UIWorkCounter.GlyphsCopied, glyphs.Count);
         int glyphOffset = batch.Glyphs.Count;
         for (int i = 0; i < glyphs.Count; i++)
             batch.Glyphs.Add(glyphs[i]);
@@ -566,6 +571,7 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     public void SwapBuffers()
     {
+        UIRuntimeCounters.Add(UIWorkCounter.BatchCollectionResets);
         (_collectMaterialGroups, _renderMaterialGroups) = (_renderMaterialGroups, _collectMaterialGroups);
         (_collectTextGroups, _renderTextGroups) = (_renderTextGroups, _collectTextGroups);
 
@@ -855,6 +861,9 @@ public sealed class UIBatchCollector : IDisposable
         boundsWriter.Commit();
         if (textured)
             uvWriter.Commit();
+        UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
+            ((long)transformElementCount + instanceElementCount * (textured ? 3L : 2L)) * 16L);
+        UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, textured ? 4 : 3);
         _matQuadNeedsPush = false;
     }
 
@@ -1461,6 +1470,9 @@ public sealed class UIBatchCollector : IDisposable
         glyphUvWriter.Commit();
         textInstanceWriter.Commit();
         glyphIndexWriter.Commit();
+        UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
+            (long)glyphElementCount * 36L + (long)textElementCount * 16L);
+        UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, 4);
         gpu.NeedsPush = false;
     }
 

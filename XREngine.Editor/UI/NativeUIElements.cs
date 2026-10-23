@@ -4,6 +4,7 @@ using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.UI.State;
 using XREngine.Scene;
 
 namespace XREngine.Editor.UI;
@@ -70,8 +71,16 @@ public static class NativeUIElements
         var focusedColor = focusOutlineColor ?? ColorF4.White;
         var unfocusedColor = unfocusedOutlineColor ?? ColorF4.Transparent;
 
-        void GotFocus(UIInteractableComponent _) => mat.SetVector4(OutlineColorUniformName, focusedColor);
-        void LostFocus(UIInteractableComponent _) => mat.SetVector4(OutlineColorUniformName, unfocusedColor);
+        void GotFocus(UIInteractableComponent _)
+        {
+            matComp.UITransform.RecordUIChange(UIChangeDomain.Visual);
+            mat.SetVector4(OutlineColorUniformName, focusedColor);
+        }
+        void LostFocus(UIInteractableComponent _)
+        {
+            matComp.UITransform.RecordUIChange(UIChangeDomain.Visual);
+            mat.SetVector4(OutlineColorUniformName, unfocusedColor);
+        }
 
         textInput.MouseDirectOverlapEnter += GotFocus;
         textInput.MouseDirectOverlapLeave += LostFocus;
@@ -135,12 +144,14 @@ public static class NativeUIElements
 
         void GotFocus(UIInteractableComponent _)
         {
+            materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
             material.SetVector4(OutlineColorUniformName, ColorF4.White);
             glyph.Color = ColorF4.White;
         }
 
         void LostFocus(UIInteractableComponent _)
         {
+            materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
             material.SetVector4(OutlineColorUniformName, ColorF4.Gray);
             glyph.Color = ColorF4.Gray;
         }

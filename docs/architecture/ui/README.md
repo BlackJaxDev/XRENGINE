@@ -6,6 +6,7 @@ This directory contains comprehensive documentation for the XREngine UI layout s
 |----------|-------------|
 | [01-Architecture.md](01-Architecture.md) | Core architecture: two-phase measure/arrange, dual execution paths, canvas entry points, invalidation/dirty tracking |
 | [02-Transform-Types.md](02-Transform-Types.md) | Reference for every UI transform type: properties, overrides, and child arrangement behavior |
+| [04-Change-Tracking.md](04-Change-Tracking.md) | Current mutation ownership, identities, dirty domains, bounded transactions, and work counters |
 | [03-Rendering-Pipeline.md](03-Rendering-Pipeline.md) | How laid-out UI reaches the screen: UICanvasComponent → VisualScene2D → Quadtree → RenderInfo2D |
 | [Native UI Layout Known Issues](../../work/audit/COMPLETED/native-ui-layout-known-issues.md) | Audit record for architectural conflicts, performance traps, and outstanding bugs with analysis and suggested fixes |
 

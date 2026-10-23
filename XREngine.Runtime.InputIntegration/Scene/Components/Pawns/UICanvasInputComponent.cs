@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using XREngine.Rendering.UI.State;
 using System.Collections;
 using System.ComponentModel;
 using System.Numerics;
@@ -392,11 +393,14 @@ namespace XREngine.Components
         private void CollectVisible()
         {
             var tree = GetCameraCanvas()?.VisualScene2D?.RenderTree;
+            if (tree is not null)
+                UIRuntimeCounters.Add(UIWorkCounter.HitQueries);
             tree?.FindAllIntersectingSorted(
                 CursorPositionWorld2D,
                 UIElementIntersections,
                 _intersectionCollectionScratch,
                 UIElementPredicate);
+            UIRuntimeCounters.Add(UIWorkCounter.HitCandidates, UIElementIntersections.Count);
         }
 
         private void SwapBuffers()

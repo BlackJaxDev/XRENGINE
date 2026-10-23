@@ -801,8 +801,12 @@ namespace XREngine.Scene.Transforms
             _children.PostAnythingRemoved -= ChildRemoved;
         }
 
-        private bool ValidateChildListMutation(TransformBase child)
+        /// <summary>Checks a child list change before the list writes the child.</summary>
+        protected virtual bool ValidateChildListMutation(TransformBase child)
             => PhysicsChainWorld.ValidateChildListMutation(this, child);
+
+        /// <summary>Reconnects derived child list handlers after cooked data restores a list.</summary>
+        protected virtual void OnChildListRestored() { }
 
         protected TransformBase() : this(null) { }
 
@@ -833,6 +837,7 @@ namespace XREngine.Scene.Transforms
 
             _children.ThreadSafe = true;
             AttachChildListHandlers();
+            OnChildListRestored();
 
             // Ensure this transform appears in its parent's child list.
             if (_parent is not null)
@@ -841,6 +846,7 @@ namespace XREngine.Scene.Transforms
 
                 _parent._children.ThreadSafe = true;
                 _parent.AttachChildListHandlers();
+                _parent.OnChildListRestored();
 
                 lock (_parent._children)
                 {

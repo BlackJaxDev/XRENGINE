@@ -14,6 +14,8 @@
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Rendering/UIChangeJournalTests.cs" Link="Rendering/UIChangeJournalTests.cs" />
+    <Compile Include="../Rendering/UIChangeTrackingTests.cs" Link="Rendering/UIChangeTrackingTests.cs" />
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />
     <Compile Include="../VR/VrTrackerBinderTests.cs" Link="VR/VrTrackerBinderTests.cs" />
     <Compile Include="../Animation/VRIKAdditionalTargetTests.cs" Link="Animation/VRIKAdditionalTargetTests.cs" />
