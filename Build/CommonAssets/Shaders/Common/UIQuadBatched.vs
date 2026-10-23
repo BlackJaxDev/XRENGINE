@@ -21,6 +21,11 @@ layout(std430, binding = 2) buffer QuadBoundsBuffer
     vec4 QuadBounds[]; // (x, y, w, h) per instance
 };
 
+layout(std430, binding = 5) buffer QuadDrawIndexBuffer
+{
+    uint QuadDrawIndices[];
+};
+
 uniform mat4 ViewProjectionMatrix_VTX;
 
 layout (location = 0) out vec3 FragPos;
@@ -45,7 +50,7 @@ mat4 getModelMatrix(int instanceID)
 void main()
 {
     // Use gl_InstanceID for OpenGL compatibility; Vulkan fixup auto-converts to gl_InstanceIndex
-    int id = gl_InstanceID;
+    int id = int(QuadDrawIndices[gl_InstanceID]);
 
     mat4 modelMatrix = getModelMatrix(id);
     mat4 mvpMatrix = ViewProjectionMatrix_VTX * modelMatrix;

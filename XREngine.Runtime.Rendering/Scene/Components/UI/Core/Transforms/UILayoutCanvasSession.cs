@@ -16,7 +16,7 @@ internal sealed class UILayoutCanvasSession
     private UILayoutSnapshot? _runningInput;
     private UILayoutPageLease? _runningLease;
     private List<UITransform>? _runningTargets;
-    private Task<UILayoutOutputPageView>? _runningTask;
+    private Task<UILayoutWorkerResult>? _runningTask;
     private CancellationTokenSource? _runningCancellation;
     private bool _runningAbandoned;
     private bool _capturing;
@@ -29,6 +29,7 @@ internal sealed class UILayoutCanvasSession
     private long _epoch;
     private long _runningEpoch;
     private UILayoutSnapshot? _lastAcceptedInput;
+    private UILayoutSnapshot? _lastAcceptedResolvedInput;
     private List<UITransform>? _lastAcceptedTargets;
     private UILayoutOutputPageView? _lastAcceptedOutput;
     private uint _blockedMeasureVersion;
@@ -160,7 +161,7 @@ internal sealed class UILayoutCanvasSession
     {
         if (_pumping || _dispatching || _capturing)
             return false;
-        Task<UILayoutOutputPageView>? task = _runningTask;
+        Task<UILayoutWorkerResult>? task = _runningTask;
         if (task is null || !task.IsCompleted)
         {
             TryStart();
@@ -195,7 +196,8 @@ internal sealed class UILayoutCanvasSession
             _canvas.RaiseLayoutingFinished();
             if (task.IsCompletedSuccessfully && epoch == _epoch && DependenciesMatch(_canvas, input, targets))
             {
-                UILayoutOutputPageView output = task.Result;
+                UILayoutWorkerResult result = task.Result;
+                UILayoutOutputPageView output = result.Output;
                 bool applied;
                 try
                 {
@@ -211,6 +213,7 @@ internal sealed class UILayoutCanvasSession
                 {
                     _canvas.PublishLayoutValues(input.Identities, output);
                     _lastAcceptedInput = input;
+                    _lastAcceptedResolvedInput = result.ResolvedInput;
                     _lastAcceptedTargets = targets;
                     _lastAcceptedOutput = output;
                     accepted = true;
@@ -221,7 +224,13 @@ internal sealed class UILayoutCanvasSession
             else
             {
                 if (task.IsFaulted && task.Exception!.GetBaseException() is not OperationCanceledException)
-                    Block(task.Exception!.GetBaseException());
+                {
+                    if (epoch == _epoch && !_canvas.IsLayoutInvalidated &&
+                        DependenciesMatch(_canvas, input, targets))
+                        Block(task.Exception!.GetBaseException());
+                    else
+                        _ = task.Exception;
+                }
                 _canvas.SetLayoutInvalidated(true);
             }
         }
@@ -251,6 +260,7 @@ internal sealed class UILayoutCanvasSession
         _epoch++;
         _canvas.SetLayoutInvalidated(true);
         _lastAcceptedInput = null;
+        _lastAcceptedResolvedInput = null;
         _lastAcceptedTargets = null;
         _lastAcceptedOutput = null;
         _canvas.ClearLayoutValues();
@@ -306,6 +316,7 @@ internal sealed class UILayoutCanvasSession
         if (canvas.IsNestedCanvas || targets.Count != input.Nodes.Length ||
             !currentRootConstraint.Equals(input.RootBounds) ||
             FontGlyphSet.GlobalLayoutMetricsGeneration != input.FontGeneration ||
+            UITextShapingBackendRegistry.Generation != input.ShapingBackendGeneration ||
             canvas.ElementIdentity != input.Identities[0] ||
             canvas.LayoutMeasureVersion != input.MeasureVersions[0] ||
             canvas.LayoutArrangeVersion != input.ArrangeVersions[0])
@@ -449,7 +460,10 @@ internal sealed class UILayoutCanvasSession
         UILayoutSnapshot input = _pendingInput;
         UILayoutPageLease lease = _pendingLease!;
         UILayoutSnapshot? previous = _lastAcceptedInput;
+        UILayoutSnapshot? previousResolved = _lastAcceptedResolvedInput;
         UILayoutOutputPageView? previousOutput = _lastAcceptedOutput;
+        UITextShapingBackendState backendState = UITextShapingBackendRegistry.State;
+        IUITextWorkerShapingBackend? backend = backendState.Backend as IUITextWorkerShapingBackend;
         _runningInput = input;
         _runningLease = lease;
         _runningTargets = _pendingTargets;
@@ -467,8 +481,14 @@ internal sealed class UILayoutCanvasSession
             _canvas.RaiseLayoutingStarted();
             if (_runningEpoch != _epoch || _canvas.IsLayoutInvalidated || _canvas.IsNestedCanvas)
                 throw new OperationCanceledException("Canvas layout was canceled before worker dispatch.");
+            foreach (int i in input.TextIndices)
+                if (input.Nodes[i].TextInput is { ShapingRequest: not null } text &&
+                    (backend is null || text.ShapingBackendGeneration != backendState.Generation ||
+                        !ReferenceEquals(backendState, UITextShapingBackendRegistry.State)))
+                    throw new InvalidOperationException("UI.WorkerShapingBackendChanged: the shaping backend changed before dispatch.");
             lease.StartWorker();
-            _runningTask = StartWorkerTask(input, previous, previousOutput, cancellation, lease);
+            _runningTask = StartWorkerTask(input, previous, previousResolved,
+                previousOutput, backend, cancellation, lease);
         }
         catch (Exception ex)
         {
@@ -493,14 +513,18 @@ internal sealed class UILayoutCanvasSession
 
     // Keep the task closure out of TryStart. Idle pumps must not allocate a
     // compiler-generated capture object before the pending-work guard returns.
-    private static Task<UILayoutOutputPageView> StartWorkerTask(UILayoutSnapshot input,
-        UILayoutSnapshot? previous, UILayoutOutputPageView? previousOutput,
+    private static Task<UILayoutWorkerResult> StartWorkerTask(UILayoutSnapshot input,
+        UILayoutSnapshot? previous, UILayoutSnapshot? previousResolved,
+        UILayoutOutputPageView? previousOutput, IUITextWorkerShapingBackend? backend,
         CancellationToken cancellation, UILayoutPageLease lease)
         => Task.Run(() =>
         {
             try
             {
-                return UILayoutValueKernel.RunPaged(input, previous, previousOutput, cancellation);
+                UILayoutSnapshot resolved = backend is null ? input :
+                    input.ResolveShaping(backend, previous, previousResolved, cancellation);
+                return new UILayoutWorkerResult(resolved,
+                    UILayoutValueKernel.RunPaged(resolved, previousResolved, previousOutput, cancellation));
             }
             finally
             {

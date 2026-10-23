@@ -411,6 +411,16 @@ public static partial class EditorImGuiUI
         state.CandidateCacheComponentCount = root.GetComponents<XRComponent>().Count();
     }
 
+    internal static IReadOnlyList<AnimationClipPathCandidate> DiscoverAnimationClipPaths(SceneNode root)
+    {
+        AnimationClipEditorState state = new();
+        SetAnimationClipAuthoringRoot(state, root);
+        return state.CandidateCache;
+    }
+
+    internal static void AddAnimationClipPath(AnimationClip clip, AnimationClipPathCandidate candidate)
+        => AddAnimationClipCandidatePath(clip, new AnimationClipEditorState(), candidate);
+
     private static void AddAnimationClipTargetPathCandidates(
         List<AnimationClipPathCandidate> candidates,
         HashSet<string> ids,
@@ -626,31 +636,81 @@ public static partial class EditorImGuiUI
 
     private static void AddAnimationClipCandidatePath(AnimationClip clip, AnimationClipEditorState state, AnimationClipPathCandidate candidate)
     {
-        AnimationMember root = EnsureAnimationClipRootGroup(clip);
+        AnimationMember? oldRoot = clip.RootMember;
+        AnimationMember root = oldRoot?.MemberType == EAnimationMemberType.Group
+            ? oldRoot : new AnimationMember("Root", EAnimationMemberType.Group);
+        if (oldRoot is not null && !ReferenceEquals(root, oldRoot))
+            root.Children.Add(oldRoot);
+        bool rootChanged = !ReferenceEquals(root, oldRoot);
         AnimationMember current = root;
-
+        AnimationMember? addedParent = null;
+        AnimationMember? addedMember = null;
+        int addedIndex = -1;
         foreach (AnimationClipPathSegment segment in candidate.Segments)
         {
-            AnimationMember? existing = current.Children.FirstOrDefault(child => AnimationClipPathSegmentMatches(child, segment));
-            if (existing is null)
+            AnimationMember? child = addedMember is null
+                ? current.Children.FirstOrDefault(item => AnimationClipPathSegmentMatches(item, segment))
+                : null;
+            if (child is null)
             {
-                existing = CreateAnimationClipMember(segment);
-                current.Children.Add(existing);
+                child = CreateAnimationClipMember(segment);
+                if (addedMember is null)
+                {
+                    addedParent = current;
+                    addedMember = child;
+                    addedIndex = current.Children.Count;
+                }
+                else
+                    current.Children.Add(child);
             }
-
-            current = existing;
+            current = child;
         }
-
-        current.Animation ??= CreateAnimationClipAnimation(candidate.ValueType, clip, candidate.DefaultValue);
-        current.DefaultValue = candidate.DefaultValue ?? CreateAnimationClipDefaultValue(candidate.ValueType);
-        current.Animation.LengthInSeconds = clip.LengthInSeconds;
-        current.Animation.Looped = clip.Looped;
-
-        SyncAnimationClipStats(clip);
-        if (TryFindAnimationClipMemberId(clip.RootMember, current, "0", out string? id))
-            state.SelectedMemberId = id;
-        state.SelectedKeyframe = null;
-        state.SelectedKeyframeMemberId = null;
+        BasePropAnim? oldAnimation = current.Animation;
+        object? oldDefault = current.DefaultValue;
+        float oldLength = oldAnimation?.LengthInSeconds ?? 0;
+        bool oldLooped = oldAnimation?.Looped ?? false;
+        BasePropAnim newAnimation = oldAnimation ??
+            CreateAnimationClipAnimation(candidate.ValueType, clip, candidate.DefaultValue);
+        object? newDefault = candidate.DefaultValue ?? CreateAnimationClipDefaultValue(candidate.ValueType);
+        bool applied = AnimationClipAuthoringActions.Apply(clip, "Add Animation Path",
+            () =>
+            {
+                if (rootChanged)
+                    clip.RootMember = root;
+                if (addedParent is not null && addedMember is not null && !addedParent.Children.Contains(addedMember))
+                    addedParent.Children.Insert(Math.Clamp(addedIndex, 0, addedParent.Children.Count), addedMember);
+                current.Animation = newAnimation;
+                current.DefaultValue = newDefault;
+                newAnimation.LengthInSeconds = clip.LengthInSeconds;
+                newAnimation.Looped = clip.Looped;
+                SyncAnimationClipStats(clip);
+            },
+            () =>
+            {
+                if (rootChanged)
+                    clip.RootMember = oldRoot;
+                else if (addedParent is not null && addedMember is not null)
+                    addedParent.Children.Remove(addedMember);
+                current.Animation = oldAnimation;
+                current.DefaultValue = oldDefault;
+                if (oldAnimation is not null)
+                {
+                    oldAnimation.LengthInSeconds = oldLength;
+                    oldAnimation.Looped = oldLooped;
+                }
+                SyncAnimationClipStats(clip);
+            },
+            () => ReferenceEquals(clip.RootMember, root) && ReferenceEquals(current.Animation, newAnimation) &&
+                (addedParent is null || addedMember is null || addedParent.Children.Contains(addedMember)),
+            () => ReferenceEquals(clip.RootMember, oldRoot) && ReferenceEquals(current.Animation, oldAnimation) &&
+                (rootChanged || addedParent is null || addedMember is null || !addedParent.Children.Contains(addedMember)));
+        if (applied)
+        {
+            if (TryFindAnimationClipMemberId(clip.RootMember, current, "0", out string? id))
+                state.SelectedMemberId = id;
+            state.SelectedKeyframe = null;
+            state.SelectedKeyframeMemberId = null;
+        }
     }
 
     private static AnimationMember EnsureAnimationClipRootGroup(AnimationClip clip)
@@ -780,49 +840,12 @@ public static partial class EditorImGuiUI
     {
         if (clip.RootMember is null || string.IsNullOrWhiteSpace(state.SelectedMemberId))
             return;
-
-        if (state.SelectedMemberId == "0")
-        {
-            clip.RootMember = null;
-            state.SelectedMemberId = null;
-            state.SelectedKeyframe = null;
-            state.SelectedKeyframeMemberId = null;
-            SyncAnimationClipStats(clip);
+        if (!TryFindAnimationClipSelectedMember(clip.RootMember, state.SelectedMemberId, "0", clip.RootMember.MemberName, out AnimationMember? member, out _)
+            || member is null || !AnimationClipAuthoringActions.RemoveMember(clip, member))
             return;
-        }
-
-        string[] parts = state.SelectedMemberId.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length <= 1 || parts[0] != "0")
-            return;
-
-        AnimationMember? parent = clip.RootMember;
-        for (int index = 1; index < parts.Length - 1; index++)
-        {
-            if (!int.TryParse(parts[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out int childIndex)
-                || parent is null
-                || childIndex < 0
-                || childIndex >= parent.Children.Count)
-            {
-                return;
-            }
-
-            parent = parent.Children[childIndex];
-        }
-
-        if (!int.TryParse(parts[^1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int removeIndex)
-            || parent is null
-            || removeIndex < 0
-            || removeIndex >= parent.Children.Count)
-        {
-            return;
-        }
-
-        parent.Children.RemoveAt(removeIndex);
-        state.SelectedMemberId = "0";
+        state.SelectedMemberId = clip.RootMember is null ? null : "0";
         state.SelectedKeyframe = null;
         state.SelectedKeyframeMemberId = null;
-        PruneEmptyAnimationClipGroups(clip.RootMember);
-        SyncAnimationClipStats(clip);
     }
 
     private static bool PruneEmptyAnimationClipGroups(AnimationMember member)
@@ -900,68 +923,7 @@ public static partial class EditorImGuiUI
     }
 
     private static bool TryAddAnimationClipKeyframe(AnimationMember member, float second, AnimationClip clip, out Keyframe? keyframe)
-    {
-        keyframe = null;
-        if (member.Animation is null)
-            return false;
-
-        float clampedSecond = Math.Clamp(second, 0.0f, MathF.Max(clip.LengthInSeconds, 0.0f));
-        object? defaultValue = member.DefaultValue ?? GetAnimationClipDefaultValue(member.Animation);
-
-        switch (member.Animation)
-        {
-            case PropAnimFloat floatAnimation:
-                {
-                    float value = defaultValue is float scalar ? scalar : floatAnimation.DefaultValue;
-                    FloatKeyframe newKey = new(clampedSecond, value, 0.0f, EVectorInterpType.Linear);
-                    floatAnimation.Keyframes.Add(newKey);
-                    keyframe = newKey;
-                    return true;
-                }
-            case PropAnimVector2 vector2Animation:
-                {
-                    Vector2 value = defaultValue is Vector2 vector2 ? vector2 : vector2Animation.DefaultValue;
-                    Vector2Keyframe newKey = new(clampedSecond, value, Vector2.Zero, EVectorInterpType.Smooth);
-                    vector2Animation.Keyframes.Add(newKey);
-                    keyframe = newKey;
-                    return true;
-                }
-            case PropAnimVector3 vector3Animation:
-                {
-                    Vector3 value = defaultValue is Vector3 vector3 ? vector3 : vector3Animation.DefaultValue;
-                    Vector3Keyframe newKey = new(clampedSecond, value, Vector3.Zero, EVectorInterpType.Smooth);
-                    vector3Animation.Keyframes.Add(newKey);
-                    keyframe = newKey;
-                    return true;
-                }
-            case PropAnimVector4 vector4Animation:
-                {
-                    Vector4 value = defaultValue is Vector4 vector4 ? vector4 : vector4Animation.DefaultValue;
-                    Vector4Keyframe newKey = new(clampedSecond, value, Vector4.Zero, EVectorInterpType.Smooth);
-                    vector4Animation.Keyframes.Add(newKey);
-                    keyframe = newKey;
-                    return true;
-                }
-            case PropAnimQuaternion quaternionAnimation:
-                {
-                    Quaternion value = defaultValue is Quaternion quaternion ? quaternion : quaternionAnimation.DefaultValue;
-                    QuaternionKeyframe newKey = new(clampedSecond, value, Quaternion.Identity, ERadialInterpType.Smooth);
-                    quaternionAnimation.Keyframes.Add(newKey);
-                    keyframe = newKey;
-                    return true;
-                }
-            case PropAnimBool boolAnimation:
-                {
-                    bool value = defaultValue is bool boolean ? boolean : boolAnimation.DefaultValue;
-                    BoolKeyframe newKey = new(clampedSecond, value);
-                    boolAnimation.Keyframes.Add(newKey);
-                    keyframe = newKey;
-                    return true;
-                }
-            default:
-                return false;
-        }
-    }
+        => AnimationClipAuthoringActions.TryAddKey(clip, member, second, out keyframe);
 
     private static object? GetAnimationClipDefaultValue(BasePropAnim animation)
         => animation switch
@@ -1340,7 +1302,7 @@ public static partial class EditorImGuiUI
             ImGui.BeginDisabled();
         if (ImGui.Button("Remove Key") && state.SelectedKeyframe is not null)
         {
-            state.SelectedKeyframe.Remove();
+            AnimationClipAuthoringActions.RemoveKey(clip, member, state.SelectedKeyframe);
             state.SelectedKeyframe = null;
             state.SelectedKeyframeMemberId = null;
         }
@@ -1385,7 +1347,7 @@ public static partial class EditorImGuiUI
             ImGui.SetNextItemWidth(-1.0f);
             if (ImGui.DragFloat("##Second", ref second, 0.01f, 0.0f, MathF.Max(clip.LengthInSeconds, 0.0f), "%.3f"))
             {
-                keyframe.Second = Math.Clamp(second, 0.0f, MathF.Max(clip.LengthInSeconds, 0.0f));
+                AnimationClipAuthoringActions.SetKeyTime(clip, keyframe, second);
                 state.NewKeySecond = keyframe.Second;
             }
 
@@ -1401,7 +1363,7 @@ public static partial class EditorImGuiUI
             }
 
             ImGui.TableSetColumnIndex(3);
-            DrawAnimationClipKeyframeValueEditor(keyframe);
+            DrawAnimationClipKeyframeValueEditor(clip, keyframe);
 
             ImGui.TableSetColumnIndex(4);
             DrawAnimationClipKeyframeTangentEditor(keyframe);
@@ -1415,7 +1377,7 @@ public static partial class EditorImGuiUI
         ImGui.EndTable();
     }
 
-    private static void DrawAnimationClipKeyframeValueEditor(Keyframe keyframe)
+    private static void DrawAnimationClipKeyframeValueEditor(AnimationClip clip, Keyframe keyframe)
     {
         if (keyframe is IPlanarKeyframe planar)
         {
@@ -1424,7 +1386,7 @@ public static partial class EditorImGuiUI
             if (DrawAnimationClipValueEditor("In", keyframe.ValueType, ref inValue, 0.01f))
                 planar.InValue = inValue;
             if (DrawAnimationClipValueEditor("Out", keyframe.ValueType, ref outValue, 0.01f))
-                planar.OutValue = outValue;
+                AnimationClipAuthoringActions.SetKeyValue(clip, keyframe, outValue);
             return;
         }
 
@@ -1435,7 +1397,7 @@ public static partial class EditorImGuiUI
             if (DrawAnimationClipValueEditor("In", typeof(Quaternion), ref inValue, 0.01f))
                 quaternionKeyframe.InValue = (Quaternion)inValue;
             if (DrawAnimationClipValueEditor("Out", typeof(Quaternion), ref outValue, 0.01f))
-                quaternionKeyframe.OutValue = (Quaternion)outValue;
+                AnimationClipAuthoringActions.SetKeyValue(clip, keyframe, outValue);
             return;
         }
 
@@ -1443,7 +1405,7 @@ public static partial class EditorImGuiUI
         {
             bool value = boolKeyframe.Value;
             if (ImGui.Checkbox("Value", ref value))
-                boolKeyframe.Value = value;
+                AnimationClipAuthoringActions.SetKeyValue(clip, keyframe, value);
         }
     }
 
@@ -2236,7 +2198,7 @@ public static partial class EditorImGuiUI
     }
 
     private readonly record struct AnimationClipMemberRow(AnimationMember Member, string Id, string DisplayPath, int Depth);
-    private sealed record AnimationClipPathCandidate(
+    internal sealed record AnimationClipPathCandidate(
         string Id,
         string DisplayPath,
         string TargetTypeName,
@@ -2245,7 +2207,7 @@ public static partial class EditorImGuiUI
         Type ValueType,
         object? DefaultValue);
 
-    private sealed record AnimationClipPathSegment(
+    internal sealed record AnimationClipPathSegment(
         string MemberName,
         EAnimationMemberType MemberType,
         object?[]? MethodArguments,

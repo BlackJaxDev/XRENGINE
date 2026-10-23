@@ -149,12 +149,17 @@ namespace XREngine.Rendering.UI
         {
             if (id is { } selected && !HasOption(selected))
                 return false;
-            if (_binding is not null && origin != EUIValueChangeOrigin.Binding)
+            IUIValueBinding<ulong?>? binding = _binding;
+            if (binding is not null && origin != EUIValueChangeOrigin.Binding)
             {
                 _writingBinding = true;
-                try { _binding.SetValue(id); }
+                try { binding.SetValue(id); }
                 finally { _writingBinding = false; }
-                id = _binding.Value;
+                if (!ReferenceEquals(_binding, binding))
+                    return false;
+                id = binding.Value;
+                if (id is { } boundId && !HasOption(boundId))
+                    return false;
             }
             if (_selectedId == id)
                 return true;

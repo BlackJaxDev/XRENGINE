@@ -75,12 +75,16 @@ public class ProfilerPanel : NativeVirtualTextPanel
 
     private void AppendScope(Engine.CodeProfiler.ProfilerNodeSnapshot scope, int depth, ref ulong id)
     {
-        if (_rows.Count >= 1000)
-            return;
-        _rows.Add((id++, new ScopeRow(
-            $"{new string(' ', Math.Min(depth, 8) * 2)}{scope.Name}",
-            scope.ElapsedMs.ToString("F2"), scope.SelfMs.ToString("F2"))));
-        foreach (var child in scope.Children)
-            AppendScope(child, depth + 1, ref id);
+        Stack<(Engine.CodeProfiler.ProfilerNodeSnapshot Node, int Depth)> pending = new();
+        pending.Push((scope, depth));
+        while (pending.Count > 0)
+        {
+            var (node, level) = pending.Pop();
+            _rows.Add((id++, new ScopeRow(
+                $"{new string(' ', Math.Min(level, 8) * 2)}{node.Name}",
+                node.ElapsedMs.ToString("F2"), node.SelfMs.ToString("F2"))));
+            for (int index = node.Children.Count - 1; index >= 0; index--)
+                pending.Push((node.Children[index], level + 1));
+        }
     }
 }

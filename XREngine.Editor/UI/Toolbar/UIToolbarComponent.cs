@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Core.Attributes;
+using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Editor.UI.Toolbar;
@@ -25,6 +26,14 @@ public partial class UIToolbarComponent : UIComponent
     }
 
     public List<ToolbarButton> ActiveSubmenus { get; } = [];
+    private readonly List<(ToolbarItemBase Item, UIButtonComponent Button)> _bindings = [];
+    private bool _releasingBindings;
+    private bool _remaking;
+    private bool _remakePending;
+    private bool _remakeTickRegistered;
+    private bool _bindingsStopped;
+    private bool _destroying;
+    private long _bindingGeneration;
 
     private float _menuHeight = 34.0f;
     public float SubmenuItemHeight
@@ -48,19 +57,153 @@ public partial class UIToolbarComponent : UIComponent
 
     protected override void OnComponentActivated()
     {
+        if (_destroying)
+            return;
+        _bindingsStopped = false;
         base.OnComponentActivated();
         RemakeToolbarItems();
     }
     protected override void OnComponentDeactivated()
     {
-        base.OnComponentDeactivated();
+        try { base.OnComponentDeactivated(); }
+        finally { StopBindings(); }
+    }
+
+    protected override void OnDestroying()
+    {
+        _destroying = true;
+        try { StopBindings(); }
+        finally { base.OnDestroying(); }
+    }
+
+    private void StopBindings()
+    {
+        _bindingsStopped = true;
+        _bindingGeneration++;
+        CancelDeferredRemake();
+        ReleaseBindings();
+    }
+
+    private bool BindItem(ToolbarItemBase item, UIButtonComponent button)
+    {
+        if (_releasingBindings || _bindingsStopped || _destroying || IsDestroyed)
+            return false;
+        long generation = _bindingGeneration;
+        _bindings.Add((item, button));
+        item.InteractableComponent = button;
+        if (!BindingIsCurrent(generation, button) || !ReferenceEquals(item.InteractableComponent, button))
+        {
+            ReleaseStaleBinding(item, button);
+            return false;
+        }
+        item.ParentToolbarComponent = this;
+        if (!BindingIsCurrent(generation, button) || !ReferenceEquals(item.ParentToolbarComponent, this))
+        {
+            ReleaseStaleBinding(item, button);
+            return false;
+        }
+        return true;
+    }
+
+    private bool BindingIsCurrent(long generation, UIButtonComponent button)
+        => generation == _bindingGeneration && !_bindingsStopped && !_destroying && !IsDestroyed && !button.IsDestroyed;
+
+    private void ReleaseStaleBinding(ToolbarItemBase item, UIButtonComponent button)
+    {
+        if (ReferenceEquals(item.InteractableComponent, button))
+            item.InteractableComponent = null;
+        if (ReferenceEquals(item.InteractableComponent, button))
+            throw new InvalidOperationException("A toolbar item refused to release a stale control.");
+        if (ReferenceEquals(item.ParentToolbarComponent, this))
+            item.ParentToolbarComponent = null;
+    }
+
+    private void ReleaseBindings()
+    {
+        if (_releasingBindings)
+            return;
+        _releasingBindings = true;
+        try
+        {
+            foreach (var (item, button) in _bindings)
+            {
+                if (!ReferenceEquals(item.InteractableComponent, button))
+                    continue;
+                if (item is ToolbarButton menu)
+                    menu.ChildOptionsVisible = false;
+                item.InteractableComponent = null;
+                if (ReferenceEquals(item.InteractableComponent, button))
+                    throw new InvalidOperationException("A toolbar item refused to release its retired control.");
+                if (ReferenceEquals(item.ParentToolbarComponent, this))
+                    item.ParentToolbarComponent = null;
+            }
+            _bindings.Clear();
+            ActiveSubmenus.Clear();
+        }
+        finally
+        {
+            _releasingBindings = false;
+            ScheduleDeferredRemake();
+        }
     }
 
     public void RemakeToolbarItems()
     {
-        SceneNode.Transform.Clear();
-        //Create the root menu transform - this is a horizontal list of buttons.
-        CreateMenu(SceneNode, true, null, SubmenuItemHeight, RootMenuOptions, false, SubmenuItemHeight, this);
+        if (_bindingsStopped || _destroying || IsDestroyed)
+            return;
+        if (_remaking || _releasingBindings)
+        {
+            _bindingGeneration++;
+            _remakePending = true;
+            return;
+        }
+        _remaking = true;
+        long generation = ++_bindingGeneration;
+        try
+        {
+            ReleaseBindings();
+            foreach (var child in SceneNode.Transform.Children.ToArray())
+                if (child.SceneNode is { } owned)
+                {
+                    owned.Destroy(true);
+                    if (!owned.IsDestroyed)
+                        throw new InvalidOperationException("A toolbar child refused teardown; the toolbar was not rebuilt.");
+                }
+            if (generation != _bindingGeneration || _bindingsStopped || IsDestroyed)
+                return;
+            CreateMenu(SceneNode, true, null, SubmenuItemHeight, RootMenuOptions, false, SubmenuItemHeight, this);
+        }
+        finally
+        {
+            _remaking = false;
+            ScheduleDeferredRemake();
+        }
+    }
+
+    private void ScheduleDeferredRemake()
+    {
+        if (_remaking || _releasingBindings || !_remakePending || _bindingsStopped ||
+            _destroying || IsDestroyed || _remakeTickRegistered)
+            return;
+        _remakeTickRegistered = true;
+        RegisterTick(ETickGroup.Late, ETickOrder.Scene, CompleteDeferredRemake);
+    }
+
+    private void CompleteDeferredRemake()
+    {
+        bool pending = _remakePending;
+        CancelDeferredRemake();
+        if (pending)
+            RemakeToolbarItems();
+    }
+
+    private void CancelDeferredRemake()
+    {
+        _remakePending = false;
+        if (!_remakeTickRegistered)
+            return;
+        _remakeTickRegistered = false;
+        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompleteDeferredRemake);
     }
 
     public UIListTransform CreateMenu(
@@ -74,7 +217,7 @@ public partial class UIToolbarComponent : UIComponent
         UIToolbarComponent toolbar)
     {
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
-        menuMat.Material = EditorPanel.MakeBackgroundMaterial();
+        EditorPanel.ApplyBackground(menuMat);
         menuMat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = horizontal;
@@ -99,8 +242,11 @@ public partial class UIToolbarComponent : UIComponent
         UIToolbarComponent toolbar)
     {
         //Create the buttons for each menu option.
-        foreach (ToolbarItemBase menuItem in options)
+        long generation = toolbar._bindingGeneration;
+        foreach (ToolbarItemBase menuItem in options.ToArray())
         {
+            if (generation != toolbar._bindingGeneration || toolbar._bindingsStopped || toolbar.IsDestroyed)
+                break;
             switch (menuItem)
             {
                 case ToolbarButton tbb:
@@ -120,12 +266,10 @@ public partial class UIToolbarComponent : UIComponent
     {
         var buttonNode = listNode.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
         EditorUI.Styles.UpdateButton(button);
-        tbd.InteractableComponent = button;
-        tbd.ParentToolbarComponent = toolbar;
+        if (!toolbar.BindItem(tbd, button))
+            return;
         button.Name = tbd.Text;
-        var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
-        mat.EnableTransparency();
-        background.Material = mat;
+        background.SetBatchSolidColor(ColorF4.Transparent);
         background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
@@ -168,7 +312,7 @@ public partial class UIToolbarComponent : UIComponent
     private void CreateSeparator(SceneNode listNode, bool alignSubmenuToSide, UIToolbarComponent toolbar, ToolbarSeparator tbs)
     {
         var separatorNode = listNode.NewChild<UIMaterialComponent>(out var separatorMat);
-        separatorMat.Material = EditorPanel.MakeBackgroundMaterial();
+        EditorPanel.ApplyBackground(separatorMat);
         var separatorTfm = separatorNode.SetTransform<UIBoundableTransform>();
         separatorTfm.Padding = new Vector4(0.0f);
         separatorTfm.Width = 1.0f;
@@ -179,13 +323,11 @@ public partial class UIToolbarComponent : UIComponent
     {
         var buttonNode = listNode.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
         EditorUI.Styles.UpdateButton(button);
-        tbb.InteractableComponent = button;
-        tbb.ParentToolbarComponent = toolbar;
+        if (!toolbar.BindItem(tbb, button))
+            return;
         button.Name = tbb.Text;
 
-        var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
-        mat.EnableTransparency();
-        background.Material = mat;
+        background.SetBatchSolidColor(ColorF4.Transparent);
         background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
 
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;

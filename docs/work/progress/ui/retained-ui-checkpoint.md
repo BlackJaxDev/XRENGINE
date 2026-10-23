@@ -214,3 +214,48 @@ all **353 tests passed**, with no skips, in 7.657s. The final editor build passe
 with zero warnings/errors in 47.53s. The full desktop test project compiled with
 zero warnings/errors in 43.85s. Desktop execution remains blocked by its Windows
 assembly requirement. The checked source includes the dock review repairs.
+
+## Worker Shaping, Sparse Quads, And Editor Mutations
+
+This checkpoint keeps the reconciliation at **34 of 60 implementation items**.
+The remaining 26 implementation items and four owner decisions stay open. The
+changes complete useful parts of these broad items but do not establish their
+full done conditions.
+
+- Opt-in single-run shaping now executes within the bounded layout worker.
+  Pending snapshots compare with accepted output, stale faults cannot block
+  newer input, and backend/font generation changes invalidate cached subtrees.
+  Visual-only edits retain layout reuse. Language, feature, glyph, and scratch
+  limits reject oversized requests. Full bidi, fallback, and wrapped shaping
+  remain open.
+- Desktop quad cohorts use stable payload slots and a separate painter-order
+  index stream. Dirty adjacent payload fields upload independently. Full storage
+  resets clear slot initialization state. Run insertion can still rebase later
+  cohorts; dense text-instance indices and text growth uploads remain open.
+- Shaped controls distinguish glyph provenance from complete grapheme caret
+  geometry. Complete runs use visual caret movement; incomplete geometry reports
+  unsupported placement. Ordinary context menus use bounded scroll containers.
+  Recycled editor drag sessions and accepted-layout popup checks remain open.
+- All seven primary panels can use the detached-window host. Inspector asset
+  drops validate request identity and target changes on the scene-edit owner.
+  Multi-target component removal verifies rollback after callbacks. Toolbar
+  teardown coalesces callback-driven rebuilds. Native panels use solid retained
+  backgrounds; shared opt-in backdrop capture remains open.
+- Animation panels share inverse-first key/member mutation actions and dirty
+  tracking. The native panel adds paged path discovery and bounded retained
+  curve/timeline display. A required keyframe removal repair completes ownership
+  changes before notifying listeners. Full animation workflow parity remains
+  open. The profiler no longer truncates its source at 1,000 rows.
+- The bounded render-surface pool separates reservation from producer completion.
+  The new offscreen/direct-world route is still inactive. Exact consumer receipts,
+  direct-world clipping, and independent composition layers remain open.
+
+Windows execution, GPU uploads, shader execution, visual checks, multi-window
+interaction, IME acceptance, and equivalent ImGui measurements remain pending.
+
+The final headless build passed with zero warnings/errors in 16.09s; all
+**391 tests passed**, no skips, in 8.844s. The matching editor build passed with
+zero warnings/errors in 40.30s, and the desktop test project compiled with zero
+warnings/errors in 47.19s. Source hashes confirmed the matching snapshot. The
+desktop regression tests did not execute on Linux. All 31 local document links
+resolve, and the diff whitespace check passes.

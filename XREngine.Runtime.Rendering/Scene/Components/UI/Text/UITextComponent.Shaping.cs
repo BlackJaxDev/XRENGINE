@@ -21,7 +21,8 @@ public partial class UITextComponent
     {
         get => _shapeLanguage;
         set => SetField(ref _shapeLanguage,
-            !string.IsNullOrWhiteSpace(value) ? value : throw new ArgumentException("A language is required."));
+            !string.IsNullOrWhiteSpace(value) && value.Length <= 64 ? value :
+                throw new ArgumentException("A language of at most 64 characters is required."));
     }
 
     /// <summary>Direction for one text run.</summary>
@@ -45,18 +46,35 @@ public partial class UITextComponent
         throw new NotSupportedException("UI.ShapingFaceUnavailable: this font has no glyph-ID face snapshot.");
     }
 
-    private UITextShapedRunInput CaptureShapedRun(string text, FontGlyphSet font,
-        string language, UITextDirection direction, string? featureSource,
-        IUITextShapingBackend backend)
+    private UITextShapingRequest CaptureShapingRequest(string text, FontGlyphSet font,
+        string language, UITextDirection direction, string? featureSource)
     {
         if (WrapMode != FontGlyphSet.EWrapMode.None || UITextShapedLayoutKernel.HasLineBreak(text))
             throw new NotSupportedException("UI.ShapedLineAnalysisUnavailable: wrapped and multiline text require line analysis.");
         EnsureOneDirection(text, direction);
+        if (featureSource is { Length: > 2048 })
+            throw new NotSupportedException("UI.ShapingFeaturesExceeded: feature text exceeds 2048 characters.");
+        int featureCount = 0;
+        if (!string.IsNullOrWhiteSpace(featureSource))
+        {
+            bool hasContent = false;
+            foreach (char value in featureSource)
+            {
+                if (value == ',')
+                {
+                    if (hasContent && ++featureCount > 32)
+                        throw new NotSupportedException("UI.ShapingFeaturesExceeded: more than 32 features.");
+                    hasContent = false;
+                }
+                else if (!char.IsWhiteSpace(value))
+                    hasContent = true;
+            }
+            if (hasContent && ++featureCount > 32)
+                throw new NotSupportedException("UI.ShapingFeaturesExceeded: more than 32 features.");
+        }
         string[] features = string.IsNullOrWhiteSpace(featureSource) ? [] :
             featureSource.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        UITextShapingResult shaped = backend.Shape(new UITextShapingRequest(text,
-            GetRequiredShapingFace(font), language, direction, features));
-        return new UITextShapedRunInput(shaped, featureSource);
+        return new UITextShapingRequest(text, GetRequiredShapingFace(font), language, direction, features);
     }
 
     internal static void EnsureOneDirection(string text, UITextDirection direction)

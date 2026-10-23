@@ -3,23 +3,29 @@ namespace XREngine.Rendering.UI;
 /// <summary>Holds the optional native text shaping service.</summary>
 public static class UITextShapingBackendRegistry
 {
-    private static IUITextShapingBackend? _current;
-    private static long _generation;
+    private static UITextShapingBackendState _state = new(null, 0);
 
     public static event Action? Changed;
 
     public static IUITextShapingBackend? Current
     {
-        get => System.Threading.Volatile.Read(ref _current);
+        get => System.Threading.Volatile.Read(ref _state).Backend;
         set
         {
-            IUITextShapingBackend? old = System.Threading.Interlocked.Exchange(ref _current, value);
-            if (ReferenceEquals(old, value))
+            while (true)
+            {
+                UITextShapingBackendState old = System.Threading.Volatile.Read(ref _state);
+                if (ReferenceEquals(old.Backend, value))
+                    return;
+                UITextShapingBackendState next = new(value, checked(old.Generation + 1));
+                if (!ReferenceEquals(System.Threading.Interlocked.CompareExchange(ref _state, next, old), old))
+                    continue;
+                Changed?.Invoke();
                 return;
-            System.Threading.Interlocked.Increment(ref _generation);
-            Changed?.Invoke();
+            }
         }
     }
 
-    public static long Generation => System.Threading.Volatile.Read(ref _generation);
+    public static long Generation => State.Generation;
+    internal static UITextShapingBackendState State => System.Threading.Volatile.Read(ref _state);
 }

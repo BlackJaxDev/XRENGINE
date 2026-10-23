@@ -104,30 +104,130 @@ public static partial class EditorImGuiUI
 
     internal static void QueueNativeComponentRemove(SceneNode node, XRComponent component,
         Action? completed = null)
+        => QueueNativeComponentRemoveMany([(node, component)], completed);
+
+    internal static void QueueNativeComponentRemoveMany(
+        IReadOnlyList<(SceneNode Node, XRComponent Component)> components, Action? completed = null)
     {
-        var ownerWorld = node.World;
+        var targets = components.Select(entry =>
+            (entry.Node, entry.Component, World: entry.Node.World)).ToArray();
         EnqueueSceneEdit(() =>
         {
-            if (node.IsDestroyed || !ReferenceEquals(node.World, ownerWorld) || component.IsDestroyed ||
-                !ReferenceEquals(component.SceneNode, node) || !node.Components.Contains(component))
+            if (targets.Length == 0 || targets.Select(entry => entry.Component)
+                .Distinct(ReferenceEqualityComparer.Instance).Count() != targets.Length)
                 return;
-            node.DetachComponent(component);
+            string description = $"Remove {targets[0].Component.GetType().Name}";
             using var interaction = Undo.BeginUserInteraction();
-            using var scope = Undo.BeginChange($"Remove {component.GetType().Name}");
-            Undo.RecordStructuralChange($"Remove {component.GetType().Name}",
-                undoAction: () =>
-                {
-                    node.ReattachComponent(component);
-                    MarkNativeComponentNodeDirty(node);
-                },
-                redoAction: () =>
-                {
-                    node.DetachComponent(component);
-                    MarkNativeComponentNodeDirty(node);
-                });
-            MarkNativeComponentNodeDirty(node);
+            using var scope = Undo.BeginChange(description);
+            // Establish the inverse before firing detach callbacks. If rollback
+            // cannot fully restore membership, retain this step for recovery.
+            Undo.RecordStructuralChange(description,
+                undoAction: () => ApplyNativeComponentBatch(targets, attach: true, repairExisting: true),
+                redoAction: () => ApplyNativeComponentBatch(targets, attach: false, repairExisting: true));
+            ComponentBatchResult result = ApplyNativeComponentBatch(targets, attach: false);
+            if (result != ComponentBatchResult.Success)
+            {
+                if (result == ComponentBatchResult.Restored)
+                    scope.Cancel();
+                else
+                    Debug.UI("[NativeInspector] Component removal was partially applied; its Undo step was retained for recovery.");
+                return;
+            }
             completed?.Invoke();
         });
+    }
+
+    private enum ComponentBatchResult { Success, Restored, Partial }
+
+    private static ComponentBatchResult ApplyNativeComponentBatch(
+        (SceneNode Node, XRComponent Component, IRuntimeWorldContext? World)[] targets,
+        bool attach, bool repairExisting = false)
+    {
+        static bool HasOwner((SceneNode Node, XRComponent Component, IRuntimeWorldContext? World) entry)
+            => !entry.Node.IsDestroyed && !entry.Component.IsDestroyed &&
+               ReferenceEquals(entry.Node.World, entry.World) &&
+               ReferenceEquals(entry.Component.SceneNode, entry.Node);
+
+        // Validate ownership before touching any target. Undo/Redo can repair a
+        // mixed membership state left by a failed callback or rollback.
+        if (targets.Any(entry => !HasOwner(entry)))
+        {
+            if (repairExisting)
+                Debug.UI("[NativeInspector] Undo/Redo could not restore a component whose owner or lifetime changed.");
+            return repairExisting ? ComponentBatchResult.Partial : ComponentBatchResult.Restored;
+        }
+        if (!repairExisting && targets.Any(entry =>
+            entry.Node.Components.Contains(entry.Component) == attach))
+            return ComponentBatchResult.Restored;
+        bool[] originalAttached = targets.Select(entry =>
+            entry.Node.Components.Contains(entry.Component)).ToArray();
+
+        try
+        {
+            foreach (var entry in targets)
+            {
+                if (!HasOwner(entry))
+                    throw new InvalidOperationException("A component target changed owner during the batch.");
+                var (node, component, _) = entry;
+                if (node.Components.Contains(component) == attach)
+                    continue;
+                if (attach)
+                    node.ReattachComponent(component);
+                else if (!node.DetachComponent(component))
+                    throw new InvalidOperationException("The component was no longer attached.");
+            }
+            if (targets.Any(entry => !HasOwner(entry) ||
+                entry.Node.Components.Contains(entry.Component) != attach))
+                throw new InvalidOperationException("A component callback changed batch membership or ownership.");
+            foreach (var (node, _, _) in targets)
+                MarkNativeComponentNodeDirty(node);
+            if (targets.Any(entry => !HasOwner(entry) ||
+                entry.Node.Components.Contains(entry.Component) != attach))
+                throw new InvalidOperationException("Dirty-state callbacks changed component batch ownership or membership.");
+            return ComponentBatchResult.Success;
+        }
+        catch (Exception exception)
+        {
+            // Check every captured component, including ones mutated by callbacks on
+            // a different target, and restore each target's original membership.
+            bool restored = true;
+            for (int index = targets.Length - 1; index >= 0; index--)
+            {
+                var entry = targets[index];
+                var (node, component, _) = entry;
+                try
+                {
+                    if (!HasOwner(entry))
+                    {
+                        restored = false;
+                        continue;
+                    }
+                    bool isAttached = node.Components.Contains(component);
+                    if (originalAttached[index] && !isAttached)
+                        node.ReattachComponent(component);
+                    else if (!originalAttached[index] && isAttached)
+                        node.DetachComponent(component);
+                    MarkNativeComponentNodeDirty(node);
+                    if (node.Components.Contains(component) != originalAttached[index])
+                        restored = false;
+                }
+                catch (Exception rollbackException)
+                {
+                    restored = false;
+                    Debug.LogException(rollbackException,
+                        $"Failed to roll back component change on '{node.Name}'.");
+                }
+            }
+            // Rollback callbacks can mutate an earlier target after it was checked.
+            // Only discard the inverse if the whole captured batch is restored now.
+            if (targets.Where((entry, index) => !HasOwner(entry) ||
+                entry.Node.Components.Contains(entry.Component) != originalAttached[index]).Any())
+                restored = false;
+            Debug.LogException(exception, restored
+                ? "Failed to apply native component batch; original membership restored."
+                : "Failed to apply native component batch; rollback left partial membership.");
+            return restored ? ComponentBatchResult.Restored : ComponentBatchResult.Partial;
+        }
     }
 
     private static void MarkNativeComponentNodeDirty(SceneNode node)

@@ -16,6 +16,8 @@ public sealed class UIPublication
     private int _retainedPayloadCount;
     private int _retainedTextureCount;
     private int _retainedAtlasCount;
+    private bool _retainedSurface;
+    private bool _retainedQuadPayload;
     private int _claims = 1;
     private int _resourcesRetired;
     private readonly Dictionary<long, UIRenderRecord> _renderByMembership;
@@ -32,7 +34,10 @@ public sealed class UIPublication
         UILayoutOutputPageView? layoutPages = null,
         Matrix4x4? authoringCanvasWorldMatrix = null,
         ECanvasDrawSpace authoringDrawSpace = ECanvasDrawSpace.Screen,
-        bool authoringOffscreen = false)
+        bool authoringOffscreen = false,
+        UIRenderSurface? offscreenSurface = null,
+        UIDrawPayload? offscreenQuadPayload = null,
+        Matrix4x4? offscreenQuadWorldMatrix = null)
     {
         Generation = generation;
         CanvasLifetime = canvasLifetime;
@@ -44,6 +49,10 @@ public sealed class UIPublication
         Identities = identities;
         _hits = hits;
         _renders = renders;
+        OffscreenSurface = offscreenSurface;
+        OffscreenReservationGeneration = offscreenSurface?.ReservationGeneration ?? 0;
+        OffscreenQuadPayload = offscreenQuadPayload;
+        OffscreenQuadWorldMatrix = offscreenQuadWorldMatrix ?? Matrix4x4.Identity;
         _scrollReceivers = scrollReceivers ?? [];
         _focusScopes = focusScopes ?? [];
         UIElementIdentity activeScope = identities.Length > 0 ? identities.Span[0] : default;
@@ -101,6 +110,10 @@ public sealed class UIPublication
     internal UIFocusScopeRecord[] FocusScopeStorage => _focusScopes;
     internal ReadOnlySpan<UIPublishedWorldMeshCommand> WorldCommands
         => _worldCommands ?? [];
+    internal UIRenderSurface? OffscreenSurface { get; }
+    internal ulong OffscreenReservationGeneration { get; }
+    internal UIDrawPayload? OffscreenQuadPayload { get; }
+    internal Matrix4x4 OffscreenQuadWorldMatrix { get; }
 
     internal void BuildWorldCommands(XREngine.Components.UICanvasComponent canvas)
     {
@@ -162,6 +175,10 @@ public sealed class UIPublication
         Identities = source.Identities;
         _hits = source._hits;
         _renders = source._renders;
+        OffscreenSurface = source.OffscreenSurface;
+        OffscreenReservationGeneration = source.OffscreenReservationGeneration;
+        OffscreenQuadPayload = source.OffscreenQuadPayload;
+        OffscreenQuadWorldMatrix = source.OffscreenQuadWorldMatrix;
         _scrollReceivers = source._scrollReceivers;
         _focusScopes = source._focusScopes;
         ActiveFocusScopeIdentity = source.ActiveFocusScopeIdentity;
@@ -188,6 +205,16 @@ public sealed class UIPublication
 
     private void RetainDrawPayloads()
     {
+        if (OffscreenSurface is not null)
+        {
+            OffscreenSurface.Retain();
+            _retainedSurface = true;
+        }
+        if (OffscreenQuadPayload is not null)
+        {
+            OffscreenQuadPayload.Retain();
+            _retainedQuadPayload = true;
+        }
         for (int index = 0; index < _renders.Length; index++)
         {
             _renders[index].Payload?.Retain();
@@ -260,6 +287,22 @@ public sealed class UIPublication
             catch (Exception)
             {
                 // Keep retiring independent image claims.
+            }
+        }
+        if (_retainedSurface)
+        {
+            try { OffscreenSurface?.Release(); }
+            catch (Exception)
+            {
+                // The surface quarantines its native owners on terminal failure.
+            }
+        }
+        if (_retainedQuadPayload)
+        {
+            try { OffscreenQuadPayload?.Release(); }
+            catch (Exception)
+            {
+                // Owned payload cleanup keeps failed native resources quarantined.
             }
         }
     }

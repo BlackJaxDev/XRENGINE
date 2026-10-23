@@ -60,6 +60,13 @@ public partial class UITextInputComponent
         else if (_caretOverlay is not null)
             _caretOverlay.Visibility = EVisibility.Collapsed;
 
+        if (!layout.HasCompleteGraphemeCaretStops)
+        {
+            foreach (UIBoundableTransform overlay in _selectionOverlays)
+                overlay.Visibility = EVisibility.Collapsed;
+            return;
+        }
+
         int used = 0;
         bool hasRun = false;
         int runLine = -1;
@@ -69,8 +76,10 @@ public partial class UITextInputComponent
         {
             UITextCaretStop left = stops[i];
             UITextCaretStop right = stops[i + 1];
-            if (left.Line != right.Line || left.Utf16Offset < SelectionStart ||
-                right.Utf16Offset > SelectionEnd || right.Utf16Offset <= left.Utf16Offset)
+            int firstOffset = Math.Min(left.Utf16Offset, right.Utf16Offset);
+            int lastOffset = Math.Max(left.Utf16Offset, right.Utf16Offset);
+            if (left.Line != right.Line || firstOffset < SelectionStart ||
+                lastOffset > SelectionEnd || firstOffset == lastOffset)
                 continue;
             float x = MathF.Min(left.Position.X, right.Position.X);
             float width = MathF.Abs(right.Position.X - left.Position.X);

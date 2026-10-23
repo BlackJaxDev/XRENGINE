@@ -13,9 +13,9 @@ namespace XREngine.Editor;
 /// <summary>Creates an isolated input/canvas host for a detached native tool panel.</summary>
 internal static class NativeDetachedDockWindows
 {
-    private sealed record SavedWindow(string Key, int Panel);
+    private sealed record SavedWindow(string Key, string? PanelId = null, int? Panel = null);
     private sealed record OpenWindow(XRWindow Window, RuntimeWorld World, SceneNode Root,
-        LocalPlayerController Controller, string Key, int Panel);
+        LocalPlayerController Controller, string Key, string Panel);
 
     private static readonly Dictionary<string, OpenWindow> OpenWindows = new(StringComparer.Ordinal);
     private static bool _restoreQueued;
@@ -29,17 +29,28 @@ internal static class NativeDetachedDockWindows
         {
             _restoreQueued = false;
             foreach (SavedWindow saved in ReadSavedWindows())
-                if (!OpenWindows.ContainsKey(saved.Key))
-                    OpenCore(source, saved.Panel, saved.Key, restoring: true);
+                if (!OpenWindows.ContainsKey(saved.Key) && ResolvePanel(saved) is { } panel)
+                {
+                    bool legacy = !NativeDockPanel.All.Contains(saved.PanelId ?? string.Empty) &&
+                        saved.Panel is >= 0 and < 4;
+                    if (legacy && NativeDockLayoutStore.HasLayout(saved.Key))
+                        NativeDockLayoutStore.MigrateLegacyDetached(saved.Key, saved.Panel!.Value);
+                    if (OpenCore(source, panel, saved.Key, restoring: true) && legacy)
+                        SaveWindow(saved.Key, panel);
+                }
         }, "Restore detached native dock windows");
     }
 
     public static bool Open(XRWindow source, int panel)
+        => (uint)panel < (uint)NativeDockPanel.LegacyTools.Length &&
+           Open(source, NativeDockPanel.LegacyTools[panel]);
+
+    public static bool Open(XRWindow source, string panel)
         => OpenCore(source, panel, "detached:" + Guid.NewGuid().ToString("N"), restoring: false);
 
-    private static bool OpenCore(XRWindow source, int panel, string key, bool restoring)
+    private static bool OpenCore(XRWindow source, string panel, string key, bool restoring)
     {
-        if (panel is < 0 or > 3 || source.TargetWorldInstance?.WorldContext is not RuntimeWorld sourceWorld ||
+        if (!NativeDockPanel.All.Contains(panel) || source.TargetWorldInstance?.WorldContext is not RuntimeWorld sourceWorld ||
             sourceWorld.TargetWorld is not { } authoredWorld)
         {
             Debug.UI("[NativeDock] Cannot detach a panel without a source window and authored world.");
@@ -93,7 +104,7 @@ internal static class NativeDetachedDockWindows
             SceneNode content = root.NewChildWithTransform<UIBoundableTransform>(out var bounds, "DockContent");
             bounds.MinAnchor = Vector2.Zero;
             bounds.MaxAnchor = Vector2.One;
-            EditorPanelHost.BuildDetached(content, window, key, panel);
+            NativeDockTreeHost.BuildDetached(content, world, window, key, panel, restoring);
             EditorWorldIntegrationRegistry.GetOrAttach(world).AddToEditorScene(root);
             if (root.IsActiveSelf)
                 root.OnActivated();
@@ -128,6 +139,7 @@ internal static class NativeDetachedDockWindows
         if (EditorWorldIntegrationRegistry.TryGet(entry.World, out EditorWorldIntegration? integration))
             integration?.RemoveFromEditorScene(entry.Root);
         entry.Controller.Destroy();
+        entry.Root.Destroy(true);
         if (!Engine.ShuttingDown)
             ForgetWindow(key);
     }
@@ -140,7 +152,8 @@ internal static class NativeDetachedDockWindows
         try
         {
             return JsonSerializer.Deserialize<List<SavedWindow>>(json)?.Where(saved =>
-                saved.Key.StartsWith("detached:", StringComparison.Ordinal) && saved.Panel is >= 0 and < 4).ToList() ?? [];
+                saved is not null && saved.Key?.StartsWith("detached:", StringComparison.Ordinal) == true &&
+                ResolvePanel(saved) is not null).ToList() ?? [];
         }
         catch (JsonException exception)
         {
@@ -149,11 +162,16 @@ internal static class NativeDetachedDockWindows
         }
     }
 
-    private static void SaveWindow(string key, int panel)
+    private static string? ResolvePanel(SavedWindow saved)
+        => saved.PanelId is { } panelId && NativeDockPanel.All.Contains(panelId)
+            ? panelId : saved.Panel is >= 0 and < 4
+                ? NativeDockPanel.LegacyTools[saved.Panel.Value] : null;
+
+    private static void SaveWindow(string key, string panel)
     {
         List<SavedWindow> saved = ReadSavedWindows();
         saved.RemoveAll(entry => entry.Key == key);
-        saved.Add(new SavedWindow(key, panel));
+        saved.Add(new SavedWindow(key, PanelId: panel));
         WriteSavedWindows(saved);
     }
 
@@ -171,12 +189,6 @@ internal static class NativeDetachedDockWindows
         service.SaveGlobalPreferences();
     }
 
-    private static string PanelName(int panel) => panel switch
-    {
-        0 => "Assets",
-        1 => "Console",
-        2 => "Profiler",
-        3 => "Animation",
-        _ => "Panel",
-    };
+    private static string PanelName(string panel)
+        => panel.Length == 0 ? "Panel" : char.ToUpperInvariant(panel[0]) + panel[1..];
 }

@@ -7,7 +7,7 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The branch contains bounded worker layout with shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained render storage, common controls, virtual collections, and native editor panels. Completed code accounts for 34 of the original 60 implementation items; 26 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
+The branch contains bounded worker layout and opt-in single-run shaping, shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained quad slots and glyph storage, common controls, virtual collections, and native editor panels. All primary panels can use the detached-window host; full cross-window workflows remain open. Completed code accounts for 34 of the original 60 implementation items; 26 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
 
 ## Open Code Items
 

@@ -7,6 +7,7 @@ layout(std430, binding = 0) buffer QuadTransformBuffer { vec4 QuadTransforms[]; 
 layout(std430, binding = 1) buffer QuadColorBuffer { vec4 QuadColors[]; };
 layout(std430, binding = 2) buffer QuadBoundsBuffer { vec4 QuadBounds[]; };
 layout(std430, binding = 3) buffer QuadUvBuffer { vec4 QuadUvs[]; };
+layout(std430, binding = 5) buffer QuadDrawIndexBuffer { uint QuadDrawIndices[]; };
 
 uniform mat4 ViewProjectionMatrix_VTX;
 
@@ -15,7 +16,7 @@ layout(location = 5) flat out vec4 InstanceColor;
 
 void main()
 {
-    int id = gl_InstanceID;
+    int id = int(QuadDrawIndices[gl_InstanceID]);
     int base4 = id * 4;
     mat4 model = mat4(QuadTransforms[base4], QuadTransforms[base4 + 1],
         QuadTransforms[base4 + 2], QuadTransforms[base4 + 3]);

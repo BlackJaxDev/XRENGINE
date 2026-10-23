@@ -1,6 +1,8 @@
+using System.ComponentModel;
 using System.Numerics;
 using System.Reflection;
 using XREngine.Components;
+using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Editor.UI;
@@ -21,6 +23,59 @@ public partial class InspectorPanel
         public readonly Dictionary<Type, SceneNode> PrimitiveEditors = [];
         public PropertyInfo? Property;
         public IDisposable? DropTarget;
+    }
+
+    private sealed class AssetDropRequest(PropertyInfo property, object?[] targets,
+        EditorPropertyAccess access, object?[] before, ulong providerRevision, ulong generation)
+    {
+        private int _invalidated;
+        private readonly List<Action> _unsubscribe = [];
+        public PropertyInfo Property { get; } = property;
+        public object?[] Targets { get; } = targets;
+        public EditorPropertyAccess Access { get; } = access;
+        public object?[] Before { get; } = before;
+        public ulong ProviderRevision { get; } = providerRevision;
+        public ulong Generation { get; } = generation;
+        public IRuntimeWorldContext?[] Worlds { get; } = targets
+            .Select(target => (target as XRWorldObjectBase)?.World).ToArray();
+        public SceneNode?[] Owners { get; } = targets
+            .Select(target => (target as XRComponent)?.SceneNode).ToArray();
+        public bool IsInvalidated => Volatile.Read(ref _invalidated) != 0;
+        public void Invalidate() => Interlocked.Exchange(ref _invalidated, 1);
+
+        public void ObserveSynchronousChanges()
+        {
+            foreach (object? target in Targets)
+            {
+                if (target is IXRNotifyPropertyChanged engineObject)
+                {
+                    XRPropertyChangedEventHandler handler = (_, args) =>
+                    {
+                        if (string.IsNullOrEmpty(args.PropertyName) || args.PropertyName == Property.Name)
+                            Invalidate();
+                    };
+                    engineObject.PropertyChanged += handler;
+                    _unsubscribe.Add(() => engineObject.PropertyChanged -= handler);
+                }
+                else if (target is INotifyPropertyChanged observable)
+                {
+                    PropertyChangedEventHandler handler = (_, args) =>
+                    {
+                        if (string.IsNullOrEmpty(args.PropertyName) || args.PropertyName == Property.Name)
+                            Invalidate();
+                    };
+                    observable.PropertyChanged += handler;
+                    _unsubscribe.Add(() => observable.PropertyChanged -= handler);
+                }
+            }
+        }
+
+        public void StopObserving()
+        {
+            foreach (Action unsubscribe in _unsubscribe)
+                unsubscribe();
+            _unsubscribe.Clear();
+        }
     }
 
     private sealed class PropertyProvider : IUIVirtualTableSource<PropertyInfo>, IVirtualListItemIndex
@@ -72,6 +127,7 @@ public partial class InspectorPanel
     private UIListTransform? _virtualPropertyList;
     private UIScrollableTransform? _propertyScroll;
     private readonly Dictionary<UIBoundableTransform, PropertyRow> _propertyRows = [];
+    private readonly Dictionary<PropertyInfo, AssetDropRequest> _pendingAssetDrops = [];
     private UIBoundableTransform? _detailTransform;
     private SceneNode? _detailEditor;
     private PropertyInfo? _detailProperty;
@@ -274,6 +330,21 @@ public partial class InspectorPanel
                     EditorDragDropUtility.TryGetComponent(payload, out XRComponent? component) &&
                     component is not null && property.PropertyType.IsInstanceOfType(component));
         }
+        else if (typeof(XRAsset).IsAssignableFrom(property.PropertyType) && targets is { Length: > 0 } &&
+                 property.SetMethod?.IsPublic == true)
+        {
+            object?[] boundTargets = targets;
+            state.DropTarget = EditorDragDropUtility.RegisterDropTarget(row,
+                payload =>
+                {
+                    if (!ReferenceEquals(state.Property, property) ||
+                        !TryResolveAssetReference(payload, property, out string path, out Type type))
+                        return false;
+                    return StartAssetReferenceDrop(path, type, property, boundTargets);
+                },
+                payload => ReferenceEquals(state.Property, property) &&
+                    TryResolveAssetReference(payload, property, out _, out _));
+        }
         TypeCode typeCode = Type.GetTypeCode(property.PropertyType);
         bool isString = property.PropertyType == typeof(string);
         bool primitive = !isString && typeCode is not (TypeCode.Object or TypeCode.DateTime or TypeCode.Empty or TypeCode.DBNull);
@@ -292,6 +363,124 @@ public partial class InspectorPanel
         }
         NativeUIElements.RebindPropertyEditor(editorNode, property, targets);
         editorNode.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Visible;
+    }
+
+    private static bool TryResolveAssetReference(in EditorDragDropUtility.DragPayload payload,
+        PropertyInfo property, out string path, out Type type)
+    {
+        path = string.Empty;
+        type = null!;
+        if (!EditorDragDropUtility.TryGetAssetPath(payload, out string? candidate) ||
+            string.IsNullOrWhiteSpace(candidate) ||
+            !string.Equals(Path.GetExtension(candidate), $".{AssetManager.AssetExtension}",
+                StringComparison.OrdinalIgnoreCase))
+            return false;
+        Type? resolved = EditorImGuiUI.ResolveNativeAssetType(candidate);
+        if (resolved is null || !property.PropertyType.IsAssignableFrom(resolved) ||
+            Engine.Assets is null || !File.Exists(candidate))
+            return false;
+        path = Path.GetFullPath(candidate);
+        type = resolved;
+        return true;
+    }
+
+    private bool StartAssetReferenceDrop(string path, Type type, PropertyInfo property, object?[] targets)
+    {
+        AssetDropRequest? request = null;
+        try
+        {
+            EditorPropertyAccess access = new(property, targets);
+            object?[] before = targets.Select(target => target is null ? null : property.GetValue(target)).ToArray();
+            request = new AssetDropRequest(property, targets, access, before,
+                _virtualPropertyProvider!.Revision, _componentGeneration);
+            if (_pendingAssetDrops.TryGetValue(property, out AssetDropRequest? previous))
+            {
+                previous.Invalidate();
+                previous.StopObserving();
+            }
+            _pendingAssetDrops[property] = request;
+            request.ObserveSynchronousChanges();
+            _ = AssignAssetReferenceAsync(path, type, request);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            request?.StopObserving();
+            if (request is not null && _pendingAssetDrops.TryGetValue(property, out var pending) &&
+                ReferenceEquals(pending, request))
+                _pendingAssetDrops.Remove(property);
+            Debug.LogException(exception, $"Could not prepare dropped asset for '{property.Name}'.");
+            return false;
+        }
+    }
+
+    private async Task AssignAssetReferenceAsync(string path, Type type, AssetDropRequest request)
+    {
+        XRAsset? asset;
+        try
+        {
+            AssetManager? manager = Engine.Assets;
+            if (manager is null)
+            {
+                EditorImGuiUI.EnqueueSceneEdit(() => FinishAssetReferenceDrop(request, null));
+                return;
+            }
+            asset = manager.TryGetAssetByPath(path, out XRAsset? cached)
+                ? cached : await manager.LoadAsync(path, type).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, $"Failed to load dropped asset '{path}'.");
+            EditorImGuiUI.EnqueueSceneEdit(() => FinishAssetReferenceDrop(request, null));
+            return;
+        }
+        EditorImGuiUI.EnqueueSceneEdit(() => FinishAssetReferenceDrop(request, asset));
+    }
+
+    private void FinishAssetReferenceDrop(AssetDropRequest request, XRAsset? asset)
+    {
+        request.StopObserving();
+        if (!_pendingAssetDrops.TryGetValue(request.Property, out AssetDropRequest? latest) ||
+            !ReferenceEquals(latest, request))
+            return;
+        _pendingAssetDrops.Remove(request.Property);
+        object?[]? current = _virtualPropertyProvider?.Targets;
+        if (asset is null || !request.Property.PropertyType.IsInstanceOfType(asset) ||
+            request.IsInvalidated || request.Generation != _componentGeneration ||
+            SceneNode.IsDestroyed || _virtualPropertyProvider?.Revision != request.ProviderRevision ||
+            current is null || current.Length != request.Targets.Length ||
+            request.Targets.Where((target, index) => !ReferenceEquals(target, current[index])).Any() ||
+            Properties?.Contains(request.Property) != true)
+            return;
+        for (int index = 0; index < request.Targets.Length; index++)
+        {
+            object? target = request.Targets[index];
+            if (target is null || target is XRObjectBase { IsDestroyed: true } ||
+                target is XRWorldObjectBase worldObject &&
+                !ReferenceEquals(worldObject.World, request.Worlds[index]) ||
+                target is XRComponent component &&
+                (!ReferenceEquals(component.SceneNode, request.Owners[index]) ||
+                 component.SceneNode.IsDestroyed || !component.SceneNode.Components.Contains(component)))
+                return;
+            try
+            {
+                if (!Equals(request.Property.GetValue(target), request.Before[index]))
+                    return;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogException(exception, $"Could not recheck '{request.Property.Name}' before asset assignment.");
+                return;
+            }
+        }
+        try
+        {
+            request.Access.SetValue(asset);
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, $"Failed to set dropped asset on '{request.Property.Name}'.");
+        }
     }
 
     private void UnbindPropertyRow(UIBoundableTransform row)
@@ -422,6 +611,12 @@ public partial class InspectorPanel
 
     private void ReleaseVirtualPropertyList()
     {
+        foreach (AssetDropRequest request in _pendingAssetDrops.Values)
+        {
+            request.Invalidate();
+            request.StopObserving();
+        }
+        _pendingAssetDrops.Clear();
         HideDetailEditor();
         if (_virtualPropertyList is not null)
             _virtualPropertyList.VirtualProvider = null;

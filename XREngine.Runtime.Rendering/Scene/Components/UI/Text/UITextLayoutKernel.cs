@@ -10,6 +10,8 @@ public static class UITextLayoutKernel
 {
     public static UITextLayoutResult Measure(UITextLayoutInput input, Vector2 availableSize)
     {
+        if (input.ShapingRequest is not null && input.ShapedRun is null)
+            throw new InvalidOperationException("UI.ShapingRequestUnresolved: shape text before measuring layout.");
         if (!float.IsFinite(input.DpiScale) || input.DpiScale <= 0.0f)
             throw new ArgumentOutOfRangeException(nameof(input), "DPI scale must be finite and positive.");
         if (input.DpiScale != 1.0f)
@@ -31,7 +33,8 @@ public static class UITextLayoutKernel
                     LineHeight = scaledCarets[i].LineHeight * dpiScale
                 };
             return UITextLayoutResult.FromOwned(unscaled.IntrinsicSize * dpiScale, scaledGlyphs,
-                scaledCarets, unscaled.TextRevision, unscaled.FontRevision, unscaled.HasVisualCarets);
+                scaledCarets, unscaled.TextRevision, unscaled.FontRevision,
+                unscaled.HasVisualCarets, unscaled.UsesShapedGlyphs);
         }
         if (input.ShapedRun is not null)
             return UITextShapedLayoutKernel.Measure(input, availableSize);

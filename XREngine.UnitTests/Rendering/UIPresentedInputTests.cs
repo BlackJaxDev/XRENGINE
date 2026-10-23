@@ -289,7 +289,8 @@ public sealed class UIPresentedInputTests
             input.FocusedComponent = outside;
             outer.Show(Vector2.Zero, new ContextMenuItem("Outer", () => { }));
             outerNode.GetTransformAs<UIBoundableTransform>(true)!.Visibility = EVisibility.Visible;
-            UIButtonComponent outerButton = outerNode.FirstChild!.FirstChild!.GetComponent<UIButtonComponent>()!;
+            UIButtonComponent outerButton = outerNode.FirstChild!.FirstChild!.FirstChild!
+                .GetComponent<UIButtonComponent>()!;
             UIElementIdentity outerScope = outerNode.GetTransformAs<UIBoundableTransform>(true)!.ElementIdentity;
             Present(2,
                 [Hit(outside, 0, Vector2.Zero, rootScope), Hit(outerButton, 1, new Vector2(30, 0), outerScope)],
@@ -301,7 +302,8 @@ public sealed class UIPresentedInputTests
 
             inner.Show(Vector2.Zero, new ContextMenuItem("Inner", () => { }));
             innerNode.GetTransformAs<UIBoundableTransform>(true)!.Visibility = EVisibility.Visible;
-            UIButtonComponent innerButton = innerNode.FirstChild!.FirstChild!.GetComponent<UIButtonComponent>()!;
+            UIButtonComponent innerButton = innerNode.FirstChild!.FirstChild!.FirstChild!
+                .GetComponent<UIButtonComponent>()!;
             UIElementIdentity innerScope = innerNode.GetTransformAs<UIBoundableTransform>(true)!.ElementIdentity;
             Present(3,
                 [Hit(outside, 0, Vector2.Zero, rootScope), Hit(outerButton, 1, new Vector2(30, 0), outerScope),

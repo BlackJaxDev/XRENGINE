@@ -37,6 +37,7 @@ public partial class UITextInputComponent
             IsComposing || SingleLineMode ||
             !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult currentLayout) ||
             !ReferenceEquals(layout, currentLayout) ||
+            !layout.HasCompleteGraphemeCaretStops ||
             !TryFindCaretStop(layout.Carets.Span, out UITextCaretStop current))
             return false;
 
@@ -112,12 +113,26 @@ public partial class UITextInputComponent
     private bool TryFindCaretStop(ReadOnlySpan<UITextCaretStop> stops, out UITextCaretStop result)
     {
         result = default;
+        if (_visualCaretLayout is not null &&
+            (uint)_visualCaretIndex < (uint)stops.Length &&
+            stops[_visualCaretIndex].Utf16Offset == CursorPosition &&
+            ReferenceEquals(_visualCaretLayout, TextComponent.TryGetCurrentLayoutResult(
+                out UITextLayoutResult currentLayout) ? currentLayout : null))
+        {
+            result = stops[_visualCaretIndex];
+            return true;
+        }
         bool found = false;
         for (int index = 0; index < stops.Length; index++)
         {
             UITextCaretStop stop = stops[index];
             if (stop.Utf16Offset != CursorPosition)
                 continue;
+            if (_visualCaretLayout is not null && stop.Affinity == _visualCaretAffinity)
+            {
+                result = stop;
+                return true;
+            }
             if (!found || _verticalVisualLine is null || _verticalVisualLine == stop.Line)
             {
                 result = stop;

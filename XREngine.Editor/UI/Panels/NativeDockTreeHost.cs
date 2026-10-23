@@ -21,23 +21,38 @@ internal sealed class NativeDockTreeHost
     private readonly Dictionary<string, SceneNode> _panelSlots = [];
     private int _closedCursor;
 
-    private NativeDockTreeHost(SceneNode root, RuntimeWorld? world)
+    private NativeDockTreeHost(SceneNode root, RuntimeWorld? world, XRWindow? window = null,
+        string? windowKey = null, string? initialPanel = null, bool restoreWindows = true)
     {
         _root = root;
         _world = world;
-        _window = EditorPanelHost.ResolveWindow(root);
-        _windowKey = EditorPanelHost.GetWindowKey(_window);
+        _window = window ?? EditorPanelHost.ResolveWindow(root);
+        _windowKey = windowKey ?? EditorPanelHost.GetWindowKey(_window);
         _layout = NativeDockLayoutStore.Load(_windowKey);
+        if (initialPanel is not null)
+        {
+            _layout.DockTree = new NativeDockTree
+            {
+                Root = new NativeDockNode { Tabs = [initialPanel], Selected = initialPanel },
+            }.Sanitize();
+            NativeDockLayoutStore.Save(_windowKey, _layout);
+        }
         _tree = _layout.DockTree!;
         _root.Destroyed += _ => Dispose();
-        _root.AddComponent<NativeDockWindowRegistration>()!.Configure(_windowKey, ReceiveToolPanel);
+        _root.AddComponent<NativeDockWindowRegistration>()!.Configure(_windowKey, ReceivePanel);
         Render();
-        if (_window is not null)
+        if (restoreWindows && _window is not null)
             NativeDetachedDockWindows.Restore(_window);
     }
 
     public static void Build(SceneNode root, RuntimeWorld? world)
         => _ = new NativeDockTreeHost(root, world);
+
+    public static void BuildDetached(SceneNode root, RuntimeWorld world, XRWindow window,
+        string windowKey, string panel, bool restoring)
+        => _ = new NativeDockTreeHost(root, world, window, windowKey,
+            restoring && NativeDockLayoutStore.HasLayout(windowKey) ? null : panel,
+            restoreWindows: false);
 
     private void Render()
     {
@@ -399,8 +414,7 @@ internal sealed class NativeDockTreeHost
     {
         if (source.Selected is not { } panel || _window is null)
             return;
-        int index = Array.IndexOf(NativeDockPanel.LegacyTools, panel);
-        if (index >= 0 && NativeDetachedDockWindows.Open(_window, index) && _tree.Close(panel))
+        if (NativeDetachedDockWindows.Open(_window, panel) && _tree.Close(panel))
             CommitStructure();
     }
 
@@ -408,19 +422,18 @@ internal sealed class NativeDockTreeHost
     {
         if (source.Selected is not { } panel)
             return;
-        int index = Array.IndexOf(NativeDockPanel.LegacyTools, panel);
-        if (index >= 0 && NativeDockWindowRegistry.TryMoveToAnotherWindow(_windowKey, index) &&
+        if (NativeDockWindowRegistry.TryMoveToAnotherWindow(_windowKey, panel) &&
             _tree.Close(panel))
             CommitStructure();
     }
 
-    private void ReceiveToolPanel(int index)
+    private void ReceivePanel(string panel)
     {
-        if ((uint)index >= (uint)NativeDockPanel.LegacyTools.Length)
+        if (!NativeDockPanel.All.Contains(panel))
             return;
         NativeDockNode target = _tree.Stacks().FirstOrDefault(stack =>
-            stack.Tabs.Any(panel => NativeDockPanel.LegacyTools.Contains(panel))) ?? _tree.Stacks().First();
-        if (_tree.Move(NativeDockPanel.LegacyTools[index], target.Id, int.MaxValue))
+            stack.Tabs.Any(item => NativeDockPanel.LegacyTools.Contains(item))) ?? _tree.Stacks().First();
+        if (_tree.Move(panel, target.Id, int.MaxValue))
             CommitStructure();
     }
 

@@ -72,11 +72,17 @@ and fallback-font behavior are not established by the basic rune-layout kernel.
 `SkiaTextShapingBackend` uses the existing HarfBuzz dependency to return glyph IDs,
 advances, offsets, and UTF-16 clusters. Rasterization and shaping use the same
 owned bytes. Missing atlas coverage produces a named failure. `UITextComponent.UseShapedText` opts into one direction run with one atlas and
-no wrapping or line breaks. Owner capture shapes text and freezes numeric glyph
-values for the worker. The cache checks text/style/font inputs and backend
-generation before and after the shaping callback. Backend replacement invalidates
-active shaped owners. Full worker shaping, bidi analysis, fallback, wrapped
-shaping, and shaped control navigation remain open. Unsupported direction mixes,
+no wrapping or line breaks. Owner capture freezes the shaping request. The bounded
+layout worker shapes it, then measures and arranges the resolved numeric values.
+Only backends that declare worker-safe inputs enter this path. The cache checks
+text/style/font inputs and the atomic backend identity and generation. Accepted
+shaped pages remain shared on unchanged captures. Pending work compares dirty
+inputs with the accepted output, including changes from rejected earlier tasks.
+Stale worker faults cannot block a newer valid input. Feature, glyph, and scratch
+limits reject oversized requests before expansion. Skia reserves a conservative
+managed-copy allowance; this is not a hard limit on native allocator use.
+Backend replacement invalidates active shaped owners. Bidi analysis, fallback,
+and wrapped shaping remain open. Unsupported direction mixes,
 digits in RTL runs, and bidi controls report a named failure. Runtime face data
 does not change the serialized font format.
 
@@ -249,7 +255,11 @@ property access, marshal source notifications to the scene owner, and group
 mutations through `Undo`. Engine targets use property-change tracking. Plain
 object targets record their committed before/after values in the same undo group.
 Numeric fields retain an invalid draft until valid
-commit or cancellation. Text fields provide selection, grapheme navigation,
+commit or cancellation. Shaped text distinguishes glyph provenance from complete
+grapheme caret geometry. Complete runs use visual left/right navigation while
+keeping logical UTF-16 edit positions. Incomplete runs reject geometric caret,
+selection, and candidate placement rather than inventing logical geometry.
+Logical edits can continue while a newer layout is pending. Text fields provide selection, grapheme navigation,
 undo/redo, and composition state.
 
 The desktop IME adapter uses existing Windows IMM32 APIs. Composition events carry
@@ -300,10 +310,10 @@ mutation path. Windows watcher ordering and complete workflow parity remain
 unverified. `NativeDockTree` provides a bounded, versioned split/tab model with
 move, resize, close, reopen, and malformed-state checks. `NativeDockTreeHost` connects that model to the primary editor canvas. Structural
 changes retain panel instances, deactivate/detach closed slots, and destroy only
-obsolete structural nodes. Existing tool search and scroll state survive. Four
-tool panel types use the existing detached-window path. Primary-panel detach,
-cross-window pointer drag, presented focus restoration, and full play-mode state
-persistence remain open.
+obsolete structural nodes. Existing tool search and scroll state survive. All seven primary panel types use the detached-window path. Legacy numeric
+window records migrate an existing saved layout; absent records seed the requested
+panel. Cross-window pointer drag, presented focus restoration, and full play-mode
+state persistence remain open.
 
 Render-command publication claims and receipt suspend/resume boundaries are
 prepared for world-space integration. No world command uses that interface yet.
@@ -332,3 +342,33 @@ Later direct dictionary edits require another call before a draw can use them.
 Animation changes retain unchanged UV buffers and mesh storage. Known built-in
 glyph snapshots contain only used elements. Reusable source buffers can retain
 spare capacity; generic custom shader snapshots preserve their full storage.
+
+## Sparse quad uploads and editor resources
+
+Desktop quad cohorts retain stable payload slots. A dense draw-index buffer at
+shader binding 5 preserves painter order while removed slots can be reused.
+Changed contiguous payload spans upload independently. A full buffer rebuild
+clears slot-initialization metadata with the storage, so later hole reuse writes
+all fields. Historical cohorts retain their own slots and buffers until retirement.
+This contract does not establish live GPU upload cost or independent static layers.
+
+Editor panel and toolbar backgrounds use intrinsic solid colors. They no longer
+request an implicit grab-pass blur. Shared opt-in backdrop capture remains open.
+Toolbar rebuild and teardown detach item callbacks and destroy owned child nodes.
+
+Inspector asset drops finish on the scene-edit owner queue. Request identity,
+property notifications, captured values, target lifetime, and world identity reject
+stale loads. Multi-node component removal records inverse actions before callbacks
+and verifies the whole target set after success and rollback. Partial rollback
+retains the inverse action and reports the failure.
+
+The native animation panel and ImGui panel share canonical key/member mutation
+actions and Undo recording. The native panel uses paged path discovery, stable
+key IDs, and a retained plot bounded to 512 segments. Full timeline interaction
+and animation editor parity remain open. The profiler virtualizes the full source
+row set instead of truncating it at 1,000 rows.
+
+`UIRenderSurfacePool` prepares four bounded leased color targets. Reservation and
+GPU completion are separate generations. Promotion requires a submitted, signaled
+producer fence. The current world/offscreen display route remains unchanged;
+these targets are not yet connected to exact producer/consumer publication.

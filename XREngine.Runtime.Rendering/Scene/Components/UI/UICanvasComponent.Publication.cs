@@ -210,7 +210,6 @@ public partial class UICanvasComponent
             }
             return;
         }
-        _lastPublicationCaptureFailure = null;
         bool hitsChanged = previous is null ||
             !CollectionsMarshal.AsSpan(_publicationHitScratch).SequenceEqual(previous.Hits);
         bool scrollChanged = previous is null ||
@@ -230,6 +229,7 @@ public partial class UICanvasComponent
         ulong hitGeneration = previous?.HitGeneration ?? ++_nextHitGeneration;
         if (previous is not null && hitsChanged)
             hitGeneration = ++_nextHitGeneration;
+        _lastPublicationCaptureFailure = null;
         lock (_publicationGate)
         {
             // A capture adapter can mutate the tree while it copies draw values.

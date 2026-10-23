@@ -96,6 +96,33 @@ public class NativeDockLayoutTests
     }
 
     [Test]
+    public void LegacyDetached_MigratesOneToolStackDespiteStalePrimaryTree()
+    {
+        NativeDockLayout layout = new()
+        {
+            OpenMask = (1 << 0) | (1 << 2),
+            SelectedTab = 2,
+            TabOrder = [2, 0, 3, 1],
+            PanelScrollOffsets = [17, 23, 31, 47],
+            AssetSearch = "stone",
+            ConsoleFilter = "warning",
+            DockTree = new NativeDockLayout().Sanitize().DockTree,
+        };
+
+        NativeDockTree tree = NativeDockTree.FromLegacyDetached(layout.Sanitize(), 0);
+        Assert.Multiple(() =>
+        {
+            Assert.That(tree.Stacks().Count(), Is.EqualTo(1));
+            Assert.That(tree.Root.Tabs, Is.EqualTo(new[] { NativeDockPanel.Profiler, NativeDockPanel.Assets }));
+            Assert.That(tree.Root.Selected, Is.EqualTo(NativeDockPanel.Profiler));
+            Assert.That(tree.Root.Tabs, Does.Not.Contain(NativeDockPanel.Scene));
+            Assert.That(layout.PanelScrollOffsets, Is.EqualTo(new float[] { 17, 23, 31, 47 }));
+            Assert.That(layout.AssetSearch, Is.EqualTo("stone"));
+            Assert.That(layout.ConsoleFilter, Is.EqualTo("warning"));
+        });
+    }
+
+    [Test]
     public void DockTree_MoveSplitCloseReopenAndResizePreserveUniquePanelIdentity()
     {
         NativeDockTree tree = new NativeDockLayout().Sanitize().DockTree!;

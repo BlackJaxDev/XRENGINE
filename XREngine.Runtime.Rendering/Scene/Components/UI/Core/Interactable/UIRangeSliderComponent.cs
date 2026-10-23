@@ -27,8 +27,7 @@ public class UIRangeSliderComponent : UIInteractableComponent
         if (!CanInteract || IsReadOnly || !float.IsFinite(direction.X) ||
             MathF.Abs(direction.X) <= MathF.Abs(direction.Y))
             return false;
-        AccessibilityAdjust(Math.Sign(direction.X));
-        return true;
+        return AccessibilityAdjust(Math.Sign(direction.X));
     }
     public override bool AccessibilityAdjust(int direction)
     {
@@ -148,10 +147,14 @@ public class UIRangeSliderComponent : UIInteractableComponent
         if (_value == value)
             return;
         double previous = _value;
-        if (_binding is not null && origin != EUIValueChangeOrigin.Binding && !_dragging)
+        IUIValueBinding<double>? binding = _binding;
+        if (binding is not null && origin != EUIValueChangeOrigin.Binding && !_dragging)
         {
-            _binding.SetValue(value);
-            value = Normalize(_binding.Value);
+            bool wasActive = IsActiveInHierarchy;
+            binding.SetValue(value);
+            if (!ReferenceEquals(_binding, binding) || wasActive && !IsActiveInHierarchy)
+                return;
+            value = Normalize(binding.Value);
         }
         SetField(ref _value, value, nameof(Value));
         ValueChanged?.Invoke(new(previous, value, origin));
@@ -189,10 +192,13 @@ public class UIRangeSliderComponent : UIInteractableComponent
             SetValue(_binding?.Value ?? previous, EUIValueChangeOrigin.Binding);
             return;
         }
-        if (_binding is not null)
+        IUIValueBinding<double>? binding = _binding;
+        if (binding is not null)
         {
-            _binding.SetValue(_value);
-            SetField(ref _value, Normalize(_binding.Value), nameof(Value));
+            binding.SetValue(_value);
+            if (!ReferenceEquals(_binding, binding) || !IsActiveInHierarchy)
+                return;
+            SetField(ref _value, Normalize(binding.Value), nameof(Value));
         }
         if (previous != _value)
             ValueCommitted?.Invoke(new(previous, _value, EUIValueChangeOrigin.User));

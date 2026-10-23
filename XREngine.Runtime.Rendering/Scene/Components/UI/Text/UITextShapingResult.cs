@@ -8,6 +8,9 @@ public sealed class UITextShapingResult
     public UITextShapingResult(UITextShapingRequest request, UITextShapedGlyph[] glyphs)
     {
         Request = request ?? throw new ArgumentNullException(nameof(request));
+        ArgumentNullException.ThrowIfNull(glyphs);
+        if (glyphs.Length > (long)request.Text.Length * 4)
+            throw new NotSupportedException("UI.ShapedGlyphCountExceeded: one run exceeds its glyph budget.");
         _glyphs = (UITextShapedGlyph[])glyphs.Clone();
     }
 

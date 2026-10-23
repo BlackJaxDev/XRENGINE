@@ -331,7 +331,7 @@ public static partial class InspectorPropertyEditors
     private static SceneNode CreateInspectorCard(SceneNode parent)
     {
         var cardNode = parent.NewChild<UIMaterialComponent>(out var matComp);
-        matComp.Material = EditorPanel.MakeBackgroundMaterial();
+        EditorPanel.ApplyBackground(matComp);
         var cardLayout = cardNode.SetTransform<UIListTransform>();
         cardLayout.DisplayHorizontal = false;
         cardLayout.ItemSpacing = 2.0f;

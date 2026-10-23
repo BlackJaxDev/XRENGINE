@@ -216,6 +216,28 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void ShapedVisualCaretNavigation_FollowsDisplayedOrderAndYieldsAtEdges()
+    {
+        UITextCaretStop[] visualStops =
+        [
+            new(2, 0, new(0, 0), 10, 0, UITextCaretAffinity.Upstream),
+            new(1, 0, new(9, 0), 10, 1, UITextCaretAffinity.Downstream),
+            new(1, 0, new(9, 0), 10, 2, UITextCaretAffinity.Upstream),
+            new(0, 0, new(18, 0), 10, 3, UITextCaretAffinity.Downstream)
+        ];
+        int[] boundaries = [0, 1];
+
+        UITextInputComponent.FindNextVisualCaretIndex(visualStops, 0, 1, 2, boundaries, 2)
+            .ShouldBe(1);
+        UITextInputComponent.FindNextVisualCaretIndex(visualStops, 1, 1, 1, boundaries, 2)
+            .ShouldBe(3);
+        UITextInputComponent.FindNextVisualCaretIndex(visualStops, 3, 1, 0, boundaries, 2)
+            .ShouldBe(-1);
+        UITextInputComponent.FindNextVisualCaretIndex(visualStops, 3, -1, 0, boundaries, 2)
+            .ShouldBe(2);
+    }
+
+    [Test]
     public void NumericInput_HoldsInvalidIntermediateTextForCommit()
     {
         var input = new UIIntInputComponent();
@@ -225,6 +247,99 @@ public sealed class UIRetainedControlsTests
         input.AllowInvalidDraft.ShouldBeTrue();
         input.PostValidateInput("-").ShouldBeFalse();
         input.PostValidateInput("-12").ShouldBeTrue();
+    }
+
+    [Test]
+    public void NumericInput_CommitsValidDraftAndCancelsInvalidDraftWithoutBindingWrite()
+    {
+        SceneNode root = new("Numeric test canvas", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode field = new(root) { Name = "Number" };
+        field.SetTransform<UIBoundableTransform>();
+        field.AddComponent<UITextComponent>();
+        UIIntInputComponent input = field.AddComponent<UIIntInputComponent>()!;
+        UIValueState<string> binding = new("12");
+        int writes = 0;
+        binding.ValueChanged += _ => writes++;
+        input.Binding = binding;
+        root.IsActiveSelf = true;
+        input.IsFocused = true;
+
+        input.UserReplaceText("-", 1, 1).ShouldBeTrue();
+        input.IsInvalid.ShouldBeTrue();
+        input.UserSubmit();
+        binding.Value.ShouldBe("12");
+        writes.ShouldBe(0);
+        input.UserCancel();
+        input.Text.ShouldBe("12");
+
+        input.UserReplaceText("-34", 3, 3).ShouldBeTrue();
+        input.UserSubmit();
+        binding.Value.ShouldBe("-34");
+        writes.ShouldBe(1);
+    }
+
+    [Test]
+    public void RangeDrag_CancelsPreviewAndCommitsOnceAtRelease()
+    {
+        SceneNode root = new("Range test canvas", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode node = new(root) { Name = "Range" };
+        node.SetTransform<UIBoundableTransform>();
+        UIRangeSliderComponent slider = node.AddComponent<UIRangeSliderComponent>()!;
+        UIValueState<double> binding = new(0.2);
+        int writes = 0;
+        int commits = 0;
+        binding.ValueChanged += _ => writes++;
+        slider.ValueCommitted += _ => commits++;
+        slider.Binding = binding;
+        root.IsActiveSelf = true;
+
+        slider.BeginDrag(0.8f).ShouldBeTrue();
+        slider.IsDragging.ShouldBeTrue();
+        binding.Value.ShouldBe(0.2);
+        slider.EndDrag(false);
+        slider.Value.ShouldBe(0.2);
+        writes.ShouldBe(0);
+        commits.ShouldBe(0);
+
+        slider.BeginDrag(0.7f).ShouldBeTrue();
+        slider.EndDrag(true);
+        binding.Value.ShouldBe(0.7, 0.00001);
+        writes.ShouldBe(1);
+        commits.ShouldBe(1);
+        slider.SetValue(1);
+        slider.TryConsumeFocusDirection(Vector2.UnitX).ShouldBeFalse();
+    }
+
+    [Test]
+    public void RangeDrag_BindingReplacementDuringCommitDoesNotUseOldSource()
+    {
+        SceneNode root = new("Range replacement", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode node = new(root) { Name = "Range" };
+        node.SetTransform<UIBoundableTransform>();
+        UIRangeSliderComponent slider = node.AddComponent<UIRangeSliderComponent>()!;
+        UIValueState<double> oldBinding = new(0.2);
+        UIValueState<double> replacement = new(0.4);
+        slider.Binding = oldBinding;
+        int commits = 0;
+        slider.ValueCommitted += _ => commits++;
+        root.IsActiveSelf = true;
+        oldBinding.ValueChanged += _ => slider.Binding = replacement;
+
+        slider.BeginDrag(0.8f).ShouldBeTrue();
+        slider.EndDrag(true);
+
+        slider.Binding.ShouldBeSameAs(replacement);
+        slider.Value.ShouldBe(0.4);
+        commits.ShouldBe(0);
     }
 
     [Test]
@@ -388,6 +503,34 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void OrdinaryContextMenu_MountsItemsInScrollableViewport()
+    {
+        SceneNode root = new("Popup canvas", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode popupNode = new(root) { Name = "Popup" };
+        popupNode.SetTransform<UIBoundableTransform>();
+        UIContextMenuComponent popup = popupNode.AddComponent<UIContextMenuComponent>()!;
+        root.IsActiveSelf = true;
+
+        ContextMenuItem[] items = Enumerable.Range(0, 12)
+            .Select(index => new ContextMenuItem($"Item {index}", () => { })).ToArray();
+        popup.Show(Vector2.Zero, items);
+
+        SceneNode scrollNode = popupNode.FirstChild.ShouldNotBeNull();
+        UIScrollableTransform scroll = scrollNode.GetTransformAs<UIScrollableTransform>(true)!;
+        UIScrollRegionComponent region = scrollNode.GetComponent<UIScrollRegionComponent>()!;
+        UIListTransform list = scrollNode.FirstChild!.GetTransformAs<UIListTransform>(true)!;
+        scroll.ScrollableY.ShouldBeTrue();
+        scroll.ScrollableX.ShouldBeFalse();
+        region.IsTabStop.ShouldBeFalse();
+        list.Children.Count.ShouldBe(12);
+        list.Height.ShouldBe(UIContextMenuComponent.ItemHeight * 12);
+        popup.Hide();
+    }
+
+    [Test]
     public void ImeSnapshot_CoalescesPreeditButKeepsCommitUntilConsumed()
     {
         WindowInputSnapshotAccumulator input = new();
@@ -453,6 +596,22 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void ComboBinding_ReplacementDuringWriteKeepsNewSourceSelection()
+    {
+        UIComboBoxComponent combo = new();
+        combo.SetOptions([new(3, "Third"), new(8, "Eighth")]);
+        UIValueState<ulong?> oldBinding = new(3);
+        UIValueState<ulong?> replacement = new(3);
+        combo.Binding = oldBinding;
+        oldBinding.ValueChanged += _ => combo.Binding = replacement;
+
+        combo.Select(8, EUIValueChangeOrigin.User).ShouldBeFalse();
+
+        combo.Binding.ShouldBeSameAs(replacement);
+        combo.SelectedId.ShouldBe(3UL);
+    }
+
+    [Test]
     public void ColorSelector_PreviewCancelCommitAndRecycleKeepBindingConsistent()
     {
         SceneNode root = new("Color binding", new UICanvasTransform()) { IsActiveSelf = false };
@@ -490,6 +649,33 @@ public sealed class UIRetainedControlsTests
         ColorF4 retained = selector.LinearColor;
         binding.SetValue(original);
         selector.LinearColor.ShouldBe(retained);
+    }
+
+    [Test]
+    public void ColorSelector_BindingReplacementDuringCommitDoesNotEmitOldCommit()
+    {
+        SceneNode root = new("Color replacement", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode node = new(root) { Name = "Color" };
+        node.SetTransform<UIBoundableTransform>();
+        UIColorSelectorComponent selector = node.AddComponent<UIColorSelectorComponent>()!;
+        UIValueState<ColorF4> oldBinding = new(new ColorF4(1, 0, 0, 1));
+        UIValueState<ColorF4> replacement = new(new ColorF4(0, 0, 1, 1));
+        selector.Binding = oldBinding;
+        int commits = 0;
+        selector.ColorCommitted += _ => commits++;
+        root.IsActiveSelf = true;
+        oldBinding.ValueChanged += _ => selector.Binding = replacement;
+
+        selector.BeginEdit().ShouldBeTrue();
+        selector.PreviewHexSrgb("#00FF00FF").ShouldBeTrue();
+        selector.CommitEdit();
+
+        selector.Binding.ShouldBeSameAs(replacement);
+        selector.LinearColor.ShouldBe(replacement.Value);
+        commits.ShouldBe(0);
     }
 
     [Test]

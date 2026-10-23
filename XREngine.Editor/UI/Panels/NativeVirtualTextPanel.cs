@@ -55,7 +55,16 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
         commands.ItemSize = 88;
         commands.ItemSpacing = 2;
         CreateCommands(Commands);
-        SceneNode content = root.NewChildWithTransform(out UIListTransform list, "Rows");
+        SceneNode content = root;
+        if (FooterHeight > 0)
+        {
+            content = root.NewChildWithTransform(out UIDualSplitTransform contentSplit, "ContentAndFooter");
+            contentSplit.VerticalSplit = true;
+            contentSplit.FirstFixedSize = false;
+            contentSplit.FixedSize = FooterHeight;
+            contentSplit.SplitterSize = 0;
+        }
+        content.NewChildWithTransform(out UIListTransform list, "Rows");
         list.DisplayHorizontal = false;
         list.ItemAlignment = EListAlignment.TopOrLeft;
         list.ItemSize = 24;
@@ -63,6 +72,8 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
         list.VirtualProvider = RowProvider;
         _list = list;
         list.ContentScrollOffset = _storedScrollOffset;
+        if (FooterHeight > 0)
+            CreateFooter(content);
         RefreshRows();
     }
 
@@ -74,6 +85,8 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
     }
 
     protected virtual void CreateCommands(SceneNode commands) { }
+    protected virtual float FooterHeight => 0;
+    protected virtual void CreateFooter(SceneNode parent) { }
     protected virtual void OnRowActivated(ulong id) { }
     protected abstract void RefreshRows();
 
@@ -122,5 +135,5 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
         _list.SetVirtualBounds(ViewportHeight(), 0);
     }
 
-    private float ViewportHeight() => MathF.Max(24, BoundableTransform.ActualHeight - 30);
+    private float ViewportHeight() => MathF.Max(24, BoundableTransform.ActualHeight - 30 - FooterHeight);
 }

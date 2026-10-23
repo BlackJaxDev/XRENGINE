@@ -25,6 +25,7 @@ internal sealed class UILayoutValuePageView<T>
     }
 
     internal T[][] CopyPageTable() => (T[][])_pages.Clone();
+    internal T[] GetPage(int index) => _pages[index / PageSize];
 
     internal bool SharesPageWith(UILayoutValuePageView<T> other, int index)
         => ReferenceEquals(_pages[index / PageSize], other._pages[index / PageSize]);

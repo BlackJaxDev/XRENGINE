@@ -12,14 +12,19 @@ new headless regression tests before Windows and graphics validation on
 2026-10-23. This approval applies to this task. It does not establish live
 acceptance or change the default editor.
 
-The current checkpoint source passes the headless and editor builds with zero
-warnings and errors through `Tools/Invoke-AgentBuild.ps1`. All **353 of 353**
-headless tests pass, with no failures or skips. The final run took 7.657 seconds.
-Coverage includes immutable image atlases and callback teardown, custom image
-ownership, shaping cache invalidation and input capture, used glyph prefixes,
-virtual accessibility, popup Back routing, and fresh dock-layout state. The
-headless build took 13.11 seconds. The matching editor build passed in 47.53s;
-the full desktop test project compiled in 43.85s. Both had zero warnings/errors.
+The current headless snapshot passes compilation with zero warnings and errors
+through `Tools/Invoke-AgentBuild.ps1`. All **391 of 391** tests pass, with no
+failures or skips, in 8.844 seconds. The build took 16.09 seconds. Coverage adds
+worker shaping, pending-input cache reuse, backend-only invalidation, shaping
+budgets, sparse quad slot reuse after storage clearing, shaped caret provenance,
+ordinary popup structure, and callback-safe key removal. The count also includes
+existing animation timing tests newly linked into the headless project.
+
+The matching editor build passed with zero warnings/errors in 40.30s. The full
+desktop test project compiled with zero warnings/errors in 47.19s. Source hashes
+confirmed that these builds used the same runtime and test source as the final
+headless run. The editor-only callback regressions compile but require Windows
+execution.
 
 The editor build compiles Windows targets on Linux. The desktop test-project
 build compiles shaping and Vulkan regression tests. Desktop tests did not execute:
