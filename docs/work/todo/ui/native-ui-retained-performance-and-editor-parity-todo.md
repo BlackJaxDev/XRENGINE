@@ -7,7 +7,7 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-Phase 1 contracts and instrumentation are implemented in the runtime UI change-tracking types and their integration points. They provide stable element IDs and incarnations, eight change domains, a bounded coalescing journal with removal tombstones, local ancestor invalidation, and work counters. The final targeted run passed 23 tests; the full headless run passed 167 tests. Full editor compilation remains blocked after NuGet restore by the uninitialized OpenVR.NET and OscCore submodules, and live acceptance remains open in the validation document. No worker layout, coherent asynchronous publication, persistent UI rendering, virtual controls, or editor panel implementations are complete. ImGui remains the default editor.
+Phase 1 contracts and instrumentation are implemented in the runtime UI change-tracking types and their integration points. They provide stable element IDs and incarnations, eight change domains, a bounded coalescing journal with removal tombstones, local ancestor invalidation, and work counters. The final targeted run passed 23 tests; the full headless run passed 167 tests. NuGet restore and pinned submodule initialization passed. Full editor compilation remains blocked by `NETSDK1073` for the Windows Forms framework reference in the Linux environment, and live acceptance remains open in the validation document. No worker layout, coherent asynchronous publication, persistent UI rendering, virtual controls, or editor panel implementations are complete. ImGui remains the default editor.
 
 ## Open Code Items
 
