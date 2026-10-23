@@ -1,4 +1,6 @@
 using System.Numerics;
+using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
@@ -19,6 +21,146 @@ public sealed class UIPresentedInputTests
     private UITestShaderScope _shaderScope = null!;
     [SetUp] public void SetUpShaderAssets() => _shaderScope = new UITestShaderScope();
     [TearDown] public void RestoreShaderAssets() => _shaderScope.Dispose();
+
+    [Test]
+    public void ReentrantPressKeepsItsPresentedGeometryAndLeavesReplacementCaptureUsable()
+    {
+        UICanvasInputComponent input = new();
+        PointerReentryProbe target = new();
+        UIPublication first = EmptyPointerPacket(1);
+        UIPublication replacement = EmptyPointerPacket(2);
+        try
+        {
+            SetPointerCapture(input, target, first, 1, new UIPointerGeometry(new Vector2(120, 20)));
+            target.AfterPress = () =>
+            {
+                ClearPointerCapture(input);
+                SetPointerCapture(input, target, replacement, 2,
+                    new UIPointerGeometry(new Vector2(240, 20)));
+                target.ThrowAfterPress = true;
+            };
+
+            var exception = Assert.Throws<System.Reflection.TargetInvocationException>(
+                () => DispatchPointerPress(input, target, 1));
+            exception!.InnerException.ShouldBeOfType<InvalidOperationException>();
+            target.Before[0].ShouldBe(new Vector2(120, 20));
+            target.After[0].ShouldBe(new Vector2(120, 20));
+
+            target.AfterPress = null;
+            target.ThrowAfterPress = false;
+            DispatchPointerPress(input, target, 2);
+            target.Before[1].ShouldBe(new Vector2(240, 20));
+            target.After[1].ShouldBe(new Vector2(240, 20));
+        }
+        finally
+        {
+            ClearPointerCapture(input);
+            input.Destroy(true);
+            target.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void ZeroOffsetContentResizeRejectsStaleScrollbarMaximumAndCoalescesRetry()
+    {
+        UICanvasComponent canvas = new();
+        UIScrollbarComponent scrollbar = new();
+        UIScrollableTransform target = new();
+        UIBoundableTransform thumb = new();
+        try
+        {
+            scrollbar.ScrollTarget = target;
+            typeof(UIScrollbarComponent).GetField("_thumb",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(scrollbar, thumb);
+            SetScrollField(target, "_contentExtent", new Vector2(200, 20));
+            SetScrollField(target, "_viewportExtent", new Vector2(100, 20));
+            SetScrollField(target, "_hasAcceptedScrollGeometry", true);
+            target.ScrollOffset.ShouldBe(Vector2.Zero);
+            target.MaxScrollOffset.X.ShouldBe(100f);
+
+            var indices = (Dictionary<UIElementIdentity, int>)typeof(UICanvasComponent)
+                .GetField("_publicationLayoutIndices",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .GetValue(canvas)!;
+            indices.Add(target.ElementIdentity, 0);
+            indices.Add(thumb.ElementIdentity, 1);
+            UILayoutNodeOutput[] stale =
+            [
+                new() { Visible = true, AcceptedScrollOffset = Vector2.Zero,
+                    AcceptedMaxScrollOffset = new Vector2(200, 0) },
+                new() { Visible = true, ActualSize = new Vector2(50, 20) },
+            ];
+            UILayoutOutputPageView pages = UILayoutOutputPageView.CopyFrom(stale);
+            var capture = typeof(UICanvasComponent).GetMethod("CapturePointerGeometry",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            uint before = target.LayoutArrangeVersion;
+            UIPointerGeometry first = (UIPointerGeometry)capture.Invoke(canvas,
+                [scrollbar, new Vector2(100, 20), pages])!;
+            first.Scrollbar.ShouldBeNull();
+            target.LayoutArrangeVersion.ShouldBeGreaterThan(before);
+            uint afterFirst = target.LayoutArrangeVersion;
+
+            UIPointerGeometry second = (UIPointerGeometry)capture.Invoke(canvas,
+                [scrollbar, new Vector2(100, 20), pages])!;
+            second.Scrollbar.ShouldBeNull();
+            target.LayoutArrangeVersion.ShouldBe(afterFirst);
+
+            stale[0].AcceptedMaxScrollOffset = new Vector2(100, 0);
+            pages = UILayoutOutputPageView.CopyFrom(stale);
+            _ = capture.Invoke(canvas, [scrollbar, new Vector2(100, 20), pages]);
+            var retries = (Dictionary<UIElementIdentity, (Vector2, Vector2)>)typeof(UICanvasComponent)
+                .GetField("_scrollMetricRetry",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .GetValue(canvas)!;
+            retries.ShouldBeEmpty();
+        }
+        finally
+        {
+            scrollbar.Destroy(true);
+            canvas.Destroy(true);
+            target.Destroy(true);
+            thumb.Destroy(true);
+        }
+    }
+
+    private static void SetScrollField(UIScrollableTransform target, string field, object value)
+        => typeof(UIScrollableTransform).GetField(field,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(target, value);
+
+    private static UIPublication EmptyPointerPacket(ulong generation)
+        => new(generation, 1, 1, 1, 1, default, default, [], [],
+            new BoundingRectangleF(Vector2.Zero, new Vector2(100, 20)),
+            Matrix4x4.Identity, Matrix4x4.Identity);
+
+    private static void SetPointerCapture(UICanvasInputComponent input, UIInteractableComponent target,
+        UIPublication publication, ulong epoch, UIPointerGeometry geometry)
+    {
+        SetPointerField(input, "_pressedTarget", target);
+        SetPointerField(input, "_pressedPublication", publication);
+        SetPointerField(input, "_pressedPointerPressEpoch", epoch);
+        SetPointerField(input, "_pressedPointerGeometry", geometry);
+        SetPointerField(input, "_pressedCanvasToLocal", Matrix4x4.Identity);
+        SetPointerField(input, "_pressedLastCanvasPosition", new Vector2(10, 5));
+    }
+
+    private static void SetPointerField(UICanvasInputComponent input, string field, object value)
+        => typeof(UICanvasInputComponent).GetField(field,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(input, value);
+
+    private static void DispatchPointerPress(UICanvasInputComponent input,
+        UIInteractableComponent target, ulong epoch)
+        => typeof(UICanvasInputComponent).GetMethod("DispatchPressedTarget",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(input, [target, epoch]);
+
+    private static void ClearPointerCapture(UICanvasInputComponent input)
+        => typeof(UICanvasInputComponent).GetMethod("ClearPointerPress",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(input, [false]);
+
 
     [Test]
     public void FocusCallbacksCannotLeaveOldInputRegistrations()
@@ -104,6 +246,52 @@ public sealed class UIPresentedInputTests
 
             button.CancelForRecycle();
             input.FindVirtualControl(new Vector2(10, 10), out _, out _, out _).ShouldBeNull();
+        }
+        finally
+        {
+            root.Destroy(true);
+            viewport.Destroy();
+        }
+    }
+
+    [Test]
+    public void CapturedPresentedOwner_IsRejectedWhenInputDispatcherDeactivates()
+    {
+        var root = new SceneNode("Scene pointer input", new UICanvasTransform());
+        root.SetWorldContext(new TestWorldContext());
+        var viewport = new XRViewport(null)
+        {
+            AutomaticallyCollectVisible = false,
+            AutomaticallySwapBuffers = false,
+            SetRenderPipelineFromCamera = false,
+        };
+        try
+        {
+            var canvas = root.AddComponent<UICanvasComponent>()!;
+            var input = root.AddComponent<UICanvasInputComponent>()!;
+            var pawn = root.NewChild("Pawn").AddComponent<PawnComponent>()!;
+            var controller = new LocalPlayerController { Viewport = viewport };
+            pawn.Controller = controller;
+            input.OwningPawn = pawn;
+            var target = root.NewChild("Target").AddComponent<UIVirtualButtonComponent>()!;
+            UIHitRecord hit = new(target.RenderInfo2D, target.RenderInfo2D.MembershipId,
+                target.UITransform.ElementIdentity, target.InteractionRevision,
+                Matrix4x4.Identity, new Vector2(100),
+                new BoundingRectangleF(Vector2.Zero, new Vector2(100)), null,
+                1, 0, 2, 1, 0, 0, true, false);
+            UIPublication packet = new(1, canvas.PublicationLifetime, 1, 1, 1,
+                default, default, [hit], [],
+                new BoundingRectangleF(Vector2.Zero, new Vector2(100)),
+                Matrix4x4.Identity, Matrix4x4.Identity);
+            canvas.MarkPresented(viewport, packet);
+            packet.Release();
+
+            input.IsPresentedPointerOwnerCurrent(target, hit.Identity, hit.InteractionRevision,
+                canvas.PublicationLifetime).ShouldBeTrue();
+            input.IsActive = false;
+            input.IsPresentedPointerOwnerCurrent(target, hit.Identity, hit.InteractionRevision,
+                canvas.PublicationLifetime).ShouldBeFalse();
+            input.TryGetPresentedPointerUv(target, out _).ShouldBeFalse();
         }
         finally
         {

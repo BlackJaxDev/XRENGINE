@@ -38,6 +38,12 @@
     <Compile Include="../Rendering/UIPublicationHitTests.cs" Link="Rendering/UIPublicationHitTests.cs" />
     <Compile Include="../Physics/TestWorldContext.cs" Link="Physics/TestWorldContext.cs" />
     <Compile Include="../Rendering/UIPresentedInputTests.cs" Link="Rendering/UIPresentedInputTests.cs" />
+    <Compile Include="../Rendering/PointerReentryProbe.cs" Link="Rendering/PointerReentryProbe.cs" />
+    <Compile Include="../Rendering/UIImePresentedCaretTests.cs" Link="Rendering/UIImePresentedCaretTests.cs" />
+    <Compile Include="../Rendering/UIMediaTeardownTests.cs" Link="Rendering/UIMediaTeardownTests.cs" />
+    <Compile Include="../Rendering/UIVideoFakeMediaSession.cs" Link="Rendering/UIVideoFakeMediaSession.cs" />
+    <Compile Include="../Rendering/UIVideoFakeGpuActions.cs" Link="Rendering/UIVideoFakeGpuActions.cs" />
+    <Compile Include="../Rendering/UIVideoDeferredRenderHost.cs" Link="Rendering/UIVideoDeferredRenderHost.cs" />
     <Compile Include="../Rendering/UIInputAllocationTests.cs" Link="Rendering/UIInputAllocationTests.cs" />
     <Compile Include="../Rendering/FocusRegistrationProbe.cs" Link="Rendering/FocusRegistrationProbe.cs" />
     <Compile Include="../Rendering/UIPublicationReceiptStateTests.cs" Link="Rendering/UIPublicationReceiptStateTests.cs" />

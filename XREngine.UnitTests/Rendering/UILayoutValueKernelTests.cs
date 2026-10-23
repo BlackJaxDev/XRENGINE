@@ -13,6 +13,146 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class UILayoutValueKernelTests
 {
+    [Test, NonParallelizable]
+    public void InterruptedScrollApplyPreservesSettledExtentAndReappliesCachedPage()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        UIScrollableTransform scroll = new()
+        {
+            Parent = canvas, Width = 100, Height = 100, MaxAnchor = Vector2.Zero
+        };
+        UIBoundableTransform content = new()
+        {
+            Parent = scroll, Width = 240, Height = 100, MaxAnchor = Vector2.Zero
+        };
+        try
+        {
+            canvas.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            ulong firstGeneration = canvas.CurrentLayoutGeneration;
+            scroll.ContentExtent.X.ShouldBe(240);
+            scroll.MaxScrollOffset.X.ShouldBe(140);
+
+            bool interrupted = false;
+            content.PropertyChanged += (_, change) =>
+            {
+                if (interrupted || change.PropertyName != nameof(UITransform.ActualLocalBottomLeftTranslation))
+                    return;
+                interrupted = true;
+                scroll.ScrollOffset = Vector2.Zero;
+            };
+            scroll.ScrollOffset = new Vector2(96, 0);
+            canvas.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() =>
+            {
+                canvas.PumpLayoutResults();
+                return interrupted;
+            }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+
+            // Candidate A wrote a child placement before its callback rejected
+            // publication. Pre-capture must retain settled limits.
+            scroll.ContentExtent.X.ShouldBe(240);
+            scroll.MaxScrollOffset.X.ShouldBe(140);
+
+            SpinWait.SpinUntil(() =>
+            {
+                canvas.UpdateLayoutAsync();
+                canvas.PumpLayoutResults();
+                return canvas.CurrentLayoutGeneration > firstGeneration && !canvas.IsLayoutInvalidated;
+            }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            content.ActualLocalBottomLeftTranslation.X.ShouldBe(0);
+            scroll.ContentExtent.X.ShouldBe(240);
+            scroll.MaxScrollOffset.X.ShouldBe(140);
+        }
+        finally
+        {
+            content.Destroy(true);
+            scroll.Destroy(true);
+            canvas.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void ScrollExtentUsesPlacementOffsetOfAppliedChildGeometry()
+    {
+        UIScrollableTransform scroll = new();
+        UIBoundableTransform content = new() { Parent = scroll };
+        UILayoutNodeOutput contentOutput = new()
+        {
+            ActualSize = new Vector2(240, 100),
+            DesiredSize = new Vector2(240, 100)
+        };
+        Vector2 viewport = new(100, 100);
+
+        content.ApplyCalculatedLayout(contentOutput, Vector2.Zero);
+        scroll.SynchronizeAppliedScroll(viewport, Vector2.Zero);
+        scroll.ContentExtent.X.ShouldBe(240);
+        scroll.MaxScrollOffset.X.ShouldBe(140);
+
+        // Authored input advances while the child still shows the old accepted
+        // placement. Pre-capture synchronization must not add 96 to its extent.
+        scroll.ScrollOffset = new Vector2(96, 0);
+        scroll.SynchronizeScroll(viewport);
+        scroll.ContentExtent.X.ShouldBe(240);
+        scroll.MaxScrollOffset.X.ShouldBe(140);
+
+        // After the new result applies, use its scroll offset as the basis for
+        // recovering logical content coordinates from the child's placement.
+        content.ApplyCalculatedLayout(contentOutput, new Vector2(-96, 0));
+        scroll.SynchronizeAppliedScroll(viewport, new Vector2(96, 0));
+        scroll.ContentExtent.X.ShouldBe(240);
+        scroll.MaxScrollOffset.X.ShouldBe(140);
+
+        contentOutput.ActualSize = new Vector2(100, 240);
+        contentOutput.LocalTranslation = new Vector2(0, -140);
+        content.ApplyCalculatedLayout(contentOutput, Vector2.Zero);
+        scroll.SynchronizeAppliedScroll(viewport, Vector2.Zero);
+        scroll.ScrollOffset = new Vector2(0, 96);
+        scroll.SynchronizeScroll(viewport);
+        scroll.ContentExtent.Y.ShouldBe(240);
+        scroll.MaxScrollOffset.Y.ShouldBe(140);
+
+        content.ApplyCalculatedLayout(contentOutput, new Vector2(0, 96));
+        scroll.SynchronizeAppliedScroll(viewport, new Vector2(0, 96));
+        scroll.ContentExtent.Y.ShouldBe(240);
+        scroll.MaxScrollOffset.Y.ShouldBe(140);
+    }
+
+    [Test]
+    public void ScrollbarMetricsComeFromAcceptedScrollableOutput()
+    {
+        UILayoutNodeInput[] nodes =
+        [
+            default(UILayoutNodeInput) with
+            {
+                Operator = UILayoutOperator.Scrollable,
+                Parent = -1,
+                ChildCount = 1,
+                Width = 100,
+                Height = 50,
+                MaxAnchor = Vector2.Zero,
+                OperatorValues = new(12, 34, 80, 120)
+            },
+            default(UILayoutNodeInput) with
+            {
+                Operator = UILayoutOperator.Boundable,
+                Parent = 0,
+                Width = 300,
+                Height = 300,
+                MaxAnchor = Vector2.Zero
+            }
+        ];
+        UILayoutChildInput[] children = [new(1, 0, 0, 1, 1)];
+
+        UILayoutNodeOutput[] result = UILayoutValueKernel.Run(nodes, children,
+            new BoundingRectangleF(0, 0, 100, 50));
+
+        result[0].AcceptedScrollOffset.ShouldBe(new Vector2(12, 34));
+        result[0].AcceptedMaxScrollOffset.ShouldBe(new Vector2(80, 120));
+        result[1].AcceptedScrollOffset.ShouldBe(Vector2.Zero);
+        result[1].PlacementTranslation.ShouldBe(new Vector2(-12, 34));
+    }
+
     [Test]
     public void ListSeparatesRawIntrinsicSizeFromDesiredOuterSize()
     {

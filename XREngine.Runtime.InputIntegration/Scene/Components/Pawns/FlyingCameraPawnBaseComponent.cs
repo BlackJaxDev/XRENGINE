@@ -264,8 +264,11 @@ namespace XREngine.Components
 
         public bool IsHoveringUI()
         {
-            foreach (UICanvasInputComponent canvasInput in LinkedUICanvasInputs.OfType<UICanvasInputComponent>())
+            for (int index = 0; index < LinkedUICanvasInputs.Count; index++)
             {
+                XRComponent component = LinkedUICanvasInputs[index];
+                if (component is not UICanvasInputComponent canvasInput)
+                    continue;
                 if (canvasInput.TopMostInteractable is { } interactable)
                 {
                     // Re-validate that the cursor is actually inside the interactable's
@@ -292,6 +295,13 @@ namespace XREngine.Components
         /// retries activation every frame until hover clears or the button is released.
         /// </summary>
         private bool _rightClickPendingDragActivation = false;
+
+        /// <summary>Ends a drag after its input owner loses focus or presentation.</summary>
+        protected void CancelRightClickDrag()
+        {
+            _rightClickDragging = false;
+            _rightClickPendingDragActivation = false;
+        }
 
         /// <summary>
         /// Called by subclasses' Tick() each frame. If right-click is held but drag

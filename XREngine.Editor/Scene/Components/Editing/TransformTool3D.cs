@@ -1546,6 +1546,14 @@ namespace XREngine.Scene.Components.Editing
             return snapFound;
         }
 
+        /// <summary>Finish a drag when its viewport loses presented pointer ownership.</summary>
+        public void CancelPointerInteraction()
+        {
+            if (_pressed)
+                OnReleased();
+            _hiAxis.X = _hiAxis.Y = _hiAxis.Z = _hiCam = _hiSphere = false;
+        }
+
         private Vector3 GetWorldDragPoint(Segment cursor, XRCamera camera)
         {
             Matrix4x4 invRoot = Transform.FirstChild()!.InverseWorldMatrix;

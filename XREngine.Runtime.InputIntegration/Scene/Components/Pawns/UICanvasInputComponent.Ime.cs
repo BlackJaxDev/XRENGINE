@@ -13,6 +13,18 @@ public partial class UICanvasInputComponent
     private long _imeFocusEpoch;
     private UIElementIdentity _imeIdentity;
     private bool _imeCandidateTickRegistered;
+    internal bool ImeCandidateTickRegistered => _imeCandidateTickRegistered;
+
+    private void RetireImeSession()
+    {
+        UITextInputComponent? target = _imeTarget;
+        _imeTarget = null;
+        _imeIdentity = default;
+        _imeInteractionRevision = 0;
+        _imeFocusEpoch = 0;
+        StopImeCandidateTick();
+        target?.CancelComposition();
+    }
 
     private void UpdateImeFocusTarget()
     {
@@ -135,22 +147,29 @@ public partial class UICanvasInputComponent
                 ? acquired : null;
         try
         {
-        UITextComponent text = target.TextComponent;
-        if (publication is null || canvas is null ||
-            publication.LayoutGeneration != canvas.CanvasTransform.CurrentLayoutGeneration ||
-            !text.TryGetCurrentLayoutResult(out UITextLayoutResult layout) ||
-            !target.TryGetCaretLocalBounds(layout, out Vector4 bounds) ||
-            !publication.TryGetRenderRecord(text.RenderInfo2D.MembershipId, out UIRenderRecord record) ||
-            record.Identity != text.UITransform.ElementIdentity ||
-            !ReferenceEquals(record.TextLayout, layout))
-            return;
+            if (publication is null || canvas is null ||
+                publication.CanvasLifetime != canvas.PublicationLifetime ||
+                !target.TryGetCaretOverlayPublicationKey(out long membershipId,
+                    out UIElementIdentity identity) ||
+                !TryResolvePresentedImeCaretClientPoint(publication, membershipId, identity,
+                    out Vector2 clientPoint))
+                return;
 
-        if (OwningPawn?.Viewport is XRViewport viewport &&
-            TryMapImeCaretClientPoint(publication, record, new Vector2(bounds.X, bounds.Y),
-                out Vector2 clientPoint))
-            viewport.Window?.TrySetImeCandidatePosition(clientPoint);
+            if (OwningPawn?.Viewport is XRViewport viewport)
+                viewport.Window?.TrySetImeCandidatePosition(clientPoint);
         }
         finally { publication?.Release(); }
+    }
+
+    /// <summary>Uses the caret quad in the displayed packet, never a newer live caret position.</summary>
+    internal static bool TryResolvePresentedImeCaretClientPoint(UIPublication publication,
+        long membershipId, UIElementIdentity identity, out Vector2 clientPoint)
+    {
+        clientPoint = default;
+        return identity.Id != 0 &&
+            publication.TryGetRenderRecord(membershipId, out UIRenderRecord record) &&
+            record.Identity == identity && record.Visible &&
+            TryMapImeCaretClientPoint(publication, record, Vector2.Zero, out clientPoint);
     }
 
     /// <summary>Projects a caret through only the geometry frozen in the displayed packet.</summary>

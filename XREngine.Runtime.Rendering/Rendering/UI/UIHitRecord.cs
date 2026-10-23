@@ -28,7 +28,8 @@ public readonly record struct UIHitRecord(
     UIElementIdentity FocusScopeIdentity = default,
     UIElementIdentity VirtualListIdentity = default,
     UIElementIdentity VirtualRowIdentity = default,
-    UIVirtualRowLease VirtualRowLease = default)
+    UIVirtualRowLease VirtualRowLease = default,
+    UIPointerGeometry PointerGeometry = default)
 {
     /// <summary>Tests the frozen shape and clip in canvas coordinates.</summary>
     public bool Contains(Vector2 canvasPoint)
@@ -44,6 +45,19 @@ public readonly record struct UIHitRecord(
         return Clip is not { } crop ||
             canvasPoint.X >= crop.MinX && canvasPoint.X < crop.MaxX &&
             canvasPoint.Y >= crop.MinY && canvasPoint.Y < crop.MaxY;
+    }
+
+    /// <summary>Converts a local point using this presented record's frozen size.</summary>
+    public bool TryNormalizeLocal(Vector2 localPoint, out Vector2 normalizedPoint)
+    {
+        normalizedPoint = default;
+        if (!float.IsFinite(localPoint.X) || !float.IsFinite(localPoint.Y) ||
+            !float.IsFinite(Size.X) || !float.IsFinite(Size.Y) || Size.X <= 0f || Size.Y <= 0f ||
+            localPoint.X < 0f || localPoint.Y < 0f ||
+            localPoint.X > Size.X || localPoint.Y > Size.Y)
+            return false;
+        normalizedPoint = localPoint / Size;
+        return true;
     }
 
     /// <summary>Checks the frozen layout ancestry used by input blocking.</summary>

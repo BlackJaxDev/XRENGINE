@@ -23,6 +23,10 @@ namespace XREngine.Rendering.UI
         private Vector2 _scrollOffset;
         private Vector2 _contentExtent;
         private Vector2 _viewportExtent;
+        // The scroll used to place the currently applied child geometry can
+        // lag behind the newly authored ScrollOffset while layout is pending.
+        private Vector2 _appliedPlacementScrollOffset;
+        private bool _layoutApplyPending;
         private bool _hasAcceptedScrollGeometry;
 
         /// <summary>Positive X scrolls right and positive Y scrolls down.</summary>
@@ -52,6 +56,11 @@ namespace XREngine.Rendering.UI
         /// <summary>Updates scroll limits from accepted geometry before layout input capture.</summary>
         public void SynchronizeScroll(Vector2 viewportExtent)
         {
+            // A rejected worker result can leave some descendants with new
+            // geometry and others with old geometry. Keep the last settled
+            // limits until the next complete owner apply repairs them.
+            if (_layoutApplyPending)
+                return;
             if (!float.IsFinite(viewportExtent.X) || !float.IsFinite(viewportExtent.Y) ||
                 viewportExtent.X <= 0 || viewportExtent.Y <= 0)
                 return;
@@ -77,7 +86,8 @@ namespace XREngine.Rendering.UI
                 // Recover unscrolled content coordinates from the accepted
                 // placement. Positive X moves content left; positive Y moves it up.
                 Vector2 start = child.ActualLocalBottomLeftTranslation -
-                    new Vector2(Padding.X, Padding.Y) + new Vector2(ScrollOffset.X, -ScrollOffset.Y);
+                    new Vector2(Padding.X, Padding.Y) +
+                    new Vector2(_appliedPlacementScrollOffset.X, -_appliedPlacementScrollOffset.Y);
                 Vector2 end = start + child.ActualSize;
                 content = Vector2.Max(content, end);
                 // Top-anchored content grows toward negative local Y. Measure its
@@ -91,6 +101,16 @@ namespace XREngine.Rendering.UI
             _hasAcceptedScrollGeometry = true;
             ScrollOffset = Vector2.Min(_scrollOffset, MaxScrollOffset);
         }
+
+        /// <summary>Settles limits after all children received a layout result.</summary>
+        internal void SynchronizeAppliedScroll(Vector2 viewportExtent, Vector2 placementScrollOffset)
+        {
+            _appliedPlacementScrollOffset = placementScrollOffset;
+            _layoutApplyPending = false;
+            SynchronizeScroll(viewportExtent);
+        }
+
+        internal void MarkLayoutApplyPending() => _layoutApplyPending = true;
 
         /// <summary>Moves the viewport to include a top-down content rectangle.</summary>
         public void ScrollIntoView(Vector2 contentStart, Vector2 contentEnd)

@@ -13,18 +13,16 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. All **410 of 410** tests pass, with no
-failures or skips, in 8.269 seconds. The build took 16.15 seconds. Coverage adds
-stable text slots and glyph ranges, offscreen producer completion and fence
-reuse, lazy standalone text ownership, recycled drag targets, accepted popup
-bounds, and vertical and horizontal scroll movement.
+through `Tools/Invoke-AgentBuild.ps1`. All **437 of 437** tests pass, with no
+warnings, failures, or skips, in 11.643 seconds. The build took 1m45.89s. Coverage
+adds presented control geometry, callback reentry, stable scroll extents,
+interrupted layout recovery, IME caret placement, shared material definitions,
+and media teardown.
 
-The matching editor build passed with zero warnings/errors in 52.46s. The full
-desktop test project compiled with zero warnings/errors in 47.18s. Hash checks
-confirm that all three builds used the same 9,865 source and project files.
-Editor-only Undo replay regressions require Windows execution. The prior editor attempt found facade
-and type-inference errors that the headless project did not expose; these were
-repaired before the final headless run and matching editor build.
+The matching editor build passed with zero warnings/errors in 3m21.83s.
+The desktop test project compiled with zero warnings/errors in 47.16s.
+Source hashes confirm that all three builds used the same 9,882 source and
+project files. Desktop execution remains subject to the Windows requirement.
 
 The editor build compiles Windows targets on Linux. The desktop test-project
 build compiles shaping and Vulkan regression tests. Desktop tests did not execute:

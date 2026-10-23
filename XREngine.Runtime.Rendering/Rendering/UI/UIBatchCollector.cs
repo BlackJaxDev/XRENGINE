@@ -1755,30 +1755,12 @@ public sealed class UIBatchCollector : IDisposable
 
         // Create the batched material
         bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
-        XRShader[] shaders = webGpu ? [] :
-        [
-            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.fs"), EShaderType.Fragment)
-        ];
+        XRShader[] shaders = webGpu ? [] : UIBatchMaterialPrototype.Solid.CreateDesktopShaders();
 
         var material = new XRMaterial(Array.Empty<ShaderVar>(), shaders)
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
-            RenderOptions = new RenderingParameters
-            {
-                CullMode = ECullMode.None,
-                DepthTest = new DepthTest
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = !webGpu
-                },
-                StencilTest = new StencilTest
-                {
-                    Enabled = ERenderParamUsage.Disabled
-                },
-                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
-            }
+            RenderOptions = UIBatchMaterialPrototype.Solid.CreateRenderOptions(webGpu)
         };
         if (webGpu)
             material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedV2;
@@ -1880,21 +1862,11 @@ public sealed class UIBatchCollector : IDisposable
             throw new NotSupportedException("A cooked WebGPU border primitive is not available.");
         EnsureMaterialQuadMesh();
         XRMaterial material = new(Array.Empty<ShaderVar>(),
-        [
-            XRShader.EngineShader(Path.Combine("Common", "UIBorderBatched.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UIBorderBatched.fs"), EShaderType.Fragment)
-        ])
+            UIBatchMaterialPrototype.Border.CreateDesktopShaders())
         {
             Name = "UIBatchBorder",
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
-            RenderOptions = new RenderingParameters
-            {
-                CullMode = ECullMode.None,
-                DepthTest = new DepthTest { Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always, UpdateDepth = true },
-                StencilTest = new StencilTest { Enabled = ERenderParamUsage.Disabled },
-                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
-            }
+            RenderOptions = UIBatchMaterialPrototype.Border.CreateRenderOptions(false)
         };
         XRMeshRenderer mesh = new(_matQuadMesh!.Mesh!, material)
         {
@@ -1939,28 +1911,13 @@ public sealed class UIBatchCollector : IDisposable
 
         EnsureMaterialQuadMesh();
         bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
-        XRShader[] shaders = webGpu ? [] :
-        [
-            XRShader.EngineShader(Path.Combine("Common", "UIImageBatched.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UIImageBatched.fs"), EShaderType.Fragment)
-        ];
+        XRShader[] shaders = webGpu ? [] : UIBatchMaterialPrototype.Image.CreateDesktopShaders();
         XRMaterial material = new(Array.Empty<ShaderVar>(), [texture], shaders)
         {
             Name = "UIBatchMaterialTexture",
             SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, texture, IsSrgb: srgb)],
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
-            RenderOptions = new RenderingParameters
-            {
-                CullMode = ECullMode.None,
-                DepthTest = new DepthTest
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false
-                },
-                StencilTest = new StencilTest { Enabled = ERenderParamUsage.Disabled },
-                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
-            }
+            RenderOptions = UIBatchMaterialPrototype.Image.CreateRenderOptions(webGpu)
         };
         if (webGpu)
             material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2;
@@ -2325,13 +2282,7 @@ public sealed class UIBatchCollector : IDisposable
         TextGPUResources gpu = new();
 
         bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
-        XRShader[] shaders = webGpu ? [] :
-        [
-            XRShader.EngineShader(Path.Combine("Common", "UITextBatched.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UITextBatchedStereoMV2.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UITextBatchedStereoNV.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment)
-        ];
+        XRShader[] shaders = webGpu ? [] : UIBatchMaterialPrototype.Text.CreateDesktopShaders();
 
         ShaderVar[] parameters =
         [
@@ -2348,21 +2299,7 @@ public sealed class UIBatchCollector : IDisposable
         {
             Name = "UIBatchTextMaterial",
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
-            RenderOptions = new RenderingParameters
-            {
-                CullMode = ECullMode.None,
-                DepthTest = new DepthTest
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = !webGpu
-                },
-                StencilTest = new StencilTest
-                {
-                    Enabled = ERenderParamUsage.Disabled
-                },
-                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
-            }
+            RenderOptions = UIBatchMaterialPrototype.Text.CreateRenderOptions(webGpu)
         };
         if (webGpu)
             material.EngineSemantic = EngineMaterialSemanticIdentity.UITextBatchedBitmapV2;

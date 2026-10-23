@@ -45,6 +45,18 @@ namespace XREngine.Components
         [RuntimeOnly, YamlIgnore]
         private UIInteractableComponent? _pressedTarget;
         [RuntimeOnly, YamlIgnore]
+        private ulong _nextPointerPressEpoch;
+        [RuntimeOnly, YamlIgnore]
+        private ulong _pressedPointerPressEpoch;
+        [RuntimeOnly, YamlIgnore]
+        private UIPublication? _pressedPublication;
+        [RuntimeOnly, YamlIgnore]
+        private UIPointerGeometry _pressedPointerGeometry;
+        [RuntimeOnly, YamlIgnore]
+        private Matrix4x4 _pressedCanvasToLocal;
+        [RuntimeOnly, YamlIgnore]
+        private Vector2 _pressedLastCanvasPosition;
+        [RuntimeOnly, YamlIgnore]
         private long _pressedInteractionRevision;
         [RuntimeOnly, YamlIgnore]
         private ulong _pressedCanvasLifetime;
@@ -506,6 +518,42 @@ namespace XREngine.Components
             => _inputRecords.TryGetValue(target.RenderInfo2D.MembershipId, out UIHitRecord record)
                 ? Vector2.Transform(canvasPoint, record.CanvasToLocal) : Vector2.Zero;
 
+        private UIPointerGeometry PresentedGeometry(UIInteractableComponent target)
+            => _inputRecords.TryGetValue(target.RenderInfo2D.MembershipId, out UIHitRecord record)
+                ? record.PointerGeometry : default;
+
+        private void DispatchCapturedPointerMove(UIInteractableComponent target)
+        {
+            if (_pressedPublication is not { } publication ||
+                !publication.TryMapPointer(_cursorOutputPosition, out Vector2 canvasPosition,
+                    requireInsideOutput: false))
+            {
+                ClearPointerPress();
+                return;
+            }
+            Vector2 previousCanvasPosition = _pressedLastCanvasPosition;
+            Matrix4x4 canvasToLocal = _pressedCanvasToLocal;
+            UIPointerGeometry geometry = _pressedPointerGeometry;
+            ulong pressEpoch = _pressedPointerPressEpoch;
+            _pressedLastCanvasPosition = canvasPosition;
+            publication.Retain();
+            try
+            {
+                target.MouseMoved(
+                    Vector2.Transform(previousCanvasPosition, canvasToLocal),
+                    Vector2.Transform(canvasPosition, canvasToLocal), in geometry);
+            }
+            catch
+            {
+                if (_pressedPointerPressEpoch == pressEpoch &&
+                    ReferenceEquals(_pressedTarget, target) &&
+                    ReferenceEquals(_pressedPublication, publication))
+                    ClearPointerPress();
+                throw;
+            }
+            finally { publication.Release(); }
+        }
+
         private void SwapBuffers()
         {
             using IDisposable? sample = RuntimeRenderingHostServices.Current.StartProfileScope("UICanvasInputComponent.SwapBuffers");
@@ -558,8 +606,7 @@ namespace XREngine.Components
                 if (!HasCurrentPointerPressOwner())
                     ClearPointerPress();
                 else if (!_lastIntersectionIdentities.Contains(captured.RenderInfo2D) && captured.NeedsMouseMove)
-                    captured.MouseMoved(PresentedLocal(captured, LastCursorPositionWorld2D),
-                        PresentedLocal(captured, CursorPositionWorld2D));
+                    DispatchCapturedPointerMove(captured);
             }
             LastCursorPositionWorld2D = CursorPositionWorld2D;
         }
@@ -640,8 +687,9 @@ namespace XREngine.Components
 
         private void OnMouseInteractButtonDown()
         {
+            ulong startingEpoch = _nextPointerPressEpoch;
             ClearPointerPress();
-            if (IsVirtualMouseConsumed)
+            if (_nextPointerPressEpoch != startingEpoch || IsVirtualMouseConsumed)
                 return;
             LocalInputInterface? input = GetOwningInput() as LocalInputInterface;
             BaseMouse? mouse = input?.Mouse;
@@ -651,24 +699,57 @@ namespace XREngine.Components
             bool wasTouch = OwningLocalPlayer?.IsTouchMouseDispatch == true;
             UIInteractableComponent? target = FindMouseInteractTarget();
             FocusMouseTarget(target);
+            if (_nextPointerPressEpoch != startingEpoch)
+                return;
             // Focus may legitimately change mappings. Later callback changes must
             // not transfer this press to a replacement input owner or binding.
             ulong registrationRevision = mouse?.InputRegistrationRevision ?? 0UL;
             LeftClickDown?.Invoke(target);
+            if (_nextPointerPressEpoch != startingEpoch)
+                return;
 
             if (target is not null && TryRecordPointerPress(target, input, mouse, registrationRevision,
                 source, sourceOwner, sourceGeneration, wasTouch))
             {
+                ulong pressEpoch = _pressedPointerPressEpoch;
                 target.IsCaptured = true;
-                if (!HasCurrentPointerPressOwner())
+                if (_pressedPointerPressEpoch != pressEpoch || !HasCurrentPointerPressOwner())
                 {
-                    ClearPointerPress();
+                    if (_pressedPointerPressEpoch == pressEpoch)
+                        ClearPointerPress();
                     return;
                 }
-                target.PointerPressed(PresentedLocal(target, CursorPositionWorld2D));
-                if (HasCurrentPointerPressOwner() && target.InteractOnButtonDown)
+                DispatchPressedTarget(target, pressEpoch);
+            }
+        }
+
+        private void DispatchPressedTarget(UIInteractableComponent target, ulong pressEpoch)
+        {
+            if (_pressedPointerPressEpoch != pressEpoch || !ReferenceEquals(_pressedTarget, target) ||
+                _pressedPublication is not { } pressedPacket)
+                return;
+            UIPointerGeometry pressedGeometry = _pressedPointerGeometry;
+            Matrix4x4 pressedCanvasToLocal = _pressedCanvasToLocal;
+            Vector2 pressedCanvasPosition = _pressedLastCanvasPosition;
+            pressedPacket.Retain();
+            try
+            {
+                target.PointerPressed(
+                    Vector2.Transform(pressedCanvasPosition, pressedCanvasToLocal),
+                    in pressedGeometry);
+                if (_pressedPointerPressEpoch == pressEpoch &&
+                    HasCurrentPointerPressOwner() && target.InteractOnButtonDown)
                     target.OnInteract();
             }
+            catch
+            {
+                if (_pressedPointerPressEpoch == pressEpoch &&
+                    ReferenceEquals(_pressedTarget, target) &&
+                    ReferenceEquals(_pressedPublication, pressedPacket))
+                    ClearPointerPress();
+                throw;
+            }
+            finally { pressedPacket.Release(); }
         }
         private void OnMouseInteractButtonUp()
         {
@@ -679,27 +760,54 @@ namespace XREngine.Components
                 ClearPointerPress();
                 return;
             }
-            ClearPointerPress(cancel: false);
-            if (GetOwningInput() is LocalInputInterface { Mouse: { } releaseMouse } &&
-                RefreshPresentedInput() is { } releasePacket)
+            if (GetOwningInput() is not LocalInputInterface { Mouse: { } pressedMouse } ||
+                _pressedPublication is not { } pressedPacket ||
+                !pressedPacket.TryMapPointer(pressedMouse.CursorPosition,
+                    out Vector2 pressedReleaseCanvas, requireInsideOutput: false))
             {
-                try
-                {
-                    if (releasePacket.TryMapPointer(releaseMouse.CursorPosition,
-                        out Vector2 releasePosition, false))
-                        CursorPositionWorld2D = releasePosition;
-                }
-                finally { releasePacket.Release(); }
+                ClearPointerPress();
+                return;
             }
-            UIInteractableComponent? target = FindMouseInteractTarget();
-            bool inside = IsPointerTargetEligible(pressed) && ReferenceEquals(target, pressed) &&
-                ReferenceEquals(FocusedComponent, pressed) &&
-                ReferenceEquals(OwningPawn?.Controller?.FocusedInteractable, pressed);
-            long interactionRevision = pressed.InteractionRevision;
-            pressed.PointerReleased(PresentedLocal(pressed, CursorPositionWorld2D), inside);
-            if (inside && pressed.InteractionRevision == interactionRevision && IsPointerTargetEligible(pressed) &&
-                ReferenceEquals(FocusedComponent, pressed) && !pressed.InteractOnButtonDown)
-                OnInteract();
+            UIPointerGeometry pressedGeometry = _pressedPointerGeometry;
+            Matrix4x4 pressedCanvasToLocal = _pressedCanvasToLocal;
+            pressedPacket.Retain();
+            bool releaseDelivered = false;
+            try
+            {
+                ClearPointerPress(cancel: false);
+                ulong detachedEpoch = _nextPointerPressEpoch;
+                if (GetOwningInput() is LocalInputInterface { Mouse: { } releaseMouse } &&
+                    RefreshPresentedInput() is { } releasePacket)
+                {
+                    try
+                    {
+                        if (releasePacket.TryMapPointer(releaseMouse.CursorPosition,
+                            out Vector2 releasePosition, false))
+                            CursorPositionWorld2D = releasePosition;
+                    }
+                    finally { releasePacket.Release(); }
+                }
+                UIInteractableComponent? target = FindMouseInteractTarget();
+                bool inside = IsPointerTargetEligible(pressed) && ReferenceEquals(target, pressed) &&
+                    ReferenceEquals(FocusedComponent, pressed) &&
+                    ReferenceEquals(OwningPawn?.Controller?.FocusedInteractable, pressed);
+                long interactionRevision = pressed.InteractionRevision;
+                pressed.PointerReleased(Vector2.Transform(pressedReleaseCanvas, pressedCanvasToLocal),
+                    inside, in pressedGeometry);
+                releaseDelivered = true;
+                if (inside && _nextPointerPressEpoch == detachedEpoch && _pressedTarget is null &&
+                    pressed.InteractionRevision == interactionRevision &&
+                    IsPointerTargetEligible(pressed) &&
+                    ReferenceEquals(FocusedComponent, pressed) && !pressed.InteractOnButtonDown)
+                    OnInteract();
+            }
+            catch
+            {
+                if (!releaseDelivered && !ReferenceEquals(_pressedTarget, pressed))
+                    pressed.PointerCancelled();
+                throw;
+            }
+            finally { pressedPacket.Release(); }
         }
 
         private void FocusMouseTarget(UIInteractableComponent? target)
@@ -739,6 +847,12 @@ namespace XREngine.Components
             object? sourceOwner, ulong sourceGeneration, bool wasTouch)
         {
             if (!IsPointerTargetEligible(target) ||
+                !_inputRecords.TryGetValue(target.RenderInfo2D.MembershipId, out UIHitRecord pressedRecord) ||
+                !IsCurrentHitRecord(pressedRecord) ||
+                mouse is null ||
+                _inputPublication is not { } pressedPublication ||
+                !pressedPublication.TryMapPointer(mouse.CursorPosition, out Vector2 pressedCanvasPosition,
+                    requireInsideOutput: false) ||
                 !ReferenceEquals(FocusedComponent, target) ||
                 !ReferenceEquals(OwningPawn?.Controller?.FocusedInteractable, target) ||
                 input is null || mouse is null || !ReferenceEquals(GetOwningInput(), input) ||
@@ -750,7 +864,13 @@ namespace XREngine.Components
                 wasTouch != (OwningLocalPlayer?.IsTouchMouseDispatch == true))
                 return false;
 
+            pressedPublication.Retain();
+            _pressedPublication = pressedPublication;
             SetField(ref _pressedTarget, target, publishNotifications: false);
+            _pressedPointerPressEpoch = ++_nextPointerPressEpoch;
+            _pressedPointerGeometry = pressedRecord.PointerGeometry;
+            _pressedCanvasToLocal = pressedRecord.CanvasToLocal;
+            _pressedLastCanvasPosition = pressedCanvasPosition;
             SetField(ref _pressedInteractionRevision, target.InteractionRevision, publishNotifications: false);
             SetField(ref _pressedCanvasLifetime, _inputPublication!.CanvasLifetime, publishNotifications: false);
             SetField(ref _pressedElementIdentity, target.UITransform.ElementIdentity, publishNotifications: false);
@@ -790,6 +910,12 @@ namespace XREngine.Components
         {
             UIInteractableComponent? target = _pressedTarget;
             SetField(ref _pressedTarget, null, publishNotifications: false);
+            _pressedPointerPressEpoch = 0;
+            UIPublication? pressedPublication = _pressedPublication;
+            _pressedPublication = null;
+            _pressedPointerGeometry = default;
+            _pressedCanvasToLocal = default;
+            _pressedLastCanvasPosition = default;
             SetField(ref _pressedInteractionRevision, 0L, publishNotifications: false);
             SetField(ref _pressedCanvasLifetime, 0UL, publishNotifications: false);
             SetField(ref _pressedElementIdentity, default(UIElementIdentity), publishNotifications: false);
@@ -801,6 +927,7 @@ namespace XREngine.Components
             SetField(ref _pressedPointerOwner, null, publishNotifications: false);
             SetField(ref _pressedPointerGeneration, 0UL, publishNotifications: false);
             SetField(ref _pressedWasTouch, false, publishNotifications: false);
+            pressedPublication?.Release();
             if (cancel)
                 target?.PointerCancelled();
         }
@@ -915,6 +1042,7 @@ namespace XREngine.Components
             _inputLifecycleRevision++;
             ClearPointerPress();
             FocusedComponent = null;
+            RetireImeSession();
             UnlinkOwningPawn();
             UnregisterCanvasInputs();
             UpdateImeFocusTarget();
@@ -1000,9 +1128,15 @@ namespace XREngine.Components
                         inter.IsMouseDirectlyOver = shouldBeDirectlyOver;
 
                     if (inter.NeedsMouseMove && IsPointerTargetEligible(inter))
-                        inter.MouseMoved(
-                            PresentedLocal(inter, LastCursorPositionWorld2D),
-                            PresentedLocal(inter, CursorPositionWorld2D));
+                        if (ReferenceEquals(inter, _pressedTarget))
+                            DispatchCapturedPointerMove(inter);
+                        else
+                        {
+                            UIPointerGeometry geometry = PresentedGeometry(inter);
+                            inter.MouseMoved(
+                                PresentedLocal(inter, LastCursorPositionWorld2D),
+                                PresentedLocal(inter, CursorPositionWorld2D), in geometry);
+                        }
                 }
             }
             else if (isIntersecting) //Mouse was not over this renderable last update

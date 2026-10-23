@@ -1,5 +1,7 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
+using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Rendering.VideoStreaming;
 using XREngine.Rendering.VideoStreaming.Interfaces;
@@ -15,6 +17,22 @@ namespace XREngine.Rendering.UI
 
     public partial class UIVideoComponent
     {
+        private long _streamingLifecycleEpoch;
+        private CancellationTokenSource? _streamingOpenCancellation;
+        private Task? _streamingOpenCompletionTask;
+        internal long StreamingLifecycleEpoch => Interlocked.Read(ref _streamingLifecycleEpoch);
+        internal Task? StreamingOpenCompletionTask => _streamingOpenCompletionTask;
+
+        internal bool IsCurrentStreamingLifecycle(long epoch)
+            => epoch == Interlocked.Read(ref _streamingLifecycleEpoch) &&
+                IsActiveInHierarchy && Volatile.Read(ref _videoProducerDestroyed) == 0;
+
+        private bool IsCurrentStreamingSession(IMediaStreamSession session, long epoch,
+            CancellationToken cancellationToken)
+            => !cancellationToken.IsCancellationRequested &&
+                IsCurrentStreamingLifecycle(epoch) &&
+                ReferenceEquals(Volatile.Read(ref _streamingSession), session);
+
         // ═══════════════════════════════════════════════════════════════
         // Streaming Pipeline — Start / Stop / URL Changes
         // ═══════════════════════════════════════════════════════════════
@@ -33,7 +51,6 @@ namespace XREngine.Rendering.UI
             _availableQualities = [];
             _originalStreamUrl = null;
 
-            StopStreamingPipeline();
             StartStreamingPipeline();
         }
 
@@ -43,23 +60,28 @@ namespace XREngine.Rendering.UI
         /// creates a session, and begins the async open.
         /// </summary>
         private void StartStreamingPipeline()
-            => RuntimeEngine.InvokeOnAppThread(StartStreamingPipelineOnMainThread, "UIVideoComponent.StartStreamingPipeline", true);
-
-        private void StartStreamingPipelineOnMainThread()
         {
+            long epoch = Interlocked.Increment(ref _streamingLifecycleEpoch);
+            RuntimeEngine.InvokeOnAppThread(() => StartStreamingPipelineOnMainThread(epoch),
+                "UIVideoComponent.StartStreamingPipeline", true);
+        }
+
+        private void StartStreamingPipelineOnMainThread(long epoch)
+        {
+            if (!IsCurrentStreamingLifecycle(epoch))
+                return;
+            // A newer start supersedes a queued stop. Settle the previous
+            // session here even when the replacement URL is empty.
+            if (_streamingSession is not null || _gpuVideoActions is not null)
+                StopStreamingPipelineOnMainThread();
+            if (!IsCurrentStreamingLifecycle(epoch))
+                return;
             Debug.UI($"Streaming pipeline starting: url='{StreamUrl}'");
             if (string.IsNullOrWhiteSpace(StreamUrl))
             {
                 Debug.UIWarning("Streaming playback requires a valid StreamUrl.");
                 return;
             }
-
-            // Avoid redundant opens for the same URL.
-            if (_streamingSession != null && string.Equals(_streamingCurrentUrl, StreamUrl, StringComparison.OrdinalIgnoreCase))
-                return;
-
-            if (_streamingSession != null)
-                StopStreamingPipelineOnMainThread();
 
             var renderer = GetActiveRenderer();
             if (renderer is null)
@@ -69,13 +91,13 @@ namespace XREngine.Rendering.UI
             }
 
             // Create the GPU upload helper for the active renderer.
-            _gpuVideoActions?.Dispose();
-            _gpuVideoActions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
-            if (_gpuVideoActions is null)
+            IVideoFrameGpuActions? actions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
+            if (actions is null)
             {
                 Debug.UIWarning("Streaming playback requires a registered video GPU actions service.");
                 return;
             }
+            AttachVideoGpuActions(actions);
 
             if (!HlsReferenceRuntime.EnsureStarted())
             {
@@ -105,6 +127,9 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
+            if (!IsCurrentStreamingLifecycle(epoch))
+                return;
+
             Debug.UI($"Streaming source resolved: url='{resolved.Url}', retries={resolved.RetryCount}, qualities={resolved.AvailableQualities.Count}");
 
             // Store discovered quality variants for UI quality selectors.
@@ -112,8 +137,6 @@ namespace XREngine.Rendering.UI
             _originalStreamUrl = StreamUrl;
 
             // Create and configure the streaming session.
-            _streamingSession = StreamingSubsystem.CreateSession();
-            _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
             _cachedAudioSource = ResolveAudioSource();
             Debug.UI($"[AV Setup] Pipeline starting: audioSource={(
                 _cachedAudioSource != null
@@ -127,7 +150,7 @@ namespace XREngine.Rendering.UI
             _streamingOpenOptions.AudioQueueCapacity = Math.Max(_streamingOpenOptions.AudioQueueCapacity, 250);
             _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
 
-            BeginStreamingOpenWithSession(resolved.Url, _streamingOpenOptions);
+            AttachStreamingSession(StreamingSubsystem.CreateSession(), resolved.Url, _streamingOpenOptions, epoch);
         }
 
         /// <summary>
@@ -136,15 +159,22 @@ namespace XREngine.Rendering.UI
         /// media playlist URL.
         /// </summary>
         private void StartStreamingPipelineWithVariant(StreamVariantInfo variant)
-            => RuntimeEngine.InvokeOnAppThread(() => StartStreamingPipelineWithVariantOnMainThread(variant),
-                "UIVideoComponent.StartStreamingPipelineWithVariant", true);
-
-        private void StartStreamingPipelineWithVariantOnMainThread(StreamVariantInfo variant)
         {
+            long epoch = Interlocked.Increment(ref _streamingLifecycleEpoch);
+            RuntimeEngine.InvokeOnAppThread(() => StartStreamingPipelineWithVariantOnMainThread(variant, epoch),
+                "UIVideoComponent.StartStreamingPipelineWithVariant", true);
+        }
+
+        private void StartStreamingPipelineWithVariantOnMainThread(StreamVariantInfo variant, long epoch)
+        {
+            if (!IsCurrentStreamingLifecycle(epoch))
+                return;
             Debug.UI($"Streaming pipeline starting with variant: {variant.DisplayLabel}");
 
-            if (_streamingSession != null)
+            if (_streamingSession is not null || _gpuVideoActions is not null)
                 StopStreamingPipelineOnMainThread();
+            if (!IsCurrentStreamingLifecycle(epoch))
+                return;
 
             var renderer = GetActiveRenderer();
             if (renderer is null)
@@ -153,13 +183,13 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
-            _gpuVideoActions?.Dispose();
-            _gpuVideoActions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
-            if (_gpuVideoActions is null)
+            IVideoFrameGpuActions? actions = RuntimeVideoStreamingServices.Current?.CreateVideoFrameGpuActions(renderer);
+            if (actions is null)
             {
                 Debug.UIWarning("Streaming playback requires a registered video GPU actions service.");
                 return;
             }
+            AttachVideoGpuActions(actions);
 
             if (!HlsReferenceRuntime.EnsureStarted())
             {
@@ -167,8 +197,9 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
-            _streamingSession = StreamingSubsystem.CreateSession();
-            _streamingSession.VideoSizeChanged += HandleStreamingVideoSizeChanged;
+            if (!IsCurrentStreamingLifecycle(epoch))
+                return;
+
             _cachedAudioSource = ResolveAudioSource();
             Debug.UI($"[AV Setup] Pipeline starting (variant): audioSource={(
                 _cachedAudioSource != null
@@ -181,7 +212,7 @@ namespace XREngine.Rendering.UI
             _streamingOpenOptions.VideoQueueCapacity = 120;
             _streamingOpenOptions.AudioQueueCapacity = 250;
             _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
-            BeginStreamingOpenWithSession(variant.Url, _streamingOpenOptions);
+            AttachStreamingSession(StreamingSubsystem.CreateSession(), variant.Url, _streamingOpenOptions, epoch);
         }
 
         /// <summary>
@@ -189,40 +220,40 @@ namespace XREngine.Rendering.UI
         /// the session, disposes GPU upload resources, and resets all state.
         /// </summary>
         private void StopStreamingPipeline()
-            => RuntimeEngine.InvokeOnAppThread(StopStreamingPipelineOnMainThread, "UIVideoComponent.StopStreamingPipeline", true);
+        {
+            long epoch = Interlocked.Increment(ref _streamingLifecycleEpoch);
+            RuntimeEngine.InvokeOnAppThread(() =>
+            {
+                if (epoch == Interlocked.Read(ref _streamingLifecycleEpoch))
+                    StopStreamingPipelineOnMainThread();
+            }, "UIVideoComponent.StopStreamingPipeline", true);
+        }
 
         private void StopStreamingPipelineOnMainThread()
         {
-            // Restore normal audio source behavior before tearing down.
-            var audioSource = _cachedAudioSource;
-            if (audioSource is not null)
-            {
-                audioSource.ExternalBufferManagement = false;
-                audioSource.SetAutoPlayOnQueue(true);
-            }
+            CancellationTokenSource? openCancellation = _streamingOpenCancellation;
+            _streamingOpenCancellation = null;
 
-            // Unsubscribe from the primary source's BufferProcessed event.
-            if (_primaryAudioSource is not null)
+            // Exclude the frame producer while detaching its session and
+            // exact helper. Native Close/Dispose may wait on callbacks, so
+            // perform those after releasing the gate.
+            IMediaStreamSession? retiredSession;
+            IVideoFrameGpuActions? retiredActions;
+            IAudioStreamingComponent? audioSource;
+            IAudioPlaybackSource? primaryAudioSource;
+            lock (_videoProducerGate)
             {
-                _primaryAudioSource.StreamingBufferProcessed -= OnPrimaryBufferProcessed;
+                retiredSession = _streamingSession;
+                _streamingSession = null;
+                retiredActions = _gpuVideoActions;
+                _gpuVideoActions = null;
+                audioSource = _cachedAudioSource;
+                _cachedAudioSource = null;
+                primaryAudioSource = _primaryAudioSource;
                 _primaryAudioSource = null;
             }
-
-            // Close and dispose the streaming session.
-            var session = _streamingSession;
-            _streamingSession = null;
-            if (session is not null)
-            {
-                session.VideoSizeChanged -= HandleStreamingVideoSizeChanged;
-                session.Close();
-                session.Dispose();
-            }
-
-            // Dispose the GPU upload helper.
-            _gpuVideoActions?.Dispose();
-            _gpuVideoActions = null;
-
             _streamingSessionOpenTask = null;
+            _streamingOpenCompletionTask = null;
             _streamingCurrentUrl = null;
 
             // Log session uptime before resetting.
@@ -251,7 +282,6 @@ namespace XREngine.Rendering.UI
             _submittedSampleCounts.Clear();
             _primaryAudioSampleRate = 0;
             // Audio pipeline helpers
-            _cachedAudioSource = null;
             _totalAudioDurationSubmittedTicks = 0;
             _totalAudioBuffersSubmitted = 0;
             _wasAudioPlaying = false;
@@ -270,6 +300,65 @@ namespace XREngine.Rendering.UI
             _driftIntervalSamples = 0;
             _driftIntervalMinTicks = long.MaxValue;
             _driftIntervalMaxTicks = long.MinValue;
+
+            // Each external step can throw or synchronously start a new
+            // session. Complete every old-resource retirement independently.
+            Exception? failure = null;
+            void Settle(Action action)
+            {
+                try { action(); }
+                catch (Exception ex) { failure ??= ex; }
+            }
+            if (primaryAudioSource is not null)
+                Settle(() => primaryAudioSource.StreamingBufferProcessed -= OnPrimaryBufferProcessed);
+            if (audioSource is not null && !ReferenceEquals(_cachedAudioSource, audioSource))
+                Settle(() => audioSource.ExternalBufferManagement = false);
+            if (audioSource is not null && !ReferenceEquals(_cachedAudioSource, audioSource))
+                Settle(() => audioSource.SetAutoPlayOnQueue(true));
+            if (openCancellation is not null)
+                Settle(openCancellation.Cancel);
+            if (retiredSession is not null)
+            {
+                Settle(() => retiredSession.VideoSizeChanged -= HandleStreamingVideoSizeChanged);
+                Settle(retiredSession.Close);
+                Settle(retiredSession.Dispose);
+            }
+            if (openCancellation is not null)
+                Settle(openCancellation.Dispose);
+            if (retiredActions is not null)
+                Settle(() => RetireVideoGpuActions(retiredActions));
+            if (failure is not null)
+                throw new InvalidOperationException("Video streaming teardown failed after retiring available resources.", failure);
+        }
+
+        private static void RetireVideoGpuActions(IVideoFrameGpuActions actions)
+        {
+            if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                actions.Dispose();
+            else
+                RuntimeEngine.EnqueueRenderThreadTask(actions.Dispose, "UI.Video.RetireGpuActions",
+                    RenderThreadJobKind.RenderPipelineResource);
+        }
+
+        internal void AttachStreamingSession(IMediaStreamSession session, string url,
+            StreamOpenOptions options, long epoch)
+        {
+            if (!IsCurrentStreamingLifecycle(epoch) || _streamingSession is not null)
+                throw new InvalidOperationException("A streaming session can only attach to the current empty lifecycle.");
+            _streamingSession = session;
+            session.VideoSizeChanged += HandleStreamingVideoSizeChanged;
+            _streamingOpenCancellation = new CancellationTokenSource();
+            BeginStreamingOpenWithSession(url, options, epoch);
+        }
+
+        internal void AttachVideoGpuActions(IVideoFrameGpuActions actions)
+        {
+            lock (_videoProducerGate)
+            {
+                if (_gpuVideoActions is not null)
+                    throw new InvalidOperationException("Video GPU actions are already attached.");
+                _gpuVideoActions = actions;
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -280,23 +369,34 @@ namespace XREngine.Rendering.UI
         /// Kicks off the async <see cref="IMediaStreamSession.OpenAsync"/> call
         /// and attaches a continuation to handle success/failure.
         /// </summary>
-        private void BeginStreamingOpenWithSession(string url, StreamOpenOptions? options)
+        private void BeginStreamingOpenWithSession(string url, StreamOpenOptions? options, long epoch)
         {
             var session = _streamingSession;
-            if (session is null)
+            CancellationTokenSource? cancellation = _streamingOpenCancellation;
+            if (session is null || cancellation is null || !IsCurrentStreamingLifecycle(epoch))
                 return;
 
             _streamingCurrentUrl = url;
-            _streamingSessionOpenTask = session.OpenAsync(url, options, CancellationToken.None);
-            _ = _streamingSessionOpenTask.ContinueWith(OnStreamingSessionOpenCompleted, TaskScheduler.Default);
+            CancellationToken token = cancellation.Token;
+            Task openTask = session.OpenAsync(url, options, token);
+            if (!IsCurrentStreamingSession(session, epoch, token))
+                return;
+            _streamingSessionOpenTask = openTask;
+            _streamingOpenCompletionTask = openTask.ContinueWith(task =>
+                RuntimeEngine.InvokeOnAppThread(() =>
+                    OnStreamingSessionOpenCompleted(task, session, epoch, token),
+                    "UIVideoComponent.StreamOpenCompleted", true), TaskScheduler.Default);
         }
 
         /// <summary>
         /// Continuation for the session open task. Handles retries with
         /// exponential backoff on failure, and records telemetry on success.
         /// </summary>
-        private void OnStreamingSessionOpenCompleted(Task task)
+        private void OnStreamingSessionOpenCompleted(Task task, IMediaStreamSession session,
+            long epoch, CancellationToken cancellationToken)
         {
+            if (!IsCurrentStreamingSession(session, epoch, cancellationToken))
+                return;
             Debug.UI($"Streaming session open completed: status={task.Status}, faulted={task.IsFaulted}");
 
             if (task.IsCanceled)
@@ -313,14 +413,16 @@ namespace XREngine.Rendering.UI
                     _streamingRetryCount = attempt;
                     Debug.UIWarning($"Streaming session failed to open stream (attempt {attempt}): {task.Exception?.GetBaseException().Message}. Retrying in {backoffMs}ms.");
 
-                    _ = Task.Delay(backoffMs).ContinueWith(_ =>
-                    {
-                        if (!IsActiveInHierarchy || _streamingSession is null || string.IsNullOrWhiteSpace(_streamingCurrentUrl))
-                            return;
+                    _ = Task.Delay(backoffMs, cancellationToken).ContinueWith(_ =>
+                        RuntimeEngine.InvokeOnAppThread(() =>
+                        {
+                            if (!IsCurrentStreamingSession(session, epoch, cancellationToken) ||
+                                string.IsNullOrWhiteSpace(_streamingCurrentUrl))
+                                return;
 
-                        _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
-                        BeginStreamingOpenWithSession(_streamingCurrentUrl, _streamingOpenOptions);
-                    }, TaskScheduler.Default);
+                            _streamOpenAttemptStartedTicks = GetEngineTimeTicks();
+                            BeginStreamingOpenWithSession(_streamingCurrentUrl, _streamingOpenOptions, epoch);
+                        }, "UIVideoComponent.StreamOpenRetry", true), TaskScheduler.Default);
                     return;
                 }
 

@@ -28,7 +28,6 @@ namespace XREngine.Rendering.UI
             // it rejects the shadow cameras too, so the declaration keeps a hidden or screen-space item out of the
             // shadow-only caster census.
             RenderInfo3D.SetCameraIndependentPreCollectCommandsCallback(PreCollectRenderInfo3D);
-            RenderInfo3D.PropertyChanged += RenderInfo3DPropertyChanged;
             RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
             _publicationCommandObserver = new UIDrawCommandObserver(RenderCommand2D, PublicationDrawChanged);
         }
@@ -48,33 +47,14 @@ namespace XREngine.Rendering.UI
 
         private readonly UIDrawCommandObserver _publicationCommandObserver;
         private bool _worldCollectionSuppressed;
-        private bool _worldAuthoredVisible = true;
-        private bool _applyingWorldCollectionVisibility;
 
         /// <summary>Keeps authored world visibility while the canvas owns frozen world collection.</summary>
         internal void SetCanvasWorldCollectionSuppressed(bool suppressed)
         {
             if (_worldCollectionSuppressed == suppressed)
                 return;
-            if (suppressed)
-                _worldAuthoredVisible = RenderInfo3D.IsVisible;
             _worldCollectionSuppressed = suppressed;
-            _applyingWorldCollectionVisibility = true;
-            try { RenderInfo3D.IsVisible = suppressed ? false : _worldAuthoredVisible; }
-            finally { _applyingWorldCollectionVisibility = false; }
-        }
-
-        private void RenderInfo3DPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
-        {
-            if (e.PropertyName != nameof(RenderInfo3D.IsVisible) || _applyingWorldCollectionVisibility)
-                return;
-            _worldAuthoredVisible = RenderInfo3D.IsVisible;
-            if (_worldCollectionSuppressed && RenderInfo3D.IsVisible)
-            {
-                _applyingWorldCollectionVisibility = true;
-                try { RenderInfo3D.IsVisible = false; }
-                finally { _applyingWorldCollectionVisibility = false; }
-            }
+            RenderInfo3D.SetCollectionSuppressed(suppressed);
         }
         private UIDrawPayloadBuilder? _publicationPayloadBuilder;
         private RenderCommandMesh2D? _publicationFrozenCommand;
@@ -139,7 +119,6 @@ namespace XREngine.Rendering.UI
         protected override void OnDestroying()
         {
             ReleaseBatchPrimitiveRegistration();
-            RenderInfo3D.PropertyChanged -= RenderInfo3DPropertyChanged;
             _publicationCommandObserver.Dispose();
             try
             {
@@ -327,7 +306,7 @@ namespace XREngine.Rendering.UI
                 canvas is not null && !canvas.UseOffscreenRenderingForNonScreenSpaces();
             bool supportsBatch = !directWorld && SupportsBatchedRendering && canvas?.BatchCollector.Enabled == true;
             bool visible = output.Visible && IsActiveInHierarchy &&
-                (directWorld ? (_worldCollectionSuppressed ? _worldAuthoredVisible : RenderInfo3D.IsVisible) &&
+                (directWorld ? RenderInfo3D.IsVisible &&
                     RenderCommand3D.Enabled && RenderCommand3D.Instances > 0 :
                     RenderInfo2D.IsVisible && (supportsBatch || RenderCommand2D.Enabled && RenderCommand2D.Instances > 0));
             if (supportsBatch || !visible)
@@ -433,6 +412,8 @@ namespace XREngine.Rendering.UI
                 FrozenCommand = frozenCommand,
                 FrozenWorldCommand = frozenWorldCommand,
                 WorldCastsShadows = RenderInfo3D.CastsShadows,
+                WorldLayer = RenderInfo3D.Layer,
+                WorldCullingVolume = RenderInfo3D.CaptureWorldCullingVolume(),
                 Payload = payload,
                 CaptureFailure = captureFailure,
             };

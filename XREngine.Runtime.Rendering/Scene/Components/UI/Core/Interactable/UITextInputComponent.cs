@@ -707,7 +707,7 @@ namespace XREngine.Rendering.UI
         }
 
         /// <summary>Raises the same single-line submit action as the engine Enter key.</summary>
-        public void UserSubmit()
+        public virtual void UserSubmit()
         {
             if (IsComposing)
                 return;
@@ -716,7 +716,7 @@ namespace XREngine.Rendering.UI
         }
 
         /// <summary>Raises the same single-line cancel action as the engine Escape key.</summary>
-        public void UserCancel()
+        public virtual void UserCancel()
         {
             if (IsComposing)
             {

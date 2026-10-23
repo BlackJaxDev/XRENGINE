@@ -538,6 +538,8 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            lock (_videoProducerGate)
+                _videoStreamStopPending = false;
             RuntimeEngine.Time.Timer.RenderFrame += ProduceVideoFrame;
             StartStreamingPipeline();
         }
@@ -546,13 +548,15 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentDeactivated();
             RuntimeEngine.Time.Timer.RenderFrame -= ProduceVideoFrame;
+            bool stopNow;
             lock (_videoProducerGate)
             {
                 if (_videoProducerActive != 0)
                     _videoStreamStopPending = true;
-                else
-                    StopStreamingPipeline();
+                stopNow = _videoProducerActive == 0;
             }
+            if (stopNow)
+                StopStreamingPipeline();
         }
 
         /// <summary>

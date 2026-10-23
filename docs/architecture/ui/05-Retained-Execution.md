@@ -46,6 +46,13 @@ notifications. Text dependencies are scanned when that generation changes.
 The flat output accessor is a diagnostic compatibility path; normal publication
 uses the immutable indexed page view.
 
+Scroll extents use the offset that placed the applied child geometry. A newer
+authored offset cannot increase the measured content size while layout is
+pending. Owner application marks scroll geometry provisional before writing.
+An interrupted apply preserves the last settled limits. Recovery reapplies all
+owner output pages before accepting a generation; ordinary successful updates
+retain sparse application.
+
 Before applying a result, the owner checks canvas lifetime, element identity and
 incarnation, parent and child order, layout dependencies, text metrics, and root
 constraints. A visual-only edit does not invalidate an otherwise valid layout.
@@ -186,6 +193,15 @@ Leaving the output region invalidates that cache before clearing intersections.
 A return to the same point must perform a fresh query. Blocker filtering compacts
 the existing hit list in place and preserves only the frozen blocker subtree.
 
+Press capture retains the displayed publication, its canvas-to-local transform,
+and `UIPointerGeometry` until release or cancellation. Scroll metrics come from
+accepted layout output. A callback can replace capture; dispatch uses a local
+copy and a capture token so the old handler cannot change the replacement.
+Scene viewport input uses the same frozen hit record for normalized coordinates.
+Deferred pick and hover work validates the pane, input owner, window, camera,
+world, focus, and current presentation before applying its result. An inactive
+input dispatcher cannot revive its old presented mapping.
+
 The output receipt integration still requires graphics validation. CPU command
 completion alone does not prove that deferred GPU draws reached an output.
 Do not infer atomic rendering, Vulkan replay correctness, or visual parity from
@@ -197,8 +213,12 @@ headless packet tests.
 Desktop intrinsic quad controls keep color, border, texture, and UV values without
 allocating a material or shader per control. Explicit `Material` access creates an
 isolated legacy material when that path can preserve the primitive. Border or
-atlas-subregion escape reports an unsupported-path failure. Shared text prototypes
-remain open.
+atlas-subregion escape reports an unsupported-path failure.
+`UIBatchMaterialPrototype` provides immutable shader and raster definitions for
+solid, border, image, and text cohorts. Each cohort creates its own mutable
+material and raster options. Deferred draws must not share those mutable values.
+Common combo rows use the intrinsic solid path. Per-control color, border,
+texture, and glyph values remain in instance records.
 Unknown custom shaders retain normal draw commands. Batch eligibility fixes
 shader, sampler, blend/depth, and feature contracts. Cohort and painter-run keys
 include primitive type, atlas or image snapshot, shader mode, clip values, pass,
@@ -254,8 +274,18 @@ active and unsubscribe on deactivation or row recycling. Editor adapters cache
 property access, marshal source notifications to the scene owner, and group
 mutations through `Undo`. Engine targets use property-change tracking. Plain
 object targets record their committed before/after values in the same undo group.
-Numeric fields retain an invalid draft until valid
-commit or cancellation. Shaped text distinguishes glyph provenance from complete
+`UINumericInputComponent<T>` retains an invalid draft until valid commit or
+cancellation. It supplies culture-aware parsing, finite limits, keyboard steps,
+and an optional Alt-drag edit. Enter or Escape ends that drag before dispatching
+submit or cancel. Later pointer movement cannot resume the old edit. Integer
+steps use a wider intermediate value before range checks.
+`UIScrollbarComponent` uses the press packet's thumb and scroll extents. Slider
+and scrollbar input must not combine displayed coordinates with pending live
+geometry. A changed target identity or configuration rejects the old capture.
+Combo typeahead searches bounded local options. A virtual source above 256
+options must provide `IUIComboPrefixSearch`; otherwise typeahead is unavailable.
+Explicit capability reporting and bounded disabled-option navigation remain open.
+Shaped text distinguishes glyph provenance from complete
 grapheme caret geometry. Complete runs use visual left/right navigation while
 keeping logical UTF-16 edit positions. Incomplete runs reject geometric caret,
 selection, and candidate placement rather than inventing logical geometry.
@@ -265,7 +295,9 @@ undo/redo, and composition state.
 The desktop IME adapter uses existing Windows IMM32 APIs. Composition events carry
 an immutable focus identity and focus epoch. A separate interaction revision
 rejects recycled or disabled targets. Candidate placement uses
-accepted caret geometry. Other hosts report unsupported IME capability. This
+the caret overlay's frozen record in the displayed packet. A newer pending
+layout does not move the native candidate window. Deactivation removes the
+candidate update registration before cancelling composition. Other hosts report unsupported IME capability. This
 boundary does not imply tested Windows IME behavior or a Linux IME implementation.
 
 `IVirtualListProvider` supplies item count, stable IDs, and row binding.
@@ -318,6 +350,20 @@ state persistence remain open.
 Offscreen world canvases use render-command publication claims and separate
 producer and consumer receipts. Direct world UI still uses the existing component
 route; its frozen shadow and draw census remains open.
+
+## Media and callback teardown
+
+Video starts, open completions, and retries carry a lifecycle epoch. Teardown
+detaches the exact session, audio sources, and GPU upload helper under the
+producer gate. It resets owner state before external cancellation and close
+callbacks. Old audio cleanup cannot change a replacement that claims the same
+source. Each cleanup step runs even if another step throws. GPU helper disposal
+runs on the render owner and retains the exact retired helper.
+
+Viewport teardown removes collection, swap, and mesh callbacks. Property-text
+drivers stop polling on deactivation and direct destruction. These contracts do
+not complete all media teardown: web backend replacement and render-owner
+retirement remain open.
 
 ## Opt-in fixtures
 

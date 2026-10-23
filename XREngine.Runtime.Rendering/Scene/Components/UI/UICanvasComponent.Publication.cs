@@ -24,6 +24,8 @@ public partial class UICanvasComponent
     private ulong _publicationPainterOrderRevision = ulong.MaxValue;
     private readonly Dictionary<UIElementIdentity, int> _publicationLayoutIndices = [];
     private readonly Dictionary<UIElementIdentity, int> _publicationSubtreeEnds = [];
+    private readonly Dictionary<UIElementIdentity, (Vector2 Offset, Vector2 Maximum)> _scrollMetricRetry = [];
+    private readonly List<UIElementIdentity> _scrollMetricRetired = [];
     private readonly ConcurrentDictionary<object, UIPublication> _presentedPublications =
         new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentDictionary<object, (ulong FrameId, UIPublication Publication, ulong ReceiptId)> _renderedPublications =
@@ -183,6 +185,12 @@ public partial class UICanvasComponent
         _publicationLayoutIndices.Clear();
         for (int index = 0; index < identities.Length; index++)
             _publicationLayoutIndices.Add(identities.Span[index], index);
+        _scrollMetricRetired.Clear();
+        foreach (UIElementIdentity identity in _scrollMetricRetry.Keys)
+            if (!_publicationLayoutIndices.ContainsKey(identity))
+                _scrollMetricRetired.Add(identity);
+        for (int index = 0; index < _scrollMetricRetired.Count; index++)
+            _scrollMetricRetry.Remove(_scrollMetricRetired[index]);
         _publicationSubtreeEnds.Clear();
         CaptureSubtreeEnds(canvas);
         _publicationHitScratch.Clear();
@@ -403,10 +411,13 @@ public partial class UICanvasComponent
 
                 long interactionRevision = component is UIInteractableComponent target
                     ? target.InteractionRevision : 0;
+                Vector2 acceptedSize = layoutPages[layoutIndex].ActualSize;
+                UIPointerGeometry pointerGeometry = CapturePointerGeometry(
+                    component, acceptedSize, layoutPages);
                 _publicationHitScratch.Add(new UIHitRecord(
                     renderInfo, renderInfo.MembershipId, transform.ElementIdentity,
                     interactionRevision, canvas.WorldMatrix * transform.InverseWorldMatrix,
-                    bounds.ActualSize, bounds.GetCanvasRegion(canvas),
+                    acceptedSize, bounds.GetCanvasRegion(canvas),
                     UIClipRegion.ResolveCrop(bounds, false), layoutIndex,
                     transform.Parent is UITransform parent &&
                     _publicationLayoutIndices.TryGetValue(parent.ElementIdentity, out int parentIndex)
@@ -417,7 +428,7 @@ public partial class UICanvasComponent
                     component is UIInteractableComponent focusTarget && focusTarget.IsTabStop,
                     component is UIInteractableComponent indexedTarget ? indexedTarget.TabIndex : 0,
                     focusScopeIdentity, virtualListIdentity, virtualRowIdentity,
-                    virtualRowLease));
+                    virtualRowLease, pointerGeometry));
             }
         }
 
@@ -425,6 +436,42 @@ public partial class UICanvasComponent
             if (transform.Children[index] is UITransform child)
                 CaptureHitRecords(canvas, child, focusScopeIdentity, layoutPages,
                     virtualListIdentity, virtualRowIdentity, virtualRowLease);
+    }
+
+    private UIPointerGeometry CapturePointerGeometry(UIComponent component, Vector2 acceptedSize,
+        UILayoutOutputPageView layoutPages)
+    {
+        if (component is not UIScrollbarComponent scrollbar ||
+            scrollbar.ScrollTarget is not { IsDestroyed: false } scrollTarget ||
+            scrollbar.ThumbTransform is not { IsDestroyed: false } thumb ||
+            !_publicationLayoutIndices.TryGetValue(scrollTarget.ElementIdentity, out int targetIndex) ||
+            !_publicationLayoutIndices.TryGetValue(thumb.ElementIdentity, out int thumbIndex) ||
+            !layoutPages[targetIndex].Visible || !layoutPages[thumbIndex].Visible)
+            return new UIPointerGeometry(acceptedSize);
+
+        ref readonly UILayoutNodeOutput acceptedTarget = ref layoutPages[targetIndex];
+        ref readonly UILayoutNodeOutput acceptedThumb = ref layoutPages[thumbIndex];
+        Vector2 settledOffset = scrollTarget.ScrollOffset;
+        Vector2 settledMaximum = scrollTarget.MaxScrollOffset;
+        UIElementIdentity targetIdentity = scrollTarget.ElementIdentity;
+        if (acceptedTarget.AcceptedScrollOffset != settledOffset ||
+            acceptedTarget.AcceptedMaxScrollOffset != settledMaximum)
+        {
+            var settled = (settledOffset, settledMaximum);
+            if (!_scrollMetricRetry.TryGetValue(targetIdentity, out var last) || last != settled)
+            {
+                _scrollMetricRetry[targetIdentity] = settled;
+                scrollTarget.InvalidateArrange();
+            }
+            return new UIPointerGeometry(acceptedSize);
+        }
+        _scrollMetricRetry.Remove(targetIdentity);
+        Vector2 thumbTranslation = acceptedThumb.LocalTranslation + acceptedThumb.PlacementTranslation;
+        return scrollbar.TryCapturePointerGeometry(acceptedSize, acceptedThumb.ActualSize,
+            thumbTranslation, acceptedTarget.AcceptedScrollOffset,
+            acceptedTarget.AcceptedMaxScrollOffset, out UIScrollbarPointerMetrics metrics)
+            ? new UIPointerGeometry(acceptedSize, metrics)
+            : new UIPointerGeometry(acceptedSize);
     }
 
     private void BeginPublicationCollection()
@@ -522,7 +569,8 @@ public partial class UICanvasComponent
                             Matrix4x4.CreateScale(publication.CanvasBounds.Width,
                                 publication.CanvasBounds.Height, 1.0f);
                     }
-                    else if (!TryGetWorldToCanvasMatrix(out worldToCanvas))
+                    else if (!Matrix4x4.Invert(publication.AuthoringCanvasWorldMatrix,
+                                 out worldToCanvas))
                         return;
                     XRCamera? camera = viewport.ActiveCamera;
                     if (camera?.Transform is null)
@@ -584,6 +632,8 @@ public partial class UICanvasComponent
     private void ClearPublications()
     {
         List<UIPublication> detached = [];
+        _scrollMetricRetry.Clear();
+        _scrollMetricRetired.Clear();
         lock (_publicationGate)
         {
             Interlocked.Increment(ref _canvasLifetime);

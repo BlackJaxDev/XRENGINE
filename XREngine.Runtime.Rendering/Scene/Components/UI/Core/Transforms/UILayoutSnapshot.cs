@@ -569,7 +569,8 @@ internal sealed class UILayoutSnapshot
                 flags = (int)fitted.FitType;
                 break;
             case UIScrollableTransform scroll:
-                values = new(scroll.ScrollOffset.X, scroll.ScrollOffset.Y, 0, 0);
+                Vector2 maxScroll = scroll.MaxScrollOffset;
+                values = new(scroll.ScrollOffset.X, scroll.ScrollOffset.Y, maxScroll.X, maxScroll.Y);
                 break;
         }
         if (transform is IUILayoutValueAdapter adapter)

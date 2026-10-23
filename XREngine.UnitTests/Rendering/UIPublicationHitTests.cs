@@ -32,6 +32,34 @@ public sealed class UIPublicationHitTests
     }
 
     [Test]
+    public void SceneUv_UsesPresentedTransformAndSizeAfterAuthoringLayoutMoves()
+    {
+        using RenderInfo2D renderInfo = RenderInfo2D.New(null!);
+        UIHitRecord displayed = new(
+            renderInfo, renderInfo.MembershipId, new UIElementIdentity(1, 1), 1,
+            Matrix4x4.CreateTranslation(-40, -20, 0), new Vector2(200, 100),
+            new BoundingRectangleF(new Vector2(40, 20), new Vector2(200, 100)),
+            null, 0, -1, 1, 0, 0, 0, true, false);
+        Vector2 canvasPointer = new(90, 45);
+        displayed.Contains(canvasPointer).ShouldBeTrue();
+        Vector2 displayedLocal = Vector2.Transform(canvasPointer, displayed.CanvasToLocal);
+        displayed.TryNormalizeLocal(displayedLocal, out Vector2 displayedUv).ShouldBeTrue();
+        displayedUv.ShouldBe(new Vector2(0.25f, 0.25f));
+
+        // A newer authoring layout must not affect the still displayed hit packet.
+        UIHitRecord unpublished = displayed with
+        {
+            CanvasToLocal = Matrix4x4.CreateTranslation(-270, -130, 0),
+            Size = new Vector2(300, 150),
+            Bounds = new BoundingRectangleF(new Vector2(270, 130), new Vector2(300, 150)),
+        };
+        displayed.TryNormalizeLocal(displayedLocal, out Vector2 uvAfterMove).ShouldBeTrue();
+        uvAfterMove.ShouldBe(displayedUv);
+        Vector2 unpublishedLocal = Vector2.Transform(canvasPointer, unpublished.CanvasToLocal);
+        unpublished.TryNormalizeLocal(unpublishedLocal, out _).ShouldBeFalse();
+    }
+
+    [Test]
     public void SubtreeMembership_UsesFrozenLayoutIndices()
     {
         using RenderInfo2D renderInfo = RenderInfo2D.New(null!);

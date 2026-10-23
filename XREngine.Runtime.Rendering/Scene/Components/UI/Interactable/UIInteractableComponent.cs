@@ -402,6 +402,10 @@ namespace XREngine.Rendering.UI
             OnMouseMove(posLocal.X, posLocal.Y);
         }
 
+        /// <summary>Moves a pointer with geometry from its presented hit.</summary>
+        public virtual void MouseMoved(Vector2 lastPosLocal, Vector2 posLocal, in UIPointerGeometry geometry)
+            => MouseMoved(lastPosLocal, posLocal);
+
         /// <summary>Begins an accepted pointer action in control-local coordinates.</summary>
         public virtual void PointerPressed(Vector2 localPoint)
         {
@@ -409,12 +413,20 @@ namespace XREngine.Rendering.UI
                 IsPressed = true;
         }
 
+        /// <summary>Begins a pointer action with geometry from its presented hit.</summary>
+        public virtual void PointerPressed(Vector2 localPoint, in UIPointerGeometry geometry)
+            => PointerPressed(localPoint);
+
         /// <summary>Ends an accepted pointer action in control-local coordinates.</summary>
         public virtual void PointerReleased(Vector2 localPoint, bool inside)
         {
             IsPressed = false;
             IsCaptured = false;
         }
+
+        /// <summary>Ends a pointer action with geometry from its pressed hit.</summary>
+        public virtual void PointerReleased(Vector2 localPoint, bool inside, in UIPointerGeometry geometry)
+            => PointerReleased(localPoint, inside);
 
         /// <summary>Stops a pointer action without activation.</summary>
         public virtual void PointerCancelled()

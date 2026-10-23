@@ -428,3 +428,107 @@ A hash comparison of 9,865 source/project/shader files confirms that no source
 changed between headless build 55, test run 31, editor build 24, and desktop
 build 6. The 31 local links in the five updated UI documents resolve. The diff
 whitespace check passes. Windows-only desktop tests were compiled, not run.
+
+## Paragraph Analysis Decision
+
+The installed Skia/HarfBuzz adapter shapes a caller-declared run. It does not
+supply paragraph bidi analysis or line-break opportunities. The
+[HarfBuzz contract](https://harfbuzz.github.io/what-harfbuzz-doesnt-do.html)
+requires the caller to supply those results. The complete shaping/cache item
+therefore remains open.
+
+A Windows-first option is an audited values-only adapter to
+[DirectWrite text analysis](https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nn-dwrite-idwritetextanalyzer).
+It uses a Windows system API without a package installation. It still adds a
+platform boundary and requires Windows runtime validation. System font fallback
+has a separate capability requirement: [MapCharacters](https://learn.microsoft.com/en-us/windows/win32/api/dwrite_2/nf-dwrite_2-idwritefontfallback-mapcharacters)
+requires Windows 8.1 or later. The existing Windows target alone does not prove
+that capability. Authored fallback faces need immutable worker snapshots and
+atlas ownership regardless of the analysis backend.
+
+A portable analyzer would require a separate dependency and packaging review.
+The owner choice is pending. No paragraph analyzer or new dependency has been
+added. Presented-caret IME placement and the existing single-run path can
+advance independently.
+
+## Presented Controls And Media Lifetime
+
+Headless build 56 passed with zero warnings/errors in 2m58.12s. Run 32 passed
+all 424 tests, with no warnings or skips, in 8.212s. Source hashes confirmed the
+frozen input, control, material-prototype, media, and world-capture snapshot.
+This was an intermediate check, not a publication acceptance result.
+
+Review found additional gaps not covered by that run:
+
+- A queued stop followed by a blank-URL start could leave an old video session
+  open. GPU upload helper destruction also needs the render owner and exclusion
+  from active frame uploads. Deferred fake sessions must test these paths.
+- An asynchronous scene pick must validate its pane, input, window, camera,
+  world, and presentation when it completes. A tick revision alone is not
+  sufficient after focus loss or popup coverage. Rectangle selection must keep
+  its press owner, and right-drag camera input needs explicit capture.
+- Numeric Escape and Enter must end an Alt-drag edit. Later pointer movement or
+  release must not resume or commit that edit again.
+- A slider or scrollbar must not combine a displayed local pointer coordinate
+  with newer live geometry. The existing pointer dispatch must carry the exact
+  hit record and frozen scroll metrics. Metric changes must invalidate input
+  records, and a recycled or reconfigured scroll target must reject old input.
+
+These findings remain repair work. The published checkpoint remains the prior
+410-test snapshot until the repairs, matching builds, and review pass.
+
+Headless build 57 compiled with one nullable warning and no errors in 1m39.05s.
+A pointer reentry repair overlapped that build, so it is not a final matching
+snapshot. The warning exposed a missing explicit local target check in scrollbar
+capture. Review also found that pre-layout scroll limits can disagree with newly
+arranged content. Capture must reject those metrics until the follow-up layout
+settles. The next check includes these repairs and a callback-reentry regression.
+
+Headless build 58 passed with zero warnings/errors in 1m19.74s. Run 33 passed
+434 of 435 tests in 8.623s. The scrollbar test failed because its requested
+pointer metrics were rejected; the press-reentry, stale-limit, and media teardown
+regressions passed. The fixture and accepted thumb geometry need investigation
+before this snapshot can publish. No source changed during this build or run.
+
+The thumb coordinate bases match: accepted local plus placement translation is
+the applied bottom-left translation. The fixture exited on an already-positive
+thumb width and paired that old position with a newer scroll offset. It now waits
+for a newer accepted layout whose thumb geometry matches the requested metrics.
+The production rejection stays unchanged.
+
+Build 59 passed with zero warnings/errors in 14.28s. Run 34 still passed only
+434 of 435 tests; the same scrollbar wait timed out. The timing change alone
+did not resolve the failure. The next targeted run records accepted and requested
+thumb geometry, scroll limits, and interaction state to isolate the remaining
+mismatch. This result does not support publication yet.
+
+Build 60 passed with zero warnings/errors in 21.12s. Targeted run 35 failed the
+same test in 6.324s. Its diagnostic showed content width grow from 240 to 336
+after a 96-pixel scroll, while authored width stayed 240. `SynchronizeScroll`
+used the new authored offset to recover unscrolled coordinates from old applied
+child geometry. The transform now retains the offset used for that geometry;
+the existing post-apply loop updates that basis after applying child outputs.
+The regression checks both horizontal and vertical extents. No new tree scan
+is required.
+
+Build 61 passed with zero warnings/errors in 1m28.60s. Targeted run 36 passed
+the scrollbar and horizontal/vertical extent tests (2/2) in 0.796s. Review then
+identified a related recovery case: an owner callback can abort layout application
+after some live child geometry changes. The next capture must preserve the last
+settled scroll limits until complete geometry application succeeds. Cached pages
+also need a recovery check so a rejected partial apply cannot leave stale live
+values when a later result reuses older accepted output.
+
+The reviewed recovery guard preserves settled scroll extents while owner geometry
+is provisional. A force-reapply flag remains set until validated publication;
+only recovery bypasses the normal changed-page skips. Build 62 passed with zero
+warnings/errors in 1m45.89s. Full run 37 passed all 437 tests, with no warnings or
+skips, in 11.643s. This includes callback-driven apply rejection and restoration
+of cached owner geometry. Matching editor and desktop compilation follow.
+
+Editor build 25 passed with zero warnings/errors in 3m21.83s. Desktop test
+build 7 passed with zero warnings/errors in 47.16s. Source hashes matched the
+9,882-file build-62 snapshot after all checks. No Windows test execution or
+graphics validation is claimed. The final document link and whitespace checks
+passed. The completed prototype contract advances reconciliation to 38 of 60;
+22 code items and four original owner decisions remain.

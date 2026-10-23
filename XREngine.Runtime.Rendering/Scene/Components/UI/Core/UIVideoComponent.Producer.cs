@@ -19,6 +19,7 @@ public partial class UIVideoComponent
     private bool _videoReleasePending;
     private bool _videoSurfacesReleased;
     private bool _videoStreamStopPending;
+    internal bool VideoSurfacesReleased => _videoSurfacesReleased;
 
     private sealed class VideoSurface(XRTexture2D texture) : IUIDrawProducerLease
     {
@@ -62,6 +63,7 @@ public partial class UIVideoComponent
 
     private void ProduceVideoFrame()
     {
+        bool stopPending = false;
         lock (_videoProducerGate)
         {
             if (Volatile.Read(ref _videoProducerDestroyed) != 0 || !IsActive || _streamingSession is not { } session)
@@ -74,12 +76,14 @@ public partial class UIVideoComponent
                 if (_videoProducerActive == 0 && _videoStreamStopPending)
                 {
                     _videoStreamStopPending = false;
-                    StopStreamingPipeline();
+                    stopPending = true;
                 }
                 if (_videoProducerActive == 0 && _videoReleasePending)
                     ReleaseVideoSurfacesUnderGate();
             }
         }
+        if (stopPending)
+            StopStreamingPipeline();
     }
 
     private void QueueVideoVisualInvalidation()
@@ -163,6 +167,19 @@ public partial class UIVideoComponent
     {
         Volatile.Write(ref _videoProducerDestroyed, 1);
         RuntimeEngine.Time.Timer.RenderFrame -= ProduceVideoFrame;
+        bool stopNow;
+        lock (_videoProducerGate)
+        {
+            if (_videoProducerActive != 0)
+                _videoStreamStopPending = true;
+            stopNow = _videoProducerActive == 0;
+        }
+        Exception? stopFailure = null;
+        if (stopNow)
+        {
+            try { StopStreamingPipeline(); }
+            catch (Exception ex) { stopFailure = ex; }
+        }
         Volatile.Write(ref _publishedVideoSurface, null);
         try { base.OnDestroying(); }
         finally
@@ -178,6 +195,8 @@ public partial class UIVideoComponent
                         RenderThreadJobKind.RenderPipelineResource);
             }
         }
+        if (stopFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(stopFailure).Throw();
     }
 
     private void ReleaseVideoSurfaces()
