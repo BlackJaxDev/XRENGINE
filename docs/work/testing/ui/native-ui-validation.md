@@ -13,19 +13,20 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current checkpoint source passes the headless and editor builds with zero
-warnings and errors through `Tools/Invoke-AgentBuild.ps1`. All **328 of 328**
-headless tests pass, with no failures or skips. The final run took 8.389 seconds.
-Coverage includes standalone text ownership and font-thread transitions, stable
-primitive registration, registered gamepad/popup routing, binding re-entry,
-100,000/1,000,000-item presented focus, file mutation bounds, and dock-tree state.
-The matching editor build passed in 2m49.10s; the headless build took 1m11.89s.
+warnings and errors through `Tools/Invoke-AgentBuild.ps1`. All **353 of 353**
+headless tests pass, with no failures or skips. The final run took 7.657 seconds.
+Coverage includes immutable image atlases and callback teardown, custom image
+ownership, shaping cache invalidation and input capture, used glyph prefixes,
+virtual accessibility, popup Back routing, and fresh dock-layout state. The
+headless build took 13.11 seconds. The matching editor build passed in 47.53s;
+the full desktop test project compiled in 43.85s. Both had zero warnings/errors.
 
-The editor build compiles Windows targets on Linux. The matching desktop
-test-project build, including new shaping tests, passed with zero warnings/errors
-in 49.52s. Desktop tests did not execute: prior NUnit discovery rejects
-the assembly with "Only supported on Windows7.0". The new inspector component
-mutations compile; their Windows live Undo workflow remains pending. Do not
-bypass the assembly platform check or count a zero-test exit as a pass.
+The editor build compiles Windows targets on Linux. The desktop test-project
+build compiles shaping and Vulkan regression tests. Desktop tests did not execute:
+prior NUnit discovery rejects the assembly with "Only supported on Windows7.0".
+Inspector and dock-host mutations compile; their Windows live Undo, pointer,
+window, and lifecycle workflows remain pending. Do not bypass the assembly
+platform check or count a zero-test exit as a pass.
 
 These are checkpoint results, not platform or performance acceptance. See the
 [integration investigation](../../investigations/ui/retained-ui-integration.md)

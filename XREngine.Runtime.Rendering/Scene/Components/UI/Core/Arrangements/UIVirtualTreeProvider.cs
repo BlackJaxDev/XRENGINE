@@ -7,7 +7,7 @@ namespace XREngine.Rendering.UI
     /// Keeps a visible preorder index. Structural edits change the affected range; scrolling reads it by index.
     /// This type is owned by the UI thread. Large inserts and moves can shift later list elements.
     /// </summary>
-    public sealed class UIVirtualTreeProvider : IVirtualListProvider, IVirtualListItemIndex
+    public sealed class UIVirtualTreeProvider : IVirtualListProvider, IVirtualListItemIndex, IUIVirtualAccessibilityProvider
     {
         private readonly Dictionary<ulong, UIVirtualTreeNode> _nodes = [];
         private readonly List<ulong> _roots = [];
@@ -33,11 +33,27 @@ namespace XREngine.Rendering.UI
         }
 
         public int Count => _visible.Count;
+        public int AccessibilityItemCount => Count;
         public ulong Revision => _revision;
         public ulong ActiveId => _activeId;
         public bool IsSelected(ulong id) => _selection.Contains(id);
         public bool TryGetNode(ulong id, out UIVirtualTreeNode? node) => _nodes.TryGetValue(id, out node);
         public ulong GetItemId(int index) => _visible[index];
+        public bool TryGetAccessibilityItem(int index, out UIVirtualAccessibilityItem item)
+        {
+            item = default;
+            if ((uint)index >= (uint)_visible.Count)
+                return false;
+            ulong id = _visible[index];
+            UIVirtualTreeNode node = _nodes[id];
+            int depth = 0;
+            for (ulong parent = node.ParentId; parent != 0; parent = _nodes[parent].ParentId)
+                depth++;
+            item = new(id, node.Name, EUIAccessibilityRole.TreeItem,
+                _selection.Contains(id), node.IsExpanded, node.Children.Count > 0, node.IsSection,
+                depth, _activeId == id);
+            return true;
+        }
         public int FindVisibleIndex(ulong id)
             => _visibleIndexById.TryGetValue(id, out int index) ? index : -1;
         public bool TryGetIndexOfItemId(ulong itemId, out int index)

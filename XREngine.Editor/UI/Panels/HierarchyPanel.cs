@@ -132,7 +132,8 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             _contextMenu = null;
         }
 
-        SceneNode.Transform.Clear();
+        foreach (var child in SceneNode.Transform.Children.ToArray())
+            child.SceneNode?.Destroy(true);
         _treeListTransform = null;
         _scrollbarTrackTransform = null;
         _scrollbarThumbTransform = null;

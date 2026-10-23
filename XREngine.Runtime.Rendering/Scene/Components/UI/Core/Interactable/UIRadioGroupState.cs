@@ -135,5 +135,6 @@ public sealed class UIRadioGroupState : IDisposable
         _buttons.Clear();
         for (int i = 0; i < buttons.Length; i++)
             buttons[i].IsSelected = false;
+        SelectionChanged = null;
     }
 }

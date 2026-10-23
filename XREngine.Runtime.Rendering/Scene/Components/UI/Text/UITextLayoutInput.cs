@@ -19,4 +19,5 @@ public sealed record UITextLayoutInput(
     EVerticalAlignment VerticalAlignment,
     Vector4 Margins,
     float DpiScale = 1.0f,
-    bool TrimFirstBearing = true);
+    bool TrimFirstBearing = true,
+    UITextShapedRunInput? ShapedRun = null);

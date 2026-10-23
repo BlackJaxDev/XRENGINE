@@ -7,7 +7,7 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The branch contains bounded worker layout with shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained render storage, common controls, virtual collections, and native editor panels. Completed code accounts for 31 of the original 60 implementation items; 29 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
+The branch contains bounded worker layout with shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained render storage, common controls, virtual collections, and native editor panels. Completed code accounts for 34 of the original 60 implementation items; 26 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
 
 ## Open Code Items
 
@@ -25,17 +25,14 @@ The branch contains bounded worker layout with shared immutable pages, explicit 
 - [ ] Cache shaping/layout results by all glyph-placement inputs. Done when unchanged text with matching font/fallback, locale/direction, features, wrap, line policy, and DPI reuses layout.
 - [ ] Avoid adding 3D render records for UI items that no 3D camera can draw. `UIRenderableComponent` and canvas integration. Preserve the decision whether world-space UI may cast shadows for owner review. Done when screen-space, inactive, and offscreen canvases do not pollute 3D collection, draw-space changes restore valid visibility, and a test covers transitions.
 - [ ] Use shared solid, border, image, and text shaders with immutable material prototypes. Done when common controls do not create one shader/material per control and per-control values stay in instance records.
-- [ ] Atlas compatible editor icons and small UI images; evaluate bindless handles only on supported backends. Done when unsupported paths report their limits.
 - [ ] Make backdrop blur opt-in and share captures by canvas/composition layer when enabled. Done when compatible panels reuse one capture.
 - [ ] Group static chrome, scrolling content, and high-frequency overlays into independently invalidated composition layers. Done when FPS, caret, hover, and selection updates leave static chrome valid.
 
 ### Phase 5: Retained Controls And Virtual Collections
 
 - [ ] Define identity-safe focus, selection, capture, rename, and drag behavior for recycled rows. Done when interaction cannot transfer to a different item after scrolling or removal.
-- [ ] Add a virtual tree on the list using cached visible ranges. Done when expansion, insert, remove, move, rename, activation, selection, and section headers do not rebuild the full data set. Add sticky headers only if required by a concrete control.
 - [ ] Complete first-milestone buttons, checkboxes, radio groups, dropdowns, range sliders, color selectors, numeric inputs, and scroll regions. Done when keyboard, focus, state, commit/cancel, clipping, and binding contracts work.
 - [ ] Complete text selection, grapheme-aware navigation, caret hit testing, undo/redo, and platform IME composition. `UITextInputComponent`, text layout, and input integration. Done when edits preserve text identity during layout changes and IME candidate bounds use the presented generation.
-- [ ] Define accessibility semantics and platform adapter boundaries. Done when roles, labels, values, actions, focus order, and virtual realization have contracts and unsupported adapters report limits.
 - [ ] Make focus traversal, gamepad navigation, clipping, visibility, disabled state, and input blocking consistent. Done when nested-control navigation and shared-state behavior pass tests.
 - [ ] Deactivate child subtrees and unregister callbacks during teardown. Done when render, input, watcher, audio, and streaming listeners do not outlive their owners.
 

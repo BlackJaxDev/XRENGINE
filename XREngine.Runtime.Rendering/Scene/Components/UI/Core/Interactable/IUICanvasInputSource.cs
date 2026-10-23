@@ -20,4 +20,5 @@ public interface IUICanvasInputSource
     event Action<UIInteractableComponent?>? LeftClickDown;
     event Action<UIInteractableComponent>? RightClick;
     event Action? EscapePressed;
+    event Action<UIInteractableComponent?>? BackPressed;
 }

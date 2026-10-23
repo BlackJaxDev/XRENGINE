@@ -75,6 +75,60 @@ public partial class InspectorPanel
     private UIBoundableTransform? _detailTransform;
     private SceneNode? _detailEditor;
     private PropertyInfo? _detailProperty;
+    private object?[]? _savedViewTargets;
+    private SceneNode[]? _savedSceneSelection;
+    private object? _savedAssetSelection;
+    private InspectorView _savedInspectorView;
+    private PropertyInfo? _savedDetailProperty;
+    private Vector2 _savedPropertyScroll;
+    private Vector2 _savedDetailScroll;
+    private Vector2 _savedComponentScroll;
+    private Vector2 _savedPickerScroll;
+
+    private void CaptureViewState()
+    {
+        _savedViewTargets = InspectedObjects?.ToArray();
+        _savedSceneSelection = (SceneNode[])Selection.SceneNodes.Clone();
+        _savedAssetSelection = NativeAssetSelection.SelectedTarget;
+        _savedInspectorView = _inspectorView;
+        _savedDetailProperty = _detailProperty;
+        _savedPropertyScroll = _propertyScroll?.ScrollOffset ?? Vector2.Zero;
+        _savedDetailScroll = (_detailTransform as UIScrollableTransform)?.ScrollOffset ?? Vector2.Zero;
+        _savedComponentScroll = _componentListView?.ScrollOffset ?? Vector2.Zero;
+        _savedPickerScroll = _componentPickerView?.ScrollOffset ?? Vector2.Zero;
+    }
+
+    private void RestoreViewState()
+    {
+        object?[]? saved = _savedViewTargets;
+        _savedViewTargets = null;
+        if (saved is null || InspectedObjects is not { } current || saved.Length != current.Length ||
+            saved.Where((target, index) => !ReferenceEquals(target, current[index])).Any())
+            return;
+        _inspectorView = _savedInspectorView;
+        _propertyScroll!.ScrollOffset = _savedPropertyScroll;
+        if (_componentListView is not null)
+            _componentListView.ScrollOffset = _savedComponentScroll;
+        if (_componentPickerView is not null)
+            _componentPickerView.ScrollOffset = _savedPickerScroll;
+        if (_savedDetailProperty is { } detail && Properties?.Contains(detail) == true)
+        {
+            ShowDetailEditor(detail);
+            if (_detailTransform is UIScrollableTransform scroll)
+                scroll.ScrollOffset = _savedDetailScroll;
+        }
+        ApplyInspectorView();
+    }
+
+    private bool DidGlobalSelectionChangeWhileHidden()
+    {
+        if (_savedSceneSelection is null ||
+            !ReferenceEquals(_savedAssetSelection, NativeAssetSelection.SelectedTarget))
+            return true;
+        SceneNode[] current = Selection.SceneNodes;
+        return current.Length != _savedSceneSelection.Length ||
+            current.Where((node, index) => !ReferenceEquals(node, _savedSceneSelection[index])).Any();
+    }
 
     private void CreateVirtualPropertyList()
     {
@@ -347,7 +401,7 @@ public partial class InspectorPanel
                 focused.SceneNode is { } focusedNode && IsDetailDescendant(focusedNode, _detailEditor))
                 input.FocusedComponent = null;
             _detailEditor.IsActiveSelf = false;
-            _detailEditor.Transform.Parent = null;
+            _detailEditor.Destroy(true);
             _detailEditor = null;
         }
         _detailProperty = null;

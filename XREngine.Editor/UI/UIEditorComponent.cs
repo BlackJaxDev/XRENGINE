@@ -75,13 +75,17 @@ public partial class UIEditorComponent : UIComponent
                 sn.IsActiveSelf = false;
     }
 
-    private HierarchyPanel? _hierarchy;
-
     public void RemakeChildren()
     {
         using var sample = Engine.Profiler.Start("UIEditorComponent.RemakeChildren");
         DeactivateChildSubtrees();
-        SceneNode.Transform.Clear();
+        foreach (var child in SceneNode.Transform.Children.ToArray())
+            if (child.SceneNode is { } owned)
+            {
+                owned.Destroy(true);
+                if (!owned.IsDestroyed)
+                    throw new InvalidOperationException("An editor UI child refused teardown; the UI was not rebuilt.");
+            }
 
         var splitChild = SceneNode.NewChildWithTransform(out UIDualSplitTransform splitTfm, "EditorRoot");
         splitTfm.VerticalSplit = true;
@@ -137,22 +141,7 @@ public partial class UIEditorComponent : UIComponent
             return;
         }
 
-        SceneNode dockNode = splitChild.NewChildWithTransform(out UIMultiSplitTransform dockTfm, "DockableRoot");
-        dockTfm.Arrangement = UISplitArrangement.LeftMiddleRight;
-        dockTfm.SplitterSize = 0.0f;
-        dockTfm.CanUserResize = false;
-        dockTfm.FixedSizeFirst = 300;
-        dockTfm.FixedSizeSecond = 300;
-
-        SceneNode hierarchyNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Hierarchy");
-        HierarchyPanel hierarchy;
-        using (Engine.Profiler.Start("UIEditorComponent.RemakeChildren.HierarchyPanel"))
-            hierarchyNode.NewChild<HierarchyPanel>(out hierarchy);
-        if (WorldAs<RuntimeWorld>() is { } world)
-            hierarchy.RootNodes = [.. world.RootNodes];
-        _hierarchy = hierarchy;
-
-        var middleNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Scene");
+        SceneNode dockNode = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "DockableRoot");
         if (EditorUnitTests.Toggles.BackgroundShader)
         {
             XRShader bgShader = ShaderHelper.LoadEngineShader("UI/Backgrounds/Surf2.fs", EShaderType.Fragment);
@@ -171,15 +160,10 @@ public partial class UIEditorComponent : UIComponent
                     RequiredEngineUniforms = EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions,
                 }
             };
-            var comp = middleNode.AddComponent<UIMaterialComponent>()!;
+            var comp = dockNode.AddComponent<UIMaterialComponent>()!;
             comp.Material = mat;
         }
-
-        EditorPanelHost.Build(middleNode);
-
-        SceneNode inspectorNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Inspector");
-        inspectorNode.NewChild<InspectorPanel>(out var inspector);
-        inspector.InspectedObjects = Selection.SceneNodes;
+        NativeDockTreeHost.Build(dockNode, WorldAs<RuntimeWorld>());
 
         ////Create the dockable windows transform for panels
         //var dockableNode = splitChild.NewChild<UIDockingRootComponent>(out var root);

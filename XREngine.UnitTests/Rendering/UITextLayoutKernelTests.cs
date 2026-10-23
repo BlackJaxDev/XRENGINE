@@ -191,4 +191,80 @@ public sealed class UITextLayoutKernelTests
         result.Carets.Span[5].Utf16Offset.ShouldBe(5);
         result.TextRevision.ShouldBe(4);
     }
+
+    [Test]
+    public void ShapedGlyphIdsAndVisualCaretOrderReachLayoutResult()
+    {
+        UIRuneMetrics a = Metrics['A'];
+        UIRuneMetrics b = Metrics['B'];
+        UIFontFaceSnapshot face = new([1], 0, 10,
+            new Dictionary<uint, UIRuneMetrics> { [51] = a, [52] = b });
+        UITextShapingRequest request = new("AB", face, "en-US", UITextDirection.RightToLeft);
+        UITextShapingResult shaped = new(request,
+        [
+            new(52, b, new Vector2(9, 0), Vector2.Zero, 1, 1),
+            new(51, a, new Vector2(9, 0), Vector2.Zero, 0, 1)
+        ]);
+
+        UITextLayoutResult result = UITextLayoutKernel.Measure(
+            Input("AB") with { ShapedRun = new UITextShapedRunInput(shaped) }, new(100, 50));
+
+        result.Glyphs.Span[0].GlyphId.ShouldBe(52u);
+        result.Glyphs.Span[1].GlyphId.ShouldBe(51u);
+        result.Glyphs.Span[1].Transform.X.ShouldBe(9f);
+        result.HasVisualCarets.ShouldBeTrue();
+        result.Carets.Span[0].Utf16Offset.ShouldBe(2);
+        result.Carets.Span[^1].Utf16Offset.ShouldBe(0);
+        for (int i = 0; i < result.Carets.Length; i++)
+            result.Carets.Span[i].VisualIndex.ShouldBe(i);
+    }
+
+    [Test]
+    public void LigatureWithoutInteriorCaretReportsIncompleteVisualCarets()
+    {
+        UIRuneMetrics metric = Metrics['A'];
+        UIFontFaceSnapshot face = new([1], 0, 10,
+            new Dictionary<uint, UIRuneMetrics> { [81] = metric });
+        UITextShapingResult shaped = new(
+            new UITextShapingRequest("AB", face, "en-US", UITextDirection.LeftToRight),
+            [new(81, metric, new Vector2(18, 0), Vector2.Zero, 0, 2)]);
+
+        UITextLayoutResult result = UITextLayoutKernel.Measure(
+            Input("AB") with { ShapedRun = new UITextShapedRunInput(shaped) }, new(100, 50));
+
+        result.Glyphs.Span[0].ClusterLength.ShouldBe(2);
+        result.HasVisualCarets.ShouldBeFalse();
+        result.Carets.Span[0].Utf16Offset.ShouldBe(0);
+        result.Carets.Span[^1].Utf16Offset.ShouldBe(2);
+    }
+
+    [Test]
+    public void ShapedIntrinsicWithNoBoundDoesNotFitToFloatMaxValue()
+    {
+        UIRuneMetrics metric = Metrics['A'];
+        UIFontFaceSnapshot face = new([1], 0, 10,
+            new Dictionary<uint, UIRuneMetrics> { [51] = metric });
+        UITextShapingResult shaped = new(
+            new UITextShapingRequest("A", face, "en-US", UITextDirection.LeftToRight),
+            [new(51, metric, new Vector2(9, 0), Vector2.Zero, 0, 1)]);
+
+        UITextLayoutResult result = UITextLayoutKernel.Measure(
+            Input("A") with { FontSize = null, ShapedRun = new UITextShapedRunInput(shaped) },
+            new(float.MaxValue, float.MaxValue));
+
+        float.IsFinite(result.IntrinsicSize.X).ShouldBeTrue();
+        result.IntrinsicSize.X.ShouldBe(0.9f, 0.00001f);
+        result.IntrinsicSize.Y.ShouldBe(1f);
+    }
+
+    [TestCase("אב12", UITextDirection.RightToLeft)]
+    [TestCase("12", UITextDirection.RightToLeft)]
+    [TestCase("אב\u2067", UITextDirection.RightToLeft)]
+    [TestCase("A\u200F", UITextDirection.LeftToRight)]
+    public void UnsupportedBidiAnalysisFailsBeforeSingleRunShaping(string text, UITextDirection direction)
+    {
+        NotSupportedException error = Should.Throw<NotSupportedException>(() =>
+            UITextComponent.EnsureOneDirection(text, direction));
+        error.Message.ShouldContain("UI.BidiAnalysisUnavailable");
+    }
 }

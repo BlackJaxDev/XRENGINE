@@ -30,6 +30,7 @@
     <Compile Include="../Rendering/UILayoutValueKernelTests.cs" Link="Rendering/UILayoutValueKernelTests.cs" />
     <Compile Include="../Rendering/UILayoutGridKernelTests.cs" Link="Rendering/UILayoutGridKernelTests.cs" />
     <Compile Include="../Rendering/UIBatchCollectionTests.cs" Link="Rendering/UIBatchCollectionTests.cs" />
+    <Compile Include="../Rendering/UIImageAtlasTests.cs" Link="Rendering/UIImageAtlasTests.cs" />
     <Compile Include="../Rendering/UIDrawPayloadTests.cs" Link="Rendering/UIDrawPayloadTests.cs" />
     <Compile Include="../Rendering/UITextMaterialRefreshProbe.cs" Link="Rendering/UITextMaterialRefreshProbe.cs" />
     <Compile Include="../Rendering/UIPublicationHitTests.cs" Link="Rendering/UIPublicationHitTests.cs" />
@@ -48,6 +49,7 @@
     <Compile Include="../Rendering/FocusVirtualListProvider.cs" Link="Rendering/FocusVirtualListProvider.cs" />
     <Compile Include="../Rendering/UITextLayoutKernelTests.cs" Link="Rendering/UITextLayoutKernelTests.cs" />
     <Compile Include="../Rendering/UITextValueLayoutTests.cs" Link="Rendering/UITextValueLayoutTests.cs" />
+    <Compile Include="../Rendering/UITextMutatingShapingBackend.cs" Link="Rendering/UITextMutatingShapingBackend.cs" />
     <Compile Include="../Rendering/UIRetainedControlsTests.cs" Link="Rendering/UIRetainedControlsTests.cs" />
     <Compile Include="../Rendering/UIChangeJournalTests.cs" Link="Rendering/UIChangeJournalTests.cs" />
     <Compile Include="../Rendering/UIChangeTrackingTests.cs" Link="Rendering/UIChangeTrackingTests.cs" />

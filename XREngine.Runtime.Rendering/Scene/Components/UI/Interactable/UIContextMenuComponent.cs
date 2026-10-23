@@ -405,6 +405,7 @@ namespace XREngine.Rendering.UI
                 _subscribedInput.EscapePressed += OnEscapeDismiss;
                 _subscribedInput.RightClick += OnOutsideRightClick;
                 _subscribedInput.LeftClickDown += OnLeftClickDown;
+                _subscribedInput.BackPressed += OnGamepadBackPressed;
             }
 
             // Delay one frame before listening for left-clicks so the same click that
@@ -424,6 +425,7 @@ namespace XREngine.Rendering.UI
                 _subscribedInput.EscapePressed -= OnEscapeDismiss;
                 _subscribedInput.RightClick -= OnOutsideRightClick;
                 _subscribedInput.LeftClickDown -= OnLeftClickDown;
+                _subscribedInput.BackPressed -= OnGamepadBackPressed;
                 _subscribedInput = null;
             }
             UnsubscribeArmDismissClick();
@@ -454,6 +456,20 @@ namespace XREngine.Rendering.UI
         private void OnEscapeDismiss()
         {
             Hide();
+        }
+
+        private void OnGamepadBackPressed(UIInteractableComponent? focused)
+        {
+            if (!_isOpen || focused?.SceneNode is not { } focusedNode)
+                return;
+            // Only the closest open menu owns Back, including when menus are nested.
+            for (SceneNode? node = focusedNode; node is not null; node = node.Parent)
+                if (node.GetComponent<UIContextMenuComponent>() is { IsOpen: true } menu)
+                {
+                    if (ReferenceEquals(menu, this))
+                        Hide();
+                    return;
+                }
         }
 
         private void OnOutsideRightClick(UIInteractableComponent _)

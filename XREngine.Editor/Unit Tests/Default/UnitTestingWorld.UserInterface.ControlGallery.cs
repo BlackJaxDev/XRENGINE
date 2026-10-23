@@ -22,7 +22,7 @@ public static partial class EditorUnitTests
             list.NormalizedPivot = new Vector2(0, 1);
             list.Translation = new Vector2(360, -20);
             list.Width = 280;
-            list.Height = 340;
+            list.Height = 380;
             list.ItemSpacing = 6;
             list.ItemAlignment = EListAlignment.TopOrLeft;
             list.BlocksInputBehind = true;
@@ -38,6 +38,7 @@ public static partial class EditorUnitTests
             {
                 Binding = new UIValueState<ulong?>(1)
             };
+            panel.Destroyed += _ => group.Dispose();
             for (ulong id = 1; id <= 2; id++)
             {
                 SceneNode option = MakeGalleryRow(panel, $"Radio {id}");
@@ -92,6 +93,17 @@ public static partial class EditorUnitTests
             color.Binding = new UIValueState<ColorF4>(ColorF4.White);
             AddGalleryBackground(colorNode, ColorF4.White);
             AddGalleryLabel(colorNode, "Color palette").Color = ColorF4.Black;
+
+            UIImageAtlasComponent atlasOwner = panel.AddComponent<UIImageAtlasComponent>()!;
+            atlasOwner.Initialize(new UIImageAtlas([
+                new("Gallery cyan", 2, 2, new byte[] { 0, 180, 220, 255, 0, 230, 255, 255, 0, 230, 255, 255, 0, 180, 220, 255 }),
+                new("Gallery amber", 2, 2, new byte[] { 255, 180, 0, 255, 255, 220, 0, 255, 255, 220, 0, 255, 255, 180, 0, 255 }),
+            ], pageSize: 8));
+            SceneNode imageRow = MakeGalleryRow(panel, "Shared image atlas");
+            NativeUIElements.CreateImage(imageRow, atlasOwner, "Gallery cyan");
+            var amber = NativeUIElements.CreateImage(imageRow, atlasOwner, "Gallery amber");
+            amber.Image.BoundableTransform.Translation = new Vector2(28, 0);
+            AddGalleryLabel(imageRow, "Shared image atlas").BoundableTransform.Margins = new Vector4(60, 0, 4, 0);
         }
 
         private static SceneNode MakeGalleryRow(SceneNode parent, string label)

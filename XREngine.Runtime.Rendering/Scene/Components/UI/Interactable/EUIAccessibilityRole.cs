@@ -13,5 +13,6 @@ public enum EUIAccessibilityRole
     ColorWell,
     ScrollRegion,
     TableRow,
-    Tab
+    Tab,
+    TreeItem
 }

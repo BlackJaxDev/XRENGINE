@@ -27,6 +27,59 @@ public sealed class UITextValueLayoutTests
             LayoutEmSize = 8,
         };
 
+    [Test]
+    public void ShapingCallbackCannotInstallGlyphsForChangedText()
+    {
+        FontGlyphSet font = CreateFont();
+        UIRuneMetrics metric = new(Vector2.Zero, new(8, 8), 9, new(0, 0, 8, 8));
+        font.InstallRuntimeShapingFace(new UIFontFaceSnapshot([1], 0, 8,
+            new Dictionary<uint, UIRuneMetrics> { [51] = metric }));
+        XREngine.Scene.SceneNode root = new("Shaping capture", new UIBoundableTransform())
+        {
+            IsActiveSelf = false
+        };
+        IUITextShapingBackend? original = UITextShapingBackendRegistry.Current;
+        try
+        {
+            UITextComponent component = root.AddComponent<UITextComponent>()!;
+            component.Font = font;
+            component.FontSize = 8;
+            component.Text = "A";
+            bool mutate = false;
+            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ =>
+            {
+                if (!mutate)
+                    return;
+                mutate = false;
+                component.Text = "B";
+            });
+            component.UseShapedText = true;
+            component.CaptureLayoutInput().ShouldNotBeNull().Text.ShouldBe("A");
+            mutate = true;
+            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ =>
+            {
+                if (!mutate)
+                    return;
+                mutate = false;
+                component.Text = "B";
+            });
+
+            Should.Throw<InvalidOperationException>(() => component.CaptureLayoutInput())
+                .Message.ShouldContain("UI.ShapingInputsChanged");
+            component.CaptureLayoutInput().ShouldNotBeNull().Text.ShouldBe("B");
+            UITextShapingBackendRegistry.Current = null;
+            Should.Throw<NotSupportedException>(() => component.CaptureLayoutInput())
+                .Message.ShouldContain("UI.ShapingBackendUnavailable");
+        }
+        finally
+        {
+            UITextShapingBackendRegistry.Current = original;
+            root.Destroy(true);
+            font.Atlas?.Destroy(true);
+            font.Destroy(true);
+        }
+    }
+
     private static void Destroy(UIText text, FontGlyphSet font)
     {
         text.OnPoolableDestroyed();
@@ -165,6 +218,53 @@ public sealed class UITextValueLayoutTests
             Destroy(text, font);
             originalAtlas.Destroy(true);
         }
+    }
+
+    [Test]
+    public void ComponentAndStandaloneRetainOneImmutableLayoutAcrossPoolAndDrawLifetimes()
+    {
+        FontGlyphSet font = CreateFont();
+        font.Atlas!.Mipmaps[0].DataBytes = new byte[8 * 8 * 4];
+        UIText standalone = new() { Font = font, FontSize = 8, Text = "AA" };
+        XREngine.Scene.SceneNode root = new("Shared text layout", new UIBoundableTransform()) { IsActiveSelf = false };
+        UIDrawPayload? held = null;
+        try
+        {
+            standalone.PushGlyphDataIfNeeded();
+            UITextLayoutResult shared = standalone.LayoutResult.ShouldNotBeNull();
+            UITextMaterialRefreshProbe component = root.AddComponent<UITextMaterialRefreshProbe>()!;
+            component.Font = font;
+            component.FontSize = 8;
+            component.Text = "AA";
+            component.ApplyLayoutResult(shared, component.BoundableTransform.ActualSize).ShouldBeTrue();
+            component.TryGetCurrentLayoutResult(out UITextLayoutResult accepted).ShouldBeTrue();
+            accepted.ShouldBeSameAs(shared);
+            using UIDrawPayloadBuilder builder = component.CreateBuilder();
+            component.Capture(builder, out held, out string? reason).ShouldBeTrue(reason);
+            held!.Retain();
+            standalone.OnPoolableReleased();
+            component.TryGetCurrentLayoutResult(out UITextLayoutResult afterRelease).ShouldBeTrue();
+            afterRelease.ShouldBeSameAs(shared);
+            component.Capture(builder, out UIDrawPayload? reused, out reason).ShouldBeTrue(reason);
+            reused.ShouldBeSameAs(held);
+            foreach (var binding in held.Geometry.RendererBuffers)
+            {
+                binding.Value.ElementCount.ShouldBe(2u);
+                binding.Value.ClientSideSource!.Length.ShouldBe(32u);
+            }
+            root.Destroy(true);
+            builder.Dispose();
+            held.IsRetired.ShouldBeFalse();
+            held.Geometry.FixedBuffers.All(buffer => !buffer.IsDestroyed).ShouldBeTrue();
+        }
+        finally
+        {
+            held?.Release();
+            root.Destroy(true);
+            Destroy(standalone, font);
+        }
+        held!.IsRetired.ShouldBeTrue();
+        held.Geometry.FixedBuffers.All(buffer => buffer.IsDestroyed).ShouldBeTrue();
     }
 
     [Test]

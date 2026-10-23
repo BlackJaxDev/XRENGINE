@@ -85,7 +85,7 @@ namespace XREngine.Rendering
         private readonly Dictionary<ulong, (UI.UIPublication Publication, XRGpuFence? Fence,
             long BackendGeneration)> _uiPublicationFallbackFences = [];
         private readonly object _uiPublicationFallbackGate = new();
-        private readonly Dictionary<ulong, string?> _uiPublicationAuthoring = [];
+        private readonly Dictionary<ulong, (ulong FrameId, string? FailureReason)> _uiPublicationAuthoring = [];
         private readonly object _uiPublicationAuthoringGate = new();
         [ThreadStatic] private static ulong _currentUiPublicationReceiptId;
 
@@ -111,8 +111,19 @@ namespace XREngine.Rendering
                 receiptId = 0UL;
                 return false;
             }
-            lock (_uiPublicationAuthoringGate)
-                _uiPublicationAuthoring.Add(receiptId, null);
+            try
+            {
+                lock (_uiPublicationAuthoringGate)
+                    _uiPublicationAuthoring.Add(receiptId,
+                        (RuntimeEngine.Rendering.State.RenderFrameId, null));
+            }
+            catch
+            {
+                // Backend reservation owns a publication claim. If frontend
+                // bookkeeping fails, no draw has started and it must be canceled.
+                CancelUiPublicationReceiptBeforeAuthoringCore(receiptId);
+                throw;
+            }
             _currentUiPublicationReceiptId = receiptId;
             return true;
         }
@@ -141,8 +152,9 @@ namespace XREngine.Rendering
             if (_currentUiPublicationReceiptId == 0UL)
                 return;
             lock (_uiPublicationAuthoringGate)
-                if (_uiPublicationAuthoring.TryGetValue(_currentUiPublicationReceiptId, out string? previous))
-                    _uiPublicationAuthoring[_currentUiPublicationReceiptId] = previous ?? reason;
+                if (_uiPublicationAuthoring.TryGetValue(_currentUiPublicationReceiptId, out var state))
+                    _uiPublicationAuthoring[_currentUiPublicationReceiptId] =
+                        (state.FrameId, state.FailureReason ?? reason);
             OnUiPublicationAuthoringFailed(_currentUiPublicationReceiptId, reason);
         }
 
@@ -151,10 +163,11 @@ namespace XREngine.Rendering
         {
             if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
                 throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
-            string? failureReason;
+            (ulong FrameId, string? FailureReason) state;
             lock (_uiPublicationAuthoringGate)
-                if (!_uiPublicationAuthoring.Remove(receiptId, out failureReason))
+                if (!_uiPublicationAuthoring.Remove(receiptId, out state))
                     throw new InvalidOperationException("The UI publication receipt has already ended.");
+            string? failureReason = state.FailureReason;
             bool complete = succeeded && failureReason is null;
             _currentUiPublicationReceiptId = 0UL;
             return CompleteUiPublicationReceiptCore(receiptId, complete, failureReason, out completionFence);
@@ -169,6 +182,40 @@ namespace XREngine.Rendering
             lock (_uiPublicationAuthoringGate)
                 _uiPublicationAuthoring.Remove(receiptId);
             CancelUiPublicationReceiptBeforeAuthoringCore(receiptId);
+        }
+
+        /// <summary>
+        /// Abandons a reserved receipt whose later required pass never authored.
+        /// Unlike pre-authoring cancellation, this path allows partial native work
+        /// and lets the backend retain its packet until that work is retired.
+        /// </summary>
+        internal void AbortUiPublicationReceipt(ulong receiptId, string reason)
+        {
+            if (receiptId == 0UL)
+                return;
+            lock (_uiPublicationAuthoringGate)
+                if (!_uiPublicationAuthoring.Remove(receiptId))
+                    return;
+            if (_currentUiPublicationReceiptId == receiptId)
+                _currentUiPublicationReceiptId = 0UL;
+            try { OnUiPublicationAuthoringFailed(receiptId, reason); }
+            finally { _ = CompleteUiPublicationReceiptCore(receiptId, false, reason, out _); }
+        }
+
+        /// <summary>Fails unfinished canvas draws before the frame's output is submitted.</summary>
+        internal int AbortUnfinishedUiPublicationReceipts(ulong frameId)
+        {
+            List<ulong>? unfinished = null;
+            lock (_uiPublicationAuthoringGate)
+                foreach (var entry in _uiPublicationAuthoring)
+                    if (entry.Value.FrameId == frameId)
+                        (unfinished ??= []).Add(entry.Key);
+            if (unfinished is null)
+                return 0;
+            for (int index = 0; index < unfinished.Count; index++)
+                AbortUiPublicationReceipt(unfinished[index],
+                    "UI.Canvas.RequiredPassMissing: a published draw pass did not finish before output submission.");
+            return unfinished.Count;
         }
 
         protected virtual void CancelUiPublicationReceiptBeforeAuthoringCore(ulong receiptId)

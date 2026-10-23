@@ -23,6 +23,7 @@ public sealed class UIDrawPayloadBuilder : IDisposable
     public IUIDrawProducerLease? ProducerLease { get; set; }
     public int ProducerTextureSlot { get; set; }
     internal bool UseCommittedGlyphRevisions { get; set; }
+    internal uint? UsedGlyphCount { get; set; }
     private ulong[] _rendererBufferRevisions = [];
     private bool _rawStorageInvalidated;
     internal void InvalidateRawStorage() => _rawStorageInvalidated = true;
@@ -50,6 +51,12 @@ public sealed class UIDrawPayloadBuilder : IDisposable
     {
         payload = null;
         failure = null;
+        if (UsedGlyphCount is { } glyphCount &&
+            (glyphCount == 0 || glyphCount > UIDrawStateCapture.MaximumArrayLength || source.Instances > glyphCount))
+        {
+            failure = "UI.DrawCapture.GlyphRange: the used glyph range must cover every instance and stay within the bounded capture profile.";
+            return false;
+        }
         XRMeshRenderer? renderer = source.Mesh;
         XRMaterial? material = source.MaterialOverride ?? renderer?.Material;
         if (renderer?.Mesh is not { } mesh || material is null)
@@ -103,7 +110,7 @@ public sealed class UIDrawPayloadBuilder : IDisposable
             {
                 if (entry.Value.BindingIndexOverride is null)
                     throw new NotSupportedException($"UI buffer '{entry.Key}' requires a fixed binding index.");
-                geometryBytes = checked(geometryBytes + MeasureBuffer(entry.Value));
+                geometryBytes = checked(geometryBytes + MeasureBuffer(entry.Value, GetCapturedGlyphCount(entry.Value, UsedGlyphCount)));
             }
             if (material.Parameters.Length > 4096 || material.Shaders.Count > 32 || material.Textures.Count > 256)
                 throw new NotSupportedException("UI material exceeds the bounded draw capture profile.");
@@ -175,7 +182,7 @@ public sealed class UIDrawPayloadBuilder : IDisposable
             // Constructor shader discovery must not remove captured arrays or manually authored parameters.
             ownedMaterial.Parameters = parameters;
             geometry = UIDrawGeometry.Capture(mesh, meshBuffers, rendererBuffers, meshBytes, _cached?.Geometry,
-                _rendererBuffers, _rendererBufferRevisions, UseCommittedGlyphRevisions && !_rawStorageInvalidated);
+                _rendererBuffers, _rendererBufferRevisions, UseCommittedGlyphRevisions && !_rawStorageInvalidated, UsedGlyphCount);
             ownedRenderer = new XRMeshRenderer(geometry.Mesh, ownedMaterial);
             // The geometry owner retains these buffers. This renderer only publishes their fixed bindings.
             ownedRenderer.BindingPublishers.Add(new UIFixedDrawBindings(geometry.FixedBuffers, textures, Bounds));
@@ -264,14 +271,14 @@ public sealed class UIDrawPayloadBuilder : IDisposable
     private bool RendererBuffersMatch(XRMesh.BufferCollection source, KeyValuePair<string, XRDataBuffer>[] owned)
     {
         if (!UseCommittedGlyphRevisions || _rawStorageInvalidated)
-            return BuffersEqual(source, owned, _rendererBuffers);
+            return BuffersEqual(source, owned, _rendererBuffers, UsedGlyphCount);
         if (source.Count != _rendererBuffers.Length || owned.Length != _rendererBuffers.Length)
             return false;
         for (int index = 0; index < _rendererBuffers.Length; index++)
         {
             var previous = _rendererBuffers[index];
             if (!source.TryGetValue(previous.Key, out XRDataBuffer? current) || !ReferenceEquals(current, previous.Value) ||
-                current.Revision != _rendererBufferRevisions[index] || !BufferMetadataEquals(current, owned[index].Value))
+                current.Revision != _rendererBufferRevisions[index] || !BufferMetadataEquals(current, owned[index].Value, GetCapturedGlyphCount(current, UsedGlyphCount)))
                 return false;
         }
         return true;
@@ -306,7 +313,7 @@ public sealed class UIDrawPayloadBuilder : IDisposable
     }
 
     internal static bool BuffersEqual(XRMesh.BufferCollection source, KeyValuePair<string, XRDataBuffer>[] owned,
-        KeyValuePair<string, XRDataBuffer>[] previous)
+        KeyValuePair<string, XRDataBuffer>[] previous, uint? usedGlyphCount = null)
     {
         if (source.Count != previous.Length || owned.Length != previous.Length)
             return false;
@@ -314,22 +321,29 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         {
             KeyValuePair<string, XRDataBuffer> entry = previous[index];
             if (owned[index].Key != entry.Key || !source.TryGetValue(entry.Key, out XRDataBuffer? current) ||
-                !ReferenceEquals(current, entry.Value) || !BufferEquals(current, owned[index].Value))
+                !ReferenceEquals(current, entry.Value) || !BufferEquals(current, owned[index].Value, GetCapturedGlyphCount(current, usedGlyphCount)))
                 return false;
         }
         return true;
     }
 
-    internal static bool BufferMetadataEquals(XRDataBuffer current, XRDataBuffer copy)
-        => current.Length == copy.Length && current.Target == copy.Target &&
-           current.BindingIndexOverride == copy.BindingIndexOverride && current.ComponentType == copy.ComponentType &&
-           current.ComponentCount == copy.ComponentCount && current.ElementCount == copy.ElementCount &&
+    internal static uint? GetCapturedGlyphCount(XRDataBuffer buffer, uint? usedGlyphCount)
+        => usedGlyphCount is not null && buffer.AttributeName is
+            "GlyphTransformsBuffer" or "GlyphTexCoordsBuffer" or "GlyphRotationsBuffer"
+            ? usedGlyphCount : null;
+
+    internal static bool BufferMetadataEquals(XRDataBuffer current, XRDataBuffer copy, uint? usedElements = null)
+        => (usedElements ?? current.ElementCount) == copy.ElementCount &&
+           (usedElements is { } count ? count <= current.ElementCount && (ulong)count * current.ElementSize == copy.Length : current.Length == copy.Length) &&
+           current.Target == copy.Target && current.BindingIndexOverride == copy.BindingIndexOverride &&
+           current.ComponentType == copy.ComponentType && current.ComponentCount == copy.ComponentCount &&
            current.Normalize == copy.Normalize && current.InstanceDivisor == copy.InstanceDivisor &&
            current.Integral == copy.Integral && current.PadEndingToVec4 == copy.PadEndingToVec4;
 
-    internal static unsafe bool BufferEquals(XRDataBuffer current, XRDataBuffer copy)
-        => BufferMetadataEquals(current, copy) && current.ClientSideSource is { } data && copy.ClientSideSource is { } frozen && data.Length == frozen.Length &&
-           new ReadOnlySpan<byte>(data.Address.Pointer, checked((int)data.Length)).SequenceEqual(
+    internal static unsafe bool BufferEquals(XRDataBuffer current, XRDataBuffer copy, uint? usedElements = null)
+        => BufferMetadataEquals(current, copy, usedElements) && current.ClientSideSource is { } data && copy.ClientSideSource is { } frozen &&
+           (usedElements is not null ? data.Length >= frozen.Length && frozen.Length == copy.Length : data.Length == frozen.Length) &&
+           new ReadOnlySpan<byte>(data.Address.Pointer, checked((int)frozen.Length)).SequenceEqual(
                new ReadOnlySpan<byte>(frozen.Address.Pointer, checked((int)frozen.Length)));
 
     private static long MeasureParameter(ShaderVar parameter, int depth = 0)
@@ -350,11 +364,20 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         return bytes;
     }
 
-    internal static long MeasureBuffer(XRDataBuffer buffer)
+    internal static long MeasureBuffer(XRDataBuffer buffer, uint? usedElements = null)
     {
-        if (buffer.ClientSideSource is not { } source || source.Length < buffer.Length || buffer.GpuCompressedSource is not null)
+        long length = usedElements is { } count ? checked((long)count * buffer.ElementSize) : buffer.Length;
+        if (usedElements is { } glyphCount &&
+            (glyphCount > UIDrawStateCapture.MaximumArrayLength || glyphCount > buffer.ElementCount ||
+             buffer.Target != EBufferTarget.ShaderStorageBuffer || buffer.ComponentType != EComponentType.Float ||
+             buffer.ComponentCount != (buffer.AttributeName == "GlyphRotationsBuffer" ? 1u : 4u) ||
+             buffer.Normalize || buffer.Integral || buffer.PadEndingToVec4 || buffer.InterleavedAttributes.Length != 0 ||
+             buffer.BindingIndexOverride != (buffer.AttributeName == "GlyphTransformsBuffer" ? 0u : buffer.AttributeName == "GlyphTexCoordsBuffer" ? 1u : 2u)))
+            throw new NotSupportedException("UI glyph storage requires the known fixed float layout and a bounded used element count.");
+        if (buffer.ClientSideSource is not { } source || source.Length < length ||
+            (length > 0 && source.Address == XREngine.Data.VoidPtr.Zero) || buffer.GpuCompressedSource is not null)
             throw new NotSupportedException($"UI buffer '{buffer.AttributeName}' requires complete uncompressed CPU-owned bytes.");
-        return checked(source.Length + 512L);
+        return checked((usedElements is null ? source.Length : length) + 512L);
     }
 
     internal static bool TryReserveBudget(long bytes, bool countPayload = true)
@@ -398,6 +421,7 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         _rendererBuffers = [];
         _rendererBufferRevisions = [];
         UseCommittedGlyphRevisions = false;
+        UsedGlyphCount = null;
         _rawStorageInvalidated = false;
         previous?.Release();
     }

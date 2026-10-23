@@ -41,6 +41,8 @@ public sealed class SkiaTextShapingBackend : IUITextShapingBackend
         GlyphPosition[] positions = buffer.GlyphPositions;
         if (infos.Length != positions.Length)
             throw new InvalidDataException("UI.ShapingResultInvalid: glyph arrays differ in length.");
+        if (infos.Length > request.Text.Length * 4)
+            throw new NotSupportedException("UI.ShapedGlyphCountExceeded: one run exceeds its glyph budget.");
         int[] starts = new int[infos.Length];
         for (int i = 0; i < infos.Length; i++)
         {

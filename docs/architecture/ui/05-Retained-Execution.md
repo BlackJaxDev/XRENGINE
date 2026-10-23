@@ -71,10 +71,14 @@ and fallback-font behavior are not established by the basic rune-layout kernel.
 `UIFontFaceSnapshot` owns font bytes and frozen glyph-ID metrics. The optional
 `SkiaTextShapingBackend` uses the existing HarfBuzz dependency to return glyph IDs,
 advances, offsets, and UTF-16 clusters. Rasterization and shaping use the same
-owned bytes. Missing atlas coverage produces a named failure. This backend is
-not yet connected to the production layout kernel. Full shaping, bidi, fallback,
-and shaped caret behavior remain open. Runtime face data does not change the
-serialized font format.
+owned bytes. Missing atlas coverage produces a named failure. `UITextComponent.UseShapedText` opts into one direction run with one atlas and
+no wrapping or line breaks. Owner capture shapes text and freezes numeric glyph
+values for the worker. The cache checks text/style/font inputs and backend
+generation before and after the shaping callback. Backend replacement invalidates
+active shaped owners. Full worker shaping, bidi analysis, fallback, wrapped
+shaping, and shaped control navigation remain open. Unsupported direction mixes,
+digits in RTL runs, and bidi controls report a named failure. Runtime face data
+does not change the serialized font format.
 
 ## Owned custom draws
 
@@ -97,7 +101,9 @@ Explicit raw-buffer invalidation forces byte validation before reuse. The standa
 writer. Its font observer only marks dirtiness. The render/preparation owner
 consumes that mark under the same gate used for mesh changes and draw admission.
 Pool return and destruction detach observers; Math label owners call the full
-teardown path. Changed immutable buffer captures can still copy allocated capacity.
+teardown path. Built-in text captures copy only used glyph spans. Generic/custom buffer captures
+retain their full storage semantics. Both text paths use `UIGlyphBufferWriter`
+for bounds checks and dirty writes.
 
 `TryCapturePublicationPayload` is the explicit adapter boundary. Derived custom
 components must declare `CanCapturePublicationUniforms` only when capture owns
@@ -182,6 +188,11 @@ headless packet tests.
 ## Batch storage
 
 `UIBatchCollector` distinguishes owned solid, border, image, and text semantics.
+Desktop intrinsic quad controls keep color, border, texture, and UV values without
+allocating a material or shader per control. Explicit `Material` access creates an
+isolated legacy material when that path can preserve the primitive. Border or
+atlas-subregion escape reports an unsupported-path failure. Shared text prototypes
+remain open.
 Unknown custom shaders retain normal draw commands. Batch eligibility fixes
 shader, sampler, blend/depth, and feature contracts. Cohort and painter-run keys
 include primitive type, atlas or image snapshot, shader mode, clip values, pass,
@@ -201,6 +212,16 @@ Resizable image mip formats must also agree with GPU storage so OpenGL and Vulka
 sample the same color space. A known mismatch rejects publication with a named
 failure. Pending image storage follows the ordinary readiness path. This does
 not establish runtime shader or GPU acceptance.
+
+`UIImageAtlas` owns fixed RGBA8 pixels and normalized image regions. A page accepts
+1..256 images, with each dimension at most 512 pixels and a power-of-two page
+size of 4..2048. All images share one declared color space. One-pixel edge gutters
+support linear sampling without adjacent-image bleed. Pages do not repack in
+place. `UIImageAtlasComponent` owns the source texture and binds descendants
+through `NativeUIElements.CreateImage` or `Bind`. Packets retain private texture
+snapshots. Teardown waits for observable binding setters to unwind, clears only
+matching bindings, and keeps ownership if a detach veto prevents cleanup. No
+bindless image path is selected.
 
 Painter runs retain pass and order boundaries. GPU cohorts isolate storage still
 in use by previous draws. Reuse requires the backend completion and buffer reuse
@@ -262,6 +283,11 @@ including automatically added required components. Failed creation removes its
 partial component delta. Deferred completion callbacks reject rebuilt or changed
 inspector targets.
 
+Virtual tree/table accessibility exposes stable IDs, names, roles, selected state,
+and tree depth/expansion without creating offscreen rows. The platform adapter
+boundary reports unsupported OS integration. Gamepad Back dismisses the nearest
+open popup and removes its input subscription when hidden.
+
 Radio groups request focus through the presented packet before selecting the
 next item. Binding callbacks cannot resume a stale commit after replacement or
 disposal. Scroll controls consume directional input only while they can move.
@@ -272,8 +298,12 @@ and linked paths at execution time, including Undo and Redo. Moves stay within
 one watched asset root. Inspector component drops use the canonical property
 mutation path. Windows watcher ordering and complete workflow parity remain
 unverified. `NativeDockTree` provides a bounded, versioned split/tab model with
-move, resize, close, reopen, and malformed-state checks. The live editor host is
-not yet connected to that model.
+move, resize, close, reopen, and malformed-state checks. `NativeDockTreeHost` connects that model to the primary editor canvas. Structural
+changes retain panel instances, deactivate/detach closed slots, and destroy only
+obsolete structural nodes. Existing tool search and scroll state survive. Four
+tool panel types use the existing detached-window path. Primary-panel detach,
+cross-window pointer drag, presented focus restoration, and full play-mode state
+persistence remain open.
 
 Render-command publication claims and receipt suspend/resume boundaries are
 prepared for world-space integration. No world command uses that interface yet.
@@ -299,5 +329,6 @@ Legacy text writes read the accepted immutable layout. They commit only the
 changed used glyph spans. Paint and canvas transform changes do not copy glyphs.
 `MarkGlyphTransformsChanged()` captures sparse animation values on the app thread.
 Later direct dictionary edits require another call before a draw can use them.
-Animation changes retain unchanged UV buffers and mesh storage. Changed buffers
-keep their allocated capacity in each immutable generation.
+Animation changes retain unchanged UV buffers and mesh storage. Known built-in
+glyph snapshots contain only used elements. Reusable source buffers can retain
+spare capacity; generic custom shader snapshots preserve their full storage.

@@ -180,6 +180,24 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void RadioGroup_SceneTeardownReleasesBindingAndCallbacks()
+    {
+        SceneNode root = new("Radio host");
+        UIValueState<ulong?> binding = new(1);
+        UIRadioGroupState group = new() { Binding = binding };
+        int callbacks = 0;
+        group.SelectionChanged += _ => callbacks++;
+        root.Destroyed += _ => group.Dispose();
+
+        root.Destroy(true);
+        binding.SetValue(2);
+
+        group.Binding.ShouldBeNull();
+        callbacks.ShouldBe(0);
+        Should.Throw<ObjectDisposedException>(() => group.Binding = binding);
+    }
+
+    [Test]
     public void TextCaret_NeverStopsInsideCombiningOrEmojiCluster()
     {
         var input = new UITextInputComponent { Text = "A\U0001F1FA\U0001F1F8e\u0301\U0001F469\u200d\U0001F680B" };
@@ -271,6 +289,44 @@ public sealed class UIRetainedControlsTests
         row.SceneNode.Destroy(true);
     }
 
+    [Test]
+    public void VirtualTreeAccessibility_DescribesLogicalRowsWithoutRealization()
+    {
+        int created = 0;
+        UIVirtualTreeProvider tree = new(
+            () => { created++; return new UIBoundableTransform(); },
+            (_, _, _, _) => { }, (_, _, _) => { });
+        tree.Insert(1, 0, 0, "Section", isSection: true);
+        tree.Insert(2, 1, 0, "Child");
+        tree.Insert(3, 2, 0, "Grandchild");
+        tree.AccessibilityItemCount.ShouldBe(1);
+        tree.TryGetAccessibilityItem(0, out UIVirtualAccessibilityItem section).ShouldBeTrue();
+        section.ItemId.ShouldBe(1UL);
+        section.Role.ShouldBe(EUIAccessibilityRole.TreeItem);
+        section.IsSection.ShouldBeTrue();
+        section.HasChildren.ShouldBeTrue();
+        section.IsExpanded.ShouldBeFalse();
+
+        tree.SetExpanded(1, true);
+        tree.Rename(2, "Renamed child");
+        tree.SetSelected(2, true);
+        tree.Activate(2);
+        tree.AccessibilityItemCount.ShouldBe(2);
+        tree.TryGetAccessibilityItem(1, out UIVirtualAccessibilityItem child).ShouldBeTrue();
+        child.ItemId.ShouldBe(2UL);
+        child.Name.ShouldBe("Renamed child");
+        child.Depth.ShouldBe(1);
+        child.IsSelected.ShouldBeTrue();
+        child.IsActive.ShouldBeTrue();
+        child.HasChildren.ShouldBeTrue();
+        tree.TryGetAccessibilityItem(2, out _).ShouldBeFalse();
+        tree.SetExpanded(2, true);
+        tree.TryGetAccessibilityItem(2, out UIVirtualAccessibilityItem grandchild).ShouldBeTrue();
+        grandchild.ItemId.ShouldBe(3UL);
+        grandchild.Depth.ShouldBe(2);
+        created.ShouldBe(0);
+    }
+
     private sealed class TableSource : IUIVirtualTableSource<string>
     {
         private (ulong Id, string Text)[] _items = [(42, "First"), (73, "Second")];
@@ -294,6 +350,41 @@ public sealed class UIRetainedControlsTests
 
         transform.ScrollOffset.ShouldBe(Vector2.Zero);
         transform.ContentExtent.ShouldBe(new Vector2(100, 80));
+    }
+
+    [Test]
+    public void ScrollRegion_DirectionalInputYieldsAtAcceptedBoundary()
+    {
+        SceneNode root = new("Scroll navigation", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode scrollNode = new(root) { Name = "Scroll" };
+        UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+        UIScrollRegionComponent region = scrollNode.AddComponent<UIScrollRegionComponent>()!;
+        UIListTransform list = new() { ItemSize = 20, VirtualOverscan = 0 };
+        new SceneNode(scrollNode, "Rows", list);
+        UIVirtualTreeProvider provider = new(() =>
+            new SceneNode("Row", new UIBoundableTransform()).GetTransformAs<UIBoundableTransform>(true)!,
+            (_, _, _, _) => { }, (_, _, _) => { });
+        for (ulong id = 1; id <= 10; id++)
+            provider.Insert(id, 0, (int)id - 1, $"Row {id}");
+        list.VirtualProvider = provider;
+        root.IsActiveSelf = true;
+        list.SynchronizeVirtualRows(60);
+        scroll.SynchronizeScroll(new Vector2(100, 60));
+
+        scroll.MaxScrollOffset.Y.ShouldBe(140);
+        region.TryConsumeFocusDirection(-Vector2.UnitY).ShouldBeTrue();
+        scroll.ScrollOffset.Y.ShouldBe(48);
+        region.AccessibilityAdjust(1).ShouldBeTrue();
+        scroll.ScrollOffset.Y.ShouldBe(96);
+        region.AccessibilityAdjust(1).ShouldBeTrue();
+        scroll.ScrollOffset.Y.ShouldBe(140);
+        region.TryConsumeFocusDirection(-Vector2.UnitY).ShouldBeFalse();
+        region.HandleMouseScroll(-1).ShouldBeFalse();
+        region.TryConsumeFocusDirection(Vector2.UnitY).ShouldBeTrue();
+        scroll.ScrollOffset.Y.ShouldBe(92);
     }
 
     [Test]

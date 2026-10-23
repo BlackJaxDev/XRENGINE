@@ -7,6 +7,16 @@ namespace XREngine.UnitTests.Editor;
 public class NativeDockLayoutTests
 {
     [Test]
+    public void FreshLayout_SanitizeCreatesUsableDockTree()
+    {
+        NativeDockTree? tree = new NativeDockLayout().Sanitize().DockTree;
+
+        Assert.That(tree, Is.Not.Null);
+        Assert.That(tree!.Stacks().SelectMany(stack => stack.Tabs),
+            Does.Contain(NativeDockPanel.Scene));
+    }
+
+    [Test]
     public void Sanitize_ClampsSizeAndSelectsAnOpenTab()
     {
         NativeDockLayout layout = new()

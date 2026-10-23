@@ -217,9 +217,14 @@ public sealed class UIDrawPayloadTests
             XRDataBuffer originalTransforms = first.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 0).Value;
             XRDataBuffer originalUvs = first.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 1).Value;
             XRDataBuffer originalRotations = first.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 2).Value;
+            originalTransforms.ElementCount.ShouldBe(1u);
+            originalTransforms.ClientSideSource!.Length.ShouldBe(16u);
+            originalUvs.ClientSideSource!.Length.ShouldBe(16u);
+            originalRotations.ClientSideSource!.Length.ShouldBe(4u);
             Vector4 originalTransform = originalTransforms.Get<Vector4>(0) ?? throw new InvalidOperationException("Missing glyph transform.");
             XRDataBuffer sourceTransforms = text.Mesh!.Buffers[originalTransforms.AttributeName];
             XRDataBuffer sourceUvs = text.Mesh.Buffers[originalUvs.AttributeName];
+            sourceTransforms.ElementCount.ShouldBeGreaterThan(originalTransforms.ElementCount);
             ulong transformRevision = sourceTransforms.Revision;
             ulong uvRevision = sourceUvs.Revision;
             text.Color = new(1.0f, 0.0f, 0.0f, 1.0f);
@@ -309,6 +314,58 @@ public sealed class UIDrawPayloadTests
             changed.ShouldNotBeSameAs(first);
             changed!.Geometry.RendererBuffers[0].Value.Get<Vector4>(0).ShouldBe(new Vector4(7));
             first.Geometry.RendererBuffers[0].Value.Get<Vector4>(0).ShouldBe(Vector4.One);
+        }
+        finally { first.Release(); }
+    }
+
+    [Test]
+    public void UsedGlyphCaptureIgnoresUnusedTailAndKeepsGenericStorageComplete()
+    {
+        RenderCommandMesh2D source = CreateDraw();
+        source.Instances = 2;
+        XRDataBuffer<Vector4> glyphs = new("GlyphTransformsBuffer", EBufferTarget.ShaderStorageBuffer, 8u) { BindingIndexOverride = 0 };
+        glyphs.SetDataRaw<Vector4>([Vector4.One, new Vector4(2), new Vector4(3), new Vector4(4),
+            new Vector4(5), new Vector4(6), new Vector4(7), new Vector4(8)]);
+        XRDataBuffer<Vector4> custom = new("CustomData", EBufferTarget.ShaderStorageBuffer, 8u) { BindingIndexOverride = 7 };
+        source.Mesh!.Buffers.Add(glyphs.AttributeName, glyphs);
+        source.Mesh.Buffers.Add(custom.AttributeName, custom);
+        using UIDrawPayloadBuilder builder = new() { UsedGlyphCount = 2, UseCommittedGlyphRevisions = true };
+        builder.TryCapture(source, false, out UIDrawPayload? first, out string? reason).ShouldBeTrue(reason);
+        first!.Retain();
+        try
+        {
+            XRDataBuffer captured = first.Geometry.RendererBuffers.Single(x => x.Key == glyphs.AttributeName).Value;
+            captured.ElementCount.ShouldBe(2u);
+            captured.ClientSideSource!.Length.ShouldBe(32u);
+            first.Geometry.RendererBuffers.Single(x => x.Key == custom.AttributeName).Value.ElementCount.ShouldBe(8u);
+            glyphs.GetCpuMirrorSpan()[7] = new Vector4(90);
+            builder.InvalidateRawStorage();
+            builder.TryCapture(source, false, out UIDrawPayload? same, out reason).ShouldBeTrue(reason);
+            same.ShouldBeSameAs(first);
+            glyphs.GetCpuMirrorSpan()[1] = new Vector4(20);
+            builder.InvalidateRawStorage();
+            builder.TryCapture(source, false, out UIDrawPayload? changed, out reason).ShouldBeTrue(reason);
+            changed!.Geometry.RendererBuffers.Single(x => x.Key == glyphs.AttributeName).Value.ClientSideSource!.Length.ShouldBe(32u);
+            captured.Get<Vector4>(16).ShouldBe(new Vector4(2));
+            builder.UsedGlyphCount = 3;
+            source.Instances = 3;
+            builder.TryCapture(source, false, out UIDrawPayload? grown, out reason).ShouldBeTrue(reason);
+            grown!.Geometry.RendererBuffers.Single(x => x.Key == glyphs.AttributeName).Value.ClientSideSource!.Length.ShouldBe(48u);
+            builder.UsedGlyphCount = 1;
+            source.Instances = 1;
+            builder.TryCapture(source, false, out UIDrawPayload? shrunk, out reason).ShouldBeTrue(reason);
+            shrunk!.Geometry.RendererBuffers.Single(x => x.Key == glyphs.AttributeName).Value.ClientSideSource!.Length.ShouldBe(16u);
+            builder.UsedGlyphCount = 9;
+            builder.TryCapture(source, false, out _, out reason).ShouldBeFalse();
+            shrunk.IsRetired.ShouldBeFalse();
+            builder.UsedGlyphCount = 1;
+            source.Instances = 2;
+            builder.TryCapture(source, false, out _, out reason).ShouldBeFalse();
+            (reason ?? string.Empty).ShouldContain("GlyphRange");
+            using UIDrawPayloadBuilder generic = new();
+            generic.TryCapture(source, false, out UIDrawPayload? full, out reason).ShouldBeTrue(reason);
+            full!.Geometry.RendererBuffers.Single(x => x.Key == glyphs.AttributeName).Value.ElementCount.ShouldBe(8u);
+            full.Geometry.RendererBuffers.Single(x => x.Key == glyphs.AttributeName).Value.ClientSideSource!.Length.ShouldBe(128u);
         }
         finally { first.Release(); }
     }
