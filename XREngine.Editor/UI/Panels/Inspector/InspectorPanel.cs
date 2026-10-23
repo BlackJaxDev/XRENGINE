@@ -23,6 +23,10 @@ public partial class InspectorPanel : EditorPanel
         switch (propName)
         {
             case nameof(InspectedObjects):
+                if (prev is object?[] previous &&
+                    (field is not object?[] next || previous.Length != next.Length ||
+                     previous.Where((item, index) => !ReferenceEquals(item, next[index])).Any()))
+                    HideDetailEditor();
                 RemakeChildren();
                 break;
         }
@@ -58,6 +62,9 @@ public partial class InspectorPanel : EditorPanel
     {
         if (!IsLocked)
         {
+            _componentGeneration++;
+            _componentTargets = [.. obj];
+            _inspectorView = InspectorView.Properties;
             _inspectingAsset = false;
             NativeAssetSelection.Clear();
             InspectedObjects = obj;
@@ -70,11 +77,15 @@ public partial class InspectorPanel : EditorPanel
             return;
         if (target is null)
         {
+            _componentGeneration++;
             if (_inspectingAsset)
                 InspectedObjects = null;
             _inspectingAsset = false;
             return;
         }
+        _componentGeneration++;
+        _componentTargets = [];
+        _inspectorView = InspectorView.Properties;
         _inspectingAsset = true;
         InspectedObjects = [target];
     }

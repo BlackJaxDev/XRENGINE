@@ -304,6 +304,76 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void ComboBinding_WritesOnceAndDetachesWhenRecycled()
+    {
+        SceneNode root = new("Combo binding", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode node = new(root) { Name = "Combo" };
+        node.SetTransform<UIBoundableTransform>();
+        UIComboBoxComponent combo = node.AddComponent<UIComboBoxComponent>()!;
+        combo.SetOptions([new(3, "Third"), new(8, "Eighth")]);
+        UIValueState<ulong?> binding = new(3);
+        int writes = 0;
+        binding.ValueChanged += _ => writes++;
+        combo.Binding = binding;
+        root.IsActiveSelf = true;
+
+        combo.Select(8, EUIValueChangeOrigin.User).ShouldBeTrue();
+        binding.Value.ShouldBe(8UL);
+        writes.ShouldBe(1);
+        combo.Select(8, EUIValueChangeOrigin.User).ShouldBeTrue();
+        writes.ShouldBe(1);
+
+        combo.CancelForRecycle();
+        combo.Binding.ShouldBeNull();
+        combo.SelectedId.ShouldBe(8UL);
+        binding.SetValue(3);
+        combo.SelectedId.ShouldBe(8UL);
+    }
+
+    [Test]
+    public void ColorSelector_PreviewCancelCommitAndRecycleKeepBindingConsistent()
+    {
+        SceneNode root = new("Color binding", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode node = new(root) { Name = "Color" };
+        node.SetTransform<UIBoundableTransform>();
+        UIColorSelectorComponent selector = node.AddComponent<UIColorSelectorComponent>()!;
+        ColorF4 original = new(1, 0, 0, 1);
+        UIValueState<ColorF4> binding = new(original);
+        int writes = 0;
+        int commits = 0;
+        binding.ValueChanged += _ => writes++;
+        selector.ColorCommitted += _ => commits++;
+        selector.Binding = binding;
+        root.IsActiveSelf = true;
+
+        selector.BeginEdit().ShouldBeTrue();
+        selector.PreviewHexSrgb("#00FF00FF").ShouldBeTrue();
+        binding.Value.ShouldBe(original);
+        writes.ShouldBe(0);
+        selector.CancelEdit();
+        selector.LinearColor.ShouldBe(original);
+        commits.ShouldBe(0);
+
+        selector.BeginEdit().ShouldBeTrue();
+        selector.PreviewHexSrgb("#0000FFFF").ShouldBeTrue();
+        selector.CommitEdit();
+        writes.ShouldBe(1);
+        commits.ShouldBe(1);
+        selector.LinearColor.ShouldBe(binding.Value);
+        selector.CancelForRecycle();
+        selector.Binding.ShouldBeNull();
+        ColorF4 retained = selector.LinearColor;
+        binding.SetValue(original);
+        selector.LinearColor.ShouldBe(retained);
+    }
+
+    [Test]
     public void ImeComposition_PreviewsWithoutBindingWriteAndCommitsAsOneUndoStep()
     {
         UITextInputComponent input = CreateFocusedInput(out _);

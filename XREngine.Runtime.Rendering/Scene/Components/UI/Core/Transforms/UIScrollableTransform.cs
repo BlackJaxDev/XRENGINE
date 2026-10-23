@@ -156,10 +156,6 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _scrollableYMax, value);
         }
 
-        protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
-        {
-            base.OnResizeChildComponents(parentRegion);
-        }
         public override void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo)
         {
             base.VerifyPlacementInfo(childTransform, ref placementInfo);

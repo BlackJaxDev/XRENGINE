@@ -72,27 +72,6 @@ namespace XREngine.Rendering.UI
             }
         }
 
-        protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
-        {
-            //lock (Children)
-            //{
-                for (int i = 0; i < Children.Count; i++)
-                {
-                    if (Children[i] is not UITransform child)
-                        continue;
-                    
-                    if (i == SelectedIndex)
-                    {
-                        child.FitLayout(parentRegion);
-                        child.Visibility = EVisibility.Visible;
-                    }
-                    else
-                    {
-                        child.Visibility = EVisibility.Collapsed;
-                    }
-                }
-            //}
-        }
     }
     /// <summary>
     /// Same as a boundable transform, but supports docking another boundable transform to the center (creating a new tab), top, bottom, left, right.

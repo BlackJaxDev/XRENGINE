@@ -5,6 +5,7 @@ using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.UI.State;
 using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
 using XREngine.UnitTests.Physics;
@@ -168,5 +169,90 @@ public sealed class UIPresentedInputTests
             Should.Throw<InvalidOperationException>(reader.Release);
         }
         finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void VirtualItemFocus_WaitsForPresentedLeaseAndRejectsRecycledRow()
+    {
+        var root = new SceneNode("Virtual focus", new UICanvasTransform());
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UICanvasInputComponent input = root.AddComponent<UICanvasInputComponent>()!;
+            UIListTransform list = new() { ItemSize = 20, VirtualOverscan = 0 };
+            SceneNode listNode = new(root, "List", list);
+            UIVirtualTreeProvider provider = new(
+                () =>
+                {
+                    UIBoundableTransform createdRow = new();
+                    SceneNode createdNode = new(listNode, "Row", createdRow);
+                    createdNode.NewChild("Button").AddComponent<UIVirtualButtonComponent>();
+                    return createdRow;
+                },
+                (_, _, _, _) => { },
+                (_, _, _) => { });
+            provider.Insert(1, 0, 0, "First");
+            provider.Insert(2, 0, 1, "Second");
+            list.VirtualProvider = provider;
+            list.SynchronizeVirtualRows(20);
+            list.TryGetRealizedVirtualRow(1, out UIBoundableTransform? row,
+                out UIVirtualRowLease lease).ShouldBeTrue();
+            row.ShouldNotBeNull();
+            UIVirtualButtonComponent focusButton =
+                row!.SceneNode!.FirstChild!.GetComponent<UIVirtualButtonComponent>()!;
+
+            input.RequestVirtualItemFocus(list, 1).ShouldBeTrue();
+            input.FocusedComponent.ShouldBeNull();
+            focusButton.UserInterfaceCanvas.ShouldBeSameAs(canvas);
+            focusButton.CanInteract.ShouldBeTrue();
+            BoundingRectangleF bounds = new(Vector2.Zero, new Vector2(100));
+            UIHitRecord hit = new(focusButton.RenderInfo2D, focusButton.RenderInfo2D.MembershipId,
+                focusButton.UITransform.ElementIdentity, focusButton.InteractionRevision,
+                Matrix4x4.Identity, new Vector2(20), bounds, null,
+                3, 2, 4, 3, 0, 0, true, false,
+                FocusScopeIdentity: canvas.CanvasTransform.ElementIdentity,
+                VirtualListIdentity: list.ElementIdentity,
+                VirtualRowIdentity: row!.ElementIdentity,
+                VirtualRowLease: lease);
+            UIPublication packet = new(1, canvas.PublicationLifetime, 1, 1,
+                list.ParentCanvas!.ChangeJournal.Revision, default,
+                new UIElementIdentity[] { canvas.CanvasTransform.ElementIdentity, list.ElementIdentity,
+                    row!.ElementIdentity, focusButton.UITransform.ElementIdentity }, [hit], [],
+                bounds, Matrix4x4.Identity, Matrix4x4.Identity);
+            canvas.MarkPresented(canvas, packet);
+            packet.Release();
+
+            RefreshPresentedInput(input);
+            input.FocusedComponent.ShouldBeSameAs(focusButton);
+
+            UIVirtualButtonComponent elsewhere =
+                root.NewChild("Other focus").AddComponent<UIVirtualButtonComponent>()!;
+            input.RequestVirtualItemFocus(list, 1).ShouldBeTrue();
+            input.FocusedComponent = elsewhere;
+            RefreshPresentedInput(input);
+            input.FocusedComponent.ShouldBeSameAs(elsewhere);
+
+            input.FocusedComponent = null;
+            focusButton.CancelForRecycle();
+            input.RequestVirtualItemFocus(list, 1).ShouldBeTrue();
+            RefreshPresentedInput(input);
+            input.FocusedComponent.ShouldBeNull();
+
+            list.ContentScrollOffset = 20;
+            list.SynchronizeVirtualRows(20);
+            input.RequestVirtualItemFocus(list, 2).ShouldBeTrue();
+            RefreshPresentedInput(input);
+            input.FocusedComponent.ShouldBeNull();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    private static void RefreshPresentedInput(UICanvasInputComponent input)
+    {
+        var method = typeof(UICanvasInputComponent).GetMethod("RefreshPresentedInput",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        UIPublication? publication = (UIPublication?)method.Invoke(input, null);
+        publication?.Release();
     }
 }

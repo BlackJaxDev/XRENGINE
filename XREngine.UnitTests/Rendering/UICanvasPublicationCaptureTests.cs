@@ -17,6 +17,42 @@ public sealed class UICanvasPublicationCaptureTests
     [TearDown] public void RestoreShaderAssets() => _shaderScope.Dispose();
 
     [Test]
+    public void PaintChangesKeepHitGenerationButEligibilityChangesReplaceIt()
+    {
+        UICanvasTransform transform = new() { Width = 100, Height = 100 };
+        SceneNode root = new("Publication hit revisions", transform);
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            var button = root.NewChild("Button").AddComponent<UIVirtualButtonComponent>()!;
+            button.BoundableTransform.Width = 20;
+            button.BoundableTransform.Height = 20;
+            transform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => transform.PumpLayoutResults(), TimeSpan.FromSeconds(5))
+                .ShouldBeTrue();
+            Capture(canvas);
+            UIPublication first = Candidate(canvas).ShouldNotBeNull();
+            ulong hitGeneration = first.HitGeneration;
+            first.Hits.Length.ShouldBe(1);
+
+            button.IsSelected = true;
+            Capture(canvas);
+            UIPublication painted = Candidate(canvas).ShouldNotBeNull();
+            painted.Generation.ShouldBeGreaterThan(first.Generation);
+            painted.HitGeneration.ShouldBe(hitGeneration);
+
+            button.IsEnabled = false;
+            Capture(canvas);
+            UIPublication disabled = Candidate(canvas).ShouldNotBeNull();
+            disabled.HitGeneration.ShouldBeGreaterThan(hitGeneration);
+            disabled.Hits.Length.ShouldBe(1);
+            disabled.Hits[0].InteractionRevision.ShouldBe(button.InteractionRevision);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
     public void CaptureMutationRejectsMixedCandidateAndCleanRetrySucceeds()
     {
         UICanvasTransform transform = new() { Width = 100, Height = 100 };

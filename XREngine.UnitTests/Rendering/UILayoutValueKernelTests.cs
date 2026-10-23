@@ -322,6 +322,75 @@ public sealed class UILayoutValueKernelTests
         }
     }
 
+    [Test]
+    public void PublicMeasureAndArrangeUseAcceptedCanvasLayout()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        UIBoundableTransform child = new()
+        {
+            Parent = canvas, Width = 25, Height = 10, MaxAnchor = Vector2.Zero
+        };
+        try
+        {
+            Should.Throw<InvalidOperationException>(() => child.Measure(new Vector2(100, 100)));
+            child.ActualSize.ShouldBe(Vector2.Zero);
+            SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+
+            child.Measure(new Vector2(100, 100)).ShouldBe(new Vector2(25, 10));
+            child.Arrange(new BoundingRectangleF(0, 0, 1, 1));
+            child.ActualSize.ShouldBe(new Vector2(25, 10));
+        }
+        finally
+        {
+            child.Destroy(true);
+            canvas.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void DetachedMeasureUsesBoundedValueKernelWithoutApplyingGeometry()
+    {
+        UIBoundableTransform detached = new()
+        {
+            Width = 25, Height = 10, MaxAnchor = Vector2.Zero
+        };
+        try
+        {
+            detached.Measure(new Vector2(100, 100)).ShouldBe(new Vector2(25, 10));
+            detached.ActualSize.ShouldBe(Vector2.Zero);
+            Should.Throw<InvalidOperationException>(() =>
+                detached.Arrange(new BoundingRectangleF(0, 0, 100, 100)));
+        }
+        finally { detached.Destroy(true); }
+    }
+
+    [Test]
+    public void WarmIdleCanvasRequestsAllocateNoManagedStorage()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        try
+        {
+            canvas.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            ulong generation = canvas.CurrentLayoutGeneration;
+            for (int index = 0; index < 100; index++)
+            {
+                canvas.UpdateLayoutAsync();
+                canvas.PumpLayoutResults();
+            }
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int index = 0; index < 1000; index++)
+            {
+                canvas.UpdateLayoutAsync();
+                canvas.PumpLayoutResults();
+            }
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            allocated.ShouldBe(0);
+            canvas.CurrentLayoutGeneration.ShouldBe(generation);
+        }
+        finally { canvas.Destroy(true); }
+    }
+
     [Test, NonParallelizable]
     public void CompletedUnpumpedPageKeepsQuotaUntilOwnerRetires()
     {

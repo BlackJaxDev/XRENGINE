@@ -14,10 +14,10 @@ public sealed class UIDrawPayload
     private readonly XRShader[] _shaders;
     private readonly IUIDrawProducerLease? _producerLease;
     private readonly UITextureSnapshot?[] _textures;
-    private readonly XRDataBuffer[] _buffers;
+    internal UIDrawGeometry Geometry { get; }
 
     internal UIDrawPayload(XRMeshRenderer renderer, XRMaterial material,
-        RenderingParameters? renderOptions, XRShader[] shaders, long reservedBytes, IUIDrawProducerLease? producerLease, UITextureSnapshot?[] textures)
+        RenderingParameters? renderOptions, XRShader[] shaders, long reservedBytes, IUIDrawProducerLease? producerLease, UITextureSnapshot?[] textures, UIDrawGeometry geometry)
     {
         Renderer = renderer;
         Material = material;
@@ -26,7 +26,7 @@ public sealed class UIDrawPayload
         _reservedBytes = reservedBytes;
         _producerLease = producerLease;
         _textures = textures;
-        _buffers = CaptureOwnedBuffers(renderer, renderer.Mesh);
+        Geometry = geometry;
     }
 
     internal XRMeshRenderer Renderer { get; }
@@ -78,9 +78,8 @@ public sealed class UIDrawPayload
             // Native owners must retire before any dependent producer or texture claim is released.
             DestroyOwner(Renderer);
             Renderer.Buffers.RetireAndDisposeOwnedBuffers();
-            if (Renderer.Mesh is { } mesh)
-                DestroyOwner(mesh);
-            VerifyBufferRetirement(_buffers);
+            if (!Geometry.ReleaseFromRenderOwner())
+                throw new InvalidOperationException("UI geometry retirement failed; dependent claims remain retained.");
             DestroyOwner(Material);
             DestroyOwner(Material.RenderOptions);
             if (RenderOptions is { } options)

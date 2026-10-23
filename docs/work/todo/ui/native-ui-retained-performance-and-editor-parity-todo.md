@@ -7,22 +7,14 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The branch contains bounded worker layout with shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained render storage, common controls, virtual collections, and native editor panels. Completed code accounts for 19 of the original 60 implementation items; 41 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
+The branch contains bounded worker layout with shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained render storage, common controls, virtual collections, and native editor panels. Completed code accounts for 24 of the original 60 implementation items; 36 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
 
 ## Open Code Items
-
-### Phase 2: Immutable Layout And Bounded Scheduling
-
-- [ ] Remove active `OnResizeChildComponents` paths only after equivalent behavior belongs to measure and arrange. UI transform classes. Done when normal layout has one authoritative kernel.
-- [ ] Replace LINQ in `UIBoundableTransform.GetMaxChildWidth` and `GetMaxChildHeight`; audit layout hot paths for allocations. Done when steady-state visits use allocation-free iteration and measured steady-state layout allocates no managed memory.
 
 ### Phase 3: Coherent Publication And Input
 
 - [ ] Publish layout, render records, clip data, and hit data as one complete UI generation. `UICanvasComponent`, `UICanvasInputComponent`, and UI publication code. Done when no consumer sees partial state and window input uses the most recently presented generation.
 - [ ] Retire snapshots and UI records only after workers and render/input readers release them. UI lifecycle and renderer integration. Done when cancellation, reparenting, removal, canvas teardown, and in-flight frames cannot reuse referenced storage, and deterministic holder/reader retirement prevents bounded producer pools from waiting for garbage collection.
-- [ ] Replace hit transition set rebuilding with an allocation-free identity diff. `UICanvasInputComponent` and render records. Done when warmed pointer movement allocates no managed memory and enter/leave behavior remains correct.
-- [ ] Bound reusable blocker-filter capacity and cache idle hit queries by pointer state, capture state, output transform, and hit generation. Done when warmed hit queries avoid allocations and unchanged input reuses the prior result.
-- [ ] Advance hit generations only for visibility, eligibility, clip, painter order, transform, or bounds changes. Done when visual-only changes leave hit state valid.
 - [ ] Preserve pointer capture and drag behavior across publication changes. Keep `TopMostInteractable` as the camera-input blocking contract. Done when capture targets remain valid and overlapping UI/camera input tests pass.
 
 ### Phase 4: Persistent Render Data And Clipping

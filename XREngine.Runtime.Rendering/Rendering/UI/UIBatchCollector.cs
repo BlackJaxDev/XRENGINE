@@ -1697,10 +1697,16 @@ public sealed class UIBatchCollector : IDisposable
             _materialTextureMeshes.Remove(stale);
         }
         if (_materialTextureMeshes.Count >= MaxMaterialTextureMeshes)
-            throw new NotSupportedException("WebGPU.UI.ImageTextureBudgetExceeded: at most 64 distinct image and color-space bindings may be visible in one frame.");
+            throw new NotSupportedException("UI.ImageTextureBudgetExceeded: at most 64 distinct image and color-space bindings may be visible in one frame.");
 
         EnsureMaterialQuadMesh();
-        XRMaterial material = new(Array.Empty<ShaderVar>(), [texture], Array.Empty<XRShader>())
+        bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+        XRShader[] shaders = webGpu ? [] :
+        [
+            XRShader.EngineShader(Path.Combine("Common", "UIImageBatched.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UIImageBatched.fs"), EShaderType.Fragment)
+        ];
+        XRMaterial material = new(Array.Empty<ShaderVar>(), [texture], shaders)
         {
             Name = "UIBatchMaterialTexture",
             SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, texture, IsSrgb: srgb)],
@@ -1718,7 +1724,8 @@ public sealed class UIBatchCollector : IDisposable
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
             }
         };
-        material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2;
+        if (webGpu)
+            material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2;
         XRMeshRenderer mesh = new(_matQuadMesh!.Mesh!, material)
         {
             Name = "UIBatchMaterialTextureRenderer",

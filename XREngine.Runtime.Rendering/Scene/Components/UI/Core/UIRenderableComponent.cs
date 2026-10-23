@@ -29,11 +29,17 @@ namespace XREngine.Rendering.UI
             // shadow-only caster census.
             RenderInfo3D.SetCameraIndependentPreCollectCommandsCallback(PreCollectRenderInfo3D);
             RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
-            _publicationCommandObserver = new UIDrawCommandObserver(RenderCommand2D, InvalidatePublicationDraw);
+            _publicationCommandObserver = new UIDrawCommandObserver(RenderCommand2D, PublicationDrawChanged);
         }
 
         /// <summary>Call after direct writes to draw arrays, index lists, or other storage without change events.</summary>
         public void InvalidatePublicationDraw()
+        {
+            _publicationPayloadBuilder?.InvalidateRawStorage();
+            PublicationDrawChanged();
+        }
+
+        private void PublicationDrawChanged()
         {
             if (UITransform is { } transform)
                 transform.RecordUIChange(UIChangeDomain.Visual);
@@ -251,7 +257,7 @@ namespace XREngine.Rendering.UI
                 if (_publicationPayloadBuilder is null)
                 {
                     _publicationPayloadBuilder = new UIDrawPayloadBuilder(OnMaterialSettingUniforms);
-                    _publicationPayloadBuilder.SourceChanged += InvalidatePublicationDraw;
+                    _publicationPayloadBuilder.SourceChanged += PublicationDrawChanged;
                 }
                 _publicationPayloadBuilder.Bounds = frozenBounds;
                 if (TryCapturePublicationPayload(in output, _publicationPayloadBuilder, out payload, out captureFailure) && payload is not null)

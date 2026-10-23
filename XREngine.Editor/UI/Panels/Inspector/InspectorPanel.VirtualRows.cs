@@ -76,7 +76,19 @@ public partial class InspectorPanel
 
     private void CreateVirtualPropertyList()
     {
-        SceneNode scrollNode = SceneNode.NewChild();
+        SceneNode root = SceneNode.NewChildWithTransform(out UIDualSplitTransform split, "InspectorContent");
+        split.VerticalSplit = true;
+        split.FirstFixedSize = true;
+        split.FixedSize = 30;
+        split.SplitterSize = 0;
+        SceneNode toolbar = root.NewChildWithTransform(out UIListTransform commands, "InspectorCommands");
+        commands.DisplayHorizontal = true;
+        commands.ItemAlignment = EListAlignment.TopOrLeft;
+        commands.ItemSpacing = 2;
+        CreateComponentCommands(toolbar);
+        SceneNode body = root.NewChild();
+        body.SetTransform<UIBoundableTransform>().MaxAnchor = Vector2.One;
+        SceneNode scrollNode = body.NewChild();
         UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
         scroll.MinAnchor = Vector2.Zero;
         scroll.MaxAnchor = Vector2.One;
@@ -105,7 +117,7 @@ public partial class InspectorPanel
         list.VirtualProvider = _virtualPropertyGrid;
         _virtualPropertyList = list;
 
-        SceneNode detailNode = SceneNode.NewChild();
+        SceneNode detailNode = body.NewChild();
         UIScrollableTransform detail = detailNode.SetTransform<UIScrollableTransform>();
         detail.MinAnchor = Vector2.Zero;
         detail.MaxAnchor = Vector2.One;
@@ -122,6 +134,7 @@ public partial class InspectorPanel
         backLabel.VerticalAlignment = EVerticalAlignment.Center;
         backButton.InteractAction += _ => HideDetailEditor();
         _detailTransform = detail;
+        CreateComponentViews(body);
         RefreshVirtualProperties();
     }
 
@@ -131,10 +144,12 @@ public partial class InspectorPanel
         Properties = properties;
         _virtualPropertyProvider!.Reset(properties, InspectedObjects);
         _virtualPropertyList!.InvalidateMeasure();
+        RefreshComponentViews();
         if (_detailProperty is not null && !properties.Contains(_detailProperty))
             HideDetailEditor();
         else if (_detailProperty is not null)
             ShowDetailEditor(_detailProperty);
+        ApplyInspectorView();
     }
 
     private UIBoundableTransform CreatePropertyValueCell(SceneNode tableRow)
@@ -324,5 +339,6 @@ public partial class InspectorPanel
         _virtualPropertyList = null;
         _propertyScroll = null;
         _detailTransform = null;
+        ReleaseComponentViews();
     }
 }

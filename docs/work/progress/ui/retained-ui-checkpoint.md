@@ -98,3 +98,34 @@ rejects the Windows-targeted assembly on Linux with "Only supported on Windows7.
 Its zero-test exit code is not counted as a pass.
 No Windows execution, GPU presentation, native IME, visual acceptance, or comparison
 with ImGui is implied.
+
+## Shared Glyph Storage And Presented Row Focus
+
+This checkpoint closes five more original code items: the authoritative layout
+entry path, the layout allocation audit, hit-identity diff allocation, bounded
+blocker filtering and idle hit reuse, and separate visual/hit generations.
+The total is **24 of 60 implementation items**. The TODO retains 36 code items
+and four owner decisions. Broader rendering and control items remain open.
+
+- Attached public measure/arrange calls request the canvas worker. Detached
+  measurement uses the same value kernel. Legacy child-layout overrides no longer
+  compete with the accepted result. Warmed idle canvas pumps allocate zero bytes
+  in the regression fixture. Edited immutable pages still require bounded storage.
+- Mesh and unchanged glyph buffers have explicit shared ownership. Paint changes
+  reuse geometry; animated overrides replace only their own buffers. Dirty glyph
+  writes preserve old publications. Standalone `UIText` work remains open.
+- Desktop image batching checks storage, color space, sampler, and mip contracts.
+  Normal owned draws remain available for unsupported batch profiles. Known
+  color/storage mismatches fail with a diagnostic. GPU execution remains pending.
+- Virtual trees maintain item-ID indexes. Focus requests wait for a presented
+  row lease and cannot target an arbitrary recycled row. Input tests cover
+  leave/return transitions, blockers, paint-only reuse, and generation changes.
+- The inspector exposes canonical component add/remove actions, deferred callback
+  guards, and structural Undo integration. The editor build checks this code;
+  Windows workflow acceptance remains pending.
+
+The matching editor build passed with zero warnings/errors in 3m57.06s. The
+final headless build passed with zero warnings/errors in 15.16s. All **310 tests
+passed**, with no skips, in 7.482s. These results cover the exact source in this
+checkpoint. No Windows execution, shader execution, visual, GPU upload, native
+IME, or performance comparison result is claimed.

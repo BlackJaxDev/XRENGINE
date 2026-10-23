@@ -42,6 +42,9 @@ public partial class UICanvasComponent
     private ulong _nextHitGeneration;
     private long _canvasLifetime = 1;
 
+    /// <summary>Gets the current canvas incarnation for deferred input requests.</summary>
+    public ulong PublicationLifetime => (ulong)Volatile.Read(ref _canvasLifetime);
+
     /// <summary>Acquires the packet used by a render attempt. The caller must release it in a finally block.</summary>
     private UIPublication? AcquireCurrentPublication()
     {
@@ -178,7 +181,8 @@ public partial class UICanvasComponent
         _publicationScrollScratch.Clear();
         _publicationFocusScopeScratch.Clear();
         _publicationRenderScratch.Clear();
-        CaptureHitRecords(canvas, canvas, canvas.ElementIdentity, layoutPages);
+        CaptureHitRecords(canvas, canvas, canvas.ElementIdentity, layoutPages,
+            default, default, default);
         OrderPublicationRenders();
         OrderPublicationFocusScopes();
         for (int index = 0; index < _publicationRenderScratch.Count; index++)
@@ -287,11 +291,21 @@ public partial class UICanvasComponent
     }
 
     private void CaptureHitRecords(UICanvasTransform canvas, UITransform transform,
-        UIElementIdentity focusScopeIdentity, UILayoutOutputPageView layoutPages)
+        UIElementIdentity focusScopeIdentity, UILayoutOutputPageView layoutPages,
+        UIElementIdentity virtualListIdentity, UIElementIdentity virtualRowIdentity,
+        UIVirtualRowLease virtualRowLease)
     {
         if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int layoutIndex) ||
             !layoutPages[layoutIndex].Visible)
             return;
+
+        if (transform is UIBoundableTransform row && transform.Parent is UIListTransform list &&
+            list.TryGetVirtualRowLease(row, out UIVirtualRowLease rowLease))
+        {
+            virtualListIdentity = list.ElementIdentity;
+            virtualRowIdentity = row.ElementIdentity;
+            virtualRowLease = rowLease;
+        }
 
         if (transform.SceneNode?.Components is { } nodeComponents)
         {
@@ -355,13 +369,15 @@ public partial class UICanvasComponent
                     component is UIInteractableComponent, bounds.BlocksInputBehind,
                     component is UIInteractableComponent focusTarget && focusTarget.IsTabStop,
                     component is UIInteractableComponent indexedTarget ? indexedTarget.TabIndex : 0,
-                    focusScopeIdentity));
+                    focusScopeIdentity, virtualListIdentity, virtualRowIdentity,
+                    virtualRowLease));
             }
         }
 
         for (int index = 0; index < transform.Children.Count; index++)
             if (transform.Children[index] is UITransform child)
-                CaptureHitRecords(canvas, child, focusScopeIdentity, layoutPages);
+                CaptureHitRecords(canvas, child, focusScopeIdentity, layoutPages,
+                    virtualListIdentity, virtualRowIdentity, virtualRowLease);
     }
 
     private void BeginPublicationCollection()

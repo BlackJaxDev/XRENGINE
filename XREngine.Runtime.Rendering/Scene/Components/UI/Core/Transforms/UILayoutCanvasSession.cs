@@ -468,18 +468,7 @@ internal sealed class UILayoutCanvasSession
             if (_runningEpoch != _epoch || _canvas.IsLayoutInvalidated || _canvas.IsNestedCanvas)
                 throw new OperationCanceledException("Canvas layout was canceled before worker dispatch.");
             lease.StartWorker();
-            _runningTask = Task.Run(() =>
-            {
-                try
-                {
-                    return UILayoutValueKernel.RunPaged(input, previous, previousOutput, cancellation);
-                }
-                finally
-                {
-                    lease.FinishWorker();
-                    Interlocked.Decrement(ref _activeWorkers);
-                }
-            });
+            _runningTask = StartWorkerTask(input, previous, previousOutput, cancellation, lease);
         }
         catch (Exception ex)
         {
@@ -501,6 +490,24 @@ internal sealed class UILayoutCanvasSession
             _dispatching = false;
         }
     }
+
+    // Keep the task closure out of TryStart. Idle pumps must not allocate a
+    // compiler-generated capture object before the pending-work guard returns.
+    private static Task<UILayoutOutputPageView> StartWorkerTask(UILayoutSnapshot input,
+        UILayoutSnapshot? previous, UILayoutOutputPageView? previousOutput,
+        CancellationToken cancellation, UILayoutPageLease lease)
+        => Task.Run(() =>
+        {
+            try
+            {
+                return UILayoutValueKernel.RunPaged(input, previous, previousOutput, cancellation);
+            }
+            finally
+            {
+                lease.FinishWorker();
+                Interlocked.Decrement(ref _activeWorkers);
+            }
+        });
 
     private void Block(Exception error)
     {

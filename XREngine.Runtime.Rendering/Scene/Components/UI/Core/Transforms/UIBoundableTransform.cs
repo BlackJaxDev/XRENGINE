@@ -375,7 +375,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public override Vector2 Measure(Vector2 availableSize)
         {
-            return UILayoutSystem.MeasureBoundable(this, availableSize);
+            return base.Measure(availableSize);
         }
 
         /// <summary>
@@ -407,7 +407,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public override void Arrange(BoundingRectangleF finalBounds)
         {
-            UILayoutSystem.ArrangeBoundable(this, finalBounds);
+            base.Arrange(finalBounds);
         }
 
         /// <summary>

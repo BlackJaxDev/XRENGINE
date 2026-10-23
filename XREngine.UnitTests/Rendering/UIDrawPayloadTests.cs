@@ -183,9 +183,152 @@ public sealed class UIDrawPayloadTests
         builder.TryCapture(source, false, out UIDrawPayload? payload, out string? reason).ShouldBeTrue(reason);
         glyphs.SetDataRaw<Vector4>([new Vector4(20)]);
 
-        payload!.Renderer.Buffers[glyphs.AttributeName].Get<Vector4>(0).ShouldBe(new Vector4(1, 2, 3, 4));
+        payload!.Geometry.RendererBuffers[0].Value.Get<Vector4>(0).ShouldBe(new Vector4(1, 2, 3, 4));
         payload.Renderer.BindingPublishers[0].ShouldBeAssignableTo<IRenderResourceBindingPublisher>();
         ((IRenderResourceBindingPublisher)payload.Renderer.BindingPublishers[0]).RequiresReadyDescriptorResources.ShouldBeTrue();
+    }
+
+    [Test]
+    public void PaintRecaptureSharesMeshAndGlyphStorageWhileAnimationReplacesOnlyChangedBuffers()
+    {
+        XRTexture2D atlas = new(8, 8, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true);
+        atlas.Mipmaps[0].DataBytes = new byte[8 * 8 * 4];
+        FontGlyphSet font = new()
+        {
+            Glyphs = new Dictionary<string, FontGlyphSet.Glyph> { ["A"] = new(new Vector2(8), Vector2.Zero) },
+            Atlas = atlas,
+            LayoutEmSize = 8,
+            AtlasType = EFontAtlasType.Mtsdf,
+        };
+        XREngine.Scene.SceneNode root = new("Shared glyphs", new UIBoundableTransform()) { IsActiveSelf = false };
+        UIDrawPayload? first = null;
+        UIDrawPayload? paint = null;
+        try
+        {
+            UITextMaterialRefreshProbe text = root.AddComponent<UITextMaterialRefreshProbe>()!;
+            text.Font = font;
+            text.Text = "A";
+            text.AnimatableTransforms = true;
+            text.Mesh!.Mesh!.Buffers.Values.First().DisposeOnPush = true;
+            using UIDrawPayloadBuilder builder = text.CreateBuilder();
+            text.Capture(builder, out first, out string? reason).ShouldBeTrue(reason);
+            first!.Retain();
+            first.Geometry.Mesh.Buffers.Values.All(buffer => !buffer.DisposeOnPush).ShouldBeTrue();
+            XRDataBuffer originalTransforms = first.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 0).Value;
+            XRDataBuffer originalUvs = first.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 1).Value;
+            XRDataBuffer originalRotations = first.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 2).Value;
+            Vector4 originalTransform = originalTransforms.Get<Vector4>(0) ?? throw new InvalidOperationException("Missing glyph transform.");
+            XRDataBuffer sourceTransforms = text.Mesh!.Buffers[originalTransforms.AttributeName];
+            XRDataBuffer sourceUvs = text.Mesh.Buffers[originalUvs.AttributeName];
+            ulong transformRevision = sourceTransforms.Revision;
+            ulong uvRevision = sourceUvs.Revision;
+            text.Color = new(1.0f, 0.0f, 0.0f, 1.0f);
+            text.Capture(builder, out paint, out reason).ShouldBeTrue(reason);
+            paint.ShouldNotBeSameAs(first);
+            paint!.Retain();
+            sourceTransforms.Revision.ShouldBe(transformRevision);
+            sourceUvs.Revision.ShouldBe(uvRevision);
+            paint.Geometry.Mesh.ShouldBeSameAs(first.Geometry.Mesh);
+            paint.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 0).Value.ShouldBeSameAs(originalTransforms);
+            paint.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 1).Value.ShouldBeSameAs(originalUvs);
+            text.GlyphRelativeTransforms[0] = (new Vector2(3, 4), Vector2.One, 0.25f);
+            text.MarkGlyphTransformsChanged();
+            text.Capture(builder, out UIDrawPayload? animated, out reason).ShouldBeTrue(reason);
+            XRDataBuffer animatedTransforms = animated!.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 0).Value;
+            XRDataBuffer animatedRotations = animated.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 2).Value;
+            animated.Geometry.Mesh.ShouldBeSameAs(first.Geometry.Mesh);
+            animated.Geometry.RendererBuffers.Single(x => x.Value.BindingIndexOverride == 1).Value.ShouldBeSameAs(originalUvs);
+            sourceUvs.Revision.ShouldBe(uvRevision);
+            animatedTransforms.ShouldNotBeSameAs(originalTransforms);
+            animatedRotations.ShouldNotBeSameAs(originalRotations);
+            animatedTransforms.Get<Vector4>(0).ShouldBe(originalTransform + new Vector4(3, 4, 0, 0));
+            animatedRotations.Get<float>(0).ShouldBe(0.25f);
+            originalTransforms.Get<Vector4>(0).ShouldBe(originalTransform);
+            originalRotations.Get<float>(0).ShouldBe(0);
+            // Direct edits do not change the accepted override snapshot until the owner marks them.
+            text.GlyphRelativeTransforms[0] = (new Vector2(90), Vector2.One, 1.0f);
+            text.Capture(builder, out UIDrawPayload? unchanged, out reason).ShouldBeTrue(reason);
+            unchanged.ShouldBeSameAs(animated);
+            text.AnimatableTransforms = false;
+            text.Capture(builder, out UIDrawPayload? staticText, out reason).ShouldBeTrue(reason);
+            staticText!.Geometry.RendererBuffers.Any(x => x.Value.BindingIndexOverride == 2).ShouldBeFalse();
+            XRDataBuffer shortBuffer = text.Mesh!.Buffers[originalTransforms.AttributeName];
+            shortBuffer.ClientSideSource = new XREngine.Data.DataSource(4u);
+            text.Capture(builder, out _, out reason).ShouldBeFalse();
+            (reason ?? string.Empty).ShouldContain("LayoutPending");
+        }
+        finally
+        {
+            paint?.Release();
+            first?.Release();
+            root.Destroy(true);
+            font.Destroy(true);
+            atlas.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void LastSharedGeometryRetirementFailureKeepsItsProducerClaim()
+    {
+        RenderCommandMesh2D source = CreateDraw();
+        TestProducerLease producer = new();
+        source.Mesh!.Material!.Textures = [producer.Texture];
+        UIDrawPayloadBuilder builder = new() { ProducerLease = producer };
+        builder.TryCapture(source, false, out UIDrawPayload? first, out string? reason).ShouldBeTrue(reason);
+        first!.Retain();
+        ((ShaderFloat)source.Mesh.Material.Parameters[0]).Value = 3;
+        builder.TryCapture(source, false, out UIDrawPayload? second, out reason).ShouldBeTrue(reason);
+        second!.Geometry.Mesh.ShouldBeSameAs(first.Geometry.Mesh);
+        second.Geometry.Mesh.Destroying += static _ => false;
+        first.Release();
+        first.IsRetired.ShouldBeTrue();
+        builder.Dispose();
+        second.IsRetired.ShouldBeFalse();
+        second.Material.IsDestroyed.ShouldBeFalse();
+        producer.Claims.ShouldBe(1);
+    }
+
+    [Test]
+    public void ExplicitStorageInvalidationRecapturesUncommittedGlyphBytes()
+    {
+        RenderCommandMesh2D source = CreateDraw();
+        XRDataBuffer<Vector4> glyphs = new("GlyphTransformsBuffer", EBufferTarget.ShaderStorageBuffer, 1u)
+        {
+            BindingIndexOverride = 0,
+        };
+        glyphs.SetDataRaw<Vector4>([Vector4.One]);
+        source.Mesh!.Buffers.Add(glyphs.AttributeName, glyphs);
+        using UIDrawPayloadBuilder builder = new() { UseCommittedGlyphRevisions = true };
+        builder.TryCapture(source, false, out UIDrawPayload? first, out string? reason).ShouldBeTrue(reason);
+        first!.Retain();
+        try
+        {
+            glyphs.GetCpuMirrorSpan()[0] = new Vector4(7);
+            builder.InvalidateRawStorage();
+            builder.TryCapture(source, false, out UIDrawPayload? changed, out reason).ShouldBeTrue(reason);
+            changed.ShouldNotBeSameAs(first);
+            changed!.Geometry.RendererBuffers[0].Value.Get<Vector4>(0).ShouldBe(new Vector4(7));
+            first.Geometry.RendererBuffers[0].Value.Get<Vector4>(0).ShouldBe(Vector4.One);
+        }
+        finally { first.Release(); }
+    }
+
+    [Test]
+    public void SharedGeometryByteReservationsDoNotConsumeDrawSlots()
+    {
+        int reservations = 0;
+        try
+        {
+            for (; reservations <= UIDrawPayloadBuilder.MaximumRetainedPayloads; reservations++)
+                UIDrawPayloadBuilder.TryReserveBudget(1, countPayload: false).ShouldBeTrue();
+            using UIDrawPayloadBuilder builder = new();
+            builder.TryCapture(CreateDraw(), false, out _, out string? reason).ShouldBeTrue(reason);
+        }
+        finally
+        {
+            for (int index = 0; index < reservations; index++)
+                UIDrawPayloadBuilder.ReleaseBudget(1, countPayload: false);
+        }
     }
 
     [Test]

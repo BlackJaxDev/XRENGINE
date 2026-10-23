@@ -374,25 +374,6 @@ namespace XREngine.Rendering.UI
 
         #endregion
 
-        protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
-        {
-            //TODO: clip children that are outside of the parent region
-            //lock (Children)
-            {
-                switch (ItemAlignment)
-                {
-                    case EListAlignment.TopOrLeft:
-                        SizeChildrenLeftTop(parentRegion);
-                        break;
-                    case EListAlignment.Centered:
-                        SizeChildrenCentered(parentRegion);
-                        break;
-                    case EListAlignment.BottomOrRight:
-                        SizeChildrenRightBottom(parentRegion);
-                        break;
-                }
-            }
-        }
 
         private void SizeChildrenRightBottom(BoundingRectangleF parentRegion)
         {

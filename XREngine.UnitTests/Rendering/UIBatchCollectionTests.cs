@@ -197,6 +197,69 @@ public sealed class UIBatchCollectionTests
     }
 
     [Test]
+    public void CanonicalDesktopImageIsEligibleForOwnedTextureBatch()
+    {
+        using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        XRTexture2D texture = new()
+        {
+            Mipmaps = [new Mipmap2D(2, 2, new byte[16])],
+            SizedInternalFormat = ESizedInternalFormat.Rgba8,
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
+        };
+        XRMaterial image = UIMaterialComponent.CreateImageMaterial(texture, Vector4.One);
+        UIMaterialComponent component = new(image);
+
+        component.SupportsBatchedRendering.ShouldBeTrue();
+        image.SettingUniforms += static (_, _) => { };
+        component.SupportsBatchedRendering.ShouldBeFalse();
+    }
+
+    [Test]
+    public void DesktopImageColorSpaceRequiresMatchingGpuStorage()
+    {
+        using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        XRTexture2D texture = new()
+        {
+            Mipmaps = [new Mipmap2D(2, 2, new byte[16])],
+            SizedInternalFormat = ESizedInternalFormat.Srgb8Alpha8,
+            ImportedColorSpace = ETextureColorSpace.Srgb,
+            Resizable = false,
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+        };
+
+        UIMaterialComponent component = new(UIMaterialComponent.CreateImageMaterial(texture, Vector4.One));
+        component.SupportsBatchedRendering.ShouldBeTrue();
+
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba8;
+        UIMaterialComponent.TryGetDesktopImageProfile(texture, true, out string? reason).ShouldBeFalse();
+        Assert.That(reason, Does.Contain("sRGB binding"));
+        UIMaterialComponent.CreateImageMaterial(texture, Vector4.One).ShouldNotBeNull();
+    }
+
+    [Test]
+    public void ResizableDesktopSrgbImageRequiresMatchingVulkanMipFormat()
+    {
+        XRTexture2D texture = new()
+        {
+            Mipmaps = [new Mipmap2D(2, 2, new byte[16])],
+            SizedInternalFormat = ESizedInternalFormat.Srgb8Alpha8,
+            ImportedColorSpace = ETextureColorSpace.Srgb,
+            Resizable = true,
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+        };
+
+        UIMaterialComponent.TryGetDesktopImageProfile(texture, true, out string? reason).ShouldBeFalse();
+        Assert.That(reason, Does.Contain("first mip format"));
+    }
+
+    [Test]
     public void ChangingOneTextLengthKeepsOtherGlyphStorageStable()
     {
         RetainedGlyphRanges ranges = new();

@@ -149,6 +149,7 @@ namespace XREngine.Components
                     LinkOwningPawn();
                     break;
                 case nameof(FocusedComponent):
+                    CancelVirtualFocusAfterExternalFocusChange();
                     ReconcileFocusedComponent();
                     break;
             }
@@ -403,7 +404,13 @@ namespace XREngine.Components
             {
 
             if (!publication.TryMapPointer(_cursorOutputPosition, out Vector2 canvasPosition, _pressedTarget is null))
+            {
+                // The next swap clears the prior intersections. A later return to
+                // the same point must query the packet again instead of reusing them.
+                _queriedCanvasLifetime = 0;
+                _queriedHitGeneration = 0;
                 return;
+            }
             CursorPositionWorld2D = canvasPosition;
             if (_queriedCanvasLifetime == publication.CanvasLifetime &&
                 _queriedHitGeneration == publication.HitGeneration &&
@@ -447,6 +454,9 @@ namespace XREngine.Components
                 {
                     _queriedCanvasLifetime = 0;
                     _queriedHitGeneration = 0;
+                    if (_pendingVirtualFocusCanvas is { } pendingCanvas &&
+                        !ReferenceEquals(pendingCanvas, canvas))
+                        ClearPendingVirtualFocus();
                     SynchronizeFocusScope(null);
                 }
                 bool hitRecordsChanged = outputChanged || publication is null || _inputPublication is null ||
@@ -459,6 +469,7 @@ namespace XREngine.Components
                 if (!hitRecordsChanged)
                 {
                     SynchronizeFocusScope(publication);
+                    ResolvePresentedVirtualFocus(publication);
                     return publication;
                 }
                 _inputRecords.Clear();
@@ -472,6 +483,7 @@ namespace XREngine.Components
                         _inputRecords.Add(record.MembershipId, record);
                 SynchronizeFocusScope(publication);
             }
+            ResolvePresentedVirtualFocus(publication);
             return publication;
             }
             catch
@@ -913,6 +925,7 @@ namespace XREngine.Components
             _lastIntersectionIdentities.Clear();
             _currentIntersectionIdentities.Clear();
             _inputRecords.Clear();
+            ClearPendingVirtualFocus();
             UIPublication? oldInputPublication = _inputPublication;
             _inputPublication = null;
             oldInputPublication?.Release();

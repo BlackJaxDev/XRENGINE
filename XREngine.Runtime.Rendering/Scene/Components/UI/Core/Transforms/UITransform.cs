@@ -362,37 +362,34 @@ namespace XREngine.Rendering.UI
         #region Measure/Arrange Phase Methods
 
         /// <summary>
-        /// Measure phase: calculates the desired size of this transform.
-        /// Override in derived classes to provide custom measurement logic.
+        /// Requests canvas layout and reads the last accepted desired size.
+        /// Detached trees use the same bounded value kernel for serial measurement.
         /// </summary>
         /// <param name="availableSize">The available space from the parent.</param>
         /// <returns>The desired size of this transform.</returns>
         public virtual Vector2 Measure(Vector2 availableSize)
         {
-            return UILayoutSystem.MeasureTransform(this, availableSize);
+            return UILayoutSystem.MeasureAcceptedOrDetached(this, availableSize);
         }
 
         /// <summary>
-        /// Arrange phase: assigns final position and size to this transform.
+        /// Requests canvas layout. The canvas owns the final bounds.
         /// </summary>
         /// <param name="finalBounds">The final bounds assigned by the parent.</param>
         public virtual void Arrange(BoundingRectangleF finalBounds)
         {
-            UILayoutSystem.ArrangeTransform(this, finalBounds);
+            UILayoutSystem.RequestAttachedLayout(this);
         }
 
         #endregion
 
         /// <summary>
-        /// Fits the layout of this UI transform to the parent region.
-        /// For non-boundable transforms, delegates to the centralized layout system
-        /// to run Measure + Arrange.
+        /// Requests bounded canvas layout for this transform.
         /// </summary>
         /// <param name="parentRegion"></param>
         public virtual void FitLayout(BoundingRectangleF parentRegion)
         {
-            UILayoutSystem.MeasureTransform(this, parentRegion.Extents);
-            UILayoutSystem.ArrangeTransform(this, parentRegion);
+            UILayoutSystem.RequestAttachedLayout(this);
         }
 
         public bool IsVisible => Visibility == EVisibility.Visible;
@@ -457,26 +454,6 @@ namespace XREngine.Rendering.UI
         //        OwningUserInterface?.RemoveRenderableComponent(r);
         //}
 
-        protected virtual void OnResizeChildComponents(BoundingRectangleF parentRegion)
-        {
-            try
-            {
-                //lock (Children)
-                {
-                    foreach (var c in Children)
-                        if (c is UITransform uiTfm)
-                            uiTfm.FitLayout(parentRegion);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.UIException(ex);
-            }
-            finally
-            {
-                //_childLocker.ExitReadLock();
-            }
-        }
 
         /// <summary>
         /// Converts a local-space coordinate of a parent UI component 
