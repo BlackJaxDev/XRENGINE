@@ -140,6 +140,10 @@ public partial class InspectorPanel
     private Vector2 _savedDetailScroll;
     private Vector2 _savedComponentScroll;
     private Vector2 _savedPickerScroll;
+    private PropertyInfo? _savedDetailFocusBinding;
+    private object?[]? _pendingFocusTargets;
+    private readonly Stack<SceneNode> _pendingFocusNodes = new();
+    private int _pendingFocusFrames;
 
     private void CaptureViewState()
     {
@@ -152,6 +156,11 @@ public partial class InspectorPanel
         _savedDetailScroll = (_detailTransform as UIScrollableTransform)?.ScrollOffset ?? Vector2.Zero;
         _savedComponentScroll = _componentListView?.ScrollOffset ?? Vector2.Zero;
         _savedPickerScroll = _componentPickerView?.ScrollOffset ?? Vector2.Zero;
+        _savedDetailFocusBinding = _detailEditor is { } detail &&
+            _detailTransform?.GetCanvasComponent()?.GetInputComponent()?.FocusedComponent is { } focused &&
+            focused.SceneNode is { } focusedNode && IsDetailDescendant(focusedNode, detail) &&
+            focused is UITextInputComponent { Binding: EditorTextPropertyBinding binding }
+                ? binding.Property : null;
     }
 
     private void RestoreViewState()
@@ -172,8 +181,78 @@ public partial class InspectorPanel
             ShowDetailEditor(detail);
             if (_detailTransform is UIScrollableTransform scroll)
                 scroll.ScrollOffset = _savedDetailScroll;
+            if (_savedDetailFocusBinding is not null)
+            {
+                if (_pendingFocusFrames > 0)
+                    UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RestoreDetailFocusTick);
+                _pendingFocusTargets = current.ToArray();
+                _pendingFocusFrames = 30;
+                RegisterTick(ETickGroup.Late, ETickOrder.Scene, RestoreDetailFocusTick);
+            }
         }
         ApplyInspectorView();
+    }
+
+    private void RestoreDetailFocusTick()
+    {
+        if (--_pendingFocusFrames <= 0 || _detailEditor is null || _savedDetailFocusBinding is null ||
+            !Equals(_detailProperty, _savedDetailProperty) ||
+            _pendingFocusTargets is not { } focusTargets ||
+            InspectedObjects is not { } current || focusTargets.Length != current.Length)
+        {
+            StopDetailFocusRestore();
+            return;
+        }
+        for (int index = 0; index < focusTargets.Length; index++)
+            if (!ReferenceEquals(focusTargets[index], current[index]))
+            {
+                StopDetailFocusRestore();
+                return;
+            }
+        var input = _detailTransform?.GetCanvasComponent()?.GetInputComponent();
+        if (input is null)
+            return;
+        UITextInputComponent? match = null;
+        _pendingFocusNodes.Push(_detailEditor);
+        try
+        {
+            while (_pendingFocusNodes.TryPop(out SceneNode? node))
+            {
+                foreach (var component in node.Components)
+                    if (component is UITextInputComponent { Binding: EditorTextPropertyBinding binding } text &&
+                        Equals(binding.Property, _savedDetailFocusBinding))
+                    {
+                        if (match is not null)
+                        {
+                            StopDetailFocusRestore();
+                            return;
+                        }
+                        match = text;
+                    }
+                foreach (var child in node.Transform.Children)
+                    if (child.SceneNode is { } childNode)
+                        _pendingFocusNodes.Push(childNode);
+            }
+        }
+        finally { _pendingFocusNodes.Clear(); }
+        if (input.FocusedComponent is { IsActiveInHierarchy: true } focused &&
+            !ReferenceEquals(focused, match))
+        {
+            StopDetailFocusRestore();
+            return;
+        }
+        if (match is not null && input.TryFocusPresented(match))
+            StopDetailFocusRestore();
+    }
+
+    private void StopDetailFocusRestore(bool clearSavedBinding = true)
+    {
+        _pendingFocusFrames = 0;
+        _pendingFocusTargets = null;
+        _pendingFocusNodes.Clear();
+        if (clearSavedBinding)
+            _savedDetailFocusBinding = null;
+        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RestoreDetailFocusTick);
     }
 
     private bool DidGlobalSelectionChangeWhileHidden()

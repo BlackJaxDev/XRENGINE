@@ -25,6 +25,8 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeAssetPathPolicy.cs" Link="Editor/NativeAssetPathPolicy.cs" />
     <Compile Include="../Editor/NativeAssetPathPolicyTests.cs" Link="Editor/NativeAssetPathPolicyTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorPropertyDelegates.cs" Link="Editor/EditorPropertyDelegates.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorDragDropUtility.cs" Link="Editor/EditorDragDropUtility.cs" />
+    <Compile Include="../Editor/EditorDragDropUtilityTests.cs" Link="Editor/EditorDragDropUtilityTests.cs" />
     <Compile Include="../Editor/EditorPropertyDelegatesTests.cs" Link="Editor/EditorPropertyDelegatesTests.cs" />
     <Compile Include="../Editor/EditorPropertyTestTarget.cs" Link="Editor/EditorPropertyTestTarget.cs" />
     <Compile Include="../Rendering/UILayoutValueKernelTests.cs" Link="Rendering/UILayoutValueKernelTests.cs" />
@@ -49,6 +51,7 @@
     <Compile Include="../Rendering/FocusVirtualListProvider.cs" Link="Rendering/FocusVirtualListProvider.cs" />
     <Compile Include="../Rendering/UITextLayoutKernelTests.cs" Link="Rendering/UITextLayoutKernelTests.cs" />
     <Compile Include="../Rendering/UITextValueLayoutTests.cs" Link="Rendering/UITextValueLayoutTests.cs" />
+    <Compile Include="../Rendering/UITextLazyStandaloneTests.cs" Link="Rendering/UITextLazyStandaloneTests.cs" />
     <Compile Include="../Rendering/UITextMutatingShapingBackend.cs" Link="Rendering/UITextMutatingShapingBackend.cs" />
     <Compile Include="../Rendering/UIRetainedControlsTests.cs" Link="Rendering/UIRetainedControlsTests.cs" />
     <Compile Include="../Rendering/UIChangeJournalTests.cs" Link="Rendering/UIChangeJournalTests.cs" />

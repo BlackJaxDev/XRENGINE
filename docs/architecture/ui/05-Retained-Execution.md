@@ -315,9 +315,9 @@ window records migrate an existing saved layout; absent records seed the request
 panel. Cross-window pointer drag, presented focus restoration, and full play-mode
 state persistence remain open.
 
-Render-command publication claims and receipt suspend/resume boundaries are
-prepared for world-space integration. No world command uses that interface yet.
-Direct world UI and sampled offscreen consumer receipts remain open.
+Offscreen world canvases use render-command publication claims and separate
+producer and consumer receipts. Direct world UI still uses the existing component
+route; its frozen shadow and draw census remains open.
 
 ## Opt-in fixtures
 
@@ -368,7 +368,50 @@ key IDs, and a retained plot bounded to 512 segments. Full timeline interaction
 and animation editor parity remain open. The profiler virtualizes the full source
 row set instead of truncating it at 1,000 rows.
 
-`UIRenderSurfacePool` prepares four bounded leased color targets. Reservation and
-GPU completion are separate generations. Promotion requires a submitted, signaled
-producer fence. The current world/offscreen display route remains unchanged;
-these targets are not yet connected to exact producer/consumer publication.
+`UIRenderSurfacePool` owns up to four bounded leased color targets. Reservation and
+GPU completion are separate generations. An offscreen canvas captures its target,
+quad payload, pose, render data, and hit data in one immutable packet. The producer
+receipt must retire with successful authoring and a signaled submission fence
+before that surface becomes displayable. The newest completed packet can advance
+while newer authoring is still pending. Completion belongs to one renderer and
+backend generation; replacement requires recapture and new producer work.
+
+The sampled quad has a separate output receipt. Window input uses its accepted
+packet after presentation. A shared receipt probe freezes completion before a
+pooled fence wrapper can be reused. Old packets retain surface and payload claims
+until their holders and backend readers release them. These contracts do not
+establish visual or GPU acceptance.
+
+## Stable text slots and editor state
+
+Painter order and GPU run identity are separate. Inserting an earlier compatible
+run does not reassign all later GPU storage. Text instances have stable sparse
+slots, and glyph indices refer to those slots. Adjacent dirty glyph spans combine
+into bounded uploads; buffer growth writes the used high-water range. Active-run
+lookup and retirement use reusable sets rather than nested run scans.
+
+Eligible built-in canvas text uses shared batch resources. It creates private
+mesh, material, and glyph buffers only when standalone rendering is required.
+Custom and direct-world text retain their own route. Owned private resources
+retire on the render owner after renderer claims release. Caller-supplied resources
+and the borrowed font atlas remain with their owner. Failed retirement retains
+the owned bundle and reports the failure.
+
+Editor drag sessions capture the source interaction revision and stable identity.
+Recycled rows cancel old drags before hover or drop dispatch. Play-mode selection
+restoration belongs to `EditorPlayModeController`; each Inspector restores only
+its own targets. Keep-changes mode preserves play-time state. Deferred focus
+restoration checks the target and property identity and yields to new user focus.
+
+Undo keeps an action on its source stack until replay succeeds. Reentrant replay
+is rejected. A history revision prevents a callback from restoring an entry after
+history was cleared or replaced. This does not roll back partially executed
+multi-step actions; their mutation owner must provide that guarantee.
+
+Ordinary scroll content uses positive X offsets to move content left and positive
+Y offsets to move top-anchored content up. Extent measurement removes accepted
+scroll movement and padding before computing limits. Virtual lists apply their
+logical offset once. Context menus wait for accepted viewport size and provide
+bounded scroll content. During owner deactivation, a menu removes its input and
+placement callbacks without destroying children inside a parent world transfer.
+Its normal Hide or next Show clears those owned nodes.

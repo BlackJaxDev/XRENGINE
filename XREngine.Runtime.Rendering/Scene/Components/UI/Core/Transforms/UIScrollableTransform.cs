@@ -74,8 +74,15 @@ namespace XREngine.Rendering.UI
                 if (child.ActualWidth <= 0 || child.ActualHeight <= 0)
                     continue;
                 hasMeasuredChild = true;
-                Vector2 end = child.ActualLocalBottomLeftTranslation + child.ActualSize + ScrollOffset;
+                // Recover unscrolled content coordinates from the accepted
+                // placement. Positive X moves content left; positive Y moves it up.
+                Vector2 start = child.ActualLocalBottomLeftTranslation -
+                    new Vector2(Padding.X, Padding.Y) + new Vector2(ScrollOffset.X, -ScrollOffset.Y);
+                Vector2 end = start + child.ActualSize;
                 content = Vector2.Max(content, end);
+                // Top-anchored content grows toward negative local Y. Measure its
+                // distance from the viewport top as well as its positive end.
+                content.Y = MathF.Max(content.Y, viewportExtent.Y - start.Y);
             }
             if (!hasMeasuredChild)
                 return;

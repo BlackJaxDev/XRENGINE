@@ -13,18 +13,18 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. All **391 of 391** tests pass, with no
-failures or skips, in 8.844 seconds. The build took 16.09 seconds. Coverage adds
-worker shaping, pending-input cache reuse, backend-only invalidation, shaping
-budgets, sparse quad slot reuse after storage clearing, shaped caret provenance,
-ordinary popup structure, and callback-safe key removal. The count also includes
-existing animation timing tests newly linked into the headless project.
+through `Tools/Invoke-AgentBuild.ps1`. All **410 of 410** tests pass, with no
+failures or skips, in 8.269 seconds. The build took 16.15 seconds. Coverage adds
+stable text slots and glyph ranges, offscreen producer completion and fence
+reuse, lazy standalone text ownership, recycled drag targets, accepted popup
+bounds, and vertical and horizontal scroll movement.
 
-The matching editor build passed with zero warnings/errors in 40.30s. The full
-desktop test project compiled with zero warnings/errors in 47.19s. Source hashes
-confirmed that these builds used the same runtime and test source as the final
-headless run. The editor-only callback regressions compile but require Windows
-execution.
+The matching editor build passed with zero warnings/errors in 52.46s. The full
+desktop test project compiled with zero warnings/errors in 47.18s. Hash checks
+confirm that all three builds used the same 9,865 source and project files.
+Editor-only Undo replay regressions require Windows execution. The prior editor attempt found facade
+and type-inference errors that the headless project did not expose; these were
+repaired before the final headless run and matching editor build.
 
 The editor build compiles Windows targets on Linux. The desktop test-project
 build compiles shaping and Vulkan regression tests. Desktop tests did not execute:

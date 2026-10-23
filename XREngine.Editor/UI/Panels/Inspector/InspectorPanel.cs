@@ -43,9 +43,17 @@ public partial class InspectorPanel : EditorPanel
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
+        Engine.PlayMode.PreEnterPlay += CapturePlayModeState;
+        Engine.PlayMode.PostExitPlay += RestorePlayModeState;
         RemakeChildren();
         Selection.SelectionChanged += OnSelectionChanged;
         NativeAssetSelection.SelectionChanged += OnNativeAssetSelectionChanged;
+        if (_playInspectedTargets is not null)
+        {
+            if (Engine.PlayMode.State == EPlayModeState.Edit)
+                RestorePlayModeState();
+            return;
+        }
         if (!IsLocked && DidGlobalSelectionChangeWhileHidden())
         {
             if (NativeAssetSelection.SelectedTarget is { } assetTarget)
@@ -67,7 +75,11 @@ public partial class InspectorPanel : EditorPanel
 
     protected override void OnComponentDeactivated()
     {
-        CaptureViewState();
+        if (_playInspectedTargets is null)
+            CaptureViewState();
+        StopDetailFocusRestore(clearSavedBinding: false);
+        Engine.PlayMode.PreEnterPlay -= CapturePlayModeState;
+        Engine.PlayMode.PostExitPlay -= RestorePlayModeState;
         base.OnComponentDeactivated();
         Selection.SelectionChanged -= OnSelectionChanged;
         NativeAssetSelection.SelectionChanged -= OnNativeAssetSelectionChanged;
@@ -76,6 +88,8 @@ public partial class InspectorPanel : EditorPanel
 
     private void OnSelectionChanged(SceneNode[] obj)
     {
+        if (obj.Length == 0 && Engine.PlayMode.State == EPlayModeState.EnteringPlay)
+            CapturePlayModeState();
         if (!IsLocked)
         {
             _componentGeneration++;

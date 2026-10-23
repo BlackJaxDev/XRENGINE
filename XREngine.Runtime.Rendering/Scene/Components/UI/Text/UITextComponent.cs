@@ -261,7 +261,12 @@ namespace XREngine.Rendering.UI
             if (_observedLayoutFont is not null)
                 _observedLayoutFont.LayoutMetricsChanged -= FontLayoutMetricsChanged;
             _observedLayoutFont = null;
-            base.OnDestroying();
+            try { DestroyOwnedStandalone(); }
+            finally
+            {
+                ReleasePublicationAtlas();
+                base.OnDestroying();
+            }
         }
 
         private string? _publishedFontAssetPath;
@@ -712,7 +717,7 @@ namespace XREngine.Rendering.UI
                         var mat = Mesh?.Material;
                         if (mat is not null)
                             mat.SetVector4(TextColorUniformName, Color);
-                        else
+                        else if (!CanDeferStandaloneText())
                             UpdateText(true);
                     }
                     break;
@@ -721,7 +726,7 @@ namespace XREngine.Rendering.UI
                         var mat = Mesh?.Material;
                         if (mat is not null)
                             mat.SetVector4(OutlineColorUniformName, OutlineColor);
-                        else
+                        else if (!CanDeferStandaloneText())
                             UpdateText(true);
                     }
                     break;
@@ -730,7 +735,7 @@ namespace XREngine.Rendering.UI
                         var mat = Mesh?.Material;
                         if (mat is not null)
                             mat.SetFloat(OutlineThicknessUniformName, OutlineThickness);
-                        else
+                        else if (!CanDeferStandaloneText())
                             UpdateText(true);
 
                         if (OutlineAffectsSpacing)
@@ -747,7 +752,7 @@ namespace XREngine.Rendering.UI
                         var mat = Mesh?.Material;
                         if (mat is not null)
                             mat.SetFloat(MsdfFillBiasUniformName, MsdfFillBias);
-                        else
+                        else if (!CanDeferStandaloneText())
                             UpdateText(true);
                     }
                     break;
@@ -935,20 +940,35 @@ namespace XREngine.Rendering.UI
         /// <param name="atlas"></param>
         private EFontAtlasType? _createdAtlasType;
 
-        private void VerifyCreated(bool forceRemake, XRTexture2D? atlas)
+        private void VerifyCreated(bool forceRemake, XRTexture2D? atlas, bool requireStandalone = false)
         {
             // Browser screen text is rendered by the shared bitmap batch. Building this
             // legacy per-component mesh would synchronously load desktop GLSL stages.
             if (UseWebGpuBatchOnly)
                 return;
+            if (_retiringStandalone || _installingStandalone)
+                return;
+            // A caller may clear or replace Mesh without passing through our normal
+            // retirement path. Settle that old private bundle before making another.
+            if (_ownedStandaloneRenderer is not null &&
+                !ReferenceEquals(Mesh, _ownedStandaloneRenderer))
+                DestroyOwnedStandalone();
+
+            if (!requireStandalone && CanDeferStandaloneText())
+                return;
 
             var mesh = Mesh;
             if (atlas is null)
                 return;
-            if (!forceRemake && mesh is not null && _createdAtlasType == Font?.AtlasType)
+            // A renderer supplied by the caller belongs to the caller. Its material and
+            // callbacks are not ours to replace when text or atlas metadata changes.
+            if (mesh is not null && !ReferenceEquals(mesh, _ownedStandaloneRenderer))
+                return;
+            if (!forceRemake && mesh is not null && _createdAtlasType == Font?.AtlasType &&
+                ReferenceEquals(Material, mesh.Material))
             {
                 // The font can replace its atlas without changing text geometry.
-                if (mesh.Material is { } material)
+                if (ReferenceEquals(mesh.Material, _ownedStandaloneMaterial) && mesh.Material is { } material)
                 {
                     if (material.Textures.Count > 0 && !ReferenceEquals(material.Textures[0], atlas))
                         material.Textures[0] = atlas;
@@ -958,21 +978,39 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
+            XRMaterial? authoredMaterial = Material is { } existingMaterial &&
+                !ReferenceEquals(existingMaterial, _ownedStandaloneMaterial)
+                ? existingMaterial : null;
             if (mesh is not null)
             {
-                mesh.SettingUniforms -= MeshRend_SettingUniforms;
-                mesh.PreparingRenderData -= MeshRend_PreparingRenderData;
-                mesh.Destroy();
+                DestroyOwnedStandalone();
+                if (Mesh is not null)
+                    return;
             }
+            if (!ReferenceEquals(Font?.Atlas, atlas))
+                return;
 
+            XRMaterial materialForRenderer = Material ?? authoredMaterial ?? CreateMaterial(atlas);
+            XRMesh geometry = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false));
             var rend = new XRMeshRenderer(
-                XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
-                CreateMaterial(atlas));
+                geometry,
+                materialForRenderer);
 
             rend.SettingUniforms += MeshRend_SettingUniforms;
             rend.PreparingRenderData += MeshRend_PreparingRenderData;
             CreateSSBOs(rend);
-            Mesh = rend;
+            _ownedStandaloneRenderer = rend;
+            _ownedStandaloneGeometry = geometry;
+            _ownedStandaloneMaterial = ReferenceEquals(materialForRenderer, authoredMaterial) ||
+                ReferenceEquals(materialForRenderer, Material) ? null : materialForRenderer;
+            _installingStandalone = true;
+            try { Mesh = rend; }
+            finally { _installingStandalone = false; }
+            if (!ReferenceEquals(Mesh, rend))
+            {
+                DestroyOwnedStandalone();
+                return;
+            }
             _createdAtlasType = Font?.AtlasType;
         }
 
@@ -1305,7 +1343,7 @@ namespace XREngine.Rendering.UI
         {
             payload = null;
             failure = null;
-            VerifyCreated(false, Font?.Atlas);
+            VerifyCreated(false, Font?.Atlas, requireStandalone: true);
             XRMeshRenderer? renderer = RenderCommand2D.Mesh;
             if (!CanCapturePublicationUniforms || renderer is null || !renderer.HasOnlySettingUniformsHandler(MeshRend_SettingUniforms) ||
                 !renderer.HasOnlyRenderDataPreparationHandler(MeshRend_PreparingRenderData))
@@ -1346,6 +1384,8 @@ namespace XREngine.Rendering.UI
                 layout = _layoutResult;
             FontGlyphSet? font = Font;
             UIRenderRecord record = base.CapturePublicationRenderRecord(in output);
+            if (record.SupportsBatch)
+                RetireOwnedStandaloneIfBatched();
             XRTexture2D? atlas = font?.Atlas;
             UITextureSnapshot? snapshot = null;
             string? failure = record.CaptureFailure;
@@ -1415,10 +1455,7 @@ namespace XREngine.Rendering.UI
         /// Text components use the shared batch when their shader and raster state match it.
         /// </summary>
         public override bool SupportsBatchedRendering
-            => !DisableBatching &&
-               !AnimatableTransforms &&
-               NonVertexShadersOverride is null &&
-               UIBatchCollector.HasWebGpuRasterProfile(RenderParameters);
+            => CanUseSharedTextBatch();
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {

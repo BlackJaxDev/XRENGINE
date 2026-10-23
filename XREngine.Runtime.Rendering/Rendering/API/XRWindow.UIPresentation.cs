@@ -17,6 +17,19 @@ public sealed partial class XRWindow
         _vulkanUiImagePackets = [];
     private readonly Dictionary<uint, ulong> _vulkanUiImageSources = [];
     private ulong _vulkanUiOutputGeneration;
+    private readonly List<(XRViewport Viewport, UICanvasComponent Canvas, ulong FrameId)>
+        _worldUiConsumers = [];
+
+    internal void RegisterUiWorldConsumer(XRViewport viewport, UICanvasComponent canvas)
+    {
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        for (int index = 0; index < _worldUiConsumers.Count; index++)
+            if (ReferenceEquals(_worldUiConsumers[index].Viewport, viewport) &&
+                ReferenceEquals(_worldUiConsumers[index].Canvas, canvas) &&
+                _worldUiConsumers[index].FrameId == frameId)
+                return;
+        _worldUiConsumers.Add((viewport, canvas, frameId));
+    }
 
     private void CaptureWindowUiFrame(ulong renderFrameId)
     {
@@ -38,6 +51,20 @@ public sealed partial class XRWindow
             else
                 publication.Release();
         }
+        for (int index = 0; index < _worldUiConsumers.Count; index++)
+        {
+            var consumer = _worldUiConsumers[index];
+            if (consumer.FrameId != renderFrameId ||
+                !consumer.Canvas.TryAcquireRenderedPublication(consumer.Viewport,
+                    renderFrameId, out UIPublication? publication, out ulong receiptId) ||
+                publication is null)
+                continue;
+            if (receiptId != 0UL)
+                _windowUiFrame.Add((consumer.Viewport, consumer.Canvas, publication, receiptId));
+            else
+                publication.Release();
+        }
+        _worldUiConsumers.Clear();
     }
 
     private void OnOpenGlRenderDispatched()
@@ -197,6 +224,7 @@ public sealed partial class XRWindow
 
     private void ReleaseWindowUiPublications()
     {
+        _worldUiConsumers.Clear();
         ReleaseUiFrame(_windowUiFrame);
         ReleaseUiFrame(_lastPresentedUiFrame);
         ReleaseVulkanUiImages();

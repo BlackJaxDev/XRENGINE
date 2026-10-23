@@ -229,12 +229,35 @@ public partial class UICanvasComponent
         ulong hitGeneration = previous?.HitGeneration ?? ++_nextHitGeneration;
         if (previous is not null && hitsChanged)
             hitGeneration = ++_nextHitGeneration;
+        UIRenderSurface? surfaceWriter = null;
+        UIDrawPayload? quadPayload = null;
+        Matrix4x4 quadWorldMatrix = Matrix4x4.Identity;
+        if (authoringDrawSpace != ECanvasDrawSpace.Screen && authoringOffscreen &&
+            !TryPrepareOffscreenPublication(out surfaceWriter, out quadPayload,
+                out quadWorldMatrix, out string? surfaceFailure))
+        {
+            if (_lastPublicationCaptureFailure != surfaceFailure)
+            {
+                _lastPublicationCaptureFailure = surfaceFailure;
+                Debug.LogWarning(surfaceFailure ?? "UI.Canvas.SurfacePending: the offscreen target could not be prepared.");
+            }
+            return;
+        }
         _lastPublicationCaptureFailure = null;
+        try
+        {
         lock (_publicationGate)
         {
             // A capture adapter can mutate the tree while it copies draw values.
             // Admit only the exact layout, journal, and painter census we read.
             ulong painterRevision = _publicationPainterOrderRevision;
+            bool quadPlacementChanged = false;
+            if (surfaceWriter is not null)
+            {
+                Matrix4x4 world = GetWorldSpaceCanvasMatrix(out Vector2 size);
+                quadPlacementChanged = Matrix4x4.CreateScale(size.X, size.Y, 1.0f) * world !=
+                    quadWorldMatrix;
+            }
             if (lifetime != _canvasLifetime ||
                 !ReferenceEquals(canvas, CanvasTransform) ||
                 canvas.CurrentLayoutGeneration != layoutGeneration ||
@@ -243,6 +266,7 @@ public partial class UICanvasComponent
                 canvas.DrawSpace != authoringDrawSpace ||
                 UseOffscreenRenderingForNonScreenSpaces() != authoringOffscreen ||
                 canvas.GetActualBounds() != canvasBounds ||
+                quadPlacementChanged ||
                 canvas.IsLayoutInvalidated || canvas.IsUpdatingLayout ||
                 VisualScene2D.TryCopyRenderableMembershipOrder(
                     ref painterRevision, _publicationPainterOrder))
@@ -251,7 +275,8 @@ public partial class UICanvasComponent
                 ++_nextPublicationGeneration, (ulong)lifetime, layoutGeneration, hitGeneration,
                 revision, default, identities, hits, renders, canvasBounds,
                 Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
-                layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen);
+                layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen,
+                surfaceWriter, quadPayload, quadWorldMatrix);
             try { replacement.BuildWorldCommands(this); }
             catch
             {
@@ -262,6 +287,8 @@ public partial class UICanvasComponent
             _candidatePublication = replacement;
             oldCandidate?.Release();
         }
+        }
+        finally { surfaceWriter?.Release(); }
         }
         finally { previous?.Release(); }
     }
@@ -479,18 +506,25 @@ public partial class UICanvasComponent
                 Matrix4x4.CreateTranslation(region.MinX, region.MinY + region.Height, 0);
             if (Matrix4x4.Invert(canvasToOutput, out Matrix4x4 outputToCanvas))
             {
-                ECanvasDrawSpace drawSpace = CanvasTransform.DrawSpace;
+                ECanvasDrawSpace drawSpace = publication.AuthoringDrawSpace;
                 Matrix4x4 worldToCanvas = Matrix4x4.Identity;
                 Matrix4x4 clipToWorld = Matrix4x4.Identity;
                 float nearClipZ = 0;
                 float farClipZ = 1;
                 if (drawSpace != ECanvasDrawSpace.Screen)
                 {
-                    if (!TryGetWorldToCanvasMatrix(out worldToCanvas))
+                    if (publication.AuthoringOffscreen)
+                    {
+                        if (!Matrix4x4.Invert(publication.OffscreenQuadWorldMatrix,
+                                out Matrix4x4 normalizedWorldToCanvas))
+                            return;
+                        worldToCanvas = normalizedWorldToCanvas *
+                            Matrix4x4.CreateScale(publication.CanvasBounds.Width,
+                                publication.CanvasBounds.Height, 1.0f);
+                    }
+                    else if (!TryGetWorldToCanvasMatrix(out worldToCanvas))
                         return;
-                    XRCamera? camera = drawSpace == ECanvasDrawSpace.Camera
-                        ? CanvasTransform.CameraSpaceCamera ?? viewport.ActiveCamera
-                        : viewport.ActiveCamera;
+                    XRCamera? camera = viewport.ActiveCamera;
                     if (camera?.Transform is null)
                         return;
                     clipToWorld = camera.InverseProjectionMatrix * camera.Transform.RenderMatrix;
@@ -575,6 +609,7 @@ public partial class UICanvasComponent
             }
             _outputMappingCache.Clear();
         }
+        ClearOffscreenPublicationHolders();
         for (int index = 0; index < detached.Count; index++)
             detached[index].Release();
     }

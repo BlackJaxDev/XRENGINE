@@ -448,6 +448,12 @@ public sealed class UIPresentedInputTests
             controller.Input.TickStates(1f / 60f);
             group.SelectedId.ShouldBe(1UL);
             input.FocusedComponent.ShouldBeSameAs(outside);
+
+            first.BoundableTransform.Visibility = EVisibility.Hidden;
+            frames.RecordKeyDown(EKey.Tab);
+            keyboard.ApplySnapshot(frames.Publish(1, 0, 1, true, false));
+            controller.Input.TickStates(1f / 60f);
+            input.FocusedComponent.ShouldBeSameAs(outside);
         }
         finally
         {

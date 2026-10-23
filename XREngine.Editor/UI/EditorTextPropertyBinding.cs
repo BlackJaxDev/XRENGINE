@@ -8,14 +8,18 @@ namespace XREngine.Editor.UI;
 internal sealed class EditorTextPropertyBinding : IUIValueBinding<string>
 {
     private readonly EditorPropertyAccess _access;
+    private readonly PropertyInfo _property;
     private readonly Type _valueType;
     private Action<string>? _changed;
 
     public EditorTextPropertyBinding(PropertyInfo property, object?[] targets)
     {
+        _property = property;
         _access = new(property, targets);
         _valueType = property.PropertyType;
     }
+
+    public PropertyInfo Property => _property;
 
     public string Value => _access.TryGetCommonValue(out object? value)
         ? Convert.ToString(value, CultureInfo.CurrentCulture) ?? string.Empty : string.Empty;

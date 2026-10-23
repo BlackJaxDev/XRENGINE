@@ -160,9 +160,11 @@ namespace XREngine.Components
                 return;
 
             _worldSpaceQuadCommand = new RenderCommandMesh3D(EDefaultRenderPass.TransparentForward);
+            _worldSpaceQuadCommand.Enabled = false;
             _worldSpacePreRenderCommand = new RenderCommandMethod3D((int)EDefaultRenderPass.PreRender, RenderNonScreenCanvasToTexture);
             _worldSpaceQuadRenderInfo = RenderInfo3D.New(this, _worldSpaceQuadCommand, _worldSpacePreRenderCommand);
             _worldSpaceQuadRenderInfo.PreCollectCommandsCallback = ShouldRenderWorldSpaceQuad;
+            _worldSpaceQuadRenderInfo.CullingIntersectionOverride = static (_, _, _) => true;
             _worldSpaceQuadRenderInfo.CastsShadows = false;
             _worldSpaceQuadRenderInfo.ReceivesShadows = false;
             _worldSpaceQuadRenderInfo.VisibleInLightingProbes = false;
@@ -596,6 +598,8 @@ namespace XREngine.Components
             List<Exception>? failures = null;
             Release(_renderPipeline.RequestTerminalTeardown);
             Release(BatchCollector.Dispose);
+            Release(() => _offscreenQuadPayloadBuilder?.Dispose());
+            Release(() => _offscreenSurfacePool?.Dispose());
             Release(() => _visualScene2D?.Destroy());
             Release(() => _worldSpaceQuadRenderInfo?.Dispose());
             Release(() => _offscreenFbo?.Destroy(true));
@@ -655,6 +659,8 @@ namespace XREngine.Components
 
             RefreshNonScreenRenderingMode();
             EnsureCameraSpaceBinding();
+            if (Interlocked.Exchange(ref _offscreenRecaptureRequired, 0) != 0)
+                ClearPublications();
 
             using var sample = RuntimeEngine.Profiler.Start("UICanvasComponent.UpdateLayout");
             var canvasTransform = CanvasTransform;
@@ -815,10 +821,29 @@ namespace XREngine.Components
             if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen || !UseOffscreenRenderingForNonScreenSpaces())
                 return false;
 
-            if (canvasTransform.DrawSpace == ECanvasDrawSpace.World && ShouldAutoPlaceWorldSpaceCanvas(canvasTransform))
-                UpdateWorldSpaceQuadData();
-
-            return _worldSpaceQuadCommand!.Mesh is not null;
+            UIPublication? displayed = AcquireDisplayedOffscreenPublication();
+            try
+            {
+                AbstractRenderer? outputRenderer =
+                    RuntimeEngine.Rendering.State.RenderingViewport?.Window?.Renderer ??
+                    AbstractRenderer.Current;
+                if (displayed is not null &&
+                    displayed.CanvasLifetime == (ulong)Volatile.Read(ref _canvasLifetime) &&
+                    displayed.AuthoringDrawSpace == canvasTransform.DrawSpace &&
+                    displayed.OffscreenSurface?.IsCompletedFor(
+                        displayed.OffscreenReservationGeneration, outputRenderer) == true &&
+                    displayed.WorldCommands.Length == 1)
+                    passes.AddCPU(displayed.WorldCommands[0], camera);
+                else if (displayed is not null && displayed.OffscreenSurface is not null &&
+                    outputRenderer is not null &&
+                    !displayed.OffscreenSurface.IsCompletedFor(
+                        displayed.OffscreenReservationGeneration, outputRenderer))
+                    RequestOffscreenRecapture();
+            }
+            finally { displayed?.Release(); }
+            // Keep the producer command in PreRender even before the first
+            // completed surface exists. The mutable legacy quad is disabled.
+            return true;
         }
 
         private void RenderNonScreenCanvasToTexture()
@@ -838,10 +863,31 @@ namespace XREngine.Components
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
             EnsureCameraSpaceBinding();
+            AdvanceOffscreenProducers();
 
             var canvasTransform = CanvasTransform;
             if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen || !UseOffscreenRenderingForNonScreenSpaces())
                 return;
+
+            UIRenderSurface? surface = publication.OffscreenSurface;
+            if (_offscreenProducerQuarantined)
+                throw new RenderResourcePreparationPendingException(
+                    "UI.Canvas.ProducerQuarantined: an earlier producer could not be tracked safely.");
+            if (surface is null || publication.OffscreenReservationGeneration == 0)
+                throw new RenderResourcePreparationPendingException(
+                    "UI.Canvas.SurfacePending: the published offscreen target is unavailable.");
+            AbstractRenderer? activeRenderer = AbstractRenderer.Current;
+            if (surface.IsCompletedFor(publication.OffscreenReservationGeneration, activeRenderer) ||
+                HasPendingOffscreenProducer(publication))
+                return;
+            if (surface.CompletedGeneration == publication.OffscreenReservationGeneration)
+            {
+                RequestOffscreenRecapture();
+                if (activeRenderer?.RequiresAtomicFrameAuthoring == true)
+                    throw new RenderResourcePreparationPendingException(
+                        "UI.Canvas.SurfacePending: the producer belongs to another renderer generation.");
+                return;
+            }
 
             EnsureNonScreenCanvasSize(publication);
             if (!BatchCollector.CanRenderPublishedBatches())
@@ -900,12 +946,13 @@ namespace XREngine.Components
                 throw;
             }
             bool collectorStarted = false;
+            UIReceiptCompletionProbe? completionProbe = null;
             XRGpuFence? completionFence = null;
             bool receiptComplete = false;
             bool completed;
             try
             {
-                BatchCollector.BeginPublicationReceipt(receiptId);
+                completionProbe = BatchCollector.BeginPublicationReceipt(receiptId);
                 collectorStarted = true;
                 if (BatchCollector.HasPendingPublishedTextLayout)
                     renderer.FailCurrentUiPublicationAuthoring("A visible text layout is not ready for the published UI frame.");
@@ -914,7 +961,7 @@ namespace XREngine.Components
                     Camera2D,
                     null,
                     viewport,
-                    _offscreenFbo!,
+                    surface.FrameBuffer,
                     null,
                     false,
                     false);
@@ -934,7 +981,14 @@ namespace XREngine.Components
                         }
                         finally
                         {
-                            BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
+                            try
+                            {
+                                BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
+                            }
+                            finally
+                            {
+                                TrackOffscreenProducer(publication, completionProbe!);
+                            }
                         }
                     }
                 }
@@ -946,8 +1000,6 @@ namespace XREngine.Components
             }
             completed &= receiptComplete;
             SetField(ref _nonScreenCommandChainCompleted, completed, publishNotifications: false);
-            if (completed)
-                RecordRenderedPublication(this, publication, receiptId);
             // Atomic consumers need this invocation's producer. Preserve a nested
             // decline instead of losing its cause at the later texture readiness check.
             if (!completed && AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
@@ -1128,6 +1180,14 @@ namespace XREngine.Components
         {
             if (_worldSpaceQuadCommand is null || _worldSpaceQuadRenderInfo is null)
                 return;
+
+            if (UseOffscreenRenderingForNonScreenSpaces())
+            {
+                // The producer must run once for an owner-captured generation
+                // even if its eventual quad is outside this camera's frustum.
+                _worldSpaceQuadRenderInfo.LocalCullingVolume = null;
+                return;
+            }
 
             Matrix4x4 world = GetWorldSpaceCanvasMatrix(out Vector2 size);
             float width = size.X;

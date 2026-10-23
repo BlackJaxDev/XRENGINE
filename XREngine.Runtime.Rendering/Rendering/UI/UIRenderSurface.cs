@@ -10,6 +10,8 @@ internal sealed class UIRenderSurface : IUIDrawProducerLease
     private int _references = 1; // the pool's claim
     private long _reservedGeneration;
     private long _completedGeneration;
+    private object? _completedRenderer;
+    private long _completedBackendGeneration;
 
     internal UIRenderSurface(uint width, uint height, EPixelInternalFormat internalFormat,
         EPixelFormat format, EPixelType type)
@@ -35,6 +37,13 @@ internal sealed class UIRenderSurface : IUIDrawProducerLease
     // Completion is a separate fact established only after the render receipt.
     public ulong Generation => ReservationGeneration;
     internal ulong CompletedGeneration => unchecked((ulong)Volatile.Read(ref _completedGeneration));
+    internal bool IsCompletedFor(ulong generation, object? renderer, long backendGeneration) =>
+        renderer is not null && CompletedGeneration == generation &&
+        ReferenceEquals(Volatile.Read(ref _completedRenderer), renderer) &&
+        Volatile.Read(ref _completedBackendGeneration) == backendGeneration;
+
+    internal bool IsCompletedFor(ulong generation, AbstractRenderer? renderer) =>
+        IsCompletedFor(generation, renderer, renderer?.BackendGeneration ?? 0);
     internal ulong ReservationGeneration => unchecked((ulong)Volatile.Read(ref _reservedGeneration));
     internal bool IsPoolOnly => Volatile.Read(ref _references) == 1;
     internal uint Width => Texture.Width;
@@ -57,10 +66,15 @@ internal sealed class UIRenderSurface : IUIDrawProducerLease
     }
 
     internal bool TryComplete(ulong generation)
+        => TryComplete(generation, null, 0);
+
+    internal bool TryComplete(ulong generation, object? renderer, long backendGeneration)
     {
         if (generation == 0 || ReservationGeneration != generation ||
             Volatile.Read(ref _references) < 2)
             return false;
+        Volatile.Write(ref _completedRenderer, renderer);
+        Volatile.Write(ref _completedBackendGeneration, backendGeneration);
         Volatile.Write(ref _completedGeneration, checked((long)generation));
         return true;
     }

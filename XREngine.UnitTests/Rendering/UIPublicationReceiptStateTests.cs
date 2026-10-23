@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI;
+using XREngine.Components;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -76,6 +77,25 @@ public sealed class UIPublicationReceiptStateTests
     }
 
     [Test]
+    public void OutputVisualVariantSharesHitGenerationButUsesDistinctRenderRecords()
+    {
+        UIPublication source = EmptyPublication(17);
+        UIRenderRecord replacement = default(UIRenderRecord) with { MembershipId = 91 };
+        UIPublication variant = source.WithOutputVariant([replacement], 31,
+            Matrix4x4.Identity, Matrix4x4.Identity,
+            new BoundingRectangleF(0, 0, 8, 8));
+        variant.Generation.ShouldBe(source.Generation);
+        variant.HitGeneration.ShouldBe(source.HitGeneration);
+        variant.RenderGeneration.ShouldBe(31UL);
+        variant.Renders.Length.ShouldBe(1);
+        variant.TryGetRenderRecord(91, out _).ShouldBeTrue();
+        source.Renders.Length.ShouldBe(0);
+        source.Release();
+        variant.Renders.Length.ShouldBe(1);
+        variant.Release();
+    }
+
+    [Test]
     public void SurfaceGenerationRequiresSubmittedAndSignaledProducerFence()
     {
         using var pool = new UIRenderSurfacePool(EPixelInternalFormat.Rgba8,
@@ -98,11 +118,84 @@ public sealed class UIPublicationReceiptStateTests
         writer.Release();
     }
 
+    [Test]
+    public void RetiredFailedProducerCannotCompleteAfterItsFenceWrapperIsRentedAgain()
+    {
+        bool retired = false;
+        UIReceiptCompletionProbe probe = new(() => retired);
+        using var fence = new TestSurfaceFence { Status = EGpuFenceStatus.Failed };
+        probe.Seal(authored: true, fence: fence);
+        probe.IsCompleted.ShouldBeFalse();
+        retired = true;
+        probe.IsRetired.ShouldBeTrue();
+        probe.IsCompleted.ShouldBeFalse();
+        fence.Dispose();
+        fence.RentAgain(EGpuFenceStatus.Signaled);
+        probe.IsCompleted.ShouldBeFalse();
+    }
+
+    [Test]
+    public void CompletedOffscreenFrameAdvancesDespiteNewerUnfinishedAuthoring()
+    {
+        UIPublication first = EmptyPublication(1);
+        UIPublication second = EmptyPublication(2);
+        UIPublication newest = EmptyPublication(3);
+        try
+        {
+            UICanvasComponent.CanPromoteOffscreenPublication(first, null, 1, true)
+                .ShouldBeTrue();
+            // The current authoring candidate could already be generation three.
+            UICanvasComponent.CanPromoteOffscreenPublication(second, first, 1, true)
+                .ShouldBeTrue();
+            UICanvasComponent.CanPromoteOffscreenPublication(first, second, 1, true)
+                .ShouldBeFalse();
+            UICanvasComponent.CanPromoteOffscreenPublication(newest, second, 1, false)
+                .ShouldBeFalse();
+            UICanvasComponent.CanPromoteOffscreenPublication(newest, second, 2, true)
+                .ShouldBeFalse();
+        }
+        finally { first.Release(); second.Release(); newest.Release(); }
+    }
+
+    [Test]
+    public void CompletedSurfaceRejectsForeignRendererAndBackendGeneration()
+    {
+        using var pool = new UIRenderSurfacePool(EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba, EPixelType.UnsignedByte, 4);
+        pool.TryReserve(8, 8, out UIRenderSurface? writer, out _).ShouldBeTrue();
+        writer.ShouldNotBeNull();
+        object originalRenderer = new();
+        object replacementRenderer = new();
+        ulong generation = writer.ReservationGeneration;
+        writer.TryComplete(generation, originalRenderer, 7).ShouldBeTrue();
+        writer.IsCompletedFor(generation, originalRenderer, 7).ShouldBeTrue();
+        writer.IsCompletedFor(generation, originalRenderer, 8).ShouldBeFalse();
+        writer.IsCompletedFor(generation, replacementRenderer, 7).ShouldBeFalse();
+        writer.Release();
+    }
+
+    [Test]
+    public void SuccessfulAtomicOffscreenConsumerDoesNotRequireWindowPresentation()
+    {
+        UICanvasComponent.MustRejectWorldConsumer(completed: true,
+            requiresAtomic: true).ShouldBeFalse();
+        UICanvasComponent.MustRejectWorldConsumer(completed: false,
+            requiresAtomic: true).ShouldBeTrue();
+    }
+
     private sealed class TestSurfaceFence : XRGpuFence
     {
         public EGpuFenceStatus Status { get; set; } = EGpuFenceStatus.Pending;
         public EGpuFenceSubmissionStatus Submission { get; set; } = EGpuFenceSubmissionStatus.Submitted;
         public override EGpuFenceSubmissionStatus SubmissionStatus => Submission;
+        public override long DiagnosticRentalId => _rentalId;
+        private long _rentalId = 1;
+        public void RentAgain(EGpuFenceStatus status)
+        {
+            _rentalId++;
+            Status = status;
+            ResetForReuse();
+        }
         protected override EGpuFenceStatus PollCore() => Status;
         protected override void DisposeCore() { }
     }
