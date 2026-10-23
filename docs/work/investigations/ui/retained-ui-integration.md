@@ -103,3 +103,54 @@ These checks remain open until the corresponding implementation and tests pass.
   pools. This is a known liveness limit. Deterministic publication holder/reader
   retirement remains implementation work; enlarging pools or forcing collection
   is not the fix.
+
+## Paged Layout And Packet Ownership Integration
+
+The next change uses copy-on-write input and output pages for layout and explicit
+packet claims for canvas, input, window, collector, and backend holders. Review
+found these transition requirements:
+
+- A failed direct-backend frame can still submit GPU work. Its receipt must retain
+  the packet until completion, even when no presented holder accepts it.
+- Mapping lookup needs a local claim between the mapping and rendered-holder locks.
+- A retirement sweep must not erase a completion result before a cohort reads it.
+  Empty and custom-only frames also need a receipt retirement consumer.
+- Exception cleanup must restore renderer binding and thread-local state. A
+  failed collector admission must not strand the backend reservation.
+- Remove old holder entries before releasing their claims. Resource destruction
+  callbacks must not find a holder whose claim has already ended.
+
+The first build of this change compiled the runtime projects. The headless test
+project failed with six type errors in `UILayoutGridKernelTests`: its fixtures
+still passed flat arrays to the new paged kernel API. The fixtures were updated.
+This intermediate result is not a passing validation of the combined change.
+
+The next headless build passed with zero warnings and errors. Its 283 tests
+produced 281 passes and two errors. Caret scrolling accessed a missing text child
+on an unattached input component. The other test expected vertical navigation to
+leave a multiline field; it needed an explicit single-line fixture. Both issues
+were corrected for the next run. The matching editor build found one missing
+`XREngine.Rendering` import in the multiline inspector detail view. That import
+was added. These intermediate failures do not change the published checkpoint's
+275-test result.
+
+The subsequent headless build passed with zero warnings and errors; all 290
+tests passed with no skips. Final review then found two exceptional retirement
+gaps: exhausted collector capacity needed cancellation before authoring, and
+Vulkan shutdown needed an exact-owner ledger drain after GPU idle and artifact
+teardown. The first compile of those fixes found missing braces on two `finally`
+blocks. Those syntax errors were corrected before the next build. Final results
+must include these later fixes, not only the earlier 290-test snapshot.
+
+The final headless build passed with zero warnings/errors. All 293 tests passed
+with no skips in 7.920 seconds. The allocation fixture initially measured the
+DispatchProxy profiler's argument array; a concrete no-op profiler isolates the
+actual unchanged-hit-set query. No production allocation path was suppressed.
+The editor build passed, then the matching full desktop test-project build also
+passed with zero warnings/errors after borrowed packet getters were removed.
+
+The filtered `EditorPropertyAccessTests` run returned zero tests. Diagnostic
+discovery found 6,115 tests but rejected the assembly: "Only supported on
+Windows7.0". This is a platform validation blocker, not a passing Undo regression.
+The test remains compiled and available for Windows execution. No platform check
+was disabled. The matching source still has 293 passing headless tests.

@@ -8,12 +8,15 @@ namespace XREngine.Rendering.UI;
 public sealed class UIPublication
 {
     private readonly UIHitRecord[] _hits;
-    private readonly UIRenderRecord[] _renders;
+    private readonly UIRenderRecord[] _renders = [];
     private readonly UIScrollRecord[] _scrollReceivers;
     private readonly UIFocusScopeRecord[] _focusScopes;
+    private UILayoutNodeOutput[]? _flatLayout;
     private int _retainedPayloadCount;
     private int _retainedTextureCount;
     private int _retainedAtlasCount;
+    private int _claims = 1;
+    private int _resourcesRetired;
     private readonly Dictionary<long, UIRenderRecord> _renderByMembership;
 
     internal UIPublication(ulong generation, ulong canvasLifetime, ulong layoutGeneration, ulong hitGeneration,
@@ -22,14 +25,16 @@ public sealed class UIPublication
         BoundingRectangleF canvasBounds, Matrix4x4 canvasToOutput, Matrix4x4 outputToCanvas,
         UIPublication? previous = null,
         UIScrollRecord[]? scrollReceivers = null,
-        UIFocusScopeRecord[]? focusScopes = null)
+        UIFocusScopeRecord[]? focusScopes = null,
+        UILayoutOutputPageView? layoutPages = null)
     {
         Generation = generation;
         CanvasLifetime = canvasLifetime;
         LayoutGeneration = layoutGeneration;
         HitGeneration = hitGeneration;
         ChangeRevision = changeRevision;
-        Layout = layout;
+        _flatLayout = layout.IsEmpty ? null : layout.ToArray();
+        LayoutPages = layoutPages;
         Identities = identities;
         _hits = hits;
         _renders = renders;
@@ -52,7 +57,12 @@ public sealed class UIPublication
             for (int index = 0; index < renders.Length; index++)
                 _renderByMembership.Add(renders[index].MembershipId, renders[index]);
         }
-        RetainDrawPayloads();
+        try { RetainDrawPayloads(); }
+        catch
+        {
+            RetireDrawPayloads();
+            throw;
+        }
         CanvasBounds = canvasBounds;
         CanvasToOutput = canvasToOutput;
         OutputToCanvas = outputToCanvas;
@@ -67,7 +77,9 @@ public sealed class UIPublication
     public ulong LayoutGeneration { get; }
     public ulong HitGeneration { get; }
     public long ChangeRevision { get; }
-    public ReadOnlyMemory<UILayoutNodeOutput> Layout { get; }
+    public ReadOnlyMemory<UILayoutNodeOutput> Layout
+        => _flatLayout ??= LayoutPages?.ToArray() ?? [];
+    public UILayoutOutputPageView? LayoutPages { get; }
     public ReadOnlyMemory<UIElementIdentity> Identities { get; }
     public ReadOnlySpan<UIHitRecord> Hits => _hits;
     public ReadOnlySpan<UIRenderRecord> Renders => _renders;
@@ -78,6 +90,7 @@ public sealed class UIPublication
     internal UIRenderRecord[] RenderStorage => _renders;
     internal UIScrollRecord[] ScrollStorage => _scrollReceivers;
     internal UIFocusScopeRecord[] FocusScopeStorage => _focusScopes;
+    internal bool ResourcesRetired => Volatile.Read(ref _resourcesRetired) != 0;
     public BoundingRectangleF CanvasBounds { get; }
     public Matrix4x4 CanvasToOutput { get; }
     public Matrix4x4 OutputToCanvas { get; }
@@ -106,7 +119,8 @@ public sealed class UIPublication
         LayoutGeneration = source.LayoutGeneration;
         HitGeneration = source.HitGeneration;
         ChangeRevision = source.ChangeRevision;
-        Layout = source.Layout;
+        _flatLayout = source._flatLayout;
+        LayoutPages = source.LayoutPages;
         Identities = source.Identities;
         _hits = source._hits;
         _renders = source._renders;
@@ -114,7 +128,12 @@ public sealed class UIPublication
         _focusScopes = source._focusScopes;
         ActiveFocusScopeIdentity = source.ActiveFocusScopeIdentity;
         _renderByMembership = source._renderByMembership;
-        RetainDrawPayloads();
+        try { RetainDrawPayloads(); }
+        catch
+        {
+            RetireDrawPayloads();
+            throw;
+        }
         CanvasBounds = source.CanvasBounds;
         CanvasToOutput = canvasToOutput;
         OutputToCanvas = outputToCanvas;
@@ -139,8 +158,39 @@ public sealed class UIPublication
         }
     }
 
-    ~UIPublication()
+    /// <summary>Keep draw resources while a holder or reader uses this packet.</summary>
+    public void Retain()
     {
+        int current;
+        do
+        {
+            current = Volatile.Read(ref _claims);
+            ObjectDisposedException.ThrowIf(current == 0, this);
+        } while (Interlocked.CompareExchange(ref _claims, checked(current + 1), current) != current);
+    }
+
+    /// <summary>End one packet claim after its reader or GPU artifact retires.</summary>
+    public void Release()
+    {
+        int current;
+        do
+        {
+            current = Volatile.Read(ref _claims);
+            if (current == 0)
+                throw new InvalidOperationException("A UI publication claim was released twice.");
+        } while (Interlocked.CompareExchange(ref _claims, current - 1, current) != current);
+        if (current != 1)
+            return;
+        RetireDrawPayloads();
+        GC.SuppressFinalize(this);
+    }
+
+    ~UIPublication() => RetireDrawPayloads();
+
+    private void RetireDrawPayloads()
+    {
+        if (Interlocked.Exchange(ref _resourcesRetired, 1) != 0)
+            return;
         for (int index = 0; index < _renders.Length; index++)
         {
             try

@@ -9,6 +9,8 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Owns native Vulkan startup and shutdown ordering for one frame-loop generation.</summary>
 internal sealed partial class VulkanFrameLoop
 {
+    private int _cleanupGpuIdleProven;
+    internal bool CleanupGpuIdleProven => Volatile.Read(ref _cleanupGpuIdleProven) != 0;
     /// <summary>
     /// Quiesces all producers that can record, submit, or publish native work.
     /// XRWindow invokes this before waiting for GPU idle and destroying wrappers,
@@ -30,6 +32,7 @@ internal sealed partial class VulkanFrameLoop
 
     internal void Initialize()
     {
+        Volatile.Write(ref _cleanupGpuIdleProven, 0);
         if (_initializationStage is not VulkanFrameLoopInitializationStage.None)
         {
             throw new InvalidOperationException(
@@ -153,6 +156,7 @@ internal sealed partial class VulkanFrameLoop
             return;
         if (Interlocked.CompareExchange(ref _cleanupInProgress, 1, 0) != 0)
             return;
+        Volatile.Write(ref _cleanupGpuIdleProven, 0);
 
         QuiesceFrameAdmissionAndWait();
         List<Exception> failures = [];
@@ -173,12 +177,18 @@ internal sealed partial class VulkanFrameLoop
             bool hasLogicalDevice =
                 stage >= VulkanFrameLoopInitializationStage.LogicalDevice &&
                 _deviceContext.Device.Handle != 0;
-            bool gpuIdleEstablished = hasLogicalDevice && gpuIdleAlreadyEstablished;
+            bool gpuIdleEstablished = hasLogicalDevice && gpuIdleAlreadyEstablished &&
+                _deviceContext.FirstNativeDeviceFault is null;
             // Initialization failures can reach cleanup before the public idle
             // boundary. They still need native proof before reversing ownership.
             if (hasLogicalDevice && !_resourceRuntime.Lifetime.Tracker.DeviceLost &&
                 (waitForGpu || !gpuIdleAlreadyEstablished))
-                gpuIdleEstablished = RunCleanupStep("GPU completion", WaitForDeviceIdle, failures);
+            {
+                long idleCallsBefore = DeviceWaitIdleCalls;
+                gpuIdleEstablished = RunCleanupStep("GPU completion", WaitForDeviceIdle, failures) &&
+                    DeviceWaitIdleCalls > idleCallsBefore &&
+                    _deviceContext.FirstNativeDeviceFault is null;
+            }
 
             // This is deliberately outside RunCleanupStep: lack of native proof
             // must stop teardown, not collect an exception and free live handles.
@@ -256,6 +266,10 @@ internal sealed partial class VulkanFrameLoop
             if (failures.Count == 0)
                 RunCleanupStep("per-thread workspaces", ReleasePerThreadWorkspaces, failures);
             cleanupReachedCompletion = true;
+            if (failures.Count == 0 && gpuIdleEstablished &&
+                !_resourceRuntime.Lifetime.Tracker.DeviceLost &&
+                _deviceContext.FirstNativeDeviceFault is null)
+                Volatile.Write(ref _cleanupGpuIdleProven, 1);
         }
         finally
         {

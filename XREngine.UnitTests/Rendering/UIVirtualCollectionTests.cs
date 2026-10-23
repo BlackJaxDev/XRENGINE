@@ -9,6 +9,32 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class UIVirtualCollectionTests
 {
     [Test]
+    public void OffscreenItemRequest_RealizesStableIdWithoutScanningMillionItems()
+    {
+        CountingVirtualListProvider provider = new(1_000_000);
+        UIListTransform list = new() { ItemSize = 20, VirtualOverscan = 0, VirtualProvider = provider };
+        list.SynchronizeVirtualRows(100);
+
+        list.TryScrollToVirtualItem(900_000).ShouldBeTrue();
+        list.SynchronizeVirtualRows(100);
+        list.TryGetRealizedVirtualRow(900_000, out UIBoundableTransform? row,
+            out UIVirtualRowLease lease).ShouldBeTrue();
+        row.ShouldNotBeNull();
+        lease.ItemId.ShouldBe(900_000UL);
+        provider.Created.ShouldBeLessThanOrEqualTo(10);
+        list.TryScrollToVirtualItem(1_000_001).ShouldBeFalse();
+
+        provider.AdvanceRevision();
+        list.TryGetRealizedVirtualRow(900_000, out _, out _).ShouldBeFalse();
+        list.SynchronizeVirtualRows(100);
+        list.TryGetRealizedVirtualRow(900_000, out _, out _).ShouldBeTrue();
+
+        list.TryScrollToVirtualItem(1).ShouldBeTrue();
+        list.SynchronizeVirtualRows(100);
+        list.TryGetRealizedVirtualRow(900_000, out _, out _).ShouldBeFalse();
+    }
+
+    [Test]
     public void MillionItemList_RealizesOnlyViewportRowsAndReusesPool()
     {
         CountingVirtualListProvider provider = new(1_000_000);

@@ -431,8 +431,11 @@ namespace XREngine.Components
         //private int _screenRenderDiagCount = 0;
         public void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO)
         {
-            if (!IsActive || GetCanvasTransformOrNull() is null || CurrentPublication is not { } publication)
+            if (!IsActive || GetCanvasTransformOrNull() is null || AcquireCurrentPublication() is not { } publication)
                 return;
+
+            try
+            {
 
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
@@ -460,13 +463,23 @@ namespace XREngine.Components
             UICanvasComponent? previousRenderingCanvas = t_renderingCanvas;
             t_renderingCanvas = this;
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            if (renderer is null || !renderer.TryBeginUiPublicationReceipt(
-                    publication, BatchCollector.ExpectedPublishedDrawIntentCount,
-                    requiresSwapchainPresentation: true, out ulong receiptId))
+            ulong receiptId;
+            try
+            {
+                if (renderer is null || !renderer.TryBeginUiPublicationReceipt(
+                        publication, BatchCollector.ExpectedPublishedDrawIntentCount,
+                        requiresSwapchainPresentation: true, out receiptId))
+                {
+                    t_renderingCanvas = previousRenderingCanvas;
+                    BatchCollector.BindRenderingPublication(null);
+                    return;
+                }
+            }
+            catch
             {
                 t_renderingCanvas = previousRenderingCanvas;
                 BatchCollector.BindRenderingPublication(null);
-                return;
+                throw;
             }
             bool collectorStarted = false;
             bool authored = false;
@@ -491,19 +504,32 @@ namespace XREngine.Components
             }
             finally
             {
-                receiptComplete = renderer.CompleteUiPublicationReceipt(receiptId, authored, out completionFence);
-                if (collectorStarted)
-                    BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
-                else
-                    completionFence?.Dispose();
-                t_renderingCanvas = previousRenderingCanvas;
-                BatchCollector.BindRenderingPublication(null);
+                try
+                {
+                    if (!collectorStarted)
+                        renderer.CancelUiPublicationReceiptBeforeAuthoring(receiptId);
+                    else
+                    {
+                        try { receiptComplete = renderer.CompleteUiPublicationReceipt(receiptId, authored, out completionFence); }
+                        finally
+                        {
+                            BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
+                        }
+                    }
+                }
+                finally
+                {
+                    t_renderingCanvas = previousRenderingCanvas;
+                    BatchCollector.BindRenderingPublication(null);
+                }
             }
             if (!receiptComplete && renderer.RequiresAtomicFrameAuthoring)
                 throw new RenderResourcePreparationPendingException(
                     "UI.Canvas.PublicationReceiptIncomplete: the published canvas did not author every required draw.");
             if (viewport is not null && authored && receiptComplete)
                 RecordRenderedPublication(viewport, publication, receiptId);
+            }
+            finally { publication.Release(); }
         }
 
         private int _screenSwapDiagCount = 0;
@@ -803,8 +829,11 @@ namespace XREngine.Components
             if (!IsActive)
                 return;
 
-            if (CurrentPublication is not { } publication)
+            if (AcquireCurrentPublication() is not { } publication)
                 return;
+
+            try
+            {
 
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
@@ -852,13 +881,23 @@ namespace XREngine.Components
             UICanvasComponent? previousRenderingCanvas = t_renderingCanvas;
             t_renderingCanvas = this;
             AbstractRenderer? renderer = AbstractRenderer.Current;
-            if (renderer is null || !renderer.TryBeginUiPublicationReceipt(
-                    publication, BatchCollector.ExpectedPublishedDrawIntentCount,
-                    requiresSwapchainPresentation: false, out ulong receiptId))
+            ulong receiptId;
+            try
+            {
+                if (renderer is null || !renderer.TryBeginUiPublicationReceipt(
+                        publication, BatchCollector.ExpectedPublishedDrawIntentCount,
+                        requiresSwapchainPresentation: false, out receiptId))
+                {
+                    t_renderingCanvas = previousRenderingCanvas;
+                    BatchCollector.BindRenderingPublication(null);
+                    return;
+                }
+            }
+            catch
             {
                 t_renderingCanvas = previousRenderingCanvas;
                 BatchCollector.BindRenderingPublication(null);
-                return;
+                throw;
             }
             bool collectorStarted = false;
             XRGpuFence? completionFence = null;
@@ -882,14 +921,28 @@ namespace XREngine.Components
             }
             finally
             {
-                receiptComplete = renderer.CompleteUiPublicationReceipt(receiptId,
-                    _renderPipeline.CompletedCommandChainThisFrame, out completionFence);
-                if (collectorStarted)
-                    BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
-                else
-                    completionFence?.Dispose();
-                t_renderingCanvas = previousRenderingCanvas;
-                BatchCollector.BindRenderingPublication(null);
+                try
+                {
+                    if (!collectorStarted)
+                        renderer.CancelUiPublicationReceiptBeforeAuthoring(receiptId);
+                    else
+                    {
+                        try
+                        {
+                            receiptComplete = renderer.CompleteUiPublicationReceipt(receiptId,
+                                _renderPipeline.CompletedCommandChainThisFrame, out completionFence);
+                        }
+                        finally
+                        {
+                            BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
+                        }
+                    }
+                }
+                finally
+                {
+                    t_renderingCanvas = previousRenderingCanvas;
+                    BatchCollector.BindRenderingPublication(null);
+                }
             }
             completed &= receiptComplete;
             SetField(ref _nonScreenCommandChainCompleted, completed, publishNotifications: false);
@@ -900,6 +953,8 @@ namespace XREngine.Components
             if (!completed && AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
                 throw new RenderResourcePreparationPendingException(_renderPipeline.LastRenderDeclineReason
                     ?? "UI.Canvas.ProducerPending: the offscreen canvas command chain did not execute.");
+            }
+            finally { publication.Release(); }
         }
 
         /// <summary>Formats offscreen producer state only when a host requests failure diagnostics.</summary>

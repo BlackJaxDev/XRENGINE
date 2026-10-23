@@ -20,12 +20,21 @@ namespace XREngine.Rendering.UI
         public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.TextBox;
         public override bool TryConsumeFocusDirection(Vector2 direction)
         {
-            if (!CanInteract || !float.IsFinite(direction.X) ||
-                MathF.Abs(direction.X) <= MathF.Abs(direction.Y))
+            if (!CanInteract || !float.IsFinite(direction.X) || !float.IsFinite(direction.Y))
                 return false;
-            if (!IsComposing)
-                MoveCaretByGrapheme(direction.X > 0 ? 1 : -1);
-            return true;
+            if (MathF.Abs(direction.X) > MathF.Abs(direction.Y))
+            {
+                if (!IsComposing)
+                    MoveCaretByGrapheme(direction.X > 0 ? 1 : -1);
+                return true;
+            }
+            if (!SingleLineMode && direction.Y != 0)
+            {
+                if (!IsComposing)
+                    MoveCaretVertically(direction.Y > 0 ? 1 : -1);
+                return true;
+            }
+            return false;
         }
         public override string? AccessibilityValue => Text;
         private const int DefaultKeyRepeatDelayMs = 500;
@@ -361,6 +370,8 @@ namespace XREngine.Rendering.UI
             input.RegisterKeyStateChange(EKey.Delete, Delete);
             input.RegisterKeyStateChange(EKey.Left, Left);
             input.RegisterKeyStateChange(EKey.Right, Right);
+            input.RegisterKeyStateChange(EKey.Up, Up);
+            input.RegisterKeyStateChange(EKey.Down, Down);
             input.RegisterKeyStateChange(EKey.ShiftLeft, ShiftLeft);
             input.RegisterKeyStateChange(EKey.ShiftRight, ShiftRight);
             input.RegisterKeyStateChange(EKey.ControlLeft, ControlLeft);
@@ -845,7 +856,15 @@ namespace XREngine.Rendering.UI
         public int CursorPosition
         {
             get => _cursorPosition;
-            set => SetField(ref _cursorPosition, SnapGraphemeBoundary(value.Clamp(0, Text.Length)));
+            set
+            {
+                if (SetField(ref _cursorPosition, SnapGraphemeBoundary(value.Clamp(0, Text.Length))) &&
+                    !_movingCaretVertically)
+                {
+                    _preferredCaretX = null;
+                    _verticalVisualLine = null;
+                }
+            }
         }
 
         private int _selectionAnchor;
@@ -870,6 +889,7 @@ namespace XREngine.Rendering.UI
                 CursorPosition = NextGraphemeBoundary(CursorPosition);
             if (!extendSelection)
                 SelectionAnchor = CursorPosition;
+            EnsureCaretVisible();
         }
 
         private string? _graphemeText;
@@ -971,6 +991,8 @@ namespace XREngine.Rendering.UI
             switch (propName)
             {
                 case nameof(Text):
+                    _preferredCaretX = null;
+                    _verticalVisualLine = null;
                     //Re-validate cursor position
                     CursorPosition = _cursorPosition;
                     SelectionAnchor = _selectionAnchor;
@@ -990,19 +1012,18 @@ namespace XREngine.Rendering.UI
 
         public void SetCursorPositionWithLocalPoint(Vector3 localPoint)
         {
-            UITextLayoutInput? input = TextComponent.CaptureLayoutInput();
-            if (input is null || input.Text != Text)
+            if (SceneNode is null || SceneNode.IsTransformNull ||
+                !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult layout))
                 return;
-            UITextLayoutResult layout = UITextLayoutKernel.Measure(input, BoundableTransform.ActualSize);
             TrySetCursorPositionWithLayout(localPoint, layout);
         }
 
         /// <summary>Uses placed caret stops only when geometry matches the current text revision.</summary>
         public bool TrySetCursorPositionWithLayout(Vector3 localPoint, UITextLayoutResult layout)
         {
-            UITextLayoutInput? input = TextComponent.CaptureLayoutInput();
-            if (input is null || input.Text != Text || input.TextRevision != layout.TextRevision ||
-                input.FontRevision != layout.FontRevision)
+            if (SceneNode is null || SceneNode.IsTransformNull ||
+                !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult currentLayout) ||
+                !ReferenceEquals(layout, currentLayout) || TextComponent.Text != Text)
                 return false;
             ReadOnlySpan<UITextCaretStop> stops = layout.Carets.Span;
             if (stops.IsEmpty)
@@ -1041,20 +1062,14 @@ namespace XREngine.Rendering.UI
         public bool TryGetCaretLocalBounds(UITextLayoutResult layout, out Vector4 bounds)
         {
             bounds = default;
-            UITextLayoutInput? input = TextComponent.CaptureLayoutInput();
-            if (input is null || input.Text != Text || input.TextRevision != layout.TextRevision ||
-                input.FontRevision != layout.FontRevision)
+            if (SceneNode is null || SceneNode.IsTransformNull ||
+                !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult currentLayout) ||
+                !ReferenceEquals(layout, currentLayout) || TextComponent.Text != Text)
                 return false;
-            ReadOnlySpan<UITextCaretStop> stops = layout.Carets.Span;
-            for (int i = 0; i < stops.Length; i++)
-            {
-                UITextCaretStop stop = stops[i];
-                if (stop.Utf16Offset != CursorPosition)
-                    continue;
-                bounds = new(stop.Position.X, stop.Position.Y - stop.LineHeight, 1f, stop.LineHeight);
-                return true;
-            }
-            return false;
+            if (!TryFindCaretStop(layout.Carets.Span, out UITextCaretStop stop))
+                return false;
+            bounds = new(stop.Position.X, stop.Position.Y - stop.LineHeight, 1f, stop.LineHeight);
+            return true;
         }
     }
 }

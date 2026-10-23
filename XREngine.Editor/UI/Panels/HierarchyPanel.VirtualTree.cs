@@ -473,6 +473,7 @@ public partial class HierarchyPanel
             {
                 _showEditorScene = !_showEditorScene;
                 RebuildVirtualTree();
+                SaveHierarchyState();
             }
             else if (state.Scene is not null)
                 ToggleVirtualSceneSection(state.Scene);
@@ -607,6 +608,7 @@ public partial class HierarchyPanel
             _virtualTree.SetExpanded(id, !_collapsedSections.Contains(scene.ID));
             NotifyVirtualTreeChanged();
         }
+        SaveHierarchyState();
     }
 
     private void UnloadVirtualScene(HierarchyRow state)

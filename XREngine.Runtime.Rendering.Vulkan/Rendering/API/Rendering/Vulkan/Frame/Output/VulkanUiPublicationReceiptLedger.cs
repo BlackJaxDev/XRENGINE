@@ -17,12 +17,19 @@ internal static class VulkanUiPublicationReceiptLedger
         bool requiresSwapchainPresentation)
     {
         internal readonly VulkanRenderer Owner = owner;
+        internal readonly long BackendGeneration = owner.BackendGeneration;
         internal readonly ulong Id = id;
-        internal readonly UIPublication Publication = publication;
+        internal readonly UIPublication Publication = RetainPublication(publication);
         internal readonly UIPublicationReceiptState State =
             new(expected, requiresSwapchainPresentation);
         internal readonly ulong FrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         internal XRGpuFence? Fence;
+
+        private static UIPublication RetainPublication(UIPublication publication)
+        {
+            publication.Retain();
+            return publication;
+        }
     }
 
     internal static bool TryReserve(VulkanRenderer owner, ulong id,
@@ -241,6 +248,22 @@ internal static class VulkanUiPublicationReceiptLedger
         }
     }
 
+    /// <summary>Release one renderer generation after native artifacts and GPU use end.</summary>
+    internal static void RetireKnownIdle(VulkanRenderer owner, long backendGeneration)
+    {
+        List<UIPublication> detached = [];
+        lock (Gate)
+            for (int index = 0; index < Entries.Length; index++)
+                if (Entries[index] is { } entry && ReferenceEquals(entry.Owner, owner) &&
+                    entry.BackendGeneration == backendGeneration)
+                {
+                    Entries[index] = null;
+                    detached.Add(entry.Publication);
+                }
+        for (int index = 0; index < detached.Count; index++)
+            detached[index].Release();
+    }
+
     private static Entry? Find(ulong id)
     {
         for (int index = 0; index < Entries.Length; index++)
@@ -254,7 +277,9 @@ internal static class VulkanUiPublicationReceiptLedger
         for (int index = 0; index < Entries.Length; index++)
             if (Entries[index]?.Id == id)
             {
+                Entry entry = Entries[index]!;
                 Entries[index] = null;
+                entry.Publication.Release();
                 return;
             }
     }

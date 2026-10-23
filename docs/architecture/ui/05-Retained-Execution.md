@@ -27,8 +27,16 @@ An unknown transform does not silently use a different layout algorithm.
 Measure reuse requires matching identity, aggregate measure revision, text
 inputs, and constraint. Arrange reuse also requires matching child edges,
 allocated slot, placement, visibility, and geometry. Topology-stable capture
-reuses numeric descriptors. Capture and result validation still inspect the
-retained target list; this is not a claim of constant-time capture for a leaf edit.
+uses immutable pages of 256 nodes. A changed page is copied before writing;
+unchanged input and output pages remain shared. The worker skips cached subtrees,
+and owner application visits changed output pages. Page-table copies still scale
+with page count. Topology changes require a new capture. This is not a claim of
+constant-time work for every leaf edit.
+
+A font generation guard detects metric changes that precede queued owner
+notifications. Text dependencies are scanned when that generation changes.
+The flat output accessor is a diagnostic compatibility path; normal publication
+uses the immutable indexed page view.
 
 Before applying a result, the owner checks canvas lifetime, element identity and
 incarnation, parent and child order, layout dependencies, text metrics, and root
@@ -85,11 +93,20 @@ their use ends. Terminal cleanup runs on the render owner. A cleanup failure
 quarantines its resource owner and keeps its budget reserved. A failed native
 owner destruction does not release dependent texture or producer claims.
 
-Publication claims currently retire through finalizers when their holders become
-unreachable. This prevents early reuse but does not guarantee timely reuse. A
-four-surface video, web, or viewport pool can stall until garbage collection and
-render-owner cleanup retire old packets. Deterministic holder and reader leases
-remain open work. Do not interpret the bounded pool as a frame-latency guarantee.
+Canvas, window, input, collector, and backend holders retain explicit publication
+claims. Readers acquire a claim while the holder lock is held and release it in
+`finally`. Holder replacement detaches the old entry before releasing it. The last
+claim retires the packet's draw resources; normal reuse does not wait for garbage
+collection. Finalization is a fallback for abandoned packets, not the normal
+retirement path. The four-surface producer pool remains bounded and can refuse a
+new generation while readers or GPU artifacts still hold its surfaces.
+
+Direct-backend receipts retain even failed draw attempts until their fence retires.
+Collector admission failure cancels the reservation before authoring. Vulkan
+receipts also wait for command-artifact retirement. Shutdown drains an exact
+renderer generation only after a successful native idle wait and artifact teardown.
+A timeout, skipped wait, device fault, or cleanup failure does not establish idle
+proof. These ownership rules do not establish a live frame-latency guarantee.
 
 Draw source observers mark the canvas dirty when shader source, numeric parameters,
 notifying raster state, buffer commits, buffer collections, or texture snapshots change.
@@ -159,7 +176,9 @@ Leave it unset for ordinary workloads.
 `IUIValueBinding<T>` defines typed retained values. Controls subscribe while
 active and unsubscribe on deactivation or row recycling. Editor adapters cache
 property access, marshal source notifications to the scene owner, and group
-mutations through `Undo`. Numeric fields retain an invalid draft until valid
+mutations through `Undo`. Engine targets use property-change tracking. Plain
+object targets record their committed before/after values in the same undo group.
+Numeric fields retain an invalid draft until valid
 commit or cancellation. Text fields provide selection, grapheme navigation,
 undo/redo, and composition state.
 

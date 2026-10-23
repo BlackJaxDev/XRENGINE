@@ -195,7 +195,7 @@ namespace XREngine.Rendering.UI
             }
             else
             {
-                bgMat.Material?.SetVector4("MatColor", BackgroundColor);
+                bgMat.SetQuadColor("MatColor", BackgroundColor);
             }
             bgMat.RenderCommand2D.ZIndex = BackgroundZIndex;
             bgMat.ClipToBounds = true;

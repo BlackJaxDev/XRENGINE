@@ -7,6 +7,8 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.UI.State;
+using XREngine.Data.Geometry;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -271,6 +273,58 @@ public sealed class UIDrawPayloadTests
         producer.Claims.ShouldBe(1);
         payload.Release();
         producer.Claims.ShouldBe(0);
+    }
+
+    [Test]
+    public void FourProducerPacketsReleaseWithoutGarbageCollectionAfterLastReader()
+    {
+        var producer = new TestProducerLease();
+        List<UIPublication> packets = [];
+        UIPublication? reader = null;
+        try
+        {
+            for (int index = 0; index < 4; index++)
+            {
+                RenderCommandMesh2D source = CreateDraw();
+                source.Mesh!.Material!.Textures = [producer.Texture];
+                using UIDrawPayloadBuilder builder = new() { ProducerLease = producer };
+                builder.TryCapture(source, false, out UIDrawPayload? payload,
+                    out string? reason).ShouldBeTrue(reason);
+                UIRenderRecord record = new()
+                {
+                    RenderInfo = null!, MembershipId = index + 1,
+                    Identity = new UIElementIdentity(index + 1, 1),
+                    WorldMatrix = Matrix4x4.Identity, Bounds = Vector4.One,
+                    RenderPass = 0, ZIndex = 0, Material = payload!.Material,
+                    Payload = payload,
+                };
+                packets.Add(new UIPublication((ulong)index + 1, 1, 1, 1, index,
+                    default, default, [], [record],
+                    new BoundingRectangleF(0, 0, 10, 10),
+                    Matrix4x4.Identity, Matrix4x4.Identity));
+            }
+
+            producer.Claims.ShouldBe(4);
+            reader = packets[0];
+            reader.Retain();
+            packets[0].Release();
+            packets.RemoveAt(0);
+            producer.Claims.ShouldBe(4);
+
+            reader.Release();
+            reader = null;
+            producer.Claims.ShouldBe(3);
+            foreach (UIPublication packet in packets)
+                packet.Release();
+            packets.Clear();
+            producer.Claims.ShouldBe(0);
+        }
+        finally
+        {
+            reader?.Release();
+            foreach (UIPublication packet in packets)
+                packet.Release();
+        }
     }
 
     [Test]

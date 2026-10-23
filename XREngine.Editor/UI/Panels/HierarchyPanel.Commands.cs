@@ -54,6 +54,7 @@ public partial class HierarchyPanel
 
         _nodePendingRename = node;
         ShowVirtualRename(node);
+        SaveHierarchyState();
     }
 
     private void ApplyRename(UITextInputComponent input)
@@ -67,6 +68,7 @@ public partial class HierarchyPanel
 
         var node = _nodePendingRename;
         _nodePendingRename = null;
+        SaveHierarchyState();
 
         EnqueueSceneEdit(() =>
         {
@@ -80,6 +82,7 @@ public partial class HierarchyPanel
     private void CancelRename()
     {
         _nodePendingRename = null;
+        SaveHierarchyState();
         RefreshVisibleRenameRows();
     }
 

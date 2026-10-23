@@ -3,7 +3,7 @@ using XREngine.Scene;
 namespace XREngine.Rendering.UI;
 
 /// <summary>Two-column virtual property grid with retained value editor cells.</summary>
-public sealed class UIVirtualPropertyGridProvider<T> : IVirtualListProvider, IUIVirtualAccessibilityProvider
+public sealed class UIVirtualPropertyGridProvider<T> : IVirtualListProvider, IUIVirtualAccessibilityProvider, IVirtualListItemIndex
 {
     private readonly UIVirtualTableProvider<T> _table;
 
@@ -38,6 +38,8 @@ public sealed class UIVirtualPropertyGridProvider<T> : IVirtualListProvider, IUI
         remove => _table.SelectionChanged -= value;
     }
     public ulong GetItemId(int index) => _table.GetItemId(index);
+    public bool TryGetIndexOfItemId(ulong itemId, out int index)
+        => _table.TryGetIndexOfItemId(itemId, out index);
     public UIBoundableTransform CreateRow() => _table.CreateRow();
     public void BindRow(UIBoundableTransform row, int index, ulong itemId, ulong incarnation)
         => _table.BindRow(row, index, itemId, incarnation);

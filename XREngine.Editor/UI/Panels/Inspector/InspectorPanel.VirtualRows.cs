@@ -1,7 +1,9 @@
 using System.Numerics;
 using System.Reflection;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Editor.UI;
+using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 
@@ -14,14 +16,16 @@ public partial class InspectorPanel
         public required SceneNode ValueRoot;
         public required UIButtonComponent DetailButton;
         public required UIBoundableTransform DetailButtonTransform;
+        public required UITextComponent DetailLabel;
         public readonly Dictionary<Type, SceneNode> PrimitiveEditors = [];
         public PropertyInfo? Property;
     }
 
-    private sealed class PropertyProvider : IUIVirtualTableSource<PropertyInfo>
+    private sealed class PropertyProvider : IUIVirtualTableSource<PropertyInfo>, IVirtualListItemIndex
     {
         private readonly List<PropertyInfo> _properties = [];
         private readonly Dictionary<PropertyInfo, ulong> _ids = [];
+        private readonly Dictionary<ulong, int> _indices = [];
         private object?[] _targetIdentities = [];
         private ulong _nextId;
         public object?[]? Targets { get; private set; }
@@ -29,6 +33,7 @@ public partial class InspectorPanel
         public ulong Revision { get; private set; } = 1;
         public ulong GetItemId(int index) => _ids[_properties[index]];
         public PropertyInfo GetItem(int index) => _properties[index];
+        public bool TryGetIndexOfItemId(ulong id, out int index) => _indices.TryGetValue(id, out index);
 
         public void Reset(List<PropertyInfo> properties, object?[]? targets)
         {
@@ -53,6 +58,9 @@ public partial class InspectorPanel
             foreach (PropertyInfo property in properties)
                 if (!_ids.ContainsKey(property))
                     _ids.Add(property, ++_nextId);
+            _indices.Clear();
+            for (int index = 0; index < _properties.Count; index++)
+                _indices[_ids[_properties[index]]] = index;
             Revision++;
         }
     }
@@ -145,7 +153,8 @@ public partial class InspectorPanel
         PropertyRow state = new()
         {
             ValueRoot = valueRoot,
-            DetailButton = detailButton, DetailButtonTransform = buttonTransform
+            DetailButton = detailButton, DetailButtonTransform = buttonTransform,
+            DetailLabel = buttonLabel
         };
         detailButton.InteractAction += _ =>
         {
@@ -161,8 +170,10 @@ public partial class InspectorPanel
         PropertyRow state = _propertyRows[row];
         state.Property = property;
         TypeCode typeCode = Type.GetTypeCode(property.PropertyType);
-        bool primitive = typeCode is not (TypeCode.Object or TypeCode.DateTime or TypeCode.Empty or TypeCode.DBNull);
+        bool isString = property.PropertyType == typeof(string);
+        bool primitive = !isString && typeCode is not (TypeCode.Object or TypeCode.DateTime or TypeCode.Empty or TypeCode.DBNull);
         state.DetailButtonTransform.Visibility = primitive ? EVisibility.Collapsed : EVisibility.Visible;
+        state.DetailLabel.Text = isString ? GetStringPreview(property, targets) : "Open details";
         foreach (SceneNode editor in state.PrimitiveEditors.Values)
             editor.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Collapsed;
         if (!primitive)
@@ -194,6 +205,14 @@ public partial class InspectorPanel
         HideDetailEditor();
         _detailProperty = property;
         SceneNode host = _detailTransform!.SceneNode!.NewChild();
+        if (property.PropertyType == typeof(string))
+        {
+            CreateMultilineStringDetail(host, property);
+            _detailEditor = host;
+            _detailTransform.Visibility = EVisibility.Visible;
+            _propertyScroll!.Visibility = EVisibility.Collapsed;
+            return;
+        }
         UIListTransform hostLayout = host.SetTransform<UIListTransform>();
         hostLayout.MinAnchor = new Vector2(0, 1);
         hostLayout.MaxAnchor = new Vector2(1, 1);
@@ -207,10 +226,73 @@ public partial class InspectorPanel
         _propertyScroll!.Visibility = EVisibility.Collapsed;
     }
 
+    private void CreateMultilineStringDetail(SceneNode host, PropertyInfo property)
+    {
+        UIBoundableTransform bounds = host.SetTransform<UIBoundableTransform>();
+        bounds.MinAnchor = new Vector2(0, 1);
+        bounds.MaxAnchor = Vector2.One;
+        bounds.NormalizedPivot = new Vector2(0, 1);
+        bounds.Translation = new Vector2(0, -34);
+        var (input, text, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(host, property, InspectedObjects);
+        input.SingleLineMode = false;
+        input.CommitOnSubmit = true;
+        text.VerticalAlignment = EVerticalAlignment.Top;
+        text.WrapMode = FontGlyphSet.EWrapMode.Word;
+        text.BoundableTransform.MinAnchor = Vector2.Zero;
+        text.BoundableTransform.MaxAnchor = Vector2.One;
+        bounds.Height = EstimateStringDetailHeight(input.Text);
+        input.PropertyChanged += TextChanged;
+
+        void TextChanged(object? _, IXRPropertyChangedEventArgs change)
+        {
+            if (change.PropertyName == nameof(UITextInputComponent.Text))
+                bounds.Height = EstimateStringDetailHeight(input.Text);
+        }
+    }
+
+    private static float EstimateStringDetailHeight(string? value)
+    {
+        int lines = 1;
+        int width = 0;
+        foreach (char character in value ?? string.Empty)
+        {
+            if (character == '\n')
+            {
+                lines += Math.Max(1, (width + 63) / 64);
+                width = 0;
+            }
+            else if (character != '\r')
+                width++;
+        }
+        lines += Math.Max(1, (width + 63) / 64);
+        return Math.Clamp(lines * 22.0f + 12, 180, 20000);
+    }
+
+    private static string GetStringPreview(PropertyInfo property, object?[]? targets)
+    {
+        if (targets?.FirstOrDefault(target => target is not null) is not { } target)
+            return "Open text details";
+        try
+        {
+            string value = property.GetValue(target) as string ?? string.Empty;
+            int breakIndex = value.IndexOfAny(['\r', '\n']);
+            if (breakIndex >= 0)
+                value = value[..breakIndex];
+            return value.Length > 56 ? value[..56] + "…" : value.Length == 0 ? "Open text details" : value;
+        }
+        catch (Exception)
+        {
+            return "Open text details";
+        }
+    }
+
     private void HideDetailEditor()
     {
         if (_detailEditor is not null)
         {
+            if (_detailTransform?.GetCanvasComponent()?.GetInputComponent() is { FocusedComponent: { } focused } input &&
+                focused.SceneNode is { } focusedNode && IsDetailDescendant(focusedNode, _detailEditor))
+                input.FocusedComponent = null;
             _detailEditor.IsActiveSelf = false;
             _detailEditor.Transform.Parent = null;
             _detailEditor = null;
@@ -220,6 +302,15 @@ public partial class InspectorPanel
             _detailTransform.Visibility = EVisibility.Collapsed;
         if (_propertyScroll is not null)
             _propertyScroll.Visibility = EVisibility.Visible;
+    }
+
+    private static bool IsDetailDescendant(SceneNode node, SceneNode root)
+    {
+        for (SceneNode? current = node; current is not null;
+             current = current.Transform.Parent?.SceneNode)
+            if (ReferenceEquals(current, root))
+                return true;
+        return false;
     }
 
     private void ReleaseVirtualPropertyList()

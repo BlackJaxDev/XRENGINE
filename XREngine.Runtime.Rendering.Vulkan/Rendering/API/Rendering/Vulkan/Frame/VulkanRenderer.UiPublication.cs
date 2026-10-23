@@ -14,6 +14,12 @@ public sealed partial class VulkanRenderer
     protected override void OnUiPublicationAuthoringFailed(ulong receiptId, string reason)
         => VulkanUiPublicationReceiptLedger.Fail(receiptId);
 
+    protected override void CancelUiPublicationReceiptBeforeAuthoringCore(ulong receiptId)
+    {
+        _frameLoop.DiscardPendingUiPublication(receiptId);
+        VulkanUiPublicationReceiptLedger.RetireFailedAuthoring(receiptId);
+    }
+
     protected override bool CompleteUiPublicationReceiptCore(
         ulong receiptId, bool succeeded, string? failureReason, out XRGpuFence? completionFence)
     {

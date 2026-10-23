@@ -74,6 +74,19 @@ namespace XREngine.Rendering.UI
             RecordQuadVisualChange();
         }
 
+        /// <summary>Updates a quad color while preserving custom material uniform names.</summary>
+        public void SetQuadColor(string uniformName, Vector4 color)
+        {
+            ArgumentException.ThrowIfNullOrEmpty(uniformName);
+            if (uniformName == "MatColor" && Material is { } material && OwnsDefaultMaterial(material))
+            {
+                SetBatchSolidColor(color);
+                return;
+            }
+            Material?.SetVector4(uniformName, color);
+            RecordQuadVisualChange();
+        }
+
         /// <summary>Uses the shared desktop border shader with per-instance fill, outline and width.</summary>
         public void SetBatchBorderStyle(Vector4 fillColor, Vector4 outlineColor, float width)
         {

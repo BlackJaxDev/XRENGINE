@@ -92,7 +92,12 @@ namespace XREngine.Rendering.UI
         private ulong _currentLayoutGeneration;
 
         /// <summary>Gets the most recent validated layout values in snapshot node order.</summary>
-        public ReadOnlyMemory<UILayoutNodeOutput> CurrentLayoutOutputs => _currentLayoutOutputs;
+        public ReadOnlyMemory<UILayoutNodeOutput> CurrentLayoutOutputs
+            => _currentLayoutOutputs.Length != 0 || CurrentLayoutOutputPages is null
+                ? _currentLayoutOutputs
+                : _currentLayoutOutputs = CurrentLayoutOutputPages.ToArray();
+        /// <summary>Gets accepted layout values without flattening unchanged pages.</summary>
+        public UILayoutOutputPageView? CurrentLayoutOutputPages { get; private set; }
         /// <summary>Gets identities in the same order as CurrentLayoutOutputs.</summary>
         public ReadOnlyMemory<UIElementIdentity> CurrentLayoutIdentities => _currentLayoutIdentities;
         /// <summary>Changes only after the owner accepts a complete layout result.</summary>
@@ -109,13 +114,23 @@ namespace XREngine.Rendering.UI
 
         internal void PublishLayoutValues(UIElementIdentity[] identities, UILayoutNodeOutput[] outputs)
         {
+            CurrentLayoutOutputPages = null;
             _currentLayoutIdentities = identities;
             _currentLayoutOutputs = outputs;
             _currentLayoutGeneration++;
         }
 
+        internal void PublishLayoutValues(UIElementIdentity[] identities, UILayoutOutputPageView outputs)
+        {
+            CurrentLayoutOutputPages = outputs;
+            _currentLayoutIdentities = identities;
+            _currentLayoutOutputs = [];
+            _currentLayoutGeneration++;
+        }
+
         internal void ClearLayoutValues()
         {
+            CurrentLayoutOutputPages = null;
             _currentLayoutIdentities = [];
             _currentLayoutOutputs = [];
             _currentLayoutGeneration++;

@@ -116,20 +116,56 @@ public sealed class UIPresentedInputTests
         var root = new SceneNode("Canvas lifetime", new UICanvasTransform());
         root.SetWorldContext(new TestWorldContext());
         object output = new();
+        UIPublication? packet = null;
         try
         {
             var canvas = root.AddComponent<UICanvasComponent>()!;
             var bounds = new BoundingRectangleF(Vector2.Zero, new Vector2(100));
-            var packet = new UIPublication(1, 1, 1, 1, 1, default, default, [], [],
+            packet = new UIPublication(1, 1, 1, 1, 1, default, default, [], [],
                 bounds, Matrix4x4.Identity, Matrix4x4.Identity);
             canvas.MarkPresented(output, packet);
-            canvas.GetPresentedPublication(output).ShouldBeSameAs(packet);
+            canvas.TryAcquirePresentedPublication(output, out UIPublication? presented).ShouldBeTrue();
+            try { presented.ShouldBeSameAs(packet); }
+            finally { presented?.Release(); }
 
             canvas.IsActive = false;
             canvas.IsActive = true;
             canvas.MarkPresented(output, packet);
 
-            canvas.GetPresentedPublication(output).ShouldBeNull();
+            canvas.TryAcquirePresentedPublication(output, out presented).ShouldBeFalse();
+            presented.ShouldBeNull();
+        }
+        finally
+        {
+            packet?.Release();
+            root.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void PresentedReaderKeepsPacketUntilAfterOutputAndCanvasRetire()
+    {
+        var root = new SceneNode("Presented reader", new UICanvasTransform());
+        root.SetWorldContext(new TestWorldContext());
+        object output = new();
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            var bounds = new BoundingRectangleF(Vector2.Zero, new Vector2(100));
+            UIPublication packet = new(1, 1, 1, 1, 1, default, default, [], [],
+                bounds, Matrix4x4.Identity, Matrix4x4.Identity);
+            canvas.MarkPresented(output, packet);
+            packet.Release();
+
+            canvas.TryAcquirePresentedPublication(output, out UIPublication? reader).ShouldBeTrue();
+            reader.ShouldNotBeNull();
+            canvas.RemovePublicationOutput(output);
+            canvas.IsActive = false;
+
+            reader.ResourcesRetired.ShouldBeFalse();
+            reader.Release();
+            reader.ResourcesRetired.ShouldBeTrue();
+            Should.Throw<InvalidOperationException>(reader.Release);
         }
         finally { root.Destroy(true); }
     }

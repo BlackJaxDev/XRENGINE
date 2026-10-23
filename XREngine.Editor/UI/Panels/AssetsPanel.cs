@@ -23,6 +23,7 @@ public class AssetsPanel : NativeVirtualTextPanel
     private int _pendingRefresh;
     private string _search = string.Empty;
     private UITextInputComponent? _searchInput;
+    private UITextInputComponent? _nameInput;
 
     public string? SelectedPath { get; private set; }
     public event Action<string>? AssetSelected;
@@ -30,12 +31,12 @@ public class AssetsPanel : NativeVirtualTextPanel
     public string Folder
     {
         get => _folder ?? string.Empty;
-        set { _folder = string.IsNullOrWhiteSpace(value) ? null : value; RefreshRows(); ViewStateChanged?.Invoke(); }
+        set { _folder = string.IsNullOrWhiteSpace(value) ? null : value; SelectedPath = null; RefreshRows(); ViewStateChanged?.Invoke(); }
     }
     public bool UseEngineAssets
     {
         get => _engineFiles;
-        set { _engineFiles = value; _folder = null; RefreshRows(); ViewStateChanged?.Invoke(); }
+        set { _engineFiles = value; _folder = null; SelectedPath = null; RefreshRows(); ViewStateChanged?.Invoke(); }
     }
     public string Search
     {
@@ -92,6 +93,14 @@ public class AssetsPanel : NativeVirtualTextPanel
         AddCommand("Game", () => UseEngineAssets = false);
         AddCommand("Engine", () => UseEngineAssets = true);
         AddCommand("Refresh", RefreshRows);
+        AddCommand("New Folder", CreateFolder);
+        AddCommand("Rename", RenameSelection);
+        AddCommand("Import", () => _ = ImportSelectionAsync());
+        SceneNode nameNode = commands.NewChild();
+        nameNode.SetTransform<UIBoundableTransform>().Width = 140;
+        var (nameInput, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(nameNode);
+        _nameInput = nameInput;
+        nameInput.SingleLineMode = true;
         SceneNode searchNode = commands.NewChild();
         searchNode.SetTransform<UIBoundableTransform>().Width = 144;
         var (input, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(searchNode);
@@ -227,4 +236,61 @@ public class AssetsPanel : NativeVirtualTextPanel
     private bool BeginAssetDrag(ulong id, UIInteractableComponent source, Vector2 point)
         => _paths.TryGetValue(id, out string? path) && File.Exists(path) &&
            EditorDragDropUtility.BeginDrag(source, EditorDragDropUtility.CreateAssetPayload(path), point);
+
+    private void CreateFolder()
+    {
+        try
+        {
+            string created = NativeAssetFileMutations.CreateFolder(RootFolder, CurrentFolder, _nameInput?.Text ?? string.Empty);
+            Folder = created;
+            if (_nameInput is not null)
+                _nameInput.Text = string.Empty;
+        }
+        catch (Exception exception)
+        {
+            Debug.UI($"[NativeAssets] Could not create folder: {exception.Message}");
+        }
+    }
+
+    private void RenameSelection()
+    {
+        try
+        {
+            string path = SelectedPath ?? CurrentFolder;
+            string renamed = NativeAssetFileMutations.Rename(RootFolder, path, _nameInput?.Text ?? string.Empty);
+            if (Directory.Exists(renamed))
+                Folder = renamed;
+            else
+            {
+                SelectedPath = renamed;
+                NativeAssetSelection.Select(renamed);
+                RefreshRows();
+            }
+            if (_nameInput is not null)
+                _nameInput.Text = string.Empty;
+        }
+        catch (Exception exception)
+        {
+            Debug.UI($"[NativeAssets] Could not rename selection: {exception.Message}");
+        }
+    }
+
+    private async Task ImportSelectionAsync()
+    {
+        string? selected = SelectedPath;
+        if (selected is null || !File.Exists(selected) ||
+            string.Equals(Path.GetExtension(selected), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+            return;
+        try
+        {
+            NativeAssetFileMutations.RequireUnderRoot(RootFolder, selected, allowRoot: false);
+            if (!await Engine.Assets.ReimportThirdPartyFileAsync(selected).ConfigureAwait(false))
+                Debug.UI($"[NativeAssets] Import failed for {Path.GetFileName(selected)}.");
+            Interlocked.Exchange(ref _pendingRefresh, 1);
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, $"[NativeAssets] Import failed for '{selected}'.");
+        }
+    }
 }

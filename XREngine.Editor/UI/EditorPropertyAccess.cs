@@ -83,6 +83,15 @@ internal sealed class EditorPropertyAccess
                 if (target is XRBase tracked && target is not InspectorPropertyEditors.DataTransformerBase)
                     Undo.Track(tracked);
                 setter(target, next);
+                if (target is not XRBase)
+                {
+                    // Plain objects do not publish the engine events used by Undo.Track.
+                    object? committedValue = _access.Get(target);
+                    if (!Equals(oldValue, committedValue))
+                        Undo.RecordStructuralChange($"Set {_property.Name}",
+                            () => RestoreValue(target, oldValue),
+                            () => RestoreValue(target, committedValue));
+                }
                 EditorMutationDirtyState.Mark(target);
             }
         }
@@ -91,6 +100,13 @@ internal sealed class EditorPropertyAccess
             _writing = false;
             _changed?.Invoke();
         }
+    }
+
+    private void RestoreValue(object target, object? value)
+    {
+        _access.Set!(target, value);
+        EditorMutationDirtyState.Mark(target);
+        Notify(_property.Name);
     }
 
     private void Subscribe()
@@ -116,7 +132,8 @@ internal sealed class EditorPropertyAccess
 
     private void Notify(string? propertyName)
     {
-        if (!_writing && (string.IsNullOrEmpty(propertyName) || propertyName == _property.Name) &&
+        if (!_writing && _changed is not null &&
+            (string.IsNullOrEmpty(propertyName) || propertyName == _property.Name) &&
             Interlocked.Exchange(ref _refreshPending, 1) == 0)
             EditorImGuiUI.EnqueueSceneEdit(_refresh);
     }

@@ -312,6 +312,8 @@ namespace XREngine.Components
 
             if (RefreshPresentedInput() is not { } publication)
                 return;
+            try
+            {
             if (TopMostInteractable is { } target && !IsPointerTargetEligible(target))
                 return;
 
@@ -359,6 +361,8 @@ namespace XREngine.Components
                 if (receiver.Receiver.HandleMouseScroll(diff) || !ReferenceEquals(_inputPublication, publication))
                     return;
             }
+            }
+            finally { publication.Release(); }
         }
 
         /// <summary>
@@ -395,6 +399,8 @@ namespace XREngine.Components
             UIPublication? publication = RefreshPresentedInput();
             if (publication is null)
                 return;
+            try
+            {
 
             if (!publication.TryMapPointer(_cursorOutputPosition, out Vector2 canvasPosition, _pressedTarget is null))
                 return;
@@ -419,14 +425,19 @@ namespace XREngine.Components
                 if (IsCurrentHitRecord(record) && record.Contains(CursorPositionWorld2D))
                     UIElementIntersections.Add(record.RenderInfo);
             UIRuntimeCounters.Add(UIWorkCounter.HitCandidates, publication.Hits.Length);
+            }
+            finally { publication.Release(); }
         }
 
         private UIPublication? RefreshPresentedInput()
         {
             UICanvasComponent? canvas = GetCameraCanvas();
             object? output = OwningPawn?.Viewport ?? (object?)canvas;
-            UIPublication? publication = canvas is { IsActiveInHierarchy: true } && output is not null
-                ? canvas.GetPresentedPublication(output) : null;
+            UIPublication? publication = canvas is { IsActiveInHierarchy: true } && output is not null &&
+                canvas.TryAcquirePresentedPublication(output, out UIPublication? acquired)
+                ? acquired : null;
+            try
+            {
             bool outputChanged = !ReferenceEquals(canvas, _inputCanvas) || !ReferenceEquals(output, _inputOutput);
             if (outputChanged || !ReferenceEquals(publication, _inputPublication))
             {
@@ -441,7 +452,10 @@ namespace XREngine.Components
                 bool hitRecordsChanged = outputChanged || publication is null || _inputPublication is null ||
                     publication.CanvasLifetime != _inputPublication.CanvasLifetime ||
                     publication.HitGeneration != _inputPublication.HitGeneration;
+                UIPublication? previous = _inputPublication;
+                publication?.Retain();
                 _inputPublication = publication;
+                previous?.Release();
                 if (!hitRecordsChanged)
                 {
                     SynchronizeFocusScope(publication);
@@ -459,6 +473,12 @@ namespace XREngine.Components
                 SynchronizeFocusScope(publication);
             }
             return publication;
+            }
+            catch
+            {
+                publication?.Release();
+                throw;
+            }
         }
 
         private bool IsCurrentHitRecord(in UIHitRecord record)
@@ -648,9 +668,16 @@ namespace XREngine.Components
             }
             ClearPointerPress(cancel: false);
             if (GetOwningInput() is LocalInputInterface { Mouse: { } releaseMouse } &&
-                RefreshPresentedInput() is { } releasePacket &&
-                releasePacket.TryMapPointer(releaseMouse.CursorPosition, out Vector2 releasePosition, false))
-                CursorPositionWorld2D = releasePosition;
+                RefreshPresentedInput() is { } releasePacket)
+            {
+                try
+                {
+                    if (releasePacket.TryMapPointer(releaseMouse.CursorPosition,
+                        out Vector2 releasePosition, false))
+                        CursorPositionWorld2D = releasePosition;
+                }
+                finally { releasePacket.Release(); }
+            }
             UIInteractableComponent? target = FindMouseInteractTarget();
             bool inside = IsPointerTargetEligible(pressed) && ReferenceEquals(target, pressed) &&
                 ReferenceEquals(FocusedComponent, pressed) &&
@@ -678,11 +705,21 @@ namespace XREngine.Components
         }
 
         private bool IsPointerTargetEligible(UIInteractableComponent target)
-            => IsActiveInHierarchy && RefreshPresentedInput() is not null && _inputRecords.TryGetValue(target.RenderInfo2D.MembershipId, out UIHitRecord record) &&
-               IsCurrentHitRecord(record) && target.CanInteract &&
-               record.FocusScopeIdentity == _inputPublication!.ActiveFocusScopeIdentity &&
-               GetCameraCanvas() is { IsActiveInHierarchy: true } canvas && canvas.CanvasTransform.IsVisibleInHierarchy &&
-               ReferenceEquals(target.UserInterfaceCanvas, canvas);
+        {
+            if (!IsActiveInHierarchy || RefreshPresentedInput() is not { } publication)
+                return false;
+            try
+            {
+                return _inputRecords.TryGetValue(target.RenderInfo2D.MembershipId,
+                           out UIHitRecord record) &&
+                    IsCurrentHitRecord(record) && target.CanInteract &&
+                    record.FocusScopeIdentity == publication.ActiveFocusScopeIdentity &&
+                    GetCameraCanvas() is { IsActiveInHierarchy: true } canvas &&
+                    canvas.CanvasTransform.IsVisibleInHierarchy &&
+                    ReferenceEquals(target.UserInterfaceCanvas, canvas);
+            }
+            finally { publication.Release(); }
+        }
 
         private bool TryRecordPointerPress(UIInteractableComponent target, LocalInputInterface? input,
             BaseMouse? mouse, ulong registrationRevision, IRuntimePointerContactSource? source,
@@ -817,6 +854,8 @@ namespace XREngine.Components
         {
             if (IsVirtualGamepadDispatch || RefreshPresentedInput() is not { } publication)
                 return;
+            try
+            {
             long current = FocusedComponent?.RenderInfo2D.MembershipId ?? 0;
             if (direction is { } navigation && FocusedComponent is { } focused &&
                 IsPointerTargetEligible(focused) && focused.TryConsumeFocusDirection(navigation))
@@ -836,6 +875,8 @@ namespace XREngine.Components
                 }
                 current = record.MembershipId;
             }
+            }
+            finally { publication.Release(); }
         }
 
         private bool _subscribedToTimer;
@@ -872,7 +913,9 @@ namespace XREngine.Components
             _lastIntersectionIdentities.Clear();
             _currentIntersectionIdentities.Clear();
             _inputRecords.Clear();
+            UIPublication? oldInputPublication = _inputPublication;
             _inputPublication = null;
+            oldInputPublication?.Release();
             SynchronizeFocusScope(null);
             _queriedCanvasLifetime = 0;
             _queriedHitGeneration = 0;

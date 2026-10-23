@@ -130,8 +130,11 @@ public partial class UICanvasInputComponent
 
         UICanvasComponent? canvas = GetCameraCanvas();
         object? output = OwningPawn?.Viewport ?? (object?)canvas;
-        UIPublication? publication = canvas is not null && output is not null
-            ? canvas.GetPresentedPublication(output) : null;
+        UIPublication? publication = canvas is not null && output is not null &&
+            canvas.TryAcquirePresentedPublication(output, out UIPublication? acquired)
+                ? acquired : null;
+        try
+        {
         UITextComponent text = target.TextComponent;
         if (publication is null || canvas is null ||
             publication.LayoutGeneration != canvas.CanvasTransform.CurrentLayoutGeneration ||
@@ -146,6 +149,8 @@ public partial class UICanvasInputComponent
             TryMapImeCaretClientPoint(publication, record, new Vector2(bounds.X, bounds.Y),
                 out Vector2 clientPoint))
             viewport.Window?.TrySetImeCandidatePosition(clientPoint);
+        }
+        finally { publication?.Release(); }
     }
 
     /// <summary>Projects a caret through only the geometry frozen in the displayed packet.</summary>

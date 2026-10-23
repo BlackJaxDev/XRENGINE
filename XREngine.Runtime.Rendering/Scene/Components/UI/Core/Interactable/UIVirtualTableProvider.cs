@@ -5,7 +5,7 @@ using XREngine.Scene;
 namespace XREngine.Rendering.UI;
 
 /// <summary>Reuses a bounded set of horizontal cell rows under UIListTransform virtualization.</summary>
-public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtualAccessibilityProvider
+public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtualAccessibilityProvider, IVirtualListItemIndex
 {
     private sealed class RowState
     {
@@ -73,6 +73,14 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
     public event Action<ulong, UIVirtualTableRowComponent, Vector2>? RowPointerMoved;
     public event Action<UIVirtualTableRowComponent>? RowPointerLeft;
     public ulong GetItemId(int index) => _source.GetItemId(index);
+
+    public bool TryGetIndexOfItemId(ulong itemId, out int index)
+    {
+        index = -1;
+        return itemId != 0 && _source is IVirtualListItemIndex lookup &&
+            lookup.TryGetIndexOfItemId(itemId, out index) &&
+            (uint)index < (uint)_source.Count && _source.GetItemId(index) == itemId;
+    }
 
     public UIBoundableTransform CreateRow()
     {

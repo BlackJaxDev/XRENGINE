@@ -9,8 +9,8 @@ internal static class UILayoutMultiSplitKernel
 {
     internal static void ArrangeMultiSplit(
         in UILayoutNodeInput node, BoundingRectangleF region,
-        ReadOnlySpan<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
-        UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache = null)
+        UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
+        UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache = null)
     {
         if (node.ChildCount == 0)
             return;
@@ -68,8 +68,8 @@ internal static class UILayoutMultiSplitKernel
 
     private static void ArrangeSlot(
         in UILayoutNodeInput node, int ordinal, float offset, float length,
-        BoundingRectangleF region, bool vertical, ReadOnlySpan<UILayoutNodeInput> nodes,
-        ReadOnlySpan<UILayoutChildInput> children, UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache = null)
+        BoundingRectangleF region, bool vertical, UILayoutValuePageView<UILayoutNodeInput> nodes,
+        ReadOnlySpan<UILayoutChildInput> children, UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache = null)
     {
         Vector2 position = vertical ? new(0, offset) : new(offset, 0);
         Vector2 size = vertical ? new(region.Width, length) : new(length, region.Height);
@@ -79,8 +79,8 @@ internal static class UILayoutMultiSplitKernel
 
     private static void ArrangeChild(
         in UILayoutNodeInput node, int ordinal, BoundingRectangleF bounds,
-        Vector2 placement, ReadOnlySpan<UILayoutNodeInput> nodes,
-        ReadOnlySpan<UILayoutChildInput> children, UILayoutNodeOutput[] outputs, bool visible, UILayoutArrangeCache? cache = null)
+        Vector2 placement, UILayoutValuePageView<UILayoutNodeInput> nodes,
+        ReadOnlySpan<UILayoutChildInput> children, UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache = null)
     {
         UILayoutValueKernel.Arrange(children[node.FirstChild + ordinal].NodeIndex,
             bounds, placement, visible, nodes, children, outputs, cache);

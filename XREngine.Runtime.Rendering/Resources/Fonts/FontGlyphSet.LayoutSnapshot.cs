@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Numerics;
 using System.Text;
+using System.Threading;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.UI;
 
@@ -42,6 +43,8 @@ public partial class FontGlyphSet
     }
 
     private long _layoutMetricsRevision;
+    private static long _globalLayoutMetricsGeneration;
+    internal static long GlobalLayoutMetricsGeneration => Volatile.Read(ref _globalLayoutMetricsGeneration);
     private long _cachedLayoutMetricsRevision = -1;
     private Vector2 _cachedLayoutAtlasSize;
     private float _cachedLayoutEmSize;
@@ -52,7 +55,8 @@ public partial class FontGlyphSet
 
     private void InvalidateLayoutMetrics()
     {
-        _layoutMetricsRevision++;
+        Interlocked.Increment(ref _layoutMetricsRevision);
+        Interlocked.Increment(ref _globalLayoutMetricsGeneration);
         _cachedLayoutMetrics = null;
         LayoutMetricsChanged?.Invoke(this);
     }
@@ -67,7 +71,7 @@ public partial class FontGlyphSet
         if (_cachedLayoutMetrics is { } retained && _glyphs is not null &&
             currentAtlas is not null && currentAtlas.Mipmaps is { Length: > 0 } &&
             currentAtlas.Width > 0 && currentAtlas.Height > 0 &&
-            _cachedLayoutMetricsRevision == _layoutMetricsRevision &&
+            _cachedLayoutMetricsRevision == Volatile.Read(ref _layoutMetricsRevision) &&
             _cachedLayoutAtlasSize == new Vector2(currentAtlas.Width, currentAtlas.Height) &&
             _cachedLayoutEmSize == LayoutEmSize)
         {
@@ -90,7 +94,7 @@ public partial class FontGlyphSet
         atlasSize = new(Atlas!.Width, Atlas.Height);
         emSize = LayoutEmSize;
         if (_cachedLayoutMetrics is { } cached &&
-            _cachedLayoutMetricsRevision == _layoutMetricsRevision &&
+            _cachedLayoutMetricsRevision == Volatile.Read(ref _layoutMetricsRevision) &&
             _cachedLayoutAtlasSize == atlasSize && _cachedLayoutEmSize == emSize)
         {
             metrics = cached;
@@ -98,8 +102,10 @@ public partial class FontGlyphSet
             return true;
         }
 
-        Dictionary<int, UIRuneMetrics> captured = new(_glyphs!.Count);
-        foreach ((string key, Glyph glyph) in _glyphs)
+        long capturedRevision = Volatile.Read(ref _layoutMetricsRevision);
+        Dictionary<string, Glyph> glyphs = _glyphs!;
+        Dictionary<int, UIRuneMetrics> captured = new(glyphs.Count);
+        foreach ((string key, Glyph glyph) in glyphs)
         {
             if (glyph is null || !Rune.TryGetRuneAt(key, 0, out Rune rune) || rune.Utf16SequenceLength != key.Length)
                 continue;
@@ -109,9 +115,11 @@ public partial class FontGlyphSet
                     glyph.Position.X + atlasExtent.X, glyph.Position.Y + atlasExtent.Y));
             captured[rune.Value] = value;
         }
+        if (capturedRevision != Volatile.Read(ref _layoutMetricsRevision))
+            throw new InvalidOperationException("Font metrics changed during layout capture.");
         metrics = captured.ToFrozenDictionary();
         _cachedLayoutMetrics = metrics;
-        _cachedLayoutMetricsRevision = _layoutMetricsRevision;
+        _cachedLayoutMetricsRevision = capturedRevision;
         _cachedLayoutAtlasSize = atlasSize;
         _cachedLayoutEmSize = emSize;
         revision = _cachedLayoutMetricsRevision;

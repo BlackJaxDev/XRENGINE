@@ -699,7 +699,14 @@ public sealed class UIBatchCollector : IDisposable
 
     /// <summary>Sets the exact owner-frozen packet being rendered by this canvas.</summary>
     public void BindRenderingPublication(UIPublication? publication)
-        => _renderingPublication = publication;
+    {
+        if (ReferenceEquals(_renderingPublication, publication))
+            return;
+        publication?.Retain();
+        UIPublication? previous = _renderingPublication;
+        _renderingPublication = publication;
+        previous?.Release();
+    }
 
     /// <summary>Reads a frozen source record from the currently rendering packet.</summary>
     public bool TryGetRenderingRecord(long membershipId, out UIRenderRecord record)
@@ -3084,6 +3091,7 @@ public sealed class UIBatchCollector : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        BindRenderingPublication(null);
         lock (CollectorRegistryGate)
         {
             for (int index = CollectorRegistry.Count - 1; index >= 0; index--)
