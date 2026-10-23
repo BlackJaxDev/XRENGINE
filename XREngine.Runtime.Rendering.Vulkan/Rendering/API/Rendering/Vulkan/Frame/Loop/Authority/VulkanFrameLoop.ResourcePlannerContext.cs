@@ -1014,6 +1014,8 @@ internal sealed partial class VulkanFrameLoop
                 : context.OutputSchedulingRequest.FrameId,
             OutputCompletionReceiptId =
                 context.PipelineInstance?.RenderState.OutputCompletionReceiptId ?? 0UL,
+            UiPublicationReceiptId =
+                context.PipelineInstance?.RenderState.UiPublicationReceiptId ?? 0UL,
             OutputCompletionSourceFrame =
                 context.PipelineInstance?.RenderState.OutputCompletionRequest.FrameId ?? 0UL,
         };

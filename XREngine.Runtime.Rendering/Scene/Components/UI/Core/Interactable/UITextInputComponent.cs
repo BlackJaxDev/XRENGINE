@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Numerics;
 using System.Reflection;
+using System.Globalization;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
@@ -14,9 +15,19 @@ namespace XREngine.Rendering.UI
     /// Handles textual input from the user.
     /// </summary>
     [RequireComponents(typeof(UITextComponent))]
-    public class UITextInputComponent : UIInspectorEditorComponent
+    public partial class UITextInputComponent : UIInspectorEditorComponent
     {
         public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.TextBox;
+        public override bool TryConsumeFocusDirection(Vector2 direction)
+        {
+            if (!CanInteract || !float.IsFinite(direction.X) ||
+                MathF.Abs(direction.X) <= MathF.Abs(direction.Y))
+                return false;
+            if (!IsComposing)
+                MoveCaretByGrapheme(direction.X > 0 ? 1 : -1);
+            return true;
+        }
+        public override string? AccessibilityValue => Text;
         private const int DefaultKeyRepeatDelayMs = 500;
         private const int DefaultKeyRepeatIntervalMs = 50;
 
@@ -26,6 +37,36 @@ namespace XREngine.Rendering.UI
         }
 
         public UITextComponent TextComponent => GetSiblingComponent<UITextComponent>(true)!;
+
+        private IUIValueBinding<string>? _binding;
+        private bool _writingBinding;
+
+        /// <summary>Typed text source. Its callback is active only while this control is active.</summary>
+        public IUIValueBinding<string>? Binding
+        {
+            get => _binding;
+            set
+            {
+                if (ReferenceEquals(_binding, value))
+                    return;
+                if (IsActiveInHierarchy && _binding is not null)
+                    _binding.ValueChanged -= OnBindingChanged;
+                SetField(ref _binding, value);
+                if (IsActiveInHierarchy && _binding is not null)
+                    _binding.ValueChanged += OnBindingChanged;
+                if (_binding is not null)
+                    OnBindingChanged(_binding.Value);
+            }
+        }
+
+        private void OnBindingChanged(string value)
+        {
+            if (_writingBinding || IsComposing || IsFocused && CommitOnSubmit)
+                return;
+            Text = value ?? string.Empty;
+            _editOriginalText = Text;
+            IsInvalid = false;
+        }
 
         private string _text = string.Empty;
         public string Text
@@ -47,6 +88,116 @@ namespace XREngine.Rendering.UI
         }
 
         private bool _singleLineMode;
+        private bool _commitOnSubmit;
+        private string _editOriginalText = string.Empty;
+        private bool _isComposing;
+        private long _focusEpoch;
+        /// <summary>Changes on every focus transition so delayed IME events cannot reach a later edit session.</summary>
+        public long FocusEpoch => _focusEpoch;
+        private string _compositionOriginalText = string.Empty;
+        private int _compositionOriginalAnchor;
+        private int _compositionOriginalCaret;
+        private int _compositionStart;
+        private int _compositionReplacedLength;
+        private int _compositionLength;
+
+        /// <summary>True while a platform text service owns a provisional edit.</summary>
+        public bool IsComposing => _isComposing;
+        public int CompositionStart => _isComposing ? _compositionStart : -1;
+        public int CompositionLength => _isComposing ? _compositionLength : 0;
+
+        public bool BeginComposition()
+        {
+            if (!CanInteract || IsReadOnly || !IsFocused)
+                return false;
+            if (_isComposing)
+                CancelComposition();
+            _compositionOriginalText = Text;
+            _compositionOriginalAnchor = SelectionAnchor;
+            _compositionOriginalCaret = CursorPosition;
+            _compositionStart = SelectionStart;
+            _compositionReplacedLength = SelectionEnd - SelectionStart;
+            _compositionLength = 0;
+            _isComposing = true;
+            return true;
+        }
+
+        /// <summary>Displays preedit text without committing it to a binding or undo history.</summary>
+        public bool UpdateComposition(string preedit, int caretOffset)
+        {
+            if (!_isComposing || !CanInteract || IsReadOnly || preedit is null ||
+                caretOffset < 0 || caretOffset > preedit.Length)
+                return false;
+            if (!IsGraphemeBoundary(preedit, caretOffset))
+            {
+                int snapped = 0;
+                foreach (int boundary in StringInfo.ParseCombiningCharacters(preedit))
+                {
+                    if (boundary > caretOffset)
+                        break;
+                    snapped = boundary;
+                }
+                caretOffset = snapped;
+            }
+            string candidate = _compositionOriginalText.Remove(_compositionStart, _compositionReplacedLength)
+                .Insert(_compositionStart, preedit);
+            if (MaxInputLength is { } maximum && candidate.Length > maximum)
+                return false;
+            Text = candidate;
+            _compositionLength = preedit.Length;
+            CursorPosition = _compositionStart + caretOffset;
+            SelectionAnchor = CursorPosition;
+            return true;
+        }
+
+        /// <summary>Commits one IME edit and records the original text as one undo step.</summary>
+        public bool CommitComposition(string committedText)
+        {
+            if (!_isComposing || committedText is null || !PreValidateInput(committedText))
+                return false;
+            string result = _compositionOriginalText.Remove(_compositionStart, _compositionReplacedLength)
+                .Insert(_compositionStart, committedText);
+            bool valid = PostValidateInput(result);
+            if (MaxInputLength is { } maximum && result.Length > maximum ||
+                !valid && !AllowInvalidDraft)
+                return false;
+            if (result != _compositionOriginalText)
+            {
+                if (_undo.Count == MaximumUndoEntries)
+                    _undo.RemoveAt(0);
+                _undo.Add((_compositionOriginalText, _compositionOriginalAnchor, _compositionOriginalCaret));
+                _redo.Clear();
+            }
+            _isComposing = false;
+            Text = result;
+            CursorPosition = _compositionStart + committedText.Length;
+            SelectionAnchor = CursorPosition;
+            IsInvalid = !valid;
+            if (!CommitOnSubmit && valid)
+                SetValue();
+            return true;
+        }
+
+        public void CancelComposition()
+        {
+            if (!_isComposing)
+                return;
+            _isComposing = false;
+            Text = _compositionOriginalText;
+            SelectionAnchor = _compositionOriginalAnchor;
+            CursorPosition = _compositionOriginalCaret;
+            IsInvalid = !PostValidateInput(Text);
+        }
+
+        /// <summary>Keeps text changes local until Enter or focus loss commits a valid value.</summary>
+        public bool CommitOnSubmit
+        {
+            get => _commitOnSubmit;
+            set => SetField(ref _commitOnSubmit, value);
+        }
+
+        /// <summary>Allows a temporary invalid draft while the user edits a value.</summary>
+        public bool AllowInvalidDraft { get; set; }
         /// <summary>
         /// When true, Enter submits the input (fires <see cref="Submitted"/>) instead of inserting a newline,
         /// and Escape cancels the input (fires <see cref="Cancelled"/>).
@@ -82,12 +233,20 @@ namespace XREngine.Rendering.UI
 
         protected override void OnGotFocus()
         {
+            _focusEpoch++;
+            _editOriginalText = Text;
             if (SceneNode is not null)
                 TextComponent.Text = Text;
             base.OnGotFocus();
+            StartEditOverlay();
         }
         protected override void OnLostFocus()
         {
+            _focusEpoch++;
+            StopEditOverlay();
+            CancelComposition();
+            if (CommitOnSubmit && Text != _editOriginalText && !CommitDraft())
+                RestoreDraft();
             if (SceneNode is not null)
                 TextComponent.Text = FormatText(Text);
             base.OnLostFocus();
@@ -95,6 +254,11 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            if (_binding is not null)
+            {
+                _binding.ValueChanged += OnBindingChanged;
+                OnBindingChanged(_binding.Value);
+            }
             // Restore the authored input after both components are attached. An empty
             // input leaves independently authored text on the sibling unchanged.
             if (!string.IsNullOrEmpty(Text) &&
@@ -115,7 +279,27 @@ namespace XREngine.Rendering.UI
         }
         protected override void OnComponentDeactivated()
         {
+            StopEditOverlay();
+            CancelComposition();
+            if (_binding is not null)
+                _binding.ValueChanged -= OnBindingChanged;
+            _keyRepeatTimer.Cancel();
+            _controlLeft = _controlRight = _shiftLeft = _shiftRight = false;
             base.OnComponentDeactivated();
+        }
+
+        public override void CancelForRecycle()
+        {
+            CancelComposition();
+            _keyRepeatTimer.Cancel();
+            _controlLeft = _controlRight = _shiftLeft = _shiftRight = false;
+            if (CommitOnSubmit)
+                RestoreDraft();
+            Binding = null;
+            _undo.Clear();
+            _redo.Clear();
+            SelectionAnchor = CursorPosition;
+            base.CancelForRecycle();
         }
         public override void RegisterInput(IInputRegistration input)
         {
@@ -179,6 +363,11 @@ namespace XREngine.Rendering.UI
             input.RegisterKeyStateChange(EKey.Right, Right);
             input.RegisterKeyStateChange(EKey.ShiftLeft, ShiftLeft);
             input.RegisterKeyStateChange(EKey.ShiftRight, ShiftRight);
+            input.RegisterKeyStateChange(EKey.ControlLeft, ControlLeft);
+            input.RegisterKeyStateChange(EKey.ControlRight, ControlRight);
+            input.RegisterKeyStateChange(EKey.Z, UndoShortcut);
+            input.RegisterKeyStateChange(EKey.Y, RedoShortcut);
+            input.RegisterKeyStateChange(EKey.A, SelectAllShortcut);
             input.RegisterKeyStateChange(EKey.CapsLock, CapsLock);
             input.RegisterKeyStateChange(EKey.Enter, Enter);
             input.RegisterKeyStateChange(EKey.Escape, Escape);
@@ -186,6 +375,8 @@ namespace XREngine.Rendering.UI
 
         private void OnCharacterTyped(char character)
         {
+            if (AnyControl || IsComposing)
+                return;
             AddChar(true, character.ToString());
         }
 
@@ -193,8 +384,10 @@ namespace XREngine.Rendering.UI
         {
             if (pressed)
             {
+                if (IsComposing)
+                    return;
                 if (SingleLineMode)
-                    Submitted?.Invoke(this);
+                    UserSubmit();
                 else
                     UserAddText(Environment.NewLine);
             }
@@ -202,8 +395,12 @@ namespace XREngine.Rendering.UI
 
         private void Escape(bool pressed)
         {
-            if (pressed && SingleLineMode)
-                Cancelled?.Invoke(this);
+            if (!pressed)
+                return;
+            if (IsComposing)
+                CancelComposition();
+            else if (SingleLineMode)
+                UserCancel();
         }
 
         private void CapsLock(bool pressed)
@@ -219,15 +416,48 @@ namespace XREngine.Rendering.UI
 
         private bool _shiftLeft = false;
         private bool _shiftRight = false;
+        private bool _controlLeft;
+        private bool _controlRight;
         private bool _capsLock = false;
 
         public bool AnyShift => _shiftLeft || _shiftRight;
+        public bool AnyControl => _controlLeft || _controlRight;
         public bool CapsLocked => _capsLock;
         
         private void ShiftRight(bool pressed)
             => _shiftRight = pressed;
         private void ShiftLeft(bool pressed)
             => _shiftLeft = pressed;
+        private void ControlLeft(bool pressed)
+            => _controlLeft = pressed;
+        private void ControlRight(bool pressed)
+            => _controlRight = pressed;
+
+        private void UndoShortcut(bool pressed)
+        {
+            if (pressed && AnyControl)
+            {
+                if (AnyShift)
+                    Redo();
+                else
+                    Undo();
+            }
+        }
+
+        private void RedoShortcut(bool pressed)
+        {
+            if (pressed && AnyControl)
+                Redo();
+        }
+
+        private void SelectAllShortcut(bool pressed)
+        {
+            if (pressed && AnyControl)
+            {
+                SelectionAnchor = 0;
+                CursorPosition = Text.Length;
+            }
+        }
 
         private readonly GameTimer _keyRepeatTimer;
         private string? _lastChar = string.Empty;
@@ -333,7 +563,7 @@ namespace XREngine.Rendering.UI
             {
                 _lastChar = null;
                 _lastMovementInput = EKey.Left;
-                CursorPosition--;
+                MoveCaretByGrapheme(-1, AnyShift);
                 StartCharTimer();
             }
             else
@@ -346,7 +576,7 @@ namespace XREngine.Rendering.UI
             {
                 _lastChar = null;
                 _lastMovementInput = EKey.Right;
-                CursorPosition++;
+                MoveCaretByGrapheme(1, AnyShift);
                 _keyRepeatTimer.StartMultiFire(AddLastChar, _keyRepeatInterval, -1, _keyRepeatDelay, ETickGroup.Normal, (int)ETickOrder.Input);
             }
             else
@@ -375,10 +605,10 @@ namespace XREngine.Rendering.UI
                 switch (_lastMovementInput)
                 {
                     case EKey.Left:
-                        CursorPosition--;
+                        MoveCaretByGrapheme(-1, AnyShift);
                         break;
                     case EKey.Right:
-                        CursorPosition++;
+                        MoveCaretByGrapheme(1, AnyShift);
                         break;
                     case EKey.Backspace:
                         UserRemoveText(1, true);
@@ -394,22 +624,30 @@ namespace XREngine.Rendering.UI
 
         public void UserAddText(string text)
         {
-            if (MaxInputLength.HasValue && Text.Length + text.Length > MaxInputLength)
+            if (!CanInteract || IsReadOnly || IsComposing)
+                return;
+            int start = SelectionStart;
+            int length = SelectionEnd - start;
+            if (MaxInputLength.HasValue && Text.Length - length + text.Length > MaxInputLength)
                 return;
 
             if (!PreValidateInput(text))
                 return;
 
-            string newText = Text.Insert(CursorPosition, text);
-            if (!PostValidateInput(newText))
+            string newText = Text.Remove(start, length).Insert(start, text);
+            bool valid = PostValidateInput(newText);
+            if (!valid && !AllowInvalidDraft)
                 return;
-            
+            SaveUndo();
             //Set the new text
             Text = newText;
+            IsInvalid = !valid;
             ///Move the cursor to the end of the new text
-            CursorPosition += text.Length;
+            CursorPosition = start + text.Length;
+            SelectionAnchor = CursorPosition;
             //Apply the new value to the property
-            SetValue();
+            if (!CommitOnSubmit && valid)
+                SetValue();
         }
 
         /// <summary>
@@ -418,8 +656,13 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public bool UserReplaceText(string value, int selectionStart, int selectionEnd)
         {
+            if (!CanInteract || IsReadOnly)
+                return false;
+            CancelComposition();
             ArgumentNullException.ThrowIfNull(value);
             if (selectionStart < 0 || selectionEnd < selectionStart || selectionEnd > value.Length)
+                return false;
+            if (!IsGraphemeBoundary(value, selectionStart) || !IsGraphemeBoundary(value, selectionEnd))
                 return false;
             if (MaxInputLength is { } maximum && value.Length > maximum)
                 return false;
@@ -440,13 +683,18 @@ namespace XREngine.Rendering.UI
                 int insertionLength = value.Length - prefix - suffix;
                 if (insertionLength > 0 && !PreValidateInput(value.Substring(prefix, insertionLength)))
                     return false;
-                if (!PostValidateInput(value))
+                bool valid = PostValidateInput(value);
+                if (!valid && !AllowInvalidDraft)
                     return false;
 
+                SaveUndo();
                 Text = value;
-                SetValue();
+                IsInvalid = !valid;
+                if (!CommitOnSubmit && valid)
+                    SetValue();
             }
 
+            SelectionAnchor = selectionStart;
             CursorPosition = selectionEnd;
             return true;
         }
@@ -454,58 +702,128 @@ namespace XREngine.Rendering.UI
         /// <summary>Raises the same single-line submit action as the engine Enter key.</summary>
         public void UserSubmit()
         {
-            if (SingleLineMode)
+            if (IsComposing)
+                return;
+            if (SingleLineMode && (!CommitOnSubmit || CommitDraft()))
                 Submitted?.Invoke(this);
         }
 
         /// <summary>Raises the same single-line cancel action as the engine Escape key.</summary>
         public void UserCancel()
         {
+            if (IsComposing)
+            {
+                CancelComposition();
+                return;
+            }
             if (SingleLineMode)
+            {
+                if (CommitOnSubmit)
+                    RestoreDraft();
                 Cancelled?.Invoke(this);
+            }
+        }
+
+        private bool CommitDraft()
+        {
+            if (!PostValidateInput(Text))
+            {
+                IsInvalid = true;
+                return false;
+            }
+            IsInvalid = false;
+            SetValue();
+            _editOriginalText = Text;
+            return true;
+        }
+
+        private void RestoreDraft()
+        {
+            Text = _binding?.Value ?? _editOriginalText;
+            CursorPosition = Text.Length;
+            SelectionAnchor = CursorPosition;
+            IsInvalid = false;
+            _undo.Clear();
+            _redo.Clear();
         }
 
         public void UserRemoveText(int count, bool backward)
         {
+            if (!CanInteract || IsReadOnly || IsComposing || count <= 0)
+                return;
+            if (SelectionStart != SelectionEnd)
+            {
+                int start = SelectionStart;
+                string selectedText = Text.Remove(start, SelectionEnd - start);
+                bool valid = PostValidateInput(selectedText);
+                if (!valid && !AllowInvalidDraft)
+                    return;
+                SaveUndo();
+                Text = selectedText;
+                IsInvalid = !valid;
+                CursorPosition = start;
+                SelectionAnchor = start;
+                if (!CommitOnSubmit && valid)
+                    SetValue();
+                return;
+            }
             string newText;
             if (backward)
             {
-                if (CursorPosition - count < 0)
-                    count = CursorPosition;
+                int boundary = CursorPosition;
+                for (int i = 0; i < count && boundary > 0; i++)
+                    boundary = PreviousGraphemeBoundary(boundary);
+                count = CursorPosition - boundary;
                 if (count <= 0)
                     return;
 
                 newText = Text.Remove(CursorPosition - count, count);
 
-                if (!PostValidateInput(newText))
+                bool valid = PostValidateInput(newText);
+                if (!valid && !AllowInvalidDraft)
                     return;
 
-                //Move the cursor back
+                SaveUndo();
                 CursorPosition -= count;
             }
             else
             {
-                if (CursorPosition + count > Text.Length)
-                    count = Text.Length - CursorPosition;
+                int boundary = CursorPosition;
+                for (int i = 0; i < count && boundary < Text.Length; i++)
+                    boundary = NextGraphemeBoundary(boundary);
+                count = boundary - CursorPosition;
                 if (count <= 0)
                     return;
 
                 newText = Text.Remove(CursorPosition, count);
 
-                if (!PostValidateInput(newText))
+                bool valid = PostValidateInput(newText);
+                if (!valid && !AllowInvalidDraft)
                     return;
 
-                //Cursor stays in the same position
+                SaveUndo();
             }
 
             //Set the new text
             Text = newText;
+            IsInvalid = !PostValidateInput(newText);
+            SelectionAnchor = CursorPosition;
             //Apply the new value to the property
-            SetValue();
+            if (!CommitOnSubmit && !IsInvalid)
+                SetValue();
         }
 
         private void SetValue()
         {
+            if (_binding is not null)
+            {
+                _writingBinding = true;
+                try { _binding.SetValue(Text); }
+                finally { _writingBinding = false; }
+                if (_binding.Value != Text)
+                    Text = _binding.Value;
+                return;
+            }
             var prop = Property;
             var targets = Targets;
             if (prop is null || targets is null)
@@ -527,7 +845,109 @@ namespace XREngine.Rendering.UI
         public int CursorPosition
         {
             get => _cursorPosition;
-            set => SetField(ref _cursorPosition, value.Clamp(0, Text.Length));
+            set => SetField(ref _cursorPosition, SnapGraphemeBoundary(value.Clamp(0, Text.Length)));
+        }
+
+        private int _selectionAnchor;
+        /// <summary>Fixed end of the current text selection, as a UTF-16 boundary.</summary>
+        public int SelectionAnchor
+        {
+            get => _selectionAnchor;
+            set => SetField(ref _selectionAnchor, SnapGraphemeBoundary(value.Clamp(0, Text.Length)));
+        }
+
+        public int SelectionStart => Math.Min(SelectionAnchor, CursorPosition);
+        public int SelectionEnd => Math.Max(SelectionAnchor, CursorPosition);
+
+        /// <summary>Moves the caret by one displayed text element.</summary>
+        public void MoveCaretByGrapheme(int direction, bool extendSelection = false)
+        {
+            if (IsComposing)
+                return;
+            if (direction < 0)
+                CursorPosition = PreviousGraphemeBoundary(CursorPosition);
+            else if (direction > 0)
+                CursorPosition = NextGraphemeBoundary(CursorPosition);
+            if (!extendSelection)
+                SelectionAnchor = CursorPosition;
+        }
+
+        private string? _graphemeText;
+        private int[] _graphemeStarts = [];
+
+        private int[] GraphemeBoundaries()
+        {
+            if (!ReferenceEquals(_graphemeText, Text))
+            {
+                _graphemeText = Text;
+                _graphemeStarts = StringInfo.ParseCombiningCharacters(Text);
+            }
+            return _graphemeStarts;
+        }
+
+        private int PreviousGraphemeBoundary(int position)
+        {
+            int previous = 0;
+            foreach (int boundary in GraphemeBoundaries())
+            {
+                if (boundary >= position)
+                    break;
+                previous = boundary;
+            }
+            return previous;
+        }
+
+        private int NextGraphemeBoundary(int position)
+        {
+            foreach (int boundary in GraphemeBoundaries())
+                if (boundary > position)
+                    return boundary;
+            return Text.Length;
+        }
+
+        private int SnapGraphemeBoundary(int position)
+            => position == Text.Length ? position : PreviousGraphemeBoundary(position + 1);
+
+        private static bool IsGraphemeBoundary(string value, int position)
+        {
+            if (position == value.Length)
+                return true;
+            foreach (int boundary in StringInfo.ParseCombiningCharacters(value))
+                if (boundary == position)
+                    return true;
+            return false;
+        }
+
+        private readonly List<(string Text, int Anchor, int Caret)> _undo = [];
+        private readonly List<(string Text, int Anchor, int Caret)> _redo = [];
+        private const int MaximumUndoEntries = 100;
+
+        private void SaveUndo()
+        {
+            if (_undo.Count == MaximumUndoEntries)
+                _undo.RemoveAt(0);
+            _undo.Add((Text, SelectionAnchor, CursorPosition));
+            _redo.Clear();
+        }
+
+        public bool Undo() => CanInteract && !IsReadOnly && !IsComposing && RestoreHistory(_undo, _redo);
+        public bool Redo() => CanInteract && !IsReadOnly && !IsComposing && RestoreHistory(_redo, _undo);
+
+        private bool RestoreHistory(List<(string Text, int Anchor, int Caret)> source,
+            List<(string Text, int Anchor, int Caret)> destination)
+        {
+            if (source.Count == 0)
+                return false;
+            destination.Add((Text, SelectionAnchor, CursorPosition));
+            var entry = source[^1];
+            source.RemoveAt(source.Count - 1);
+            Text = entry.Text;
+            IsInvalid = !PostValidateInput(Text);
+            SelectionAnchor = entry.Anchor;
+            CursorPosition = entry.Caret;
+            if (!CommitOnSubmit && !IsInvalid)
+                SetValue();
+            return true;
         }
 
         private int? _maxInputLength = null;
@@ -539,15 +959,28 @@ namespace XREngine.Rendering.UI
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            // The base implementation raises PropertyChanged, so advance the IME token
+            // before the input host observes this transition.
+            if (propName is nameof(IsReadOnly) or nameof(IsEnabled))
+            {
+                _focusEpoch++;
+                if (IsReadOnly || !IsEnabled)
+                    CancelComposition();
+            }
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
                 case nameof(Text):
                     //Re-validate cursor position
                     CursorPosition = _cursorPosition;
+                    SelectionAnchor = _selectionAnchor;
                     // YAML assigns input properties before the owning node is attached.
                     if (SceneNode is not null)
                         TextComponent.Text = IsFocused ? Text : FormatText(Text);
+                    break;
+                case nameof(CursorPosition):
+                case nameof(SelectionAnchor):
+                    InvalidateEditOverlay();
                     break;
             }
         }
@@ -557,49 +990,71 @@ namespace XREngine.Rendering.UI
 
         public void SetCursorPositionWithLocalPoint(Vector3 localPoint)
         {
-            var text = TextComponent.Text;
-            if (string.IsNullOrEmpty(text))
-            {
-                CursorPosition = 0;
+            UITextLayoutInput? input = TextComponent.CaptureLayoutInput();
+            if (input is null || input.Text != Text)
                 return;
-            }
-            var font = TextComponent.Font;
-            if (font is null)
+            UITextLayoutResult layout = UITextLayoutKernel.Measure(input, BoundableTransform.ActualSize);
+            TrySetCursorPositionWithLayout(localPoint, layout);
+        }
+
+        /// <summary>Uses placed caret stops only when geometry matches the current text revision.</summary>
+        public bool TrySetCursorPositionWithLayout(Vector3 localPoint, UITextLayoutResult layout)
+        {
+            UITextLayoutInput? input = TextComponent.CaptureLayoutInput();
+            if (input is null || input.Text != Text || input.TextRevision != layout.TextRevision ||
+                input.FontRevision != layout.FontRevision)
+                return false;
+            ReadOnlySpan<UITextCaretStop> stops = layout.Carets.Span;
+            if (stops.IsEmpty)
+                return false;
+
+            float nearest = float.PositiveInfinity;
+            int nearestCaret = CursorPosition;
+            for (int i = 0; i < stops.Length; i++)
             {
-                CursorPosition = 0;
-                return;
+                UITextCaretStop stop = stops[i];
+                if (!IsCurrentGraphemeBoundary(stop.Utf16Offset))
+                    continue;
+                float bottom = stop.Position.Y - stop.LineHeight;
+                float top = stop.Position.Y;
+                float vertical = localPoint.Y < bottom ? bottom - localPoint.Y :
+                    localPoint.Y > top ? localPoint.Y - top : 0;
+                float horizontal = localPoint.X - stop.Position.X;
+                float distance = horizontal * horizontal + vertical * vertical;
+                if (distance < nearest)
+                {
+                    nearest = distance;
+                    nearestCaret = stop.Utf16Offset;
+                }
             }
+            if (!float.IsFinite(nearest))
+                return false;
+            CursorPosition = nearestCaret;
+            SelectionAnchor = CursorPosition;
+            return true;
+        }
 
-            //TODO
+        private bool IsCurrentGraphemeBoundary(int position)
+            => position == Text.Length || Array.BinarySearch(GraphemeBoundaries(), position) >= 0;
 
-            //var glyphs = TextComponent.Glyphs;
-            //if (glyphs is null)
-            //{
-            //    CursorPosition = 0;
-            //    return;
-            //}
-            //var cursorX = localPoint.X;
-            //var cursorY = localPoint.Y;
-            //var cursorIndex = 0;
-            //var cursorDistance = float.MaxValue;
-            //for (int i = 0; i < glyphs.Count; i++)
-            //{
-            //    var glyph = glyphs[i];
-            //    var glyphX = glyph.transform.X;
-            //    var glyphY = glyph.transform.Y;
-            //    var glyphWidth = glyph.transform.Z;
-            //    var glyphHeight = glyph.transform.W;
-            //    if (cursorY >= glyphY && cursorY <= glyphY + glyphHeight)
-            //    {
-            //        var distance = Math.Abs(cursorX - glyphX);
-            //        if (distance < cursorDistance)
-            //        {
-            //            cursorDistance = distance;
-            //            cursorIndex = i;
-            //        }
-            //    }
-            //}
-            //CursorPosition = cursorIndex;
+        /// <summary>Gets the current caret bounds from a matching placed text result.</summary>
+        public bool TryGetCaretLocalBounds(UITextLayoutResult layout, out Vector4 bounds)
+        {
+            bounds = default;
+            UITextLayoutInput? input = TextComponent.CaptureLayoutInput();
+            if (input is null || input.Text != Text || input.TextRevision != layout.TextRevision ||
+                input.FontRevision != layout.FontRevision)
+                return false;
+            ReadOnlySpan<UITextCaretStop> stops = layout.Carets.Span;
+            for (int i = 0; i < stops.Length; i++)
+            {
+                UITextCaretStop stop = stops[i];
+                if (stop.Utf16Offset != CursorPosition)
+                    continue;
+                bounds = new(stop.Position.X, stop.Position.Y - stop.LineHeight, 1f, stop.LineHeight);
+                return true;
+            }
+            return false;
         }
     }
 }

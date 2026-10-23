@@ -67,6 +67,8 @@ internal sealed class VulkanAcceptedFramePlan
     private bool _frameViewHistoryClaimed;
     private int _outputCompletionCount;
     private bool _outputCompletionsClaimed;
+    private readonly ulong[] _uiPublicationReceiptIds = new ulong[UiCapacity];
+    private int _uiPublicationReceiptCount;
     private int _recordedAdvancedPickingSourceCount;
 
     internal VulkanCanonicalPublicationPinSet CanonicalPublicationPins { get; } =
@@ -110,6 +112,87 @@ internal sealed class VulkanAcceptedFramePlan
     internal bool HasClaimedFrameViewHistory => _frameViewHistoryClaimed;
     internal bool HasClaimedOutputCompletions => _outputCompletionsClaimed;
     internal int OutputCompletionCount => _outputCompletionCount;
+    internal int UiPublicationReceiptCount => _uiPublicationReceiptCount;
+    internal ReadOnlySpan<ulong> UiPublicationReceiptIds
+        => _uiPublicationReceiptIds.AsSpan(0, _uiPublicationReceiptCount);
+    internal bool IsUiPublicationReceiptBound(ulong id)
+    {
+        for (int index = 0; index < _uiPublicationReceiptCount; index++)
+            if (_uiPublicationReceiptIds[index] == id)
+                return true;
+        return false;
+    }
+
+    private void BindUiPublicationReceipts(FramePlan logicalPlan, VulkanRenderer owner)
+    {
+        int count = VulkanUiPublicationReceiptLedger.CopySealedForFrame(
+            owner, RuntimeEngine.Rendering.State.RenderFrameId,
+            _uiPublicationReceiptIds);
+        if (count < 0)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.Ui, _uiPublicationReceiptIds.Length,
+                _uiPublicationReceiptIds.Length + 1);
+        _uiPublicationReceiptCount = count;
+        FrameOperationSequence nativeStatic =
+            logicalPlan.GetNativeStaticOperationsForRecording();
+        FrameOperationSequence nativeDynamic =
+            logicalPlan.GetNativeDynamicOverlayOperationsForRecording();
+        for (int receiptIndex = 0; receiptIndex < count; receiptIndex++)
+        {
+            ulong id = _uiPublicationReceiptIds[receiptIndex];
+            if (!VulkanUiPublicationReceiptLedger.TryGetSealed(id,
+                    out int expectedDraws, out _, out _))
+                throw new VulkanPlanPreconditionException(
+                    $"UI publication receipt {id} lost its sealed authoring state.");
+            int authoredDraws = 0;
+            for (int index = 0; index < StaticOperationCount; index++)
+                if (_staticOperations[index].ContextReference.UiPublicationReceiptId == id &&
+                    _staticOperations[index] is MeshDrawOp)
+                    authoredDraws++;
+            for (int index = 0; index < PreparedMeshIngress.Count; index++)
+            {
+                ref readonly VulkanPreparedMeshIngressEntry ingress =
+                    ref PreparedMeshIngress.GetEntry(index);
+                if (ingress.Context.UiPublicationReceiptId != id)
+                    continue;
+                if (ingress.IsDynamicUi)
+                    throw new VulkanPlanPreconditionException(
+                        $"UI publication receipt {id} escaped into a dynamic overlay.");
+                authoredDraws++;
+            }
+            for (int index = 0; index < nativeDynamic.Length; index++)
+                if (nativeDynamic.GetContext(index).UiPublicationReceiptId == id)
+                    throw new VulkanPlanPreconditionException(
+                        $"UI publication receipt {id} escaped into a dynamic overlay.");
+            int executableDraws = 0;
+            for (int index = 0; index < nativeStatic.Length; index++)
+                if (nativeStatic.GetContext(index).UiPublicationReceiptId == id &&
+                    nativeStatic.TryGetMeshDraw(index, out _))
+                    executableDraws++;
+            if (authoredDraws != expectedDraws ||
+                executableDraws != expectedDraws ||
+                !VulkanUiPublicationReceiptLedger.TryAttestPrepared(id, executableDraws))
+            {
+                VulkanUiPublicationReceiptLedger.Fail(id);
+                throw new VulkanPlanPreconditionException(
+                    $"UI publication receipt {id} lost draw intents: expected={expectedDraws}, authored={authoredDraws}, executable={executableDraws}.");
+            }
+        }
+        for (int index = 0; index < nativeStatic.Length; index++)
+        {
+            ulong id = nativeStatic.GetContext(index).UiPublicationReceiptId;
+            if (id != 0UL && !IsUiPublicationReceiptBound(id))
+                throw new VulkanPlanPreconditionException(
+                    $"A UI draw escaped its accepted publication receipt {id}.");
+        }
+        for (int index = 0; index < PreparedMeshIngress.Count; index++)
+        {
+            ulong id = PreparedMeshIngress.GetEntry(index).Context.UiPublicationReceiptId;
+            if (id != 0UL && !IsUiPublicationReceiptBound(id))
+                throw new VulkanPlanPreconditionException(
+                    $"A prepared UI draw escaped its accepted publication receipt {id}.");
+        }
+    }
     internal ReadOnlySpan<RenderOutputCompletionBackendReservation> OutputCompletions
         => _outputCompletions.AsSpan(0, _outputCompletionCount);
 
@@ -781,6 +864,8 @@ internal sealed class VulkanAcceptedFramePlan
         for (int index = 0; index < _outputCompletionCount; index++)
             _outputCompletions[index] = default;
         _outputCompletionCount = 0;
+        _uiPublicationReceiptIds.AsSpan(0, _uiPublicationReceiptCount).Clear();
+        _uiPublicationReceiptCount = 0;
     }
 
     /// <summary>Fails every marker still owned by this unsubmitted plan once.</summary>
@@ -800,7 +885,17 @@ internal sealed class VulkanAcceptedFramePlan
         _outputCompletionOutputIndices.AsSpan(0, _outputCompletionCount).Fill(-1);
         _outputCompletionTerminalAttested.AsSpan(0, _outputCompletionCount).Clear();
         _outputCompletionCount = 0;
+        ReleaseUnrecordedUiPublicationClaims();
         _outputCompletionsClaimed = false;
+    }
+
+    private void ReleaseUnrecordedUiPublicationClaims()
+    {
+        for (int index = 0; index < _uiPublicationReceiptCount; index++)
+            VulkanUiPublicationReceiptLedger.ReleaseUnrecordedPlanClaim(
+                _uiPublicationReceiptIds[index]);
+        _uiPublicationReceiptIds.AsSpan(0, _uiPublicationReceiptCount).Clear();
+        _uiPublicationReceiptCount = 0;
     }
 
     internal void Begin(
@@ -1522,7 +1617,8 @@ internal sealed class VulkanAcceptedFramePlan
         in RenderOutputRequest outputContract,
         FramePlan logicalPlan,
         in ResourcePlannerRuntimeState plannerState,
-        in VulkanFramePlanningSnapshot frozenPlanningSnapshot)
+        in VulkanFramePlanningSnapshot frozenPlanningSnapshot,
+        VulkanRenderer owner)
     {
         ArgumentNullException.ThrowIfNull(logicalPlan);
         if (!logicalPlan.IsSealed)
@@ -1542,6 +1638,7 @@ internal sealed class VulkanAcceptedFramePlan
         IsSealed = true;
         BindFrameViewHistory(logicalPlan);
         BindOutputCompletions(logicalPlan);
+        BindUiPublicationReceipts(logicalPlan, owner);
     }
 
     /// <summary>
@@ -1625,6 +1722,7 @@ internal sealed class VulkanAcceptedFramePlan
         _outputCompletionOutputIndices.AsSpan(0, _outputCompletionCount).Fill(-1);
         _outputCompletionTerminalAttested.AsSpan(0, _outputCompletionCount).Clear();
         _outputCompletionCount = 0;
+        ReleaseUnrecordedUiPublicationClaims();
         _outputCompletionsClaimed = false;
         ResetAuthoredOperations();
         CanonicalPublicationPins.ReleaseAll();

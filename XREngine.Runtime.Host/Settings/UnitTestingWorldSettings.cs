@@ -32,6 +32,7 @@ public partial class UnitTestingWorldSettings
     public bool MeshletDebugDisplay = false;
 
     public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI;
+    public int VirtualCollectionFixtureItemCount { get; set; } = 0;
     public CameraUIDrawMode CameraUIDrawSpaceOnInit { get; set; } = CameraUIDrawMode.Screen;
     public bool TransformTool = false;
     public bool VideoStreaming = false;

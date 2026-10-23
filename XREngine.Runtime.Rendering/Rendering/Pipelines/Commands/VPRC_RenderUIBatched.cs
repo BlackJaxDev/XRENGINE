@@ -45,7 +45,16 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
         // Batched UI elements inject lightweight marker commands during collect-visible.
         // Rendering the CPU pass now executes inline batch groups and normal CPU fallback
         // commands in the same ordered stream.
-        ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false);
+        UIBatchCollector? collector = (ActivePipelineInstance.Pipeline as UserInterfaceRenderPipeline)?.BatchCollector;
+        collector?.BeginRasterMapping(ActivePipelineInstance.RenderState.CurrentRenderRegion);
+        try
+        {
+            ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false);
+        }
+        finally
+        {
+            collector?.EndRasterMapping();
+        }
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

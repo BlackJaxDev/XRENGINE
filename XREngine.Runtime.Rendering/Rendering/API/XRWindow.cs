@@ -13,6 +13,7 @@ using XREngine.Input.Devices;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.UI;
 using XREngine.Scene;
 
 namespace XREngine.Rendering
@@ -21,7 +22,7 @@ namespace XREngine.Rendering
     /// Connects an owned desktop window backend to an API-specific engine renderer.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
+    public sealed partial class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
     {
         private long _completedRenderWindowIntervalSequence;
         public XRWindowCompletedRenderInterval LastCompletedRenderWindowInterval { get; private set; }
@@ -77,6 +78,7 @@ namespace XREngine.Rendering
                 if (owner._renderer is not null)
                     owner.RenderCallback(deltaSeconds);
             }
+            public void OpenGlRenderDispatched() => owner.OnOpenGlRenderDispatched();
         }
 
         #endregion
@@ -1496,6 +1498,7 @@ namespace XREngine.Rendering
 
         private bool DestroyRenderer(AbstractRenderer renderer, string reason, bool waitForGpu)
         {
+            long retiringBackendGeneration = renderer.BackendGeneration;
             Debug.Rendering(
                 "[XRWindow] Destroying renderer for hash={0}. RendererType={1} WaitForGpu={2} Reason={3}",
                 GetHashCode(),
@@ -1578,10 +1581,15 @@ namespace XREngine.Rendering
             }
 
             if (waitForGpu)
+            {
                 TryRendererCleanupStep(renderer, reason,
                     "RetirePhysicsChainOutputPages",
                     () => XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.Instance
                         .NotifyOutputProducerKnownIdle(renderer));
+                TryRendererCleanupStep(renderer, reason,
+                    "RetireUIBatchCohorts",
+                    () => UIBatchCollector.NotifyRendererKnownIdle(renderer, retiringBackendGeneration));
+            }
 
             bool wrappersDestroyed = TryRendererCleanupStep(
                 renderer,
@@ -3059,6 +3067,7 @@ namespace XREngine.Rendering
                     bool succeeded = false;
                     try
                     {
+                        CaptureWindowUiFrame(renderFrameId);
                         frameRenderer.RenderWindow(delta);
                         succeeded = true;
                     }

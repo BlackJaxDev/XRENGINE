@@ -11,9 +11,6 @@ namespace XREngine.Editor.UI;
 
 public static class NativeUIElements
 {
-    private const string OutlineColorUniformName = "OutlineColor";
-    private const string OutlineWidthUniformName = "OutlineWidth";
-    private const string FillColorUniformName = "FillColor";
 
     public static (SceneNode Node, UIButtonComponent Button, UIMaterialComponent Background, UITextComponent Label) CreateButton(
         SceneNode parent,
@@ -27,9 +24,7 @@ public static class NativeUIElements
         var buttonNode = parent.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
         EditorUI.Styles.UpdateButton(button);
 
-        var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
-        mat.EnableTransparency();
-        background.Material = mat;
+        background.SetBatchSolidColor(ColorF4.Transparent);
 
         var buttonTransform = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         if (width is not null)
@@ -63,8 +58,7 @@ public static class NativeUIElements
         where TInput : UITextInputComponent
     {
         var matComp = parent.AddComponent<UIMaterialComponent>()!;
-        var mat = CreateOutlineMaterial()!;
-        matComp.Material = mat;
+        matComp.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Transparent, 2.0f);
 
         parent.NewChild<UITextComponent, TInput, UIPropertyTextDriverComponent>(out var textComp, out var textInput, out var textDriver);
 
@@ -74,18 +68,21 @@ public static class NativeUIElements
         void GotFocus(UIInteractableComponent _)
         {
             matComp.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            mat.SetVector4(OutlineColorUniformName, focusedColor);
+            matComp.BatchBorderColor = focusedColor;
         }
         void LostFocus(UIInteractableComponent _)
         {
             matComp.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            mat.SetVector4(OutlineColorUniformName, unfocusedColor);
+            matComp.BatchBorderColor = unfocusedColor;
         }
 
         textInput.MouseDirectOverlapEnter += GotFocus;
         textInput.MouseDirectOverlapLeave += LostFocus;
-        textInput.Property = property;
-        textInput.Targets = targets;
+        if (property is not null && targets is not null)
+        {
+            textInput.Binding = new EditorTextPropertyBinding(property, targets);
+            textInput.IsReadOnly = !property.CanWrite;
+        }
 
         textComp.FontSize = fontSize ?? EditorUI.Styles.PropertyInputFontSize;
         textComp.Color = EditorUI.Styles.PropertyInputTextColor;
@@ -95,8 +92,7 @@ public static class NativeUIElements
         textComp.ClipToBounds = true;
         textComp.WrapMode = FontGlyphSet.EWrapMode.None;
 
-        textDriver.Property = property;
-        textDriver.Sources = targets;
+        textDriver.IsActive = false;
 
         return (textInput, textComp, textDriver, matComp);
     }
@@ -109,10 +105,7 @@ public static class NativeUIElements
         float glyphFontSize = 16.0f)
     {
         var materialComponent = parent.AddComponent<UIMaterialComponent>()!;
-        var material = CreateOutlineMaterial()!;
-        material.SetVector4(FillColorUniformName, ColorF4.Black);
-        material.SetVector4(OutlineColorUniformName, ColorF4.Gray);
-        materialComponent.Material = material;
+        materialComponent.SetBatchBorderStyle(ColorF4.Black, ColorF4.Gray, 2.0f);
 
         var tfm = materialComponent.BoundableTransform;
         tfm.MinAnchor = new Vector2(0.0f, 0.0f);
@@ -121,8 +114,11 @@ public static class NativeUIElements
         tfm.Height = size;
 
         parent.NewChild(out UIToggleComponent toggle);
-        toggle.Property = property;
-        toggle.Targets = targets;
+        if (property is not null && targets is not null)
+        {
+            toggle.Binding = new EditorTogglePropertyBinding(property, targets);
+            toggle.IsReadOnly = !property.CanWrite;
+        }
 
         parent.NewChild(out UITextComponent glyph, "ToggleLabel");
         glyph.Text = string.Empty;
@@ -145,14 +141,14 @@ public static class NativeUIElements
         void GotFocus(UIInteractableComponent _)
         {
             materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            material.SetVector4(OutlineColorUniformName, ColorF4.White);
+            materialComponent.BatchBorderColor = ColorF4.White;
             glyph.Color = ColorF4.White;
         }
 
         void LostFocus(UIInteractableComponent _)
         {
             materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            material.SetVector4(OutlineColorUniformName, ColorF4.Gray);
+            materialComponent.BatchBorderColor = ColorF4.Gray;
             glyph.Color = ColorF4.Gray;
         }
 
@@ -164,38 +160,37 @@ public static class NativeUIElements
         return (toggle, materialComponent, glyph);
     }
 
-    private static XRMaterial? CreateOutlineMaterial()
+    /// <summary>Rebinds pooled primitive editors without retaining prior property targets.</summary>
+    public static void RebindPropertyEditor(SceneNode root, PropertyInfo? property, object?[]? targets)
     {
-        string fragCode = @"
-            #version 460
-
-            layout (location = 4) in vec2 FragUV0;
-            out vec4 FragColor;
-
-            uniform float OutlineWidth;
-            uniform vec4 OutlineColor;
-            uniform vec4 FillColor;
-            uniform float UIWidth;
-            uniform float UIHeight;
-
-            void main()
+        for (int index = 0; index < root.Components.Count; index++)
+        {
+            switch (root.Components[index])
             {
-                float pixelOutlineWidthX = OutlineWidth / UIWidth;
-                float pixelOutlineWidthY = OutlineWidth / UIHeight;
-                float isOutline = max(
-                    step(FragUV0.x, pixelOutlineWidthX) + step(1.0 - pixelOutlineWidthX, FragUV0.x),
-                    step(FragUV0.y, pixelOutlineWidthY) + step(1.0 - pixelOutlineWidthY, FragUV0.y));
-                FragColor = mix(FillColor, OutlineColor, isOutline);
-            }";
-        XRShader frag = new(EShaderType.Fragment, fragCode);
-        ShaderVar[] parameters =
-        [
-            new ShaderFloat(2.0f, OutlineWidthUniformName),
-            new ShaderVector4(ColorF4.Transparent, OutlineColorUniformName),
-            new ShaderVector4(ColorF4.Transparent, FillColorUniformName),
-        ];
-        var mat = new XRMaterial(parameters, frag);
-        mat.EnableTransparency();
-        return mat;
+                case UIToggleComponent toggle:
+                    toggle.Binding = property is not null && targets is not null
+                        ? new EditorTogglePropertyBinding(property, targets) : null;
+                    toggle.Property = null;
+                    toggle.Targets = null;
+                    toggle.IsReadOnly = property is null || !property.CanWrite;
+                    break;
+                case UITextInputComponent text:
+                    text.Binding = property is not null && targets is not null
+                        ? new EditorTextPropertyBinding(property, targets) : null;
+                    text.Property = null;
+                    text.Targets = null;
+                    text.IsReadOnly = property is null || !property.CanWrite;
+                    break;
+                case UIPropertyTextDriverComponent driver:
+                    driver.Property = null;
+                    driver.Sources = null;
+                    driver.IsActive = false;
+                    break;
+            }
+        }
+        for (int index = 0; index < root.Transform.Children.Count; index++)
+            if (root.Transform.Children[index].SceneNode is { } child)
+                RebindPropertyEditor(child, property, targets);
     }
+
 }

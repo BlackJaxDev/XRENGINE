@@ -1,6 +1,5 @@
 using XREngine.Imaging;
 using MemoryPack;
-using System.Buffers;
 using System.Numerics;
 using System.Collections.Concurrent;
 using System.Text;
@@ -25,13 +24,11 @@ namespace XREngine.Rendering
     [XRTypeRedirect("XREngine.Rendering.FontGlyphSet")]
     public partial class FontGlyphSet : XRAsset
     {
-        private static readonly string[] AsciiGlyphKeys = CreateAsciiGlyphKeys();
-
         [MemoryPackConstructor]
         public FontGlyphSet(List<string> characters, Dictionary<string, Glyph>? glyphs, XRTexture2D? atlas)
         {
             _characters = characters;
-            _glyphs = glyphs;
+            _glyphs = CloneGlyphMap(glyphs);
             Atlas = atlas;
         }
 
@@ -60,8 +57,33 @@ namespace XREngine.Rendering
         private Dictionary<string, Glyph>? _glyphs;
         public Dictionary<string, Glyph>? Glyphs
         {
-            get => _glyphs;
-            set => SetField(ref _glyphs, value);
+            // A caller must assign a changed map back through this property. Exposing
+            // the owned map would allow glyph/collection edits with no metric revision.
+            get => CloneGlyphMap(_glyphs);
+            set
+            {
+                SetField(ref _glyphs, CloneGlyphMap(value));
+                InvalidateLayoutMetrics();
+            }
+        }
+
+        internal int LayoutGlyphCount => _glyphs?.Count ?? 0;
+
+        private static Dictionary<string, Glyph>? CloneGlyphMap(Dictionary<string, Glyph>? source)
+        {
+            if (source is null)
+                return null;
+            Dictionary<string, Glyph> copy = new(source.Count, source.Comparer);
+            foreach ((string key, Glyph glyph) in source)
+                copy.Add(key, glyph is null ? null! : new Glyph
+                {
+                    Position = glyph.Position,
+                    AtlasSize = glyph.AtlasSize,
+                    Size = glyph.Size,
+                    Bearing = glyph.Bearing,
+                    AdvanceX = glyph.AdvanceX
+                });
+            return copy;
         }
 
         private XRTexture2D? _atlas;
@@ -75,6 +97,7 @@ namespace XREngine.Rendering
                 if (value is not null)
                     value.AllowAutomaticImportedTextureStreaming = false;
                 SetField(ref _atlas, value);
+                InvalidateLayoutMetrics();
             }
         }
 
@@ -82,28 +105,50 @@ namespace XREngine.Rendering
         public EFontAtlasType AtlasType
         {
             get => _atlasType;
-            set => SetField(ref _atlasType, value);
+            set
+            {
+                if (_atlasType == value)
+                    return;
+                SetField(ref _atlasType, value);
+                LayoutMetricsChanged?.Invoke(this);
+            }
         }
 
         private float _distanceRange;
         public float DistanceRange
         {
             get => _distanceRange;
-            set => SetField(ref _distanceRange, value);
+            set
+            {
+                if (_distanceRange == value)
+                    return;
+                SetField(ref _distanceRange, value);
+                LayoutMetricsChanged?.Invoke(this);
+            }
         }
 
         private float _distanceRangeMiddle = DefaultMsdfDistanceRangeMiddle;
         public float DistanceRangeMiddle
         {
             get => _distanceRangeMiddle;
-            set => SetField(ref _distanceRangeMiddle, value);
+            set
+            {
+                if (_distanceRangeMiddle == value)
+                    return;
+                SetField(ref _distanceRangeMiddle, value);
+                LayoutMetricsChanged?.Invoke(this);
+            }
         }
 
         private float _layoutEmSize = DefaultBitmapFontDrawSize;
         public float LayoutEmSize
         {
             get => _layoutEmSize;
-            set => SetField(ref _layoutEmSize, value);
+            set
+            {
+                SetField(ref _layoutEmSize, value);
+                InvalidateLayoutMetrics();
+            }
         }
 
         public override void Reload(string path)
@@ -169,8 +214,8 @@ namespace XREngine.Rendering
                 if (!string.IsNullOrWhiteSpace(distanceFieldAtlasPath) && !string.IsNullOrWhiteSpace(distanceFieldMetadataPath) &&
                     TryGenerateDistanceFieldAtlas(filePath, distanceFieldAtlasPath, distanceFieldMetadataPath, options, characterSet))
                 {
-                    Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"Font import success: source='{filePath}', atlasType={AtlasType}, glyphs={Glyphs?.Count ?? 0}, atlas='{Atlas?.OriginalPath ?? Atlas?.FilePath ?? distanceFieldAtlasPath}', range={DistanceRange}, middle={DistanceRangeMiddle}, layoutEm={LayoutEmSize}");
-                Debug.RenderingWarning($"Font '{name}' loaded with {AtlasType} atlas ({Glyphs?.Count ?? 0} glyphs, range={DistanceRange}, middle={DistanceRangeMiddle}).");
+                    Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"Font import success: source='{filePath}', atlasType={AtlasType}, glyphs={LayoutGlyphCount}, atlas='{Atlas?.OriginalPath ?? Atlas?.FilePath ?? distanceFieldAtlasPath}', range={DistanceRange}, middle={DistanceRangeMiddle}, layoutEm={LayoutEmSize}");
+                Debug.RenderingWarning($"Font '{name}' loaded with {AtlasType} atlas ({LayoutGlyphCount} glyphs, range={DistanceRange}, middle={DistanceRangeMiddle}).");
                     return true;
                 }
 
@@ -192,8 +237,8 @@ namespace XREngine.Rendering
             AtlasType = EFontAtlasType.Bitmap;
             DistanceRange = 0.0f;
             DistanceRangeMiddle = DefaultMsdfDistanceRangeMiddle;
-            Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"Font import success: source='{filePath}', atlasType={AtlasType}, glyphs={Glyphs?.Count ?? 0}, atlas='{Atlas?.OriginalPath ?? Atlas?.FilePath ?? atlasPath}', drawSize={options.BitmapFontDrawSize}, layoutEm={LayoutEmSize}");
-            Debug.RenderingWarning($"Font '{name}' loaded with bitmap atlas ({Glyphs?.Count ?? 0} glyphs, drawSize={options.BitmapFontDrawSize}).");
+            Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"Font import success: source='{filePath}', atlasType={AtlasType}, glyphs={LayoutGlyphCount}, atlas='{Atlas?.OriginalPath ?? Atlas?.FilePath ?? atlasPath}', drawSize={options.BitmapFontDrawSize}, layoutEm={LayoutEmSize}");
+            Debug.RenderingWarning($"Font '{name}' loaded with bitmap atlas ({LayoutGlyphCount} glyphs, drawSize={options.BitmapFontDrawSize}).");
             return true;
         }
 
@@ -541,7 +586,7 @@ namespace XREngine.Rendering
                 return;
             }
 
-            Dictionary<string, Glyph> glyphs = Glyphs!;
+            Dictionary<string, Glyph> glyphs = _glyphs!;
             XRTexture2D atlas = Atlas!;
 
             GetQuads(
@@ -554,26 +599,6 @@ namespace XREngine.Rendering
                 fontSize,
                 spacing,
                 lineSpacing);
-        }
-
-        private static bool TryReadNextRune(ReadOnlySpan<char> text, ref int charIndex, out Rune rune, out bool last)
-        {
-            while (charIndex < text.Length)
-            {
-                OperationStatus status = Rune.DecodeFromUtf16(text[charIndex..], out rune, out int charsConsumed);
-                if (status == OperationStatus.Done)
-                {
-                    last = charIndex + charsConsumed >= text.Length;
-                    charIndex += charsConsumed;
-                    return true;
-                }
-
-                charIndex++;
-            }
-
-            rune = default;
-            last = true;
-            return false;
         }
 
         /// <summary>
@@ -596,57 +621,9 @@ namespace XREngine.Rendering
             float fontSize,
             float spacing = 0.0f)
         {
-            quads.Clear();
-            if (str is null)
-                return;
-
-            ReadOnlySpan<char> text = str.AsSpan();
-            float xOffset = offset.X;
-            for (int charIndex = 0; charIndex < text.Length;)
-            {
-                if (!TryReadNextRune(text, ref charIndex, out Rune rune, out bool last))
-                    break;
-
-                string character = (uint)rune.Value < (uint)AsciiGlyphKeys.Length
-                    ? AsciiGlyphKeys[rune.Value]
-                    : rune.ToString();
-                if (!glyphs.TryGetValue(character, out Glyph? glyph) || glyph is null)
-                {
-                    // Handle missing glyphs (e.g., skip or substitute)
-                    continue;
-                }
-
-                float scale = fontSize / layoutEmSize;
-                float translateX = (xOffset + glyph.Bearing.X) * scale;
-                float translateY = (offset.Y + glyph.Bearing.Y) * scale;
-                float scaleX = glyph.Size.X * scale;
-                float scaleY = -glyph.Size.Y * scale;
-
-                Vector4 transform = new(
-                    translateX,
-                    translateY,
-                    scaleX,
-                    scaleY);
-
-                float u0 = glyph.Position.X / atlasSize.X;
-                float v0 = glyph.Position.Y / atlasSize.Y;
-                float u1 = (glyph.Position.X + glyph.EffectiveAtlasSize.X) / atlasSize.X;
-                float v1 = (glyph.Position.Y + glyph.EffectiveAtlasSize.Y) / atlasSize.Y;
-
-                // Add UVs in the order matching the quad vertices
-                // Assuming quad vertices are defined in this order:
-                // Bottom-left (0, 0)
-                // Bottom-right (1, 0)
-                // Top-right (1, 1)
-                // Top-left (0, 1)
-                Vector4 uvs = new(u0, v0, u1, v1); // Bottom-left to Top-right
-                
-                quads.Add((transform, uvs));
-
-                xOffset += glyph.EffectiveAdvance;
-                if (!last)
-                    xOffset += spacing;
-            }
+            LayoutQuads(str, glyphs, atlasSize, layoutEmSize, quads, offset, fontSize,
+                float.MaxValue, float.MaxValue, EWrapMode.None, spacing, 5.0f,
+                trimFirstBearing: false);
         }
 
         /// <summary>
@@ -750,7 +727,7 @@ namespace XREngine.Rendering
                 return;
             }
 
-            Dictionary<string, Glyph> glyphs = Glyphs!;
+            Dictionary<string, Glyph> glyphs = _glyphs!;
             XRTexture2D atlas = Atlas!;
 
             GetQuads(
@@ -795,155 +772,8 @@ namespace XREngine.Rendering
             float spacing = 0.0f,
             float lineSpacing = 5.0f)
         {
-            quads.Clear();
-            if (str is null)
-                return;
-
-            float xOffset = offset.X;
-            float yOffset = offset.Y;
-            float lineHeight = fontSize ?? 0.0f;
-            float spaceWidth = glyphs.TryGetValue(" ", out Glyph? spaceGlyph) ? MathF.Max(spaceGlyph.EffectiveAdvance, layoutEmSize * 0.25f) : layoutEmSize * 0.25f;
-
-            // Track line breaks for a single deferred Y-shift pass instead of
-            // shifting all previous quads on every newline/wrap (was O(n*k)).
-            int lineBreakCount = 0;
-            float lineBreakShiftTotal = 0.0f;
-            Span<float> lineBreakHeights = str.Length <= 256
-                ? stackalloc float[Math.Min(str.Length, 256)]
-                : new float[str.Length];
-            Span<int> lineBreakQuadIndices = str.Length <= 256
-                ? stackalloc int[Math.Min(str.Length, 256)]
-                : new int[str.Length];
-
-            float scale = (fontSize ?? 1.0f) / layoutEmSize;
-            ReadOnlySpan<char> text = str.AsSpan();
-            for (int charIndex = 0; charIndex < text.Length;)
-            {
-                int runeStart = charIndex;
-                if (!TryReadNextRune(text, ref charIndex, out Rune rune, out bool last))
-                    break;
-
-                bool first = runeStart == 0;
-
-                if (rune.Value == ' ')
-                {
-                    xOffset += spaceWidth;
-                    if (!last)
-                        xOffset += spacing;
-                    continue;
-                }
-                if (rune.Value == '\n')
-                {
-                    xOffset = offset.X;
-                    lineBreakHeights[lineBreakCount] = lineHeight;
-                    lineBreakQuadIndices[lineBreakCount] = quads.Count;
-                    lineBreakShiftTotal += lineHeight + lineSpacing;
-                    lineBreakCount++;
-                    if (fontSize is null)
-                        lineHeight = 0.0f;
-                    continue;
-                }
-
-                string character = rune.ToString();
-                if (!glyphs.TryGetValue(character, out Glyph? glyph) || glyph is null)
-                {
-                    // Handle missing glyphs (e.g., skip or substitute)
-                    continue;
-                }
-
-                float translateX = (xOffset + glyph.Bearing.X) * scale;
-                if (first)
-                {
-                    xOffset -= glyph.Bearing.X;
-                    translateX = 0.0f;
-                }
-                float translateY = (yOffset + glyph.Bearing.Y) * scale;
-                float scaleX = glyph.Size.X * scale;
-                float scaleY = -glyph.Size.Y * scale;
-
-                if (wrap != EWrapMode.None && (translateX + scaleX) > maxWidth && maxWidth > 0.0f)
-                {
-                    xOffset = offset.X;
-                    lineBreakHeights[lineBreakCount] = lineHeight;
-                    lineBreakQuadIndices[lineBreakCount] = quads.Count;
-                    lineBreakShiftTotal += lineHeight + lineSpacing;
-                    lineBreakCount++;
-                    if (fontSize is null)
-                        lineHeight = 0.0f;
-                    translateX = (xOffset + glyph.Bearing.X) * scale;
-                    translateY = (yOffset + glyph.Bearing.Y) * scale;
-                }
-
-                Vector4 transform = new(
-                    translateX,
-                    translateY,
-                    scaleX,
-                    scaleY);
-
-                float u0 = glyph.Position.X / atlasSize.X;
-                float v0 = glyph.Position.Y / atlasSize.Y;
-                float u1 = (glyph.Position.X + glyph.EffectiveAtlasSize.X) / atlasSize.X;
-                float v1 = (glyph.Position.Y + glyph.EffectiveAtlasSize.Y) / atlasSize.Y;
-
-                Vector4 uvs = new(u0, v0, u1, v1);
-
-                quads.Add((transform, uvs));
-
-                xOffset += glyph.EffectiveAdvance;
-                if (!last)
-                    xOffset += spacing;
-
-                if (fontSize is null)
-                    lineHeight = Math.Max(lineHeight, glyph.Size.Y * scale);
-            }
-
-            // Apply all Y-shifts in a single O(n) pass.
-            // Text builds bottom-up: last line stays at yOffset, earlier lines shift up.
-            if (lineBreakCount > 0)
-            {
-                int segStart = 0;
-                float shift = lineBreakShiftTotal;
-                for (int b = 0; b < lineBreakCount; b++)
-                {
-                    int segEnd = lineBreakQuadIndices[b];
-                    for (int j = segStart; j < segEnd; j++)
-                    {
-                        var (t, u) = quads[j];
-                        t.Y += shift;
-                        quads[j] = (t, u);
-                    }
-                    shift -= lineBreakHeights[b] + lineSpacing;
-                    segStart = segEnd;
-                }
-            }
-
-            if (fontSize is null)
-            {
-                float maxX = xOffset;
-                float maxY = yOffset + lineHeight;
-                float boundsX = maxWidth;
-                float boundsY = maxHeight;
-                float widthScale = boundsX / maxX;
-                float heightScale = boundsY / maxY;
-                float minScale = Math.Min(widthScale, heightScale);
-                for (int i = 0; i < quads.Count; i++)
-                {
-                    Vector4 transform = quads[i].transform;
-                    transform.X *= minScale;
-                    transform.Y *= minScale;
-                    transform.Z *= minScale;
-                    transform.W *= minScale;
-                    quads[i] = (transform, quads[i].uvs);
-                }
-            }
-        }
-
-        private static string[] CreateAsciiGlyphKeys()
-        {
-            string[] keys = new string[128];
-            for (int i = 0; i < keys.Length; i++)
-                keys[i] = ((char)i).ToString();
-            return keys;
+            LayoutQuads(str, glyphs, atlasSize, layoutEmSize, quads, offset, fontSize,
+                maxWidth, maxHeight, wrap, spacing, lineSpacing);
         }
 
         public float CalculateFontSize(
@@ -952,10 +782,10 @@ namespace XREngine.Rendering
             Vector2 bounds,
             float spacing = 0.0f)
         {
-            if (Glyphs is null)
+            if (_glyphs is null)
                 throw new InvalidOperationException("Glyphs are not initialized.");
 
-            return CalculateFontSize(str, Glyphs, offset, bounds, spacing, LayoutEmSize);
+            return CalculateFontSize(str, _glyphs, offset, bounds, spacing, LayoutEmSize);
         }
         public static float CalculateFontSize(
             string? str,
@@ -1023,7 +853,7 @@ namespace XREngine.Rendering
                 XRFontImportOptions resolvedImportOptions = ResolveDirectEngineFontImportOptions(path, importOptionsOverride);
                 string directCacheKey = BuildDirectEngineFontCacheKey(path, resolvedImportOptions);
                 FontGlyphSet directFont = GetOrLoadDirectEngineFont(directCacheKey, path, resolvedImportOptions);
-                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFont (direct): folder='{folderName}', font='{fontName}', atlasMode={resolvedImportOptions.AtlasMode}, atlasType={directFont.AtlasType}, glyphs={directFont.Glyphs?.Count ?? 0}, atlas='{directFont.Atlas?.OriginalPath ?? directFont.Atlas?.FilePath ?? "<null>"}', assetPath='{directFont.FilePath ?? "<null>"}', originalPath='{directFont.OriginalPath ?? "<null>"}', layoutEm={directFont.LayoutEmSize}, range={directFont.DistanceRange}, middle={directFont.DistanceRangeMiddle}");
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFont (direct): folder='{folderName}', font='{fontName}', atlasMode={resolvedImportOptions.AtlasMode}, atlasType={directFont.AtlasType}, glyphs={directFont.LayoutGlyphCount}, atlas='{directFont.Atlas?.OriginalPath ?? directFont.Atlas?.FilePath ?? "<null>"}', assetPath='{directFont.FilePath ?? "<null>"}', originalPath='{directFont.OriginalPath ?? "<null>"}', layoutEm={directFont.LayoutEmSize}, range={directFont.DistanceRange}, middle={directFont.DistanceRangeMiddle}");
                 return directFont;
             }
 
@@ -1039,10 +869,10 @@ namespace XREngine.Rendering
                 if (reloaded is not null)
                     font = reloaded;
 
-                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFont: forced reload result for '{path}' => atlasType={font.AtlasType}, glyphs={font.Glyphs?.Count ?? 0}, layoutEm={font.LayoutEmSize}, range={font.DistanceRange}, middle={font.DistanceRangeMiddle}");
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFont: forced reload result for '{path}' => atlasType={font.AtlasType}, glyphs={font.LayoutGlyphCount}, layoutEm={font.LayoutEmSize}, range={font.DistanceRange}, middle={font.DistanceRangeMiddle}");
             }
 
-            Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFont: folder='{folderName}', font='{fontName}', atlasType={font.AtlasType}, glyphs={font.Glyphs?.Count ?? 0}, atlas='{font.Atlas?.OriginalPath ?? font.Atlas?.FilePath ?? "<null>"}', assetPath='{font.FilePath ?? "<null>"}', originalPath='{font.OriginalPath ?? "<null>"}', layoutEm={font.LayoutEmSize}, range={font.DistanceRange}, middle={font.DistanceRangeMiddle}");
+            Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadEngineFont: folder='{folderName}', font='{fontName}', atlasType={font.AtlasType}, glyphs={font.LayoutGlyphCount}, atlas='{font.Atlas?.OriginalPath ?? font.Atlas?.FilePath ?? "<null>"}', assetPath='{font.FilePath ?? "<null>"}', originalPath='{font.OriginalPath ?? "<null>"}', layoutEm={font.LayoutEmSize}, range={font.DistanceRange}, middle={font.DistanceRangeMiddle}");
             return font;
         }
 
@@ -1351,7 +1181,7 @@ namespace XREngine.Rendering
         {
             if (string.IsNullOrWhiteSpace(fastCachePath) ||
                 !File.Exists(sourcePath) ||
-                font.Glyphs is null ||
+                font._glyphs is null ||
                 font.Atlas?.Mipmaps is not { Length: > 0 } mipmaps)
             {
                 return;
@@ -1385,8 +1215,8 @@ namespace XREngine.Rendering
                     for (int i = 0; i < characters.Count; i++)
                         writer.Write(characters[i] ?? string.Empty);
 
-                    writer.Write(font.Glyphs.Count);
-                    foreach (KeyValuePair<string, Glyph> pair in font.Glyphs)
+                    writer.Write(font._glyphs.Count);
+                    foreach (KeyValuePair<string, Glyph> pair in font._glyphs)
                     {
                         Glyph g = pair.Value;
                         writer.Write(pair.Key);
@@ -1743,7 +1573,7 @@ namespace XREngine.Rendering
         {
             issue = null;
 
-            if (font.Glyphs is null)
+            if (font._glyphs is null)
             {
                 issue = "glyph table is null";
                 return true;
@@ -1770,7 +1600,7 @@ namespace XREngine.Rendering
                 return true;
             }
 
-            if (TryGetGlyphAtlasExtents(font.Glyphs, out float maxX, out float maxY)
+            if (TryGetGlyphAtlasExtents(font._glyphs, out float maxX, out float maxY)
                 && (maxX > atlasWidth + 0.5f || maxY > atlasHeight + 0.5f))
             {
                 issue = $"glyph atlas bounds exceed texture (maxGlyph={maxX:F1}x{maxY:F1}, atlas={atlasWidth}x{atlasHeight}, mips={atlas.Mipmaps.Length})";
@@ -1980,10 +1810,10 @@ namespace XREngine.Rendering
 
         public Vector2 MeasureString(string str, float fontSize)
         {
-            if (Glyphs is null)
+            if (_glyphs is null)
                 throw new InvalidOperationException("Glyphs are not initialized.");
 
-            return MeasureString(str, Glyphs, fontSize, LayoutEmSize);
+            return MeasureString(str, _glyphs, fontSize, LayoutEmSize);
         }
 
         public static Vector2 MeasureString(string str, Dictionary<string, Glyph> glyphs, float fontSize, float layoutEmSize = DefaultBitmapFontDrawSize)

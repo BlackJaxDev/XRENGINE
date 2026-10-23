@@ -29,16 +29,37 @@ namespace XREngine.Rendering.UI
             // shadow-only caster census.
             RenderInfo3D.SetCameraIndependentPreCollectCommandsCallback(PreCollectRenderInfo3D);
             RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
+            _publicationCommandObserver = new UIDrawCommandObserver(RenderCommand2D, InvalidatePublicationDraw);
+        }
+
+        /// <summary>Call after direct writes to draw arrays, index lists, or other storage without change events.</summary>
+        public void InvalidatePublicationDraw()
+        {
+            if (UITransform is { } transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
+        }
+
+        private readonly UIDrawCommandObserver _publicationCommandObserver;
+        private UIDrawPayloadBuilder? _publicationPayloadBuilder;
+        private RenderCommandMesh2D? _publicationFrozenCommand;
+
+        protected override void OnComponentDeactivated()
+        {
+            _publicationPayloadBuilder?.Dispose();
+            _publicationFrozenCommand = null;
+            base.OnComponentDeactivated();
         }
 
         protected override void OnDestroying()
         {
+            _publicationCommandObserver.Dispose();
             try
             {
                 base.OnDestroying();
             }
             finally
             {
+                _publicationPayloadBuilder?.Dispose();
                 try { RenderInfo3D.Dispose(); }
                 finally { RenderInfo2D.Dispose(); }
             }
@@ -67,7 +88,7 @@ namespace XREngine.Rendering.UI
         {
             var tfm = BoundableTransform;
             bool diagLog = _shouldRender3DDiagCount < 20;
-            if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
+            if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false))
             {
                 if (diagLog)
                 {
@@ -114,11 +135,11 @@ namespace XREngine.Rendering.UI
             var tfm = BoundableTransform;
             bool diagLog = _shouldRender2DDiagCount < 20;
 
-            if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false) || !tfm.IsVisibleInHierarchy)
+            if (!(tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy ?? false))
             {
                 if (diagLog)
                 {
-                    Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': parentCanvasActive={tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy} visibleInHierarchy={tfm.IsVisibleInHierarchy} parentCanvas={tfm.ParentCanvas?.SceneNode?.Name}");
+                    Debug.UI($"[ShouldRender2D] REJECTED {GetType().Name} on '{SceneNode?.Name}': parentCanvasActive={tfm.ParentCanvas?.SceneNode?.IsActiveInHierarchy} parentCanvas={tfm.ParentCanvas?.SceneNode?.Name}");
                     _shouldRender2DDiagCount++;
                 }
                 return false;
@@ -137,9 +158,13 @@ namespace XREngine.Rendering.UI
 
             var canvasComp = canvas.SceneNode?.GetComponent<UICanvasComponent>();
 
-            // Resolve on collection so ancestor motion and clip toggles affect descendants
-            // without subscribing every child to every ancestor's property changes.
-            RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(tfm, ClipToBounds);
+            if (canvasComp is null ||
+                !canvasComp.TryGetCollectingRenderRecord(RenderInfo2D.MembershipId, out UIRenderRecord published) ||
+                !published.Visible || published.Identity != tfm.ElementIdentity)
+                return false;
+
+            RenderCommand2D.WorldCropRegion = published.Crop;
+            RenderCommand2D.WorldMatrix = published.WorldMatrix;
 
             // Determine if this item should use the 2D render path:
             // - Screen-space: always yes
@@ -160,7 +185,7 @@ namespace XREngine.Rendering.UI
 
             // Attempt batched rendering path: register with the canvas's batch collector
             // and skip the individual render command for this component.
-            if (SupportsBatchedRendering)
+            if (published.SupportsBatch)
             {
                 if (canvasComp?.BatchCollector is { Enabled: true } collector)
                 {
@@ -170,7 +195,7 @@ namespace XREngine.Rendering.UI
                 }
             }
 
-            canvasComp?.BatchCollector?.BreakBatchRun(RenderPass);
+            canvasComp?.BatchCollector?.BreakBatchRun(published.RenderPass);
 
             if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
                 AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
@@ -199,6 +224,106 @@ namespace XREngine.Rendering.UI
         /// <param name="passes">The UI pass collection so batching can insert ordered dispatch markers.</param>
         /// <returns>True if the component was successfully registered for batching; false to fall back to individual rendering.</returns>
         protected virtual bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes) => false;
+
+        /// <summary>Captures draw values on the canvas owner for one publication.</summary>
+        public virtual UIRenderRecord CapturePublicationRenderRecord(in UILayoutNodeOutput output)
+        {
+            UIBoundableTransform bounds = BoundableTransform;
+            Vector2 bottomLeft = bounds.ActualLocalBottomLeftTranslation;
+            Matrix4x4 worldMatrix = bounds.WorldMatrix *
+                (bounds.ParentCanvas?.InverseWorldMatrix ?? Matrix4x4.Identity);
+            worldMatrix = CapturePublicationModelMatrix(in output, in worldMatrix);
+            bool supportsBatch = SupportsBatchedRendering &&
+                bounds.ParentCanvas?.SceneNode?.GetComponent<UICanvasComponent>()?.BatchCollector.Enabled == true;
+            bool visible = output.Visible && IsActiveInHierarchy && RenderInfo2D.IsVisible &&
+                (supportsBatch || RenderCommand2D.Enabled && RenderCommand2D.Instances > 0);
+            if (supportsBatch || !visible)
+            {
+                _publicationPayloadBuilder?.Dispose();
+                _publicationFrozenCommand = null;
+            }
+            RenderCommandMesh2D? frozenCommand = null;
+            UIDrawPayload? payload = null;
+            string? captureFailure = null;
+            Vector4 frozenBounds = new(bottomLeft.X, bottomLeft.Y, output.ActualSize.X, output.ActualSize.Y);
+            if (!supportsBatch && visible)
+            {
+                if (_publicationPayloadBuilder is null)
+                {
+                    _publicationPayloadBuilder = new UIDrawPayloadBuilder(OnMaterialSettingUniforms);
+                    _publicationPayloadBuilder.SourceChanged += InvalidatePublicationDraw;
+                }
+                _publicationPayloadBuilder.Bounds = frozenBounds;
+                if (TryCapturePublicationPayload(in output, _publicationPayloadBuilder, out payload, out captureFailure) && payload is not null)
+                {
+                    RenderCommandMesh2D source = RenderCommand2D;
+                    var crop = UIClipRegion.ResolveCrop(bounds, ClipToBounds);
+                    var cropSpace = bounds.ParentCanvas?.GetActualBounds();
+                    RenderCommandMesh2D? cached = _publicationFrozenCommand;
+                    if (cached is not null && ReferenceEquals(cached.Mesh, payload.Renderer) &&
+                        cached.WorldMatrix == worldMatrix && cached.ZIndex == source.ZIndex && cached.RenderPass == source.RenderPass &&
+                        cached.Instances == source.Instances && cached.WorldCropRegion == crop && cached.UICanvasCropSpace == cropSpace &&
+                        cached.ForceCpuRendering == source.ForceCpuRendering && cached.WorldMatrixIsModelMatrix == source.WorldMatrixIsModelMatrix &&
+                        cached.GpuProfilingLabel == source.GpuProfilingLabel && cached.Enabled == source.Enabled)
+                        frozenCommand = cached;
+                    else
+                        frozenCommand = _publicationFrozenCommand = new RenderCommandMesh2D(source.RenderPass)
+                        {
+                            Mesh = payload.Renderer,
+                            WorldMatrix = worldMatrix,
+                            ZIndex = source.ZIndex,
+                            MaterialOverride = payload.Material,
+                            RenderOptionsOverride = payload.RenderOptions,
+                            Instances = source.Instances,
+                            WorldCropRegion = crop,
+                            UICanvasCropSpace = cropSpace,
+                            ForceCpuRendering = source.ForceCpuRendering,
+                            WorldMatrixIsModelMatrix = source.WorldMatrixIsModelMatrix,
+                            GpuProfilingLabel = source.GpuProfilingLabel,
+                            Enabled = source.Enabled,
+                        };
+                }
+            }
+            return new UIRenderRecord
+            {
+                RenderInfo = RenderInfo2D,
+                MembershipId = RenderInfo2D.MembershipId,
+                Identity = bounds.ElementIdentity,
+                WorldMatrix = worldMatrix,
+                Bounds = new Vector4(bottomLeft.X, bottomLeft.Y, output.ActualSize.X, output.ActualSize.Y),
+                Crop = UIClipRegion.ResolveCrop(bounds, ClipToBounds),
+                RenderPass = RenderPass,
+                ZIndex = RenderCommand2D.ZIndex,
+                Material = payload?.Material ?? Material,
+                Visible = visible,
+                SupportsBatch = supportsBatch,
+                FrozenCommand = frozenCommand,
+                Payload = payload,
+                CaptureFailure = captureFailure,
+            };
+        }
+
+        /// <summary>Declares that the component captures all values emitted by its material callback.</summary>
+        protected virtual bool CanCapturePublicationUniforms => false;
+
+        /// <summary>Captures callback values and owned resources before a publication can become visible.</summary>
+        protected virtual bool TryCapturePublicationPayload(in UILayoutNodeOutput output,
+            UIDrawPayloadBuilder builder, out UIDrawPayload? payload, out string? failure)
+        {
+            // Overrides with render side effects must supply their own producer data adapter.
+            if (!CanCapturePublicationUniforms)
+            {
+                payload = null;
+                failure = "UI.DrawCapture.MaterialAdapterRequired: capture the component uniform callback in TryCapturePublicationPayload.";
+                return false;
+            }
+            return builder.TryCapture(RenderCommand2D, false, out payload, out failure);
+        }
+
+        /// <summary>Applies component mesh sizing to the owner-captured canvas matrix.</summary>
+        protected virtual Matrix4x4 CapturePublicationModelMatrix(
+            in UILayoutNodeOutput output, in Matrix4x4 canvasMatrix)
+            => canvasMatrix;
 
         protected override void OnTransformRenderWorldMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
@@ -308,20 +433,28 @@ namespace XREngine.Rendering.UI
         private Vector4 _lastBounds = Vector4.Zero;
         protected virtual void OnMaterialSettingUniforms(XRMaterialBase material, XRRenderProgram program)
         {
-            var tfm = BoundableTransform;
-            var w = tfm.ActualWidth;
-            var h = tfm.ActualHeight;
-            var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
-            var x = bottomLeft.X;
-            var y = bottomLeft.Y;
+            UIRenderRecord record = default;
+            bool hasPublication = UICanvasComponent.RenderingCanvasForCurrentThread?.BatchCollector
+                .TryGetRenderingRecord(RenderInfo2D.MembershipId, out record) == true;
+            Vector4 bounds;
+            if (hasPublication)
+                bounds = record.Bounds;
+            else
+            {
+                UIBoundableTransform tfm = BoundableTransform;
+                Vector2 bottomLeft = tfm.ActualLocalBottomLeftTranslation;
+                bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
+            }
+            float x = bounds.X;
+            float y = bounds.Y;
+            float w = bounds.Z;
+            float h = bounds.W;
 
-            if (x == _lastBounds.X && 
-                y == _lastBounds.Y && 
-                w == _lastBounds.Z && 
+            if (!hasPublication && x == _lastBounds.X &&
+                y == _lastBounds.Y &&
+                w == _lastBounds.Z &&
                 h == _lastBounds.W)
                 return; //No change, no need to update uniforms
-
-            var bounds = new Vector4(x, y, w, h);
 
             _lastBounds = bounds;
             program.Uniform(EEngineUniform.UIWidth.ToStringFast(), w);

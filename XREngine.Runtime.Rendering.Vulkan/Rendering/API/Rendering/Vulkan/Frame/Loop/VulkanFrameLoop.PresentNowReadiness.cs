@@ -711,7 +711,8 @@ internal sealed partial class VulkanFrameLoop
             in outputContract,
             logicalPlan,
             in plannerState,
-            in frozenPlanningSnapshot);
+            in frozenPlanningSnapshot,
+            _ownerRenderer);
         return true;
     }
 

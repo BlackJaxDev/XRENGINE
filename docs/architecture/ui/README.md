@@ -1,60 +1,20 @@
-# XREngine UI Layout System — Complete Documentation
+# Native UI Architecture
 
-This directory contains comprehensive documentation for the XREngine UI layout system architecture, covering:
+The native UI uses retained scene components and the existing FPS text renderer.
+ImGui remains the default editor while native UI acceptance is open.
 
-| Document | Description |
-|----------|-------------|
-| [01-Architecture.md](01-Architecture.md) | Core architecture: two-phase measure/arrange, dual execution paths, canvas entry points, invalidation/dirty tracking |
-| [02-Transform-Types.md](02-Transform-Types.md) | Reference for every UI transform type: properties, overrides, and child arrangement behavior |
-| [04-Change-Tracking.md](04-Change-Tracking.md) | Current mutation ownership, identities, dirty domains, bounded transactions, and work counters |
-| [03-Rendering-Pipeline.md](03-Rendering-Pipeline.md) | How laid-out UI reaches the screen: UICanvasComponent → VisualScene2D → Quadtree → RenderInfo2D |
-| [Native UI Layout Known Issues](../../work/audit/COMPLETED/native-ui-layout-known-issues.md) | Audit record for architectural conflicts, performance traps, and outstanding bugs with analysis and suggested fixes |
+| Document | Scope |
+|---|---|
+| [Retained execution](05-Retained-Execution.md) | Current worker layout, publication, input, batch storage, controls, and virtual data |
+| [Change tracking](04-Change-Tracking.md) | Identities, change domains, transaction journal, and work counters |
+| [Layout reference](01-Architecture.md) | Value-based measure/arrange, owner and worker boundaries, and extension points |
+| [Transform reference](02-Transform-Types.md) | Transform properties and layout behavior |
+| [Rendering reference](03-Rendering-Pipeline.md) | Retained canvas collection, resource ownership, clipping, and output receipts |
+| [Implementation TODO](../../work/todo/ui/native-ui-retained-performance-and-editor-parity-todo.md) | Open implementation items and owner decisions |
+| [Validation](../../work/testing/ui/native-ui-validation.md) | Build, runtime, visual, performance, and backend acceptance |
 
-## Progress Update (2026-02-06)
-
-- Issues 1, 3, and 4 are fixed; issue 2 (camera WASD/mouse interaction) is still active.
-- Current diagnostics show `IsHoveringUI` is false and `_rightClickDragging` is true, so UI hover gating is not the blocker.
-- No `MoveForward` log entries appeared in the latest run, suggesting key state callbacks are not firing or movement is not applied.
-- Added temporary debug logging to trace key presses and mouse deltas; see [XREngine.Runtime.InputIntegration/Scene/Components/Pawns/FlyingCameraPawnBaseComponent.cs](../../../XREngine.Runtime.InputIntegration/Scene/Components/Pawns/FlyingCameraPawnBaseComponent.cs) and [XREngine.Runtime.InputIntegration/Scene/Components/Pawns/FlyingCameraPawn.cs](../../../XREngine.Runtime.InputIntegration/Scene/Components/Pawns/FlyingCameraPawn.cs).
-
-## Quick Orientation
-
-The UI layout system lives in:
-
-```
-XREngine.Runtime.Rendering/Scene/Components/UI/Core/
-├── Transforms/
-│   ├── UILayoutSystem.cs          ← Centralized static layout engine
-│   ├── UITransform.cs             ← Base class for all UI transforms
-│   ├── UIBoundableTransform.cs    ← Base for bounded (sized) UI elements
-│   ├── UICanvasTransform.cs       ← Root canvas (screen/camera/world)
-│   ├── UIDualSplitTransform.cs    ← Two-panel split
-│   ├── UIMultiSplitTransform.cs   ← Multi-panel split
-│   ├── UIDockingRootTransform.cs  ← Center/left/right/bottom docking
-│   ├── UIFittedTransform.cs       ← Stretch/center/fill fitting
-│   ├── UIScrollableTransform.cs   ← Scrollable container
-│   ├── UIRotationTransform.cs     ← Rotation wrapper
-│   ├── UIChildPlacementInfo.cs    ← Abstract placement info base
-│   ├── UIDockableTransform.cs     ← Commented-out legacy code
-│   └── UIDockableTransform1.cs    ← UITabTransform + UIDockableTransform (active)
-├── Arrangements/
-│   ├── UIListTransform.cs         ← Vertical/horizontal list layout
-│   └── UIGridTransform.cs         ← Row/column grid layout
-```
-
-Rendering integration:
-```
-XREngine.Runtime.Rendering/Scene/Components/UI/
-└── UICanvasComponent.cs           ← Manages VisualScene2D, Camera2D, render pipeline
-```
-
-## Key Concept: Two Execution Paths
-
-The layout system has **two competing execution paths** that both run:
-
-1. **NEW Path** — `UILayoutSystem.UpdateCanvasLayout()` → Measure → Arrange → `ArrangeChildren()` virtual
-2. **OLD Path** — `OnLocalMatrixChanged()` → `OnResizeChildComponents()` → `FitLayout()` on each child
-
-Both paths currently execute. The NEW path runs first (during `CollectVisibleItems`), then the OLD path triggers whenever `MarkLocalModified()` causes deferred matrix recalculation and `OnLocalMatrixChanged` fires.
-
-See [Native UI Layout Known Issues](../../work/audit/COMPLETED/native-ui-layout-known-issues.md) for the historical audit notes and remaining cleanup items.
+The historical layout audit remains available in
+[Native UI Layout Known Issues](../../work/audit/COMPLETED/native-ui-layout-known-issues.md).
+Its findings are historical evidence, not a statement that both old layout paths
+still execute. Production canvas layout now requests the numeric worker kernel
+and applies only validated results on the owner thread.

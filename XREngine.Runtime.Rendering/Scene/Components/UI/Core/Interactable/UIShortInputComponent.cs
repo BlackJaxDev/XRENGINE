@@ -4,6 +4,13 @@ namespace XREngine.Rendering.UI
 {
     public class UIShortInputComponent : UITextInputComponent
     {
+        public UIShortInputComponent()
+        {
+            SingleLineMode = true;
+            CommitOnSubmit = true;
+            AllowInvalidDraft = true;
+        }
+
         public override bool PostValidateInput(string input)
             => short.TryParse(input, out _);
 

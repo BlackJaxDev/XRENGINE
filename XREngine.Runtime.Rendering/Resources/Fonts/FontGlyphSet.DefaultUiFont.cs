@@ -11,7 +11,7 @@ public partial class FontGlyphSet
     public static IDisposable InstallDefaultUiFont(FontGlyphSet font)
     {
         ArgumentNullException.ThrowIfNull(font);
-        if (font.AtlasType != EFontAtlasType.Bitmap || font.Atlas is null || font.Glyphs is not { Count: > 0 })
+        if (font.AtlasType != EFontAtlasType.Bitmap || font.Atlas is null || font.LayoutGlyphCount == 0)
             throw new NotSupportedException("BrowserFont.DefaultUiFontUnsupported: expected a cooked bitmap font with atlas and glyphs.");
         lock (DefaultUiFontGate)
         {

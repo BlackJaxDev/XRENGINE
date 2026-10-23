@@ -5,12 +5,34 @@ This document owns native UI runtime, visual, performance, backend, editor workf
 
 Design: [Native UI retained rendering](../../design/ui/native-ui-retained-rendering-design.md)  Architecture: [UI architecture](../../../architecture/ui/README.md); [UI rendering pipeline](../../../architecture/ui/03-Rendering-Pipeline.md)  Code todos: [Native UI retained performance and editor parity TODO](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
 
-## Change-Tracking Validation (2026-10-23)
+## Retained UI Integration (2026-10-23)
 
-The implemented scope is contracts and instrumentation: runtime identities,
+The expanded implementation is under integration. The user explicitly approved
+new headless regression tests before Windows and graphics validation on
+2026-10-23. This approval applies to this task. It does not establish live
+acceptance or change the default editor.
+
+The latest completed headless build passed with zero warnings and errors through
+`Tools/Invoke-AgentBuild.ps1`. The latest completed headless test run passed
+275 of 275 tests, with no failures, warnings, or skips. This includes wrapped text
+inside narrow parents, stale task rejection, focus callback re-entry, immutable
+owned draw data, cleanup vetoes, and exact presentation-receipt state. The latest
+completed editor build passed with zero warnings and errors, including required
+texture bindings and hierarchy command changes. The matching editor build also passed with zero warnings and errors after the review repairs.
+These editor checks compile Windows targets on Linux.
+These are checkpoint results, not platform or performance acceptance. See the
+[integration investigation](../../investigations/ui/retained-ui-integration.md)
+for check history and remaining safety work.
+
+Windows execution, IME, graphics, visual checks, GPU uploads, command replay,
+multi-window workflows, and comparisons with ImGui remain untested here.
+
+## Published Change-Tracking Validation (2026-10-23)
+
+The earlier published scope was contracts and instrumentation: runtime identities,
 change domains, a bounded transaction journal, ancestor cache invalidation, and
-work counters. Worker layout, publication, persistent rendering, and controls
-remain open. See [the current contract](../../../architecture/ui/04-Change-Tracking.md).
+work counters. The table below records that source state. It does not describe
+the later integration work. See [the change-tracking contract](../../../architecture/ui/04-Change-Tracking.md).
 
 | Check | Result | Limit |
 |---|---|---|
@@ -79,8 +101,8 @@ color, transform, visibility state, and child order, then compare output and inp
 with the prior behavior. Check counter deltas with recording enabled. Confirm
 that disabled counters do not alter behavior. Check nested canvases, destruction,
 and component construction. Record backend, build, scene, and workload with each
-result. Apply the repository's live-first validation rule before adding further
-tests during feature-regression debugging or integration awaiting validation.
+result. The user has approved headless test work during this integration before
+live validation, as recorded above.
 
 ## Setup
 Use the ImGui editor as the default editor until the native UI readiness checks pass. The relevant VS Code tasks are `Build-Editor`, `Build-Editor-Fast`, `Start-Editor-NoDebug`, and `Start-Editor-RendererDevelopment-NoDebug`. The relevant launch profiles are `Editor (Default World)`, `Editor (Renderer Development)`, `Editor (Unit Testing World)`, and `Editor (Unit Testing World, Validation Layers)`. Use `XRE_WORLD_MODE=UnitTesting` for unit-world checks. Use `XRE_GL_DEBUG=1` for OpenGL debug checks and `XRE_VULKAN_VALIDATION=1` for Vulkan validation checks. Use native UI settings or launch flags only after the implementation exposes them.

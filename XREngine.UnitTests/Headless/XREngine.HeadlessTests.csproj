@@ -14,6 +14,32 @@
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../GlobalWorldTypeAliases.cs" Link="GlobalWorldTypeAliases.cs" />
+    <Compile Include="../Rendering/UITestShaderScope.cs" Link="Rendering/UITestShaderScope.cs" />
+    <Compile Include="../Rendering/UITestRenderingHost.cs" Link="Rendering/UITestRenderingHost.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockLayout.cs" Link="Editor/NativeDockLayout.cs" />
+    <Compile Include="../Editor/NativeDockLayoutTests.cs" Link="Editor/NativeDockLayoutTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorPropertyDelegates.cs" Link="Editor/EditorPropertyDelegates.cs" />
+    <Compile Include="../Editor/EditorPropertyDelegatesTests.cs" Link="Editor/EditorPropertyDelegatesTests.cs" />
+    <Compile Include="../Editor/EditorPropertyTestTarget.cs" Link="Editor/EditorPropertyTestTarget.cs" />
+    <Compile Include="../Rendering/UILayoutValueKernelTests.cs" Link="Rendering/UILayoutValueKernelTests.cs" />
+    <Compile Include="../Rendering/UILayoutGridKernelTests.cs" Link="Rendering/UILayoutGridKernelTests.cs" />
+    <Compile Include="../Rendering/UIBatchCollectionTests.cs" Link="Rendering/UIBatchCollectionTests.cs" />
+    <Compile Include="../Rendering/UIDrawPayloadTests.cs" Link="Rendering/UIDrawPayloadTests.cs" />
+    <Compile Include="../Rendering/UITextMaterialRefreshProbe.cs" Link="Rendering/UITextMaterialRefreshProbe.cs" />
+    <Compile Include="../Rendering/UIPublicationHitTests.cs" Link="Rendering/UIPublicationHitTests.cs" />
+    <Compile Include="../Physics/TestWorldContext.cs" Link="Physics/TestWorldContext.cs" />
+    <Compile Include="../Rendering/UIPresentedInputTests.cs" Link="Rendering/UIPresentedInputTests.cs" />
+    <Compile Include="../Rendering/FocusRegistrationProbe.cs" Link="Rendering/FocusRegistrationProbe.cs" />
+    <Compile Include="../Rendering/UIPublicationReceiptStateTests.cs" Link="Rendering/UIPublicationReceiptStateTests.cs" />
+    <Compile Include="../Rendering/UICanvasPublicationCaptureTests.cs" Link="Rendering/UICanvasPublicationCaptureTests.cs" />
+    <Compile Include="../Rendering/UIPublicationMutationProbe.cs" Link="Rendering/UIPublicationMutationProbe.cs" />
+    <Compile Include="../Rendering/UIFocusNavigationTests.cs" Link="Rendering/UIFocusNavigationTests.cs" />
+    <Compile Include="../Rendering/UIBatchCohortReuseTests.cs" Link="Rendering/UIBatchCohortReuseTests.cs" />
+    <Compile Include="../Rendering/CountingVirtualListProvider.cs" Link="Rendering/CountingVirtualListProvider.cs" />
+    <Compile Include="../Rendering/UIVirtualCollectionTests.cs" Link="Rendering/UIVirtualCollectionTests.cs" />
+    <Compile Include="../Rendering/UITextLayoutKernelTests.cs" Link="Rendering/UITextLayoutKernelTests.cs" />
+    <Compile Include="../Rendering/UIRetainedControlsTests.cs" Link="Rendering/UIRetainedControlsTests.cs" />
     <Compile Include="../Rendering/UIChangeJournalTests.cs" Link="Rendering/UIChangeJournalTests.cs" />
     <Compile Include="../Rendering/UIChangeTrackingTests.cs" Link="Rendering/UIChangeTrackingTests.cs" />
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />

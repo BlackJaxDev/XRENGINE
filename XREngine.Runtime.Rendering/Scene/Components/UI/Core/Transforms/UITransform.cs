@@ -192,6 +192,11 @@ namespace XREngine.Rendering.UI
         public Vector2 LastMeasureConstraint => _lastMeasureConstraint;
         public BoundingRectangleF LastArrangeBounds => _lastArrangeBounds;
 
+        // Aggregate ancestor versions change when a descendant invalidates layout.
+        internal uint LayoutMeasureVersion => _layoutVersion;
+        internal uint LayoutArrangeVersion => _arrangeVersion;
+        internal bool IsApplyingCalculatedLayout { get; set; }
+
         internal void IncrementLayoutVersionInternal() => IncrementLayoutVersion();
         internal void IncrementArrangeVersionInternal() => Interlocked.Increment(ref _arrangeVersion);
         internal void SetDesiredSize(Vector2 size) => _desiredSize = size;
@@ -199,6 +204,27 @@ namespace XREngine.Rendering.UI
         internal void SetLastArrangeBounds(BoundingRectangleF bounds) => _lastArrangeBounds = bounds;
         internal void SetLastMeasuredVersion() => _lastMeasuredVersion = _layoutVersion;
         internal void SetLastArrangedVersion() => _lastArrangedVersion = _arrangeVersion;
+        internal virtual void ApplyCalculatedLayout(in UILayoutNodeOutput output, Vector2 placement)
+        {
+            IsApplyingCalculatedLayout = true;
+            try
+            {
+                SetDesiredSize(output.DesiredSize);
+                SetLastMeasureConstraint(output.MeasureConstraint);
+                SetLastArrangeBounds(output.AllocatedBounds);
+                if (!XRMath.VectorsEqual(_actualLocalBottomLeftTranslation, output.LocalTranslation + placement))
+                {
+                    ActualLocalBottomLeftTranslation = output.LocalTranslation + placement;
+                    MarkLocalModified(true);
+                }
+                SetLastMeasuredVersion();
+                SetLastArrangedVersion();
+            }
+            finally
+            {
+                IsApplyingCalculatedLayout = false;
+            }
+        }
         internal void OnResizeActualInternal(BoundingRectangleF parentBounds) => OnResizeActual(parentBounds);
         internal void RaiseLayoutInvalidated() => OnLayoutInvalidated();
         internal new void MarkLocalModified(bool deferred = false) => base.MarkLocalModified(deferred);
@@ -639,7 +665,8 @@ namespace XREngine.Rendering.UI
                     InvalidateLayout();
                     break;
                 case nameof(ActualLocalBottomLeftTranslation):
-                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
+                    // This value is an output of arrange. Authored Translation invalidates arrange above.
+                    RecordUIChange(UIChangeDomain.Visual | UIChangeDomain.Clip | UIChangeDomain.HitTest);
                     break;
                 case nameof(ParentCanvas):
                     RetireAttachment();

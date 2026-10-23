@@ -4,6 +4,13 @@ namespace XREngine.Rendering.UI
 {
     public class UISByteInputComponent : UITextInputComponent
     {
+        public UISByteInputComponent()
+        {
+            SingleLineMode = true;
+            CommitOnSubmit = true;
+            AllowInvalidDraft = true;
+        }
+
         public override bool PostValidateInput(string input)
             => sbyte.TryParse(input, out _);
 

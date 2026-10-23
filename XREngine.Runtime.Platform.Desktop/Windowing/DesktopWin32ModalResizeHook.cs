@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Collections.Concurrent;
 using Silk.NET.Input;
 
 namespace XREngine.Runtime.Platform.Desktop.Windowing;
@@ -6,7 +7,6 @@ namespace XREngine.Runtime.Platform.Desktop.Windowing;
 /// <summary>Lets Win32 paint and timer messages drive resize snapshots while its modal drag loop runs.</summary>
 internal sealed class DesktopWin32ModalResizeHook : IDesktopInteractiveResizeHook
 {
-    private const int WndProcIndex = -4;
     private const uint WmClose = 0x0010;
     private const uint WmDestroy = 0x0002;
     private const uint WmNcDestroy = 0x0082;
@@ -18,17 +18,18 @@ internal sealed class DesktopWin32ModalResizeHook : IDesktopInteractiveResizeHoo
     private const uint WmExitSizeMove = 0x0232;
     private const nuint TimerId = 0x5852454E;
     private const uint MaximumTimerIntervalMs = 250;
-    private static readonly object HookSync = new();
-    private static readonly Dictionary<nint, nint> OriginalProcedures = [];
+    private static long _nextSubclassId;
+    private static readonly ConcurrentDictionary<nuint, DesktopWin32ModalResizeHook> RetainedHooks = new();
 
     private DesktopSilkWindowBackend? _window;
     private nint _hwnd;
-    private nint _previous;
+    private nuint _subclassId;
     private nint _callbackPointer;
     private WindowProcedure? _callback;
     private bool _inSizeMove;
     private bool _timerRunning;
     private bool _closing;
+    private bool _abandoned;
 
     public void Install(DesktopSilkWindowBackend window)
     {
@@ -39,75 +40,75 @@ internal sealed class DesktopWin32ModalResizeHook : IDesktopInteractiveResizeHoo
             throw new InvalidOperationException("The Win32 modal resize hook requires an HWND.");
 
         _window = window;
+        _subclassId = (nuint)Interlocked.Increment(ref _nextSubclassId);
         _callback = OnWindowMessage;
         _callbackPointer = Marshal.GetFunctionPointerForDelegate(_callback);
-        lock (HookSync)
+        if (!SetWindowSubclass(_hwnd, _callbackPointer, _subclassId, 0))
         {
-            nint current = GetWindowLongPtr(_hwnd, WndProcIndex);
-            if (OriginalProcedures.TryGetValue(_hwnd, out nint original))
-            {
-                if (current != original && current != _callbackPointer)
-                    SetWindowLongPtr(_hwnd, WndProcIndex, original);
-                current = original;
-            }
-            _previous = current;
-            if (_previous == _callbackPointer)
-                throw new InvalidOperationException("The Win32 resize hook cannot chain to itself.");
-            nint replaced = SetWindowLongPtr(_hwnd, WndProcIndex, _callbackPointer);
-            if (replaced == 0)
-                throw new InvalidOperationException("The Win32 resize hook could not replace the window procedure.");
-            OriginalProcedures[_hwnd] = _previous;
+            _hwnd = 0;
+            throw new InvalidOperationException("The Win32 resize hook could not attach its subclass.");
         }
     }
 
     public void OnInputCreated(IInputContext input) { }
 
-    private nint OnWindowMessage(nint hwnd, uint message, nuint wParam, nint lParam)
+    private nint OnWindowMessage(nint hwnd, uint message, nuint wParam, nint lParam,
+        nuint subclassId, nuint referenceData)
     {
-        if (message is WmClose or WmDestroy or WmNcDestroy)
+        if (message == WmNcDestroy)
+            RemoveWindowSubclass(hwnd, _callbackPointer, _subclassId);
+        if (!_abandoned && message is WmClose or WmDestroy or WmNcDestroy)
         {
             _closing = true;
             StopTimer();
         }
 
-        nint result = _previous != 0
-            ? CallWindowProc(_previous, hwnd, message, wParam, lParam)
-            : DefWindowProc(hwnd, message, wParam, lParam);
+        nint result = DefSubclassProc(hwnd, message, wParam, lParam);
 
-        if (message == WmClose && _window?.IsClosing == false)
-            _closing = false;
+        try
+        {
+            if (_abandoned)
+                return result;
+            if (message == WmClose && _window?.IsClosing == false)
+                _closing = false;
 
-        if (_closing)
+            if (_closing)
+                return result;
+
+            switch (message)
+            {
+                case WmEnterSizeMove:
+                    _inSizeMove = true;
+                    _window?.BeginNativeResize();
+                    StartTimer();
+                    RequestPaint();
+                    break;
+                case WmSize:
+                case WmSizing:
+                    _window?.UpdateNativeResize();
+                    break;
+                case WmTimer when wParam == TimerId:
+                    _window?.UpdateNativeResize();
+                    RequestPaint();
+                    break;
+                case WmPaint when _inSizeMove:
+                    _window?.UpdateNativeResize();
+                    break;
+                case WmExitSizeMove:
+                    _inSizeMove = false;
+                    StopTimer();
+                    _window?.EndNativeResize();
+                    break;
+            }
+        }
+        catch (Exception error)
+        {
+            System.Diagnostics.Debug.WriteLine($"Win32 modal resize handling failed: {error}");
+        }
+        finally
         {
             if (message == WmNcDestroy)
-                Restore();
-            return result;
-        }
-
-        switch (message)
-        {
-            case WmEnterSizeMove:
-                _inSizeMove = true;
-                _window?.BeginNativeResize();
-                StartTimer();
-                RequestPaint();
-                break;
-            case WmSize:
-            case WmSizing:
-                _window?.UpdateNativeResize();
-                break;
-            case WmTimer when wParam == TimerId:
-                _window?.UpdateNativeResize();
-                RequestPaint();
-                break;
-            case WmPaint when _inSizeMove:
-                _window?.UpdateNativeResize();
-                break;
-            case WmExitSizeMove:
-                _inSizeMove = false;
-                StopTimer();
-                _window?.EndNativeResize();
-                break;
+                ReleaseAfterDestroy();
         }
         return result;
     }
@@ -145,17 +146,21 @@ internal sealed class DesktopWin32ModalResizeHook : IDesktopInteractiveResizeHoo
     {
         if (_hwnd == 0)
             return;
-        lock (HookSync)
+        _abandoned = true;
+        if (!RemoveWindowSubclass(_hwnd, _callbackPointer, _subclassId))
         {
-            nint current = GetWindowLongPtr(_hwnd, WndProcIndex);
-            if (current == _callbackPointer && _previous != 0)
-                SetWindowLongPtr(_hwnd, WndProcIndex, _previous);
-            OriginalProcedures.Remove(_hwnd);
+            RetainedHooks[_subclassId] = this;
+            return;
         }
         _hwnd = 0;
-        _previous = 0;
-        _callbackPointer = 0;
-        _callback = null;
+        RetainedHooks.TryRemove(_subclassId, out _);
+    }
+
+    private void ReleaseAfterDestroy()
+    {
+        _abandoned = true;
+        _hwnd = 0;
+        RetainedHooks.TryRemove(_subclassId, out _);
     }
 
     public void Dispose()
@@ -166,28 +171,17 @@ internal sealed class DesktopWin32ModalResizeHook : IDesktopInteractiveResizeHoo
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-    private delegate nint WindowProcedure(nint hwnd, uint message, nuint wParam, nint lParam);
+    private delegate nint WindowProcedure(nint hwnd, uint message, nuint wParam, nint lParam,
+        nuint subclassId, nuint referenceData);
 
-    private static nint GetWindowLongPtr(nint hwnd, int index)
-        => Environment.Is64BitProcess ? GetWindowLongPtr64(hwnd, index) : GetWindowLong32(hwnd, index);
-
-    private static nint SetWindowLongPtr(nint hwnd, int index, nint procedure)
-        => Environment.Is64BitProcess
-            ? SetWindowLongPtr64(hwnd, index, procedure)
-            : SetWindowLong32(hwnd, index, procedure);
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
-    private static extern nint GetWindowLongPtr64(nint hwnd, int index);
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
-    private static extern nint GetWindowLong32(nint hwnd, int index);
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
-    private static extern nint SetWindowLongPtr64(nint hwnd, int index, nint value);
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
-    private static extern nint SetWindowLong32(nint hwnd, int index, nint value);
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern nint CallWindowProc(nint previous, nint hwnd, uint message, nuint wParam, nint lParam);
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern nint DefWindowProc(nint hwnd, uint message, nuint wParam, nint lParam);
+    [DllImport("comctl32.dll", EntryPoint = "SetWindowSubclass", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowSubclass(nint hwnd, nint callback, nuint subclassId, nuint referenceData);
+    [DllImport("comctl32.dll", EntryPoint = "RemoveWindowSubclass", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveWindowSubclass(nint hwnd, nint callback, nuint subclassId);
+    [DllImport("comctl32.dll", EntryPoint = "DefSubclassProc")]
+    private static extern nint DefSubclassProc(nint hwnd, uint message, nuint wParam, nint lParam);
     [DllImport("user32.dll", SetLastError = true)]
     private static extern nuint SetTimer(nint hwnd, nuint id, uint intervalMs, nint callback);
     [DllImport("user32.dll", SetLastError = true)]

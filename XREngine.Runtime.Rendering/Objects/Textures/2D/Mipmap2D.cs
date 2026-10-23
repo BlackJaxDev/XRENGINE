@@ -22,7 +22,13 @@ namespace XREngine.Rendering
         
         [field: MemoryPackIgnore]
         public event Action? Invalidated;
-        public void Invalidate() => Invalidated?.Invoke();
+        /// <summary>Publishes an owner edit made through the raw pixel storage.</summary>
+        public void Invalidate()
+        {
+            Interlocked.Increment(ref _resizeRevision);
+            Invalidated?.Invoke();
+        }
+        internal long DataRevision => Volatile.Read(ref _resizeRevision);
 
         [MemoryPackConstructor]
         public Mipmap2D() { }

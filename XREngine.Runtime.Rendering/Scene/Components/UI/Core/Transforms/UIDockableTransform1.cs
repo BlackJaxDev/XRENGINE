@@ -47,6 +47,9 @@ namespace XREngine.Rendering.UI
                 case nameof(SelectedIndex):
                     InvalidateLayout();
                     break;
+                case nameof(TabHeight):
+                    InvalidateArrange();
+                    break;
             }
         }
 

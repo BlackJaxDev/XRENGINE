@@ -14,6 +14,8 @@ namespace XREngine.Rendering.UI
         private EventList<UISizingDefinition> _columns;
         private List<int>[,]? _indices = null;
         private bool _invertY;
+        private readonly HashSet<UISizingDefinition> _observedDefinitions = [];
+        private readonly HashSet<UISizingValue> _observedValues = [];
 
         public UIGridTransform()
         {
@@ -76,9 +78,47 @@ namespace XREngine.Rendering.UI
 
         private void OnChildrenChanged()
         {
+            RefreshSizingSubscriptions();
             _indices = null;
             InvalidateLayout();
         }
+
+        private void RefreshSizingSubscriptions()
+        {
+            foreach (UISizingDefinition definition in _observedDefinitions)
+                definition.PropertyChanged -= SizingDefinitionChanged;
+            foreach (UISizingValue value in _observedValues)
+                value.PropertyChanged -= SizingValueChanged;
+            _observedDefinitions.Clear();
+            _observedValues.Clear();
+            ObserveDefinitions(Rows);
+            ObserveDefinitions(Columns);
+        }
+
+        private void ObserveDefinitions(EventList<UISizingDefinition> definitions)
+        {
+            foreach (UISizingDefinition definition in definitions)
+            {
+                if (definition is null || !_observedDefinitions.Add(definition))
+                    continue;
+                definition.PropertyChanged += SizingDefinitionChanged;
+                ObserveValue(definition.Value);
+                ObserveValue(definition.Min);
+                ObserveValue(definition.Max);
+            }
+        }
+
+        private void ObserveValue(UISizingValue? value)
+        {
+            if (value is not null && _observedValues.Add(value))
+                value.PropertyChanged += SizingValueChanged;
+        }
+
+        private void SizingDefinitionChanged(object? sender, IXRPropertyChangedEventArgs e)
+            => OnChildrenChanged();
+
+        private void SizingValueChanged(object? sender, IXRPropertyChangedEventArgs e)
+            => OnChildrenChanged();
 
         public List<UITransform> GetComponentsInRow(int rowIndex)
         {
@@ -143,7 +183,10 @@ namespace XREngine.Rendering.UI
             //{
                 for (int i = 0; i < Children.Count; ++i)
                     if (Children[i] is UITransform uic && uic.PlacementInfo is UIGridChildPlacementInfo info)
-                        _indices[info.Row, info.Column].Add(i);
+                    {
+                        if (info.Row >= 0 && info.Column >= 0 && info.Row < Rows.Count && info.Column < Columns.Count)
+                            _indices[info.Row, info.Column].Add(i);
+                    }
             //}
         }
 
@@ -264,6 +307,13 @@ namespace XREngine.Rendering.UI
             if (remainingColWidth < 0.0f)
                 remainingColWidth = 0.0f;
 
+            for (int r = 0; r < Rows.Count; r++)
+                if (Rows[r].Value.Mode == ESizingMode.Proportional)
+                    Rows[r].CalculatedValue = rowPropDenom <= 0 ? 0 : Rows[r].Value.Value / rowPropDenom * remainingRowHeight;
+            for (int c = 0; c < Columns.Count; c++)
+                if (Columns[c].Value.Mode == ESizingMode.Proportional)
+                    Columns[c].CalculatedValue = colPropDenom <= 0 ? 0 : Columns[c].Value.Value / colPropDenom * remainingColWidth;
+
             //Post-pass: actually size each row and col, and resize each component
             float heightOffset = 0.0f;
             for (int r = 0; r < Rows.Count; ++r)
@@ -271,9 +321,6 @@ namespace XREngine.Rendering.UI
                 var row = Rows[r];
 
                 //Calculate the proportional value now that the fixed and auto values have been processed
-                if (row.Value.Mode == ESizingMode.Proportional)
-                    row.CalculatedValue = rowPropDenom <= 0.0f ? 0.0f : row.Value.Value / rowPropDenom * remainingRowHeight;
-
                 float height = row.CalculatedValue;
 
                 float widthOffset = 0.0f;
@@ -282,9 +329,6 @@ namespace XREngine.Rendering.UI
                     var col = Columns[c];
 
                     //Calculate the proportional value now that the fixed and auto values have been processed
-                    if (col.Value.Mode == ESizingMode.Proportional)
-                        col.CalculatedValue = colPropDenom <= 0.0f ? 0.0f : col.Value.Value / colPropDenom * remainingColWidth;
-
                     float width = col.CalculatedValue;
 
                     List<int> indices = Indices[r, c];
@@ -297,12 +341,21 @@ namespace XREngine.Rendering.UI
                         if (childTfm is not UIBoundableTransform uiBoundable)
                             continue;
 
+                        if (uiBoundable.PlacementInfo is not UIGridChildPlacementInfo placement)
+                            continue;
+                        float allocatedWidth = width;
+                        for (int span = 1; span < placement.ColumnSpan && c + span < Columns.Count; span++)
+                            allocatedWidth += Columns[c + span].CalculatedValue;
+                        float allocatedHeight = height;
+                        for (int span = 1; span < placement.RowSpan && r + span < Rows.Count; span++)
+                            allocatedHeight += Rows[r + span].CalculatedValue;
+
                         float x = childRegion.X;
                         float y = childRegion.Y;
-                        y += childRegion.Height - heightOffset - height;
+                        y += InvertY ? heightOffset : childRegion.Height - heightOffset - allocatedHeight;
                         x += widthOffset;
-
-                        UILayoutSystem.FitLayout(uiBoundable, new BoundingRectangleF(x, y, width, height));
+                        placement.Offset = new System.Numerics.Vector2(x - childRegion.X, y - childRegion.Y);
+                        UILayoutSystem.FitLayout(uiBoundable, new BoundingRectangleF(x, y, allocatedWidth, allocatedHeight));
                     }
 
                     widthOffset += width;
@@ -577,17 +630,15 @@ namespace XREngine.Rendering.UI
                 case nameof(UIGridChildPlacementInfo.RowSpan):
                 case nameof(UIGridChildPlacementInfo.Row):
                     RemoveControlFromRows(info);
+                    OnChildrenChanged();
                     break;
 
                 case nameof(UIGridChildPlacementInfo.ColumnSpan):
                 case nameof(UIGridChildPlacementInfo.Column):
                     RemoveControlFromColumns(info);
+                    OnChildrenChanged();
                     break;
             }
-
-            //TODO: don't fully regenerate every time,
-            //Just update the indices of this element
-            OnChildrenChanged();
         }
 
         private void Info_PropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -600,23 +651,21 @@ namespace XREngine.Rendering.UI
                 case nameof(UIGridChildPlacementInfo.RowSpan):
                 case nameof(UIGridChildPlacementInfo.Row):
                     AddControlToRows(info);
+                    OnChildrenChanged();
                     break;
 
                 case nameof(UIGridChildPlacementInfo.ColumnSpan):
                 case nameof(UIGridChildPlacementInfo.Column):
                     AddControlToColumns(info);
+                    OnChildrenChanged();
                     break;
             }
-
-            //TODO: don't fully regenerate every time,
-            //Just update the indices of this element
-            OnChildrenChanged();
         }
 
         private void AddControlToRows(UIGridChildPlacementInfo info)
         {
             int startIndex = info.Row;
-            for (int rowIndex = startIndex; rowIndex < startIndex + info.RowSpan; ++rowIndex)
+            for (int rowIndex = startIndex; rowIndex < Rows.Count && rowIndex - startIndex < info.RowSpan; ++rowIndex)
             {
                 if (rowIndex < 0 || rowIndex >= Rows.Count)
                     continue;
@@ -632,7 +681,7 @@ namespace XREngine.Rendering.UI
         private void AddControlToColumns(UIGridChildPlacementInfo info)
         {
             int startIndex = info.Column;
-            for (int colIndex = startIndex; colIndex < startIndex + info.ColumnSpan; ++colIndex)
+            for (int colIndex = startIndex; colIndex < Columns.Count && colIndex - startIndex < info.ColumnSpan; ++colIndex)
             {
                 if (colIndex < 0 || colIndex >= Columns.Count)
                     continue;
@@ -648,7 +697,7 @@ namespace XREngine.Rendering.UI
         private void RemoveControlFromRows(UIGridChildPlacementInfo info)
         {
             int startIndex = info.Row;
-            for (int rowIndex = startIndex; rowIndex < startIndex + info.RowSpan; ++rowIndex)
+            for (int rowIndex = startIndex; rowIndex < Rows.Count && rowIndex - startIndex < info.RowSpan; ++rowIndex)
             {
                 if (rowIndex < 0 || rowIndex >= Rows.Count)
                     continue;
@@ -664,7 +713,7 @@ namespace XREngine.Rendering.UI
         private void RemoveControlFromColumns(UIGridChildPlacementInfo info)
         {
             int startIndex = info.Column;
-            for (int colIndex = startIndex; colIndex < startIndex + info.ColumnSpan; ++colIndex)
+            for (int colIndex = startIndex; colIndex < Columns.Count && colIndex - startIndex < info.ColumnSpan; ++colIndex)
             {
                 if (colIndex < 0 || colIndex >= Columns.Count)
                     continue;

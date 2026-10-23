@@ -149,6 +149,7 @@ public static partial class EditorUnitTests
 
         //Editor UI
         public UnitTestEditorType EditorType { get; set; } = UnitTestEditorType.IMGUI; //Selects which editor UI pipeline to create for unit testing.
+        public int VirtualCollectionFixtureItemCount { get; set; } = 0; //Shows a native virtual list with 100000 or 1000000 logical items when selected.
         public CameraUIDrawMode CameraUIDrawSpaceOnInit { get; set; } = CameraUIDrawMode.Screen; //Controls draw space and offscreen mode for unit testing camera UI.
         public bool TransformTool = false; //Adds the transform tool to the scene for testing dragging and rotating etc.
         public bool VideoStreaming = false; //Adds a video streaming component to the scene for testing video streaming.

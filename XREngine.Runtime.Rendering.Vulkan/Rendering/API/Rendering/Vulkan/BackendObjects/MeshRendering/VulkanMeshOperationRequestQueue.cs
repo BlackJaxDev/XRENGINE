@@ -421,6 +421,48 @@ internal sealed class VulkanMeshOperationRequestQueue
         }
     }
 
+    /// <summary>Discards queued draws from one failed UI authoring attempt.</summary>
+    internal int DiscardPendingUiPublicationRequests(ulong receiptId)
+    {
+        lock (_gate)
+        {
+            int retained = 0;
+            int discarded = 0;
+            for (int index = 0; index < _count; index++)
+            {
+                int source = _head + index;
+                if (source >= Capacity)
+                    source -= Capacity;
+                VulkanMeshRenderRequest request = _entries[source];
+                EVulkanMeshRequestLane lane = _lanes[source];
+                if (request.Context.UiPublicationReceiptId == receiptId)
+                {
+                    VulkanMeshRenderRequest.ReleaseAuthoringLease(ref request);
+                    DecrementLaneOccupancies(_lanes.AsSpan(source, 1));
+                    discarded++;
+                    continue;
+                }
+                int target = _head + retained++;
+                if (target >= Capacity)
+                    target -= Capacity;
+                _entries[target] = request;
+                _lanes[target] = lane;
+            }
+            for (int index = retained; index < _count; index++)
+            {
+                int slot = _head + index;
+                if (slot >= Capacity)
+                    slot -= Capacity;
+                _entries[slot] = default;
+                _lanes[slot] = default;
+            }
+            _count = retained;
+            if (_count == 0)
+                _publishedPublicationPins.ReleaseAll();
+            return discarded;
+        }
+    }
+
     private static int ResolveBackgroundSchedulingCapacity()
     {
         string? configured = Environment.GetEnvironmentVariable(

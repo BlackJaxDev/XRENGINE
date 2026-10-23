@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Rendering.UI.State;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Rendering.UI
@@ -24,6 +25,7 @@ namespace XREngine.Rendering.UI
             switch (propName)
             {
                 case nameof(DegreeRotation):
+                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
                     MarkLocalModified();
                     break;
             }

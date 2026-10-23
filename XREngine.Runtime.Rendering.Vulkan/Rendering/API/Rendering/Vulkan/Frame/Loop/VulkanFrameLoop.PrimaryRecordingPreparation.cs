@@ -2170,7 +2170,7 @@ internal sealed partial class VulkanFrameLoop
 
     private static bool IsQueuedDynamicUiOverlayRequest(
         in VulkanMeshRenderRequest request)
-        => IsNamedDynamicUiOverlayOperation(
+        => request.Context.UiPublicationReceiptId == 0UL && IsNamedDynamicUiOverlayOperation(
             request.Renderer.MeshRenderer,
             request.ResolvedMaterial.Material);
 
@@ -2404,6 +2404,10 @@ internal sealed partial class VulkanFrameLoop
         in PendingMeshDraw draw,
         in FrameOpContext context)
     {
+        // Publication-owned UI must remain in the primary artifact so its
+        // multipass receipt can attest the exact presented image.
+        if (context.UiPublicationReceiptId != 0UL)
+            return false;
         if (IsNamedDynamicUiOverlayOperation(in draw))
             return true;
 

@@ -37,9 +37,7 @@ public sealed class UICanvasTransformEditor : IXRTransformEditor
         if (canvas.DrawSpace == ECanvasDrawSpace.Camera)
             DrawFloat("Camera Distance", canvas.CameraDrawSpaceDistance, 0.05f, value => canvas.CameraDrawSpaceDistance = value, $"Set Canvas Camera Distance {transformLabel}", canvas);
 
-        DrawCheckbox("Use Async Layout", canvas.UseAsyncLayout, value => canvas.UseAsyncLayout = value, $"Toggle Async Layout {transformLabel}", canvas);
-        if (canvas.UseAsyncLayout)
-            DrawInt("Max Layout Items / Frame", canvas.MaxLayoutItemsPerFrame, 1f, value => canvas.MaxLayoutItemsPerFrame = value, $"Set Async Layout Budget {transformLabel}", canvas);
+        DrawReadOnlyField("Layout", "Bounded worker scheduling");
 
         DrawReadOnlyField("Layout Invalidated", canvas.IsLayoutInvalidated ? "Yes" : "No");
         DrawReadOnlyField("Layout Updating", canvas.IsUpdatingLayout ? "Yes" : "No");
@@ -53,23 +51,12 @@ public sealed class UICanvasTransformEditor : IXRTransformEditor
         if (ImGui.Button("Invalidate Layout"))
         {
             ImGuiUndoHelper.TrackDragUndo($"Invalidate Layout {transformLabel}", canvas);
-            canvas.InvalidateLayout();
             EnqueueSceneEdit(canvas.InvalidateLayout);
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("Update Layout"))
-        {
-            canvas.UpdateLayout();
-            EnqueueSceneEdit(canvas.UpdateLayout);
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Update Async"))
-        {
-            canvas.UpdateLayoutAsync();
+        if (ImGui.Button("Request Layout"))
             EnqueueSceneEdit(canvas.UpdateLayoutAsync);
-        }
 
         ImGui.Spacing();
     }

@@ -2569,6 +2569,25 @@ namespace XREngine.Rendering.Commands
         public bool TryGetGpuPass(int renderPass, out GPURenderPassCollection gpuPass)
             => _gpuPasses.TryGetValue(renderPass, out gpuPass!);
 
+        /// <summary>Discards an uncommitted producer collection without touching the rendered frame.</summary>
+        public void DiscardUpdatingCommands()
+        {
+            using (_lock.EnterScope())
+            {
+                foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
+                    pass.Clear();
+                ClearSwapQueueNoLock(_updatingSwapQueue, _updatingSwapQueueMembership);
+                CancelCollectedResourcesNoLock();
+                if (_updatingPassSortOrderCounters.Count > 0)
+                    foreach (int passIndex in _updatingPassSortOrderCounters.Keys)
+                        _updatingPassSortOrderCounters[passIndex] = 0L;
+                _numCommandsRecentlyAddedToUpdate = 0;
+                _updatingRevision++;
+                _updatingBackendReadyPackage.Reset();
+                ResetMeshOrderCollectionNoLock();
+            }
+        }
+
         public void SwapBuffers()
         {
             using var sample = RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers");

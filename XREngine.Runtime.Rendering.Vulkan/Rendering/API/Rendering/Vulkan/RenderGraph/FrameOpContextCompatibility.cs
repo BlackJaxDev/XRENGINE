@@ -90,6 +90,7 @@ internal static class FrameOpContextCompatibility
             OutputHistorySequenceId = 0UL,
             OutputHistorySourceFrame = 0UL,
             OutputCompletionReceiptId = 0UL,
+            UiPublicationReceiptId = 0UL,
             OutputCompletionSourceFrame = 0UL,
         };
 }

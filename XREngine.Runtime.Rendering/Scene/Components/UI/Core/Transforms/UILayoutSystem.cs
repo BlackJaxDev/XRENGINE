@@ -1,4 +1,3 @@
-using System.Collections;
 using XREngine.Rendering.UI.State;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -28,39 +27,11 @@ namespace XREngine.Rendering.UI
         #region Canvas Layout Entry Points
 
         /// <summary>
-        /// Root method to update the layout of a canvas synchronously.
+        /// Requests the immutable canvas layout path.
         /// </summary>
         public static void UpdateCanvasLayout(UICanvasTransform canvas)
         {
-            using var sample = RuntimeEngine.Profiler.Start();
-
-            // If the layout is not invalidated, or a parent canvas will control its layouting, don't update it as root canvas.
-            if (!canvas.IsLayoutInvalidated || canvas.IsNestedCanvas)
-                return;
-
-            // Cancel any pending async layout
-            canvas.CancelLayoutJob();
-
-            canvas.SetLayoutInvalidated(false);
-            canvas.SetUpdatingLayout(true);
-            canvas.RaiseLayoutingStarted();
-
-            BoundingRectangleF bounds;
-            using (RuntimeEngine.Profiler.Start("UpdateCanvasLayout.GetRootCanvasBounds"))
-                bounds = canvas.GetRootCanvasBounds();
-
-            if (EnableDebugLogging) LogUI($"Canvas UpdateLayout: bounds={bounds.Translation} size={bounds.Extents}");
-
-            // Phase 1: Measure (bottom-up, can skip unchanged subtrees)
-            using (RuntimeEngine.Profiler.Start("UpdateCanvasLayout.MeasureTransform"))
-                MeasureTransform(canvas, bounds.Extents);
-
-            // Phase 2: Arrange (top-down, can skip unchanged subtrees)
-            using (RuntimeEngine.Profiler.Start("UpdateCanvasLayout.ArrangeTransform"))
-                ArrangeTransform(canvas, bounds);
-
-            canvas.SetUpdatingLayout(false);
-            canvas.RaiseLayoutingFinished();
+            canvas.UpdateLayoutAsync();
         }
 
         /// <summary>
@@ -70,10 +41,8 @@ namespace XREngine.Rendering.UI
         {
             InvalidateLocal(canvas, true);
             UIRuntimeCounters.Add(UIWorkCounter.GlobalInvalidations);
-
-            // When the canvas layout is invalidated (e.g., size change), we must also
-            // invalidate all children so they recalculate positions based on anchors.
-            InvalidateChildrenRecursive(canvas);
+            // Accepted child slots are part of the arrange cache key. A new canvas
+            // constraint therefore visits only descendants whose allocation changes.
         }
 
         /// <summary>
@@ -596,182 +565,17 @@ namespace XREngine.Rendering.UI
 
         #endregion
 
-        #region Async Layout (Coroutine-based)
-
-        /// <summary>
-        /// Helper class to track processed count across coroutine calls.
-        /// </summary>
-        public class LayoutCounter
-        {
-            public int Count;
-            public void Increment() => Count++;
-            public void Reset() => Count = 0;
-        }
-
-        /// <summary>
-        /// Coroutine that performs layout in two phases, yielding periodically to avoid frame hitches.
-        /// </summary>
-        public static IEnumerable LayoutCoroutine(UICanvasTransform canvas, int maxItemsPerFrame)
-        {
-            var bounds = canvas.GetRootCanvasBounds();
-            var counter = new LayoutCounter();
-
-            // Phase 1: Measure pass (bottom-up traversal with yields)
-            foreach (var step in MeasureCoroutine(canvas, bounds.Extents, counter, maxItemsPerFrame))
-            {
-                if (counter.Count >= maxItemsPerFrame)
-                {
-                    counter.Reset();
-                    yield return null; // Yield to next frame
-                }
-            }
-
-            yield return null; // Yield between phases
-
-            counter.Reset();
-
-            // Phase 2: Arrange pass (top-down traversal with yields)
-            foreach (var step in ArrangeCoroutine(canvas, bounds, counter, maxItemsPerFrame))
-            {
-                if (counter.Count >= maxItemsPerFrame)
-                {
-                    counter.Reset();
-                    yield return null; // Yield to next frame
-                }
-            }
-        }
-
-        /// <summary>
-        /// Coroutine for the measure phase.
-        /// </summary>
-        public static IEnumerable MeasureCoroutine(UITransform transform, Vector2 availableSize, LayoutCounter counter, int maxItemsPerFrame)
-        {
-            // Measure this transform
-            MeasureTransform(transform, availableSize);
-            counter.Increment();
-            yield return null;
-
-            // Recursively measure children
-            foreach (var child in transform.Children)
-            {
-                if (child is UIBoundableTransform boundableChild)
-                {
-                    foreach (var step in MeasureChildCoroutine(boundableChild, availableSize, counter, maxItemsPerFrame))
-                        yield return step;
-                }
-                else if (child is UITransform uiChild)
-                {
-                    MeasureTransform(uiChild, availableSize);
-                    counter.Increment();
-                    yield return null;
-                }
-            }
-        }
-
-        private static IEnumerable MeasureChildCoroutine(UIBoundableTransform child, Vector2 availableSize, LayoutCounter counter, int maxItemsPerFrame)
-        {
-            // Skip if child doesn't need measuring
-            if (!child.NeedsMeasure)
-                yield break;
-
-            MeasureBoundable(child, availableSize);
-            counter.Increment();
-            yield return null;
-
-            // Recursively measure grandchildren
-            foreach (var grandchild in child.Children)
-            {
-                if (grandchild is UIBoundableTransform boundableGrandchild)
-                {
-                    foreach (var step in MeasureChildCoroutine(boundableGrandchild, availableSize, counter, maxItemsPerFrame))
-                        yield return step;
-                }
-                else if (grandchild is UITransform uiGrandchild)
-                {
-                    MeasureTransform(uiGrandchild, availableSize);
-                    counter.Increment();
-                    yield return null;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Coroutine for the arrange phase.
-        /// </summary>
-        public static IEnumerable ArrangeCoroutine(UIBoundableTransform transform, BoundingRectangleF bounds, LayoutCounter counter, int maxItemsPerFrame)
-        {
-            // Arrange this transform
-            ArrangeBoundable(transform, bounds);
-            counter.Increment();
-            yield return null;
-
-            // Get child region after arranging self
-            var childRegion = ApplyPadding(transform, transform.GetActualBounds());
-
-            // Recursively arrange children
-            foreach (var child in transform.Children)
-            {
-                if (child is UIBoundableTransform boundableChild)
-                {
-                    foreach (var step in ArrangeChildCoroutine(boundableChild, childRegion, counter, maxItemsPerFrame))
-                        yield return step;
-                }
-                else if (child is UITransform uiChild)
-                {
-                    ArrangeTransform(uiChild, childRegion);
-                    counter.Increment();
-                    yield return null;
-                }
-            }
-        }
-
-        private static IEnumerable ArrangeChildCoroutine(UIBoundableTransform child, BoundingRectangleF bounds, LayoutCounter counter, int maxItemsPerFrame)
-        {
-            // Skip if child doesn't need arranging AND bounds haven't changed.
-            // Using the same dual guard as the synchronous ArrangeBoundable path
-            // to handle cases where NeedsArrange was cleared but position changed
-            // (e.g., split panel Y offset shifts on height-only window resize).
-            if (!child.NeedsArrange && child.LastArrangeBounds.Equals(bounds))
-                yield break;
-
-            ArrangeBoundable(child, bounds);
-            counter.Increment();
-            yield return null;
-
-            // Get child's child region
-            var grandchildRegion = ApplyPadding(child, child.GetActualBounds());
-
-            // Recursively arrange grandchildren
-            foreach (var grandchild in child.Children)
-            {
-                if (grandchild is UIBoundableTransform boundableGrandchild)
-                {
-                    foreach (var step in ArrangeChildCoroutine(boundableGrandchild, grandchildRegion, counter, maxItemsPerFrame))
-                        yield return step;
-                }
-                else if (grandchild is UITransform uiGrandchild)
-                {
-                    ArrangeTransform(uiGrandchild, grandchildRegion);
-                    counter.Increment();
-                    yield return null;
-                }
-            }
-        }
-
-        #endregion
-
         #region Legacy FitLayout Support
 
         /// <summary>
-        /// Legacy single-pass layout method for boundable transforms.
+        /// Requests canvas layout for a boundable transform.
         /// </summary>
         public static void FitLayout(UIBoundableTransform transform, BoundingRectangleF parentBounds)
         {
-            using var profiler = RuntimeEngine.Profiler.Start();
-
-            // Use the two-phase approach for better dirty tracking
-            MeasureBoundable(transform, parentBounds.Extents);
-            ArrangeBoundable(transform, parentBounds);
+            UICanvasTransform canvas = transform.GetMutationCanvas() ??
+                throw new InvalidOperationException("A boundable transform needs a canvas for layout.");
+            canvas.SetLayoutInvalidated(true);
+            canvas.UpdateLayoutAsync();
         }
 
         #endregion

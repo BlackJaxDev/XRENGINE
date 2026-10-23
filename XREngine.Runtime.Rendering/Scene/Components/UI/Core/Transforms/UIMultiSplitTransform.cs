@@ -1,4 +1,3 @@
-using XREngine.Extensions;
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
@@ -15,42 +14,42 @@ namespace XREngine.Rendering.UI
         public UISplitArrangement Arrangement
         {
             get => _arrangement;
-            set => SetField(ref _arrangement, value);
+            set => SetField(ref _arrangement, Enum.IsDefined(value) ? value : throw new ArgumentOutOfRangeException(nameof(value)));
         }
 
         private float? _fixedSizeFirst = null;
         public float? FixedSizeFirst
         {
             get => _fixedSizeFirst;
-            set => SetField(ref _fixedSizeFirst, value);
+            set => SetField(ref _fixedSizeFirst, ValidateFixedSize(value));
         }
 
         private float? _fixedSizeSecond = null;
         public float? FixedSizeSecond
         {
             get => _fixedSizeSecond;
-            set => SetField(ref _fixedSizeSecond, value);
+            set => SetField(ref _fixedSizeSecond, ValidateFixedSize(value));
         }
 
         private float _splitPercentFirst = 0.33f;
         public float SplitPercentFirst
         {
             get => _splitPercentFirst;
-            set => SetField(ref _splitPercentFirst, value.Clamp(0.0f, 1.0f));
+            set => SetField(ref _splitPercentFirst, ValidatePercent(value));
         }
 
         private float _splitPercentSecond = 0.66f;
         public float SplitPercentSecond
         {
             get => _splitPercentSecond;
-            set => SetField(ref _splitPercentSecond, value.Clamp(0.0f, 1.0f));
+            set => SetField(ref _splitPercentSecond, ValidatePercent(value));
         }
 
         private float _splitterSize = 0.0f;
         public float SplitterSize
         {
             get => _splitterSize;
-            set => SetField(ref _splitterSize, value);
+            set => SetField(ref _splitterSize, float.IsFinite(value) && value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(value)));
         }
 
         private bool _canUserResize = true;
@@ -58,6 +57,21 @@ namespace XREngine.Rendering.UI
         {
             get => _canUserResize;
             set => SetField(ref _canUserResize, value);
+        }
+
+        private static float? ValidateFixedSize(float? value)
+            => value is null || (float.IsFinite(value.Value) && value.Value >= 0)
+                ? value : throw new ArgumentOutOfRangeException(nameof(value));
+
+        private static float ValidatePercent(float value)
+            => float.IsFinite(value) ? Math.Clamp(value, 0, 1) : throw new ArgumentOutOfRangeException(nameof(value));
+
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            if (propName is nameof(Arrangement) or nameof(FixedSizeFirst) or nameof(FixedSizeSecond)
+                or nameof(SplitPercentFirst) or nameof(SplitPercentSecond) or nameof(SplitterSize))
+                InvalidateArrange();
         }
 
         /// <summary>

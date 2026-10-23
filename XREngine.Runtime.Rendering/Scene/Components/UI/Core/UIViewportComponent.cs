@@ -1,8 +1,11 @@
 using XREngine.Extensions;
+using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.UI.State;
+using System.Threading;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.UI
@@ -14,8 +17,62 @@ namespace XREngine.Rendering.UI
     {
         public event DelSetUniforms? SettingUniforms;
 
-        private readonly XRMaterialFrameBuffer _fbo;
-        private readonly XRTexture2D _depthStencilTexture;
+        private XRMaterialFrameBuffer _fbo;
+        private XRTexture2D _depthStencilTexture;
+        private const int MaxProducedSurfaces = 4;
+        private readonly List<ViewportSurface> _surfaces = [];
+        private ViewportSurface? _publishedSurface;
+        private ulong _nextSurfaceGeneration;
+        private string? _lastProducerFailure;
+        private readonly Action _invalidateViewportVisual;
+        private int _viewportVisualInvalidationQueued;
+        private int _viewportProducerDestroyed;
+        private readonly object _viewportProducerGate = new();
+        private int _viewportProducerActive;
+        private bool _viewportReleasePending;
+        private bool _viewportSurfacesReleased;
+
+        private sealed class ViewportSurface(XRMaterialFrameBuffer fbo, XRTexture2D color,
+            XRTexture2D depth) : IUIDrawProducerLease
+        {
+            private int _references = 1; // component's pool ownership
+            private long _generation;
+            public XRMaterialFrameBuffer Fbo { get; } = fbo;
+            public XRTexture2D Texture { get; } = color;
+            public XRTexture2D Depth { get; } = depth;
+            public ulong Generation => unchecked((ulong)Volatile.Read(ref _generation));
+            public bool IsPoolOnly => Volatile.Read(ref _references) == 1;
+            public void Publish(ulong generation) => Volatile.Write(ref _generation, checked((long)generation));
+            public void Retain()
+            {
+                int current;
+                do
+                {
+                    current = Volatile.Read(ref _references);
+                    ObjectDisposedException.ThrowIf(current == 0, this);
+                } while (Interlocked.CompareExchange(ref _references, checked(current + 1), current) != current);
+            }
+            public void Release()
+            {
+                int remaining = Interlocked.Decrement(ref _references);
+                if (remaining < 0) throw new InvalidOperationException("Viewport surface was released twice.");
+                if (remaining != 0) return;
+                if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                    DestroyResources();
+                else
+                    RuntimeEngine.EnqueueRenderThreadTask(DestroyResources, "UI.Viewport.DestroySurface",
+                        RenderThreadJobKind.RenderPipelineResource);
+            }
+
+            private void DestroyResources()
+            {
+                Fbo.Destroy();
+                Depth.Destroy();
+                foreach (Mipmap2D mip in Texture.Mipmaps)
+                    mip.Data?.Dispose();
+                Texture.Destroy();
+            }
+        }
         private uint _requestedWidth = 1u;
         private uint _requestedHeight = 1u;
         private bool _pendingResize;
@@ -39,6 +96,7 @@ namespace XREngine.Rendering.UI
 
         public UIViewportComponent() : base(GetViewportMaterial())
         {
+            _invalidateViewportVisual = InvalidateViewportVisual;
             DisableBatching = true;
             SetBlendModeAllDrawBuffers(BlendMode.Disabled());
             Viewport.AutomaticallyCollectVisible = false;
@@ -50,6 +108,10 @@ namespace XREngine.Rendering.UI
             _fbo = new XRMaterialFrameBuffer(Material, deriveRenderTargetsFromMaterial: false);
             ApplyUniqueRenderTargetNames();
             ApplyFramebufferTargets();
+            ViewportSurface placeholder = new(_fbo, (XRTexture2D)RenderedTexture!, _depthStencilTexture);
+            placeholder.Publish(++_nextSurfaceGeneration);
+            _surfaces.Add(placeholder);
+            Volatile.Write(ref _publishedSurface, placeholder);
 
             if (RenderCommand3D.Mesh is not null)
                 RenderCommand3D.Mesh.SettingUniforms += SetUniforms;
@@ -96,8 +158,21 @@ namespace XREngine.Rendering.UI
         }
 
         private static XRMaterial GetViewportMaterial()
-            => new([CreateColorTexture(1u, 1u)],
+        {
+            XRTexture2D color = CreateColorTexture(1u, 1u);
+            color.Mipmaps[0].Data = new DataSource(new byte[8]);
+            return new XRMaterial([color],
                 XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedOpaqueForward.fs"), EShaderType.Fragment));
+        }
+
+        private void InvalidateViewportVisual()
+        {
+            Interlocked.Exchange(ref _viewportVisualInvalidationQueued, 0);
+            if (Volatile.Read(ref _viewportProducerDestroyed) != 0)
+                return;
+            if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
+        }
 
         private void ApplyFramebufferTargets()
         {
@@ -208,11 +283,36 @@ namespace XREngine.Rendering.UI
 
             _pendingResize = false;
 
-            if (_fbo.Width != _requestedWidth || _fbo.Height != _requestedHeight)
-                _fbo.Resize(_requestedWidth, _requestedHeight);
-
             if ((uint)Viewport.Width != _requestedWidth || (uint)Viewport.Height != _requestedHeight)
                 Viewport.Resize(_requestedWidth, _requestedHeight);
+        }
+
+        private ViewportSurface? AcquireProducedSurface()
+        {
+            ViewportSurface? published = Volatile.Read(ref _publishedSurface);
+            foreach (ViewportSurface surface in _surfaces)
+            {
+                if (ReferenceEquals(surface, published) || !surface.IsPoolOnly)
+                    continue;
+                if (surface.Fbo.Width != _requestedWidth || surface.Fbo.Height != _requestedHeight)
+                    surface.Fbo.Resize(_requestedWidth, _requestedHeight);
+                return surface;
+            }
+            if (_surfaces.Count >= MaxProducedSurfaces)
+                return null;
+            XRTexture2D color = CreateColorTexture(_requestedWidth, _requestedHeight);
+            XRTexture2D depth = CreateDepthStencilTexture(_requestedWidth, _requestedHeight);
+            XRMaterialFrameBuffer fbo = new(Material, deriveRenderTargetsFromMaterial: false);
+            fbo.SetRenderTargets(
+                (color, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (depth, EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
+            string suffix = $"{ID:N}_{_surfaces.Count}";
+            color.Name = $"UIViewportColor_{suffix}";
+            depth.Name = $"UIViewportDepthStencil_{suffix}";
+            fbo.Name = $"UIViewportFBO_{suffix}";
+            ViewportSurface created = new(fbo, color, depth);
+            _surfaces.Add(created);
+            return created;
         }
 
         public void CollectVisible()
@@ -282,6 +382,23 @@ namespace XREngine.Rendering.UI
         }
         public void Render()
         {
+            lock (_viewportProducerGate)
+            {
+                if (Volatile.Read(ref _viewportProducerDestroyed) != 0)
+                    return;
+                _viewportProducerActive++;
+                try { RenderCore(); }
+                finally
+                {
+                    _viewportProducerActive--;
+                    if (_viewportProducerActive == 0 && _viewportReleasePending)
+                        ReleaseViewportSurfacesUnderGate();
+                }
+            }
+        }
+
+        private void RenderCore()
+        {
             using var sample = RuntimeEngine.Profiler.Start("UIViewportComponent.Render");
 
             _renderAttempts++;
@@ -295,8 +412,18 @@ namespace XREngine.Rendering.UI
             try
             {
                 ApplyPendingSize();
+                ViewportSurface? surface = AcquireProducedSurface();
+                if (surface is null)
+                {
+                    _lastProducerFailure = "UI.Viewport.ProducerCapacity: all viewport textures still belong to published UI draws.";
+                    _renderTargetIncompleteSkipped++;
+                    return;
+                }
+                _fbo = surface.Fbo;
+                _depthStencilTexture = surface.Depth;
                 if (!_fbo.IsLastCheckComplete)
                 {
+                    _lastProducerFailure = "UI.Viewport.RenderTargetIncomplete: the selected framebuffer is not ready.";
                     _renderTargetIncompleteSkipped++;
                     return;
                 }
@@ -306,6 +433,8 @@ namespace XREngine.Rendering.UI
                 try
                 {
                     Viewport.Render(_fbo, null, null, false);
+                    if (Volatile.Read(ref _viewportProducerDestroyed) != 0)
+                        return;
                     AbstractRenderer.Current?.PublishFrameBufferAttachmentsForSampling(_fbo);
                     AbstractRenderer.Current?.MemoryBarrier(
                         EMemoryBarrierMask.Framebuffer |
@@ -316,7 +445,14 @@ namespace XREngine.Rendering.UI
                 {
                     RuntimeEngine.Rendering.State.IsSceneCapturePass = wasSceneCapturePass;
                 }
+                if (Volatile.Read(ref _viewportProducerDestroyed) != 0)
+                    return;
                 _lastRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                surface.Publish(++_nextSurfaceGeneration);
+                Volatile.Write(ref _publishedSurface, surface);
+                _lastProducerFailure = null;
+                if (Interlocked.Exchange(ref _viewportVisualInvalidationQueued, 1) == 0)
+                    RuntimeEngine.EnqueueAppThreadTask(_invalidateViewportVisual, "UI.Viewport.FramePublished");
                 _renderCompleted++;
             }
             finally
@@ -326,13 +462,104 @@ namespace XREngine.Rendering.UI
         }
 
         [YamlIgnore]
+        /// <summary>Gets the latest viewport texture. The caller must not keep it across frames.</summary>
         public XRTexture? RenderedTexture
         {
-            get => Material?.Textures?.Count > 0 ? Material.Textures[0] : null;
+            get => Volatile.Read(ref _publishedSurface)?.Texture ??
+                (Material?.Textures?.Count > 0 ? Material.Textures[0] : null);
         }
 
         [YamlIgnore]
         public XRFrameBuffer RenderTargetFBO => _fbo;
+
+        [YamlIgnore]
+        public string? LastProducerFailure => _lastProducerFailure;
+
+        protected override bool TryCapturePublicationPayload(in UILayoutNodeOutput output,
+            UIDrawPayloadBuilder builder, out UIDrawPayload? payload, out string? failure)
+        {
+            payload = null;
+            if (Volatile.Read(ref _viewportProducerDestroyed) != 0)
+            {
+                failure = "UI.Viewport.ProducerStopped: the viewport producer is closing.";
+                return false;
+            }
+            if (SettingUniforms is not null || Mesh is not { } sourceMesh ||
+                !sourceMesh.HasOnlySettingUniformsHandler(SetUniforms) ||
+                sourceMesh.HasRenderDataPreparation)
+            {
+                failure = "UI.Viewport.CallbackAdapterRequired: authored viewport callbacks need a value capture adapter.";
+                return false;
+            }
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                ViewportSurface? surface = Volatile.Read(ref _publishedSurface);
+                if (surface is null || surface.Generation == 0)
+                {
+                    failure = _lastProducerFailure ?? "UI.Viewport.ProducerPending: no complete viewport surface is ready.";
+                    return false;
+                }
+                surface.Retain();
+                try
+                {
+                    if (!ReferenceEquals(surface, Volatile.Read(ref _publishedSurface)))
+                        continue;
+                    builder.ProducerLease = surface;
+                    builder.ProducerTextureSlot = 0;
+                    return builder.TryCapture(RenderCommand2D, true, out payload, out failure);
+                }
+                finally
+                {
+                    surface.Release();
+                }
+            }
+            failure = "UI.Viewport.ProducerChanging: the viewport surface changed during owner capture.";
+            return false;
+        }
+
+        protected override void OnDestroying()
+        {
+            Volatile.Write(ref _viewportProducerDestroyed, 1);
+            UnhookRenderWindow();
+            Volatile.Write(ref _publishedSurface, null);
+            try { base.OnDestroying(); }
+            finally
+            {
+                lock (_viewportProducerGate)
+                {
+                    if (_viewportProducerActive != 0)
+                        _viewportReleasePending = true;
+                    else if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                        ReleaseViewportSurfacesUnderGate();
+                    else
+                        RuntimeEngine.EnqueueRenderThreadTask(ReleaseViewportSurfaces, "UI.Viewport.ReleaseSurfaces",
+                            RenderThreadJobKind.RenderPipelineResource);
+                }
+            }
+        }
+
+        private void ReleaseViewportSurfaces()
+        {
+            lock (_viewportProducerGate)
+                ReleaseViewportSurfacesUnderGate();
+        }
+
+        private void ReleaseViewportSurfacesUnderGate()
+        {
+            if (_viewportSurfacesReleased)
+                return;
+            if (_viewportProducerActive != 0)
+            {
+                _viewportReleasePending = true;
+                return;
+            }
+            _viewportSurfacesReleased = true;
+            _viewportReleasePending = false;
+            Volatile.Write(ref _publishedSurface, null);
+            foreach (ViewportSurface surface in _surfaces)
+                surface.Release();
+            _surfaces.Clear();
+        }
 
         [YamlIgnore]
         public ulong CollectVisibleAttempts => _collectVisibleAttempts;

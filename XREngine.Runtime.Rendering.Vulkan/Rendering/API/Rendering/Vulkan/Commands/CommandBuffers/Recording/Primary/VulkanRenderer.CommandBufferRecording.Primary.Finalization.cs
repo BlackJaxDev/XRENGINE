@@ -506,6 +506,91 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        private void FinalizeUiPublicationReceipts(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            VulkanAcceptedFramePlan? acceptedPlan = recordingState.AcceptedFramePlan;
+            if (acceptedPlan is null)
+                return;
+            foreach (ulong id in acceptedPlan.UiPublicationReceiptIds)
+            {
+                if (!VulkanUiPublicationReceiptLedger.TryGetSealed(id,
+                        out int expectedDraws, out bool requiresSwapchain, out XRGpuFence? receiptFence) ||
+                    receiptFence is not VulkanTimelineGpuFence fence)
+                    throw new VulkanPlanPreconditionException(
+                        $"UI publication receipt {id} lost its sealed GPU fence.");
+                int recordedDraws = 0;
+                int taggedOperations = 0;
+                for (int operationIndex = 0; operationIndex < recordingState.Ops.Length; operationIndex++)
+                {
+                    if (recordingState.Ops.GetContext(operationIndex).UiPublicationReceiptId != id)
+                        continue;
+                    taggedOperations++;
+                    int sourceIndex = recordingState.Ops.GetHeader(operationIndex).OriginalIndex;
+                    if ((uint)sourceIndex >=
+                            (uint)recordingState.RequiredProducerRecordingOutcomesBySourceIndex.Length ||
+                        recordingState.RequiredProducerRecordingOutcomesBySourceIndex[sourceIndex] !=
+                            (RequiredProducerOperationBit | RequiredProducerRecordedBit))
+                    {
+                        fence.Fail(EGpuFenceFailureSite.OutputCohortIncomplete,
+                            EGpuFenceNativeSubmission.NotCalled);
+                        throw new VulkanPlanPreconditionException(
+                            $"UI publication receipt {id} did not record operation {operationIndex}.");
+                    }
+                    if (recordingState.Ops.TryGetMeshDraw(operationIndex, out _))
+                        recordedDraws++;
+                }
+                bool hasAuthoredScreenClear = false;
+                if (requiresSwapchain && expectedDraws == 0)
+                    for (int operationIndex = 0; operationIndex < recordingState.Ops.Length; operationIndex++)
+                        if (recordingState.Ops.GetHeader(operationIndex).OpCode ==
+                                EVulkanPrimaryPlanNodeKind.Clear &&
+                            recordingState.Ops.GetTarget(operationIndex) is null &&
+                            recordingState.Ops.GetClear(operationIndex).ClearColor)
+                        {
+                            hasAuthoredScreenClear = true;
+                            break;
+                        }
+                if (recordedDraws != expectedDraws ||
+                    (expectedDraws > 0 && taggedOperations == 0) ||
+                    (requiresSwapchain && recordingState.ActualSwapchainWriteCount == 0) ||
+                    (requiresSwapchain && expectedDraws == 0 &&
+                     !hasAuthoredScreenClear))
+                {
+                    fence.Fail(EGpuFenceFailureSite.OutputCohortIncomplete,
+                        EGpuFenceNativeSubmission.NotCalled);
+                    throw new VulkanPlanPreconditionException(
+                        $"UI publication receipt {id} did not produce its complete output: recorded={recordedDraws}, expected={expectedDraws}, swapchainWrites={recordingState.ActualSwapchainWriteCount}.");
+                }
+                RegisterSubmissionMarker(recordingState.CommandBuffer, fence);
+                recordingState.FrameOpsRequireRerecordLocal = true;
+            }
+        }
+
+        private static void CommitRecordedUiPublicationReceipts(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            VulkanAcceptedFramePlan? acceptedPlan = recordingState.AcceptedFramePlan;
+            if (acceptedPlan is null || acceptedPlan.UiPublicationReceiptCount == 0)
+                return;
+            PrimaryCommandArtifactOwner artifact = recordingState.ArtifactOwner ??
+                throw new VulkanPlanPreconditionException(
+                    "A recorded UI publication has no primary command artifact owner.");
+            foreach (ulong id in acceptedPlan.UiPublicationReceiptIds)
+            {
+                int recordedDraws = 0;
+                for (int operationIndex = 0; operationIndex < recordingState.Ops.Length; operationIndex++)
+                    if (recordingState.Ops.GetContext(operationIndex).UiPublicationReceiptId == id &&
+                        recordingState.Ops.TryGetMeshDraw(operationIndex, out _))
+                        recordedDraws++;
+                if (!VulkanUiPublicationReceiptLedger.TryAttestRecorded(id, recordedDraws))
+                    throw new VulkanPlanPreconditionException(
+                        $"UI publication receipt {id} failed recorded-draw attestation.");
+            }
+            artifact.CaptureRecordedUiPublicationReceipts(
+                acceptedPlan.UiPublicationReceiptIds);
+        }
+
         private static void MarkActualTerminalOutputRange(
             scoped ref PrimaryCommandBufferRecordingState recordingState,
             int firstOperationIndex,

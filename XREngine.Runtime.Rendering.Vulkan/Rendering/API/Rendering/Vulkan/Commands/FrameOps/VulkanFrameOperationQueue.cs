@@ -145,6 +145,33 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             Pending.RemoveRange(retainedCount, Pending.Count - retainedCount);
     }
 
+    /// <summary>Discards operations from one failed UI authoring attempt.</summary>
+    internal int DiscardPendingUiPublicationOperations(ulong receiptId)
+    {
+        using (SyncRoot.EnterScope())
+        {
+            Span<FrameOp> operations = CollectionsMarshal.AsSpan(Pending);
+            int retainedCount = 0;
+            for (int index = 0; index < operations.Length; index++)
+            {
+                FrameOp operation = operations[index];
+                if (operation.ContextReference.UiPublicationReceiptId != receiptId)
+                {
+                    operations[retainedCount++] = operation;
+                    continue;
+                }
+                operation.ReleaseAuthoringSnapshot();
+                ReadOnlySpan<FrameOp> abandoned = operations.Slice(index, 1);
+                FailPendingSubmissionMarkers(abandoned);
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(abandoned);
+            }
+            int discarded = Pending.Count - retainedCount;
+            if (discarded != 0)
+                Pending.RemoveRange(retainedCount, discarded);
+            return discarded;
+        }
+    }
+
     internal void ReleaseDrainedOutputCompletionOwnership()
     {
         _drainedOutputCompletions.AsSpan(0, DrainedOutputCompletionCount).Clear();

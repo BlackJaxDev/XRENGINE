@@ -10,7 +10,6 @@ namespace XREngine.Components;
 
 public partial class UICanvasInputComponent
 {
-    private readonly RenderInfo2D?[] _contactHits = new RenderInfo2D?[256];
 
     private LocalPlayerController? OwningLocalPlayer => OwningPawn?.Controller as LocalPlayerController;
     private bool IsVirtualGamepadDispatch => OwningLocalPlayer?.IsVirtualGamepadDispatch ?? false;
@@ -26,27 +25,12 @@ public partial class UICanvasInputComponent
     {
         canvasPosition = default;
         if (OwningPawn?.Viewport is not XRViewport viewport || GetCameraCanvas() is not { } canvas ||
-            viewport.Width <= 0 || viewport.Height <= 0)
+            RefreshPresentedInput() is not { } publication)
             return false;
-
-        Vector2 viewportPosition = viewport.ScreenToViewportCoordinate(screenPosition);
-        if (requireInsideViewport && (viewportPosition.X < 0 || viewportPosition.Y < 0 ||
-            viewportPosition.X > viewport.Width || viewportPosition.Y > viewport.Height))
+        if (!publication.TryMapPointer(screenPosition, out canvasPosition, requireInsideViewport))
             return false;
-        Vector2 normalized = viewport.NormalizeViewportCoordinate(viewportPosition);
-        normalized.Y = 1 - normalized.Y;
-        var transform = canvas.CanvasTransform;
-        XRCamera? camera = transform.DrawSpace switch
-        {
-            ECanvasDrawSpace.Screen => canvas.Camera2D,
-            ECanvasDrawSpace.Camera => transform.CameraSpaceCamera ?? viewport.ActiveCamera,
-            _ => null,
-        };
-        Vector2? result = GetUICoordinate(viewport, camera, normalized, transform, transform.DrawSpace);
-        if (result is not { } coordinate || !float.IsFinite(coordinate.X) || !float.IsFinite(coordinate.Y))
-            return false;
-        canvasPosition = coordinate;
-        return true;
+        return float.IsFinite(canvasPosition.X) && float.IsFinite(canvasPosition.Y) &&
+            (!requireInsideViewport || publication.CanvasBounds.Contains(canvasPosition));
     }
 
     /// <summary>Uses the same canvas coordinates, input blockers and ordering as ordinary UI hit testing.</summary>
@@ -86,57 +70,38 @@ public partial class UICanvasInputComponent
         localPosition = default;
         overflow = false;
         hasUiHit = false;
-        if (!TryGetContactCoordinate(screenPosition, true, out Vector2 position) ||
-            GetCameraCanvas()?.VisualScene2D is not { } scene)
+        if (OwningPawn?.Viewport is not XRViewport viewport || GetCameraCanvas() is not { } canvas ||
+            RefreshPresentedInput() is not { } publication)
+            return null;
+        if (!publication.TryMapPointer(screenPosition, out Vector2 position) ||
+            !publication.CanvasBounds.Contains(position))
             return null;
 
-        bool complete = scene.TryFindInputIntersections(position, _contactHits.AsSpan(), out int count);
-        try
+        UIHitRecord? blocker = null;
+        foreach (ref readonly UIHitRecord record in publication.Hits)
         {
-            if (!complete)
-            {
-                overflow = true;
-                return null;
-            }
-            TransformBase? blocker = null;
-            int blockerDepth = int.MinValue;
-            for (int index = 0; index < count; index++)
-            {
-                if (_contactHits[index]?.Owner is not UIComponent ui || !IsContactHit(ui, position) ||
-                    ui.Transform is not UIBoundableTransform { BlocksInputBehind: true } bounds)
-                    continue;
-                if (bounds.Depth > blockerDepth)
-                {
-                    blocker = bounds;
-                    blockerDepth = bounds.Depth;
-                }
-            }
-
-            UIInteractableComponent? best = null;
-            int depth = int.MinValue, layer = int.MinValue, order = int.MinValue;
-            for (int index = 0; index < count; index++)
-            {
-                if (_contactHits[index] is not { } hit || hit.Owner is not UIInteractableComponent ui ||
-                    !IsContactHit(ui, position) || (blocker is not null && !IsDescendantOfOrSelf(ui.Transform, blocker)))
-                    continue;
-                if (!IsBetterInputCandidate(ui.Transform.Depth, hit.LayerIndex, hit.IndexWithinLayer, depth, layer, order))
-                    continue;
-                best = ui;
-                depth = ui.Transform.Depth;
-                layer = hit.LayerIndex;
-                order = hit.IndexWithinLayer;
-            }
-            hasUiHit = best is not null || blocker is not null;
-            if (best is not null)
-                localPosition = best.UITransform.CanvasToLocal(position);
-            return best;
+            if (!record.BlocksInputBehind || !IsCurrentHitRecord(record) || !record.Contains(position))
+                continue;
+            if (blocker is not { } previous || IsBetterInputCandidate(record.Depth,
+                record.LayerIndex, record.IndexWithinLayer, previous.Depth, previous.LayerIndex, previous.IndexWithinLayer))
+                blocker = record;
         }
-        finally
+        UIHitRecord? best = null;
+        foreach (ref readonly UIHitRecord record in publication.Hits)
         {
-            Array.Clear(_contactHits, 0, count);
+            if (!record.IsInteractable || !IsCurrentHitRecord(record) || !record.Contains(position) ||
+                blocker is { } front && !record.IsInSubtreeOf(front))
+                continue;
+            if (best is not { } previous || IsBetterInputCandidate(record.Depth,
+                record.LayerIndex, record.IndexWithinLayer, previous.Depth, previous.LayerIndex, previous.IndexWithinLayer))
+                best = record;
         }
+        hasUiHit = best is not null || blocker is not null;
+        if (best is not { } selected)
+            return null;
+        // Contact events can precede the hover tick. Retain the exact accepted record for dispatch.
+        _inputRecords[selected.MembershipId] = selected;
+        localPosition = Vector2.Transform(position, selected.CanvasToLocal);
+        return selected.RenderInfo.Owner as UIInteractableComponent;
     }
-
-    private static bool IsContactHit(UIComponent component, Vector2 canvasPosition)
-        => UIClipRegion.ContainsHit(component, canvasPosition);
 }

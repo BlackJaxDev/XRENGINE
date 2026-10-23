@@ -188,6 +188,7 @@ namespace XREngine.Runtime.InputIntegration
             _snapshotMouse.SetInputSource(source);
             WindowInputSnapshot snapshot = viewport.ConsumeInputSnapshot();
             _latestInputSnapshot = snapshot;
+            DispatchImeSnapshot(snapshot.ImeEventSpan);
             _snapshotGamepad.ApplySnapshot(snapshot);
             if (!_snapshotKeyboard.ApplySnapshot(snapshot) || revision != _snapshotInputRevision ||
                 !ReferenceEquals(viewport, _viewport) ||

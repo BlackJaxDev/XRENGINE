@@ -59,6 +59,19 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _cameraDrawSpaceDistance, value);
         }
 
+        private float _dpiScale = 1.0f;
+        /// <summary>Explicit UI text scale in canvas pixels; one preserves physical-pixel sizing.</summary>
+        public float DpiScale
+        {
+            get => _dpiScale;
+            set
+            {
+                if (!float.IsFinite(value) || value <= 0.0f)
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                SetField(ref _dpiScale, value);
+            }
+        }
+
         private int _isLayoutInvalidated = 1; // Start invalidated
         public bool IsLayoutInvalidated
         {
@@ -73,12 +86,17 @@ namespace XREngine.Rendering.UI
             private set => Volatile.Write(ref _isUpdatingLayout, value ? 1 : 0);
         }
 
-        private Job? _layoutJob;
-        /// <summary>
-        /// The currently running layout job, if any.
-        /// </summary>
-        public Job? LayoutJob => _layoutJob;
+        private UILayoutCanvasSession? _valueLayoutSession;
+        private UILayoutNodeOutput[] _currentLayoutOutputs = [];
+        private UIElementIdentity[] _currentLayoutIdentities = [];
+        private ulong _currentLayoutGeneration;
 
+        /// <summary>Gets the most recent validated layout values in snapshot node order.</summary>
+        public ReadOnlyMemory<UILayoutNodeOutput> CurrentLayoutOutputs => _currentLayoutOutputs;
+        /// <summary>Gets identities in the same order as CurrentLayoutOutputs.</summary>
+        public ReadOnlyMemory<UIElementIdentity> CurrentLayoutIdentities => _currentLayoutIdentities;
+        /// <summary>Changes only after the owner accepts a complete layout result.</summary>
+        public ulong CurrentLayoutGeneration => _currentLayoutGeneration;
         // Internal accessors for UILayoutSystem
         internal void SetLayoutInvalidated(bool value) => IsLayoutInvalidated = value;
         internal void SetUpdatingLayout(bool value) => IsUpdatingLayout = value;
@@ -86,30 +104,35 @@ namespace XREngine.Rendering.UI
         internal void RaiseLayoutingFinished() => LayoutingFinished?.Invoke(this);
         internal void CancelLayoutJob()
         {
-            _layoutJob?.Cancel();
-            _layoutJob = null;
+            _valueLayoutSession?.Cancel();
         }
 
-        /// <summary>
-        /// If true, layout updates will be processed over multiple frames using the job system.
-        /// This prevents frame hitches for complex UI hierarchies.
-        /// </summary>
-        private bool _useAsyncLayout = false;
-        public bool UseAsyncLayout
+        internal void PublishLayoutValues(UIElementIdentity[] identities, UILayoutNodeOutput[] outputs)
         {
-            get => _useAsyncLayout;
-            set => SetField(ref _useAsyncLayout, value);
+            _currentLayoutIdentities = identities;
+            _currentLayoutOutputs = outputs;
+            _currentLayoutGeneration++;
         }
 
-        /// <summary>
-        /// Maximum number of transforms to process per frame during async layout.
-        /// Higher values complete layout faster but may cause frame hitches.
-        /// </summary>
-        private int _maxLayoutItemsPerFrame = 50;
-        public int MaxLayoutItemsPerFrame
+        internal void ClearLayoutValues()
         {
-            get => _maxLayoutItemsPerFrame;
-            set => SetField(ref _maxLayoutItemsPerFrame, Math.Max(1, value));
+            _currentLayoutIdentities = [];
+            _currentLayoutOutputs = [];
+            _currentLayoutGeneration++;
+        }
+
+        protected override void OnDestroying()
+        {
+            CancelLayoutJob();
+            DetachCameraSpaceCameraListener();
+            base.OnDestroying();
+        }
+
+        /// <summary>Accepts one completed worker result on the canvas owner thread.</summary>
+        public bool PumpLayoutResults()
+        {
+            ChangeJournal.VerifyMutationAccess();
+            return (_valueLayoutSession ??= new UILayoutCanvasSession(this)).Pump();
         }
 
         public override void InvalidateLayout()
@@ -118,50 +141,20 @@ namespace XREngine.Rendering.UI
         }
 
         /// <summary>
-        /// Root method to update the layout of the canvas synchronously.
+        /// Requests layout from the bounded worker path.
         /// </summary>
         public virtual void UpdateLayout()
         {
-            UILayoutSystem.UpdateCanvasLayout(this);
+            UpdateLayoutAsync();
         }
 
         /// <summary>
-        /// Schedules an asynchronous layout update using the job system.
-        /// Layout will be processed incrementally over multiple frames.
+        /// Captures an immutable input and schedules bounded worker layout.
         /// </summary>
         public virtual void UpdateLayoutAsync()
         {
-            //If the layout is not invalidated, job is already running, or a parent canvas controls layouting
-            if (!IsLayoutInvalidated || IsNestedCanvas)
-                return;
-
-            if (_layoutJob != null && _layoutJob.IsRunning)
-                return; // Layout job already in progress
-
-            IsLayoutInvalidated = false;
-            IsUpdatingLayout = true;
-            LayoutingStarted?.Invoke(this);
-
-            _layoutJob = RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
-                routine: UILayoutSystem.LayoutCoroutine(this, MaxLayoutItemsPerFrame),
-                completed: OnLayoutJobCompleted,
-                error: OnLayoutJobError
-            );
-        }
-
-        private void OnLayoutJobCompleted()
-        {
-            IsUpdatingLayout = false;
-            _layoutJob = null;
-            LayoutingFinished?.Invoke(this);
-        }
-
-        private void OnLayoutJobError(Exception ex)
-        {
-            IsUpdatingLayout = false;
-            _layoutJob = null;
-            Debug.UIException(ex);
-            LayoutingFinished?.Invoke(this);
+            ChangeJournal.VerifyMutationAccess();
+            (_valueLayoutSession ??= new UILayoutCanvasSession(this)).Request();
         }
 
         /// <summary>
@@ -223,6 +216,10 @@ namespace XREngine.Rendering.UI
                         RecalculateMatrices(true, false);
                     else
                         MarkWorldModified();
+                    break;
+                case nameof(DpiScale):
+                    InvalidateMeasure();
+                    RecordUIChange(UIChangeDomain.Text);
                     break;
                 case nameof(Translation):
                     ActualLocalBottomLeftTranslation = Translation;

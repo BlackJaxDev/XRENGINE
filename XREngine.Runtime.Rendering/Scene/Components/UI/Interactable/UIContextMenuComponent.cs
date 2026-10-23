@@ -2,9 +2,8 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
-using XREngine.Data.Rendering;
-using XREngine.Rendering.Models.Materials;
 using XREngine.Scene;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering.UI
 {
@@ -81,8 +80,15 @@ namespace XREngine.Rendering.UI
         private const int LabelZIndex = -10;
 
         private ContextMenuItem[] _items = [];
+        private IVirtualListProvider? _virtualProvider;
+        private Action<SceneNode>? _contentBuilder;
+        private float _contentHeight;
+        private UIListTransform? _virtualList;
         private bool _isOpen;
         private IUICanvasInputSource? _subscribedInput;
+        private Vector2 _pendingPosition;
+        private ulong _layoutGenerationAtRequest;
+        private bool _awaitingPlacement;
 
         /// <summary>
         /// Whether the context menu is currently visible and accepting input.
@@ -90,7 +96,12 @@ namespace XREngine.Rendering.UI
         public bool IsOpen
         {
             get => _isOpen;
-            private set => SetField(ref _isOpen, value);
+            private set
+            {
+                if (!SetField(ref _isOpen, value) || SceneNode is null || SceneNode.IsTransformNull)
+                    return;
+                UITransform.RecordUIChange(UIChangeDomain.HitTest);
+            }
         }
 
         /// <summary>
@@ -104,55 +115,114 @@ namespace XREngine.Rendering.UI
         /// <param name="parentLocalPosition">Position in parent-local coordinates (top-left of menu).</param>
         /// <param name="items">Menu items to display.</param>
         public void Show(Vector2 parentLocalPosition, params ContextMenuItem[] items)
+            => ShowCore(parentLocalPosition, items, null);
+
+        /// <summary>Opens a bounded popup backed by a virtual list provider.</summary>
+        public void ShowVirtual(Vector2 parentLocalPosition, IVirtualListProvider provider)
+            => ShowCore(parentLocalPosition, [], provider);
+
+        /// <summary>Shows bounded controls supplied by the caller in the menu's list.</summary>
+        public void ShowContent(Vector2 parentLocalPosition, float height, Action<SceneNode> buildContent)
         {
+            ArgumentNullException.ThrowIfNull(buildContent);
+            if (!float.IsFinite(height) || height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(height));
+            ShowCore(parentLocalPosition, [], null, buildContent, height);
+        }
+
+        /// <summary>Shows a non-interactive hint through the same accepted-layout placement path.</summary>
+        public void ShowPassiveContent(Vector2 parentLocalPosition, float height, Action<SceneNode> buildContent)
+        {
+            ArgumentNullException.ThrowIfNull(buildContent);
+            if (!float.IsFinite(height) || height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(height));
+            ShowCore(parentLocalPosition, [], null, buildContent, height, passive: true);
+        }
+
+        public float PreferredWidth { get; set; } = MenuWidth;
+
+        public UIListTransform? VirtualList => _virtualList;
+
+        private void ShowCore(Vector2 parentLocalPosition, ContextMenuItem[] items, IVirtualListProvider? provider,
+            Action<SceneNode>? contentBuilder = null, float contentHeight = 0, bool passive = false)
+        {
+            UICanvasTransform canvas = BoundableTransform.GetCanvasTransform() ??
+                throw new InvalidOperationException("A context menu needs an attached UI canvas.");
             Hide(); // Dismiss any existing menu first
 
-            if (items.Length == 0)
+            if ((items.Length == 0 && provider is null && contentBuilder is null) || provider is { Count: <= 0 })
                 return;
 
             _items = items;
+            _virtualProvider = provider;
+            _contentBuilder = contentBuilder;
+            _contentHeight = contentHeight;
             IsOpen = true;
 
             // Make the node visible (it's collapsed when hidden)
-            BoundableTransform.Visibility = EVisibility.Visible;
+            BoundableTransform.Visibility = EVisibility.Hidden;
 
             // Position the menu at the given canvas location
             var tfm = BoundableTransform;
             tfm.MinAnchor = Vector2.Zero;
             tfm.MaxAnchor = Vector2.Zero;
             tfm.NormalizedPivot = new Vector2(0.0f, 1.0f); // top-left pivot
-            tfm.Width = MenuWidth;
-            tfm.BlocksInputBehind = true;
+            tfm.Width = PreferredWidth;
+            tfm.BlocksInputBehind = !passive;
             tfm.Margins = Vector4.Zero;
             tfm.Padding = Vector4.Zero;
 
             // Calculate total height
             float totalHeight = 0f;
-            foreach (var item in items)
-                totalHeight += item.IsSeparator ? SeparatorHeight : ItemHeight;
+            if (contentBuilder is not null)
+                totalHeight = contentHeight;
+            else if (provider is not null)
+                totalHeight = Math.Min(provider.Count, 8) * ItemHeight;
+            else
+                foreach (var item in items)
+                    totalHeight += item.IsSeparator ? SeparatorHeight : ItemHeight;
             tfm.Height = totalHeight;
-            tfm.Translation = ClampMenuPosition(parentLocalPosition, MenuWidth, totalHeight);
+            _pendingPosition = parentLocalPosition;
+            _layoutGenerationAtRequest = canvas.CurrentLayoutGeneration;
+            _awaitingPlacement = true;
 
             // Set render pass to ensure we draw on top
             var bgMat = SceneNode.GetComponent<UIMaterialComponent>();
             if (bgMat is null)
             {
                 bgMat = SceneNode.AddComponent<UIMaterialComponent>()!;
-                var mat = XRMaterial.CreateUnlitColorMaterialForward(BackgroundColor);
-                mat.EnableTransparency();
-                bgMat.Material = mat;
-                bgMat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                bgMat.SetBatchSolidColor(BackgroundColor);
             }
             else
             {
                 bgMat.Material?.SetVector4("MatColor", BackgroundColor);
             }
             bgMat.RenderCommand2D.ZIndex = BackgroundZIndex;
+            bgMat.ClipToBounds = true;
 
             BuildMenuItems();
             tfm.InvalidateLayout();
-            tfm.GetCanvasTransform()?.UpdateLayout();
-            SubscribeForDismiss();
+            canvas.UpdateLayoutAsync();
+            RegisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
+            if (!passive)
+                SubscribeForDismiss();
+        }
+
+        private void CompletePlacement()
+        {
+            if (!_isOpen || !_awaitingPlacement)
+                return;
+            UIBoundableTransform transform = BoundableTransform;
+            UICanvasTransform? canvas = transform.GetCanvasTransform();
+            if (canvas is null || canvas.CurrentLayoutGeneration <= _layoutGenerationAtRequest ||
+                transform.Parent is not UIBoundableTransform parent ||
+                parent.ActualWidth <= 0 || parent.ActualHeight <= 0)
+                return;
+            _awaitingPlacement = false;
+            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
+            transform.Translation = ClampMenuPosition(_pendingPosition, PreferredWidth, transform.Height ?? 0);
+            transform.Visibility = EVisibility.Visible;
+            canvas.UpdateLayoutAsync();
         }
 
         private Vector2 ClampMenuPosition(Vector2 position, float width, float height)
@@ -180,9 +250,15 @@ namespace XREngine.Rendering.UI
                 return;
 
             IsOpen = false;
+            _awaitingPlacement = false;
+            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
             UnsubscribeForDismiss();
             ClearMenuItems();
             _items = [];
+            _virtualProvider = null;
+            _contentBuilder = null;
+            _contentHeight = 0;
+            _virtualList = null;
 
             // Collapse the node so the background material stops rendering
             BoundableTransform.Visibility = EVisibility.Collapsed;
@@ -206,6 +282,23 @@ namespace XREngine.Rendering.UI
             listTfm.Height = null;
             listTfm.ItemAlignment = EListAlignment.TopOrLeft;
 
+            if (_contentBuilder is not null)
+            {
+                _contentBuilder(listNode);
+                return;
+            }
+
+            if (_virtualProvider is not null)
+            {
+                listTfm.ItemSize = ItemHeight;
+                listTfm.VirtualOverscan = 2;
+                listTfm.VirtualProvider = _virtualProvider;
+                _virtualList = listTfm;
+                UIVirtualPopupScrollComponent scroll = listNode.AddComponent<UIVirtualPopupScrollComponent>()!;
+                scroll.List = listTfm;
+                return;
+            }
+
             foreach (var item in _items)
             {
                 if (item.IsSeparator)
@@ -223,10 +316,7 @@ namespace XREngine.Rendering.UI
         {
             var buttonNode = parent.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
 
-            var mat = XRMaterial.CreateUnlitColorMaterialForward(ColorF4.Transparent);
-            mat.EnableTransparency();
-            background.Material = mat;
-            background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+            background.SetBatchSolidColor(ColorF4.Transparent);
             background.RenderCommand2D.ZIndex = ItemBackgroundZIndex;
 
             var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
@@ -281,10 +371,7 @@ namespace XREngine.Rendering.UI
             lineTfm.MaxAnchor = new Vector2(1.0f, 0.5f);
             lineTfm.Height = 1.0f;
             lineTfm.Margins = new Vector4(ItemPadding, 0.0f, ItemPadding, 0.0f);
-            var lineMat = XRMaterial.CreateUnlitColorMaterialForward(SeparatorColor);
-            lineMat.EnableTransparency();
-            line.Material = lineMat;
-            line.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+            line.SetBatchSolidColor(SeparatorColor);
             line.RenderCommand2D.ZIndex = SeparatorZIndex;
         }
 

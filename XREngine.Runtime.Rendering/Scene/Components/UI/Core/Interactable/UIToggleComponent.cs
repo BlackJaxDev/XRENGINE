@@ -1,4 +1,6 @@
 using XREngine.Data.Core;
+using XREngine.Input;
+using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.UI
 {
@@ -12,18 +14,72 @@ namespace XREngine.Rendering.UI
         }
 
         public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.CheckBox;
+        public override string? AccessibilityValue => CurrentState.ToString();
         public override bool AccessibilityActivate() => Toggle();
         public XREvent<ECurrentState>? OnStateChanged;
+        public event Action<UIValueChange<ECurrentState>>? ValueCommitted;
+
+        private IUIValueBinding<ECurrentState>? _binding;
+        /// <summary>Typed state source. A binding stays subscribed only while this control is active.</summary>
+        public IUIValueBinding<ECurrentState>? Binding
+        {
+            get => _binding;
+            set
+            {
+                if (ReferenceEquals(_binding, value))
+                    return;
+                if (IsActiveInHierarchy && _binding is not null)
+                    _binding.ValueChanged -= OnBindingChanged;
+                SetField(ref _binding, value);
+                if (IsActiveInHierarchy && _binding is not null)
+                    _binding.ValueChanged += OnBindingChanged;
+                SynchronizeBinding();
+            }
+        }
+
+        private ECurrentState _retainedState;
+        private bool _writingBinding;
+
+        private void OnBindingChanged(ECurrentState value)
+        {
+            if (!_writingBinding)
+                ChangeState(value, EUIValueChangeOrigin.Binding);
+        }
+
+        private void SynchronizeBinding()
+        {
+            if (_binding is not null)
+                ChangeState(_binding.Value, EUIValueChangeOrigin.Binding);
+        }
+
+        private void ChangeState(ECurrentState value, EUIValueChangeOrigin origin)
+        {
+            ECurrentState old = _retainedState;
+            if (old == value)
+                return;
+            SetField(ref _retainedState, value, nameof(CurrentState));
+            LastState = value;
+            OnStateChanged?.Invoke(value);
+            if (origin == EUIValueChangeOrigin.User)
+                ValueCommitted?.Invoke(new(old, value, origin));
+        }
 
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            if (_binding is not null)
+            {
+                _binding.ValueChanged += OnBindingChanged;
+                SynchronizeBinding();
+            }
             RegisterTick(Components.ETickGroup.Late, Components.ETickOrder.Scene, UpdateBox);
         }
         protected override void OnComponentDeactivated()
         {
-            base.OnComponentDeactivated();
+            if (_binding is not null)
+                _binding.ValueChanged -= OnBindingChanged;
             UnregisterTick(Components.ETickGroup.Late, Components.ETickOrder.Scene, UpdateBox);
+            base.OnComponentDeactivated();
         }
 
         private DateTime _lastUpdate = DateTime.MinValue;
@@ -44,6 +100,8 @@ namespace XREngine.Rendering.UI
 
         private void UpdateBox()
         {
+            if (_binding is not null)
+                return;
             if (DateTime.Now - _lastUpdate < UpdateInterval)
                 return;
 
@@ -55,16 +113,15 @@ namespace XREngine.Rendering.UI
             // Update the toggle state based on the current property value
             ECurrentState currentState = CurrentState;
             if (currentState != LastState)
-            {
-                LastState = currentState;
-                OnStateChanged?.Invoke(currentState);
-            }
+                ChangeState(currentState, EUIValueChangeOrigin.Binding);
         }
 
         public ECurrentState CurrentState
         {
             get
             {
+                if (_binding is not null || Property is null)
+                    return _retainedState;
                 if (Property == null || Targets == null || Targets.Length == 0)
                     return ECurrentState.False;
 
@@ -90,6 +147,11 @@ namespace XREngine.Rendering.UI
             }
             set
             {
+                if (_binding is not null || Property is null)
+                {
+                    SetRetainedState(value, EUIValueChangeOrigin.Programmatic);
+                    return;
+                }
                 if (Property == null || Targets == null || Targets.Length == 0)
                     return;
 
@@ -178,6 +240,12 @@ namespace XREngine.Rendering.UI
 
         public void SetValue(bool value)
         {
+            if (_binding is not null || Property is null)
+            {
+                SetRetainedState(value ? ECurrentState.True : ECurrentState.False,
+                    EUIValueChangeOrigin.Programmatic);
+                return;
+            }
             if (Property == null || Targets == null || Targets.Length == 0)
                 return;
 
@@ -189,24 +257,66 @@ namespace XREngine.Rendering.UI
 
         public bool Toggle()
         {
+            if (!CanInteract || IsReadOnly)
+                return false;
+            if (_binding is not null || Property is null)
+            {
+                SetRetainedState(CurrentState == ECurrentState.True ? ECurrentState.False : ECurrentState.True,
+                    EUIValueChangeOrigin.User);
+                return true;
+            }
             if (Property == null || Targets == null || Targets.Length == 0)
                 return false;
 
             bool majorityValue = GetMajorityValue();
             bool newValue = !majorityValue; // Toggle the value
             SetValue(newValue);
+            ChangeState(newValue ? ECurrentState.True : ECurrentState.False, EUIValueChangeOrigin.User);
             return true;
+        }
+
+        /// <summary>Sets retained state and writes it to the typed source when present.</summary>
+        public void SetRetainedState(ECurrentState value, EUIValueChangeOrigin origin)
+        {
+            if (_binding is null || origin == EUIValueChangeOrigin.Binding)
+            {
+                ChangeState(value, origin);
+                return;
+            }
+            _writingBinding = true;
+            try
+            {
+                _binding.SetValue(value);
+            }
+            finally
+            {
+                _writingBinding = false;
+            }
+            ChangeState(_binding.Value, origin);
         }
 
         private void OnToggleChecked(UIInteractableComponent component)
         {
             // Gamepad focus can remain after the control or canvas becomes hidden or inactive.
-            if (!IsActiveInHierarchy || !UITransform.IsVisibleInHierarchy ||
-                UserInterfaceCanvas is not { IsActiveInHierarchy: true } canvas ||
-                !canvas.CanvasTransform.IsVisibleInHierarchy)
-                return;
-
             Toggle();
+        }
+
+        public override void CancelForRecycle()
+        {
+            Binding = null;
+            base.CancelForRecycle();
+        }
+
+        public override void RegisterInput(IInputRegistration input)
+        {
+            base.RegisterInput(input);
+            input.RegisterKeyStateChange(EKey.Space, ActivateKey);
+        }
+
+        private void ActivateKey(bool pressed)
+        {
+            if (pressed)
+                OnInteract();
         }
     }
 }

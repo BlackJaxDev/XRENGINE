@@ -1013,6 +1013,11 @@ public static partial class EditorUnitTests
 
             AddFPSText(null, rootCanvasNode);
 
+            if (Toggles.VirtualCollectionFixtureItemCount != 0)
+                CreateVirtualCollectionFixture(rootCanvasNode, Toggles.VirtualCollectionFixtureItemCount);
+
+            CreateControlGallery(rootCanvasNode);
+
             createUiStopwatch.Stop();
             Debug.Rendering("[StartupUI] CreateEditorUI complete in {0:F1} ms.", createUiStopwatch.Elapsed.TotalMilliseconds);
 

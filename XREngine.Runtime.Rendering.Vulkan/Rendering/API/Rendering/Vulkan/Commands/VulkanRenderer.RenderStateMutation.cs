@@ -296,24 +296,24 @@ internal sealed class VulkanStateTracker
 
         internal static Rect2D CreateVulkanScissor(BoundingRectangle region, Extent2D targetExtent)
         {
-            int targetWidth = (int)Math.Max(targetExtent.Width, 1u);
-            int targetHeight = (int)Math.Max(targetExtent.Height, 1u);
+            long targetWidth = Math.Max(targetExtent.Width, 1u);
+            long targetHeight = Math.Max(targetExtent.Height, 1u);
 
-            int clampedX = Math.Clamp(region.X, 0, targetWidth);
-            int clampedBottomY = Math.Clamp(region.Y, 0, targetHeight);
-
-            int maxWidth = Math.Max(targetWidth - clampedX, 0);
-            int maxHeight = Math.Max(targetHeight - clampedBottomY, 0);
-
-            int clampedWidth = Math.Clamp(Math.Max(region.Width, 0), 0, maxWidth);
-            int clampedHeight = Math.Clamp(Math.Max(region.Height, 0), 0, maxHeight);
+            // Clamp both endpoints. Clamping only the origin makes an off-target
+            // rectangle cover pixels outside its original intersection.
+            long left = Math.Clamp((long)region.X, 0, targetWidth);
+            long right = Math.Clamp((long)region.X + Math.Max(region.Width, 0), 0, targetWidth);
+            long bottom = Math.Clamp((long)region.Y, 0, targetHeight);
+            long top = Math.Clamp((long)region.Y + Math.Max(region.Height, 0), 0, targetHeight);
+            uint clampedWidth = (uint)Math.Max(right - left, 0);
+            uint clampedHeight = (uint)Math.Max(top - bottom, 0);
 
             // Convert bottom-left origin to Vulkan's top-left scissor origin after clamping.
-            int yTopLeft = targetHeight - (clampedBottomY + clampedHeight);
+            long yTopLeft = targetHeight - top;
             return new Rect2D
             {
-                Offset = new Offset2D(clampedX, Math.Max(yTopLeft, 0)),
-                Extent = new Extent2D((uint)clampedWidth, (uint)clampedHeight)
+                Offset = new Offset2D((int)Math.Min(left, int.MaxValue), (int)Math.Min(yTopLeft, int.MaxValue)),
+                Extent = new Extent2D(clampedWidth, clampedHeight)
             };
         }
 

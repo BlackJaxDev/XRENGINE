@@ -4,6 +4,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.UI;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Commands
@@ -92,6 +93,8 @@ namespace XREngine.Rendering.Commands
         }
 
         public bool WorldMatrixIsModelMatrix { get; set; }
+        /// <summary>Maps a frozen UI canvas crop into the active raster target at draw time.</summary>
+        public BoundingRectangleF? UICanvasCropSpace { get; set; }
 
         private static int s_prepareFailureLogBudget = 24;
 
@@ -146,21 +149,58 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private static void BeginCrop(BoundingRectangle? cropRegion)
+        private void BeginCrop(BoundingRectangle? cropRegion)
         {
             var rend = AbstractRenderer.Current;
             if (rend is null)
                 return;
             
             if (cropRegion is null)
-                rend.SetCroppingEnabled(false);
+            {
+                BoundingRectangle parent = RuntimeEngine.Rendering.State.RenderingPipelineState?
+                    .CurrentCropRegion ?? BoundingRectangle.Empty;
+                rend.SetCroppingEnabled(parent.Width > 0 && parent.Height > 0);
+                if (parent.Width > 0 && parent.Height > 0)
+                    rend.CropRenderArea(parent);
+            }
             else
             {
+                BoundingRectangle region = cropRegion.Value;
+                if (UICanvasCropSpace is { } canvasBounds)
+                {
+                    BoundingRectangle raster = RuntimeEngine.Rendering.State.RenderingPipelineState?
+                        .CurrentRenderRegion ?? BoundingRectangle.Empty;
+                    region = UIBatchCollector.MapCanvasCropToRaster(region, canvasBounds, raster);
+                    BoundingRectangle parent = RuntimeEngine.Rendering.State.RenderingPipelineState?
+                        .CurrentCropRegion ?? BoundingRectangle.Empty;
+                    if (parent.Width > 0 && parent.Height > 0)
+                    {
+                        int left = Math.Max(region.X, parent.X);
+                        int bottom = Math.Max(region.Y, parent.Y);
+                        int right = Math.Min(region.X + region.Width, parent.X + parent.Width);
+                        int top = Math.Min(region.Y + region.Height, parent.Y + parent.Height);
+                        region = new BoundingRectangle(left, bottom,
+                            Math.Max(0, right - left), Math.Max(0, top - bottom));
+                    }
+                }
                 rend.SetCroppingEnabled(true);
-                rend.CropRenderArea(cropRegion.Value);
+                rend.CropRenderArea(region);
             }
         }
         private static void EndCrop()
-            => AbstractRenderer.Current?.SetCroppingEnabled(false);
+        {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null)
+                return;
+            BoundingRectangle parent = RuntimeEngine.Rendering.State.RenderingPipelineState?
+                .CurrentCropRegion ?? BoundingRectangle.Empty;
+            if (parent.Width > 0 && parent.Height > 0)
+            {
+                renderer.SetCroppingEnabled(true);
+                renderer.CropRenderArea(parent);
+            }
+            else
+                renderer.SetCroppingEnabled(false);
+        }
     }
 }

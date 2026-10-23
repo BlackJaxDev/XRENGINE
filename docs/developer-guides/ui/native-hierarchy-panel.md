@@ -1,8 +1,10 @@
 # Native Hierarchy Panel
 
-The native hierarchy panel is the native UI tree editor for worlds, scenes, and scene nodes. The ImGui hierarchy remains the default day-to-day editor path, but the native hierarchy now has the tree-editing features needed for production UI work.
-
-This feature doc promotes the completed porting plan from `docs/work/design/UI/native-hierarchy-porting-plan.md`.
+The native hierarchy edits worlds, scenes, and scene nodes through retained UI.
+ImGui remains the default editor. Native workflow and graphics acceptance remain
+open in the [validation record](../../work/testing/ui/native-ui-validation.md).
+See the [implementation TODO](../../work/todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
+for remaining editor parity work.
 
 ## Capabilities
 
@@ -23,7 +25,12 @@ The panel supports:
 
 ## Interaction Model
 
-Hierarchy rows are generated from the current world and scene graph, then flattened for scrolling. Collapsed node IDs and collapsed scene sections are tracked separately so the tree can rebuild quickly while preserving user state.
+The hierarchy uses `UIVirtualTreeProvider` and the fixed-height virtual list. The
+list realizes viewport rows plus overscan and rebinds stable row instances.
+Collapsed node IDs and scene sections remain in the data model. Child-list
+notifications update subtree ranges. Plain scene/root lists use a shallow
+membership check every 250 ms. Routine refresh does not construct the full row
+tree or apply a 2,000-row cap.
 
 Selection uses the editor-wide `Selection` state. Plain click selects one node; modifier clicks update the selected set. The row highlight model follows the active selection so native UI and editor state stay synchronized.
 
@@ -46,7 +53,7 @@ The hierarchy uses reusable native UI support that is now available outside the 
 
 ## Implementation References
 
-- `XREngine.Editor/UI/Panels/HierarchyPanel.cs`
+- `XREngine.Editor/UI/Panels/HierarchyPanel.cs` and its `Data`, `Rows`, `Commands`, `DragDrop`, and `Menu` partial files
 - `XREngine.Editor/UI/EditorDragDropUtility.cs`
 - `XREngine.Editor/UI/EditorStyles.cs`
 - `XREngine.Runtime.InputIntegration/Scene/Components/Pawns/UICanvasInputComponent.cs`
