@@ -223,3 +223,69 @@ label teardown code. They do not establish desktop execution or GPU acceptance.
 build with zero warnings/errors in 49.52s. This compiles the new HarfBuzz and font
 byte-ownership tests. Their runtime remains blocked by the Windows-targeted test
 assembly on Linux. The platform check was not bypassed or reported as a pass.
+
+## Atlas, Shaping, And Dock Host Integration
+
+`headless-ui-integration-build-39.log` passed with zero warnings/errors in
+3m01.68s. `headless-ui-tests-19.xml` records **343/343 passes**, no skips, in
+8.964s. This is an intermediate snapshot before the following review repairs.
+
+Review found that an atlas binding callback could destroy its owner before the
+binding was tracked. Atlas teardown now waits for binding/initialization to
+unwind. A property veto cannot free a still-bound source. Failed cleanup keeps
+the owner registered for a later retry. Regression cases cover callback teardown,
+initialization teardown, a detach veto, and successful cleanup retry.
+
+Shaping review found callback-driven input changes, backend replacement missing
+from cache validity, unbounded auto-fit, and unsupported direction mixtures.
+Capture now freezes inputs and validates them after shaping. Backend generation
+changes invalidate shaped owners. Bounded intrinsic measurement and explicit
+bidi rejection preserve the supported single-run contract. Full asynchronous
+shaping, bidi/fallback analysis, and wrapped shaping remain open.
+
+Dock host review found direct child-list clearing and loss of panel instances.
+The host now destroys obsolete structural nodes through the scene lifecycle and
+retains panel slots. Detached slots deactivate and leave their world context.
+Focus is not restored through an unvalidated live target. Cross-window workflow
+and presented focus restoration remain open. The matching editor build is still
+required for these host changes.
+
+`headless-ui-integration-build-40.log` passed with zero warnings/errors in
+1m24.59s. `headless-ui-tests-20.xml` passed 351 of 352 tests. The one failure
+compared the expected 0.9f with 0.90000004f exactly. The assertion now uses a
+0.00001f tolerance; the production measurement did not change. All new atlas
+callback/veto and shaping cache/admission regressions passed in this run.
+
+The final atlas repair preserves ownership when a custom material still samples
+the source. It also clears stale intrinsic image state after a custom material
+replacement, so later material removal cannot restore a destroyed image.
+`headless-ui-integration-build-41.log` passed with zero warnings/errors in
+1m30.64s. `headless-ui-tests-21.xml` records **352/352 passes**, no skips, in
+8.077s.
+
+Editor builds 15 and 16 exposed missing namespaces, a captured local used before
+assignment, and nullable drag payloads in the new dock host. These compile issues
+were repaired. Build 17 passed with zero warnings/errors in 49.04s. Further
+review found an unsanitized first-launch layout and stale Inspector selection
+after a hidden tab reactivated. The store now sanitizes default and null saved
+entries; an unlocked Inspector resynchronizes scene or asset selection.
+`headless-ui-integration-build-42.log` passed with zero warnings/errors in
+13.11s. `headless-ui-tests-22.xml` records **353/353 passes**, no skips, in
+7.657s, including the fresh-layout regression.
+
+Editor build 18 passed with zero warnings/errors in 45.71s. Desktop test build 3
+passed with zero warnings/errors in 56.92s. The next dock review found view-state
+loss during structural changes, missing resize input, and commands that exceeded
+stack bounds. The host now uses axis-correct drag handles and an Actions menu
+under the full dock root. Inspector view restoration compares captured global
+selection and retained target identity, so component inspection survives unrelated
+dock operations. It clears obsolete detail nodes through their scene lifecycle.
+Editor build 19 passed with zero warnings/errors in 48.17s before the final
+pivot, menu-parent, and selection-snapshot repairs. These reviews are static
+evidence; pointer, focus, and multi-window visual acceptance still require Windows.
+
+Final matching compilation passed: `editor-ui-integration-build-20.log` records
+zero warnings/errors in 47.53s; `desktop-ui-integration-build-4.log` records zero
+warnings/errors in 43.85s. The runtime and headless test source did not change
+after build 42 and the 353-test run. All review repairs are included in these
+final editor and desktop builds. No Windows or GPU execution is claimed.

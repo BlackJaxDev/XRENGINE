@@ -30,14 +30,36 @@ internal sealed class UISharedDrawResource
         catch (Exception exception) { resource.CaptureFailed(exception); throw; }
     }
 
-    internal static UISharedDrawResource CaptureBuffer(XRDataBuffer source, long bytes)
+    internal static unsafe UISharedDrawResource CaptureBuffer(XRDataBuffer source, long bytes, uint? usedElements = null)
     {
         UISharedDrawResource resource = new(bytes);
         Reserve(bytes);
         try
         {
-            XRDataBuffer buffer = source.Clone(true, source.Target);
-            resource._owner = buffer;
+            XRDataBuffer buffer;
+            if (usedElements is { } count)
+            {
+                buffer = new XRDataBuffer(source.AttributeName, source.Target, count,
+                    source.ComponentType, source.ComponentCount, source.Normalize, source.Integral,
+                    allocateClientSideSource: false);
+                resource._owner = buffer;
+                buffer.PadEndingToVec4 = source.PadEndingToVec4;
+                buffer.ShouldMap = source.ShouldMap;
+                buffer.StorageFlags = source.StorageFlags;
+                buffer.RangeFlags = source.RangeFlags;
+                buffer.Usage = source.Usage;
+                buffer.InstanceDivisor = source.InstanceDivisor;
+                buffer.BindingIndexOverride = source.BindingIndexOverride;
+                buffer.Resizable = source.Resizable;
+                buffer.ClientSideSource = new XREngine.Data.DataSource(buffer.Length);
+                new ReadOnlySpan<byte>(source.ClientSideSource!.Address.Pointer, checked((int)buffer.Length)).CopyTo(
+                    new Span<byte>(buffer.ClientSideSource!.Address.Pointer, checked((int)buffer.Length)));
+            }
+            else
+            {
+                buffer = source.Clone(true, source.Target);
+                resource._owner = buffer;
+            }
             buffer.DisposeOnPush = false;
             return resource;
         }

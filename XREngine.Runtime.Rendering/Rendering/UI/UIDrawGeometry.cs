@@ -24,7 +24,7 @@ internal sealed class UIDrawGeometry
     internal static UIDrawGeometry Capture(XRMesh source,
         KeyValuePair<string, XRDataBuffer>[] meshBuffers,
         KeyValuePair<string, XRDataBuffer>[] rendererBuffers, long meshBytes, UIDrawGeometry? previous,
-        KeyValuePair<string, XRDataBuffer>[] previousSources, ulong[] previousRevisions, bool committedGlyphs)
+        KeyValuePair<string, XRDataBuffer>[] previousSources, ulong[] previousRevisions, bool committedGlyphs, uint? usedGlyphCount)
     {
         UISharedDrawResource mesh;
         if (previous is not null && UIDrawPayloadBuilder.MeshMetadataEquals(source, previous.Mesh) &&
@@ -43,20 +43,21 @@ internal sealed class UIDrawGeometry
             {
                 var entry = rendererBuffers[index];
                 UISharedDrawResource? resource = null;
+                uint? usedElements = UIDrawPayloadBuilder.GetCapturedGlyphCount(entry.Value, usedGlyphCount);
                 if (previous is not null)
                     for (int oldIndex = 0; oldIndex < previous.RendererBuffers.Length; oldIndex++)
                         if (previous.RendererBuffers[oldIndex].Key == entry.Key &&
                             ((committedGlyphs && oldIndex < previousSources.Length && oldIndex < previousRevisions.Length &&
                               ReferenceEquals(entry.Value, previousSources[oldIndex].Value) &&
                               entry.Value.Revision == previousRevisions[oldIndex] &&
-                              UIDrawPayloadBuilder.BufferMetadataEquals(entry.Value, previous.RendererBuffers[oldIndex].Value)) ||
-                             UIDrawPayloadBuilder.BufferEquals(entry.Value, previous.RendererBuffers[oldIndex].Value)))
+                              UIDrawPayloadBuilder.BufferMetadataEquals(entry.Value, previous.RendererBuffers[oldIndex].Value, usedElements)) ||
+                             UIDrawPayloadBuilder.BufferEquals(entry.Value, previous.RendererBuffers[oldIndex].Value, usedElements)))
                         {
                             resource = previous._buffers[oldIndex]!;
                             resource.Retain();
                             break;
                         }
-                resource ??= UISharedDrawResource.CaptureBuffer(entry.Value, UIDrawPayloadBuilder.MeasureBuffer(entry.Value));
+                resource ??= UISharedDrawResource.CaptureBuffer(entry.Value, UIDrawPayloadBuilder.MeasureBuffer(entry.Value, usedElements), usedElements);
                 geometry._buffers[index] = resource;
                 XRDataBuffer buffer = (XRDataBuffer)resource.Owner;
                 geometry.RendererBuffers[index] = new(entry.Key, buffer);

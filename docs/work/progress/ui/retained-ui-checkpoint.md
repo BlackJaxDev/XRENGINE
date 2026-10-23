@@ -164,3 +164,53 @@ All **328 tests passed**, with no skips, in 8.389s. The matching editor build
 passed with zero warnings/errors in 2m49.10s. Desktop-only shaping tests require
 Windows execution; their compilation result is recorded in the validation doc.
 No Windows execution, GPU, visual, native IME, or ImGui comparison pass is claimed.
+
+## Shared Images, Shaped Values, And Live Dock Structure
+
+This checkpoint closes three more original implementation items: compatible image
+atlasing, accessibility semantics/adapter boundaries, and cached virtual-tree
+operations. The total is **34 of 60 implementation items**. The active TODO
+retains 26 implementation items and
+four owner decisions. No hardware or performance acceptance item is closed.
+
+- The fixed image atlas owns its source pixels, packs padded image regions, and
+  uses one color/sampler profile per page. The opt-in gallery displays two images
+  from one page through the production material/collector path. Atlas teardown
+  handles callback re-entry, property vetoes, and later custom material changes.
+  Existing editor icon text continues to use the shared icon-font atlas. Bindless
+  selection remains an owner decision; this path uses ordinary texture cohorts.
+- Virtual tree/table accessibility exposes stable offscreen IDs and state without
+  creating rows. Existing actions and presented-focus realization form the adapter
+  boundary. The window reports that no OS accessibility bridge is installed.
+- Desktop quads now keep intrinsic values without one material/shader per control.
+  Explicit legacy material access stays isolated and rejects unsupported border
+  or cropped-image escapes. Shared text prototypes remain open.
+- Known text snapshots copy used glyph prefixes. Both text paths use one checked
+  dirty-span writer. Generic custom buffer captures retain full-buffer semantics.
+- Opt-in shaping connects a single direction run and existing atlas to the value
+  kernel. Callback-safe capture and backend-generation invalidation prevent stale
+  cache installation. Shaping still runs on the owner; full asynchronous shaping,
+  bidi, fallback, wrapping, and shaped editing remain open.
+- The live dock host mounts the versioned tree and retains panel instances across
+  structure changes. Closed panels deactivate and leave their world context.
+  Full primary-panel detach, cross-window drag, focus, and play-state parity remain
+  open. Popup Back and radio-group teardown use explicit input/event lifetimes.
+- World draw templates and packet claims are prepared but the new route remains
+  inactive. Complete shadow-pass/output receipts and immutable offscreen consumer
+  surfaces remain open.
+
+Final matching build and test results are recorded in the validation and
+investigation documents. No Windows/GPU execution or speed comparison is implied.
+
+The tree reconciliation checks `UIVirtualTreeProvider` and the existing
+`TreeEdits_UpdateVisibleOrderWithoutRecreatingRows` and
+`InsertBeforeVisibleItem_KeepsItsRowLease` tests. Tree edits splice affected visible
+ranges and reindex shifted suffixes. They do not rebuild the source tree or
+create rows. Large edits can still cost time proportional to the shifted suffix.
+Hierarchy source refresh is a separate, open editor integration item.
+
+The final matching headless build passed with zero warnings/errors in 13.11s;
+all **353 tests passed**, with no skips, in 7.657s. The final editor build passed
+with zero warnings/errors in 47.53s. The full desktop test project compiled with
+zero warnings/errors in 43.85s. Desktop execution remains blocked by its Windows
+assembly requirement. The checked source includes the dock review repairs.

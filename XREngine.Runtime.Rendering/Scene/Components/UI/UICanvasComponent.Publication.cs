@@ -150,6 +150,10 @@ public partial class UICanvasComponent
             return;
 
         long revision = canvas.ChangeJournal.Revision;
+        Matrix4x4 canvasWorldMatrix = canvas.WorldMatrix;
+        ECanvasDrawSpace authoringDrawSpace = canvas.DrawSpace;
+        bool authoringOffscreen = UseOffscreenRenderingForNonScreenSpaces();
+        BoundingRectangleF canvasBounds = canvas.GetActualBounds();
         bool painterOrderChanged = VisualScene2D.TryCopyRenderableMembershipOrder(
             ref _publicationPainterOrderRevision, _publicationPainterOrder);
         UIPublication? previous;
@@ -161,7 +165,11 @@ public partial class UICanvasComponent
         try
         {
         if (previous is not null && previous.LayoutGeneration == layoutGeneration &&
-            previous.ChangeRevision == revision && !painterOrderChanged)
+            previous.ChangeRevision == revision && !painterOrderChanged &&
+            previous.AuthoringCanvasWorldMatrix == canvasWorldMatrix &&
+            previous.AuthoringDrawSpace == authoringDrawSpace &&
+            previous.AuthoringOffscreen == authoringOffscreen &&
+            previous.CanvasBounds == canvasBounds)
             return;
 
         ReadOnlyMemory<UIElementIdentity> identities = canvas.CurrentLayoutIdentities;
@@ -188,11 +196,13 @@ public partial class UICanvasComponent
         for (int index = 0; index < _publicationRenderScratch.Count; index++)
         {
             UIRenderRecord record = _publicationRenderScratch[index];
+            bool directWorld = authoringDrawSpace != ECanvasDrawSpace.Screen && !authoringOffscreen;
             if (!record.Visible || record.CaptureFailure is null &&
-                (record.SupportsBatch || record.FrozenCommand is not null))
+                (directWorld ? record.FrozenWorldCommand is not null :
+                    record.SupportsBatch || record.FrozenCommand is not null))
                 continue;
             string failure = record.CaptureFailure ??
-                $"UI.DrawCapture.MissingCommand: render member {record.MembershipId} has no frozen draw command.";
+                $"UI.DrawCapture.MissingCommand: render member {record.MembershipId} has no frozen {(directWorld ? "world" : "canvas")} draw command.";
             if (_lastPublicationCaptureFailure != failure)
             {
                 _lastPublicationCaptureFailure = failure;
@@ -229,15 +239,25 @@ public partial class UICanvasComponent
                 !ReferenceEquals(canvas, CanvasTransform) ||
                 canvas.CurrentLayoutGeneration != layoutGeneration ||
                 canvas.ChangeJournal.Revision != revision ||
+                canvas.WorldMatrix != canvasWorldMatrix ||
+                canvas.DrawSpace != authoringDrawSpace ||
+                UseOffscreenRenderingForNonScreenSpaces() != authoringOffscreen ||
+                canvas.GetActualBounds() != canvasBounds ||
                 canvas.IsLayoutInvalidated || canvas.IsUpdatingLayout ||
                 VisualScene2D.TryCopyRenderableMembershipOrder(
                     ref painterRevision, _publicationPainterOrder))
                 return;
             UIPublication replacement = new UIPublication(
                 ++_nextPublicationGeneration, (ulong)lifetime, layoutGeneration, hitGeneration,
-                revision, default, identities, hits, renders, canvas.GetActualBounds(),
+                revision, default, identities, hits, renders, canvasBounds,
                 Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
-                layoutPages);
+                layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen);
+            try { replacement.BuildWorldCommands(this); }
+            catch
+            {
+                replacement.Release();
+                throw;
+            }
             UIPublication? oldCandidate = _candidatePublication;
             _candidatePublication = replacement;
             oldCandidate?.Release();

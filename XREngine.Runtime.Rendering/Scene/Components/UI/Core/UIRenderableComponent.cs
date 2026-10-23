@@ -28,6 +28,7 @@ namespace XREngine.Rendering.UI
             // it rejects the shadow cameras too, so the declaration keeps a hidden or screen-space item out of the
             // shadow-only caster census.
             RenderInfo3D.SetCameraIndependentPreCollectCommandsCallback(PreCollectRenderInfo3D);
+            RenderInfo3D.PropertyChanged += RenderInfo3DPropertyChanged;
             RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
             _publicationCommandObserver = new UIDrawCommandObserver(RenderCommand2D, PublicationDrawChanged);
         }
@@ -46,8 +47,38 @@ namespace XREngine.Rendering.UI
         }
 
         private readonly UIDrawCommandObserver _publicationCommandObserver;
+        private bool _worldCollectionSuppressed;
+        private bool _worldAuthoredVisible = true;
+        private bool _applyingWorldCollectionVisibility;
+
+        /// <summary>Keeps authored world visibility while the canvas owns frozen world collection.</summary>
+        internal void SetCanvasWorldCollectionSuppressed(bool suppressed)
+        {
+            if (_worldCollectionSuppressed == suppressed)
+                return;
+            if (suppressed)
+                _worldAuthoredVisible = RenderInfo3D.IsVisible;
+            _worldCollectionSuppressed = suppressed;
+            _applyingWorldCollectionVisibility = true;
+            try { RenderInfo3D.IsVisible = suppressed ? false : _worldAuthoredVisible; }
+            finally { _applyingWorldCollectionVisibility = false; }
+        }
+
+        private void RenderInfo3DPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(RenderInfo3D.IsVisible) || _applyingWorldCollectionVisibility)
+                return;
+            _worldAuthoredVisible = RenderInfo3D.IsVisible;
+            if (_worldCollectionSuppressed && RenderInfo3D.IsVisible)
+            {
+                _applyingWorldCollectionVisibility = true;
+                try { RenderInfo3D.IsVisible = false; }
+                finally { _applyingWorldCollectionVisibility = false; }
+            }
+        }
         private UIDrawPayloadBuilder? _publicationPayloadBuilder;
         private RenderCommandMesh2D? _publicationFrozenCommand;
+        private RenderCommandMesh3D? _publicationFrozenWorldCommand;
         private UIBatchCollector? _registeredBatchCollector;
         private ulong _registeredPrimitiveHandle;
         private UIElementIdentity _registeredPrimitiveIdentity;
@@ -101,12 +132,14 @@ namespace XREngine.Rendering.UI
             ReleaseBatchPrimitiveRegistration();
             _publicationPayloadBuilder?.Dispose();
             _publicationFrozenCommand = null;
+            _publicationFrozenWorldCommand = null;
             base.OnComponentDeactivated();
         }
 
         protected override void OnDestroying()
         {
             ReleaseBatchPrimitiveRegistration();
+            RenderInfo3D.PropertyChanged -= RenderInfo3DPropertyChanged;
             _publicationCommandObserver.Dispose();
             try
             {
@@ -289,16 +322,22 @@ namespace XREngine.Rendering.UI
             Matrix4x4 worldMatrix = bounds.WorldMatrix *
                 (bounds.ParentCanvas?.InverseWorldMatrix ?? Matrix4x4.Identity);
             worldMatrix = CapturePublicationModelMatrix(in output, in worldMatrix);
-            bool supportsBatch = SupportsBatchedRendering &&
-                bounds.ParentCanvas?.SceneNode?.GetComponent<UICanvasComponent>()?.BatchCollector.Enabled == true;
-            bool visible = output.Visible && IsActiveInHierarchy && RenderInfo2D.IsVisible &&
-                (supportsBatch || RenderCommand2D.Enabled && RenderCommand2D.Instances > 0);
+            UICanvasComponent? canvas = bounds.ParentCanvas?.SceneNode?.GetComponent<UICanvasComponent>();
+            bool directWorld = bounds.ParentCanvas is { DrawSpace: not ECanvasDrawSpace.Screen } &&
+                canvas is not null && !canvas.UseOffscreenRenderingForNonScreenSpaces();
+            bool supportsBatch = !directWorld && SupportsBatchedRendering && canvas?.BatchCollector.Enabled == true;
+            bool visible = output.Visible && IsActiveInHierarchy &&
+                (directWorld ? (_worldCollectionSuppressed ? _worldAuthoredVisible : RenderInfo3D.IsVisible) &&
+                    RenderCommand3D.Enabled && RenderCommand3D.Instances > 0 :
+                    RenderInfo2D.IsVisible && (supportsBatch || RenderCommand2D.Enabled && RenderCommand2D.Instances > 0));
             if (supportsBatch || !visible)
             {
                 _publicationPayloadBuilder?.Dispose();
                 _publicationFrozenCommand = null;
+                _publicationFrozenWorldCommand = null;
             }
             RenderCommandMesh2D? frozenCommand = null;
+            RenderCommandMesh3D? frozenWorldCommand = null;
             UIDrawPayload? payload = null;
             string? captureFailure = null;
             Vector4 frozenBounds = new(bottomLeft.X, bottomLeft.Y, output.ActualSize.X, output.ActualSize.Y);
@@ -338,6 +377,44 @@ namespace XREngine.Rendering.UI
                             GpuProfilingLabel = source.GpuProfilingLabel,
                             Enabled = source.Enabled,
                         };
+                    if (directWorld)
+                    {
+                        RenderCommandMesh3D worldSource = RenderCommand3D;
+                        if (worldSource.MaterialOverride is not null || worldSource.RenderOptionsOverride is not null)
+                            captureFailure = "UI.DrawCapture.WorldOverrideAdapterRequired: direct-world material or raster overrides need an immutable payload adapter.";
+                        else
+                        {
+                            Matrix4x4 frozenWorldMatrix = worldMatrix * bounds.ParentCanvas!.WorldMatrix;
+                            RenderCommandMesh3D? cachedWorld = _publicationFrozenWorldCommand;
+                            if (cachedWorld is not null && ReferenceEquals(cachedWorld.Mesh, payload.Renderer) &&
+                                cachedWorld.WorldMatrix == frozenWorldMatrix && cachedWorld.RenderPass == worldSource.RenderPass &&
+                                ReferenceEquals(cachedWorld.MaterialOverride, payload.Material) &&
+                                ReferenceEquals(cachedWorld.RenderOptionsOverride, payload.RenderOptions) &&
+                                cachedWorld.Instances == worldSource.Instances &&
+                                cachedWorld.WorldMatrixIsModelMatrix == worldSource.WorldMatrixIsModelMatrix &&
+                                cachedWorld.ForceCpuRendering == worldSource.ForceCpuRendering &&
+                                cachedWorld.EditorHighlightBits == worldSource.EditorHighlightBits &&
+                                Equals(cachedWorld.WorldCullingVolumeOverride, worldSource.WorldCullingVolumeOverride) &&
+                                cachedWorld.GpuProfilingLabel == worldSource.GpuProfilingLabel &&
+                                cachedWorld.Enabled == worldSource.Enabled)
+                                frozenWorldCommand = cachedWorld;
+                            else
+                                frozenWorldCommand = _publicationFrozenWorldCommand = new RenderCommandMesh3D(worldSource.RenderPass)
+                                {
+                                    Mesh = payload.Renderer,
+                                    WorldMatrix = frozenWorldMatrix,
+                                    MaterialOverride = payload.Material,
+                                    RenderOptionsOverride = payload.RenderOptions,
+                                    Instances = worldSource.Instances,
+                                    WorldMatrixIsModelMatrix = worldSource.WorldMatrixIsModelMatrix,
+                                    ForceCpuRendering = worldSource.ForceCpuRendering,
+                                    EditorHighlightBits = worldSource.EditorHighlightBits,
+                                    WorldCullingVolumeOverride = worldSource.WorldCullingVolumeOverride,
+                                    GpuProfilingLabel = worldSource.GpuProfilingLabel,
+                                    Enabled = worldSource.Enabled,
+                                };
+                        }
+                    }
                 }
             }
             return new UIRenderRecord
@@ -350,10 +427,12 @@ namespace XREngine.Rendering.UI
                 Crop = UIClipRegion.ResolveCrop(bounds, ClipToBounds),
                 RenderPass = RenderPass,
                 ZIndex = RenderCommand2D.ZIndex,
-                Material = payload?.Material ?? Material,
+                Material = payload?.Material ?? _material,
                 Visible = visible,
                 SupportsBatch = supportsBatch,
                 FrozenCommand = frozenCommand,
+                FrozenWorldCommand = frozenWorldCommand,
+                WorldCastsShadows = RenderInfo3D.CastsShadows,
                 Payload = payload,
                 CaptureFailure = captureFailure,
             };
@@ -412,7 +491,7 @@ namespace XREngine.Rendering.UI
         /// The material used to render this UI component.
         /// </summary>
         private XRMaterial? _material;
-        public XRMaterial? Material
+        public virtual XRMaterial? Material
         {
             get => _material;
             set => SetField(ref _material, value);

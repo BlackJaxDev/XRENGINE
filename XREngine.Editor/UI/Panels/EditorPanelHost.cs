@@ -233,7 +233,7 @@ public static class EditorPanelHost
         void Save() => NativeDockLayoutStore.Save(windowKey, layout);
     }
 
-    private static XRWindow? ResolveWindow(SceneNode node)
+    internal static XRWindow? ResolveWindow(SceneNode node)
     {
         UICanvasComponent? canvas = node.GetTransformAs<UIBoundableTransform>(true)?.GetCanvasComponent();
         foreach (XRWindow window in RuntimeEngine.Windows)
@@ -244,7 +244,7 @@ public static class EditorPanelHost
         return RuntimeEngine.Windows.FirstOrDefault();
     }
 
-    private static string GetWindowKey(XRWindow? target)
+    internal static string GetWindowKey(XRWindow? target)
     {
         int index = 0;
         foreach (XRWindow window in RuntimeEngine.Windows)

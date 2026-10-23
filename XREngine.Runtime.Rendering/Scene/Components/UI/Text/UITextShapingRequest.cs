@@ -12,6 +12,8 @@ public sealed class UITextShapingRequest
         Face = face ?? throw new ArgumentNullException(nameof(face));
         Language = !string.IsNullOrWhiteSpace(language) ? language :
             throw new ArgumentException("A language is required.", nameof(language));
+        if (!Enum.IsDefined(direction))
+            throw new ArgumentOutOfRangeException(nameof(direction));
         Direction = direction;
         Features = features?.ToImmutableArray() ?? ImmutableArray<string>.Empty;
     }

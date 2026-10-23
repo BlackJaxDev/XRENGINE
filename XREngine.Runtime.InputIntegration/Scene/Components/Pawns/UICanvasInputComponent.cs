@@ -109,6 +109,7 @@ namespace XREngine.Components
         /// Fired when the Escape key is pressed.
         /// </summary>
         public event Action? EscapePressed;
+        public event Action<UIInteractableComponent?>? BackPressed;
 
         private IRuntimeInputControllablePawn? _owningPawn;
         private IRuntimeInputControllablePawn? _observedPawn;
@@ -831,7 +832,10 @@ namespace XREngine.Components
         {
             if (IsVirtualGamepadDispatch)
                 return;
-            if (FocusedComponent is { } target && IsPointerTargetEligible(target))
+            UIInteractableComponent? target = FocusedComponent;
+            if (target is not null && IsPointerTargetEligible(target))
+                BackPressed?.Invoke(target);
+            if (target is not null && ReferenceEquals(FocusedComponent, target) && IsPointerTargetEligible(target))
                 target.OnBack();
         }
         protected virtual void OnGamepadBackButtonUp()

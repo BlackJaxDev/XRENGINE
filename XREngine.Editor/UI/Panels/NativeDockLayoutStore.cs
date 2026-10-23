@@ -11,8 +11,8 @@ internal static class NativeDockLayoutStore
     public static NativeDockLayout Load(string windowKey)
     {
         var layouts = ReadLayouts();
-        return layouts.TryGetValue(windowKey, out NativeDockLayout? layout)
-            ? layout.Sanitize() : new NativeDockLayout();
+        return ((layouts.TryGetValue(windowKey, out NativeDockLayout? layout) ? layout : null)
+            ?? new NativeDockLayout()).Sanitize();
     }
 
     public static void Save(string windowKey, NativeDockLayout layout)

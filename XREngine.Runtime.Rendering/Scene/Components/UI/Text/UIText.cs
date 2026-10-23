@@ -739,14 +739,14 @@ namespace XREngine.Rendering.UI
         /// <summary>
         /// Writes the glyph data to the SSBOs.
         /// </summary>
-        private unsafe void WriteData(bool force = false)
+        private void WriteData(bool force = false)
         {
             using (_glyphLock.EnterScope())
             {
                 if (_layoutResult is not { } layout)
                     return;
-                if (_transformsBuffer?.ClientSideSource is not { } transforms ||
-                    _uvsBuffer?.ClientSideSource is not { } uvs || !HasGlyphStorage(layout.Glyphs.Length))
+                if (_transformsBuffer?.ClientSideSource is null ||
+                    _uvsBuffer?.ClientSideSource is null || !HasGlyphStorage(layout.Glyphs.Length))
                     throw new InvalidOperationException("UI.Text.GlyphStoragePending: complete glyph CPU storage is required before drawing.");
                 if (!force && ReferenceEquals(_writtenGlyphLayout, layout) &&
                     ReferenceEquals(_writtenGlyphBuffer, _transformsBuffer) &&
@@ -756,55 +756,8 @@ namespace XREngine.Rendering.UI
                     _pushFull = false;
                     return;
                 }
-                ReadOnlySpan<UITextLayoutGlyph> glyphs = layout.Glyphs.Span;
-                Span<Vector4> transformValues = new(transforms.Address.Pointer, glyphs.Length);
-                Span<Vector4> uvValues = new(uvs.Address.Pointer, glyphs.Length);
-                Span<float> rotations = AnimatableTransforms && _rotationsBuffer?.ClientSideSource is { } rotationSource
-                    ? new Span<float>(rotationSource.Address.Pointer, glyphs.Length) : Span<float>.Empty;
-                int transformFirst = glyphs.Length, transformLast = -1;
-                int uvFirst = glyphs.Length, uvLast = -1;
-                int rotationFirst = glyphs.Length, rotationLast = -1;
-                int changedGlyphs = 0;
-                for (int index = 0; index < glyphs.Length; index++)
-                {
-                    Vector4 transform = glyphs[index].Transform;
-                    float rotation = 0;
-                    if (AnimatableTransforms && _glyphOverrides.TryGetValue(index, out var relative))
-                    {
-                        transform.X += relative.translation.X;
-                        transform.Y += relative.translation.Y;
-                        transform.Z *= relative.scale.X;
-                        transform.W *= relative.scale.Y;
-                        rotation = relative.rotation;
-                    }
-                    bool changed = false;
-                    if (force || transformValues[index] != transform)
-                    {
-                        transformValues[index] = transform;
-                        transformFirst = Math.Min(transformFirst, index);
-                        transformLast = index;
-                        changed = true;
-                    }
-                    if (force || uvValues[index] != glyphs[index].Uvs)
-                    {
-                        uvValues[index] = glyphs[index].Uvs;
-                        uvFirst = Math.Min(uvFirst, index);
-                        uvLast = index;
-                        changed = true;
-                    }
-                    if (!rotations.IsEmpty && (force || rotations[index] != rotation))
-                    {
-                        rotations[index] = rotation;
-                        rotationFirst = Math.Min(rotationFirst, index);
-                        rotationLast = index;
-                        changed = true;
-                    }
-                    if (changed)
-                        changedGlyphs++;
-                }
-                CommitGlyphRange(_transformsBuffer, transformFirst, transformLast, 16u);
-                CommitGlyphRange(_uvsBuffer, uvFirst, uvLast, 16u);
-                CommitGlyphRange(_rotationsBuffer, rotationFirst, rotationLast, 4u);
+                int changedGlyphs = UIGlyphBufferWriter.Write(layout, _glyphOverrides, AnimatableTransforms,
+                    _transformsBuffer!, _uvsBuffer!, _rotationsBuffer, force);
                 _writtenGlyphLayout = layout;
                 _writtenGlyphOverrideRevision = _glyphOverrideRevision;
                 _writtenGlyphBuffer = _transformsBuffer;
@@ -819,24 +772,8 @@ namespace XREngine.Rendering.UI
         }
 
         private bool HasGlyphStorage(int glyphCount)
-        {
-            ulong vectorBytes = checked((ulong)glyphCount * 16UL);
-            ulong rotationBytes = checked((ulong)glyphCount * 4UL);
-            return glyphCount <= _allocatedGlyphCount &&
-                _transformsBuffer is { IsDestroyed: false, ClientSideSource: { } transforms } &&
-                _uvsBuffer is { IsDestroyed: false, ClientSideSource: { } uvs } &&
-                transforms.Length >= vectorBytes && uvs.Length >= vectorBytes &&
-                (vectorBytes == 0 || (transforms.Address != VoidPtr.Zero && uvs.Address != VoidPtr.Zero)) &&
-                (!AnimatableTransforms ||
-                 (_rotationsBuffer is { IsDestroyed: false, ClientSideSource: { } rotations } &&
-                  rotations.Length >= rotationBytes && (rotationBytes == 0 || rotations.Address != VoidPtr.Zero)));
-        }
-
-        private static void CommitGlyphRange(XRDataBuffer? buffer, int first, int last, uint stride)
-        {
-            if (buffer is not null && last >= first)
-                buffer.CommitDirtyBytes(checked((uint)first * stride), checked((uint)(last - first + 1) * stride));
-        }
+            => UIGlyphBufferWriter.HasStorage(glyphCount, _allocatedGlyphCount, AnimatableTransforms,
+                _transformsBuffer, _uvsBuffer, _rotationsBuffer);
 
         /// <summary>Commits only the changed, used glyph spans.</summary>
         private void PushSubBuffers() => WriteData();

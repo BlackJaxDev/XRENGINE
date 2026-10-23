@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Data.Geometry;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering.UI;
@@ -18,6 +19,8 @@ public sealed class UIPublication
     private int _claims = 1;
     private int _resourcesRetired;
     private readonly Dictionary<long, UIRenderRecord> _renderByMembership;
+    private UIPublishedWorldMeshCommand[]? _worldCommands;
+    private readonly object _worldCommandGate = new();
 
     internal UIPublication(ulong generation, ulong canvasLifetime, ulong layoutGeneration, ulong hitGeneration,
         long changeRevision, ReadOnlyMemory<UILayoutNodeOutput> layout,
@@ -26,7 +29,10 @@ public sealed class UIPublication
         UIPublication? previous = null,
         UIScrollRecord[]? scrollReceivers = null,
         UIFocusScopeRecord[]? focusScopes = null,
-        UILayoutOutputPageView? layoutPages = null)
+        UILayoutOutputPageView? layoutPages = null,
+        Matrix4x4? authoringCanvasWorldMatrix = null,
+        ECanvasDrawSpace authoringDrawSpace = ECanvasDrawSpace.Screen,
+        bool authoringOffscreen = false)
     {
         Generation = generation;
         CanvasLifetime = canvasLifetime;
@@ -64,6 +70,9 @@ public sealed class UIPublication
             throw;
         }
         CanvasBounds = canvasBounds;
+        AuthoringCanvasWorldMatrix = authoringCanvasWorldMatrix ?? Matrix4x4.Identity;
+        AuthoringDrawSpace = authoringDrawSpace;
+        AuthoringOffscreen = authoringOffscreen;
         CanvasToOutput = canvasToOutput;
         OutputToCanvas = outputToCanvas;
         DrawSpace = ECanvasDrawSpace.Screen;
@@ -90,8 +99,37 @@ public sealed class UIPublication
     internal UIRenderRecord[] RenderStorage => _renders;
     internal UIScrollRecord[] ScrollStorage => _scrollReceivers;
     internal UIFocusScopeRecord[] FocusScopeStorage => _focusScopes;
+    internal ReadOnlySpan<UIPublishedWorldMeshCommand> WorldCommands
+        => _worldCommands ?? [];
+
+    internal void BuildWorldCommands(XREngine.Components.UICanvasComponent canvas)
+    {
+        if (AuthoringDrawSpace == ECanvasDrawSpace.Screen || AuthoringOffscreen)
+            return;
+        lock (_worldCommandGate)
+        {
+            if (_worldCommands is not null)
+                return;
+            List<UIPublishedWorldMeshCommand> commands = [];
+            for (int index = 0; index < _renders.Length; index++)
+            {
+                UIRenderRecord record = _renders[index];
+                if (!record.Visible)
+                    continue;
+                RenderCommandMesh3D template = record.FrozenWorldCommand ??
+                    throw new InvalidOperationException("A visible direct-world UI draw has no frozen command.");
+                commands.Add(new UIPublishedWorldMeshCommand(canvas, this, template,
+                    record.WorldCastsShadows));
+            }
+            _worldCommands = commands.ToArray();
+        }
+    }
     internal bool ResourcesRetired => Volatile.Read(ref _resourcesRetired) != 0;
     public BoundingRectangleF CanvasBounds { get; }
+    /// <summary>The owner-captured canvas pose used by world draw authoring.</summary>
+    public Matrix4x4 AuthoringCanvasWorldMatrix { get; }
+    public ECanvasDrawSpace AuthoringDrawSpace { get; }
+    public bool AuthoringOffscreen { get; }
     public Matrix4x4 CanvasToOutput { get; }
     public Matrix4x4 OutputToCanvas { get; }
     public ECanvasDrawSpace DrawSpace { get; }
@@ -135,6 +173,9 @@ public sealed class UIPublication
             throw;
         }
         CanvasBounds = source.CanvasBounds;
+        AuthoringCanvasWorldMatrix = source.AuthoringCanvasWorldMatrix;
+        AuthoringDrawSpace = source.AuthoringDrawSpace;
+        AuthoringOffscreen = source.AuthoringOffscreen;
         CanvasToOutput = canvasToOutput;
         OutputToCanvas = outputToCanvas;
         DrawSpace = drawSpace;

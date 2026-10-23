@@ -1,5 +1,9 @@
+using System.Collections.Generic;
+using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Data.Geometry;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI;
 
 namespace XREngine.UnitTests.Rendering;
@@ -7,6 +11,40 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class UIPublicationReceiptStateTests
 {
+    [Test]
+    public void CollectedWorldCommandKeepsPacketUntilDiscardOrNextSwap()
+    {
+        const int pass = 1;
+        var commands = new RenderCommandCollection(
+            new Dictionary<int, IComparer<RenderCommand>?> { [pass] = null });
+        UIPublication abandoned = EmptyPublication(1);
+        commands.AddCPU(new ClaimedWorldCommand(pass, abandoned));
+        abandoned.Release();
+        abandoned.ResourcesRetired.ShouldBeFalse();
+        commands.DiscardUpdatingCommands();
+        abandoned.ResourcesRetired.ShouldBeTrue();
+
+        UIPublication rendered = EmptyPublication(2);
+        commands.AddCPU(new ClaimedWorldCommand(pass, rendered));
+        commands.SwapBuffers();
+        rendered.Release();
+        rendered.ResourcesRetired.ShouldBeFalse();
+        commands.DiscardUpdatingCommands();
+        rendered.ResourcesRetired.ShouldBeFalse();
+        commands.SwapBuffers();
+        rendered.ResourcesRetired.ShouldBeTrue();
+    }
+
+    private static UIPublication EmptyPublication(ulong generation)
+        => new(generation, 1, 1, 1, (long)generation, default, default, [], [],
+            new BoundingRectangleF(0, 0, 100, 100), Matrix4x4.Identity, Matrix4x4.Identity);
+
+    private sealed class ClaimedWorldCommand(int pass, UIPublication publication)
+        : RenderCommandMethod3D(pass, static () => { }), IUiPublicationRenderCommand
+    {
+        public UIPublication Publication { get; } = publication;
+    }
+
     [Test]
     public void MissingDrawRejectsTheWholeReceipt()
     {

@@ -46,12 +46,28 @@ public partial class InspectorPanel : EditorPanel
         RemakeChildren();
         Selection.SelectionChanged += OnSelectionChanged;
         NativeAssetSelection.SelectionChanged += OnNativeAssetSelectionChanged;
-        if (!IsLocked && NativeAssetSelection.SelectedTarget is { } assetTarget)
-            OnNativeAssetSelectionChanged(assetTarget);
+        if (!IsLocked && DidGlobalSelectionChangeWhileHidden())
+        {
+            if (NativeAssetSelection.SelectedTarget is { } assetTarget)
+            {
+                if (!_inspectingAsset || InspectedObjects is not { Length: 1 } selected ||
+                    !ReferenceEquals(selected[0], assetTarget))
+                    OnNativeAssetSelectionChanged(assetTarget);
+            }
+            else
+            {
+                SceneNode[] selected = Selection.SceneNodes;
+                if (_inspectingAsset || InspectedObjects is not { } current || current.Length != selected.Length ||
+                    selected.Where((node, index) => !ReferenceEquals(node, current[index])).Any())
+                    OnSelectionChanged(selected);
+            }
+        }
+        RestoreViewState();
     }
 
     protected override void OnComponentDeactivated()
     {
+        CaptureViewState();
         base.OnComponentDeactivated();
         Selection.SelectionChanged -= OnSelectionChanged;
         NativeAssetSelection.SelectionChanged -= OnNativeAssetSelectionChanged;
@@ -98,7 +114,8 @@ public partial class InspectorPanel : EditorPanel
             RefreshVirtualProperties();
             return;
         }
-        SceneNode.Transform.Clear();
+        foreach (var child in SceneNode.Transform.Children.ToArray())
+            child.SceneNode?.Destroy(true);
         CreateVirtualPropertyList();
     }
 

@@ -1003,25 +1003,61 @@ namespace XREngine.Rendering.Commands
 
                 long sortOrderKey = GetSortOrderKey(pass);
                 int beforeCount = set.Count;
-                int sortPriority = 0;
-                if (set is SnapshotSortedRenderCommandCollection snapshotSet)
+                XREngine.Rendering.UI.UIPublication? newUiClaim =
+                    item is XREngine.Rendering.UI.IUiPublicationRenderCommand uiCommand &&
+                    !_updatingUiPublicationCommands.Contains(uiCommand.Publication)
+                        ? uiCommand.Publication : null;
+                // Claim before a command becomes visible to this collection. If the
+                // packet was already retired, no unowned command may be inserted.
+                newUiClaim?.Retain();
+                if (newUiClaim is not null)
                 {
-                    if (snapshotSet.TryAdd(item, sortOrderKey, renderDistance,
-                        out SnapshotSortedRenderCommandCollection.Entry entry))
-                        sortPriority = entry.TransparentSortPriority;
+                    try { _updatingUiPublicationCommands.Add(newUiClaim); }
+                    catch
+                    {
+                        newUiClaim.Release();
+                        throw;
+                    }
                 }
-                else
+
+                int sortPriority = 0;
+                try
                 {
-                    item.SortOrderKey = sortOrderKey;
-                    set.Add(item);
+                    if (set is SnapshotSortedRenderCommandCollection snapshotSet)
+                    {
+                        if (snapshotSet.TryAdd(item, sortOrderKey, renderDistance,
+                            out SnapshotSortedRenderCommandCollection.Entry entry))
+                            sortPriority = entry.TransparentSortPriority;
+                    }
+                    else
+                    {
+                        item.SortOrderKey = sortOrderKey;
+                        set.Add(item);
+                    }
+                }
+                catch
+                {
+                    // A collection implementation can throw after inserting. Keep
+                    // the claim whenever the command might already be visible.
+                    if (newUiClaim is not null && set.Count == beforeCount)
+                    {
+                        _updatingUiPublicationCommands.Remove(newUiClaim);
+                        newUiClaim.Release();
+                    }
+                    throw;
                 }
                 int afterCount = set.Count;
                 if (afterCount > beforeCount)
                 {
-                    if (item is XREngine.Rendering.UI.IUiPublicationRenderCommand uiCommand &&
-                        _updatingUiPublicationCommands.Add(uiCommand.Publication))
-                        uiCommand.Publication.Retain();
                     ObserveMeshOrderInsertionNoLock(item, camera, pass, sortOrderKey, sortBounds, fallbackPosition, sortPriority);
+                }
+                else
+                {
+                    if (newUiClaim is not null)
+                    {
+                        _updatingUiPublicationCommands.Remove(newUiClaim);
+                        newUiClaim.Release();
+                    }
                 }
                 ++_numCommandsRecentlyAddedToUpdate;
                 _updatingRevision++;

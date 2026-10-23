@@ -31,8 +31,10 @@ public static class UITextLayoutKernel
                     LineHeight = scaledCarets[i].LineHeight * dpiScale
                 };
             return UITextLayoutResult.FromOwned(unscaled.IntrinsicSize * dpiScale, scaledGlyphs,
-                scaledCarets, unscaled.TextRevision, unscaled.FontRevision);
+                scaledCarets, unscaled.TextRevision, unscaled.FontRevision, unscaled.HasVisualCarets);
         }
+        if (input.ShapedRun is not null)
+            return UITextShapedLayoutKernel.Measure(input, availableSize);
         if (input.Text.Length == 0 || input.EmSize <= 0.0f || input.AtlasSize.X <= 0.0f || input.AtlasSize.Y <= 0.0f)
             return UITextLayoutResult.FromOwned(Vector2.Zero, [], [new(0, 0, Vector2.Zero, input.FontSize ?? 0.0f)],
                 input.TextRevision, input.FontRevision);

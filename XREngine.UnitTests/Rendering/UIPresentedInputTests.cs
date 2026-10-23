@@ -268,7 +268,8 @@ public sealed class UIPresentedInputTests
             pawn.Controller = controller;
             input.OwningPawn = pawn;
             WindowSnapshotKeyboard keyboard = new(0);
-            controller.Input.UpdateDevices(keyboard, null, null);
+            WindowSnapshotGamepad gamepad = new(0);
+            controller.Input.UpdateDevices(keyboard, null, gamepad);
             input.RegisterInput(controller.Input);
             UIButtonComponent outside = root.NewChild("Outside").AddComponent<UIButtonComponent>()!;
             SceneNode outerNode = root.NewChild("Outer popup");
@@ -277,6 +278,10 @@ public sealed class UIPresentedInputTests
             SceneNode innerNode = root.NewChild("Inner popup");
             innerNode.SetTransform<UIBoundableTransform>();
             UIContextMenuComponent inner = innerNode.AddComponent<UIContextMenuComponent>()!;
+            int outerDismissed = 0;
+            int innerDismissed = 0;
+            outer.Dismissed += () => outerDismissed++;
+            inner.Dismissed += () => innerDismissed++;
             UIElementIdentity rootScope = canvas.CanvasTransform.ElementIdentity;
             WindowInputSnapshotAccumulator frames = new();
 
@@ -308,14 +313,24 @@ public sealed class UIPresentedInputTests
             input.FocusedComponent.ShouldBeSameAs(innerButton);
             Tab(false);
 
-            inner.Hide();
+            Back(true);
+            inner.IsOpen.ShouldBeFalse();
+            outer.IsOpen.ShouldBeTrue();
+            innerDismissed.ShouldBe(1);
             Present(4,
                 [Hit(outside, 0, Vector2.Zero, rootScope), Hit(outerButton, 1, new Vector2(30, 0), outerScope)],
                 [new UIFocusScopeRecord(outerScope, 1, 2, 1, 10)]);
             input.FocusedComponent.ShouldBeSameAs(outerButton);
-            outer.Hide();
+            Back(false);
+            Back(true);
+            outer.IsOpen.ShouldBeFalse();
+            outerDismissed.ShouldBe(1);
             Present(5, [Hit(outside, 0, Vector2.Zero, rootScope)], []);
             input.FocusedComponent.ShouldBeSameAs(outside);
+            Back(false);
+            Back(true);
+            innerDismissed.ShouldBe(1);
+            outerDismissed.ShouldBe(1);
 
             void Present(ulong generation, UIHitRecord[] hits, UIFocusScopeRecord[] scopes)
             {
@@ -338,6 +353,99 @@ public sealed class UIPresentedInputTests
                 keyboard.ApplySnapshot(frames.Publish(1, 0, 0, true, false));
                 controller.Input.TickStates(1f / 60f);
             }
+
+            void Back(bool pressed)
+            {
+                ushort mask = pressed ? (ushort)(1 << (int)EGamePadButton.FaceRight) : (ushort)0;
+                gamepad.ApplySnapshot(frames.Publish(1, 0, 1, true, false,
+                    primaryGamepad: new WindowGamepadSnapshot(true, mask, 0, 0, 0, 0, 0, 0)));
+                controller.Input.TickStates(1f / 60f);
+            }
+        }
+        finally
+        {
+            root.Destroy(true);
+            viewport.Destroy();
+        }
+    }
+
+    [Test]
+    public void RegisteredRadioArrows_MoveSelectionAndFocusOnlyToPresentedOptions()
+    {
+        var root = new SceneNode("Radio navigation", new UICanvasTransform()) { IsActiveSelf = false };
+        root.SetWorldContext(new TestWorldContext());
+        var viewport = new XRViewport(null)
+        {
+            AutomaticallyCollectVisible = false,
+            AutomaticallySwapBuffers = false,
+            SetRenderPipelineFromCamera = false,
+        };
+        using UIRadioGroupState group = new();
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UICanvasInputComponent input = root.AddComponent<UICanvasInputComponent>()!;
+            PawnComponent pawn = root.NewChild("Pawn").AddComponent<PawnComponent>()!;
+            LocalPlayerController controller = new() { Viewport = viewport };
+            pawn.Controller = controller;
+            input.OwningPawn = pawn;
+            WindowSnapshotKeyboard keyboard = new(0);
+            WindowSnapshotGamepad gamepad = new(0);
+            controller.Input.UpdateDevices(keyboard, null, gamepad);
+            input.RegisterInput(controller.Input);
+            UIRadioButtonComponent first = root.NewChild("First").AddComponent<UIRadioButtonComponent>()!;
+            first.OptionId = 1;
+            first.Group = group;
+            UIRadioButtonComponent second = root.NewChild("Second").AddComponent<UIRadioButtonComponent>()!;
+            second.OptionId = 2;
+            second.Group = group;
+            UIButtonComponent outside = root.NewChild("Outside").AddComponent<UIButtonComponent>()!;
+            root.IsActiveSelf = true;
+            UIElementIdentity scope = canvas.CanvasTransform.ElementIdentity;
+            UIHitRecord[] hits =
+            [
+                Hit(first, 0, Vector2.Zero, scope),
+                Hit(second, 1, new Vector2(30, 0), scope),
+                Hit(outside, 2, new Vector2(70, 0), scope)
+            ];
+            BoundingRectangleF bounds = new(new Vector2(-100), new Vector2(300));
+            UIPublication packet = new(1, canvas.PublicationLifetime, 1, 1,
+                canvas.CanvasTransform.ChangeJournal.Revision, default,
+                new UIElementIdentity[] { scope }, hits, [], bounds,
+                Matrix4x4.Identity, Matrix4x4.Identity);
+            canvas.MarkPresented(viewport, packet);
+            packet.Release();
+            RefreshPresentedInput(input);
+            input.FocusedComponent = first;
+            group.Select(1).ShouldBeTrue();
+
+            WindowInputSnapshotAccumulator frames = new();
+            frames.RecordKeyDown(EKey.Right);
+            keyboard.ApplySnapshot(frames.Publish(1, 0, 1, true, false));
+            controller.Input.TickStates(1f / 60f);
+            group.SelectedId.ShouldBe(2UL);
+            input.FocusedComponent.ShouldBeSameAs(second);
+
+            frames.RecordKeyUp(EKey.Right);
+            keyboard.ApplySnapshot(frames.Publish(1, 0, 1, true, false));
+            controller.Input.TickStates(1f / 60f);
+            gamepad.ApplySnapshot(frames.Publish(1, 0, 1, true, false,
+                primaryGamepad: new WindowGamepadSnapshot(true,
+                    (ushort)(1 << (int)EGamePadButton.DPadRight), 0, 0, 0, 0, 0, 0)));
+            controller.Input.TickStates(1f / 60f);
+            group.SelectedId.ShouldBe(1UL);
+            input.FocusedComponent.ShouldBeSameAs(first);
+
+            second.IsEnabled = false;
+            gamepad.ApplySnapshot(frames.Publish(1, 0, 1, true, false,
+                primaryGamepad: new WindowGamepadSnapshot(true, 0, 0, 0, 0, 0, 0, 0)));
+            controller.Input.TickStates(1f / 60f);
+            gamepad.ApplySnapshot(frames.Publish(1, 0, 1, true, false,
+                primaryGamepad: new WindowGamepadSnapshot(true,
+                    (ushort)(1 << (int)EGamePadButton.DPadRight), 0, 0, 0, 0, 0, 0)));
+            controller.Input.TickStates(1f / 60f);
+            group.SelectedId.ShouldBe(1UL);
+            input.FocusedComponent.ShouldBeSameAs(outside);
         }
         finally
         {

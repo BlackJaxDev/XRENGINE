@@ -1,4 +1,5 @@
 using XREngine.Rendering;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Runtime.UI.Skia;
 
@@ -6,5 +7,8 @@ namespace XREngine.Runtime.UI.Skia;
 public static class SkiaFontBackend
 {
     public static void Register()
-        => FontBitmapRasterizerRegistry.Current = new SkiaFontBitmapRasterizer();
+    {
+        FontBitmapRasterizerRegistry.Current = new SkiaFontBitmapRasterizer();
+        UITextShapingBackendRegistry.Current = new SkiaTextShapingBackend();
+    }
 }

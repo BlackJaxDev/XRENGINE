@@ -11,6 +11,26 @@ namespace XREngine.Editor.UI;
 
 public static class NativeUIElements
 {
+    /// <summary>Create an image that shares its parent's immutable atlas page.</summary>
+    public static (SceneNode Node, UIMaterialComponent Image) CreateImage(
+        SceneNode parent, UIImageAtlasComponent atlas, string key,
+        float width = 24, float height = 24, ColorF4? tint = null)
+    {
+        var node = parent.NewChild<UIMaterialComponent>(out var image);
+        node.Name = key;
+        image.BoundableTransform.Width = width;
+        image.BoundableTransform.Height = height;
+        try
+        {
+            atlas.Bind(image, key, tint ?? ColorF4.White);
+            return (node, image);
+        }
+        catch
+        {
+            node.Destroy(true);
+            throw;
+        }
+    }
 
     public static (SceneNode Node, UIButtonComponent Button, UIMaterialComponent Background, UITextComponent Label) CreateButton(
         SceneNode parent,

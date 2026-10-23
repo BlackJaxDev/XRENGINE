@@ -45,7 +45,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
         ulong id = _source.GetItemId(index);
         item = new(id, AccessibleRowName?.Invoke(_source.GetItem(index)) ??
             id.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            EUIAccessibilityRole.TableRow);
+            EUIAccessibilityRole.TableRow, IsSelected: _selectedId == id);
         return id != 0;
     }
     public IReadOnlyList<UIVirtualTableColumn<T>> Columns => _columns;

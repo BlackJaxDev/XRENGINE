@@ -20,6 +20,9 @@ public sealed partial class XRWindow
 
     private void CaptureWindowUiFrame(ulong renderFrameId)
     {
+        // A reserved multipass UI packet cannot be attributed to a submitted
+        // output when one of its required passes never reached authoring.
+        Renderer.AbortUnfinishedUiPublicationReceipts(renderFrameId);
         ReleaseUiFrame(_windowUiFrame);
         _windowUiFrameId = renderFrameId;
         for (int index = 0; index < Viewports.Count; index++)

@@ -57,7 +57,7 @@ namespace XREngine.Rendering.UI
     /// - When <see cref="AnimatableTransforms"/> is enabled, per-glyph translation/scale/rotation can be applied via <see cref="GlyphRelativeTransforms"/>.
     /// - Auto sizing is supported through <see cref="UIBoundableTransform.CalcAutoWidthCallback"/> and <see cref="UIBoundableTransform.CalcAutoHeightCallback"/>.
     /// </remarks>
-    public class UITextComponent : UIRenderableComponent
+    public partial class UITextComponent : UIRenderableComponent
     {
         private static bool UseWebGpuBatchOnly =>
             RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
@@ -77,10 +77,31 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            UITextShapingBackendRegistry.Changed += ShapingBackendChanged;
             // Cooked component hydration does not raise Text/Font property notifications.
             // Resolve the preloaded font and build glyph layout after transform wiring.
             if (!string.IsNullOrEmpty(Text))
                 UpdateText(forceRemake: false);
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            UITextShapingBackendRegistry.Changed -= ShapingBackendChanged;
+            base.OnComponentDeactivated();
+        }
+
+        private void ShapingBackendChanged()
+        {
+            if (!UseShapedText ||
+                System.Threading.Interlocked.Exchange(ref _pendingShapingBackendInvalidation, 1) != 0)
+                return;
+            RuntimeEngine.InvokeOnAppThread(() =>
+            {
+                System.Threading.Interlocked.Exchange(ref _pendingShapingBackendInvalidation, 0);
+                if (UseShapedText && System.Threading.Volatile.Read(ref _layoutFontObserverDisposed) == 0 &&
+                    SceneNode?.Transform is UIBoundableTransform transform)
+                    transform.InvalidateMeasure();
+            }, "UITextComponent.ShapingBackendChanged");
         }
 
         #endregion
@@ -106,6 +127,8 @@ namespace XREngine.Rendering.UI
         private Vector2 _layoutResultActualSize;
         private UITextureSnapshot? _publicationAtlasSnapshot;
         private FontGlyphSet? _layoutInputFont;
+        private long _layoutInputBackendGeneration;
+        private int _pendingShapingBackendInvalidation;
         private long _textRevision;
         private XRDataBuffer<Vector4>? _uvsBuffer;
         private XRDataBuffer<Vector4>? _transformsBuffer;
@@ -233,6 +256,7 @@ namespace XREngine.Rendering.UI
 
         protected override void OnDestroying()
         {
+            UITextShapingBackendRegistry.Changed -= ShapingBackendChanged;
             System.Threading.Volatile.Write(ref _layoutFontObserverDisposed, 1);
             if (_observedLayoutFont is not null)
                 _observedLayoutFont.LayoutMetricsChanged -= FontLayoutMetricsChanged;
@@ -498,29 +522,73 @@ namespace XREngine.Rendering.UI
             FontGlyphSet font = EnsureLayoutFont();
             if (!font.TryCaptureLayoutMetrics(out FrozenDictionary<int, UIRuneMetrics> metrics,
                 out Vector2 atlasSize, out float emSize, out long fontRevision))
+            {
+                if (UseShapedText)
+                    throw new NotSupportedException("UI.ShapedFontMetricsUnavailable: the font has no atlas metrics.");
                 return null;
+            }
 
             float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
             float spacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
             float dpiScale = BoundableTransform.GetCanvasTransform()?.DpiScale ?? 1.0f;
+            string text = Text ?? string.Empty;
+            float? fontSize = FontSize;
+            FontGlyphSet.EWrapMode wrap = WrapMode;
+            float lineSpacing = DefaultLineSpacing + outlineSpacing;
+            EHorizontalAlignment horizontal = HorizontalAlignment;
+            EVerticalAlignment vertical = VerticalAlignment;
+            Vector4 margins = BoundableTransform.Margins;
+            bool shapedText = UseShapedText;
+            string language = ShapeLanguage;
+            UITextDirection direction = ShapeDirection;
+            string? featureSource = OpenTypeFeatures;
+            long backendGeneration = UITextShapingBackendRegistry.Generation;
             UITextLayoutInput? previous = _layoutInput;
             if (previous is not null && ReferenceEquals(_layoutInputFont, _font) &&
-                previous.Text == (Text ?? string.Empty) &&
-                previous.FontRevision == fontRevision && previous.FontSize == FontSize &&
-                previous.Wrap == WrapMode && previous.Spacing == spacing &&
-                previous.LineSpacing == DefaultLineSpacing + outlineSpacing &&
-                previous.HorizontalAlignment == HorizontalAlignment &&
-                previous.VerticalAlignment == VerticalAlignment &&
-                previous.Margins == BoundableTransform.Margins && previous.AtlasSize == atlasSize &&
+                previous.Text == text &&
+                previous.FontRevision == fontRevision && previous.FontSize == fontSize &&
+                previous.Wrap == wrap && previous.Spacing == spacing &&
+                previous.LineSpacing == lineSpacing &&
+                previous.HorizontalAlignment == horizontal &&
+                previous.VerticalAlignment == vertical &&
+                previous.Margins == margins && previous.AtlasSize == atlasSize &&
                 previous.EmSize == emSize && previous.DpiScale == dpiScale &&
-                (ReferenceEquals(previous.Runes, metrics) || MetricsEqual(previous.Runes, metrics)))
+                (previous.ShapedRun is not null) == shapedText &&
+                (!shapedText || _layoutInputBackendGeneration == backendGeneration &&
+                    previous.ShapedRun is { } shaped &&
+                    shaped.FaceContentIdentity == GetRequiredShapingFace(font).ContentIdentity &&
+                    shaped.Language == language && shaped.Direction == direction &&
+                    shaped.FeatureSource == featureSource) &&
+                (ReferenceEquals(previous.Runes, metrics) || MetricsEqual(previous.Runes, metrics)) &&
+                (!shapedText || backendGeneration == UITextShapingBackendRegistry.Generation))
                 return previous;
 
-            _layoutInput = new(Text ?? string.Empty, metrics, ++_textRevision, fontRevision,
-                emSize, atlasSize, FontSize, WrapMode, spacing,
-                DefaultLineSpacing + outlineSpacing, HorizontalAlignment, VerticalAlignment,
-                BoundableTransform.Margins, dpiScale);
+            IUITextShapingBackend? backend = shapedText ? UITextShapingBackendRegistry.Current : null;
+            if (shapedText && backend is null)
+                throw new NotSupportedException("UI.ShapingBackendUnavailable: install a text shaping backend.");
+            UITextShapedRunInput? shapedRun = shapedText ? CaptureShapedRun(text, font,
+                language, direction, featureSource, backend!) : null;
+            if (shapedText && (backendGeneration != UITextShapingBackendRegistry.Generation ||
+                !ReferenceEquals(backend, UITextShapingBackendRegistry.Current) ||
+                !ReferenceEquals(font, _font) || (Text ?? string.Empty) != text ||
+                FontSize != fontSize || WrapMode != wrap || ShapeLanguage != language ||
+                ShapeDirection != direction || OpenTypeFeatures != featureSource ||
+                UseShapedText != shapedText || HorizontalAlignment != horizontal ||
+                VerticalAlignment != vertical || BoundableTransform.Margins != margins ||
+                (BoundableTransform.GetCanvasTransform()?.DpiScale ?? 1.0f) != dpiScale ||
+                ResolveLayoutSpacingForOutputPixels(OutlineAffectsSpacing ? OutlineThickness : 0.0f) != spacing ||
+                DefaultLineSpacing + (OutlineAffectsSpacing ? OutlineThickness : 0.0f) != lineSpacing))
+                throw new InvalidOperationException("UI.ShapingInputsChanged: text inputs changed during shaping.");
+            if (shapedText && (!font.TryCaptureLayoutMetrics(out _, out Vector2 currentAtlas,
+                out float currentEm, out long currentRevision) ||
+                currentRevision != fontRevision || currentAtlas != atlasSize || currentEm != emSize))
+                throw new InvalidOperationException("UI.ShapingInputsChanged: font metrics changed during shaping.");
+            _layoutInput = new(text, metrics, ++_textRevision, fontRevision,
+                emSize, atlasSize, fontSize, wrap, spacing,
+                lineSpacing, horizontal, vertical,
+                margins, dpiScale, ShapedRun: shapedRun);
             _layoutInputFont = _font;
+            _layoutInputBackendGeneration = backendGeneration;
             return _layoutInput;
         }
 
@@ -567,6 +635,8 @@ namespace XREngine.Rendering.UI
             => propertyName switch
             {
                 nameof(Text) or nameof(Font) or nameof(FontSize) or nameof(WrapMode) or
+                nameof(UseShapedText) or nameof(ShapeLanguage) or nameof(ShapeDirection) or
+                nameof(OpenTypeFeatures) or
                 nameof(HorizontalAlignment) or nameof(VerticalAlignment) or nameof(OutlineAffectsSpacing) =>
                     UIChangeDomain.Text | UIChangeDomain.Measure | UIChangeDomain.Arrange | UIChangeDomain.Visual,
                 nameof(OutlineThickness) when OutlineAffectsSpacing =>
@@ -606,6 +676,10 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(FontSize):
                 case nameof(WrapMode):
+                case nameof(UseShapedText):
+                case nameof(ShapeLanguage):
+                case nameof(ShapeDirection):
+                case nameof(OpenTypeFeatures):
                 case nameof(HorizontalAlignment):
                 case nameof(VerticalAlignment):
                     UpdateText(false);
@@ -1174,66 +1248,19 @@ namespace XREngine.Rendering.UI
         /// <summary>
         /// Writes the glyph data to the SSBOs.
         /// </summary>
-        private unsafe void WriteData(bool force = false)
+        private void WriteData(bool force = false)
         {
             using (_glyphLock.EnterScope())
             {
-                if (_layoutResult is not { } layout || _transformsBuffer?.ClientSideSource is not { } transforms ||
-                    _uvsBuffer?.ClientSideSource is not { } uvs || !HasGlyphStorage(layout.Glyphs.Length))
+                if (_layoutResult is not { } layout || _transformsBuffer?.ClientSideSource is null ||
+                    _uvsBuffer?.ClientSideSource is null || !HasGlyphStorage(layout.Glyphs.Length))
                     return;
                 if (!force && ReferenceEquals(_writtenGlyphLayout, layout) &&
                     ReferenceEquals(_writtenGlyphBuffer, _transformsBuffer) &&
                     _writtenGlyphOverrideRevision == _glyphOverrideRevision)
                     return;
-                ReadOnlySpan<UITextLayoutGlyph> glyphs = layout.Glyphs.Span;
-                Span<Vector4> transformValues = new(transforms.Address.Pointer, glyphs.Length);
-                Span<Vector4> uvValues = new(uvs.Address.Pointer, glyphs.Length);
-                Span<float> rotations = AnimatableTransforms && _rotationsBuffer?.ClientSideSource is { } rotationSource
-                    ? new Span<float>(rotationSource.Address.Pointer, glyphs.Length) : Span<float>.Empty;
-                int transformFirst = glyphs.Length, transformLast = -1;
-                int uvFirst = glyphs.Length, uvLast = -1;
-                int rotationFirst = glyphs.Length, rotationLast = -1;
-                int changedGlyphs = 0;
-                for (int index = 0; index < glyphs.Length; index++)
-                {
-                    Vector4 transform = glyphs[index].Transform;
-                    float rotation = 0;
-                    if (AnimatableTransforms && _glyphOverrides.TryGetValue(index, out var relative))
-                    {
-                        transform.X += relative.translation.X;
-                        transform.Y += relative.translation.Y;
-                        transform.Z *= relative.scale.X;
-                        transform.W *= relative.scale.Y;
-                        rotation = relative.rotation;
-                    }
-                    bool changed = false;
-                    if (force || transformValues[index] != transform)
-                    {
-                        transformValues[index] = transform;
-                        transformFirst = Math.Min(transformFirst, index);
-                        transformLast = index;
-                        changed = true;
-                    }
-                    if (force || uvValues[index] != glyphs[index].Uvs)
-                    {
-                        uvValues[index] = glyphs[index].Uvs;
-                        uvFirst = Math.Min(uvFirst, index);
-                        uvLast = index;
-                        changed = true;
-                    }
-                    if (!rotations.IsEmpty && (force || rotations[index] != rotation))
-                    {
-                        rotations[index] = rotation;
-                        rotationFirst = Math.Min(rotationFirst, index);
-                        rotationLast = index;
-                        changed = true;
-                    }
-                    if (changed)
-                        changedGlyphs++;
-                }
-                CommitGlyphRange(_transformsBuffer, transformFirst, transformLast, 16u);
-                CommitGlyphRange(_uvsBuffer, uvFirst, uvLast, 16u);
-                CommitGlyphRange(_rotationsBuffer, rotationFirst, rotationLast, 4u);
+                int changedGlyphs = UIGlyphBufferWriter.Write(layout, _glyphOverrides, AnimatableTransforms,
+                    _transformsBuffer!, _uvsBuffer!, _rotationsBuffer, force);
                 _writtenGlyphLayout = layout;
                 _writtenGlyphOverrideRevision = _glyphOverrideRevision;
                 _writtenGlyphBuffer = _transformsBuffer;
@@ -1245,29 +1272,13 @@ namespace XREngine.Rendering.UI
                     UIRuntimeCounters.Add(UIWorkCounter.GlyphsCopied, changedGlyphs);
                 }
                 if (IsFpsTextDiagnosticTarget() && _fpsTextWriteDiagCount++ < 40)
-                    Debug.Log(ELogCategory.UI, "UITextComponent.WriteData glyphs={0} changed={1}", glyphs.Length, changedGlyphs);
+                    Debug.Log(ELogCategory.UI, "UITextComponent.WriteData glyphs={0} changed={1}", layout.Glyphs.Length, changedGlyphs);
             }
         }
 
         private bool HasGlyphStorage(int glyphCount)
-        {
-            ulong vectorBytes = checked((ulong)glyphCount * 16UL);
-            ulong rotationBytes = checked((ulong)glyphCount * 4UL);
-            return glyphCount <= _allocatedGlyphCount &&
-                _transformsBuffer is { IsDestroyed: false, ClientSideSource: { } transforms } &&
-                _uvsBuffer is { IsDestroyed: false, ClientSideSource: { } uvs } &&
-                transforms.Length >= vectorBytes && uvs.Length >= vectorBytes &&
-                (vectorBytes == 0 || (transforms.Address != VoidPtr.Zero && uvs.Address != VoidPtr.Zero)) &&
-                (!AnimatableTransforms ||
-                 (_rotationsBuffer is { IsDestroyed: false, ClientSideSource: { } rotations } &&
-                  rotations.Length >= rotationBytes && (rotationBytes == 0 || rotations.Address != VoidPtr.Zero)));
-        }
-
-        private static void CommitGlyphRange(XRDataBuffer? buffer, int first, int last, uint stride)
-        {
-            if (buffer is not null && last >= first)
-                buffer.CommitDirtyBytes(checked((uint)first * stride), checked((uint)(last - first + 1) * stride));
-        }
+            => UIGlyphBufferWriter.HasStorage(glyphCount, _allocatedGlyphCount, AnimatableTransforms,
+                _transformsBuffer, _uvsBuffer, _rotationsBuffer);
 
         /// <summary>Commits only the changed, used glyph spans.</summary>
         private void PushSubBuffers() => WriteData();
@@ -1315,6 +1326,7 @@ namespace XREngine.Rendering.UI
                 }
                 RenderCommand2D.Instances = (uint)layout.Glyphs.Length;
                 builder.UseCommittedGlyphRevisions = true;
+                builder.UsedGlyphCount = NonVertexShadersOverride is null ? (uint)layout.Glyphs.Length : null;
                 return builder.TryCapture(RenderCommand2D, true, out payload, out failure);
             }
         }

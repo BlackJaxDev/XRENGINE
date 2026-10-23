@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI;
@@ -254,10 +255,138 @@ public sealed class UIBatchCollectionTests
         first.SetQuadColor("MatColor", red);
         second.SetQuadColor("MatColor", blue);
 
+        first.Mesh.ShouldBeNull();
+        second.Mesh.ShouldBeNull();
+        first.SupportsBatchedRendering.ShouldBeTrue();
+        second.SupportsBatchedRendering.ShouldBeTrue();
+        first.Material.ShouldNotBeSameAs(second.Material);
         first.Material!.Parameter<ShaderVector4>("MatColor")!.Value.ShouldBe(red);
         second.Material!.Parameter<ShaderVector4>("MatColor")!.Value.ShouldBe(blue);
         first.SupportsBatchedRendering.ShouldBeTrue();
         second.SupportsBatchedRendering.ShouldBeTrue();
+    }
+
+    [Test]
+    public void IntrinsicAtlasImageKeepsPerInstanceUvAndConditionalUnbind()
+    {
+        using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        XRTexture2D atlas = new()
+        {
+            Mipmaps = [new Mipmap2D(2, 2, new byte[16])],
+            SizedInternalFormat = ESizedInternalFormat.Rgba8,
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
+        };
+        UIMaterialComponent first = new();
+        UIMaterialComponent second = new();
+        UIMaterialComponent escaped = new();
+        UIMaterialComponent vetoedImage = new();
+        UIMaterialComponent vetoedMaterial = new();
+        UIMaterialComponent customBorrowing = new();
+        UIMaterialComponent customUnrelated = new();
+        XRTexture2D unrelated = new();
+        XRMaterial? borrowedCustom = null;
+        XRMaterial? unrelatedCustom = null;
+        bool vetoImageChange = true;
+        bool vetoMaterialChange = true;
+        Vector4 uv = new(0, 0, 0.5f, 0.5f);
+
+        try
+        {
+        first.SetBatchImage(atlas, new Vector4(1, 0, 0, 1), uv);
+        second.SetBatchImage(atlas, new Vector4(0, 0, 1, 1), new Vector4(0.5f, 0, 1, 0.5f));
+
+        first.Mesh.ShouldBeNull();
+        second.Mesh.ShouldBeNull();
+        first.SupportsBatchedRendering.ShouldBeTrue();
+        second.SupportsBatchedRendering.ShouldBeTrue();
+        first.BatchImageRegion.ShouldBe(uv);
+        Should.Throw<NotSupportedException>(() => _ = first.Material);
+        first.ClearBatchImage(unrelated).ShouldBeFalse();
+        first.BatchImageRegion.ShouldBe(uv);
+        first.ClearBatchImage(atlas).ShouldBeTrue();
+        first.BatchImageRegion.ShouldBe(new Vector4(0, 0, 1, 1));
+        second.BatchImageRegion.ShouldBe(new Vector4(0.5f, 0, 1, 0.5f));
+        Should.Throw<ArgumentOutOfRangeException>(() => second.SetBatchImageRegion(new Vector4(0.8f, 0, 0.2f, 1)));
+
+        escaped.SetBatchImage(atlas, Vector4.One, new Vector4(0, 0, 1, 1));
+        escaped.Material!.Textures[0].ShouldBeSameAs(atlas);
+        escaped.ClearBatchImage(atlas).ShouldBeTrue();
+        escaped.Mesh.ShouldBeNull();
+        escaped.SupportsBatchedRendering.ShouldBeTrue();
+
+        vetoedImage.SetBatchImage(atlas, Vector4.One, new Vector4(0, 0, 1, 1));
+        vetoedImage.PropertyChanging += (_, args) =>
+        {
+            if (vetoImageChange && args is XRPropertyChangingEventArgs<XRTexture2D?> change &&
+                args.PropertyName == nameof(UIMaterialComponent.SetBatchSolidColor) &&
+                change.NewValue is null)
+                change.AllowChange = false;
+        };
+        Should.Throw<InvalidOperationException>(() => vetoedImage.ClearBatchImage(atlas));
+
+        vetoedMaterial.SetBatchImage(atlas, Vector4.One, new Vector4(0, 0, 1, 1));
+        XRMaterial borrowed = vetoedMaterial.Material!;
+        vetoedMaterial.PropertyChanging += (_, args) =>
+        {
+            if (vetoMaterialChange && args is XRPropertyChangingEventArgs<XRMaterial?> change &&
+                args.PropertyName == nameof(UIMaterialComponent.Material) &&
+                change.NewValue is null)
+                change.AllowChange = false;
+        };
+        Should.Throw<InvalidOperationException>(() => vetoedMaterial.ClearBatchImage(atlas));
+        vetoedMaterial.Mesh.ShouldNotBeNull();
+        vetoedMaterial.Material.ShouldBeSameAs(borrowed);
+
+        customBorrowing.SetBatchImage(atlas, Vector4.One, new Vector4(0, 0, 1, 1));
+        borrowedCustom = UIMaterialComponent.CreateImageMaterial(atlas, Vector4.One);
+        customBorrowing.Material = borrowedCustom;
+        Should.Throw<InvalidOperationException>(() => customBorrowing.ClearBatchImage(atlas));
+        customBorrowing.Material.ShouldBeSameAs(borrowedCustom);
+
+        customUnrelated.SetBatchImage(atlas, Vector4.One, new Vector4(0, 0, 1, 1));
+        unrelatedCustom = UIMaterialComponent.CreateImageMaterial(unrelated, Vector4.One);
+        customUnrelated.Material = unrelatedCustom;
+        customUnrelated.ClearBatchImage(atlas).ShouldBeTrue();
+        customUnrelated.Material.ShouldBeSameAs(unrelatedCustom);
+        customUnrelated.Material = null;
+        customUnrelated.Material!.Textures.ShouldBeEmpty();
+        }
+        finally
+        {
+            vetoImageChange = false;
+            vetoMaterialChange = false;
+            customBorrowing.Material = null;
+            foreach (UIMaterialComponent component in new[] { first, second, escaped, vetoedImage, vetoedMaterial, customBorrowing, customUnrelated })
+            {
+                component.ClearBatchImage(atlas);
+                component.Destroy(true);
+            }
+            borrowedCustom?.Destroy(true);
+            unrelatedCustom?.Destroy(true);
+            unrelated.Destroy(true);
+            atlas.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void CanvasWorldCollectionSuppressionRestoresAuthoredVisibility()
+    {
+        UIMaterialComponent component = new();
+        component.RenderInfo3D.IsVisible = true;
+
+        component.SetCanvasWorldCollectionSuppressed(true);
+        component.RenderInfo3D.IsVisible.ShouldBeFalse();
+        component.SetCanvasWorldCollectionSuppressed(false);
+        component.RenderInfo3D.IsVisible.ShouldBeTrue();
+
+        component.RenderInfo3D.IsVisible = false;
+        component.SetCanvasWorldCollectionSuppressed(true);
+        component.SetCanvasWorldCollectionSuppressed(false);
+        component.RenderInfo3D.IsVisible.ShouldBeFalse();
     }
 
     [Test]
