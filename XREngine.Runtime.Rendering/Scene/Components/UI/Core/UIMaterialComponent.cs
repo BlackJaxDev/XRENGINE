@@ -224,6 +224,7 @@ namespace XREngine.Rendering.UI
         public static XRMaterial CreateImageMaterial(XRTexture2D texture, Vector4 tint)
         {
             ArgumentNullException.ThrowIfNull(texture);
+            bool srgb = texture.ImportedColorSpace == ETextureColorSpace.Srgb;
             XRShader[] shaders = RuntimeEngineMaterialConstructionServices.Target switch
             {
                 EngineMaterialConstructionTarget.DesktopGlsl =>
@@ -236,7 +237,7 @@ namespace XREngine.Rendering.UI
                 RenderPass = (int)EDefaultRenderPass.TransparentForward,
                 EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1,
                 SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, texture,
-                    IsSrgb: texture.ImportedColorSpace == ETextureColorSpace.Srgb,
+                    IsSrgb: srgb,
                     WrapU: texture.UWrap, WrapV: texture.VWrap)]
             };
         }
@@ -332,12 +333,49 @@ namespace XREngine.Rendering.UI
 
         /// <summary>Checks the authored image and sampler against the sampled WebGPU UI binding.</summary>
         public static bool TryGetWebGpuImageProfile(XRTexture2D texture, out string? reason)
+            => TryGetImageProfile(texture, allowHardwareSrgb: false, out reason);
+
+        /// <summary>Requires desktop image metadata to match hardware sampling on both GL and Vulkan.</summary>
+        public static bool TryGetDesktopImageProfile(XRTexture2D texture, bool isSrgb, out string? reason)
+        {
+            if (!TryGetImageProfile(texture, allowHardwareSrgb: true, out reason))
+                return false;
+            return TryGetDesktopImageColorStorage(texture, isSrgb, out reason);
+        }
+
+        private static bool TryGetDesktopImageColorStorage(XRTexture2D texture, bool isSrgb, out string? reason)
+        {
+            reason = null;
+            ESizedInternalFormat required = isSrgb
+                ? ESizedInternalFormat.Srgb8Alpha8 : ESizedInternalFormat.Rgba8;
+            bool hasKnownColorStorage = texture.SizedInternalFormat is
+                ESizedInternalFormat.Rgba8 or ESizedInternalFormat.Srgb8Alpha8;
+            if (hasKnownColorStorage && texture.SizedInternalFormat != required)
+            {
+                reason = "the image's sRGB binding must match its Rgba8 or Srgb8Alpha8 GPU storage";
+                return false;
+            }
+            if (hasKnownColorStorage && texture.Resizable && texture.Mipmaps.Length > 0 &&
+                texture.Mipmaps[0].InternalFormat is EPixelInternalFormat.Rgba8 or EPixelInternalFormat.Srgb8Alpha8 &&
+                texture.Mipmaps[0].InternalFormat !=
+                    (isSrgb ? EPixelInternalFormat.Srgb8Alpha8 : EPixelInternalFormat.Rgba8))
+            {
+                reason = "a resizable image's first mip format must match its GPU storage for Vulkan sampling";
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TryGetImageProfile(XRTexture2D texture, bool allowHardwareSrgb, out string? reason)
         {
             reason = null;
             if (texture.MultiSampleCount != 1 || texture.Width == 0 || texture.Height == 0 ||
                 texture.Mipmaps.Length == 0 || texture.AutoGenerateMipmaps ||
-                texture.SizedInternalFormat != ESizedInternalFormat.Rgba8)
-                reason = "the image must be a single-sample RGBA8 texture with explicit mips";
+                (texture.SizedInternalFormat != ESizedInternalFormat.Rgba8 &&
+                 (!allowHardwareSrgb || texture.SizedInternalFormat != ESizedInternalFormat.Srgb8Alpha8)))
+                reason = allowHardwareSrgb
+                    ? "the image must be a single-sample RGBA8 or sRGB8-alpha8 texture with explicit mips"
+                    : "the image must be a single-sample RGBA8 texture with explicit mips";
             else if (texture.EnableComparison || texture.SamplerName is not (null or "Texture0") || texture.LodBias != 0 ||
                 texture.UWrap is not (ETexWrapMode.Repeat or ETexWrapMode.MirroredRepeat or ETexWrapMode.ClampToEdge) ||
                 texture.VWrap is not (ETexWrapMode.Repeat or ETexWrapMode.MirroredRepeat or ETexWrapMode.ClampToEdge) ||
@@ -620,7 +658,7 @@ namespace XREngine.Rendering.UI
         public override UIRenderRecord CapturePublicationRenderRecord(in UILayoutNodeOutput output)
         {
             XRMaterial? material = Material;
-            XRTexture2D? texture = UseWebGpuBatchOnly && material?.Textures.Count == 1
+            XRTexture2D? texture = material?.Textures.Count == 1
                 ? material.Textures[0] as XRTexture2D : null;
             Vector4 uv = new(0.0f, FlipVerticalUVCoord ? 1.0f : 0.0f,
                 1.0f, FlipVerticalUVCoord ? 0.0f : 1.0f);
@@ -634,6 +672,10 @@ namespace XREngine.Rendering.UI
                 BorderColor = _batchBorderColor,
                 BorderWidth = _batchBorderWidth,
             };
+            if (record.Visible && !UseWebGpuBatchOnly && material is not null && texture is not null &&
+                material.EngineSemantic == EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1 &&
+                !TryGetDesktopImageColorStorage(texture, UsesSrgbImage(material, texture), out string? colorFailure))
+                return record with { CaptureFailure = $"UI.ImageColorSpaceUnsupported: {colorFailure}" };
             if (!record.Visible || !record.SupportsBatch || texture is null)
                 return record;
 
@@ -683,16 +725,21 @@ namespace XREngine.Rendering.UI
                     material.EngineSemantic == EngineMaterialSemanticIdentity.UnlitColorV1;
                 bool sourceFreeSolid = HasOriginalDefaultShaders(material) && material.Textures.Count == 0 &&
                     material.SurfaceTextureBindings.Length == 0 && ownedSolidSemantic;
-                XRTexture2D? image = UseWebGpuBatchOnly && material.Textures.Count == 1
+                XRTexture2D? image = material.Textures.Count == 1
                     ? material.Textures[0] as XRTexture2D : null;
-                bool canonicalImage = image is not null && TryGetWebGpuImageProfile(image, out _) &&
+                bool canonicalImage = image is not null &&
+                    (UseWebGpuBatchOnly ? TryGetWebGpuImageProfile(image, out _) :
+                        TryGetDesktopImageProfile(image, UsesSrgbImage(material, image), out _)) &&
                     material.EngineSemantic == EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1 &&
-                    HasCanonicalImageShader(material) && HasCanonicalImageBinding(material, image);
+                    HasCanonicalImageShader(material) &&
+                    (UseWebGpuBatchOnly || material.Shaders.Count == 1) &&
+                    HasCanonicalImageBinding(material, image);
                 return
                     GetType() == typeof(UIMaterialComponent) &&
                     material.HasOnlyStandardSurfaceAndUniformHandlers(_allowedBatchUniformHandlers) &&
                     (sourceFreeSolid || canonicalImage &&
-                     (BoundableTransform.GetCanvasTransform() is not { DrawSpace: not ECanvasDrawSpace.Screen } ||
+                     (SceneNode?.Transform is not UIBoundableTransform imageBounds ||
+                      imageBounds.GetCanvasTransform() is not { DrawSpace: not ECanvasDrawSpace.Screen } ||
                       !image!.RequiresStorageUsage || !UsesSrgbImage(material, image))) &&
                     (!UseWebGpuBatchOnly || material.Textures.Count != 0 || material.Shaders.Count == 0) &&
                     material.Parameters.Length == 1 &&

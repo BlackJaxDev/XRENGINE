@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Linq;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.UI.State;
 using XREngine.Scene.Transforms;
@@ -49,7 +48,7 @@ internal sealed class UILayoutSnapshot
         ArrangeVersions = arrangeVersions;
         RootBounds = rootBounds;
         FontGeneration = fontGeneration ?? FontGlyphSet.GlobalLayoutMetricsGeneration;
-        ValidationIndices = validationIndices ?? Enumerable.Range(0, nodes.Length).ToArray();
+        ValidationIndices = validationIndices ?? CreateAllIndices(nodes.Length);
         _dirtyIndices = new HashSet<int>(ValidationIndices);
         if (stableTopology is not null)
         {
@@ -81,6 +80,14 @@ internal sealed class UILayoutSnapshot
     private static bool NeedsOwnerSynchronization(in UILayoutNodeInput node)
         => node.Operator is UILayoutOperator.Scrollable or UILayoutOperator.DockingRoot ||
             node.Operator == UILayoutOperator.List && (node.OperatorFlags & 16) != 0;
+
+    private static int[] CreateAllIndices(int count)
+    {
+        int[] indices = new int[count];
+        for (int i = 0; i < count; i++)
+            indices[i] = i;
+        return indices;
+    }
 
     private static long EstimateWorkingBytes(UILayoutValuePageView<UILayoutNodeInput> nodes, UILayoutChildInput[] children)
     {
@@ -115,6 +122,15 @@ internal sealed class UILayoutSnapshot
     public static UILayoutSnapshot Capture(UICanvasTransform canvas, List<UITransform> targets)
     {
         canvas.ChangeJournal.VerifyMutationAccess();
+        return CaptureRoot(canvas,
+            new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity),
+            targets);
+    }
+
+    /// <summary>Capture a detached tree for bounded serial measurement only.</summary>
+    internal static UILayoutSnapshot CaptureRoot(UITransform root, Vector2 availableSize,
+        List<UITransform> targets)
+    {
         long fontGeneration = FontGlyphSet.GlobalLayoutMetricsGeneration;
         List<UILayoutNodeInput> nodes = [];
         List<UILayoutChildInput> children = [];
@@ -123,10 +139,9 @@ internal sealed class UILayoutSnapshot
         List<uint> measureVersions = [];
         List<uint> arrangeVersions = [];
         long estimatedBytes = 0;
-        CaptureNode(canvas, -1, targets, nodes, children, identities, revisions,
+        CaptureNode(root, -1, targets, nodes, children, identities, revisions,
             measureVersions, arrangeVersions, ref estimatedBytes);
-        BoundingRectangleF rootConstraint = new(Vector2.Zero,
-            new Vector2(canvas.Width ?? float.PositiveInfinity, canvas.Height ?? float.PositiveInfinity));
+        BoundingRectangleF rootConstraint = new(Vector2.Zero, availableSize);
         return new UILayoutSnapshot(UILayoutValuePageView<UILayoutNodeInput>.CopyFrom(nodes.ToArray()),
             children.ToArray(), identities.ToArray(),
             UILayoutValuePageView<UIChangeRevisions>.CopyFrom(revisions.ToArray()),

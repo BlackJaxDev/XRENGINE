@@ -22,13 +22,12 @@ public sealed class UIChangeTrackingTests
     [Test]
     public void MeasureMutation_DirtiesOnlyAncestorPath()
     {
-        var canvas = Track(new UICanvasTransform());
+        var canvas = Track(new UICanvasTransform { Width = 100, Height = 100 });
         var branch = Track(new UIBoundableTransform { Parent = canvas });
         var leaf = Track(new UIBoundableTransform { Parent = branch });
         var sibling = Track(new UIBoundableTransform { Parent = canvas });
-        var constraint = new Vector2(100, 100);
-        UILayoutSystem.MeasureTransform(canvas, constraint);
-        UILayoutSystem.MeasureTransform(sibling, constraint);
+        AcceptLayout(canvas);
+        sibling.NeedsMeasure.ShouldBeFalse();
         var siblingRevision = sibling.ChangeRevisions;
         var branchRevision = branch.ChangeRevisions;
         var canvasRevision = canvas.ChangeRevisions;
@@ -53,9 +52,9 @@ public sealed class UIChangeTrackingTests
     [Test]
     public void ArrangeMutation_RetainsMeasureCache()
     {
-        var canvas = Track(new UICanvasTransform());
+        var canvas = Track(new UICanvasTransform { Width = 100, Height = 100 });
         var leaf = Track(new UIBoundableTransform { Parent = canvas });
-        UILayoutSystem.MeasureTransform(canvas, new Vector2(100, 100));
+        AcceptLayout(canvas);
         leaf.NeedsMeasure.ShouldBeFalse();
         canvas.NeedsMeasure.ShouldBeFalse();
         Drain(canvas);
@@ -75,9 +74,9 @@ public sealed class UIChangeTrackingTests
     [Test]
     public void VisualOnlyChange_DoesNotInvalidateLayout()
     {
-        var canvas = Track(new UICanvasTransform());
+        var canvas = Track(new UICanvasTransform { Width = 100, Height = 100 });
         var leaf = Track(new UITransform { Parent = canvas });
-        UILayoutSystem.MeasureTransform(canvas, new Vector2(100, 100));
+        AcceptLayout(canvas);
         Drain(canvas);
         var before = leaf.ChangeRevisions;
         bool arrangeDirtyBefore = leaf.NeedsArrange;
@@ -227,10 +226,10 @@ public sealed class UIChangeTrackingTests
     [Test]
     public void ReversingChildren_RecordsTopologyAndInvalidatesLayout()
     {
-        var canvas = Track(new UICanvasTransform());
+        var canvas = Track(new UICanvasTransform { Width = 100, Height = 100 });
         var first = Track(new UITransform { Parent = canvas });
         var second = Track(new UITransform { Parent = canvas });
-        UILayoutSystem.MeasureTransform(canvas, new Vector2(100, 100));
+        AcceptLayout(canvas);
         canvas.NeedsMeasure.ShouldBeFalse();
         Drain(canvas);
 
@@ -307,6 +306,13 @@ public sealed class UIChangeTrackingTests
     {
         try { action(); return null; }
         catch (Exception exception) { return exception; }
+    }
+
+    private static void AcceptLayout(UICanvasTransform canvas)
+    {
+        canvas.UpdateLayoutAsync();
+        SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        canvas.CurrentLayoutGeneration.ShouldBeGreaterThan(0UL);
     }
 
     private static UIElementChange[] Drain(UICanvasTransform canvas)

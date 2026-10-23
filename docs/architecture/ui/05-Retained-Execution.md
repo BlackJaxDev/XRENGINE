@@ -24,6 +24,14 @@ boundable transforms, lists, grids, split panels, docking, tabs, rotation, fitti
 and scrolling. Custom transforms must supply an `IUILayoutValueAdapter` payload.
 An unknown transform does not silently use a different layout algorithm.
 
+Public `Measure` on an attached transform requests canvas work and returns its
+last accepted desired size. Before first acceptance it reports that no result is
+available. `Arrange` and `FitLayout` request canvas work; they do not mutate live
+geometry synchronously. The canvas owns attached constraints. Detached `Measure`
+uses a bounded snapshot and the same value kernel without applying geometry.
+Detached arrange requires attaching a canvas first. Legacy child-resize overrides
+are no longer an alternate layout entry point.
+
 Measure reuse requires matching identity, aggregate measure revision, text
 inputs, and constraint. Arrange reuse also requires matching child edges,
 allocated slot, placement, visibility, and geometry. Topology-stable capture
@@ -69,6 +77,17 @@ Deferred commands do not retain source callbacks. The built-in text adapter
 copies the accepted layout and owner-captured animated glyph adjustments into
 private transform, UV, and rotation buffers. Required resource publishers defer
 unready descriptors instead of drawing with a placeholder.
+
+`UIDrawGeometry` shares immutable mesh and fixed-buffer owners between material
+captures. Paint changes reuse those owners. Animated glyph changes replace the
+changed buffers while retaining unchanged UV storage. Each physical copy spends
+the shared byte budget once; geometry owners do not consume draw-payload slots.
+The component writer reads accepted glyph spans, freezes animation overrides
+when `MarkGlyphTransformsChanged` is called, and commits changed used ranges.
+Storage resize and writes share one lock and validate actual byte lengths.
+Explicit raw-buffer invalidation forces byte validation before reuse. The separate
+`UIText` helper still has a legacy writer; changed immutable buffer captures can
+still copy their allocated capacity.
 
 `TryCapturePublicationPayload` is the explicit adapter boundary. Derived custom
 components must declare `CanCapturePublicationUniforms` only when capture owns
@@ -141,6 +160,9 @@ Hit transitions use reusable lists and identity sets. Idle queries reuse prior
 hits when pointer coordinates, output mapping result, hit generation, and capture
 state agree. `RenderInfo2D.MembershipId` provides stable membership independent of
 mutable painter order.
+Leaving the output region invalidates that cache before clearing intersections.
+A return to the same point must perform a fresh query. Blocker filtering compacts
+the existing hit list in place and preserves only the frozen blocker subtree.
 
 The output receipt integration still requires graphics validation. CPU command
 completion alone does not prove that deferred GPU draws reached an output.
@@ -153,6 +175,13 @@ headless packet tests.
 Unknown custom shaders retain normal draw commands. Common editor borders use
 `SetBatchBorderStyle`; solid backgrounds use `SetBatchSolidColor`. Per-control
 outline values do not require a new shader source.
+
+Desktop image cohorts use `UIImageBatched` shaders with per-instance UVs and tint.
+Linear RGBA8 and hardware sRGB8-alpha8 images require matching color metadata.
+Resizable image mip formats must also agree with GPU storage so OpenGL and Vulkan
+sample the same color space. A known mismatch rejects publication with a named
+failure. Pending image storage follows the ordinary readiness path. This does
+not establish runtime shader or GPU acceptance.
 
 Painter runs retain pass and order boundaries. GPU cohorts isolate storage still
 in use by previous draws. Reuse requires the backend completion and buffer reuse
@@ -194,11 +223,24 @@ pool. Source extent uses count and fixed row height. Leases distinguish a physic
 row from its current logical item. `UIVirtualTreeProvider` keeps cached visible
 ranges for tree mutations.
 
+`RequestVirtualItemFocus` requests indexed item realization on the owner thread.
+It waits for a presented hit with the requested list identity, row identity, item
+ID, and lease incarnation. Input does not query the live provider to validate the
+packet. Recycling invalidates interaction revisions. An explicit focus change or
+removal cancels the request. Providers without an item-ID index cannot service
+this request. The tree provider maintains an item-ID index across visible-range
+splices. Hidden collapsed descendants must be expanded before requesting focus.
+
 The hierarchy uses virtual rows and retains canonical scene commands. Plain
 scene/root lists have no mutation events, so the panel checks their shallow
 membership every 250 ms. Child-list notifications handle subtree edits.
 The inspector virtualizes primitive property rows; complex editors open in a
 separate detail view. Inline variable-height virtualization remains a decision.
+The inspector component picker uses the canonical component catalog and queued
+scene mutation path. Add/remove operations group structural Undo and dirty state,
+including automatically added required components. Failed creation removes its
+partial component delta. Deferred completion callbacks reject rebuilt or changed
+inspector targets.
 
 ## Opt-in fixtures
 
@@ -209,3 +251,16 @@ fixture; its default is `0`. The fixture reports realized rows, selected logical
 ID, and UI work counters. It uses the production canvas and text paths.
 Run the settings generator after changing the settings type. See the validation
 record for exact procedures and platform limits.
+
+Captured custom draws share unchanged private mesh and fixed buffer storage across
+material changes. The existing draw budget charges each physical copy once and
+also checks each draw's logical size. A failed native retirement keeps dependent
+claims and budget in quarantine. Text uses committed glyph buffer revisions to
+reuse unchanged storage without scanning its bytes.
+
+Legacy text writes read the accepted immutable layout. They commit only the
+changed used glyph spans. Paint and canvas transform changes do not copy glyphs.
+`MarkGlyphTransformsChanged()` captures sparse animation values on the app thread.
+Later direct dictionary edits require another call before a draw can use them.
+Animation changes retain unchanged UV buffers and mesh storage. Changed buffers
+keep their allocated capacity in each immutable generation.

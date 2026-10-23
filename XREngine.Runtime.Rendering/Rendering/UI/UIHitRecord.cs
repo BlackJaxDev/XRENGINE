@@ -25,7 +25,10 @@ public readonly record struct UIHitRecord(
     bool BlocksInputBehind,
     bool IsTabStop = true,
     int TabIndex = 0,
-    UIElementIdentity FocusScopeIdentity = default)
+    UIElementIdentity FocusScopeIdentity = default,
+    UIElementIdentity VirtualListIdentity = default,
+    UIElementIdentity VirtualRowIdentity = default,
+    UIVirtualRowLease VirtualRowLease = default)
 {
     /// <summary>Tests the frozen shape and clip in canvas coordinates.</summary>
     public bool Contains(Vector2 canvasPoint)

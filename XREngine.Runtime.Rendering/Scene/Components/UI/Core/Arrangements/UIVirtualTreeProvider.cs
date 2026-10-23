@@ -7,11 +7,12 @@ namespace XREngine.Rendering.UI
     /// Keeps a visible preorder index. Structural edits change the affected range; scrolling reads it by index.
     /// This type is owned by the UI thread. Large inserts and moves can shift later list elements.
     /// </summary>
-    public sealed class UIVirtualTreeProvider : IVirtualListProvider
+    public sealed class UIVirtualTreeProvider : IVirtualListProvider, IVirtualListItemIndex
     {
         private readonly Dictionary<ulong, UIVirtualTreeNode> _nodes = [];
         private readonly List<ulong> _roots = [];
         private readonly List<ulong> _visible = [];
+        private readonly Dictionary<ulong, int> _visibleIndexById = [];
         private readonly List<ulong> _scratch = [];
         private readonly HashSet<ulong> _selection = [];
         private readonly Func<UIBoundableTransform> _createRow;
@@ -37,7 +38,10 @@ namespace XREngine.Rendering.UI
         public bool IsSelected(ulong id) => _selection.Contains(id);
         public bool TryGetNode(ulong id, out UIVirtualTreeNode? node) => _nodes.TryGetValue(id, out node);
         public ulong GetItemId(int index) => _visible[index];
-        public int FindVisibleIndex(ulong id) => _visible.IndexOf(id);
+        public int FindVisibleIndex(ulong id)
+            => _visibleIndexById.TryGetValue(id, out int index) ? index : -1;
+        public bool TryGetIndexOfItemId(ulong itemId, out int index)
+            => _visibleIndexById.TryGetValue(itemId, out index);
         public UIBoundableTransform CreateRow() => _createRow();
         public void BindRow(UIBoundableTransform row, int index, ulong itemId, ulong incarnation)
             => _bindRow(row, _nodes[itemId], index, incarnation);
@@ -52,6 +56,7 @@ namespace XREngine.Rendering.UI
             _nodes.Clear();
             _roots.Clear();
             _visible.Clear();
+            _visibleIndexById.Clear();
             _scratch.Clear();
             _selection.Clear();
             _activeId = 0;
@@ -70,6 +75,7 @@ namespace XREngine.Rendering.UI
                 if (_nodes[id].IsExpanded)
                     AppendVisibleDescendants(_nodes[id], _visible);
             }
+            ReindexVisibleFrom(0);
             _bulkLoading = false;
             _revision++;
         }
@@ -85,7 +91,10 @@ namespace XREngine.Rendering.UI
             siblings.Insert(siblingIndex, id);
             _nodes.Add(id, node);
             if (insertAt >= 0)
+            {
                 _visible.Insert(insertAt, id);
+                ReindexVisibleFrom(insertAt);
+            }
             _revision++;
         }
 
@@ -93,7 +102,7 @@ namespace XREngine.Rendering.UI
         {
             if (!_nodes.TryGetValue(id, out UIVirtualTreeNode? node) || node.IsExpanded == expanded)
                 return false;
-            int index = _bulkLoading ? -1 : _visible.IndexOf(id);
+            int index = _bulkLoading ? -1 : FindVisibleIndex(id);
             if (index >= 0)
             {
                 if (expanded)
@@ -101,11 +110,15 @@ namespace XREngine.Rendering.UI
                     _scratch.Clear();
                     AppendVisibleDescendants(node, _scratch);
                     _visible.InsertRange(index + 1, _scratch);
+                    ReindexVisibleFrom(index + 1);
                 }
                 else
                 {
                     int end = FindSubtreeEnd(index, id);
+                    for (int removed = index + 1; removed < end; removed++)
+                        _visibleIndexById.Remove(_visible[removed]);
                     _visible.RemoveRange(index + 1, end - index - 1);
+                    ReindexVisibleFrom(index + 1);
                 }
             }
             node.IsExpanded = expanded;
@@ -147,9 +160,15 @@ namespace XREngine.Rendering.UI
         {
             if (!_nodes.TryGetValue(id, out UIVirtualTreeNode? node))
                 return false;
-            int index = _visible.IndexOf(id);
+            int index = FindVisibleIndex(id);
             if (index >= 0)
-                _visible.RemoveRange(index, FindSubtreeEnd(index, id) - index);
+            {
+                int end = FindSubtreeEnd(index, id);
+                for (int removed = index; removed < end; removed++)
+                    _visibleIndexById.Remove(_visible[removed]);
+                _visible.RemoveRange(index, end - index);
+                ReindexVisibleFrom(index);
+            }
             GetSiblings(node.ParentId).Remove(id);
             _scratch.Clear();
             CollectAllDescendants(id, _scratch);
@@ -175,14 +194,18 @@ namespace XREngine.Rendering.UI
                 if (ancestor == id)
                     return false;
 
-            int oldIndex = _visible.IndexOf(id);
+            int oldIndex = FindVisibleIndex(id);
             _scratch.Clear();
             if (oldIndex >= 0)
             {
                 int end = FindSubtreeEnd(oldIndex, id);
                 for (int i = oldIndex; i < end; i++)
+                {
                     _scratch.Add(_visible[i]);
+                    _visibleIndexById.Remove(_visible[i]);
+                }
                 _visible.RemoveRange(oldIndex, end - oldIndex);
+                ReindexVisibleFrom(oldIndex);
             }
             GetSiblings(node.ParentId).Remove(id);
             List<ulong> siblings = GetSiblings(newParentId);
@@ -199,6 +222,7 @@ namespace XREngine.Rendering.UI
                         AppendVisibleDescendants(node, _scratch);
                 }
                 _visible.InsertRange(insertAt, _scratch);
+                ReindexVisibleFrom(insertAt);
             }
             _revision++;
             return true;
@@ -213,7 +237,7 @@ namespace XREngine.Rendering.UI
             if (parentId == 0)
                 return siblingIndex == 0 ? 0 : FindSubtreeEndOf(siblings[siblingIndex - 1]);
             UIVirtualTreeNode parent = _nodes[parentId];
-            int parentIndex = _visible.IndexOf(parentId);
+            int parentIndex = FindVisibleIndex(parentId);
             if (parentIndex < 0 || !parent.IsExpanded)
                 return -1;
             return siblingIndex == 0 ? parentIndex + 1 : FindSubtreeEndOf(siblings[siblingIndex - 1]);
@@ -221,7 +245,7 @@ namespace XREngine.Rendering.UI
 
         private int FindSubtreeEndOf(ulong id)
         {
-            int index = _visible.IndexOf(id);
+            int index = FindVisibleIndex(id);
             return index < 0 ? -1 : FindSubtreeEnd(index, id);
         }
 
@@ -231,6 +255,12 @@ namespace XREngine.Rendering.UI
             while (end < _visible.Count && IsDescendantOf(_visible[end], id))
                 end++;
             return end;
+        }
+
+        private void ReindexVisibleFrom(int first)
+        {
+            for (int index = first; index < _visible.Count; index++)
+                _visibleIndexById[_visible[index]] = index;
         }
 
         private bool IsDescendantOf(ulong id, ulong ancestorId)

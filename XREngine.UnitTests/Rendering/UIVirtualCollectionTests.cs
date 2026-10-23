@@ -150,8 +150,12 @@ public sealed class UIVirtualCollectionTests
         tree.Count.ShouldBe(4);
         tree.GetItemId(0).ShouldBe(1UL);
         tree.GetItemId(2).ShouldBe(3UL);
+        tree.TryGetIndexOfItemId(3, out int index).ShouldBeTrue();
+        index.ShouldBe(2);
         tree.Move(3, 0, 1).ShouldBeTrue();
         tree.GetItemId(2).ShouldBe(3UL);
+        tree.TryGetIndexOfItemId(3, out index).ShouldBeTrue();
+        index.ShouldBe(2);
         tree.Rename(3, "Moved").ShouldBeTrue();
         tree.SetSelected(3, true).ShouldBeTrue();
         tree.Activate(3).ShouldBeTrue();
@@ -160,6 +164,9 @@ public sealed class UIVirtualCollectionTests
         tree.Remove(1).ShouldBeTrue();
         tree.Count.ShouldBe(2);
         tree.GetItemId(0).ShouldBe(3UL);
+        tree.TryGetIndexOfItemId(1, out _).ShouldBeFalse();
+        tree.TryGetIndexOfItemId(3, out index).ShouldBeTrue();
+        index.ShouldBe(0);
         created.ShouldBe(0);
     }
 

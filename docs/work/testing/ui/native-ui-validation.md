@@ -12,18 +12,18 @@ new headless regression tests before Windows and graphics validation on
 2026-10-23. This approval applies to this task. It does not establish live
 acceptance or change the default editor.
 
-The current checkpoint source passes the headless build with zero warnings and
-errors through `Tools/Invoke-AgentBuild.ps1`. All **293 of 293** headless tests
-pass, with no failures or skips. This includes paged layout reuse, stale font and
-placement rejection, explicit packet lifetimes, multiline navigation, stable-ID
-row realization, asset path containment, and warmed unchanged-hit-set allocation
-checks with a concrete no-op profiler.
+The current checkpoint source passes the headless and editor builds with zero
+warnings and errors through `Tools/Invoke-AgentBuild.ps1`. All **310 of 310**
+headless tests pass, with no failures or skips. The final run took 7.482 seconds.
+Coverage includes shared glyph-resource ownership, dirty glyph writes, desktop
+image eligibility, indexed virtual-row focus through a presented packet, binding
+teardown, legacy layout entry points, and warmed idle/transition allocations.
 
-The matching desktop test-project build includes the editor and passes with zero
-warnings and errors. These checks compile Windows targets on Linux. The editor
-Undo regression compiled, but NUnit refused execution because the assembly is
-supported only on Windows7.0. Zero tests executed in that filtered run; its zero
-exit code is not a test pass. Do not bypass the assembly platform check.
+The editor build compiles Windows targets on Linux. The earlier matching desktop
+test-project build passed, but its Undo regression did not execute: NUnit rejects
+the assembly with "Only supported on Windows7.0". The new inspector component
+mutations compile; their Windows live Undo workflow remains pending. Do not
+bypass the assembly platform check or count a zero-test exit as a pass.
 
 These are checkpoint results, not platform or performance acceptance. See the
 [integration investigation](../../investigations/ui/retained-ui-integration.md)

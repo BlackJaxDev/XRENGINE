@@ -154,3 +154,42 @@ discovery found 6,115 tests but rejected the assembly: "Only supported on
 Windows7.0". This is a platform validation blocker, not a passing Undo regression.
 The test remains compiled and available for Windows execution. No platform check
 was disabled. The matching source still has 293 passing headless tests.
+
+## Shared Glyph Geometry And Input Follow-Up
+
+The next runtime build compiled, but a new test assigned a nullable buffer read
+to a non-null value. The fixture now checks that value explicitly. Review also
+found a glyph-buffer resize race, shared resources consuming payload-count slots,
+and raw-buffer invalidation bypassing the glyph revision fast path. The repairs
+serialize storage changes, check actual byte bounds, separate byte and payload
+accounting, and force byte validation after explicit raw invalidation. Bounded
+review found no remaining high-priority issue in those repaired paths.
+
+The next headless build passed with zero warnings/errors. Its 308 tests produced
+305 passes and three errors. The new glyph atlas fixture lacked CPU pixel bytes;
+the fixture now supplies them. The idle-layout test found a real 56-byte closure
+allocation per pump. Task closure creation moved behind worker admission. The
+virtual-focus test used a provider without an item-ID index; the fixture now uses
+the indexed provider. The tree provider now maintains an item-ID index through structural edits.
+
+New input tests passed for enter/leave transitions, nested blocker filtering,
+paint-only hit reuse, and output-transform/hit-generation invalidation. They also
+cover the repaired return-to-output cache bug. Leaving output bounds now
+invalidates the cached hit query before its result list is cleared. Final checks
+must include the later fixture and idle-allocation repairs.
+
+The following runs passed 309 of 310 tests. The remaining virtual-focus fixture
+first omitted the packet identity page, then selected a spare recycled row rather
+than the requested row. The fixture now uses the real indexed tree provider and
+selects the button from the realized row's scene node. Interaction checks remain
+in place. The final editor build (`editor-ui-integration-build-13.log`) passed
+with zero warnings/errors in 3m57.06s. The final headless build
+(`headless-ui-integration-build-35.log`) passed with zero warnings/errors in
+15.16s. `headless-ui-tests-16.xml` records **310/310 passes**, no skips, in 7.482s.
+Evidence is under the task run's `logs` directory. The final source also retains
+CPU data in private mesh copies after upload, with a regression assertion.
+
+The zero-allocation tests cover warmed idle canvas requests and bounded input
+queries with a concrete no-op profiler. They do not measure complete frames or
+all layout edits. Inspector component actions compile in the editor; Windows
+Undo execution and desktop shader validation remain pending.

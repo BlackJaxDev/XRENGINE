@@ -22,6 +22,10 @@ public sealed class UIDrawPayloadBuilder : IDisposable
     public Vector4 Bounds { get; set; }
     public IUIDrawProducerLease? ProducerLease { get; set; }
     public int ProducerTextureSlot { get; set; }
+    internal bool UseCommittedGlyphRevisions { get; set; }
+    private ulong[] _rendererBufferRevisions = [];
+    private bool _rawStorageInvalidated;
+    internal void InvalidateRawStorage() => _rawStorageInvalidated = true;
     private IUIDrawProducerLease? _capturedProducerLease;
     private ulong _producerGeneration;
     private int _producerTextureSlot;
@@ -68,12 +72,13 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         }
         if (_cached is { } cached && Matches(source, renderer, material, mesh, cached))
         {
+            _rawStorageInvalidated = false;
             payload = cached;
             return true;
         }
 
         long reservedBytes = 0;
-        XRMesh? ownedMesh = null;
+        UIDrawGeometry? geometry = null;
         XRMeshRenderer? ownedRenderer = null;
         XRMaterial? ownedMaterial = null;
         XRShader[] shaders = [];
@@ -85,15 +90,20 @@ public sealed class UIDrawPayloadBuilder : IDisposable
                 throw new NotSupportedException("UI buffer count exceeds the bounded draw capture profile.");
             KeyValuePair<string, XRDataBuffer>[] meshBuffers = mesh.Buffers.CaptureBindingSnapshot(out _);
             KeyValuePair<string, XRDataBuffer>[] rendererBuffers = renderer.Buffers.CaptureBindingSnapshot(out _);
-            long bytes = checked(4096L + material.Parameters.Length * 2048L + material.Textures.Count * 64L +
-                (mesh.Points?.Count ?? 0) * 4L + (mesh.Lines?.Count ?? 0) * 8L + (mesh.Triangles?.Count ?? 0) * 128L);
+            ulong[] bufferRevisions = new ulong[rendererBuffers.Length];
+            for (int index = 0; index < rendererBuffers.Length; index++)
+                bufferRevisions[index] = rendererBuffers[index].Value.Revision;
+            long meshBytes = checked(512L + (mesh.Points?.Count ?? 0) * 4L +
+                (mesh.Lines?.Count ?? 0) * 8L + (mesh.Triangles?.Count ?? 0) * 128L);
             foreach (KeyValuePair<string, XRDataBuffer> entry in meshBuffers)
-                bytes = checked(bytes + MeasureBuffer(entry.Value));
+                meshBytes = checked(meshBytes + MeasureBuffer(entry.Value));
+            long geometryBytes = meshBytes;
+            long bytes = checked(3584L + material.Parameters.Length * 2048L + material.Textures.Count * 64L);
             foreach (KeyValuePair<string, XRDataBuffer> entry in rendererBuffers)
             {
                 if (entry.Value.BindingIndexOverride is null)
                     throw new NotSupportedException($"UI buffer '{entry.Key}' requires a fixed binding index.");
-                bytes = checked(bytes + MeasureBuffer(entry.Value));
+                geometryBytes = checked(geometryBytes + MeasureBuffer(entry.Value));
             }
             if (material.Parameters.Length > 4096 || material.Shaders.Count > 32 || material.Textures.Count > 256)
                 throw new NotSupportedException("UI material exceeds the bounded draw capture profile.");
@@ -101,7 +111,7 @@ public sealed class UIDrawPayloadBuilder : IDisposable
                 bytes = checked(bytes + MeasureParameter(parameter));
             foreach (XRShader shader in material.Shaders)
                 bytes = checked(bytes + shader.GetResolvedSource().Length * 2L + 512L);
-            if (!TryReserveBudget(bytes))
+            if (checked(bytes + geometryBytes) > MaximumPayloadBytes || !TryReserveBudget(bytes))
             {
                 failure = "UI.DrawCapture.Capacity: retained draw resources exceed the bounded capture budget; keep the previous complete publication.";
                 return false;
@@ -164,23 +174,14 @@ public sealed class UIDrawPayloadBuilder : IDisposable
             };
             // Constructor shader discovery must not remove captured arrays or manually authored parameters.
             ownedMaterial.Parameters = parameters;
-            // The deep clone owns all CPU buffer bytes. Shared clones are not valid here.
-            ownedMesh = mesh.Clone();
-            ownedRenderer = new XRMeshRenderer(ownedMesh, ownedMaterial);
-            XRDataBuffer[] ownedBuffers = new XRDataBuffer[rendererBuffers.Length];
-            for (int index = 0; index < rendererBuffers.Length; index++)
-            {
-                KeyValuePair<string, XRDataBuffer> entry = rendererBuffers[index];
-                XRDataBuffer buffer = entry.Value.Clone(true, entry.Value.Target);
-                buffer.DisposeOnPush = false;
-                ownedRenderer.Buffers.Add(entry.Key, buffer);
-                ownedBuffers[index] = buffer;
-            }
-            // Republish actual texture and buffer identities inside the required-resource scope.
-            ownedRenderer.BindingPublishers.Add(new UIFixedDrawBindings(ownedBuffers, textures, Bounds));
+            geometry = UIDrawGeometry.Capture(mesh, meshBuffers, rendererBuffers, meshBytes, _cached?.Geometry,
+                _rendererBuffers, _rendererBufferRevisions, UseCommittedGlyphRevisions && !_rawStorageInvalidated);
+            ownedRenderer = new XRMeshRenderer(geometry.Mesh, ownedMaterial);
+            // The geometry owner retains these buffers. This renderer only publishes their fixed bindings.
+            ownedRenderer.BindingPublishers.Add(new UIFixedDrawBindings(geometry.FixedBuffers, textures, Bounds));
             RenderingParameters? options = source.RenderOptionsOverride is { } raster
                 ? UIDrawStateCapture.CloneRaster(raster) : null;
-            UIDrawPayload replacement = new(ownedRenderer, ownedMaterial, options, shaders, reservedBytes, producerLease, capturedTextures);
+            UIDrawPayload replacement = new(ownedRenderer, ownedMaterial, options, shaders, reservedBytes, producerLease, capturedTextures, geometry);
             publication.Complete();
             UIDrawSourceObserver observer = new(source, renderer, mesh, material, sourceShaders,
                 meshBuffers, rendererBuffers, capturedTextures, NotifySourceChanged);
@@ -201,7 +202,9 @@ public sealed class UIDrawPayloadBuilder : IDisposable
             _shaderRevisions = revisions;
             _meshBuffers = meshBuffers;
             _rendererBuffers = rendererBuffers;
+            _rendererBufferRevisions = bufferRevisions;
             reservedBytes = 0;
+            _rawStorageInvalidated = false;
             producerLease = null;
             capturedTextures = [];
             payload = replacement;
@@ -217,8 +220,8 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         {
             if (reservedBytes != 0)
             {
-                new UIFailedDrawCapture(ownedRenderer, ownedMesh, ownedMaterial, shaders,
-                    capturedTextures, producerLease, reservedBytes).Retire();
+                new UIFailedDrawCapture(ownedRenderer, null, ownedMaterial, shaders,
+                    capturedTextures, producerLease, reservedBytes, geometry).Retire();
             }
         }
     }
@@ -254,11 +257,27 @@ public sealed class UIDrawPayloadBuilder : IDisposable
                 _capturedTextures[index]?.Matches(texture) != true)
                 return false;
         }
-        return BuffersEqual(mesh.Buffers, cached.Renderer.Mesh!.Buffers, _meshBuffers) &&
-            BuffersEqual(renderer.Buffers, cached.Renderer.Buffers, _rendererBuffers);
+        return BuffersEqual(mesh.Buffers, cached.Geometry.MeshBuffers, _meshBuffers) &&
+            RendererBuffersMatch(renderer.Buffers, cached.Geometry.RendererBuffers);
     }
 
-    private static bool MeshMetadataEquals(XRMesh source, XRMesh owned)
+    private bool RendererBuffersMatch(XRMesh.BufferCollection source, KeyValuePair<string, XRDataBuffer>[] owned)
+    {
+        if (!UseCommittedGlyphRevisions || _rawStorageInvalidated)
+            return BuffersEqual(source, owned, _rendererBuffers);
+        if (source.Count != _rendererBuffers.Length || owned.Length != _rendererBuffers.Length)
+            return false;
+        for (int index = 0; index < _rendererBuffers.Length; index++)
+        {
+            var previous = _rendererBuffers[index];
+            if (!source.TryGetValue(previous.Key, out XRDataBuffer? current) || !ReferenceEquals(current, previous.Value) ||
+                current.Revision != _rendererBufferRevisions[index] || !BufferMetadataEquals(current, owned[index].Value))
+                return false;
+        }
+        return true;
+    }
+
+    internal static bool MeshMetadataEquals(XRMesh source, XRMesh owned)
     {
         if (source.Interleaved != owned.Interleaved || source.InterleavedStride != owned.InterleavedStride ||
             source.PositionOffset != owned.PositionOffset || source.NormalOffset != owned.NormalOffset ||
@@ -286,26 +305,32 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         return true;
     }
 
-    private static unsafe bool BuffersEqual(XRMesh.BufferCollection source, XRMesh.BufferCollection owned,
+    internal static bool BuffersEqual(XRMesh.BufferCollection source, KeyValuePair<string, XRDataBuffer>[] owned,
         KeyValuePair<string, XRDataBuffer>[] previous)
     {
-        if (source.Count != previous.Length || owned.Count != previous.Length)
+        if (source.Count != previous.Length || owned.Length != previous.Length)
             return false;
-        foreach (KeyValuePair<string, XRDataBuffer> entry in previous)
+        for (int index = 0; index < previous.Length; index++)
         {
-            if (!source.TryGetValue(entry.Key, out XRDataBuffer? current) || !ReferenceEquals(current, entry.Value) ||
-                !owned.TryGetValue(entry.Key, out XRDataBuffer? copy) || current.Length != copy.Length ||
-                current.Target != copy.Target || current.BindingIndexOverride != copy.BindingIndexOverride ||
-                current.ComponentType != copy.ComponentType || current.ComponentCount != copy.ComponentCount ||
-                current.ElementCount != copy.ElementCount || current.Normalize != copy.Normalize ||
-                current.InstanceDivisor != copy.InstanceDivisor || current.ClientSideSource is not { } data ||
-                copy.ClientSideSource is not { } frozen || data.Length != frozen.Length ||
-                !new ReadOnlySpan<byte>(data.Address.Pointer, checked((int)data.Length)).SequenceEqual(
-                    new ReadOnlySpan<byte>(frozen.Address.Pointer, checked((int)frozen.Length))))
+            KeyValuePair<string, XRDataBuffer> entry = previous[index];
+            if (owned[index].Key != entry.Key || !source.TryGetValue(entry.Key, out XRDataBuffer? current) ||
+                !ReferenceEquals(current, entry.Value) || !BufferEquals(current, owned[index].Value))
                 return false;
         }
         return true;
     }
+
+    internal static bool BufferMetadataEquals(XRDataBuffer current, XRDataBuffer copy)
+        => current.Length == copy.Length && current.Target == copy.Target &&
+           current.BindingIndexOverride == copy.BindingIndexOverride && current.ComponentType == copy.ComponentType &&
+           current.ComponentCount == copy.ComponentCount && current.ElementCount == copy.ElementCount &&
+           current.Normalize == copy.Normalize && current.InstanceDivisor == copy.InstanceDivisor &&
+           current.Integral == copy.Integral && current.PadEndingToVec4 == copy.PadEndingToVec4;
+
+    internal static unsafe bool BufferEquals(XRDataBuffer current, XRDataBuffer copy)
+        => BufferMetadataEquals(current, copy) && current.ClientSideSource is { } data && copy.ClientSideSource is { } frozen && data.Length == frozen.Length &&
+           new ReadOnlySpan<byte>(data.Address.Pointer, checked((int)data.Length)).SequenceEqual(
+               new ReadOnlySpan<byte>(frozen.Address.Pointer, checked((int)frozen.Length)));
 
     private static long MeasureParameter(ShaderVar parameter, int depth = 0)
     {
@@ -325,32 +350,34 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         return bytes;
     }
 
-    private static long MeasureBuffer(XRDataBuffer buffer)
+    internal static long MeasureBuffer(XRDataBuffer buffer)
     {
         if (buffer.ClientSideSource is not { } source || source.Length < buffer.Length || buffer.GpuCompressedSource is not null)
             throw new NotSupportedException($"UI buffer '{buffer.AttributeName}' requires complete uncompressed CPU-owned bytes.");
         return checked(source.Length + 512L);
     }
 
-    private static bool TryReserveBudget(long bytes)
+    internal static bool TryReserveBudget(long bytes, bool countPayload = true)
     {
         lock (BudgetLock)
         {
             if (bytes > MaximumPayloadBytes || _retainedBytes + bytes > MaximumRetainedBytes ||
-                _retainedPayloads >= MaximumRetainedPayloads)
+                (countPayload && _retainedPayloads >= MaximumRetainedPayloads))
                 return false;
             _retainedBytes += bytes;
-            _retainedPayloads++;
+            if (countPayload)
+                _retainedPayloads++;
             return true;
         }
     }
 
-    internal static void ReleaseBudget(long bytes)
+    internal static void ReleaseBudget(long bytes, bool countPayload = true)
     {
         lock (BudgetLock)
         {
             _retainedBytes -= bytes;
-            _retainedPayloads--;
+            if (countPayload)
+                _retainedPayloads--;
         }
     }
 
@@ -369,6 +396,9 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         ProducerLease = null;
         _meshBuffers = [];
         _rendererBuffers = [];
+        _rendererBufferRevisions = [];
+        UseCommittedGlyphRevisions = false;
+        _rawStorageInvalidated = false;
         previous?.Release();
     }
 }

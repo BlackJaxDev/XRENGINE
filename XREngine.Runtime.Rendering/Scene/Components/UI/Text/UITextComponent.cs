@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -110,6 +111,13 @@ namespace XREngine.Rendering.UI
         private XRDataBuffer<Vector4>? _transformsBuffer;
         private XRDataBuffer<float>? _rotationsBuffer;
         private readonly Lock _glyphLock = new();
+        private FrozenDictionary<int, (Vector2 translation, Vector2 scale, float rotation)> _glyphOverrides =
+            FrozenDictionary<int, (Vector2 translation, Vector2 scale, float rotation)>.Empty;
+        private Dictionary<int, (Vector2 translation, Vector2 scale, float rotation)>? _capturedGlyphOverrides;
+        private long _glyphOverrideRevision;
+        private long _writtenGlyphOverrideRevision = -1;
+        private UITextLayoutResult? _writtenGlyphLayout;
+        private XRDataBuffer? _writtenGlyphBuffer;
 
         /// <summary>
         /// When true, the next render will push full buffer contents (e.g., after a resize).
@@ -679,6 +687,8 @@ namespace XREngine.Rendering.UI
         protected virtual void UpdateText(bool forceRemake, bool invalidateLayout = true)
         {
             FontGlyphSet font = EnsureLayoutFont();
+            if (!ReferenceEquals(_capturedGlyphOverrides, GlyphRelativeTransforms))
+                CaptureGlyphOverrides();
             //Task.Run(() =>
             //{
                 VerifyCreated(forceRemake, font.Atlas);
@@ -1026,28 +1036,31 @@ namespace XREngine.Rendering.UI
         private static int _resizeGlyphDiagCount = 0;
         private void ResizeGlyphCount(uint count, bool invalidateLayout)
         {
-            if (IsFpsTextDiagnosticTarget() && _resizeGlyphDiagCount < 10)
+            using (_glyphLock.EnterScope())
             {
-                _resizeGlyphDiagCount++;
-                Debug.Log(ELogCategory.UI, $"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
-            }
-            RenderCommand3D.Instances = count;
-            RenderCommand2D.Instances = count;
-            if (_allocatedGlyphCount < count)
-            {
-                _allocatedGlyphCount = count;
-                _transformsBuffer?.Resize(_allocatedGlyphCount);
-                _uvsBuffer?.Resize(_allocatedGlyphCount);
-                _rotationsBuffer?.Resize(_allocatedGlyphCount);
-                _pushFull = true;
-            }
-            _dataChanged = true;
+                if (IsFpsTextDiagnosticTarget() && _resizeGlyphDiagCount < 10)
+                {
+                    _resizeGlyphDiagCount++;
+                    Debug.Log(ELogCategory.UI, $"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
+                }
+                if (_allocatedGlyphCount < count)
+                {
+                    _transformsBuffer?.Resize(count);
+                    _uvsBuffer?.Resize(count);
+                    _rotationsBuffer?.Resize(count);
+                    _allocatedGlyphCount = count;
+                    _pushFull = true;
+                }
+                RenderCommand3D.Instances = count;
+                RenderCommand2D.Instances = count;
+                _dataChanged = true;
 
-            if (invalidateLayout)
-            {
-                var tfm = BoundableTransform;
-                if (tfm.UsesAutoSizing)
-                    tfm.InvalidateLayout();
+                if (invalidateLayout)
+                {
+                    var tfm = BoundableTransform;
+                    if (tfm.UsesAutoSizing)
+                        tfm.InvalidateLayout();
+                }
             }
         }
 
@@ -1072,57 +1085,61 @@ namespace XREngine.Rendering.UI
         /// <param name="meshRend"></param>
         private void CreateSSBOs(XRMeshRenderer meshRend)
         {
-            string transformsBindingName = "GlyphTransformsBuffer";
-            string uvsBindingName = $"GlyphTexCoordsBuffer";
-            string rotationsBindingName = "GlyphRotationsBuffer";
-
-            //TODO: use memory mapping instead of pushing
-
-            //_allocatedGlyphCount = GetAllocationLength();
-
-            meshRend.Buffers.Remove(transformsBindingName);
-            _transformsBuffer?.Destroy();
-            _transformsBuffer = new(transformsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
+            using (_glyphLock.EnterScope())
             {
-                //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
-                Usage = AnimatableTransforms ? EBufferUsage.StreamDraw : EBufferUsage.StaticCopy,
-                BindingIndexOverride = 0,
-                DisposeOnPush = false
-            };
-            meshRend.Buffers.Add(transformsBindingName, _transformsBuffer);
+                string transformsBindingName = "GlyphTransformsBuffer";
+                string uvsBindingName = $"GlyphTexCoordsBuffer";
+                string rotationsBindingName = "GlyphRotationsBuffer";
 
-            meshRend.Buffers.Remove(uvsBindingName);
-            _uvsBuffer?.Destroy();
-            _uvsBuffer = new(uvsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
-            {
-                //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
-                Usage = EBufferUsage.StaticCopy,
-                BindingIndexOverride = 1,
-                DisposeOnPush = false
-            };
-            meshRend.Buffers.Add(uvsBindingName, _uvsBuffer);
+                //TODO: use memory mapping instead of pushing
 
-            meshRend.Buffers.Remove(rotationsBindingName);
-            _rotationsBuffer?.Destroy();
+                //_allocatedGlyphCount = GetAllocationLength();
 
-            if (AnimatableTransforms)
-            {
-                _rotationsBuffer = new(rotationsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
+                meshRend.Buffers.Remove(transformsBindingName);
+                _transformsBuffer?.Destroy();
+                _transformsBuffer = new(transformsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
+                {
+                    //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+                    //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
+                    Usage = AnimatableTransforms ? EBufferUsage.StreamDraw : EBufferUsage.StaticCopy,
+                    BindingIndexOverride = 0,
+                    DisposeOnPush = false
+                };
+                meshRend.Buffers.Add(transformsBindingName, _transformsBuffer);
+
+                meshRend.Buffers.Remove(uvsBindingName);
+                _uvsBuffer?.Destroy();
+                _uvsBuffer = new(uvsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
                 {
                     //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
                     //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
                     Usage = EBufferUsage.StaticCopy,
-                    BindingIndexOverride = 2,
+                    BindingIndexOverride = 1,
                     DisposeOnPush = false
                 };
-                meshRend.Buffers.Add(rotationsBindingName, _rotationsBuffer);
-            }
+                meshRend.Buffers.Add(uvsBindingName, _uvsBuffer);
 
-            _dataChanged = true;
-            _pushFull = true;
-            LogFpsTextRenderHook("CreateSSBOs");
+                meshRend.Buffers.Remove(rotationsBindingName);
+                _rotationsBuffer?.Destroy();
+                _rotationsBuffer = null;
+
+                if (AnimatableTransforms)
+                {
+                    _rotationsBuffer = new(rotationsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
+                    {
+                        //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+                        //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
+                        Usage = EBufferUsage.StaticCopy,
+                        BindingIndexOverride = 2,
+                        DisposeOnPush = false
+                    };
+                    meshRend.Buffers.Add(rotationsBindingName, _rotationsBuffer);
+                }
+
+                _dataChanged = true;
+                _pushFull = true;
+                LogFpsTextRenderHook("CreateSSBOs");
+            }
         }
 
         /// <summary>
@@ -1131,9 +1148,23 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public void MarkGlyphTransformsChanged()
         {
+            CaptureGlyphOverrides();
             if (SceneNode is not null)
                 UITransform.RecordUIChange(UIChangeDomain.Text | UIChangeDomain.Visual);
             _dataChanged = true;
+        }
+
+        private void CaptureGlyphOverrides()
+        {
+            if (GlyphRelativeTransforms.Count > UIDrawStateCapture.MaximumArrayLength)
+                throw new NotSupportedException("Text glyph overrides exceed the bounded draw capture profile.");
+            var snapshot = GlyphRelativeTransforms.ToFrozenDictionary();
+            using (_glyphLock.EnterScope())
+            {
+                _glyphOverrides = snapshot;
+                _capturedGlyphOverrides = GlyphRelativeTransforms;
+                _glyphOverrideRevision++;
+            }
         }
 
         #endregion
@@ -1143,99 +1174,106 @@ namespace XREngine.Rendering.UI
         /// <summary>
         /// Writes the glyph data to the SSBOs.
         /// </summary>
-        private unsafe void WriteData()
+        private unsafe void WriteData(bool force = false)
         {
-            if (_transformsBuffer is null || _uvsBuffer is null)
-                return;
-            
-            (Vector4 transform, Vector4 uvs)[] glyphsCopy;
             using (_glyphLock.EnterScope())
-                glyphsCopy = [.. _glyphs];
-            UIRuntimeCounters.Add(UIWorkCounter.GlyphCopies);
-            UIRuntimeCounters.Add(UIWorkCounter.GlyphsCopied, glyphsCopy.Length);
-
-            if (IsFpsTextDiagnosticTarget() && _fpsTextWriteDiagCount++ < 40)
             {
-                var firstTransform = glyphsCopy.Length > 0 ? glyphsCopy[0].transform : Vector4.Zero;
-                var firstUvs = glyphsCopy.Length > 0 ? glyphsCopy[0].uvs : Vector4.Zero;
-                var lastTransform = glyphsCopy.Length > 0 ? glyphsCopy[^1].transform : Vector4.Zero;
-                Debug.Log(
-                    ELogCategory.UI,
-                    "[FpsTextDiag] UITextComponent.WriteData #{0} node='{1}' glyphs={2} firstTfm=({3:F2},{4:F2},{5:F2},{6:F2}) firstUv=({7:F5},{8:F5},{9:F5},{10:F5}) lastTfm=({11:F2},{12:F2},{13:F2},{14:F2}) color=({15:F2},{16:F2},{17:F2},{18:F2})",
-                    _fpsTextWriteDiagCount,
-                    SceneNode?.Name ?? "<null>",
-                    glyphsCopy.Length,
-                    firstTransform.X,
-                    firstTransform.Y,
-                    firstTransform.Z,
-                    firstTransform.W,
-                    firstUvs.X,
-                    firstUvs.Y,
-                    firstUvs.Z,
-                    firstUvs.W,
-                    lastTransform.X,
-                    lastTransform.Y,
-                    lastTransform.Z,
-                    lastTransform.W,
-                    Color.R,
-                    Color.G,
-                    Color.B,
-                    Color.A);
-            }
-
-            float* tfmPtr = (float*)_transformsBuffer.ClientSideSource!.Address.Pointer;
-            float* uvsPtr = (float*)_uvsBuffer.ClientSideSource!.Address.Pointer;
-
-            for (int i = 0; i < glyphsCopy.Length; i++)
-            {
-                (Vector4 transform, Vector4 uvs) = glyphsCopy[i];
-
-                if (AnimatableTransforms && GlyphRelativeTransforms.TryGetValue(i, out var relative))
+                if (_layoutResult is not { } layout || _transformsBuffer?.ClientSideSource is not { } transforms ||
+                    _uvsBuffer?.ClientSideSource is not { } uvs || !HasGlyphStorage(layout.Glyphs.Length))
+                    return;
+                if (!force && ReferenceEquals(_writtenGlyphLayout, layout) &&
+                    ReferenceEquals(_writtenGlyphBuffer, _transformsBuffer) &&
+                    _writtenGlyphOverrideRevision == _glyphOverrideRevision)
+                    return;
+                ReadOnlySpan<UITextLayoutGlyph> glyphs = layout.Glyphs.Span;
+                Span<Vector4> transformValues = new(transforms.Address.Pointer, glyphs.Length);
+                Span<Vector4> uvValues = new(uvs.Address.Pointer, glyphs.Length);
+                Span<float> rotations = AnimatableTransforms && _rotationsBuffer?.ClientSideSource is { } rotationSource
+                    ? new Span<float>(rotationSource.Address.Pointer, glyphs.Length) : Span<float>.Empty;
+                int transformFirst = glyphs.Length, transformLast = -1;
+                int uvFirst = glyphs.Length, uvLast = -1;
+                int rotationFirst = glyphs.Length, rotationLast = -1;
+                int changedGlyphs = 0;
+                for (int index = 0; index < glyphs.Length; index++)
                 {
-                    transform.X += relative.translation.X;
-                    transform.Y += relative.translation.Y;
-                    transform.Z *= relative.scale.X;
-                    transform.W *= relative.scale.Y;
-
-                    if (_rotationsBuffer is not null)
-                        ((float*)_rotationsBuffer.ClientSideSource!.Address.Pointer)[i] = relative.rotation;
+                    Vector4 transform = glyphs[index].Transform;
+                    float rotation = 0;
+                    if (AnimatableTransforms && _glyphOverrides.TryGetValue(index, out var relative))
+                    {
+                        transform.X += relative.translation.X;
+                        transform.Y += relative.translation.Y;
+                        transform.Z *= relative.scale.X;
+                        transform.W *= relative.scale.Y;
+                        rotation = relative.rotation;
+                    }
+                    bool changed = false;
+                    if (force || transformValues[index] != transform)
+                    {
+                        transformValues[index] = transform;
+                        transformFirst = Math.Min(transformFirst, index);
+                        transformLast = index;
+                        changed = true;
+                    }
+                    if (force || uvValues[index] != glyphs[index].Uvs)
+                    {
+                        uvValues[index] = glyphs[index].Uvs;
+                        uvFirst = Math.Min(uvFirst, index);
+                        uvLast = index;
+                        changed = true;
+                    }
+                    if (!rotations.IsEmpty && (force || rotations[index] != rotation))
+                    {
+                        rotations[index] = rotation;
+                        rotationFirst = Math.Min(rotationFirst, index);
+                        rotationLast = index;
+                        changed = true;
+                    }
+                    if (changed)
+                        changedGlyphs++;
                 }
-
-                *tfmPtr++ = transform.X;
-                *tfmPtr++ = transform.Y;
-                *tfmPtr++ = transform.Z;
-                *tfmPtr++ = transform.W;
-                //Debug.Out(i.ToString() + ": " + transform.ToString());
-
-                *uvsPtr++ = uvs.X;
-                *uvsPtr++ = uvs.Y;
-                *uvsPtr++ = uvs.Z;
-                *uvsPtr++ = uvs.W;
-                //Debug.Out(uvs.ToString());
+                CommitGlyphRange(_transformsBuffer, transformFirst, transformLast, 16u);
+                CommitGlyphRange(_uvsBuffer, uvFirst, uvLast, 16u);
+                CommitGlyphRange(_rotationsBuffer, rotationFirst, rotationLast, 4u);
+                _writtenGlyphLayout = layout;
+                _writtenGlyphOverrideRevision = _glyphOverrideRevision;
+                _writtenGlyphBuffer = _transformsBuffer;
+                _dataChanged = false;
+                _pushFull = false;
+                if (changedGlyphs > 0)
+                {
+                    UIRuntimeCounters.Add(UIWorkCounter.GlyphCopies);
+                    UIRuntimeCounters.Add(UIWorkCounter.GlyphsCopied, changedGlyphs);
+                }
+                if (IsFpsTextDiagnosticTarget() && _fpsTextWriteDiagCount++ < 40)
+                    Debug.Log(ELogCategory.UI, "UITextComponent.WriteData glyphs={0} changed={1}", glyphs.Length, changedGlyphs);
             }
         }
 
-        /// <summary>
-        /// Pushes the sub-data of the SSBOs to the GPU.
-        /// </summary>
-        private void PushSubBuffers()
+        private bool HasGlyphStorage(int glyphCount)
         {
-            WriteData();
-            _transformsBuffer?.CommitDirtyBytes(0u, _transformsBuffer.Length);
-            _uvsBuffer?.CommitDirtyBytes(0u, _uvsBuffer.Length);
-            _rotationsBuffer?.CommitDirtyBytes(0u, _rotationsBuffer.Length);
+            ulong vectorBytes = checked((ulong)glyphCount * 16UL);
+            ulong rotationBytes = checked((ulong)glyphCount * 4UL);
+            return glyphCount <= _allocatedGlyphCount &&
+                _transformsBuffer is { IsDestroyed: false, ClientSideSource: { } transforms } &&
+                _uvsBuffer is { IsDestroyed: false, ClientSideSource: { } uvs } &&
+                transforms.Length >= vectorBytes && uvs.Length >= vectorBytes &&
+                (vectorBytes == 0 || (transforms.Address != VoidPtr.Zero && uvs.Address != VoidPtr.Zero)) &&
+                (!AnimatableTransforms ||
+                 (_rotationsBuffer is { IsDestroyed: false, ClientSideSource: { } rotations } &&
+                  rotations.Length >= rotationBytes && (rotationBytes == 0 || rotations.Address != VoidPtr.Zero)));
         }
 
-        /// <summary>
-        /// Pushes the full data of the SSBOs to the GPU.
-        /// </summary>
-        private void PushBuffers()
+        private static void CommitGlyphRange(XRDataBuffer? buffer, int first, int last, uint stride)
         {
-            WriteData();
-            _transformsBuffer?.CommitDirtyBytes(0u, _transformsBuffer.Length);
-            _uvsBuffer?.CommitDirtyBytes(0u, _uvsBuffer.Length);
-            _rotationsBuffer?.CommitDirtyBytes(0u, _rotationsBuffer.Length);
+            if (buffer is not null && last >= first)
+                buffer.CommitDirtyBytes(checked((uint)first * stride), checked((uint)(last - first + 1) * stride));
         }
+
+        /// <summary>Commits only the changed, used glyph spans.</summary>
+        private void PushSubBuffers() => WriteData();
+
+        /// <summary>Commits the used glyph spans after storage changes.</summary>
+        private void PushBuffers() => WriteData(force: true);
 
         #endregion
 
@@ -1244,7 +1282,7 @@ namespace XREngine.Rendering.UI
         protected override bool CanCapturePublicationUniforms => GetType() == typeof(UITextComponent);
 
         /// <summary>Copies glyph values from the accepted text result before deferred draw capture.</summary>
-        protected override unsafe bool TryCapturePublicationPayload(in UILayoutNodeOutput output,
+        protected override bool TryCapturePublicationPayload(in UILayoutNodeOutput output,
             UIDrawPayloadBuilder builder, out UIDrawPayload? payload, out string? failure)
         {
             payload = null;
@@ -1266,38 +1304,17 @@ namespace XREngine.Rendering.UI
                 material.SetFloat(MsdfDistanceRangeMiddleUniformName, Font?.DistanceRangeMiddle ?? 0.5f);
                 material.SetFloat(MsdfFillBiasUniformName, MsdfFillBias);
             }
+            WriteData();
             using (_glyphLock.EnterScope())
             {
-                if (_layoutResult is not { } layout || _transformsBuffer?.ClientSideSource is not { } transforms ||
-                    _uvsBuffer?.ClientSideSource is not { } uvs || layout.Glyphs.Length > _allocatedGlyphCount)
+                if (_layoutResult is not { } layout || _transformsBuffer?.ClientSideSource is null ||
+                    _uvsBuffer?.ClientSideSource is null || !HasGlyphStorage(layout.Glyphs.Length))
                 {
                     failure = "UI.TextCapture.LayoutPending: the accepted text result and glyph storage must be ready.";
                     return false;
                 }
-                ReadOnlySpan<UITextLayoutGlyph> glyphs = layout.Glyphs.Span;
-                Span<Vector4> transformValues = new(transforms.Address.Pointer, glyphs.Length);
-                Span<Vector4> uvValues = new(uvs.Address.Pointer, glyphs.Length);
-                Span<float> rotations = _rotationsBuffer?.ClientSideSource is { } rotationSource
-                    ? new Span<float>(rotationSource.Address.Pointer, glyphs.Length) : Span<float>.Empty;
-                for (int index = 0; index < glyphs.Length; index++)
-                {
-                    Vector4 transform = glyphs[index].Transform;
-                    float rotation = 0;
-                    if (AnimatableTransforms && GlyphRelativeTransforms.TryGetValue(index, out var relative))
-                    {
-                        transform.X += relative.translation.X;
-                        transform.Y += relative.translation.Y;
-                        transform.Z *= relative.scale.X;
-                        transform.W *= relative.scale.Y;
-                        rotation = relative.rotation;
-                    }
-                    transformValues[index] = transform;
-                    uvValues[index] = glyphs[index].Uvs;
-                    if (!rotations.IsEmpty)
-                        rotations[index] = rotation;
-                }
-                RenderCommand2D.Instances = (uint)glyphs.Length;
-                // Capture copies these owner bytes into private buffers and never invokes the live callbacks.
+                RenderCommand2D.Instances = (uint)layout.Glyphs.Length;
+                builder.UseCommittedGlyphRevisions = true;
                 return builder.TryCapture(RenderCommand2D, true, out payload, out failure);
             }
         }

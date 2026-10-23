@@ -5,9 +5,9 @@ namespace XREngine.Rendering.UI;
 /// <summary>Retires a partial capture without releasing its budget before cleanup succeeds.</summary>
 internal sealed class UIFailedDrawCapture(
     XRMeshRenderer? renderer, XRMesh? mesh, XRMaterial? material,
-    XRShader[] shaders, UITextureSnapshot?[] textures, IUIDrawProducerLease? producer, long bytes)
+    XRShader[] shaders, UITextureSnapshot?[] textures, IUIDrawProducerLease? producer, long bytes, UIDrawGeometry? geometry = null)
 {
-    private readonly XRDataBuffer[] _buffers = UIDrawPayload.CaptureOwnedBuffers(renderer, mesh);
+    private readonly XRDataBuffer[] _buffers = UIDrawPayload.CaptureOwnedBuffers(null, mesh);
     private static readonly object Gate = new();
     private static readonly List<UIFailedDrawCapture> Quarantined = [];
 
@@ -36,6 +36,8 @@ internal sealed class UIFailedDrawCapture(
             if (mesh is not null)
                 UIDrawPayload.DestroyOwner(mesh);
             UIDrawPayload.VerifyBufferRetirement(_buffers);
+            if (geometry is not null && !geometry.ReleaseFromRenderOwner())
+                throw new InvalidOperationException("UI geometry retirement failed; dependent claims remain retained.");
             if (material is not null)
             {
                 UIDrawPayload.DestroyOwner(material);

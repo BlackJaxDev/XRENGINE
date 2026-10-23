@@ -72,7 +72,7 @@ public static class NativeAssetSelection
 
         _ = Engine.InvokeOnMainThread(() =>
         {
-            if (revision != _revision || !string.Equals(SelectedPath, path, StringComparison.OrdinalIgnoreCase))
+            if (revision != _revision || SelectedPath is null || !NativeAssetPathPolicy.PathsEqual(SelectedPath, path))
                 return;
             Publish(asset is not null
                 ? asset

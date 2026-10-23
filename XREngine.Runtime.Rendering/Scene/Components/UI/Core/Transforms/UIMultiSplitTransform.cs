@@ -282,30 +282,6 @@ namespace XREngine.Rendering.UI
         /// Old layout path: called from OnLocalMatrixChanged.
         /// Kept for compatibility - the new ArrangeChildren path handles arrangement during the layout system pass.
         /// </summary>
-        protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
-        {
-            List<UIBoundableTransform> children = [.. Children.OfType<UIBoundableTransform>()];
-            int childCount = children.Count;
-
-            if (childCount == 0)
-                return;
-
-            switch (Arrangement)
-            {
-                case UISplitArrangement.LeftMiddleRight:
-                    ResizeLeftMiddleRight(parentRegion, children);
-                    break;
-                case UISplitArrangement.TopMiddleBottom:
-                    ResizeTopMiddleBottom(parentRegion, children);
-                    break;
-                case UISplitArrangement.LeftRight:
-                    ResizeLeftRight(parentRegion, children);
-                    break;
-                case UISplitArrangement.TopBottom:
-                    ResizeTopBottom(parentRegion, children);
-                    break;
-            }
-        }
 
         private void ResizeLeftMiddleRight(BoundingRectangleF parentRegion, List<UIBoundableTransform> children)
         {
