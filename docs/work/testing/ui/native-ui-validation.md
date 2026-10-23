@@ -17,12 +17,14 @@ remain open. See [the current contract](../../../architecture/ui/04-Change-Track
 | Runtime rendering and input integration builds | Passed, zero warnings and errors, through `Tools/Invoke-AgentBuild.ps1`, `build`, `--no-restore`. | Uses the installed environment dependencies. |
 | Headless test build | Passed, zero warnings and errors, through the build wrapper with `--no-restore`. | Final source state compiled on Linux/.NET 10. |
 | Journal and transform contract tests | Passed: 23/23, zero warnings, failures, or skipped tests. | Deterministic headless runtime checks, including child-index replacement. |
-| Full headless regression suite | Passed: 167/167 with one test worker, zero warnings, failures, or skipped tests. Repeated after the editor targeting fix against the unchanged headless test binary. | Covers the tests linked by the existing headless project; not the full Windows test project. |
-| Declared editor NuGet restore | Passed through the build wrapper. | No tracked package declarations or lockfiles changed. No separate native dependency or Windows workload installation was performed. |
+| Full headless regression suite | Passed: 167/167 with one test worker, zero warnings, failures, or skipped tests. Repeated after the audio component cleanup and a fresh wrapper build. | Covers the tests linked by the existing headless project; not the full Windows test project. |
+| Declared editor NuGet restore | Passed through the build wrapper. | The approved audio cleanup replaces only the NAudio umbrella reference with same-version component references. No native dependency or Windows workload installation was performed. |
 | Pinned submodule initialization | Passed for OpenVR.NET and OscCore. Both submodules and their engine adapters compiled. | Exact tracked gitlink commits were used. No submodule bumps or declarations changed. |
-| Bootstrap Windows cross-compilation on Linux | Passed with the saved `EnableWindowsTargeting` setting: 0 warnings, 0 errors. | The complete project graph built through the wrapper with `--no-restore`. Target remains `net10.0-windows7.0`. |
+| Bootstrap Windows cross-compilation on Linux | Passed after removing the temporary `EnableWindowsTargeting` setting: 0 warnings, 0 errors. | The complete project graph built through the wrapper with `--no-restore`. Target remains `net10.0-windows7.0`. |
 | Editor managed Windows-target compilation on Linux | Passed through the wrapper with `--no-restore`: 0 warnings, 0 errors. | Includes the `NativeUIElements` changes. No source exclusions. Does not establish Linux execution or Windows runtime behavior. |
-| Windows target and dependency checks | Both projects evaluate to `net10.0-windows7.0`, platform `Windows`, targeting enabled; an explicit false override remains false. NAudio versions and the Windows Forms reference are unchanged. | Editor runtime configuration still requires `Microsoft.WindowsDesktop.App`. This is a compile check, not a deployment package. |
+| Windows target and dependency checks | Both projects retain `net10.0-windows7.0`. Audio, Bootstrap, and editor graphs retain the required audio components at their prior versions and contain no WinForms or Windows Desktop framework requirement. | Editor runtime configuration now requires only `Microsoft.NETCore.App`. Windows native audio APIs remain; this is a compile check, not a deployment package. |
+| Audio component cleanup | Audio adapter build passed with zero warnings and errors. All 11 restored consumer graphs retain the required five components and have no Forms/Desktop framework requirement. | Versions remain 2.3.0, with SDL2 at 2.2.6. Server restore needs its separate Windows SDK targeting override. |
+| Existing desktop audio tests | Not run: compilation succeeded, but NUnit rejected the 49 discovered tests because the assembly targets Windows7.0. Zero tests executed. | The command's zero exit code is not counted as a test pass. No test changes or platform-check bypass. |
 | Windows editor, OpenGL/Vulkan, visual input, GPU uploads, performance comparison | Not run. | This environment provides headless Linux validation. No live visual or speed result is claimed. |
 
 Final verification ran on 2026-10-23. Normal editor restore resolved the initial
@@ -41,12 +43,15 @@ After initialization, `restore XREngine.Editor/XREngine.Editor.csproj` and
 and `XREngine.Runtime.Net.Osc` compiled. That editor attempt then stopped at the
 Windows Forms framework reference in `XREngine.Runtime.Bootstrap`. The source was
 the Windows dependency group of NAudio 2.3.0, not editor Forms controls.
-Bootstrap and the editor now set `EnableWindowsTargeting` when unspecified, so
-normal restore resolves the existing desktop reference pack on Linux. No source,
-package, or Windows API was removed. See the
-[Windows targeting investigation](../../investigations/platform/linux-windows-desktop-targeting.md)
-for the dependency chain, scope, and checks. No Windows workload, native library,
-credential change, or dependency version change was needed.
+A temporary `EnableWindowsTargeting` setting fixed that reference-pack failure.
+The approved audio cleanup then replaced the NAudio umbrella package with its
+required Core, WinMM, Wasapi, and Asio components at 2.3.0; SDL2 remains at 2.2.6.
+Both MP3 callers use the same ACM decoder through `Mp3FileReaderBase`. The
+component split removes WinForms and the need for the temporary setting in
+Bootstrap and the editor. Both final builds pass with zero warnings and errors.
+See the [audio dependency investigation](../../investigations/platform/linux-windows-desktop-targeting.md)
+for the full consumer audit and audio test results. No Windows workload, native
+library, credential change, or dependency version change was needed.
 
 The first contract run found a lazy-construction error: an optional constructor
 argument did not provide the parameterless constructor required by the default

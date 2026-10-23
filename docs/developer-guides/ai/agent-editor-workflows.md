@@ -28,13 +28,13 @@ Existing agent chats must read the updated instructions before their next
 build. After all builds stop, `dotnet build-server shutdown` releases retained
 MSBuild and compiler servers. Do not use it during another task's build.
 
-Bootstrap and the editor target Windows and set `EnableWindowsTargeting` so a
-Linux or macOS build host can restore their existing Windows desktop reference
-pack. Use the same wrapper commands above. This is Windows cross-compilation;
-the output still requires Windows for execution. It does not validate native
-Windows tools, audio devices, or graphics. See the
-[reference-pack investigation](../../work/investigations/platform/linux-windows-desktop-targeting.md)
-for the NAudio dependency chain and validation limits.
+Bootstrap and the editor retain their Windows target. Their managed code can
+compile on Linux through the same wrapper after restore. The audio adapter uses
+NAudio component packages and does not require Windows Forms or
+`EnableWindowsTargeting`. This does not establish native Linux editor support:
+Windows audio APIs, native tools, and graphics need separate runtime validation.
+See the [audio dependency investigation](../../work/investigations/platform/linux-windows-desktop-targeting.md)
+for the removed framework dependency and validation limits.
 
 Editor CLI:
 
