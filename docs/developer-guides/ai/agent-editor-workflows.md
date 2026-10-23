@@ -28,6 +28,14 @@ Existing agent chats must read the updated instructions before their next
 build. After all builds stop, `dotnet build-server shutdown` releases retained
 MSBuild and compiler servers. Do not use it during another task's build.
 
+Bootstrap and the editor target Windows and set `EnableWindowsTargeting` so a
+Linux or macOS build host can restore their existing Windows desktop reference
+pack. Use the same wrapper commands above. This is Windows cross-compilation;
+the output still requires Windows for execution. It does not validate native
+Windows tools, audio devices, or graphics. See the
+[reference-pack investigation](../../work/investigations/platform/linux-windows-desktop-targeting.md)
+for the NAudio dependency chain and validation limits.
+
 Editor CLI:
 
 ```powershell
