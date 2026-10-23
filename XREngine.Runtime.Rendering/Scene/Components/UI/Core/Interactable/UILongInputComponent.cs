@@ -4,6 +4,13 @@ namespace XREngine.Rendering.UI
 {
     public class UILongInputComponent : UITextInputComponent
     {
+        public UILongInputComponent()
+        {
+            SingleLineMode = true;
+            CommitOnSubmit = true;
+            AllowInvalidDraft = true;
+        }
+
         public override bool PostValidateInput(string input)
             => long.TryParse(input, out _);
 

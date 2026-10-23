@@ -28,6 +28,10 @@ namespace XREngine.Rendering.Vulkan
                 Result resetResult = ResetVulkanCommandBufferTracked(recordingState.CommandBuffer);
                 if (resetResult != Result.Success)
                     throw new VulkanPlanPreconditionException($"The primary command buffer could not be reset ({resetResult}).");
+                recordingState.ArtifactOwner?.RetireRecordedUiPublicationReceipts();
+                if (recordingState.AcceptedFramePlan is { UiPublicationReceiptCount: > 0 } receipts)
+                    recordingState.ArtifactOwner?.CapturePendingUiPublicationReceipts(
+                        receipts.UiPublicationReceiptIds);
                 ResetSubmissionMarkersForCommandBuffer(recordingState.CommandBuffer);
                 CleanupComputeTransientResources(recordingState.FrameDataSlotIndex);
 

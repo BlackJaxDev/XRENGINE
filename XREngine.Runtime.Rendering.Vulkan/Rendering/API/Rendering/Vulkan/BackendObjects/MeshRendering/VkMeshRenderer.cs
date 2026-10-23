@@ -611,7 +611,18 @@ internal unsafe partial class VkMeshRenderer(
         }
         if (scheduleResult is VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.Scheduled
             or VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.AlreadyReady)
+        {
+            if (context.UiPublicationReceiptId != 0UL &&
+                !VulkanUiPublicationReceiptLedger.RecordQueued(context.UiPublicationReceiptId))
+            {
+                failureReason = "The UI publication draw was not admitted to its receipt.";
+                return false;
+            }
             return true;
+        }
+
+        if (context.UiPublicationReceiptId != 0UL)
+            VulkanUiPublicationReceiptLedger.Fail(context.UiPublicationReceiptId);
 
         CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
         Debug.VulkanWarningEvery(

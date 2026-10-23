@@ -175,13 +175,11 @@ public partial class UIEditorComponent : UIComponent
             comp.Material = mat;
         }
 
-        //dockNode.NewChildWithTransform(out UIListTransform listTfm, out InspectorPanel inspector, "Inspector");
-        //listTfm.DisplayHorizontal = false;
-        //listTfm.ItemAlignment = EListAlignment.TopOrLeft;
+        EditorPanelHost.Build(middleNode);
 
-        ////World.Name = "TestWorld";
-        //_inspector = inspector;
-        //inspector.InspectedObjects = [RuntimeEngine.Rendering.Settings];
+        SceneNode inspectorNode = dockNode.NewChildWithTransform<UIBoundableTransform>(out _, "Inspector");
+        inspectorNode.NewChild<InspectorPanel>(out var inspector);
+        inspector.InspectedObjects = Selection.SceneNodes;
 
         ////Create the dockable windows transform for panels
         //var dockableNode = splitChild.NewChild<UIDockingRootComponent>(out var root);

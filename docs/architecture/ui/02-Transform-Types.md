@@ -148,16 +148,18 @@ Root of a UI hierarchy. Defines draw space and manages layout scheduling.
 | `CameraDrawSpaceDistance` | `float` | `1.0` | Distance from camera |
 | `IsLayoutInvalidated` | `bool` | `true` | Thread-safe flag: layout needs recalc |
 | `IsUpdatingLayout` | `bool` | `false` | Thread-safe flag: layout in progress |
-| `UseAsyncLayout` | `bool` | `false` | Use coroutine-based incremental layout |
-| `MaxLayoutItemsPerFrame` | `int` | `50` | Items per frame in async mode |
+| `DpiScale` | `float` | `1.0` | Explicit positive text scale in canvas pixels |
 
 ### Layout Behavior
 
-- **UpdateLayout()**: Calls `UILayoutSystem.UpdateCanvasLayout(this)` — synchronous full layout
-- **UpdateLayoutAsync()**: Schedules `LayoutCoroutine` as a Job
-- **InvalidateLayout()**: Base invalidation + `UILayoutSystem.InvalidateCanvasLayout(this)` which also recursively force-invalidates all children
-- **GetRootCanvasBounds()**: Returns `(0, 0, GetWidth(), GetHeight())`
-- **IsNestedCanvas**: True if `ParentCanvas != null && ParentCanvas != this` — skips root layout for nested canvases
+- `UpdateLayout()` and `UpdateLayoutAsync()` request the bounded snapshot worker.
+- `PumpLayoutResults()` accepts a completed result only after dependency checks.
+- The serial oracle and worker use `UILayoutValueKernel`.
+- `InvalidateLayout()` records dirty state for the next request.
+- Root bounds and DPI changes use the same numeric layout kernel.
+- Nested canvases share the outer layout owner.
+
+See [retained execution](05-Retained-Execution.md) for worker quotas and lifetime.
 
 ### CreateWorldMatrix
 - **Screen space**: `Matrix4x4.Identity`

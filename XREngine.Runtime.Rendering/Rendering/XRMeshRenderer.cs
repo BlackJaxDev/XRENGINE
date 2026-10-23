@@ -881,6 +881,9 @@ namespace XREngine.Rendering
         internal bool HasRenderDataPreparation
             => _preparingRenderData is not null;
 
+        internal bool HasOnlyRenderDataPreparationHandler(DelPrepareRenderData handler)
+            => _preparingRenderData == handler;
+
         public delegate ShaderVar DelParameterRequested(int index);
 
         public class SubMesh : XRBase

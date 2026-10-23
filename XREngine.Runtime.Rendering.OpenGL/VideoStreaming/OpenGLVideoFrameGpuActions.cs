@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Silk.NET.OpenGL;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.VideoStreaming.Interfaces;
@@ -35,9 +36,7 @@ public sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
     private uint _pboSizeBytes;
     private int _currentPboIndex;
 
-    private bool _textureAllocated;
-    private uint _lastTextureWidth;
-    private uint _lastTextureHeight;
+    private readonly Dictionary<XRTexture2D, (uint BindingId, uint Width, uint Height)> _allocatedTextures = [];
 
     public OpenGLVideoFrameGpuActions(IOpenGLVideoFrameUploadContext context)
         => _context = context ?? throw new ArgumentNullException(nameof(context));
@@ -89,7 +88,8 @@ public sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
         }
 
         // (Re-)allocate texture storage when dimensions change.
-        if (!_textureAllocated || _lastTextureWidth != w || _lastTextureHeight != h)
+        if (!_allocatedTextures.TryGetValue(xrTexture, out var allocation) ||
+            allocation.BindingId != texId || allocation.Width != w || allocation.Height != h)
         {
             gl.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
             gl.BindTexture(TextureTarget.Texture2D, texId);
@@ -108,9 +108,7 @@ public sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
             // Do NOT unbind — the engine already bound this texture on the
             // active unit for the upcoming draw call.  Unbinding here would
             // cause the draw to sample a null texture → black artifacts.
-            _textureAllocated = true;
-            _lastTextureWidth = w;
-            _lastTextureHeight = h;
+            _allocatedTextures[xrTexture] = (texId, w, h);
         }
 
         // --- Ensure PBOs exist and are the right size ---
@@ -228,6 +226,6 @@ public sealed class OpenGLVideoFrameGpuActions : IVideoFrameGpuActions
             }
         }
         _pboSizeBytes = 0;
-        _textureAllocated = false;
+        _allocatedTextures.Clear();
     }
 }

@@ -1,9 +1,10 @@
 # Native UI Change Tracking
 
-The native UI records changes before future worker layout and retained rendering
-consume them. The current renderer still collects live renderables and rebuilds
-batches. The current layout system still has synchronous and live-tree coroutine
-paths. These contracts do not make either path safe for worker access.
+The native UI records authored changes for bounded worker layout and retained
+rendering. The journal separates layout, visual, transform, clip, and hit changes.
+See [retained execution](05-Retained-Execution.md) for snapshot, publication, and
+render-resource ownership. A journal lock does not make live scene objects safe
+for worker access.
 
 Design: [Retained rendering](../../work/design/ui/native-ui-retained-rendering-design.md)
 Roadmap: [Open code work](../../work/todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)

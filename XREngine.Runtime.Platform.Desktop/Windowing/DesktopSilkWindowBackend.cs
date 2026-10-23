@@ -8,6 +8,7 @@ using Silk.NET.Windowing;
 using XREngine.Data.Vectors;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.Runtime.Platform.Desktop.Windowing;
 
@@ -15,7 +16,7 @@ namespace XREngine.Runtime.Platform.Desktop.Windowing;
 /// Owns one Silk desktop window and its native input subscriptions. Callers may read published
 /// snapshots from other threads; native operations stay on the thread that created this object.
 /// </summary>
-internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
+internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntimeImeCandidateWindow
 {
     private static readonly ConcurrentBag<DesktopSilkWindowBackend> AbandonedResources = new();
     private readonly IWindow _window;
@@ -45,6 +46,9 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     private IRuntimeWindowGlContext? _glContext;
     private IRuntimeWindowVulkanSurface? _vulkanSurface;
     private IDesktopInteractiveResizeHook? _resizeHook;
+    private DesktopWin32ImeHook? _imeHook;
+    internal sealed record ImeFocusToken(UIElementIdentity Identity, long Revision);
+    private ImeFocusToken _imeFocusToken = new(default, 0);
     private EInteractiveWindowResizeStrategy _resizeStrategy;
     private bool _interactiveResize;
 
@@ -122,6 +126,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
             PublishSurface();
             RefreshMonitors();
             InstallResizeHook();
+            InstallImeHook();
             Vector2D<int> requestedPosition = new(_options.Position.X, _options.Position.Y);
             if (_window.Position != requestedPosition)
                 _window.Position = requestedPosition;
@@ -137,6 +142,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
         catch
         {
             DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
+            _imeHook?.Dispose();
+            _imeHook = null;
             _resizeHook?.Dispose();
             _resizeHook = null;
             UnlinkWindow();
@@ -188,6 +195,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
         ObjectDisposedException.ThrowIf(_disposed, this);
         _glContext?.AssertOwnerThread();
         _window.DoRender();
+        if (_glContext is not null)
+            _sink?.OpenGlRenderDispatched();
     }
 
     public void RequestSize(IVector2 size)
@@ -284,19 +293,25 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
         if (strategy == _resizeStrategy)
             return;
         EInteractiveWindowResizeStrategy previous = _resizeStrategy;
+        _imeHook?.Dispose();
+        _imeHook = null;
         _resizeHook?.Dispose();
         _resizeHook = null;
         try
         {
             _resizeStrategy = strategy;
             InstallResizeHook();
+            InstallImeHook();
         }
         catch
         {
+            _imeHook?.Dispose();
+            _imeHook = null;
             _resizeHook?.Dispose();
             _resizeHook = null;
             _resizeStrategy = previous;
             InstallResizeHook();
+            InstallImeHook();
             throw;
         }
     }
@@ -308,6 +323,30 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
         if (_input is not null)
             _resizeHook?.OnInputCreated(_input);
     }
+
+    private void InstallImeHook()
+    {
+        if (OperatingSystem.IsWindows() && _operatingSystemWindowHandle != 0)
+            _imeHook = new DesktopWin32ImeHook(this);
+    }
+
+    internal void RecordImeEvent(WindowImeEventKind kind, string text = "", int caretOffset = 0)
+    {
+        ImeFocusToken token = Volatile.Read(ref _imeFocusToken);
+        _inputAccumulator.RecordImeEvent(kind, text, caretOffset, token.Identity, token.Revision);
+    }
+
+    internal ImeFocusToken CaptureImeFocusToken() => Volatile.Read(ref _imeFocusToken);
+
+    internal void RecordImeEvent(ImeFocusToken token, WindowImeEventKind kind, string text = "", int caretOffset = 0)
+        => _inputAccumulator.RecordImeEvent(kind, text, caretOffset, token.Identity, token.Revision);
+
+    public void SetImeFocusTarget(UIElementIdentity identity, long focusEpoch)
+        => Volatile.Write(ref _imeFocusToken, new ImeFocusToken(identity, focusEpoch));
+
+    public bool IsImeAvailable => _imeHook is not null;
+    public void SetImeCandidatePosition(System.Numerics.Vector2 clientPosition)
+        => _imeHook?.SetCandidatePosition(clientPosition);
 
     internal void BeginNativeResize()
     {
@@ -341,6 +380,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     {
         AssertOwnerThread();
         DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
+        _imeHook?.Dispose();
+        _imeHook = null;
         _resizeHook?.Dispose();
         _resizeHook = null;
         UnlinkWindow();
@@ -357,6 +398,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
             throw new InvalidOperationException("The native window cannot be destroyed from its close callback; retire renderer resources first and dispose after the callback returns.");
         _disposed = true;
         DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
+        _imeHook?.Dispose();
+        _imeHook = null;
         _resizeHook?.Dispose();
         _resizeHook = null;
         UnlinkWindow();
@@ -486,7 +529,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
 
     private void OnKeyChar(IKeyboard _, char value)
     {
-        _inputAccumulator.RecordTextInput(value);
+        if (_imeHook?.ConsumeResultCharacter(value) != true)
+            _inputAccumulator.RecordTextInput(value);
         _uiInputAccumulator.RecordTextInput(value);
     }
 

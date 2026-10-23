@@ -22,7 +22,7 @@ namespace XREngine.Components
     [XRComponentEditor("XREngine.Editor.ComponentEditors.UICanvasComponentEditor")]
     [RequiresTransform(typeof(UICanvasTransform))]
     [XRTypeRedirect("XREngine.Components.UICanvasComponent")]
-    public class UICanvasComponent :
+    public partial class UICanvasComponent :
         XRComponent,
         IRenderable,
         IRuntimeRenderInfo2DRegistrationTarget,
@@ -215,7 +215,11 @@ namespace XREngine.Components
             base.OnTransformChanging();
 
             if (!SceneNode.IsTransformNull && Transform is UICanvasTransform tfm)
+            {
+                tfm.CancelLayoutJob();
                 tfm.PropertyChanged -= OnCanvasTransformPropertyChanged;
+                ClearPublications();
+            }
         }
         protected override void OnTransformChanged()
         {
@@ -254,8 +258,7 @@ namespace XREngine.Components
                 Camera2D.Parameters = new XROrthographicCameraParameters(bounds.Width, bounds.Height, DefaultNearZ, DefaultFarZ);
             SetField(ref _screenCameraSize, new Vector2(bounds.Width, bounds.Height));
 
-            if (Transform is UICanvasTransform tfm)
-                _renderPipeline.ViewportResized(tfm.ActualSize);
+            _renderPipeline.ViewportResized(new Vector2(bounds.Width, bounds.Height));
 
             uint width = Math.Max(1u, (uint)MathF.Ceiling(bounds.Width));
             uint height = Math.Max(1u, (uint)MathF.Ceiling(bounds.Height));
@@ -316,8 +319,7 @@ namespace XREngine.Components
                 return;
 
             canvasTransform.SetSize(size);
-            if (canvasTransform.IsLayoutInvalidated && !canvasTransform.IsUpdatingLayout)
-                UpdateLayout();
+            // The update owner captures the new bounds for the layout worker.
         }
 
         public void ResizeCameraSpace(XRCamera camera, XRCameraParameters parameters)
@@ -429,14 +431,23 @@ namespace XREngine.Components
         //private int _screenRenderDiagCount = 0;
         public void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO)
         {
-            if (!IsActive || GetCanvasTransformOrNull() is null)
+            if (!IsActive || GetCanvasTransformOrNull() is null || CurrentPublication is not { } publication)
                 return;
 
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
             XRViewport? concreteViewport = viewport as XRViewport;
 
-            EnsureScreenCanvasSize(concreteViewport);
+            // The camera projection is part of the admitted draw packet. A newer
+            // owner layout must not change the projection of the retained packet.
+            EnsureScreenCanvasSize(concreteViewport, publication);
+            if (!BatchCollector.CanRenderPublishedBatches())
+            {
+                if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
+                    throw new RenderResourcePreparationPendingException(
+                        "UI.Canvas.BatchCapacityPending: no isolated GPU cohort is ready for this canvas.");
+                return;
+            }
 
             //if (_screenRenderDiagCount < 20 || _screenRenderDiagCount % 300 == 0)
             //{
@@ -445,21 +456,60 @@ namespace XREngine.Components
             //}
             //_screenRenderDiagCount++;
 
-            _renderPipeline.Render(
-                VisualScene2D,
-                Camera2D,
-                null,
-                concreteViewport,
-                outputFBO,
-                null,
-                false,
-                false);
+            BatchCollector.BindRenderingPublication(publication);
+            UICanvasComponent? previousRenderingCanvas = t_renderingCanvas;
+            t_renderingCanvas = this;
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null || !renderer.TryBeginUiPublicationReceipt(
+                    publication, BatchCollector.ExpectedPublishedDrawIntentCount,
+                    requiresSwapchainPresentation: true, out ulong receiptId))
+            {
+                t_renderingCanvas = previousRenderingCanvas;
+                BatchCollector.BindRenderingPublication(null);
+                return;
+            }
+            bool collectorStarted = false;
+            bool authored = false;
+            bool receiptComplete = false;
+            XRGpuFence? completionFence = null;
+            try
+            {
+                BatchCollector.BeginPublicationReceipt(receiptId);
+                collectorStarted = true;
+                if (BatchCollector.HasPendingPublishedTextLayout)
+                    renderer.FailCurrentUiPublicationAuthoring("A visible text layout is not ready for the published UI frame.");
+                _renderPipeline.Render(
+                    VisualScene2D,
+                    Camera2D,
+                    null,
+                    concreteViewport,
+                    outputFBO,
+                    null,
+                    false,
+                    false);
+                authored = _renderPipeline.CompletedCommandChainThisFrame;
+            }
+            finally
+            {
+                receiptComplete = renderer.CompleteUiPublicationReceipt(receiptId, authored, out completionFence);
+                if (collectorStarted)
+                    BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
+                else
+                    completionFence?.Dispose();
+                t_renderingCanvas = previousRenderingCanvas;
+                BatchCollector.BindRenderingPublication(null);
+            }
+            if (!receiptComplete && renderer.RequiresAtomicFrameAuthoring)
+                throw new RenderResourcePreparationPendingException(
+                    "UI.Canvas.PublicationReceiptIncomplete: the published canvas did not author every required draw.");
+            if (viewport is not null && authored && receiptComplete)
+                RecordRenderedPublication(viewport, publication, receiptId);
         }
 
         private int _screenSwapDiagCount = 0;
         public void SwapBuffersScreenSpace()
         {
-            if (!IsActive)
+            if (!IsActive || !CanCommitCollectedPublication())
                 return;
 
             using var sample = RuntimeEngine.Profiler.Start("UICanvasComponent.SwapBuffersScreenSpace");
@@ -467,6 +517,7 @@ namespace XREngine.Components
             BatchCollector.SwapBuffers();
             _renderPipeline.MeshRenderCommands.SwapBuffers();
             VisualScene2D.GlobalSwapBuffers();
+            CommitCollectedPublication();
             int renderingCount = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
             //if (_screenSwapDiagCount < 20 || _screenSwapDiagCount % 300 == 0)
             //    Debug.Out($"[UICanvas:ScreenSwap] frame={_screenSwapDiagCount} updatingBefore={updatingCount} renderingAfter={renderingCount}");
@@ -486,24 +537,23 @@ namespace XREngine.Components
             ResizeScreenSpace(CanvasTransform.GetActualBounds());
             UpdateWorldSpaceQuadData();
 
-            // Run the initial Measure/Arrange pass synchronously here on the activating thread.
-            // If we don't, the first CollectVisibleItemsScreenSpace on the render-collect thread
-            // hits IsLayoutInvalidated==true and pays a 50–100 ms first-layout cost inline,
-            // which the startup FPS-drop log flagged. Activation happens off the latency-sensitive
-            // collect/render path, so this is the right place to absorb that cost.
-            if (CanvasTransform.IsLayoutInvalidated)
-                UpdateLayout();
+            // The first layout is scheduled by the update owner. Until it completes,
+            // the canvas has no published interactive layout.
         }
 
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
             RemoveTimerHooks();
+            GetCanvasTransformOrNull()?.CancelLayoutJob();
+            ClearPublications();
         }
 
         protected override void OnDestroying()
         {
             RemoveTimerHooks();
+            GetCanvasTransformOrNull()?.CancelLayoutJob();
+            ClearPublications();
             try { base.OnDestroying(); }
             finally
             {
@@ -570,11 +620,7 @@ namespace XREngine.Components
         }
 
         /// <summary>
-        /// Runs the full layout pass (measure + arrange) for this canvas on the update thread.
-        /// Transforms that changed during layout have MarkLocalModified called on them,
-        /// which adds them to the world's dirty queue. RuntimeWorld post-update processing
-        /// then recalculates their matrices and enqueues render matrix changes.
-        /// No expensive per-frame recursive recalculation needed.
+        /// Applies a validated layout result and schedules the next immutable input.
         /// </summary>
         private void UpdateLayout()
         {
@@ -585,17 +631,20 @@ namespace XREngine.Components
             EnsureCameraSpaceBinding();
 
             using var sample = RuntimeEngine.Profiler.Start("UICanvasComponent.UpdateLayout");
-            bool wasInvalidated = CanvasTransform.IsLayoutInvalidated;
-            CanvasTransform.UpdateLayout();
-
             var canvasTransform = CanvasTransform;
+            bool applied = canvasTransform.PumpLayoutResults();
+            canvasTransform.UpdateLayoutAsync();
+
             if (canvasTransform.DrawSpace == ECanvasDrawSpace.World && ShouldAutoPlaceWorldSpaceCanvas(canvasTransform))
                 UpdateWorldSpaceQuadData();
             else if (canvasTransform.DrawSpace == ECanvasDrawSpace.Camera)
                 UpdateWorldSpaceQuadData();
 
-            if (!wasInvalidated)
+            if (!applied)
+            {
+                CapturePublicationCandidate();
                 return;
+            }
 
             // Always recalculate dirty matrices after layout, regardless of draw space.
             // The Update thread and CollectVisible thread run independently — there is no
@@ -604,6 +653,7 @@ namespace XREngine.Components
             // matrices (and therefore quadtree positions via RemakeAxisAlignedRegion) are
             // correct before the next CollectVisible pass.
             RecalculateDirtyMatrices(canvasTransform);
+            CapturePublicationCandidate();
         }
 
         /// <summary>
@@ -648,13 +698,10 @@ namespace XREngine.Components
 
             EnsureScreenCanvasSize(viewport);
 
-            // Keep layout authoritative for screen-space: first ensure the canvas has the
-            // viewport-backed size, then run measure/arrange before collecting commands.
-            if (CanvasTransform.IsLayoutInvalidated)
-                UpdateLayout();
-
             // Ensure batch collector is wired to the pipeline
             EnsureBatchCollectorWired();
+
+            BeginPublicationCollection();
 
             // Layout is current at this point; just collect the rendered items from the quadtree.
             // Components that support batching will register with BatchCollector
@@ -663,7 +710,7 @@ namespace XREngine.Components
             {
                 _renderPipeline.MeshRenderCommands.GetCommandsAddedCount(); // reset counter
                 using var collectSample = RuntimeEngine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.CollectRenderedItems");
-                VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null, null, false);
+                CollectPublishedCanvasDraws();
                 int addedCount = _renderPipeline.MeshRenderCommands.GetCommandsAddedCount();
                 //if (_screenCollectDiagCount < 20 || _screenCollectDiagCount % 300 == 0)
                 //{
@@ -688,11 +735,12 @@ namespace XREngine.Components
                 return;
 
             EnsureBatchCollectorWired();
+            BeginPublicationCollection();
             if (_renderPipeline.AssignedPipeline is not null)
             {
                 _collectGeneration++;
                 _renderPipeline.MeshRenderCommands.GetCommandsAddedCount(); // reset counter
-                VisualScene2D.CollectRenderedItems(_renderPipeline.MeshRenderCommands, Camera2D, false, null, null, false);
+                CollectPublishedCanvasDraws();
                 int addedCount = _renderPipeline.MeshRenderCommands.GetCommandsAddedCount();
                 //if (_collectDiagCount < 10 || _collectDiagCount % 300 == 0)
                 //{
@@ -706,7 +754,7 @@ namespace XREngine.Components
         //private int _swapDiagCount = 0;
         private void SwapBuffersNonScreen()
         {
-            if (!IsActive)
+            if (!IsActive || !CanCommitCollectedPublication())
                 return;
 
             var canvasTransform = CanvasTransform;
@@ -721,6 +769,7 @@ namespace XREngine.Components
             BatchCollector.SwapBuffers();
             _renderPipeline.MeshRenderCommands.SwapBuffers();
             VisualScene2D.GlobalSwapBuffers();
+            CommitCollectedPublication();
             int renderingCount = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
 
             //if (_swapDiagCount < 10 || _swapDiagCount % 300 == 0)
@@ -754,6 +803,9 @@ namespace XREngine.Components
             if (!IsActive)
                 return;
 
+            if (CurrentPublication is not { } publication)
+                return;
+
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
             EnsureCameraSpaceBinding();
@@ -762,7 +814,14 @@ namespace XREngine.Components
             if (canvasTransform.DrawSpace == ECanvasDrawSpace.Screen || !UseOffscreenRenderingForNonScreenSpaces())
                 return;
 
-            EnsureNonScreenCanvasSize(canvasTransform);
+            EnsureNonScreenCanvasSize(publication);
+            if (!BatchCollector.CanRenderPublishedBatches())
+            {
+                if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
+                    throw new RenderResourcePreparationPendingException(
+                        "UI.Canvas.BatchCapacityPending: no isolated GPU cohort is ready for this canvas.");
+                return;
+            }
 
             bool swapAdvancedSinceLastRender = _lastSwappedGeneration != _lastRenderObservedSwapGeneration;
             if (!swapAdvancedSinceLastRender)
@@ -789,16 +848,53 @@ namespace XREngine.Components
             //    _renderDiagCount++;
             //}
 
-            bool completed = _renderPipeline.TryRender(
-                VisualScene2D,
-                Camera2D,
-                null,
-                viewport,
-                _offscreenFbo!,
-                null,
-                false,
-                false);
+            BatchCollector.BindRenderingPublication(publication);
+            UICanvasComponent? previousRenderingCanvas = t_renderingCanvas;
+            t_renderingCanvas = this;
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null || !renderer.TryBeginUiPublicationReceipt(
+                    publication, BatchCollector.ExpectedPublishedDrawIntentCount,
+                    requiresSwapchainPresentation: false, out ulong receiptId))
+            {
+                t_renderingCanvas = previousRenderingCanvas;
+                BatchCollector.BindRenderingPublication(null);
+                return;
+            }
+            bool collectorStarted = false;
+            XRGpuFence? completionFence = null;
+            bool receiptComplete = false;
+            bool completed;
+            try
+            {
+                BatchCollector.BeginPublicationReceipt(receiptId);
+                collectorStarted = true;
+                if (BatchCollector.HasPendingPublishedTextLayout)
+                    renderer.FailCurrentUiPublicationAuthoring("A visible text layout is not ready for the published UI frame.");
+                completed = _renderPipeline.TryRender(
+                    VisualScene2D,
+                    Camera2D,
+                    null,
+                    viewport,
+                    _offscreenFbo!,
+                    null,
+                    false,
+                    false);
+            }
+            finally
+            {
+                receiptComplete = renderer.CompleteUiPublicationReceipt(receiptId,
+                    _renderPipeline.CompletedCommandChainThisFrame, out completionFence);
+                if (collectorStarted)
+                    BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
+                else
+                    completionFence?.Dispose();
+                t_renderingCanvas = previousRenderingCanvas;
+                BatchCollector.BindRenderingPublication(null);
+            }
+            completed &= receiptComplete;
             SetField(ref _nonScreenCommandChainCompleted, completed, publishNotifications: false);
+            if (completed)
+                RecordRenderedPublication(this, publication, receiptId);
             // Atomic consumers need this invocation's producer. Preserve a nested
             // decline instead of losing its cause at the later texture readiness check.
             if (!completed && AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
@@ -859,13 +955,9 @@ namespace XREngine.Components
             //}
         }
 
-        private void EnsureNonScreenCanvasSize(UICanvasTransform canvasTransform)
+        private void EnsureNonScreenCanvasSize(UIPublication publication)
         {
-            var bounds = canvasTransform.GetActualBounds();
-
-            // If layout hasn't produced actual bounds yet, use root canvas requested size.
-            if (bounds.Width <= 1.0f || bounds.Height <= 1.0f)
-                bounds = canvasTransform.GetRootCanvasBounds();
+            var bounds = publication.CanvasBounds;
 
             // Final safety net for startup frames.
             float width = Math.Max(1.0f, bounds.Width);
@@ -933,9 +1025,9 @@ namespace XREngine.Components
             return false;
         }
 
-        private void EnsureScreenCanvasSize(XRViewport? viewport)
+        private void EnsureScreenCanvasSize(XRViewport? viewport, UIPublication? publication = null)
         {
-            var bounds = CanvasTransform.GetActualBounds();
+            var bounds = publication?.CanvasBounds ?? CanvasTransform.GetActualBounds();
             float width = bounds.Width;
             float height = bounds.Height;
 
@@ -1083,10 +1175,10 @@ namespace XREngine.Components
             if (cameraTransform is null)
                 return false;
 
-            position = cameraTransform.WorldTranslation;
-            forward = cameraTransform.WorldForward;
-            up = cameraTransform.WorldUp;
-            right = cameraTransform.WorldRight;
+            position = cameraTransform.RenderTranslation;
+            forward = cameraTransform.RenderForward;
+            up = cameraTransform.RenderUp;
+            right = cameraTransform.RenderRight;
             return true;
         }
 
@@ -1122,10 +1214,10 @@ namespace XREngine.Components
             if (cameraTransform is null)
                 return false;
 
-            position = cameraTransform.WorldTranslation;
-            forward = cameraTransform.WorldForward;
-            up = cameraTransform.WorldUp;
-            right = cameraTransform.WorldRight;
+            position = cameraTransform.RenderTranslation;
+            forward = cameraTransform.RenderForward;
+            up = cameraTransform.RenderUp;
+            right = cameraTransform.RenderRight;
             return true;
         }
 

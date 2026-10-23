@@ -4,6 +4,13 @@ namespace XREngine.Rendering.UI
 {
     public class UIUIntInputComponent : UITextInputComponent
     {
+        public UIUIntInputComponent()
+        {
+            SingleLineMode = true;
+            CommitOnSubmit = true;
+            AllowInvalidDraft = true;
+        }
+
         public override bool PostValidateInput(string input)
             => uint.TryParse(input, out _);
 

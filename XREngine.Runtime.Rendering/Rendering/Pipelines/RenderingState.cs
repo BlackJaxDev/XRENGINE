@@ -100,6 +100,8 @@ public sealed partial class XRRenderPipelineInstance
         internal bool ViewHistoryCaptureAccepted { get; private set; } = true;
         internal RenderFrameViewHistoryCandidateToken ViewHistoryCandidate { get; private set; }
         public ulong OutputCompletionReceiptId { get; private set; }
+        /// <summary>UI draw receipt independent of an enclosing exact framebuffer receipt.</summary>
+        public ulong UiPublicationReceiptId { get; private set; }
         public RenderOutputRequest OutputCompletionRequest { get; private set; }
         /// <summary>
         /// True when the current exact offscreen invocation failed to author any
@@ -315,6 +317,7 @@ public sealed partial class XRRenderPipelineInstance
             ViewHistoryCaptureAccepted = true;
             ViewHistoryCandidate = default;
             OutputCompletionReceiptId = 0UL;
+            UiPublicationReceiptId = AbstractRenderer.Current?.CurrentUiPublicationReceiptId ?? 0UL;
             OutputCompletionRequest = default;
             HasRequiredOffscreenAuthoringFailure = false;
             RequiredOffscreenAuthoringFailureReason = null;
@@ -440,6 +443,7 @@ public sealed partial class XRRenderPipelineInstance
             ViewHistoryCaptureAccepted = true;
             ViewHistoryCandidate = default;
             OutputCompletionReceiptId = 0UL;
+            UiPublicationReceiptId = 0UL;
             OutputCompletionRequest = default;
             HasRequiredOffscreenAuthoringFailure = false;
             RequiredOffscreenAuthoringFailureReason = null;

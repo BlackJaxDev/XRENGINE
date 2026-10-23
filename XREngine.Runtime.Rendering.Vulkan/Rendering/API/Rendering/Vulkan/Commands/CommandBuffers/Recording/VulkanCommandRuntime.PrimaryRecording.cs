@@ -177,6 +177,7 @@ internal sealed partial class VulkanCommandRuntime
         if (owner is not null &&
             input.Policy.QueueOverlapMode is EVulkanQueueOverlapMode.Auto or EVulkanQueueOverlapMode.GraphicsOnly &&
             (input.AcceptedFramePlan?.OutputCompletionCount > 0) != true &&
+            (input.AcceptedFramePlan?.UiPublicationReceiptCount > 0) != true &&
             VulkanPrimaryCommandBufferReuseEnabled &&
             CommandChainsEnabledForCurrentRecording &&
             !CommandChainBenchmarkForceRerecord &&

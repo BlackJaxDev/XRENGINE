@@ -46,6 +46,9 @@ namespace XREngine.Rendering
         public bool HasSettingUniformsHandlers
             => SettingUniforms is not null;
 
+        internal bool HasOnlyPublicationUniformHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
+            => HasOnlySettingUniformsHandler(handler);
+
         /// <summary>Checks one engine-owned publisher without allocating a delegate invocation list.</summary>
         protected bool HasOnlySettingUniformsHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
             => SettingUniforms == handler;

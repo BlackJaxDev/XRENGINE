@@ -130,6 +130,8 @@ namespace XREngine.Rendering.UI
         /// </summary>
         protected override float MeasureChildrenWidth(Vector2 availableSize)
         {
+            if (_virtualProvider is not null && _horizontal)
+                return VirtualContentExtent;
             if (!_horizontal)
                 return base.MeasureChildrenWidth(availableSize);
 
@@ -163,6 +165,8 @@ namespace XREngine.Rendering.UI
         /// </summary>
         protected override float MeasureChildrenHeight(Vector2 availableSize)
         {
+            if (_virtualProvider is not null && !_horizontal)
+                return VirtualContentExtent;
             if (_horizontal)
                 return base.MeasureChildrenHeight(availableSize);
 
@@ -196,6 +200,11 @@ namespace XREngine.Rendering.UI
         /// </summary>
         protected override void ArrangeChildren(BoundingRectangleF childRegion)
         {
+            if (_virtualProvider is not null)
+            {
+                ArrangeVirtualRows(childRegion);
+                return;
+            }
             switch (ItemAlignment)
             {
                 case EListAlignment.TopOrLeft:
@@ -574,6 +583,8 @@ namespace XREngine.Rendering.UI
 
         public override float GetMaxChildHeight()
         {
+            if (_virtualProvider is not null && !_horizontal)
+                return VirtualContentExtent;
             if (_horizontal)
                 return base.GetMaxChildHeight();
 
@@ -592,6 +603,8 @@ namespace XREngine.Rendering.UI
         }
         public override float GetMaxChildWidth()
         {
+            if (_virtualProvider is not null && _horizontal)
+                return VirtualContentExtent;
             if (!_horizontal)
                 return base.GetMaxChildWidth();
 

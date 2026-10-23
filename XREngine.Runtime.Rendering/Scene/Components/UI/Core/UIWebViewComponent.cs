@@ -2,11 +2,13 @@ using XREngine.Extensions;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering.UI
 {
@@ -78,7 +80,69 @@ namespace XREngine.Rendering.UI
     /// </summary>
     public sealed class UIWebViewComponent : UIMaterialComponent
     {
-        private readonly XRMaterialFrameBuffer _fbo;
+        private XRMaterialFrameBuffer _fbo;
+        private const int MaximumWebSurfaces = 4;
+        private readonly List<WebSurface> _webSurfaces = [];
+        private WebSurface? _publishedWebSurface;
+        private ulong _nextWebSurfaceGeneration;
+        private string? _webProducerFailure;
+        private readonly Action _invalidateWebVisual;
+        private int _webVisualInvalidationQueued;
+        private int _webProducerDestroyed;
+        private readonly object _webProducerGate = new();
+        private bool _webTransientDisposed;
+        private int _webProducerActive;
+        private bool _webReleasePending;
+        private bool _webSurfacesReleased;
+        private bool _webTransientDisposePending;
+
+        private sealed class WebSurface(XRMaterialFrameBuffer fbo, XRTexture2D texture) : IUIDrawProducerLease
+        {
+            private int _references = 1;
+            private long _generation;
+            public XRMaterialFrameBuffer Fbo { get; } = fbo;
+            public XRTexture2D Texture { get; } = texture;
+            public Mipmap2D? Mipmap { get; set; }
+            public Mipmap2D[] MipmapArray { get; } = new Mipmap2D[1];
+            public DataSource? CpuPixels { get; set; }
+            public ulong Generation => unchecked((ulong)Volatile.Read(ref _generation));
+            public bool IsPoolOnly => Volatile.Read(ref _references) == 1;
+            public void Publish(ulong generation) => Volatile.Write(ref _generation, checked((long)generation));
+            public void Retain()
+            {
+                int current;
+                do
+                {
+                    current = Volatile.Read(ref _references);
+                    ObjectDisposedException.ThrowIf(current == 0, this);
+                } while (Interlocked.CompareExchange(ref _references, checked(current + 1), current) != current);
+            }
+            public void Release()
+            {
+                int remaining = Interlocked.Decrement(ref _references);
+                if (remaining < 0)
+                    throw new InvalidOperationException("Web surface was released twice.");
+                if (remaining != 0)
+                    return;
+                if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                    DestroyResources();
+                else
+                    RuntimeEngine.EnqueueRenderThreadTask(DestroyResources, "UI.Web.DestroySurface",
+                        RenderThreadJobKind.RenderPipelineResource);
+            }
+
+            private void DestroyResources()
+            {
+                if (!ReferenceEquals(Mipmap?.Data, CpuPixels))
+                    Mipmap?.Data?.Dispose();
+                CpuPixels?.Dispose();
+                foreach (Mipmap2D mip in Texture.Mipmaps)
+                    if (!ReferenceEquals(mip.Data, CpuPixels) && !ReferenceEquals(mip.Data, Mipmap?.Data))
+                        mip.Data?.Dispose();
+                Fbo.Destroy();
+                Texture.Destroy();
+            }
+        }
         private IWebRendererBackend _backend = new NullWebRendererBackend();
         private bool _rendering;
         private bool _pendingReinitialize = true;
@@ -90,12 +154,6 @@ namespace XREngine.Rendering.UI
         private uint _backingHeight = 1;
         private int _currentPboIndex;
         private readonly XRDataBuffer<byte>?[] _pboBuffers = [null, null];
-        // Cached mipmap to avoid allocation every frame
-        private Mipmap2D? _cachedMipmap;
-        private readonly Mipmap2D[] _mipmapArray = new Mipmap2D[1];
-        
-        // Cached DataSource for direct upload - reused by updating Address/Length
-        private DataSource? _cachedDataSource;
         private bool _loggedBackendInit;
         private bool _loggedTargetFramebuffer;
         private bool _loggedSoftwareFrame;
@@ -141,18 +199,70 @@ namespace XREngine.Rendering.UI
 
         public UIWebViewComponent() : base(CreateWebMaterial(), true)
         {
-            _fbo = new XRMaterialFrameBuffer(Material);
+            _invalidateWebVisual = InvalidateWebVisual;
+            DisableBatching = true;
+            XRTexture2D texture = (XRTexture2D)Material!.Textures[0]!;
+            _fbo = CreateWebFramebuffer(texture);
+            WebSurface placeholder = new(_fbo, texture);
+            placeholder.Publish(++_nextWebSurfaceGeneration);
+            _webSurfaces.Add(placeholder);
+            Volatile.Write(ref _publishedWebSurface, placeholder);
         }
+
+        private XRMaterialFrameBuffer CreateWebFramebuffer(XRTexture2D texture)
+        {
+            XRMaterialFrameBuffer fbo = new(Material, deriveRenderTargetsFromMaterial: false);
+            fbo.SetRenderTargets((texture, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+            return fbo;
+        }
+
+        private WebSurface? AcquireWebSurface(uint width, uint height)
+        {
+            WebSurface? published = Volatile.Read(ref _publishedWebSurface);
+            foreach (WebSurface surface in _webSurfaces)
+            {
+                if (ReferenceEquals(surface, published) || !surface.IsPoolOnly)
+                    continue;
+                if (surface.Texture.Width != width || surface.Texture.Height != height)
+                    surface.Texture.Resize(width, height);
+                return surface;
+            }
+            if (_webSurfaces.Count >= MaximumWebSurfaces)
+                return null;
+            XRTexture2D texture = CreateWebTexture(width, height);
+            WebSurface created = new(CreateWebFramebuffer(texture), texture);
+            _webSurfaces.Add(created);
+            return created;
+        }
+
+        private void PublishWebSurface(WebSurface surface)
+        {
+            if (Volatile.Read(ref _webProducerDestroyed) != 0)
+                return;
+            surface.Publish(++_nextWebSurfaceGeneration);
+            Volatile.Write(ref _publishedWebSurface, surface);
+            _webProducerFailure = null;
+            if (Interlocked.Exchange(ref _webVisualInvalidationQueued, 1) == 0)
+                RuntimeEngine.EnqueueAppThreadTask(_invalidateWebVisual, "UI.Web.FramePublished");
+        }
+
+        private void InvalidateWebVisual()
+        {
+            Interlocked.Exchange(ref _webVisualInvalidationQueued, 0);
+            if (Volatile.Read(ref _webProducerDestroyed) != 0)
+                return;
+            if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
+        }
+
+        private static XRTexture2D CreateWebTexture(uint width, uint height)
+            => XRTexture2D.CreateFrameBufferTexture(width, height, EPixelInternalFormat.Rgba8,
+                EPixelFormat.Bgra, EPixelType.UnsignedByte, EFrameBufferAttachment.ColorAttachment0);
 
         private static XRMaterial CreateWebMaterial()
         {
-            XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
-                1u,
-                1u,
-                EPixelInternalFormat.Rgba8,
-                EPixelFormat.Bgra,
-                EPixelType.UnsignedByte,
-                EFrameBufferAttachment.ColorAttachment0);
+            XRTexture2D texture = CreateWebTexture(1u, 1u);
+            texture.Mipmaps[0].Data = new DataSource(new byte[4]);
 
             return new XRMaterial(
                 [texture],
@@ -193,6 +303,7 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            _webTransientDisposed = false;
             RuntimeEngine.Time.Timer.RenderFrame += RenderFrame;
             UpdateBackingSize();
             _pendingReinitialize = true;
@@ -202,8 +313,22 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentDeactivated();
             RuntimeEngine.Time.Timer.RenderFrame -= RenderFrame;
+            lock (_webProducerGate)
+            {
+                if (_webProducerActive != 0)
+                    _webTransientDisposePending = true;
+                else
+                    DisposeWebTransientResources();
+            }
+        }
+
+        private void DisposeWebTransientResources()
+        {
+            if (_webTransientDisposed)
+                return;
             _backend.Dispose();
             DestroyPbos();
+            _webTransientDisposed = true;
         }
 
         private void ReinitializeBackend()
@@ -225,7 +350,7 @@ namespace XREngine.Rendering.UI
                 UpdateFramebufferTarget();
         }
 
-        private void UpdateFramebufferTarget()
+        private bool UpdateFramebufferTarget()
         {
             _fbo.Material = Material;
             _fbo.Generate();
@@ -236,8 +361,9 @@ namespace XREngine.Rendering.UI
                 capability is null ||
                 !capability.TryGetUiFramebufferInterop(_fbo, out UiFramebufferInteropInfo interopInfo))
             {
-                Debug.UIWarning("[UIWebView] Current renderer does not expose UI framebuffer interop.");
-                return;
+                _webProducerFailure = "UI.Web.ProducerInteropUnavailable: the renderer cannot bind the web framebuffer.";
+                Debug.UIWarning(_webProducerFailure);
+                return false;
             }
 
             _backend.SetTargetFramebuffer(interopInfo.BindingId);
@@ -246,6 +372,7 @@ namespace XREngine.Rendering.UI
                 Debug.UI($"[UIWebView] Target framebuffer bound: id={interopInfo.BindingId}");
                 _loggedTargetFramebuffer = true;
             }
+            return true;
         }
 
         private void UpdateBackingSize()
@@ -262,32 +389,29 @@ namespace XREngine.Rendering.UI
             _pendingResize = true;
         }
 
-        private XRTexture2D EnsureWebTextureSize(uint width, uint height)
+        private void RenderFrame()
         {
-            var textures = Material?.Textures;
-            XRTexture2D? texture = textures is not null && textures.Count > 0 ? textures[0] as XRTexture2D : null;
-
-            if (texture is null)
+            lock (_webProducerGate)
             {
-                texture = XRTexture2D.CreateFrameBufferTexture(
-                    width,
-                    height,
-                    EPixelInternalFormat.Rgba8,
-                    EPixelFormat.Bgra,
-                    EPixelType.UnsignedByte,
-                    EFrameBufferAttachment.ColorAttachment0);
-                Material!.Textures = [texture];
-                _fbo.Material = Material;
+                if (Volatile.Read(ref _webProducerDestroyed) != 0)
+                    return;
+                _webProducerActive++;
+                try { RenderFrameCore(); }
+                finally
+                {
+                    _webProducerActive--;
+                    if (_webProducerActive == 0 && _webTransientDisposePending)
+                    {
+                        _webTransientDisposePending = false;
+                        DisposeWebTransientResources();
+                    }
+                    if (_webProducerActive == 0 && _webReleasePending)
+                        ReleaseWebSurfacesUnderGate();
+                }
             }
-            else if (texture.Width != width || texture.Height != height)
-            {
-                texture.Resize(width, height);
-            }
-
-            return texture;
         }
 
-        private void RenderFrame()
+        private void RenderFrameCore()
         {
             if (!IsActive || _rendering)
                 return;
@@ -299,11 +423,43 @@ namespace XREngine.Rendering.UI
 
                 double delta = RuntimeEngine.Time.Timer.Update.Delta;
                 _backend.Update(delta);
-                _backend.Render();
-
-                if (!_backend.SupportsFramebuffer && _backend.TryGetFrame(out WebFrame frame))
+                if (Volatile.Read(ref _webProducerDestroyed) != 0 || !IsActive)
+                    return;
+                WebSurface? acceleratedSurface = null;
+                if (_backend.SupportsFramebuffer)
                 {
-                    ApplyFrame(frame);
+                    acceleratedSurface = AcquireWebSurface(_backingWidth, _backingHeight);
+                    if (acceleratedSurface is null)
+                    {
+                        _webProducerFailure = "UI.Web.ProducerCapacity: all web textures still belong to published UI draws.";
+                        return;
+                    }
+                    _fbo = acceleratedSurface.Fbo;
+                    if (!UpdateFramebufferTarget())
+                        return;
+                }
+                if (Volatile.Read(ref _webProducerDestroyed) != 0 || !IsActive)
+                    return;
+                _backend.Render();
+                if (Volatile.Read(ref _webProducerDestroyed) != 0)
+                    return;
+
+                if (acceleratedSurface is not null)
+                    PublishWebSurface(acceleratedSurface);
+                else if (_backend.TryGetFrame(out WebFrame frame))
+                {
+                    if (Volatile.Read(ref _webProducerDestroyed) != 0 || !IsActive)
+                        return;
+                    if (frame.Width <= 0 || frame.Height <= 0 || frame.ByteLength == 0 || frame.PixelDataPtr == IntPtr.Zero)
+                        return;
+                    WebSurface? softwareSurface = AcquireWebSurface((uint)frame.Width, (uint)frame.Height);
+                    if (softwareSurface is null)
+                    {
+                        _webProducerFailure = "UI.Web.ProducerCapacity: all web textures still belong to published UI draws.";
+                        return;
+                    }
+                    ApplyFrame(frame, softwareSurface);
+                    PublishWebSurface(softwareSurface);
                     if (!_loggedSoftwareFrame)
                     {
                         Debug.UI($"[UIWebView] First software frame: {frame.Width}x{frame.Height}, bytes={frame.ByteLength}");
@@ -338,12 +494,6 @@ namespace XREngine.Rendering.UI
                     {
                         _backingWidth = w;
                         _backingHeight = h;
-
-                        EnsureWebTextureSize(w, h);
-                        _fbo.Resize(w, h);
-
-                        if (_backend.SupportsFramebuffer)
-                            UpdateFramebufferTarget();
 
                         if (_backend.IsInitialized)
                             _backend.Resize(w, h);
@@ -381,21 +531,19 @@ namespace XREngine.Rendering.UI
             }
         }
 
-        private void ApplyFrame(in WebFrame frame)
+        private void ApplyFrame(in WebFrame frame, WebSurface surface)
         {
             if (frame.Width <= 0 || frame.Height <= 0 || frame.ByteLength == 0 || frame.PixelDataPtr == IntPtr.Zero)
                 return;
 
-            XRTexture2D texture = EnsureWebTextureSize((uint)frame.Width, (uint)frame.Height);
-
             // Reuse or create cached mipmap only when dimensions/format change
-            if (_cachedMipmap is null ||
-                _cachedMipmap.Width != (uint)frame.Width ||
-                _cachedMipmap.Height != (uint)frame.Height ||
-                _cachedMipmap.PixelFormat != frame.PixelFormat ||
-                _cachedMipmap.PixelType != frame.PixelType)
+            if (surface.Mipmap is null ||
+                surface.Mipmap.Width != (uint)frame.Width ||
+                surface.Mipmap.Height != (uint)frame.Height ||
+                surface.Mipmap.PixelFormat != frame.PixelFormat ||
+                surface.Mipmap.PixelType != frame.PixelType)
             {
-                _cachedMipmap = new Mipmap2D(
+                surface.Mipmap = new Mipmap2D(
                     (uint)frame.Width,
                     (uint)frame.Height,
                     EPixelInternalFormat.Rgba8,
@@ -406,42 +554,44 @@ namespace XREngine.Rendering.UI
 
             if (UsePboUpload)
             {
-                UploadViaPbo(texture, _cachedMipmap, frame);
+                UploadViaPbo(surface, surface.Mipmap, frame);
             }
             else
             {
                 // Direct upload path - still requires copy but avoids extra allocations
-                UploadDirect(texture, _cachedMipmap, frame);
+                UploadDirect(surface, surface.Mipmap, frame);
             }
         }
 
-        private void UploadDirect(XRTexture2D texture, Mipmap2D mip, in WebFrame frame)
+        private static unsafe void UploadDirect(WebSurface surface, Mipmap2D mip, in WebFrame frame)
         {
-            // Use mipmap array to avoid allocation
-            _mipmapArray[0] = mip;
-            texture.Mipmaps = _mipmapArray;
-            texture.AutoGenerateMipmaps = false;
-            
-            // Reuse cached DataSource - just update Address and Length to avoid allocation
-            _cachedDataSource ??= new DataSource(frame.PixelDataPtr, (uint)frame.ByteLength, copyInternal: false);
-            _cachedDataSource.Address = frame.PixelDataPtr;
-            _cachedDataSource.Length = (uint)frame.ByteLength;
-            mip.Data = _cachedDataSource;
-            
-            texture.Generate();
-            texture.PushData();
+            surface.MipmapArray[0] = mip;
+            surface.Texture.Mipmaps = surface.MipmapArray;
+            surface.Texture.AutoGenerateMipmaps = false;
+            if (surface.CpuPixels is null || surface.CpuPixels.Length < (uint)frame.ByteLength)
+            {
+                surface.CpuPixels?.Dispose();
+                surface.CpuPixels = new DataSource((uint)frame.ByteLength);
+            }
+            surface.CpuPixels.Length = (uint)frame.ByteLength;
+            new ReadOnlySpan<byte>((void*)frame.PixelDataPtr, frame.ByteLength)
+                .CopyTo(new Span<byte>(surface.CpuPixels.Address.Pointer, frame.ByteLength));
+            mip.Data = surface.CpuPixels;
+            surface.Texture.Generate();
+            surface.Texture.PushData();
         }
 
-        private void UploadViaPbo(XRTexture2D texture, Mipmap2D mip, in WebFrame frame)
+        private void UploadViaPbo(WebSurface surface, Mipmap2D mip, in WebFrame frame)
         {
             int byteLength = frame.ByteLength;
-            XRDataBuffer<byte>? pbo = _pboBuffers[_currentPboIndex];
+            int index = _currentPboIndex;
+            XRDataBuffer<byte>? pbo = _pboBuffers[index];
             _currentPboIndex = (_currentPboIndex + 1) & 1;
 
             if (pbo is null || pbo.Length != (uint)byteLength)
             {
                 pbo?.Destroy();
-                _pboBuffers[_currentPboIndex] = pbo = new XRDataBuffer<byte>(
+                _pboBuffers[index] = pbo = new XRDataBuffer<byte>(
                     string.Empty,
                     EBufferTarget.PixelUnpackBuffer,
                     (uint)byteLength)
@@ -458,13 +608,13 @@ namespace XREngine.Rendering.UI
             {
                 mip.StreamingPBO = pbo;
                 // Reuse mipmap array to avoid allocation
-                _mipmapArray[0] = mip;
-                texture.Mipmaps = _mipmapArray;
-                texture.AutoGenerateMipmaps = false;
-                texture.Bind();
+                surface.MipmapArray[0] = mip;
+                surface.Texture.Mipmaps = surface.MipmapArray;
+                surface.Texture.AutoGenerateMipmaps = false;
+                surface.Texture.Bind();
 
                 CopyPixelsToPbo(frame.PixelDataPtr, byteLength, pbo);
-                texture.PushData();
+                surface.Texture.PushData();
             }
             pbo.Unbind();
         }
@@ -487,6 +637,84 @@ namespace XREngine.Rendering.UI
                 _pboBuffers[i]?.Destroy();
                 _pboBuffers[i] = null;
             }
+        }
+
+        protected override bool TryCapturePublicationPayload(in UILayoutNodeOutput output,
+            UIDrawPayloadBuilder builder, out UIDrawPayload? payload, out string? failure)
+        {
+            payload = null;
+            if (Volatile.Read(ref _webProducerDestroyed) != 0)
+            {
+                failure = "UI.Web.ProducerStopped: the web producer is closing.";
+                return false;
+            }
+            WebSurface? surface = Volatile.Read(ref _publishedWebSurface);
+            if (surface is null || surface.Generation == 0)
+            {
+                failure = _webProducerFailure ?? "UI.Web.ProducerPending: no complete web surface is ready.";
+                return false;
+            }
+            surface.Retain();
+            try
+            {
+                if (!ReferenceEquals(surface, Volatile.Read(ref _publishedWebSurface)))
+                {
+                    failure = "UI.Web.ProducerChanging: the web surface changed during owner capture.";
+                    return false;
+                }
+                builder.ProducerLease = surface;
+                builder.ProducerTextureSlot = 0;
+                return builder.TryCapture(RenderCommand2D, false, out payload, out failure);
+            }
+            finally
+            {
+                surface.Release();
+            }
+        }
+
+        protected override void OnDestroying()
+        {
+            Volatile.Write(ref _webProducerDestroyed, 1);
+            RuntimeEngine.Time.Timer.RenderFrame -= RenderFrame;
+            Volatile.Write(ref _publishedWebSurface, null);
+            try { base.OnDestroying(); }
+            finally
+            {
+                lock (_webProducerGate)
+                {
+                    if (_webProducerActive != 0)
+                        _webReleasePending = true;
+                    else if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                        ReleaseWebSurfacesUnderGate();
+                    else
+                        RuntimeEngine.EnqueueRenderThreadTask(ReleaseWebSurfaces, "UI.Web.ReleaseSurfaces",
+                            RenderThreadJobKind.RenderPipelineResource);
+                }
+            }
+        }
+
+        private void ReleaseWebSurfaces()
+        {
+            lock (_webProducerGate)
+                ReleaseWebSurfacesUnderGate();
+        }
+
+        private void ReleaseWebSurfacesUnderGate()
+        {
+            if (_webSurfacesReleased)
+                return;
+            if (_webProducerActive != 0)
+            {
+                _webReleasePending = true;
+                return;
+            }
+            _webSurfacesReleased = true;
+            _webReleasePending = false;
+            Volatile.Write(ref _publishedWebSurface, null);
+            DisposeWebTransientResources();
+            foreach (WebSurface surface in _webSurfaces)
+                surface.Release();
+            _webSurfaces.Clear();
         }
     }
 }

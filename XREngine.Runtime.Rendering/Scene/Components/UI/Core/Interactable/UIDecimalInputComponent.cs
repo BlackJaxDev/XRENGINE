@@ -4,6 +4,13 @@ namespace XREngine.Rendering.UI
 {
     public class UIDecimalInputComponent : UITextInputComponent
     {
+        public UIDecimalInputComponent()
+        {
+            SingleLineMode = true;
+            CommitOnSubmit = true;
+            AllowInvalidDraft = true;
+        }
+
         public override bool PostValidateInput(string input)
             => decimal.TryParse(input, out _);
 

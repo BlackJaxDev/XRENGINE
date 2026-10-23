@@ -16,4 +16,7 @@ public interface IRuntimeWindowEventSink
     void InteractiveResizeEnded();
     void RepaintRequested();
     void RenderRequested(double deltaSeconds);
+
+    /// <summary>Reports that the native OpenGL render dispatch returned after its swap.</summary>
+    void OpenGlRenderDispatched() { }
 }

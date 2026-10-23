@@ -28,6 +28,11 @@ layout(std430, binding = 3) buffer GlyphTextIndexBuffer
     uint GlyphTextIndex[];
 };
 
+layout(std430, binding = 4) buffer GlyphDrawIndexBuffer
+{
+    uint GlyphDrawIndex[];
+};
+
 uniform mat4 LeftEyeViewProjectionMatrix_VTX;
 uniform mat4 RightEyeViewProjectionMatrix_VTX;
 uniform int TextDebugMode;
@@ -74,7 +79,8 @@ void main()
         return;
     }
 
-    uint textIdx = GlyphTextIndex[gl_InstanceID];
+    uint glyphSlot = GlyphDrawIndex[gl_InstanceID];
+    uint textIdx = GlyphTextIndex[glyphSlot];
     mat4 modelMatrix = getTextModelMatrix(textIdx);
 
     uint baseIndex = textIdx * TextInstanceStride;
@@ -82,8 +88,8 @@ void main()
     vec4 outlineColor = TextInstances[baseIndex + 6u];
     vec4 outlineParams = TextInstances[baseIndex + 7u];
 
-    vec4 tfm = GlyphTransforms[gl_InstanceID];
-    vec4 uv = GlyphTexCoords[gl_InstanceID];
+    vec4 tfm = GlyphTransforms[glyphSlot];
+    vec4 uv = GlyphTexCoords[glyphSlot];
 
     vec2 glyphMin = tfm.xy;
     vec2 glyphSize = tfm.zw;

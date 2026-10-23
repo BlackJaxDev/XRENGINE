@@ -60,6 +60,9 @@ internal sealed partial class VulkanCommandRuntime
         RetireArtifacts(CommandBuffers.DynamicUiSecondaries, "Swapchain.DynamicUiSecondary");
         RetireArtifacts(CommandBuffers.DynamicUiOverlays, "Swapchain.DynamicUiOverlay");
         RetireArtifacts(imguiOverlayCommandBuffers, "Swapchain.ImGuiOverlay");
+        if (CommandBuffers.PrimaryOwners is { } uiOwners)
+            for (int index = 0; index < uiOwners.Length; index++)
+                uiOwners[index]?.RetireRecordedUiPublicationReceipts();
 
         CommandBuffers.Buffers = null;
         CommandBuffers.ActiveBuffers = null;

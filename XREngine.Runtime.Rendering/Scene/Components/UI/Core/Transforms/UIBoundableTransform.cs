@@ -41,6 +41,30 @@ namespace XREngine.Rendering.UI
             get => _actualSize;
             protected set => SetField(ref _actualSize, value);
         }
+        internal override void ApplyCalculatedLayout(in UILayoutNodeOutput output, Vector2 placement)
+        {
+            IsApplyingCalculatedLayout = true;
+            try
+            {
+                SetDesiredSize(output.DesiredSize);
+                SetLastMeasureConstraint(output.MeasureConstraint);
+                SetLastArrangeBounds(output.AllocatedBounds);
+                bool sizeChanged = !XRMath.VectorsEqual(_actualSize, output.ActualSize);
+                bool positionChanged = !XRMath.VectorsEqual(_actualLocalBottomLeftTranslation, output.LocalTranslation + placement);
+                if (sizeChanged)
+                    ActualSize = output.ActualSize;
+                if (positionChanged)
+                    ActualLocalBottomLeftTranslation = output.LocalTranslation + placement;
+                if (sizeChanged || positionChanged || ShouldMarkLocalMatrixChanged())
+                    MarkLocalModified(true);
+                SetLastMeasuredVersion();
+                SetLastArrangedVersion();
+            }
+            finally
+            {
+                IsApplyingCalculatedLayout = false;
+            }
+        }
         /// <summary>
         /// The width of the component after layout has been applied.
         /// </summary>
@@ -178,7 +202,8 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(ActualSize):
                 case nameof(AxisAlignedRegion):
-                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
+                    // Derived geometry changes publication, not the authored layout read set.
+                    RecordUIChange(UIChangeDomain.Visual | UIChangeDomain.Clip | UIChangeDomain.HitTest);
                     break;
                 case nameof(BlocksInputBehind):
                     RecordUIChange(UIChangeDomain.HitTest);
@@ -235,7 +260,7 @@ namespace XREngine.Rendering.UI
                 mtx *= p.GetRelativeItemMatrix();
                 p.RelativePositioningChanged = false;
             }
-            if (!XRMath.VectorsEqual(Scale, Vector3.One) || RotationRadians >= float.Epsilon)
+            if (!XRMath.VectorsEqual(Scale, Vector3.One) || MathF.Abs(RotationRadians) >= float.Epsilon)
             {
                 mtx *=
                     Matrix4x4.CreateTranslation(new Vector3(LocalPivotTranslation, 0.0f)) *
@@ -460,19 +485,16 @@ namespace XREngine.Rendering.UI
         {
             using var profiler = RuntimeEngine.Profiler.Start("UIBoundableTransform.GetMaxChildWidth");
 
-            //lock (Children)
-            //{
-                var children = Children.
-                    Where(x => x is UIBoundableTransform b && !b.IsCollapsed && !b.ExcludeFromParentAutoCalcWidth).
-                    Cast<UIBoundableTransform>();
-                float maxWidth = 0.0f;
-                foreach (var child in children)
-                {
-                    float width = child.ApplyHorizontalMargins(child.GetWidth());
-                    maxWidth = Math.Max(maxWidth, width);
-                }
-                return maxWidth;
-            //}
+            float maxWidth = 0.0f;
+            for (int i = 0; i < Children.Count; i++)
+            {
+                if (Children[i] is not UIBoundableTransform child || child.IsCollapsed || child.ExcludeFromParentAutoCalcWidth)
+                    continue;
+
+                float width = child.ApplyHorizontalMargins(child.GetWidth());
+                maxWidth = Math.Max(maxWidth, width);
+            }
+            return maxWidth;
         }
 
         /// <summary>
@@ -483,19 +505,16 @@ namespace XREngine.Rendering.UI
         {
             using var profiler = RuntimeEngine.Profiler.Start("UIBoundableTransform.GetMaxChildHeight");
 
-            //lock (Children)
-            //{
-                var children = Children.
-                    Where(x => x is UIBoundableTransform b && !b.IsCollapsed && !b.ExcludeFromParentAutoCalcHeight).
-                    Cast<UIBoundableTransform>();
-                float maxHeight = 0.0f;
-                foreach (var child in children)
-                {
-                    float height = child.ApplyVerticalMargins(child.GetHeight());
-                    maxHeight = Math.Max(maxHeight, height);
-                }
-                return maxHeight;
-            //}
+            float maxHeight = 0.0f;
+            for (int i = 0; i < Children.Count; i++)
+            {
+                if (Children[i] is not UIBoundableTransform child || child.IsCollapsed || child.ExcludeFromParentAutoCalcHeight)
+                    continue;
+
+                float height = child.ApplyVerticalMargins(child.GetHeight());
+                maxHeight = Math.Max(maxHeight, height);
+            }
+            return maxHeight;
         }
 
         public BoundingRectangleF GetActualBounds()

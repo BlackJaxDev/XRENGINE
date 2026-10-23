@@ -12,6 +12,21 @@ namespace XREngine.Rendering.UI
     [XRTransformEditor("XREngine.Editor.TransformEditors.UIDualSplitTransformEditor")]
     public class UIDualSplitTransform : UIBoundableTransform
     {
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(VerticalSplit):
+                case nameof(FixedSize):
+                case nameof(FirstFixedSize):
+                case nameof(SplitPercent):
+                case nameof(SplitterSize):
+                    InvalidateArrange();
+                    break;
+            }
+        }
+
         private bool _verticalSplit = false;
         public bool VerticalSplit
         {

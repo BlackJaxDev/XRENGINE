@@ -157,6 +157,13 @@ namespace XREngine.Rendering.Vulkan
                 hasValidFrameContent: true);
             if (presentAccepted)
             {
+                bool newUiSource = attempt.ScenePrimaryRecordedThisFrame &&
+                    attempt.Submitted && attempt.GraphicsSignalValue != 0UL;
+                _ownerRenderer.XRWindow.MarkVulkanUiPresented(
+                    attempt.ImageIndex,
+                    attempt.OutputGeneration,
+                    newUiSource ? attempt.FrameNumber : attempt.PresentedSourceFrameId,
+                    newUiSource);
                 CaptureResizeReleaseHandoffFromSuccessfulHeldPresent(
                     ref attempt);
                 TryCompleteResizeReleaseHandoffAfterSuccessorPresent(

@@ -78,6 +78,7 @@ internal readonly record struct FrameOpContext(
     ulong OutputHistorySequenceId = 0,
     ulong OutputHistorySourceFrame = 0,
     ulong OutputCompletionReceiptId = 0,
+    ulong UiPublicationReceiptId = 0,
     ulong OutputCompletionSourceFrame = 0,
     VulkanFrameOpWorkspace? OperationWorkspace = null,
     ulong AdvancedVisibilityOutputIdentity = 0)

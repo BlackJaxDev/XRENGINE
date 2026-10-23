@@ -8,7 +8,7 @@ using XREngine.Scene;
 
 namespace XREngine.Editor;
 
-public class InspectorPanel : EditorPanel
+public partial class InspectorPanel : EditorPanel
 {
     private object?[]? _inspectedObjects;
     public object?[]? InspectedObjects
@@ -29,6 +29,7 @@ public class InspectorPanel : EditorPanel
     }
 
     private bool _isLocked = false;
+    private bool _inspectingAsset;
     public bool IsLocked
     {
         get => _isLocked;
@@ -40,56 +41,84 @@ public class InspectorPanel : EditorPanel
         base.OnComponentActivated();
         RemakeChildren();
         Selection.SelectionChanged += OnSelectionChanged;
+        NativeAssetSelection.SelectionChanged += OnNativeAssetSelectionChanged;
+        if (!IsLocked && NativeAssetSelection.SelectedTarget is { } assetTarget)
+            OnNativeAssetSelectionChanged(assetTarget);
     }
 
     protected override void OnComponentDeactivated()
     {
         base.OnComponentDeactivated();
         Selection.SelectionChanged -= OnSelectionChanged;
+        NativeAssetSelection.SelectionChanged -= OnNativeAssetSelectionChanged;
+        ReleaseVirtualPropertyList();
     }
 
     private void OnSelectionChanged(SceneNode[] obj)
     {
         if (!IsLocked)
+        {
+            _inspectingAsset = false;
+            NativeAssetSelection.Clear();
             InspectedObjects = obj;
+        }
+    }
+
+    private void OnNativeAssetSelectionChanged(object? target)
+    {
+        if (IsLocked)
+            return;
+        if (target is null)
+        {
+            if (_inspectingAsset)
+                InspectedObjects = null;
+            _inspectingAsset = false;
+            return;
+        }
+        _inspectingAsset = true;
+        InspectedObjects = [target];
     }
 
     private void RemakeChildren()
     {
         using var sample = Engine.Profiler.Start("InspectorPanel.RemakeChildren");
+        if (_virtualPropertyList is not null)
+        {
+            RefreshVirtualProperties();
+            return;
+        }
         SceneNode.Transform.Clear();
-        CreatePropertyList(SceneNode, this);
+        CreateVirtualPropertyList();
     }
 
-    /// <summary>
-    /// Get the properties that are common to all the inspected objects.
-    /// </summary>
-    /// <returns></returns>
+    /// <summary>Gets property metadata that is valid for every selected object.</summary>
     private static List<PropertyInfo> GetMatchingProperties(object?[]? objects)
     {
         using var sample = Engine.Profiler.Start("InspectorPanel.GetMatchingProperties");
         List<PropertyInfo> matching = [];
         if (objects is null)
             return matching;
-        
+
         bool first = true;
-        foreach (var obj in objects)
+        foreach (object? obj in objects)
         {
             if (obj is null)
                 continue;
-
-            var props = obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-            foreach (var prop in props)
+            Type type = obj.GetType();
+            if (first)
             {
-                if (prop is null || prop.GetIndexParameters().Length > 0)
-                    continue;
-
-                if (first)
-                    matching.Add(prop);
-                else
-                    matching = [.. matching.Intersect([prop])];
+                foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                    if (property.GetIndexParameters().Length == 0)
+                        matching.Add(property);
+                first = false;
+                continue;
             }
-            first = false;
+            for (int i = matching.Count - 1; i >= 0; i--)
+            {
+                PropertyInfo property = matching[i];
+                if (property.DeclaringType?.IsAssignableFrom(type) != true)
+                    matching.RemoveAt(i);
+            }
         }
         return matching;
     }

@@ -14,9 +14,6 @@ namespace XREngine.Editor;
 
 public static partial class InspectorPropertyEditors
 {
-    private const string OutlineColorUniformName = "OutlineColor";
-    private const string OutlineWidthUniformName = "OutlineWidth";
-    private const string FillColorUniformName = "FillColor";
 
     public static Action<SceneNode, PropertyInfo, object?[]?>? CreateNew(Type propType)
         => Type.GetTypeCode(propType) switch
@@ -39,41 +36,6 @@ public static partial class InspectorPropertyEditors
             TypeCode.String => PrimitiveTypes.CreateStringEditor(),
             _ => null,
         };
-
-    public static XRMaterial? CreateUIOutlineMaterial()
-    {
-        string fragCode = @"
-            #version 460
-
-            layout (location = 4) in vec2 FragUV0;
-            out vec4 FragColor;
-
-            uniform float OutlineWidth;
-            uniform vec4 OutlineColor;
-            uniform vec4 FillColor;
-            uniform float UIWidth;
-            uniform float UIHeight;
-
-            void main()
-            {
-                float pixelOutlineWidthX = OutlineWidth / UIWidth;
-                float pixelOutlineWidthY = OutlineWidth / UIHeight;
-                float isOutline = max(
-                    step(FragUV0.x, pixelOutlineWidthX) + step(1.0 - pixelOutlineWidthX, FragUV0.x),
-                    step(FragUV0.y, pixelOutlineWidthY) + step(1.0 - pixelOutlineWidthY, FragUV0.y));
-                FragColor = mix(FillColor, OutlineColor, isOutline);
-            }";
-        XRShader frag = new(EShaderType.Fragment, fragCode);
-        ShaderVar[] parameters =
-        [
-            new ShaderFloat(2.0f, OutlineWidthUniformName),
-            new ShaderVector4(ColorF4.Transparent, OutlineColorUniformName),
-            new ShaderVector4(ColorF4.Transparent, FillColorUniformName),
-        ];
-        var mat = new XRMaterial(parameters, frag);
-        mat.EnableTransparency();
-        return mat;
-    }
 
     private static T TextEditor<T>(SceneNode n, PropertyInfo prop, object?[]? objects) where T : UITextInputComponent
     {
@@ -153,6 +115,8 @@ public static partial class InspectorPropertyEditors
 
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateArrayEditor(Type propType)
     {
+        if (CollectionTypes.TryCreateEditor(propType, out var collectionEditor))
+            return collectionEditor;
         static void ArrayEditor(SceneNode n, PropertyInfo prop, object?[]? objects)
         {
             var text = TextEditor<UITextInputComponent>(n, prop, objects);
@@ -162,9 +126,24 @@ public static partial class InspectorPropertyEditors
 
     private static Action<SceneNode, PropertyInfo, object?[]?>? CreateEnumEditor(Type propType)
     {
+        if (propType.IsDefined(typeof(FlagsAttribute), inherit: false))
+            return static (node, property, targets) => TextEditor<UITextInputComponent>(node, property, targets);
         static void EnumEditor(SceneNode n, PropertyInfo prop, object?[]? objects)
         {
-            var text = TextEditor<UITextInputComponent>(n, prop, objects);
+            var binding = new EditorEnumPropertyBinding(prop, objects ?? []);
+            var combo = n.AddComponent<UIComboBoxComponent>()!;
+            var popup = n.AddComponent<NativePropertyPopupHost>()!;
+            combo.Popup = popup.CreatePopup();
+            combo.VirtualOptions = binding;
+            combo.Binding = binding;
+            combo.IsReadOnly = !prop.CanWrite;
+            combo.AccessibilityLabel = prop.Name;
+            n.AddComponent<UIMaterialComponent>()!.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Gray, 1);
+            n.NewChild<UITextComponent>(out var label);
+            label.Text = combo.AccessibilityValue ?? "Mixed or undefined";
+            label.VerticalAlignment = EVerticalAlignment.Center;
+            combo.SelectionChanged += _ => label.Text = combo.AccessibilityValue ?? "Mixed or undefined";
+            combo.Opening += _ => combo.PopupPosition = popup.GetPosition();
         }
         return EnumEditor;
     }

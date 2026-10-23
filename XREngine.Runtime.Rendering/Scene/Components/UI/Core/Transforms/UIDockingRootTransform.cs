@@ -10,6 +10,19 @@ namespace XREngine.Rendering.UI
 {
     public class UIDockingRootTransform : UIBoundableTransform
     {
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(LeftSizeWidth):
+                case nameof(RightSizeWidth):
+                case nameof(BottomSizeHeight):
+                    InvalidateArrange();
+                    break;
+            }
+        }
+
         private float _leftSizeWidth = 300.0f;
         private float _rightSizeWidth = 300.0f;
         private float _bottomSizeHeight = 200.0f;

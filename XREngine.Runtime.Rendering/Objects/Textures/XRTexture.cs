@@ -426,8 +426,14 @@ namespace XREngine.Rendering
 
         public delegate void DelClear(ColorF4 color, int level = 0);
 
+        private long _sourceDataRevision;
+        internal long SourceDataRevision => Interlocked.Read(ref _sourceDataRevision);
+
         public void PushData()
-            => PushDataRequested?.Invoke();
+        {
+            Interlocked.Increment(ref _sourceDataRevision);
+            PushDataRequested?.Invoke();
+        }
         public void Bind()
             => BindRequested?.Invoke();
         public void Unbind()

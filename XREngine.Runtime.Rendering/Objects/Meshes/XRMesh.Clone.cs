@@ -43,7 +43,12 @@ public partial class XRMesh
 
         if (_points != null) clone._points = [.. _points];
         if (_lines != null) clone._lines = [.. _lines];
-        if (_triangles != null) clone._triangles = [.. _triangles];
+        if (_triangles != null)
+        {
+            clone._triangles = new List<IndexTriangle>(_triangles.Count);
+            foreach (IndexTriangle triangle in _triangles)
+                clone._triangles.Add(new IndexTriangle(triangle.Point0, triangle.Point1, triangle.Point2));
+        }
 
         clone.Buffers = Buffers.Clone();
 

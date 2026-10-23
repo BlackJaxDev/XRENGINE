@@ -1,6 +1,8 @@
 using XREngine.Rendering.UI.State;
 using XREngine.Data.Colors;
 using XREngine.Scene;
+using XREngine.Input;
+using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.UI
 {
@@ -11,6 +13,8 @@ namespace XREngine.Rendering.UI
             TextComponent?.Text is { Length: > 0 } text ? text : base.AccessibilityName;
         public override bool AccessibilityActivate()
         {
+            if (!CanInteract)
+                return false;
             OnInteract();
             return true;
         }
@@ -23,11 +27,30 @@ namespace XREngine.Rendering.UI
         protected override void OnMouseDirectOverlapEnter()
             => Highlight();
         protected override void OnMouseDirectOverlapLeave()
-            => Unhighlight();
+        {
+            if (!IsFocused)
+                Unhighlight();
+        }
         protected override void OnGamepadNavigateEnter()
             => Highlight();
         protected override void OnGamepadNavigateLeave()
-            => Unhighlight();
+        {
+            if (!IsFocused && !IsMouseDirectlyOver)
+                Unhighlight();
+        }
+
+        protected override void OnGotFocus()
+        {
+            base.OnGotFocus();
+            Highlight();
+        }
+
+        protected override void OnLostFocus()
+        {
+            base.OnLostFocus();
+            if (!IsMouseDirectlyOver)
+                Unhighlight();
+        }
 
         public void RegisterClickActions(params Action<UIInteractableComponent>[] actions)
         {
@@ -38,6 +61,19 @@ namespace XREngine.Rendering.UI
         {
             foreach (var action in actions)
                 InteractAction -= action;
+        }
+
+        public override void RegisterInput(IInputRegistration input)
+        {
+            base.RegisterInput(input);
+            input.RegisterKeyStateChange(EKey.Enter, ActivateKey);
+            input.RegisterKeyStateChange(EKey.Space, ActivateKey);
+        }
+
+        private void ActivateKey(bool pressed)
+        {
+            if (pressed)
+                OnInteract();
         }
 
         protected override void OnComponentActivated()
@@ -124,6 +160,12 @@ namespace XREngine.Rendering.UI
                             SetTextHighlighted();
                         break;
                     }
+                case nameof(IsEnabled):
+                    if (IsEnabled && (IsFocused || IsMouseDirectlyOver))
+                        Highlight();
+                    else if (!IsEnabled)
+                        Unhighlight();
+                    break;
             }
         }
 
@@ -136,7 +178,7 @@ namespace XREngine.Rendering.UI
 
         protected virtual void Highlight()
         {
-            if (IsHighlighted)
+            if (IsHighlighted || !IsEnabled)
                 return;
 
             IsHighlighted = true;

@@ -18,8 +18,107 @@ namespace XREngine.Rendering.UI
     [XRComponentEditor("XREngine.Editor.ComponentEditors.UIMaterialComponentEditor")]
     public class UIMaterialComponent : UIRenderableComponent
     {
-        private readonly List<(XRMaterial Material, ObjectCacheOwnership Ownership)> _ownedDefaultMaterials = [];
+        private readonly List<(XRMaterial Material, ObjectCacheOwnership Ownership, XRShader[] BatchShaders)> _ownedDefaultMaterials = [];
+        private readonly HashSet<Action<XRMaterialBase, XRRenderProgram>> _allowedBatchUniformHandlers = [];
         private bool _renderParametersEscaped;
+        private bool _reportedMissingBatchColor;
+        private ShaderVector4? _observedMatColor;
+
+        private void ObserveMatColor()
+        {
+            ShaderVector4? next = IsActiveInHierarchy
+                ? Material?.Parameter<ShaderVector4>("MatColor") : null;
+            if (ReferenceEquals(next, _observedMatColor))
+                return;
+            if (_observedMatColor is not null)
+                _observedMatColor.ValueChanged -= OnMatColorValueChanged;
+            _observedMatColor = next;
+            if (next is not null)
+                next.ValueChanged += OnMatColorValueChanged;
+        }
+
+        private void OnMatColorValueChanged(ShaderVar _)
+        {
+            if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
+        }
+        private bool _batchBorderEnabled;
+        private Vector4 _batchBorderColor;
+        private float _batchBorderWidth;
+        private UITextureSnapshot? _capturedImageSnapshot;
+        private XRTexture2D? _capturedImageSource;
+
+        private void ReleaseCapturedImageSnapshot()
+        {
+            if (_capturedImageSnapshot is not null)
+                _capturedImageSnapshot.SourceChanged -= OnCapturedImageSourceChanged;
+            _capturedImageSnapshot?.Release();
+            _capturedImageSnapshot = null;
+            _capturedImageSource = null;
+        }
+
+        private void OnCapturedImageSourceChanged()
+        {
+            if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
+        }
+
+        /// <summary>Sets the fill of the component's shared solid-quad primitive.</summary>
+        public void SetBatchSolidColor(Vector4 color)
+        {
+            if (Material is not { } material || !OwnsDefaultMaterial(material))
+                throw new InvalidOperationException("Batch solids require the component's default UI quad material.");
+            ConfigureOwnedBatchTransparency(material);
+            material.SetVector4("MatColor", color);
+            SetField(ref _batchBorderEnabled, false);
+            RecordQuadVisualChange();
+        }
+
+        /// <summary>Uses the shared desktop border shader with per-instance fill, outline and width.</summary>
+        public void SetBatchBorderStyle(Vector4 fillColor, Vector4 outlineColor, float width)
+        {
+            if (UseWebGpuBatchOnly)
+                throw new NotSupportedException("The shared border primitive requires a desktop shader backend.");
+            if (!float.IsFinite(width) || width < 0)
+                throw new ArgumentOutOfRangeException(nameof(width));
+            if (Material is not { } material || !OwnsDefaultMaterial(material))
+                throw new InvalidOperationException("Batch borders require the component's default UI quad material.");
+            ConfigureOwnedBatchTransparency(material);
+            material.SetVector4("MatColor", fillColor);
+            SetField(ref _batchBorderEnabled, true);
+            SetField(ref _batchBorderColor, outlineColor);
+            SetField(ref _batchBorderWidth, width);
+            RecordQuadVisualChange();
+        }
+
+        private void ConfigureOwnedBatchTransparency(XRMaterial material)
+        {
+            // The generic material helper enables depth and may replace the
+            // owned default shader. Batched UI has its own exact raster profile.
+            _renderParameters.BlendModeAllDrawBuffers = BlendMode.EnabledTransparent();
+            _renderParameters.BlendModesPerDrawBuffer = null;
+            _renderParameters.AlphaToCoverage = ERenderParamUsage.Disabled;
+            _renderParameters.DepthTest.Enabled = ERenderParamUsage.Disabled;
+            _renderParameters.DepthTest.UpdateDepth = false;
+            material.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+            RenderPass = material.RenderPass;
+        }
+
+        public Vector4 BatchBorderColor
+        {
+            get => _batchBorderColor;
+            set
+            {
+                if (!SetField(ref _batchBorderColor, value)) return;
+                RecordQuadVisualChange();
+            }
+        }
+
+        private void RecordQuadVisualChange()
+        {
+            if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
+        }
 
         private static readonly Lazy<string?> CanonicalImageShaderSource = new(static () =>
             XRShader.EngineShader(Path.Combine("Common", "UiTexturedForward.fs"), EShaderType.Fragment).Source.Text);
@@ -66,7 +165,7 @@ namespace XREngine.Rendering.UI
         {
             using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
             XRMaterial material = CreateDefaultQuadMaterial();
-            _ownedDefaultMaterials.Add((material, publication.CompleteWithOwnership()));
+            _ownedDefaultMaterials.Add((material, publication.CompleteWithOwnership(), [.. material.Shaders]));
             return material;
         }
 
@@ -75,6 +174,23 @@ namespace XREngine.Rendering.UI
             for (int index = 0; index < _ownedDefaultMaterials.Count; index++)
                 if (ReferenceEquals(_ownedDefaultMaterials[index].Material, material))
                     return true;
+            return false;
+        }
+
+        private bool HasOriginalDefaultShaders(XRMaterial material)
+        {
+            for (int index = 0; index < _ownedDefaultMaterials.Count; index++)
+            {
+                var owned = _ownedDefaultMaterials[index];
+                if (!ReferenceEquals(owned.Material, material))
+                    continue;
+                if (material.Shaders.Count != owned.BatchShaders.Length)
+                    return false;
+                for (int shader = 0; shader < owned.BatchShaders.Length; shader++)
+                    if (!ReferenceEquals(material.Shaders[shader], owned.BatchShaders[shader]))
+                        return false;
+                return true;
+            }
             return false;
         }
 
@@ -123,6 +239,20 @@ namespace XREngine.Rendering.UI
                     return binding.IsSrgb;
             }
             return image.ImportedColorSpace == ETextureColorSpace.Srgb;
+        }
+
+        private static bool HasCanonicalImageBinding(XRMaterial material, XRTexture2D image)
+        {
+            MaterialSurfaceTextureBinding[] bindings = material.SurfaceTextureBindings;
+            if (bindings.Length != 1)
+                return false;
+            MaterialSurfaceTextureBinding binding = bindings[0];
+            return binding.Semantic == EMaterialTextureSemantic.BaseColor &&
+                ReferenceEquals(binding.Texture, image) && binding.TexCoordSet == 0 &&
+                binding.Channel == 0 && binding.WrapU == image.UWrap &&
+                binding.WrapV == image.VWrap &&
+                binding.UvScaleOffset == new Vector4(1, 1, 0, 0) &&
+                binding.UvRotation == 0.0f;
         }
 
         /// <summary>Checks that an authored desktop stage is exactly the engine's image shader.</summary>
@@ -245,10 +375,13 @@ namespace XREngine.Rendering.UI
 
         private void InitializeQuadMaterial(XRMaterial quadMaterial, bool flipVerticalUVCoord)
         {
+            _allowedBatchUniformHandlers.Add(OnMaterialSettingUniforms);
             _flipVerticalUVCoord = flipVerticalUVCoord;
             RenderPass = quadMaterial.RenderPass;
             quadMaterial.RenderOptions = _renderParameters;
+            Material = quadMaterial;
             RemakeMesh(quadMaterial);
+            ObserveMatColor();
         }
 
         private bool _flipVerticalUVCoord = false;
@@ -271,11 +404,25 @@ namespace XREngine.Rendering.UI
             return mesh;
         }
 
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
+        {
+            bool change = base.OnPropertyChanging(propName, field, @new);
+            if (change && propName == nameof(Material) && _observedMatColor is not null)
+            {
+                _observedMatColor.ValueChanged -= OnMatColorValueChanged;
+                _observedMatColor = null;
+            }
+            return change;
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(Material):
+                    ObserveMatColor();
+                    break;
                 case nameof(FlipVerticalUVCoord):
                     RemakeMesh();
                     break;
@@ -290,10 +437,17 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentActivated();
             RemakeMesh();
+            ObserveMatColor();
         }
 
         protected override void OnComponentDeactivated()
         {
+            if (_observedMatColor is not null)
+            {
+                _observedMatColor.ValueChanged -= OnMatColorValueChanged;
+                _observedMatColor = null;
+            }
+            ReleaseCapturedImageSnapshot();
             base.OnComponentDeactivated();
         }
 
@@ -301,6 +455,12 @@ namespace XREngine.Rendering.UI
         {
             try
             {
+                ReleaseCapturedImageSnapshot();
+                if (_observedMatColor is not null)
+                {
+                    _observedMatColor.ValueChanged -= OnMatColorValueChanged;
+                    _observedMatColor = null;
+                }
                 Mesh?.Destroy();
                 Mesh = null;
                 base.OnDestroying();
@@ -435,7 +595,51 @@ namespace XREngine.Rendering.UI
             return Matrix4x4.CreateScale(w, h, 1.0f) * base.GetRenderWorldMatrix(tfm);
         }
 
+        protected override Matrix4x4 CapturePublicationModelMatrix(
+            in UILayoutNodeOutput output, in Matrix4x4 canvasMatrix)
+            => Matrix4x4.CreateScale(output.ActualSize.X, output.ActualSize.Y, 1.0f) * canvasMatrix;
+
         #region Batched Rendering
+
+        protected override bool CanCapturePublicationUniforms => GetType() == typeof(UIMaterialComponent);
+
+        /// <summary>Captures the quad source values for one canvas publication.</summary>
+        public override UIRenderRecord CapturePublicationRenderRecord(in UILayoutNodeOutput output)
+        {
+            XRMaterial? material = Material;
+            XRTexture2D? texture = UseWebGpuBatchOnly && material?.Textures.Count == 1
+                ? material.Textures[0] as XRTexture2D : null;
+            Vector4 uv = new(0.0f, FlipVerticalUVCoord ? 1.0f : 0.0f,
+                1.0f, FlipVerticalUVCoord ? 0.0f : 1.0f);
+            UIRenderRecord record = base.CapturePublicationRenderRecord(in output) with
+            {
+                QuadColor = material?.Parameter<ShaderVector4>("MatColor")?.Value ?? default,
+                Texture = texture,
+                UV = uv,
+                ImageSrgb = texture is not null && material is not null && UsesSrgbImage(material, texture),
+                IsBorder = _batchBorderEnabled,
+                BorderColor = _batchBorderColor,
+                BorderWidth = _batchBorderWidth,
+            };
+            if (!record.Visible || !record.SupportsBatch || texture is null)
+                return record;
+
+            UITextureSnapshot? snapshot = _capturedImageSnapshot;
+            if (!ReferenceEquals(_capturedImageSource, texture) || snapshot is null || !snapshot.Matches(texture))
+            {
+                if (!UITextureSnapshot.TryAcquire(texture, out UITextureSnapshot? replacement, out string? failure))
+                {
+                    ReleaseCapturedImageSnapshot();
+                    return record with { CaptureFailure = failure };
+                }
+                ReleaseCapturedImageSnapshot();
+                snapshot = replacement;
+                _capturedImageSnapshot = snapshot;
+                _capturedImageSource = texture;
+                snapshot!.SourceChanged += OnCapturedImageSourceChanged;
+            }
+            return record with { Texture = snapshot!.Texture, TextureSnapshot = snapshot };
+        }
 
         /// <summary>
         /// Material quads support solid batching. Source-free image quads on the
@@ -446,44 +650,70 @@ namespace XREngine.Rendering.UI
             get
             {
                 XRMaterial? material = Material;
-                return !DisableBatching &&
-                    (!ClipToBounds || UseWebGpuBatchOnly) &&
-                    (material?.Textures is null || material.Textures.Count == 0 ||
-                     UseWebGpuBatchOnly && material.Textures.Count == 1 &&
-                     material.Textures[0] is XRTexture2D image && TryGetWebGpuImageProfile(image, out _) &&
+                if (material is null || DisableBatching)
+                    return false;
+                if (_batchBorderEnabled && UseWebGpuBatchOnly)
+                    return false;
+
+                if (material.Parameter<ShaderVector4>("MatColor") is null)
+                {
+                    if (!_reportedMissingBatchColor)
+                    {
+                        _reportedMissingBatchColor = true;
+                        Debug.Log(ELogCategory.UI, "UI quad '{0}' has no MatColor. Use an explicit color material or a normal render command.", SceneNode?.Name ?? GetType().Name);
+                    }
+                    return false;
+                }
+
+                bool ownedSolidSemantic = !material.HasEngineSemantic ||
+                    UseWebGpuBatchOnly && OwnsDefaultMaterial(material) &&
+                    material.EngineSemantic == EngineMaterialSemanticIdentity.UnlitColorV1;
+                bool sourceFreeSolid = HasOriginalDefaultShaders(material) && material.Textures.Count == 0 &&
+                    material.SurfaceTextureBindings.Length == 0 && ownedSolidSemantic;
+                XRTexture2D? image = UseWebGpuBatchOnly && material.Textures.Count == 1
+                    ? material.Textures[0] as XRTexture2D : null;
+                bool canonicalImage = image is not null && TryGetWebGpuImageProfile(image, out _) &&
+                    material.EngineSemantic == EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1 &&
+                    HasCanonicalImageShader(material) && HasCanonicalImageBinding(material, image);
+                return
+                    GetType() == typeof(UIMaterialComponent) &&
+                    material.HasOnlyStandardSurfaceAndUniformHandlers(_allowedBatchUniformHandlers) &&
+                    (sourceFreeSolid || canonicalImage &&
                      (BoundableTransform.GetCanvasTransform() is not { DrawSpace: not ECanvasDrawSpace.Screen } ||
-                      !image.RequiresStorageUsage || !UsesSrgbImage(material, image))) &&
-                    (!UseWebGpuBatchOnly ||
-                     material is not null &&
-                     (material.Textures.Count == 0
-                         ? !material.HasEngineSemantic && material.Shaders.Count == 0
-                         : material.EngineSemantic == EngineMaterialSemanticIdentity.UIQuadBatchedTextureV1 &&
-                           HasCanonicalImageShader(material)) &&
-                     material.Parameters.Length == 1 &&
-                     material.Parameters[0] is ShaderVector4 { Name: "MatColor" } &&
-                     UIBatchCollector.HasWebGpuRasterProfile(material.RenderOptions));
+                      !image!.RequiresStorageUsage || !UsesSrgbImage(material, image))) &&
+                    (!UseWebGpuBatchOnly || material.Textures.Count != 0 || material.Shaders.Count == 0) &&
+                    material.Parameters.Length == 1 &&
+                    material.Parameters[0] is ShaderVector4 { Name: "MatColor" } &&
+                    material.BillboardMode == EMeshBillboardMode.None &&
+                    !material.HasSettingVertexUniformHandlers &&
+                    !material.HasSettingShadowUniformHandlers &&
+                    material.BindingPublishers.Count == 0 &&
+                    material.PassSet.Passes.Length == 0 &&
+                    material.PassSet.DisabledSourcePasses.Length == 0 &&
+                    material.PassSet.SourceRenderQueue == -1 &&
+                    material.PassSet.QueuePriority == 0 &&
+                    material.PassSet.ForwardAddRenderOptions is null &&
+                    material.UberAuthoredState.Features.Length == 0 &&
+                    material.UberAuthoredState.Properties.Length == 0 &&
+                    material.RequestedUberVariant.IsEmpty &&
+                    material.TransparentTechniqueOverride is null &&
+                    UIBatchCollector.HasWebGpuRasterProfile(material.RenderOptions);
             }
         }
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
-            var tfm = BoundableTransform;
-            var worldMatrix = GetRenderCanvasMatrix(tfm);
-
-            // Read the per-instance color from the material's MatColor parameter
-            var colorParam = Material?.Parameter<ShaderVector4>("MatColor");
-            var color = colorParam?.Value ?? new Vector4(1.0f, 0.0f, 1.0f, 1.0f);
-
-            var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
-            var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
-
-            XRTexture2D? texture = UseWebGpuBatchOnly && Material?.Textures.Count == 1
-                ? Material.Textures[0] as XRTexture2D : null;
-            Vector4 uv = new(0.0f, FlipVerticalUVCoord ? 1.0f : 0.0f,
-                1.0f, FlipVerticalUVCoord ? 0.0f : 1.0f);
-            collector.AddMaterialQuad(RenderPass, RenderCommand2D.ZIndex, passes, in worldMatrix, in color, in bounds,
-                UIClipRegion.ResolveCrop(tfm, ClipToBounds),
-                texture, uv, imageSrgb: texture is not null && Material is not null && UsesSrgbImage(Material, texture));
+            UIBoundableTransform tfm = BoundableTransform;
+            UICanvasComponent? canvas = tfm.ParentCanvas?.SceneNode?.GetComponent<UICanvasComponent>();
+            if (canvas is null || !canvas.TryGetCollectingRenderRecord(RenderInfo2D.MembershipId, out UIRenderRecord record) ||
+                !record.Visible || !record.SupportsBatch)
+                return false;
+            Matrix4x4 worldMatrix = record.WorldMatrix;
+            Vector4 color = record.QuadColor;
+            Vector4 bounds = record.Bounds;
+            collector.AddMaterialQuad(record.RenderPass, record.ZIndex, passes, in worldMatrix, in color, in bounds,
+                record.Crop, record.Texture, record.UV, record.ImageSrgb, record.IsBorder,
+                record.BorderColor, record.BorderWidth);
             return true;
         }
 

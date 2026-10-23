@@ -323,6 +323,19 @@ namespace XREngine.Rendering.Vulkan
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
                             // settlement flags before profiling/telemetry scopes can unwind.
                             attempt.Submitted = true;
+                            VulkanUiPublicationReceiptLedger.InvalidateImage(
+                                _ownerRenderer, attempt.ImageIndex, attempt.OutputGeneration);
+                            if (_primaryCommandArtifactOwners is { } uiArtifactOwners &&
+                                attempt.ImageIndex < uiArtifactOwners.Length &&
+                                uiArtifactOwners[attempt.ImageIndex].PrimaryCommandBuffer.Handle ==
+                                    attempt.SceneCommandBuffer.Handle)
+                            {
+                                foreach (ulong uiReceiptId in
+                                    uiArtifactOwners[attempt.ImageIndex].RecordedUiPublicationReceipts)
+                                    _ = VulkanUiPublicationReceiptLedger.TryAttachSubmission(
+                                        uiReceiptId, attempt.ImageIndex,
+                                        attempt.OutputGeneration, attempt.FrameNumber);
+                            }
                             attempt.AcceptedFramePlan?.CommitAttestedFrameViewHistory();
                             attempt.AcceptedFramePlan?.CommitRecordedAdvancedPickingSources();
                             _gpuDiagnosticReadbackSidecar?.MarkPrimarySubmissionAccepted(

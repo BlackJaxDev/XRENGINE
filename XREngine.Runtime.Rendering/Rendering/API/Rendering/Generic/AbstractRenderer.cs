@@ -81,6 +81,97 @@ namespace XREngine.Rendering
         internal virtual bool AdvancedPickingSourceRequiresSubmissionAcceptance => false;
         private int _acceptsBackendWork = 1;
         private long _nextOutputCompletionReceiptId;
+        private static long s_nextUiPublicationReceiptId;
+        private readonly Dictionary<ulong, XRGpuFence?> _uiPublicationFallbackFences = [];
+        private readonly object _uiPublicationFallbackGate = new();
+        [ThreadStatic] private static ulong _currentUiPublicationReceiptId;
+        [ThreadStatic] private static bool _currentUiPublicationAuthoringFailed;
+        [ThreadStatic] private static string? _currentUiPublicationFailureReason;
+
+        /// <summary>The independently owned UI draw cohort on this render thread.</summary>
+        public ulong CurrentUiPublicationReceiptId => _currentUiPublicationReceiptId;
+
+        internal bool TryBeginUiPublicationReceipt(
+            UI.UIPublication publication, int expectedDrawIntents,
+            bool requiresSwapchainPresentation, out ulong receiptId)
+        {
+            ArgumentNullException.ThrowIfNull(publication);
+            if (_currentUiPublicationReceiptId != 0UL || expectedDrawIntents < 0)
+            {
+                receiptId = 0UL;
+                return false;
+            }
+            receiptId = unchecked((ulong)Interlocked.Increment(ref s_nextUiPublicationReceiptId));
+            if (receiptId == 0UL)
+                receiptId = unchecked((ulong)Interlocked.Increment(ref s_nextUiPublicationReceiptId));
+            if (!TryReserveUiPublicationReceipt(receiptId, publication,
+                    expectedDrawIntents, requiresSwapchainPresentation))
+            {
+                receiptId = 0UL;
+                return false;
+            }
+            _currentUiPublicationReceiptId = receiptId;
+            _currentUiPublicationAuthoringFailed = false;
+            _currentUiPublicationFailureReason = null;
+            return true;
+        }
+
+        internal void FailCurrentUiPublicationAuthoring(string reason)
+        {
+            if (_currentUiPublicationReceiptId == 0UL)
+                return;
+            _currentUiPublicationAuthoringFailed = true;
+            _currentUiPublicationFailureReason ??= reason;
+            OnUiPublicationAuthoringFailed(_currentUiPublicationReceiptId, reason);
+        }
+
+        internal bool CompleteUiPublicationReceipt(
+            ulong receiptId, bool succeeded, out XRGpuFence? completionFence)
+        {
+            if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
+                throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
+            bool complete = succeeded && !_currentUiPublicationAuthoringFailed;
+            string? failureReason = _currentUiPublicationFailureReason;
+            _currentUiPublicationReceiptId = 0UL;
+            _currentUiPublicationAuthoringFailed = false;
+            _currentUiPublicationFailureReason = null;
+            return CompleteUiPublicationReceiptCore(receiptId, complete, failureReason, out completionFence);
+        }
+
+        protected virtual bool TryReserveUiPublicationReceipt(
+            ulong receiptId, UI.UIPublication publication, int expectedDrawIntents,
+            bool requiresSwapchainPresentation) => true;
+        protected virtual void OnUiPublicationAuthoringFailed(ulong receiptId, string reason) { }
+        protected virtual bool CompleteUiPublicationReceiptCore(
+            ulong receiptId, bool succeeded, string? failureReason, out XRGpuFence? completionFence)
+        {
+            // Direct backends may have authored part of a failed packet. Keep
+            // their cohorts behind a fence even though input cannot advance.
+            completionFence = InsertGpuFence();
+            lock (_uiPublicationFallbackGate)
+                _uiPublicationFallbackFences[receiptId] = completionFence;
+            return succeeded && completionFence is not null;
+        }
+        public virtual bool IsUiPublicationReceiptRetired(ulong receiptId)
+        {
+            lock (_uiPublicationFallbackGate)
+            {
+                if (!_uiPublicationFallbackFences.TryGetValue(receiptId, out XRGpuFence? fence) ||
+                    fence?.Poll() != EGpuFenceStatus.Signaled)
+                    return false;
+                _uiPublicationFallbackFences.Remove(receiptId);
+                return true;
+            }
+        }
+        internal virtual bool TryAcceptPresentedUiPublicationReceipt(
+            ulong receiptId, uint imageIndex, ulong outputGeneration,
+            ulong sourceFrameId) => false;
+        internal virtual bool TryAcceptReplayedUiPublicationReceipt(
+            ulong receiptId, uint sourceImageIndex, ulong sourceOutputGeneration,
+            uint targetImageIndex, ulong targetOutputGeneration,
+            ulong sourceFrameId) => false;
+        internal virtual void InvalidatePresentedUiPublicationImage(
+            uint imageIndex, ulong outputGeneration) { }
 
         /// <summary>
         /// False after quiescing starts. Retired generations may destroy their existing

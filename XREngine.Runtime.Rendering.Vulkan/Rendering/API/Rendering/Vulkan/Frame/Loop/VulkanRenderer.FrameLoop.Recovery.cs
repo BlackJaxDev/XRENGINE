@@ -237,6 +237,9 @@ namespace XREngine.Rendering.Vulkan
                 result,
                 accepted,
                 hasValidFrameContent: false);
+            if (accepted)
+                _ownerRenderer.XRWindow.InvalidateVulkanUiPresentedImage(
+                    attempt.ImageIndex, attempt.OutputGeneration);
             Exception? policyFailure = ApplyDesktopPresentPolicy(
                 ref attempt,
                 result,

@@ -11,6 +11,12 @@ namespace XREngine.Rendering.Info
 {
     public class RenderInfo2D : RenderInfo, IQuadtreeItem, IComparable<RenderInfo2D>, IRuntimeRenderInfo2DRegistrationItem
     {
+        private static long _nextMembershipId;
+
+        /// <summary>Identifies this render record independently of mutable painter order.</summary>
+        [YamlIgnore]
+        public long MembershipId { get; } = Interlocked.Increment(ref _nextMembershipId);
+
         private IRuntimeRenderInfo2DRegistrationTarget? _registeredCanvas;
         private bool _reconcilingCanvasRegistration;
 
@@ -187,7 +193,7 @@ namespace XREngine.Rendering.Info
             else if (IndexWithinLayer < other.IndexWithinLayer)
                 return -1;
 
-            return 0;
+            return MembershipId.CompareTo(other.MembershipId);
         }
 
         protected override void RenderCullingVolume()

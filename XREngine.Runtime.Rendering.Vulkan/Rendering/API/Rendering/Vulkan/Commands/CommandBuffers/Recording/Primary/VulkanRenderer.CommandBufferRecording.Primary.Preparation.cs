@@ -151,6 +151,9 @@ namespace XREngine.Rendering.Vulkan
                 if ((operationContext.OutputCompletionReceiptId != 0UL &&
                      acceptedPlan?.IsOutputCompletionBound(
                          operationContext.OutputCompletionReceiptId) == true) ||
+                    (operationContext.UiPublicationReceiptId != 0UL &&
+                     acceptedPlan?.IsUiPublicationReceiptBound(
+                         operationContext.UiPublicationReceiptId) == true) ||
                     IsTemporalResolveProducer(header.OriginalIndex))
                 {
                     int sourceIndex = header.OriginalIndex;
@@ -212,7 +215,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.ProgressiveCommandChainAdmittedOperations = 0;
             recordingState.ProgressiveCommandChainDeferredJobs = 0;
 
-            if (recordingState.AcceptedFramePlan?.OutputCompletionCount > 0)
+            if (recordingState.AcceptedFramePlan is { } receipts &&
+                (receipts.OutputCompletionCount > 0 || receipts.UiPublicationReceiptCount > 0))
                 return;
 
             if (!recordingState.Policy.AllowsSecondaryDeferral ||
