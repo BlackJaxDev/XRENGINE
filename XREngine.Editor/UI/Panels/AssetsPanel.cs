@@ -24,6 +24,7 @@ public class AssetsPanel : NativeVirtualTextPanel
     private string _search = string.Empty;
     private UITextInputComponent? _searchInput;
     private UITextInputComponent? _nameInput;
+    private IDisposable? _folderDropTarget;
 
     public string? SelectedPath { get; private set; }
     public event Action<string>? AssetSelected;
@@ -65,6 +66,10 @@ public class AssetsPanel : NativeVirtualTextPanel
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
+        _folderDropTarget = EditorDragDropUtility.RegisterDropTarget(BoundableTransform,
+            DropFileIntoCurrentFolder,
+            payload => EditorDragDropUtility.TryGetAssetOrFilePath(payload, out string? path) &&
+                path is not null && File.Exists(path) && Directory.Exists(CurrentFolder));
         SelectedPath = NativeAssetSelection.SelectedPath;
         Engine.Assets.GameFileCreated += FileChanged;
         Engine.Assets.GameFileDeleted += FileChanged;
@@ -77,6 +82,8 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     protected override void OnComponentDeactivated()
     {
+        _folderDropTarget?.Dispose();
+        _folderDropTarget = null;
         UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
         Engine.Assets.GameFileCreated -= FileChanged;
         Engine.Assets.GameFileDeleted -= FileChanged;
@@ -235,7 +242,50 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private bool BeginAssetDrag(ulong id, UIInteractableComponent source, Vector2 point)
         => _paths.TryGetValue(id, out string? path) && File.Exists(path) &&
-           EditorDragDropUtility.BeginDrag(source, EditorDragDropUtility.CreateAssetPayload(path), point);
+           EditorDragDropUtility.BeginDrag(source,
+               string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase)
+                   ? EditorDragDropUtility.CreateAssetPayload(path)
+                   : EditorDragDropUtility.CreateFilePayload(path), point);
+
+    private bool DropFileIntoCurrentFolder(EditorDragDropUtility.DragPayload payload)
+    {
+        if (!EditorDragDropUtility.TryGetAssetOrFilePath(payload, out string? source) || source is null)
+            return false;
+        string? sourceRoot = FindAssetRoot(source);
+        if (sourceRoot is null)
+            return false;
+        try
+        {
+            string moved = NativeAssetFileMutations.MoveFileToDirectory(sourceRoot, RootFolder, source, CurrentFolder);
+            SelectedPath = moved;
+            NativeAssetSelection.Select(moved);
+            RefreshRows();
+            return true;
+        }
+        catch (Exception exception)
+        {
+            Debug.UI($"[NativeAssets] Could not move file: {exception.Message}");
+            return false;
+        }
+    }
+
+    private static string? FindAssetRoot(string path)
+    {
+        foreach (string root in new[] { Engine.Assets.GameAssetsPath, Engine.Assets.EngineAssetsPath }
+                     .OrderByDescending(value => value.Length))
+        {
+            try
+            {
+                NativeAssetPathPolicy.RequireUnderRoot(root, path, allowRoot: false);
+                return root;
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or IOException or UnauthorizedAccessException)
+            {
+                // The next registered asset root may own this path.
+            }
+        }
+        return null;
+    }
 
     private void CreateFolder()
     {

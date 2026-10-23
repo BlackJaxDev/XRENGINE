@@ -7,7 +7,7 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The branch contains bounded worker layout with shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained render storage, common controls, virtual collections, and native editor panels. Completed code accounts for 24 of the original 60 implementation items; 36 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
+The branch contains bounded worker layout with shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained render storage, common controls, virtual collections, and native editor panels. Completed code accounts for 31 of the original 60 implementation items; 29 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Exact world-space publication, full sparse render capture, composition layers, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
 
 ## Open Code Items
 
@@ -19,14 +19,9 @@ The branch contains bounded worker layout with shared immutable pages, explicit 
 
 ### Phase 4: Persistent Render Data And Clipping
 
-- [ ] Define explicit solid-quad, border, image, and text primitive contracts and a complete batch key. `UIRenderableComponent`, `UIMaterialComponent`, and `UIBatchCollector`. Done when type, shader variant, texture/atlas, sampler, blend/depth state, clip mode, render pass, and material features determine compatibility.
 - [ ] Define hierarchical clipping in render records, independent of material identity. `UIClipRegion`, `UIBatchCollector`, and render backends. Done when nested regions clip consistently through batched rectangles or a documented scissor fallback on OpenGL and Vulkan.
-- [ ] Give batchable primitives stable generation-checked handles and register/unregister them on activation changes. `UIRenderableComponent` and related components. Done when normal frames do not rediscover membership and stale handles cannot draw removed elements.
-- [ ] Store primitive records in persistent pools and replace per-frame clear/re-add collection. `UIBatchCollector`. Done when unchanged UI performs no logical batch rebuild.
-- [ ] Keep stable instance slots and coalesce dirty upload ranges in OpenGL and Vulkan UI backends. Done when only changed ranges upload and buffer growth does not republish unused capacity during ordinary frames.
+- [ ] Keep stable instance slots and coalesce dirty upload ranges in OpenGL and Vulkan UI backends. Done when create/update/remove operations touch only affected records, only changed ranges upload, and buffer growth does not republish unused capacity during ordinary frames.
 - [ ] Preserve reusable backend command buffers for compatible static UI layers. Done when dynamic overlays do not invalidate static chrome.
-- [ ] Publish glyph payloads by text-layout revision and use owned or pooled contiguous storage. `UITextComponent`, `UIText`, and `UIBatchCollector`. Done when unchanged text performs no glyph-list copy and color/transform/outline changes do not rebuild glyph geometry.
-- [ ] Add stable text slots and reusable glyph ranges. Done when editing one text run does not repack unrelated text; atlas identity remains part of batch compatibility.
 - [ ] Cache shaping/layout results by all glyph-placement inputs. Done when unchanged text with matching font/fallback, locale/direction, features, wrap, line policy, and DPI reuses layout.
 - [ ] Avoid adding 3D render records for UI items that no 3D camera can draw. `UIRenderableComponent` and canvas integration. Preserve the decision whether world-space UI may cast shadows for owner review. Done when screen-space, inactive, and offscreen canvases do not pollute 3D collection, draw-space changes restore valid visibility, and a test covers transitions.
 - [ ] Use shared solid, border, image, and text shaders with immutable material prototypes. Done when common controls do not create one shader/material per control and per-control values stay in instance records.
@@ -38,16 +33,11 @@ The branch contains bounded worker layout with shared immutable pages, explicit 
 
 - [ ] Define identity-safe focus, selection, capture, rename, and drag behavior for recycled rows. Done when interaction cannot transfer to a different item after scrolling or removal.
 - [ ] Add a virtual tree on the list using cached visible ranges. Done when expansion, insert, remove, move, rename, activation, selection, and section headers do not rebuild the full data set. Add sticky headers only if required by a concrete control.
-- [ ] Add typed retained bindings and shared control state. Runtime controls and `NativeUIElements`. Done when callback lifetime is explicit and reflection is limited to cached editor adapters.
 - [ ] Complete first-milestone buttons, checkboxes, radio groups, dropdowns, range sliders, color selectors, numeric inputs, and scroll regions. Done when keyboard, focus, state, commit/cancel, clipping, and binding contracts work.
 - [ ] Complete text selection, grapheme-aware navigation, caret hit testing, undo/redo, and platform IME composition. `UITextInputComponent`, text layout, and input integration. Done when edits preserve text identity during layout changes and IME candidate bounds use the presented generation.
 - [ ] Define accessibility semantics and platform adapter boundaries. Done when roles, labels, values, actions, focus order, and virtual realization have contracts and unsupported adapters report limits.
 - [ ] Make focus traversal, gamepad navigation, clipping, visibility, disabled state, and input blocking consistent. Done when nested-control navigation and shared-state behavior pass tests.
 - [ ] Deactivate child subtrees and unregister callbacks during teardown. Done when render, input, watcher, audio, and streaming listeners do not outlive their owners.
-
-### Phase 6: First-Milestone Fixture
-
-- [ ] Validate 100,000 and 1,000,000 logical list items with bounded realization. Done when realized rows stay within viewport capacity plus overscan and focus stays on the correct item.
 
 ### Phase 7: Editor Adoption
 

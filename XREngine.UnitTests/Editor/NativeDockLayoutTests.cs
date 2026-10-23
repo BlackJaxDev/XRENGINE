@@ -58,4 +58,94 @@ public class NativeDockLayoutTests
             Assert.That(layout.ConsoleFilter, Is.EqualTo("warning"));
         });
     }
+
+    [Test]
+    public void LegacyLayout_MigratesToVersionedTreeWithoutLosingPanelState()
+    {
+        NativeDockLayout legacy = new()
+        {
+            OpenMask = (1 << 0) | (1 << 2),
+            SelectedTab = 2,
+            TabOrder = [2, 0, 3, 1],
+            BottomSize = 360,
+        };
+
+        NativeDockTree tree = legacy.Sanitize().DockTree!;
+        string[] open = tree.Stacks().SelectMany(stack => stack.Tabs).ToArray();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tree.Version, Is.EqualTo(NativeDockTree.CurrentVersion));
+            Assert.That(open, Does.Contain(NativeDockPanel.Hierarchy));
+            Assert.That(open, Does.Contain(NativeDockPanel.Scene));
+            Assert.That(open, Does.Contain(NativeDockPanel.Inspector));
+            Assert.That(open, Does.Contain(NativeDockPanel.Profiler));
+            Assert.That(tree.ClosedPanels, Does.Contain(NativeDockPanel.Console));
+            Assert.That(tree.Root.Second!.First!.FixedSize, Is.EqualTo(360));
+        });
+    }
+
+    [Test]
+    public void DockTree_MoveSplitCloseReopenAndResizePreserveUniquePanelIdentity()
+    {
+        NativeDockTree tree = new NativeDockLayout().Sanitize().DockTree!;
+        NativeDockNode scene = tree.Stacks().Single(stack => stack.Tabs.Contains(NativeDockPanel.Scene));
+        NativeDockNode hierarchy = tree.Stacks().Single(stack => stack.Tabs.Contains(NativeDockPanel.Hierarchy));
+
+        Assert.That(tree.Move(NativeDockPanel.Console, scene.Id, 0), Is.True);
+        Assert.That(tree.SplitPanel(NativeDockPanel.Profiler, hierarchy.Id, vertical: true, before: true), Is.True);
+        Assert.That(tree.Close(NativeDockPanel.Assets), Is.True);
+        Assert.That(tree.Reopen(NativeDockPanel.Assets, hierarchy.Id), Is.True);
+        Assert.That(tree.Resize(tree.Root.Id, 420), Is.True);
+        tree.Sanitize();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tree.Stacks().SelectMany(stack => stack.Tabs).Count(), Is.EqualTo(NativeDockPanel.All.Length));
+            Assert.That(tree.Stacks().SelectMany(stack => stack.Tabs).Distinct().Count(), Is.EqualTo(NativeDockPanel.All.Length));
+            Assert.That(tree.Root.FixedSize, Is.EqualTo(420));
+        });
+    }
+
+    [Test]
+    public void DockTree_RepeatedSplitMovesCollapseEmptyBranches()
+    {
+        NativeDockTree tree = new NativeDockLayout().Sanitize().DockTree!;
+        string sceneId = tree.Stacks().Single(stack => stack.Tabs.Contains(NativeDockPanel.Scene)).Id;
+
+        for (int index = 0; index < 200; index++)
+            Assert.That(tree.SplitPanel(NativeDockPanel.Assets, sceneId, vertical: index % 2 == 0,
+                before: index % 2 == 0), Is.True);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(tree.Stacks().Count(), Is.LessThanOrEqualTo(5));
+            Assert.That(tree.Sanitize().Stacks().SelectMany(stack => stack.Tabs)
+                .Count(panel => panel == NativeDockPanel.Assets), Is.EqualTo(1));
+        });
+    }
+
+    [Test]
+    public void DockTree_NullCollectionsRepairAndIncompleteSplitFallsBack()
+    {
+        NativeDockTree nullCollections = new()
+        {
+            ClosedPanels = null!,
+            Root = new NativeDockNode { Id = null!, Tabs = null! },
+        };
+        Assert.DoesNotThrow(() => nullCollections.Sanitize());
+        Assert.That(nullCollections.Root.Id, Is.Not.Empty);
+        Assert.That(nullCollections.ClosedPanels.Count, Is.EqualTo(NativeDockPanel.All.Length));
+
+        NativeDockLayout malformed = new()
+        {
+            DockTree = new NativeDockTree
+            {
+                Root = new NativeDockNode { First = new NativeDockNode(), Second = null },
+            },
+        };
+        Assert.DoesNotThrow(() => malformed.Sanitize());
+        Assert.That(malformed.DockTree!.Stacks().SelectMany(stack => stack.Tabs),
+            Does.Contain(NativeDockPanel.Scene));
+    }
 }

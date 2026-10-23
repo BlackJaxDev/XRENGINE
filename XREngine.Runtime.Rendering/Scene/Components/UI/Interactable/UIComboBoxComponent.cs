@@ -34,17 +34,14 @@ namespace XREngine.Rendering.UI
             if (!CanInteract || IsReadOnly || !float.IsFinite(direction.Y) ||
                 MathF.Abs(direction.Y) <= MathF.Abs(direction.X))
                 return false;
-            SelectAdjacent(direction.Y > 0 ? 1 : -1);
-            return true;
+            return SelectAdjacent(direction.Y > 0 ? 1 : -1);
         }
         public override bool AccessibilityActivate() => Open();
         public override bool AccessibilityAdjust(int direction)
         {
             if (direction == 0 || !CanInteract || IsReadOnly)
                 return false;
-            ulong? previous = SelectedId;
-            SelectAdjacent(Math.Sign(direction));
-            return previous != SelectedId;
+            return SelectAdjacent(Math.Sign(direction));
         }
         public override string? AccessibilityValue
         {
@@ -286,16 +283,17 @@ namespace XREngine.Rendering.UI
                 SelectAdjacent(-1);
         }
 
-        private void SelectAdjacent(int direction)
+        private bool SelectAdjacent(int direction)
         {
             if (!CanInteract || IsReadOnly || _virtualOptions is null && _options.Length == 0)
-                return;
+                return false;
+            ulong? previous = SelectedId;
             int index = -1;
             if (_virtualOptions is not null)
             {
                 int count = _virtualOptions.Count;
                 if (count == 0)
-                    return;
+                    return false;
                 index = _selectedId is { } id ? _virtualOptions.IndexOfId(id) : -1;
                 if (index < 0 && direction < 0)
                     index = 0;
@@ -306,10 +304,10 @@ namespace XREngine.Rendering.UI
                     if (option.IsEnabled)
                     {
                         Select(option.Id, EUIValueChangeOrigin.User);
-                        return;
+                        return previous != SelectedId;
                     }
                 }
-                return;
+                return false;
             }
             for (int i = 0; i < _options.Length; i++)
                 if (_options[i].Id == _selectedId)
@@ -322,9 +320,10 @@ namespace XREngine.Rendering.UI
                 if (_options[candidate].IsEnabled)
                 {
                     Select(_options[candidate].Id, EUIValueChangeOrigin.User);
-                    return;
+                    return previous != SelectedId;
                 }
             }
+            return false;
         }
 
         private sealed class VirtualOptionAdapter(UIComboBoxComponent owner, IUIComboOptionSource source) : IVirtualListProvider

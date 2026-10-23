@@ -1,3 +1,4 @@
+using System.Numerics;
 using XREngine.Input.Devices;
 using XREngine.Input;
 
@@ -16,6 +17,16 @@ public class UIRadioButtonComponent : UIButtonComponent
 
     public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.RadioButton;
     public override string? AccessibilityValue => IsSelected ? "Selected" : "Not selected";
+    public override bool AccessibilityAdjust(int direction)
+        => direction != 0 && (_group?.SelectAdjacent(this, Math.Sign(direction)) ?? false);
+    public override bool TryConsumeFocusDirection(Vector2 direction)
+    {
+        if (!CanInteract || IsReadOnly || !float.IsFinite(direction.X) || !float.IsFinite(direction.Y) ||
+            direction == Vector2.Zero)
+            return false;
+        float axis = MathF.Abs(direction.X) >= MathF.Abs(direction.Y) ? direction.X : -direction.Y;
+        return _group?.SelectAdjacent(this, Math.Sign(axis)) ?? false;
+    }
 
     public ulong OptionId
     {

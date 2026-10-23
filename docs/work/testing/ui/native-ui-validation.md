@@ -13,14 +13,16 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current checkpoint source passes the headless and editor builds with zero
-warnings and errors through `Tools/Invoke-AgentBuild.ps1`. All **310 of 310**
-headless tests pass, with no failures or skips. The final run took 7.482 seconds.
-Coverage includes shared glyph-resource ownership, dirty glyph writes, desktop
-image eligibility, indexed virtual-row focus through a presented packet, binding
-teardown, legacy layout entry points, and warmed idle/transition allocations.
+warnings and errors through `Tools/Invoke-AgentBuild.ps1`. All **328 of 328**
+headless tests pass, with no failures or skips. The final run took 8.389 seconds.
+Coverage includes standalone text ownership and font-thread transitions, stable
+primitive registration, registered gamepad/popup routing, binding re-entry,
+100,000/1,000,000-item presented focus, file mutation bounds, and dock-tree state.
+The matching editor build passed in 2m49.10s; the headless build took 1m11.89s.
 
-The editor build compiles Windows targets on Linux. The earlier matching desktop
-test-project build passed, but its Undo regression did not execute: NUnit rejects
+The editor build compiles Windows targets on Linux. The matching desktop
+test-project build, including new shaping tests, passed with zero warnings/errors
+in 49.52s. Desktop tests did not execute: prior NUnit discovery rejects
 the assembly with "Only supported on Windows7.0". The new inspector component
 mutations compile; their Windows live Undo workflow remains pending. Do not
 bypass the assembly platform check or count a zero-test exit as a pass.

@@ -129,3 +129,38 @@ final headless build passed with zero warnings/errors in 15.16s. All **310 tests
 passed**, with no skips, in 7.482s. These results cover the exact source in this
 checkpoint. No Windows execution, shader execution, visual, GPU upload, native
 IME, or performance comparison result is claimed.
+
+## Primitive Ownership, Standalone Text, And Control Lifetime
+
+This checkpoint closes seven more original code items: admitted primitive batch
+contracts, activation-owned handles, unchanged persistent run reuse, revision-owned
+glyph payloads for both text paths, stable glyph ranges, typed retained bindings,
+and the 100,000/1,000,000-item realization and presented-focus fixture. The total
+is **31 of 60 implementation items**. The TODO retains 29 code items and four
+owner decisions. Complete sparse updates, world publication, composition layers,
+full text shaping, and editor parity remain open.
+
+- Primitive slots separate current registration from historical packet identity.
+  Locking and stale-unregister tests cover owner/collector transitions.
+- Standalone text uses immutable metrics and the shared layout kernel. Font
+  callbacks only mark dirtiness; the render/preparation owner applies it under
+  the draw gate. Math label teardown releases font observers. A focused review
+  found no remaining high-priority issue in those repaired paths.
+- Popup teardown, radio binding re-entry, directional scroll, and presented radio
+  focus use retained lifetime checks. Registered-input tests cover popup scope
+  and gamepad slider routing.
+- Large-list tests use 100,000 and 1,000,000 logical items. Each keeps at most 57
+  realized rows for an 800-pixel viewport, 20-pixel rows, and overscan eight.
+  Old packets cannot focus recycled rows; new packets focus the requested ID.
+- Asset file mutations validate root and linked-path boundaries during Undo/Redo.
+  Component drops use the editor mutation path. The new dock-tree model is tested,
+  but live docking integration remains open.
+- An optional HarfBuzz backend returns glyph IDs and clusters from owned font
+  bytes. It does not yet replace the production rune-layout path. Render-command
+  publication claims are also groundwork, not completed world-space publication.
+
+The matching headless build passed with zero warnings/errors in 1m11.89s.
+All **328 tests passed**, with no skips, in 8.389s. The matching editor build
+passed with zero warnings/errors in 2m49.10s. Desktop-only shaping tests require
+Windows execution; their compilation result is recorded in the validation doc.
+No Windows execution, GPU, visual, native IME, or ImGui comparison pass is claimed.

@@ -74,7 +74,7 @@ public partial class HierarchyPanel
 
         EditorDragDropUtility.RegisterDropTarget(list,
             HandleVirtualRootDrop,
-            payload => EditorDragDropUtility.IsSceneNodePayload(payload) || EditorDragDropUtility.IsAssetPathPayload(payload),
+            payload => EditorDragDropUtility.IsSceneNodePayload(payload) || EditorDragDropUtility.TryGetAssetOrFilePath(payload, out _),
             hovering => menuMat.SetBatchSolidColor(hovering ? RootDropHighlight : Vector4.Zero));
 
         CreateVirtualScrollbar(parentNode);
@@ -336,7 +336,7 @@ public partial class HierarchyPanel
 
     private bool HandleVirtualNodeDrop(SceneNode target, EditorDragDropUtility.DragPayload payload)
     {
-        if (EditorDragDropUtility.TryGetAssetPath(payload, out string? assetPath) &&
+        if (EditorDragDropUtility.TryGetAssetOrFilePath(payload, out string? assetPath) &&
             !string.IsNullOrWhiteSpace(assetPath))
             return TryGetActiveWorld() is { } assetWorld &&
                 TryHandleDroppedSpawnableAsset(assetWorld, target, assetPath);
@@ -496,7 +496,7 @@ public partial class HierarchyPanel
             rowTransform,
             payload => state.Node is not null && HandleVirtualNodeDrop(state.Node, payload),
             payload => state.Node is not null &&
-                (CanAcceptNodeDrop(state.Node, payload) || EditorDragDropUtility.IsAssetPathPayload(payload)),
+                (CanAcceptNodeDrop(state.Node, payload) || EditorDragDropUtility.TryGetAssetOrFilePath(payload, out _)),
             hovering => background.SetBatchSolidColor(hovering ? DropTargetHighlight : Vector4.Zero));
         return rowTransform;
     }

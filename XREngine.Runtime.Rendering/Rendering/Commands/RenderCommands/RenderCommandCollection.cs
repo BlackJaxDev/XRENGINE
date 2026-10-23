@@ -361,6 +361,7 @@ namespace XREngine.Rendering.Commands
                         _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", ERenderGraphPassStage.Graphics);
                 }
             }
+            DrainRetiredUiPublicationClaims();
         }
 
         /// <summary>
@@ -377,6 +378,8 @@ namespace XREngine.Rendering.Commands
 
             foreach (ICollection<RenderCommand> pass in _renderingPasses.Values)
                 pass.Clear();
+            RetireUiPublicationClaimsNoLock(_updatingUiPublicationCommands);
+            RetireUiPublicationClaimsNoLock(_renderingUiPublicationCommands);
 
             ClearSwapQueueNoLock(_updatingSwapQueue, _updatingSwapQueueMembership);
             ClearSwapQueueNoLock(_renderingSwapQueue, _renderingSwapQueueMembership);
@@ -523,6 +526,26 @@ namespace XREngine.Rendering.Commands
 
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
+        private HashSet<XREngine.Rendering.UI.UIPublication> _updatingUiPublicationCommands =
+            new(ReferenceEqualityComparer.Instance);
+        private HashSet<XREngine.Rendering.UI.UIPublication> _renderingUiPublicationCommands =
+            new(ReferenceEqualityComparer.Instance);
+        private readonly System.Collections.Concurrent.ConcurrentQueue<XREngine.Rendering.UI.UIPublication>
+            _retiredUiPublicationClaims = new();
+
+        private void RetireUiPublicationClaimsNoLock(
+            HashSet<XREngine.Rendering.UI.UIPublication> claims)
+        {
+            foreach (XREngine.Rendering.UI.UIPublication publication in claims)
+                _retiredUiPublicationClaims.Enqueue(publication);
+            claims.Clear();
+        }
+
+        private void DrainRetiredUiPublicationClaims()
+        {
+            while (_retiredUiPublicationClaims.TryDequeue(out XREngine.Rendering.UI.UIPublication? publication))
+                publication.Release();
+        }
         private readonly Dictionary<int, int> _renderingPassCommandCounts = [];
         private readonly Dictionary<int, int> _renderingPassMeshCommandCounts = [];
         private readonly Dictionary<int, ulong> _renderingPassCommandSetSignatures = [];
@@ -863,6 +886,7 @@ namespace XREngine.Rendering.Commands
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
                 ClearPipelineTransitionPublicationsNoLock();
             }
+            DrainRetiredUiPublicationClaims();
         }
 
         /// <summary>Releases a completed one-shot output's canonical scene pin.
@@ -993,7 +1017,12 @@ namespace XREngine.Rendering.Commands
                 }
                 int afterCount = set.Count;
                 if (afterCount > beforeCount)
+                {
+                    if (item is XREngine.Rendering.UI.IUiPublicationRenderCommand uiCommand &&
+                        _updatingUiPublicationCommands.Add(uiCommand.Publication))
+                        uiCommand.Publication.Retain();
                     ObserveMeshOrderInsertionNoLock(item, camera, pass, sortOrderKey, sortBounds, fallbackPosition, sortPriority);
+                }
                 ++_numCommandsRecentlyAddedToUpdate;
                 _updatingRevision++;
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
@@ -2576,6 +2605,7 @@ namespace XREngine.Rendering.Commands
             {
                 foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
                     pass.Clear();
+                RetireUiPublicationClaimsNoLock(_updatingUiPublicationCommands);
                 ClearSwapQueueNoLock(_updatingSwapQueue, _updatingSwapQueueMembership);
                 CancelCollectedResourcesNoLock();
                 if (_updatingPassSortOrderCounters.Count > 0)
@@ -2586,6 +2616,7 @@ namespace XREngine.Rendering.Commands
                 _updatingBackendReadyPackage.Reset();
                 ResetMeshOrderCollectionNoLock();
             }
+            DrainRetiredUiPublicationClaims();
         }
 
         public void SwapBuffers()
@@ -2608,6 +2639,8 @@ namespace XREngine.Rendering.Commands
                     PrepareBackendReadyFramePackageNoLock();
 
                 (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
+                (_updatingUiPublicationCommands, _renderingUiPublicationCommands) =
+                    (_renderingUiPublicationCommands, _updatingUiPublicationCommands);
                 SwapCollectedResourcesNoLock();
                 (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
                 (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
@@ -2691,6 +2724,7 @@ namespace XREngine.Rendering.Commands
                 {
                     foreach (var pass in _updatingPasses.Values)
                         pass.Clear();
+                    RetireUiPublicationClaimsNoLock(_updatingUiPublicationCommands);
                 }
 
                 // The collection lock excludes AddCPU while existing values are reset. Replacing
@@ -2706,6 +2740,7 @@ namespace XREngine.Rendering.Commands
                 _updatingBackendReadyPackage.Reset();
                 ResetMeshOrderCollectionNoLock();
             }
+            DrainRetiredUiPublicationClaims();
         }
 
         private void PublishRenderingCommandCountsNoLock(BackendReadyFramePackage package)

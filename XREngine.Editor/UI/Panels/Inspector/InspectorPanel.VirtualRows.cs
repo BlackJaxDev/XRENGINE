@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Reflection;
+using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Editor.UI;
@@ -19,6 +20,7 @@ public partial class InspectorPanel
         public required UITextComponent DetailLabel;
         public readonly Dictionary<Type, SceneNode> PrimitiveEditors = [];
         public PropertyInfo? Property;
+        public IDisposable? DropTarget;
     }
 
     private sealed class PropertyProvider : IUIVirtualTableSource<PropertyInfo>, IVirtualListItemIndex
@@ -86,9 +88,15 @@ public partial class InspectorPanel
         commands.ItemAlignment = EListAlignment.TopOrLeft;
         commands.ItemSpacing = 2;
         CreateComponentCommands(toolbar);
-        SceneNode body = root.NewChild();
-        body.SetTransform<UIBoundableTransform>().MaxAnchor = Vector2.One;
-        SceneNode scrollNode = body.NewChild();
+        SceneNode body = root.NewChildWithTransform(out UIDualSplitTransform componentSplit, "InspectorBody");
+        componentSplit.VerticalSplit = false;
+        componentSplit.FirstFixedSize = true;
+        componentSplit.FixedSize = 0;
+        componentSplit.SplitterSize = 0;
+        _componentSplit = componentSplit;
+        SceneNode componentPane = body.NewChildWithTransform<UIBoundableTransform>(out _, "ComponentListPane");
+        SceneNode propertyPane = body.NewChildWithTransform<UIBoundableTransform>(out _, "PropertyPane");
+        SceneNode scrollNode = propertyPane.NewChild();
         UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
         scroll.MinAnchor = Vector2.Zero;
         scroll.MaxAnchor = Vector2.One;
@@ -117,7 +125,7 @@ public partial class InspectorPanel
         list.VirtualProvider = _virtualPropertyGrid;
         _virtualPropertyList = list;
 
-        SceneNode detailNode = body.NewChild();
+        SceneNode detailNode = propertyPane.NewChild();
         UIScrollableTransform detail = detailNode.SetTransform<UIScrollableTransform>();
         detail.MinAnchor = Vector2.Zero;
         detail.MaxAnchor = Vector2.One;
@@ -134,7 +142,7 @@ public partial class InspectorPanel
         backLabel.VerticalAlignment = EVerticalAlignment.Center;
         backButton.InteractAction += _ => HideDetailEditor();
         _detailTransform = detail;
-        CreateComponentViews(body);
+        CreateComponentViews(componentPane, propertyPane);
         RefreshVirtualProperties();
     }
 
@@ -183,7 +191,35 @@ public partial class InspectorPanel
     private void BindPropertyRow(UIBoundableTransform row, PropertyInfo property, object?[]? targets)
     {
         PropertyRow state = _propertyRows[row];
+        state.DropTarget?.Dispose();
+        state.DropTarget = null;
         state.Property = property;
+        if (typeof(XRComponent).IsAssignableFrom(property.PropertyType) && targets is { Length: > 0 } &&
+            property.SetMethod?.IsPublic == true)
+        {
+            object?[] boundTargets = targets;
+            state.DropTarget = EditorDragDropUtility.RegisterDropTarget(row,
+                payload =>
+                {
+                    if (!ReferenceEquals(state.Property, property) ||
+                        !EditorDragDropUtility.TryGetComponent(payload, out XRComponent? component) || component is null ||
+                        !property.PropertyType.IsInstanceOfType(component))
+                        return false;
+                    try
+                    {
+                        new EditorPropertyAccess(property, boundTargets).SetValue(component);
+                        return true;
+                    }
+                    catch (Exception exception)
+                    {
+                        Debug.LogException(exception, $"Failed to set component reference '{property.Name}'.");
+                        return false;
+                    }
+                },
+                payload => ReferenceEquals(state.Property, property) &&
+                    EditorDragDropUtility.TryGetComponent(payload, out XRComponent? component) &&
+                    component is not null && property.PropertyType.IsInstanceOfType(component));
+        }
         TypeCode typeCode = Type.GetTypeCode(property.PropertyType);
         bool isString = property.PropertyType == typeof(string);
         bool primitive = !isString && typeCode is not (TypeCode.Object or TypeCode.DateTime or TypeCode.Empty or TypeCode.DBNull);
@@ -207,6 +243,8 @@ public partial class InspectorPanel
     private void UnbindPropertyRow(UIBoundableTransform row)
     {
         PropertyRow state = _propertyRows[row];
+        state.DropTarget?.Dispose();
+        state.DropTarget = null;
         state.Property = null;
         foreach (SceneNode editor in state.PrimitiveEditors.Values)
         {
@@ -333,6 +371,8 @@ public partial class InspectorPanel
         HideDetailEditor();
         if (_virtualPropertyList is not null)
             _virtualPropertyList.VirtualProvider = null;
+        foreach (PropertyRow row in _propertyRows.Values)
+            row.DropTarget?.Dispose();
         _propertyRows.Clear();
         _virtualPropertyProvider = null;
         _virtualPropertyGrid = null;

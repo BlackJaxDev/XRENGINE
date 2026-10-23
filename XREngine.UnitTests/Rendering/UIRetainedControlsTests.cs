@@ -152,6 +152,34 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void RadioBinding_ReentrantReplacementKeepsReplacementSelection()
+    {
+        UIValueState<ulong?> original = new(7);
+        UIValueState<ulong?> replacement = new(9);
+        using UIRadioGroupState group = new() { Binding = original };
+        original.ValueChanged += _ => group.Binding = replacement;
+
+        group.RemoveOption(7);
+
+        group.Binding.ShouldBeSameAs(replacement);
+        group.SelectedId.ShouldBe(9UL);
+        original.Value.ShouldBeNull();
+    }
+
+    [Test]
+    public void RadioBinding_ReentrantDisposalDoesNotResumeCommit()
+    {
+        UIValueState<ulong?> state = new(7);
+        using UIRadioGroupState group = new() { Binding = state };
+        state.ValueChanged += _ => group.Dispose();
+
+        group.RemoveOption(7);
+
+        group.Binding.ShouldBeNull();
+        group.SelectedId.ShouldBe(7UL);
+    }
+
+    [Test]
     public void TextCaret_NeverStopsInsideCombiningOrEmojiCluster()
     {
         var input = new UITextInputComponent { Text = "A\U0001F1FA\U0001F1F8e\u0301\U0001F469\u200d\U0001F680B" };

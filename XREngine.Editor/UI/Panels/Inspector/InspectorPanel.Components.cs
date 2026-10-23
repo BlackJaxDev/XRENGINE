@@ -14,6 +14,7 @@ public partial class InspectorPanel
     private readonly NativeTableRows<NativeComponentType> _componentTypes = new();
     private readonly Dictionary<XRComponent, ulong> _componentIds = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ulong, (SceneNode Node, XRComponent Component)> _componentsById = [];
+    private readonly Dictionary<UIVirtualTableRowComponent, Vector2> _componentDragStarts = [];
     private readonly Dictionary<Type, ulong> _componentTypeIds = [];
     private readonly Dictionary<ulong, Type> _componentTypesById = [];
     private ulong _nextComponentId;
@@ -21,12 +22,14 @@ public partial class InspectorPanel
     private string _componentSearch = string.Empty;
     private UIScrollableTransform? _componentListView;
     private UIScrollableTransform? _componentPickerView;
+    private UIDualSplitTransform? _componentSplit;
     private UIListTransform? _componentList;
     private UIListTransform? _componentPicker;
     private UIVirtualTableProvider<XRComponent>? _componentTable;
     private UIVirtualTableProvider<NativeComponentType>? _componentTypeTable;
     private ulong _componentGeneration;
     private UITextComponent? _componentStatusLabel;
+    private SceneNode? _observedComponentNode;
 
     private void CreateComponentCommands(SceneNode toolbar)
     {
@@ -54,17 +57,19 @@ public partial class InspectorPanel
         _componentStatusLabel = status;
     }
 
-    private void CreateComponentViews(SceneNode body)
+    private void CreateComponentViews(SceneNode componentPane, SceneNode propertyPane)
     {
-        (_componentListView, _componentList) = CreateModeList(body, "Components");
+        (_componentListView, _componentList) = CreateModeList(componentPane, "Components");
         _componentTable = new UIVirtualTableProvider<XRComponent>(_componentRows,
-            UIVirtualTableColumn<XRComponent>.Text("component", "Component", 400,
+            UIVirtualTableColumn<XRComponent>.Text("component", "Component", 165,
                 component => component.Name ?? component.GetType().Name));
         _componentTable.AccessibleRowName = component => component.Name ?? component.GetType().Name;
         _componentTable.Activated += InspectComponent;
+        _componentTable.RowPointerMoved += DragComponentPointerMoved;
+        _componentTable.RowPointerLeft += source => _componentDragStarts.Remove(source);
         _componentList.VirtualProvider = _componentTable;
 
-        (_componentPickerView, _componentPicker) = CreateModeList(body, "AddComponent");
+        (_componentPickerView, _componentPicker) = CreateModeList(propertyPane, "AddComponent");
         _componentTypeTable = new UIVirtualTableProvider<NativeComponentType>(_componentTypes,
             UIVirtualTableColumn<NativeComponentType>.Text("name", "Component", 230, item => item.Name),
             UIVirtualTableColumn<NativeComponentType>.Text("namespace", "Namespace", 300, item => item.Namespace));
@@ -98,6 +103,7 @@ public partial class InspectorPanel
     {
         if (InspectedObjects is { Length: > 0 } targets && targets.All(target => target is SceneNode))
             _componentTargets = targets.Cast<SceneNode>().ToArray();
+        ObserveComponentNode(_componentTargets.Length == 1 ? _componentTargets[0] : null);
         if (_componentList is null)
             return;
         List<(ulong Id, XRComponent Item)> rows = [];
@@ -125,6 +131,26 @@ public partial class InspectorPanel
             _componentTable.SelectedId = null;
     }
 
+    private void ObserveComponentNode(SceneNode? node)
+    {
+        if (ReferenceEquals(_observedComponentNode, node))
+            return;
+        if (_observedComponentNode is not null)
+        {
+            _observedComponentNode.ComponentAdded -= ComponentListChanged;
+            _observedComponentNode.ComponentRemoved -= ComponentListChanged;
+        }
+        _observedComponentNode = node;
+        if (node is not null)
+        {
+            node.ComponentAdded += ComponentListChanged;
+            node.ComponentRemoved += ComponentListChanged;
+        }
+    }
+
+    private void ComponentListChanged((SceneNode node, XRComponent comp) _)
+        => RefreshComponentViews();
+
     private void RefreshComponentTypes()
     {
         if (_componentPicker is null)
@@ -149,6 +175,27 @@ public partial class InspectorPanel
             return;
         _inspectorView = InspectorView.Properties;
         InspectedObjects = [entry.Component];
+    }
+
+    private void DragComponentPointerMoved(ulong id, UIVirtualTableRowComponent source, Vector2 localPoint)
+    {
+        if (!EditorDragDropUtility.IsLeftMouseButtonHeldFor(source))
+        {
+            _componentDragStarts.Remove(source);
+            return;
+        }
+        Vector2 point = source.BoundableTransform.LocalToCanvas(localPoint);
+        if (!_componentDragStarts.TryGetValue(source, out Vector2 start))
+        {
+            _componentDragStarts[source] = point;
+            return;
+        }
+        if (Vector2.Distance(point, start) < EditorDragDropUtility.DefaultActivationDistance ||
+            !_componentsById.TryGetValue(id, out var entry) || entry.Component.IsDestroyed)
+            return;
+        if (EditorDragDropUtility.BeginDrag(source,
+            EditorDragDropUtility.CreateComponentPayload(entry.Component), point))
+            _componentDragStarts[source] = point;
     }
 
     private void ShowSceneProperties()
@@ -177,13 +224,15 @@ public partial class InspectorPanel
     {
         if (_propertyScroll is null)
             return;
+        if (_componentSplit is not null)
+            _componentSplit.FixedSize = _componentTargets.Length > 0 ? 170 : 0;
         _propertyScroll.Visibility = _inspectorView == InspectorView.Properties && _detailProperty is null
             ? EVisibility.Visible : EVisibility.Collapsed;
         if (_detailTransform is not null)
             _detailTransform.Visibility = _inspectorView == InspectorView.Properties && _detailProperty is not null
                 ? EVisibility.Visible : EVisibility.Collapsed;
         if (_componentListView is not null)
-            _componentListView.Visibility = _inspectorView == InspectorView.Components
+            _componentListView.Visibility = _componentTargets.Length > 0
                 ? EVisibility.Visible : EVisibility.Collapsed;
         if (_componentPickerView is not null)
             _componentPickerView.Visibility = _inspectorView == InspectorView.AddComponent
@@ -227,18 +276,21 @@ public partial class InspectorPanel
     private void ReleaseComponentViews()
     {
         _componentGeneration++;
+        ObserveComponentNode(null);
         if (_componentList is not null)
             _componentList.VirtualProvider = null;
         if (_componentPicker is not null)
             _componentPicker.VirtualProvider = null;
         _componentListView = null;
         _componentPickerView = null;
+        _componentSplit = null;
         _componentList = null;
         _componentPicker = null;
         _componentTable = null;
         _componentTypeTable = null;
         _componentStatusLabel = null;
         _componentsById.Clear();
+        _componentDragStarts.Clear();
         _componentTypesById.Clear();
     }
 }

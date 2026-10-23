@@ -76,12 +76,18 @@ public sealed class UIRadioGroupState : IDisposable
         int index = _buttons.IndexOf(current);
         if (index < 0 || direction == 0)
             return false;
+        IUICanvasInputSource? input = current.UserInterfaceCanvas?.GetInputComponent();
         for (int offset = 1; offset < _buttons.Count; offset++)
         {
             int candidate = (index + (direction > 0 ? offset : _buttons.Count - offset)) % _buttons.Count;
             UIRadioButtonComponent button = _buttons[candidate];
-            if (button.CanInteract && !button.IsReadOnly)
-                return Select(button.OptionId);
+            if (!button.CanInteract || button.IsReadOnly ||
+                input is not null && !input.TryFocusPresented(button))
+                continue;
+            if (Select(button.OptionId) && SelectedId == button.OptionId)
+                return true;
+            if (input is not null)
+                input.TryFocusPresented(current);
         }
         return false;
     }
@@ -94,19 +100,26 @@ public sealed class UIRadioGroupState : IDisposable
 
     private void SetSelected(ulong? id, EUIValueChangeOrigin origin)
     {
-        if (_binding is not null && origin != EUIValueChangeOrigin.Binding)
+        if (_disposed)
+            return;
+        IUIValueBinding<ulong?>? binding = _binding;
+        if (binding is not null && origin != EUIValueChangeOrigin.Binding)
         {
             _writingBinding = true;
-            try { _binding.SetValue(id); }
+            try { binding.SetValue(id); }
             finally { _writingBinding = false; }
-            id = _binding.Value;
+            if (_disposed || !ReferenceEquals(_binding, binding))
+                return;
+            id = binding.Value;
         }
         if (_selectedId == id)
             return;
         ulong? previous = _selectedId;
         _selectedId = id;
-        for (int i = 0; i < _buttons.Count; i++)
-            _buttons[i].IsSelected = _buttons[i].OptionId == id;
+        UIRadioButtonComponent[] buttons = [.. _buttons];
+        for (int i = 0; i < buttons.Length; i++)
+            if (ReferenceEquals(buttons[i].Group, this) && _buttons.Contains(buttons[i]))
+                buttons[i].IsSelected = buttons[i].OptionId == id;
         SelectionChanged?.Invoke(new(previous, id, origin));
     }
 
@@ -118,8 +131,9 @@ public sealed class UIRadioGroupState : IDisposable
         if (_binding is not null)
             _binding.ValueChanged -= OnBindingChanged;
         _binding = null;
-        for (int i = 0; i < _buttons.Count; i++)
-            _buttons[i].IsSelected = false;
+        UIRadioButtonComponent[] buttons = [.. _buttons];
         _buttons.Clear();
+        for (int i = 0; i < buttons.Length; i++)
+            buttons[i].IsSelected = false;
     }
 }

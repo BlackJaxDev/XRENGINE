@@ -17,6 +17,9 @@ public static class EditorDragDropUtility
     public const float DefaultActivationDistance = 8.0f;
     public const string SceneNodePayloadType = "SceneNode";
     public const string AssetPathPayloadType = "AssetPath";
+    public const string FilePathPayloadType = "FilePath";
+    public const string ComponentPayloadType = "Component";
+    private const string EditorPayloadPrefix = "Editor:";
 
     private static UICanvasInputComponent? _inputComponent;
     private static readonly Dictionary<UICanvasInputComponent, DragSession> _sessions = [];
@@ -65,6 +68,39 @@ public static class EditorDragDropUtility
 
         path = null;
         return false;
+    }
+
+    public static DragPayload CreateFilePayload(string path)
+        => new(FilePathPayloadType, Path.GetFullPath(path));
+
+    public static bool TryGetFilePath(in DragPayload payload, out string? path)
+    {
+        path = payload.TypeId == FilePathPayloadType ? payload.Data as string : null;
+        return path is not null;
+    }
+
+    public static bool TryGetAssetOrFilePath(in DragPayload payload, out string? path)
+        => TryGetAssetPath(payload, out path) || TryGetFilePath(payload, out path);
+
+    public static DragPayload CreateComponentPayload(XRComponent component)
+        => new(ComponentPayloadType, component);
+
+    public static bool TryGetComponent(in DragPayload payload, out XRComponent? component)
+    {
+        component = payload.TypeId == ComponentPayloadType ? payload.Data as XRComponent : null;
+        return component is { IsDestroyed: false };
+    }
+
+    public static DragPayload CreateEditorPayload<T>(string key, T value) where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        return new(EditorPayloadPrefix + key, value);
+    }
+
+    public static bool TryGetEditorPayload<T>(in DragPayload payload, string key, out T? value) where T : class
+    {
+        value = payload.TypeId == EditorPayloadPrefix + key ? payload.Data as T : null;
+        return value is not null;
     }
 
     public static bool TryGetActivePayload(out DragPayload payload)
