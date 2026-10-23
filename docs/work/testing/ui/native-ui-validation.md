@@ -17,10 +17,12 @@ remain open. See [the current contract](../../../architecture/ui/04-Change-Track
 | Runtime rendering and input integration builds | Passed, zero warnings and errors, through `Tools/Invoke-AgentBuild.ps1`, `build`, `--no-restore`. | Uses the installed environment dependencies. |
 | Headless test build | Passed, zero warnings and errors, through the build wrapper with `--no-restore`. | Final source state compiled on Linux/.NET 10. |
 | Journal and transform contract tests | Passed: 23/23, zero warnings, failures, or skipped tests. | Deterministic headless runtime checks, including child-index replacement. |
-| Full headless regression suite | Passed: 167/167 with one test worker, zero warnings, failures, or skipped tests. Repeated after editor restore against the same final test binary. | Covers the tests linked by the existing headless project; not the full Windows test project. |
+| Full headless regression suite | Passed: 167/167 with one test worker, zero warnings, failures, or skipped tests. Repeated after the editor targeting fix against the unchanged headless test binary. | Covers the tests linked by the existing headless project; not the full Windows test project. |
 | Declared editor NuGet restore | Passed through the build wrapper. | No tracked package declarations or lockfiles changed. No separate native dependency or Windows workload installation was performed. |
 | Pinned submodule initialization | Passed for OpenVR.NET and OscCore. Both submodules and their engine adapters compiled. | Exact tracked gitlink commits were used. No submodule bumps or declarations changed. |
-| Full editor build after prerequisite recovery | Blocked: `NETSDK1073` in `XREngine.Runtime.Bootstrap`: `Microsoft.WindowsDesktop.App.WindowsForms` was not recognized. Final build: 0 warnings, 1 error. | Linux SDK/framework-reference blocker. No Windows workload installation or framework override was attempted. The editor did not finish compilation; the small `NativeUIElements` edits have static review only. |
+| Bootstrap Windows cross-compilation on Linux | Passed with the saved `EnableWindowsTargeting` setting: 0 warnings, 0 errors. | The complete project graph built through the wrapper with `--no-restore`. Target remains `net10.0-windows7.0`. |
+| Editor managed Windows-target compilation on Linux | Passed through the wrapper with `--no-restore`: 0 warnings, 0 errors. | Includes the `NativeUIElements` changes. No source exclusions. Does not establish Linux execution or Windows runtime behavior. |
+| Windows target and dependency checks | Both projects evaluate to `net10.0-windows7.0`, platform `Windows`, targeting enabled; an explicit false override remains false. NAudio versions and the Windows Forms reference are unchanged. | Editor runtime configuration still requires `Microsoft.WindowsDesktop.App`. This is a compile check, not a deployment package. |
 | Windows editor, OpenGL/Vulkan, visual input, GPU uploads, performance comparison | Not run. | This environment provides headless Linux validation. No live visual or speed result is claimed. |
 
 Final verification ran on 2026-10-23. Normal editor restore resolved the initial
@@ -36,10 +38,15 @@ Those commands were scoped to these two existing paths:
 After initialization, `restore XREngine.Editor/XREngine.Editor.csproj` and
 `build XREngine.Editor/XREngine.Editor.csproj --no-restore` ran through
 `Tools/Invoke-AgentBuild.ps1`. OpenVR.NET, OscCore, `XREngine.Runtime.XR.OpenVR`,
-and `XREngine.Runtime.Net.Osc` compiled. The final editor build stopped at the
-Windows Forms framework reference in `XREngine.Runtime.Bootstrap`. This platform
-prerequisite remains unresolved. No installer, credential change, native build
-setup, or dependency declaration change was used to bypass it.
+and `XREngine.Runtime.Net.Osc` compiled. That editor attempt then stopped at the
+Windows Forms framework reference in `XREngine.Runtime.Bootstrap`. The source was
+the Windows dependency group of NAudio 2.3.0, not editor Forms controls.
+Bootstrap and the editor now set `EnableWindowsTargeting` when unspecified, so
+normal restore resolves the existing desktop reference pack on Linux. No source,
+package, or Windows API was removed. See the
+[Windows targeting investigation](../../investigations/platform/linux-windows-desktop-targeting.md)
+for the dependency chain, scope, and checks. No Windows workload, native library,
+credential change, or dependency version change was needed.
 
 The first contract run found a lazy-construction error: an optional constructor
 argument did not provide the parameterless constructor required by the default
@@ -80,7 +87,7 @@ Architecture: [UI architecture](../../../architecture/ui/01-Architecture.md)
 
 | Check | Procedure | Expected | Status | Last evidence |
 |---|---|---|---|---|
-| Build editor after layout changes. | Use the [agent build workflow](../../../developer-guides/ai/agent-editor-workflows.md#build-run-debug) for `XREngine.Editor`. | The editor builds without new warnings. | Planned | none |
+| Build editor after layout changes. | Use the [agent build workflow](../../../developer-guides/ai/agent-editor-workflows.md#build-run-debug) for `XREngine.Editor`. | The editor builds without new warnings. | Passed: managed Windows-target compilation on Linux | 2026-10-23; zero warnings/errors. Windows execution remains open. |
 | Check unchanged layout frames. | Run a native UI scene with no input or visual changes and inspect layout counters or profiler scopes. | No measure or arrange traversal runs for unchanged canvases. | Planned | none |
 | Check local layout invalidation. | Change one leaf size, one visual-only property, and one scrolling offset in focused scenarios. | Size changes visit only required branches. Visual-only changes do not run layout. Scrolling does not traverse unrelated branches. | Planned | none |
 | Check construction transactions. | Build hierarchy, inspector, menus, and docking layouts while a transaction is active. | Construction publishes one coalesced layout update. | Planned | none |
