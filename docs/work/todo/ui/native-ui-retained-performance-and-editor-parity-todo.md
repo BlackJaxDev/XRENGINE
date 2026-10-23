@@ -1,30 +1,38 @@
 # Native UI Retained Performance And Editor Parity TODO
 
-Last Updated: 2026-10-06
+Last Updated: 2026-10-23
 Status: Active
-Architecture: [UI architecture](../../../architecture/ui/README.md)  Design: [Native hierarchy porting plan](../../design/ui/native-hierarchy-porting-plan.md)
+Architecture: [UI architecture](../../../architecture/ui/README.md)  Design: [Native UI retained rendering design](../../design/ui/native-ui-retained-rendering-design.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
-The native UI uses `UILayoutSystem`, `UICanvasInputComponent`, `UIBatchCollector`, `UITextComponent`, and editor panels under `XREngine.Editor/UI`. Code verification shows that `InvalidateCanvasLayout` still invalidates descendants, `UIBoundableTransform.GetMaxChildWidth` and `GetMaxChildHeight` still use LINQ, `UICanvasInputComponent` still lacks input and hit-region generations, `UIBatchCollector` still rebuilds batch data and logs `FpsTextDiag` paths, `HierarchyPanel` still uses `RemakeChildren`, `Transform.Clear`, a 2,000 row limit, and debug-log-only asset drops, and `UIGridChildPlacementInfo` still throws `NotImplementedException`.
+The native UI uses `UILayoutSystem`, `UICanvasInputComponent`, `UIBatchCollector`, `UITextComponent`, and editor panels under `XREngine.Editor/UI`. Code verification shows that `InvalidateCanvasLayout` still invalidates descendants, `UIBoundableTransform.GetMaxChildWidth` and `GetMaxChildHeight` still use LINQ, `UICanvasInputComponent` has pointer-contact generations and reusable filter scratch but lacks a coherent layout/render/hit publication generation, `UIBatchCollector` still rebuilds batch data and logs `FpsTextDiag` paths, `HierarchyPanel` still uses `RemakeChildren`, `Transform.Clear`, a 2,000 row limit, and debug-log-only asset drops, and `UIGridChildPlacementInfo` still throws `NotImplementedException`.
 
 ## Open Code Items
+
+### Asynchronous Layout And Publication
+- [ ] Add stable element incarnations and immutable versioned layout snapshots. `UILayoutSystem`, `UICanvasTransform`, and UI transform classes. Done when workers read only captured layout values and dependency revisions, with no live scene-tree or callback access.
+- [ ] Extract one pure incremental measure/arrange kernel with dependency-keyed caches. `UILayoutSystem` and layout transforms. Done when worker execution and a diagnostic serial oracle use the same algorithm and produce equal deterministic output.
+- [ ] Bound and coalesce layout work by canvas and dirty root. UI layout scheduling. Done when each canvas has at most one running task and one coalesced pending input, with global worker and retained-memory caps.
+- [ ] Reject stale results by lifetime, element incarnation, and layout dependencies. UI layout publication. Done when unrelated visual changes do not discard valid layout and overlapping stale results cannot update current state.
+- [ ] Publish render records, layout, clip data, and hit data as one generation. `UICanvasComponent`, `UICanvasInputComponent`, and `UIBatchCollector`. Done when input uses the presented generation and no consumer observes a partial result.
+- [ ] Retain snapshot pages, glyph payloads, and render ranges until all readers finish. UI lifecycle and renderer integration. Done when cancellation, reparenting, removal, canvas teardown, and frames in flight cannot reuse live storage.
 
 ### Layout Invalidation
 - [ ] Introduce explicit dirtiness for measure, arrange, transform, and canvas-bounds changes. `UILayoutSystem`, `UICanvasTransform`, and `UITransform`. Done when ordinary child property changes do not invalidate the full canvas.
 - [ ] Track dirty layout roots per canvas. `UILayoutSystem`. Done when layout visits only required measure ancestors and affected arrange branches.
 - [ ] Limit full descendant invalidation to canvas-bounds, DPI, scale, or equivalent global changes. `UILayoutSystem.InvalidateCanvasLayout`. Done when scrolling and visual-only changes do not schedule full descendant invalidation.
-- [ ] Add a scoped layout mutation transaction. `UICanvasTransform` and `UILayoutSystem`. Done when nested transactions coalesce panel, menu, hierarchy, inspector, and docking construction into one layout publication.
-- [ ] Remove direct forced layout calls from panel rebuild paths. `XREngine.Editor/UI`. Done when transaction completion guarantees valid layout before publication.
+- [ ] Add a scoped layout mutation transaction. `UICanvasTransform` and `UILayoutSystem`. Done when nested transactions coalesce authored changes into one snapshot request and publish a complete result asynchronously.
+- [ ] Remove direct forced layout calls from panel rebuild paths. `XREngine.Editor/UI`. Done when transaction completion schedules layout and only validated complete results can publish.
 - [ ] Replace LINQ in `UIBoundableTransform.GetMaxChildWidth` and `GetMaxChildHeight`. `UIBoundableTransform`. Done when these methods use allocation-free loops.
 - [ ] Audit layout hot paths for captured delegates, boxing, temporary arrays, string formatting, and non-struct enumerators. UI transform classes. Done when steady-state layout paths allocate zero managed bytes.
 - [ ] Remove active `OnResizeChildComponents` layout paths after measure and arrange own all behavior. UI transform classes. Done when no active override drives normal layout.
-- [ ] Reassess or remove the async layout coroutine. UI layout classes. Done when synchronous incremental layout is the canonical path and no competing algorithm remains.
+- [ ] Replace the live-tree layout coroutine with immutable worker execution. UI layout classes. Done when asynchronous incremental layout is the production path and no competing live-tree or synchronous fallback algorithm remains.
 
 ### Input And Hit Testing
 - [ ] Replace intersection-set transition work with an allocation-free identity diff. `UICanvasInputComponent`. Done when pointer movement performs no managed allocation and enter/leave transitions stay correct.
 - [ ] Confirm `RenderInfo2D` identity equality and ordering semantics. `UICanvasInputComponent` and render records. Done when membership checks cannot lose items because mutable render-order fields changed.
-- [ ] Replace blocker filtering temporary lists with reusable or in-place filtering. `UICanvasInputComponent`. Done when input blocking allocates no managed memory in steady state.
+- [ ] Bound capacity growth in the existing reusable blocker-filter scratch and generation-based hit path. `UICanvasInputComponent`. Done when input blocking allocates no managed memory after warm-up at the declared capacity.
 - [ ] Track pointer and UI hit-region generations. `UICanvasInputComponent` and `RenderInfo2D`. Done when idle pointer frames reuse the previous hit result.
 - [ ] Increment UI hit-region generation only for visibility, eligibility, clip, painter order, transform, or bounds changes. UI render and input integration. Done when decorative or visual-only updates do not rebuild hit state.
 - [ ] Avoid hit testing non-interactive decorative primitives unless they block input. UI components. Done when hit tests skip decoration by default.
@@ -83,6 +91,13 @@ The native UI uses `UILayoutSystem`, `UICanvasInputComponent`, `UIBatchCollector
 - [ ] Replace default per-panel grab-pass blur with batched flat or gradient primitives. Editor panel styling. Done when backdrop blur is opt-in.
 - [ ] Share blur captures by canvas or composition layer when blur is enabled. UI composition. Done when compatible panels reuse one capture and blur result.
 - [ ] Group static chrome, scrolling content, and high-frequency overlays into independently invalidated composition layers. Editor UI composition. Done when FPS counters, carets, hover, and selection do not invalidate static chrome.
+
+### First Milestone Controls
+- [ ] Add typed retained value bindings and shared control state. Runtime UI controls and `NativeUIElements`. Done when binding callbacks have explicit lifetime and reflection is confined to cached editor adapters.
+- [ ] Complete buttons, checkboxes, radio groups, dropdowns, range sliders, color selectors, numeric inputs, and scroll regions. Runtime UI controls. Done when each supports the state, keyboard, commit/cancel, and binding contracts in the design.
+- [ ] Add text selection, grapheme-aware navigation, caret hit testing, undo/redo, and platform IME composition contracts. `UITextInputComponent`, text layout, and input integration. Done when edits retain text identity across asynchronous layout and candidate-window bounds use the presented generation.
+- [ ] Add stable accessibility semantics and platform adapter boundaries. Runtime UI controls and input integration. Done when roles, labels, values, actions, focus order, and virtual-item realization have explicit contracts and unsupported adapters report their limits.
+- [ ] Add an opt-in FPS, common-control gallery, and large-list fixture with UI counters. Unit-world UI construction and native UI runtime. Done when the fixture uses the production canvas/text/batch path without changing the default editor.
 
 ### Editor Controls And Panels
 - [ ] Complete single-line and multiline text input. `UITextInputComponent`. Done when selection, clipboard, navigation, submit, cancel, and IME-safe composition work.
