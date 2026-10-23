@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using XREngine.Rendering.UI.State;
 using System.Drawing;
 using System.Numerics;
 using XREngine.Components;
@@ -346,6 +347,8 @@ namespace XREngine.Rendering.UI
 
         public void SetBlendModeAllDrawBuffers(BlendMode? blendMode)
         {
+            if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual | UIChangeDomain.Topology);
             _renderParameters.BlendModeAllDrawBuffers = blendMode;
             if (Material is not null)
             {

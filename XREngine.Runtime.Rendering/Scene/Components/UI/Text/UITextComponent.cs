@@ -1,4 +1,5 @@
 using System;
+using XREngine.Rendering.UI.State;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -438,6 +439,20 @@ namespace XREngine.Rendering.UI
         #endregion
 
         #region Property Change Handling
+
+        protected override UIChangeDomain GetUIChangeDomain(string? propertyName)
+            => propertyName switch
+            {
+                nameof(Text) or nameof(Font) or nameof(FontSize) or nameof(WrapMode) or
+                nameof(HorizontalAlignment) or nameof(VerticalAlignment) or nameof(OutlineAffectsSpacing) =>
+                    UIChangeDomain.Text | UIChangeDomain.Measure | UIChangeDomain.Arrange | UIChangeDomain.Visual,
+                nameof(OutlineThickness) when OutlineAffectsSpacing =>
+                    UIChangeDomain.Text | UIChangeDomain.Measure | UIChangeDomain.Arrange | UIChangeDomain.Visual,
+                nameof(GlyphRelativeTransforms) or nameof(AnimatableTransforms) => UIChangeDomain.Text | UIChangeDomain.Visual,
+                nameof(NonVertexShadersOverride) or nameof(DisableBatching) => UIChangeDomain.Visual | UIChangeDomain.Topology,
+                nameof(HideOverflow) => UIChangeDomain.Clip | UIChangeDomain.HitTest,
+                _ => base.GetUIChangeDomain(propertyName),
+            };
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
@@ -933,7 +948,11 @@ namespace XREngine.Rendering.UI
         /// This will update the transforms buffer with the new values.
         /// </summary>
         public void MarkGlyphTransformsChanged()
-            => _dataChanged = true;
+        {
+            if (SceneNode is not null)
+                UITransform.RecordUIChange(UIChangeDomain.Text | UIChangeDomain.Visual);
+            _dataChanged = true;
+        }
 
         #endregion
 
@@ -950,6 +969,8 @@ namespace XREngine.Rendering.UI
             (Vector4 transform, Vector4 uvs)[] glyphsCopy;
             using (_glyphLock.EnterScope())
                 glyphsCopy = [.. _glyphs];
+            UIRuntimeCounters.Add(UIWorkCounter.GlyphCopies);
+            UIRuntimeCounters.Add(UIWorkCounter.GlyphsCopied, glyphsCopy.Length);
 
             if (IsFpsTextDiagnosticTarget() && _fpsTextWriteDiagCount++ < 40)
             {

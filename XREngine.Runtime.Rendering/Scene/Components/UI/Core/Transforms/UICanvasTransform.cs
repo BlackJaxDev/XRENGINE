@@ -1,4 +1,7 @@
 using System.Collections;
+using System.ComponentModel;
+using XREngine.Rendering.UI.State;
+using YamlDotNet.Serialization;
 using System.Numerics;
 using System.Threading;
 using XREngine.Data.Core;
@@ -10,6 +13,16 @@ namespace XREngine.Rendering.UI
     [XRTransformEditor("XREngine.Editor.TransformEditors.UICanvasTransformEditor")]
     public class UICanvasTransform : UIBoundableTransform
     {
+        private UIChangeJournal? _changeJournal;
+
+        /// <summary>Owns bounded mutation records. Records contain values, not live tree references.</summary>
+        [RuntimeOnly, YamlIgnore, Browsable(false)]
+        public UIChangeJournal ChangeJournal => LazyInitializer.EnsureInitialized(ref _changeJournal, static () => new UIChangeJournal());
+
+        /// <summary>Coalesces mutations on this canvas owner. Does not run or publish layout.</summary>
+        public IDisposable BeginMutationTransaction()
+            => (GetMutationCanvas() ?? this).ChangeJournal.BeginTransaction();
+
         public event Action<UICanvasTransform>? LayoutingStarted;
         public event Action<UICanvasTransform>? LayoutingFinished;
 
@@ -101,8 +114,7 @@ namespace XREngine.Rendering.UI
 
         public override void InvalidateLayout()
         {
-            base.InvalidateLayout();
-            UILayoutSystem.InvalidateCanvasLayout(this);
+            UILayoutSystem.InvalidateLayout(this);
         }
 
         /// <summary>
@@ -188,6 +200,7 @@ namespace XREngine.Rendering.UI
             switch (propName)
             {
                 case nameof(CameraSpaceCamera):
+                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
                     AttachCameraSpaceCameraListener();
                     // Force immediate recalculation for Camera space so bounds are correct for octree
                     if (DrawSpace == ECanvasDrawSpace.Camera)
@@ -196,6 +209,7 @@ namespace XREngine.Rendering.UI
                         MarkWorldModified();
                     break;
                 case nameof(DrawSpace):
+                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest | UIChangeDomain.Topology);
                     // Force immediate recalculation when switching to Camera/World space
                     if (DrawSpace != ECanvasDrawSpace.Screen)
                         RecalculateMatrices(true, false);
@@ -203,6 +217,7 @@ namespace XREngine.Rendering.UI
                         MarkWorldModified();
                     break;
                 case nameof(CameraDrawSpaceDistance):
+                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
                     // Force immediate recalculation for Camera space
                     if (DrawSpace == ECanvasDrawSpace.Camera)
                         RecalculateMatrices(true, false);

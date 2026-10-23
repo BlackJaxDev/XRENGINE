@@ -1,3 +1,4 @@
+using XREngine.Rendering.UI.State;
 using XREngine.Data.Colors;
 using XREngine.Scene;
 
@@ -43,7 +44,11 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentActivated();
 
-            var bg = BackgroundMaterialComponent?.Material;
+            var component = BackgroundMaterialComponent;
+            var bg = component?.Material;
+            if (bg is not null && component!.SceneNode is not null &&
+                !component.SceneNode.IsTransformNull && component.Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
             bg?.SetVector4(BackgroundColorUniformName, DefaultBackgroundColor);
 
             var text = TextComponent;
@@ -160,7 +165,11 @@ namespace XREngine.Rendering.UI
 
         private void SetBackgroundHighlighted()
         {
-            var bg = BackgroundMaterialComponent?.Material;
+            var component = BackgroundMaterialComponent;
+            var bg = component?.Material;
+            if (bg is not null && component!.SceneNode is not null &&
+                !component.SceneNode.IsTransformNull && component.Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
             bg?.SetVector4(BackgroundColorUniformName, HighlightBackgroundColor);
         }
 
@@ -173,7 +182,11 @@ namespace XREngine.Rendering.UI
 
         private void SetBackgroundDefault()
         {
-            var bg = BackgroundMaterialComponent?.Material;
+            var component = BackgroundMaterialComponent;
+            var bg = component?.Material;
+            if (bg is not null && component!.SceneNode is not null &&
+                !component.SceneNode.IsTransformNull && component.Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Visual);
             bg?.SetVector4(BackgroundColorUniformName, DefaultBackgroundColor);
         }
     }

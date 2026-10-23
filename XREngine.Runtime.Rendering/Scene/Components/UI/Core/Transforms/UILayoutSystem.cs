@@ -1,4 +1,5 @@
 using System.Collections;
+using XREngine.Rendering.UI.State;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine;
@@ -48,7 +49,7 @@ namespace XREngine.Rendering.UI
             using (RuntimeEngine.Profiler.Start("UpdateCanvasLayout.GetRootCanvasBounds"))
                 bounds = canvas.GetRootCanvasBounds();
 
-            LogUI($"Canvas UpdateLayout: bounds={bounds.Translation} size={bounds.Extents}");
+            if (EnableDebugLogging) LogUI($"Canvas UpdateLayout: bounds={bounds.Translation} size={bounds.Extents}");
 
             // Phase 1: Measure (bottom-up, can skip unchanged subtrees)
             using (RuntimeEngine.Profiler.Start("UpdateCanvasLayout.MeasureTransform"))
@@ -67,8 +68,8 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void InvalidateCanvasLayout(UICanvasTransform canvas)
         {
-            canvas.IncrementLayoutVersionInternal();
-            canvas.SetLayoutInvalidated(true);
+            InvalidateLocal(canvas, true);
+            UIRuntimeCounters.Add(UIWorkCounter.GlobalInvalidations);
 
             // When the canvas layout is invalidated (e.g., size change), we must also
             // invalidate all children so they recalculate positions based on anchors.
@@ -101,50 +102,39 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void InvalidateLayout(UITransform transform)
         {
-            transform.IncrementLayoutVersionInternal();
-            if (transform.ParentCanvas != null && transform.ParentCanvas != transform)
-                transform.ParentCanvas.InvalidateLayout();
-            // NOTE: MarkLocalModified is NOT called here. Layout invalidation marks
-            // the layout as dirty (version-based) but does not dirty the matrix.
-            // The matrix is only marked dirty during the arrange phase when
-            // actual positions change (via OnResizeActual → MarkLocalModified).
-            // Properties that directly affect the matrix (Scale, DepthTranslation)
-            // call MarkLocalModified explicitly in OnPropertyChanged.
+            InvalidateLocal(transform, true);
             transform.RaiseLayoutInvalidated();
         }
 
-        /// <summary>
-        /// Invalidates only the measure phase.
-        /// </summary>
+        /// <summary>Invalidates measure dependencies without scanning descendants.</summary>
         public static void InvalidateMeasure(UITransform transform)
-        {
-            transform.IncrementLayoutVersionInternal();
+            => InvalidateLocal(transform, true);
 
-            // Propagate measure invalidation up for auto-sizing parents
-            if (transform.Parent is UIBoundableTransform parentBoundable && parentBoundable.UsesAutoSizing)
-                InvalidateMeasure(parentBoundable);
-
-            // Invalidate layout on the parent canvas, or on ourselves if we ARE the root canvas
-            if (transform.ParentCanvas != null && transform.ParentCanvas != transform)
-                transform.ParentCanvas.InvalidateLayout();
-            else if (transform is UICanvasTransform canvasSelf)
-                canvasSelf.InvalidateLayout();
-        }
-
-        /// <summary>
-        /// Invalidates only the arrange phase.
-        /// </summary>
+        /// <summary>Invalidates arrange dependencies while retaining measured sizes.</summary>
         public static void InvalidateArrange(UITransform transform)
-        {
-            // Only increment if we haven't already invalidated measure
-            if (!transform.NeedsMeasure)
-                transform.IncrementLayoutVersionInternal();
+            => InvalidateLocal(transform, false);
 
-            // Invalidate layout on the parent canvas, or on ourselves if we ARE the root canvas
-            if (transform.ParentCanvas != null && transform.ParentCanvas != transform)
-                transform.ParentCanvas.InvalidateLayout();
-            else if (transform is UICanvasTransform canvasSelf)
-                canvasSelf.InvalidateLayout();
+        private static void InvalidateLocal(UITransform transform, bool measure)
+        {
+            transform.RecordUIChange((measure ? UIChangeDomain.Measure : UIChangeDomain.None) |
+                UIChangeDomain.Arrange | UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
+            // The current layout entry walks through ancestor cache guards. Keep that path
+            // dirty, but retain all unrelated descendant caches. Worker scheduling consumes
+            // the journal later; no snapshot or descendant scan is needed at mutation time.
+            for (TransformBase? current = transform; current is not null; current = current.Parent)
+            {
+                if (current is not UITransform ui)
+                    continue;
+                if (measure)
+                    ui.IncrementLayoutVersionInternal();
+                else
+                    ui.IncrementArrangeVersionInternal();
+                if (!ReferenceEquals(ui, transform))
+                    UIRuntimeCounters.Add(UIWorkCounter.AncestorsInvalidated);
+                if (ui is UICanvasTransform canvas)
+                    canvas.SetLayoutInvalidated(true);
+            }
+            transform.GetMutationCanvas()?.SetLayoutInvalidated(true);
         }
 
         #endregion
@@ -160,13 +150,17 @@ namespace XREngine.Rendering.UI
             if (transform is UIBoundableTransform boundable)
                 return MeasureBoundable(boundable, availableSize);
 
-            // Skip if already measured with same constraints
+            UIRuntimeCounters.Add(UIWorkCounter.MeasureVisits);
+            // Skip if already measured with same constraints.
             if (!transform.NeedsMeasure && XRMath.VectorsEqual(transform.LastMeasureConstraint, availableSize))
+            {
+                UIRuntimeCounters.Add(UIWorkCounter.MeasureCacheHits);
                 return transform.DesiredSize;
+            }
 
             using var profiler = RuntimeEngine.Profiler.Start();
 
-            LogUI($"Measure UITransform: {transform.GetType().Name} available={availableSize}");
+            if (EnableDebugLogging) LogUI($"Measure UITransform: {transform.GetType().Name} available={availableSize}");
 
             transform.SetLastMeasureConstraint(availableSize);
 
@@ -175,7 +169,7 @@ namespace XREngine.Rendering.UI
             transform.SetDesiredSize(childrenSize);
 
             transform.SetLastMeasuredVersion();
-            LogUI($"  -> desired={childrenSize}");
+            if (EnableDebugLogging) LogUI($"  -> desired={childrenSize}");
             return childrenSize;
         }
 
@@ -184,6 +178,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static Vector2 MeasureBoundable(UIBoundableTransform transform, Vector2 availableSize)
         {
+            UIRuntimeCounters.Add(UIWorkCounter.MeasureVisits);
             if (transform.IsCollapsed)
             {
                 transform.SetDesiredSize(Vector2.Zero);
@@ -193,11 +188,14 @@ namespace XREngine.Rendering.UI
 
             // Skip if already measured with same constraints and not dirty
             if (!transform.NeedsMeasure && XRMath.VectorsEqual(transform.LastMeasureConstraint, availableSize))
+            {
+                UIRuntimeCounters.Add(UIWorkCounter.MeasureCacheHits);
                 return transform.DesiredSize;
+            }
 
             using var profiler = RuntimeEngine.Profiler.Start();
 
-            LogUI($"Measure UIBoundableTransform: {transform.GetType().Name} available={availableSize}");
+            if (EnableDebugLogging) LogUI($"Measure UIBoundableTransform: {transform.GetType().Name} available={availableSize}");
 
             transform.SetLastMeasureConstraint(availableSize);
 
@@ -254,7 +252,7 @@ namespace XREngine.Rendering.UI
             transform.SetDesiredSize(desiredSize);
             transform.SetLastMeasuredVersion();
 
-            LogUI($"  -> desired={desiredSize}");
+            if (EnableDebugLogging) LogUI($"  -> desired={desiredSize}");
             return desiredSize;
         }
 
@@ -316,13 +314,17 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
+            UIRuntimeCounters.Add(UIWorkCounter.ArrangeVisits);
             // Skip if already arranged with same bounds
             if (!transform.NeedsArrange && transform.LastArrangeBounds.Equals(finalBounds))
+            {
+                UIRuntimeCounters.Add(UIWorkCounter.ArrangeCacheHits);
                 return;
+            }
 
             using var profiler = RuntimeEngine.Profiler.Start();
 
-            LogUI($"Arrange UITransform: {transform.GetType().Name} bounds={finalBounds.Translation} size={finalBounds.Extents}");
+            if (EnableDebugLogging) LogUI($"Arrange UITransform: {transform.GetType().Name} bounds={finalBounds.Translation} size={finalBounds.Extents}");
 
             transform.SetLastArrangeBounds(finalBounds);
             transform.OnResizeActualInternal(finalBounds);
@@ -337,13 +339,17 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void ArrangeBoundable(UIBoundableTransform transform, BoundingRectangleF finalBounds)
         {
+            UIRuntimeCounters.Add(UIWorkCounter.ArrangeVisits);
             // Skip if already arranged with same bounds and not dirty
             if (!transform.NeedsArrange && transform.LastArrangeBounds.Equals(finalBounds))
+            {
+                UIRuntimeCounters.Add(UIWorkCounter.ArrangeCacheHits);
                 return;
+            }
 
             using var profiler = RuntimeEngine.Profiler.Start();
 
-            LogUI($"Arrange UIBoundableTransform: {transform.GetType().Name} bounds={finalBounds.Translation} size={finalBounds.Extents}");
+            if (EnableDebugLogging) LogUI($"Arrange UIBoundableTransform: {transform.GetType().Name} bounds={finalBounds.Translation} size={finalBounds.Extents}");
 
             transform.SetLastArrangeBounds(finalBounds);
             
@@ -358,7 +364,7 @@ namespace XREngine.Rendering.UI
 
             // Get actual bounds for children
             var actualBounds = transform.GetActualBounds();
-            LogUI($"  -> actual pos={actualBounds.Translation} size={actualBounds.Extents}");
+            if (EnableDebugLogging) LogUI($"  -> actual pos={actualBounds.Translation} size={actualBounds.Extents}");
 
             // Arrange children - calls the virtual method which can be overridden
             transform.InvokeArrangeChildren(actualBounds);
@@ -505,8 +511,8 @@ namespace XREngine.Rendering.UI
 
             bottomLeftTranslation = new(minX + marginX, minY + marginY);
 
-            LogUI($"  GetActualBounds: anchors minX={minX} minY={minY} maxX={maxX} maxY={maxY} sameX={sameX} sameY={sameY}");
-            LogUI($"    -> bottomLeft={bottomLeftTranslation} size={size}");
+            if (EnableDebugLogging) LogUI($"  GetActualBounds: anchors minX={minX} minY={minY} maxX={maxX} maxY={maxY} sameX={sameX} sameY={sameY}");
+            if (EnableDebugLogging) LogUI($"    -> bottomLeft={bottomLeftTranslation} size={size}");
         }
 
         #endregion

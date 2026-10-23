@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Rendering.UI.State;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
@@ -242,6 +243,9 @@ namespace XREngine.Rendering.UI
             get => RenderCommand3D.RenderPass;
             set
             {
+                if (RenderCommand3D.RenderPass == value && RenderCommand2D.RenderPass == value)
+                    return;
+                RecordRenderTopologyChange();
                 RenderCommand3D.RenderPass = value;
                 RenderCommand2D.RenderPass = value;
             }
@@ -257,12 +261,21 @@ namespace XREngine.Rendering.UI
             get => RenderCommand3D.Mesh;
             set
             {
+                if (ReferenceEquals(RenderCommand3D.Mesh, value) && ReferenceEquals(RenderCommand2D.Mesh, value))
+                    return;
+                RecordRenderTopologyChange();
                 RenderCommand3D.Mesh = value;
                 RenderCommand2D.Mesh = value;
 
                 if (_material != value?.Material)
                     Material = value?.Material;
             }
+        }
+
+        private void RecordRenderTopologyChange()
+        {
+            if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                transform.RecordUIChange(UIChangeDomain.Topology | UIChangeDomain.Visual | UIChangeDomain.HitTest);
         }
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)

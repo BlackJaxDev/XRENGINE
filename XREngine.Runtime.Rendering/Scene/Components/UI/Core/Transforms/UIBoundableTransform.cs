@@ -1,3 +1,4 @@
+using XREngine.Rendering.UI.State;
 using XREngine.Extensions;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -171,6 +172,19 @@ namespace XREngine.Rendering.UI
                 case nameof(MaxHeight):
                 case nameof(MaxWidth):
                 case nameof(NormalizedPivot):
+                case nameof(CalcAutoHeightCallback):
+                case nameof(CalcAutoWidthCallback):
+                    InvalidateMeasure();
+                    break;
+                case nameof(ActualSize):
+                case nameof(AxisAlignedRegion):
+                    RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
+                    break;
+                case nameof(BlocksInputBehind):
+                    RecordUIChange(UIChangeDomain.HitTest);
+                    break;
+                case nameof(ExcludeFromParentAutoCalcWidth):
+                case nameof(ExcludeFromParentAutoCalcHeight):
                     InvalidateMeasure();
                     break;
                 case nameof(MinAnchor):

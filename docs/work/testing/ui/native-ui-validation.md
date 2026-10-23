@@ -5,6 +5,51 @@ This document owns native UI runtime, visual, performance, backend, editor workf
 
 Design: [Native UI retained rendering](../../design/ui/native-ui-retained-rendering-design.md)  Architecture: [UI architecture](../../../architecture/ui/README.md); [UI rendering pipeline](../../../architecture/ui/03-Rendering-Pipeline.md)  Code todos: [Native UI retained performance and editor parity TODO](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
 
+## Change-Tracking Validation (2026-10-23)
+
+The implemented scope is contracts and instrumentation: runtime identities,
+change domains, a bounded transaction journal, ancestor cache invalidation, and
+work counters. Worker layout, publication, persistent rendering, and controls
+remain open. See [the current contract](../../../architecture/ui/04-Change-Tracking.md).
+
+| Check | Result | Limit |
+|---|---|---|
+| Runtime rendering and input integration builds | Passed, zero warnings and errors, through `Tools/Invoke-AgentBuild.ps1`, `build`, `--no-restore`. | Uses the installed environment dependencies. |
+| Headless test build | Passed, zero warnings and errors, through the build wrapper with `--no-restore`. | Final source state compiled on Linux/.NET 10. |
+| Journal and transform contract tests | Passed: 23/23, zero warnings, failures, or skipped tests. | Deterministic headless runtime checks, including child-index replacement. |
+| Full headless regression suite | Passed: 167/167 with one test worker, zero warnings, failures, or skipped tests. | Covers the tests linked by the existing headless project; not the full Windows test project. |
+| Full editor build | Blocked: `NETSDK1004`, missing `XREngine.Editor/obj/project.assets.json`. | No restore or dependency installation was performed. The small `NativeUIElements` notification edits have static review only. |
+| Windows editor, OpenGL/Vulkan, visual input, GPU uploads, performance comparison | Not run. | This environment provides headless Linux validation. No live visual or speed result is claimed. |
+
+Final verification ran on 2026-10-23. The first contract run found a lazy-construction error: an optional constructor
+argument did not provide the parameterless constructor required by the default
+`LazyInitializer` overload. An explicit static factory fixed it. Review also found
+preflight and identity-retirement gaps for direct child-list edits and nested
+canvas moves. Targeted runtime checks cover those paths.
+
+Use the repository build wrapper to build
+`XREngine.UnitTests/Headless/XREngine.HeadlessTests.csproj --no-restore`.
+Then run the built test executable without a build:
+
+```text
+dotnet XREngine.UnitTests/Headless/bin/Debug/net10.0/XREngine.HeadlessTests.dll --test=XREngine.UnitTests.Rendering.UIChangeJournalTests,XREngine.UnitTests.Rendering.UIChangeTrackingTests --result=<validation-run>/logs/ui-contracts.xml
+```
+
+Create `<validation-run>` under `Build/_AgentValidation/` with the repository
+retention workflow. The targeted tests check coalescing, nested scopes, overflow,
+short drains, tombstones, foreign-thread rejection, local cache invalidation,
+canvas moves, child order and replacement, and warmed journal/counter allocations.
+The zero-allocation assertions apply only to journal record/drain and counter
+add/copy. They do not cover layout, rendering, transactions, or tree construction.
+
+Live acceptance remains open: use the existing FPS text path, change one size,
+color, transform, visibility state, and child order, then compare output and input
+with the prior behavior. Check counter deltas with recording enabled. Confirm
+that disabled counters do not alter behavior. Check nested canvases, destruction,
+and component construction. Record backend, build, scene, and workload with each
+result. Apply the repository's live-first validation rule before adding further
+tests during feature-regression debugging or integration awaiting validation.
+
 ## Setup
 Use the ImGui editor as the default editor until the native UI readiness checks pass. The relevant VS Code tasks are `Build-Editor`, `Build-Editor-Fast`, `Start-Editor-NoDebug`, and `Start-Editor-RendererDevelopment-NoDebug`. The relevant launch profiles are `Editor (Default World)`, `Editor (Renderer Development)`, `Editor (Unit Testing World)`, and `Editor (Unit Testing World, Validation Layers)`. Use `XRE_WORLD_MODE=UnitTesting` for unit-world checks. Use `XRE_GL_DEBUG=1` for OpenGL debug checks and `XRE_VULKAN_VALIDATION=1` for Vulkan validation checks. Use native UI settings or launch flags only after the implementation exposes them.
 
