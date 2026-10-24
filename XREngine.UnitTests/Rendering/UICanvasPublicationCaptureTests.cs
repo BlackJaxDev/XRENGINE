@@ -89,6 +89,37 @@ public sealed class UICanvasPublicationCaptureTests
         finally { root.Destroy(true); }
     }
 
+    [Test]
+    public void CaptureInheritsCompositionOwnerAndNestedLayerOverridesIt()
+    {
+        UICanvasTransform transform = new() { Width = 100, Height = 100 };
+        SceneNode root = new("Layer inheritance", transform);
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            root.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.StaticChrome;
+            UIPublicationMutationProbe chrome = root.NewChild("Chrome").AddComponent<UIPublicationMutationProbe>()!;
+            chrome.BoundableTransform.Width = 20;
+            chrome.BoundableTransform.Height = 20;
+            UIPublicationMutationProbe overlay = root.NewChild("Overlay").AddComponent<UIPublicationMutationProbe>()!;
+            overlay.BoundableTransform.Width = 20;
+            overlay.BoundableTransform.Height = 20;
+            overlay.SceneNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
+            transform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => transform.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            Capture(canvas);
+            UIPublication publication = Candidate(canvas).ShouldNotBeNull();
+            publication.Renders.Length.ShouldBe(2);
+            foreach (ref readonly UIRenderRecord record in publication.Renders)
+                record.CompositionOwner.ShouldBe(record.Identity == chrome.UITransform.ElementIdentity
+                    ? new UICompositionOwner(transform.ElementIdentity, EUICompositionLayerKind.StaticChrome)
+                    : new UICompositionOwner(overlay.UITransform.ElementIdentity, EUICompositionLayerKind.Overlay));
+            publication.CompositionSegments.Length.ShouldBe(2);
+        }
+        finally { root.Destroy(true); }
+    }
+
     private static void Capture(UICanvasComponent canvas)
         => typeof(UICanvasComponent).GetMethod("CapturePublicationCandidate",
             BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(canvas, null);

@@ -175,6 +175,185 @@ public sealed class AssetWatcherContextTests
         File.Exists(sourceMetadata).ShouldBeTrue();
     }
 
+    [Test]
+    public void CapturedTicketRejectsSamePathReloadAndCacheRootChange()
+    {
+        using var fixture = new WatcherFixture();
+        var authoring = new CapturingAuthoringServices();
+        using var installation = RuntimeAssetAuthoringServices.Install(authoring);
+        fixture.Manager.InvalidateAuthoringContext();
+        string source = Path.Combine(fixture.AssetsRoot, "item.fbx");
+        string options = Path.Combine(fixture.CacheRoot, "item.fbx.Model.import.yaml");
+        File.WriteAllText(source, "source");
+        File.WriteAllText(options, "options");
+        fixture.CurrentMonitor.RaiseCreated(source);
+        AssetAuthoringTicket ticket = authoring.Ticket.ShouldNotBeNull();
+        ticket.AssetsRoot.ShouldBe(fixture.AssetsRoot);
+        ticket.CacheRoot.ShouldBe(fixture.CacheRoot);
+
+        File.Delete(source);
+        fixture.Manager.GameCachePath = Path.Combine(fixture.Root, "OtherCache");
+        fixture.Manager.TryDeleteImportOptions(ticket, source, options).ShouldBeFalse();
+        File.Exists(options).ShouldBeTrue();
+
+        fixture.Manager.GameCachePath = fixture.CacheRoot;
+        fixture.Manager.IsCurrentAuthoringTicket(ticket).ShouldBeFalse();
+    }
+
+    [Test]
+    public void CapturedTicketPreservesOccupiedImportOptionsDestination()
+    {
+        using var fixture = new WatcherFixture();
+        var authoring = new CapturingAuthoringServices();
+        using var installation = RuntimeAssetAuthoringServices.Install(authoring);
+        fixture.Manager.InvalidateAuthoringContext();
+        string source = Path.Combine(fixture.AssetsRoot, "old.fbx");
+        string destination = Path.Combine(fixture.AssetsRoot, "new.fbx");
+        string oldOptions = Path.Combine(fixture.CacheRoot, "old.fbx.Model.import.yaml");
+        string newOptions = Path.Combine(fixture.CacheRoot, "new.fbx.Model.import.yaml");
+        File.WriteAllText(source, "source");
+        File.WriteAllText(oldOptions, "old options");
+        File.WriteAllText(newOptions, "occupied options");
+        File.Move(source, destination);
+        fixture.CurrentMonitor.RaiseRenamed(source, destination);
+
+        fixture.Manager.TryMoveImportOptions(authoring.Ticket.ShouldNotBeNull(), source,
+            destination, oldOptions, newOptions).ShouldBeFalse();
+        File.ReadAllText(oldOptions).ShouldBe("old options");
+        File.ReadAllText(newOptions).ShouldBe("occupied options");
+    }
+
+    [Test]
+    public void CapturedTicketMovesAndDeletesOnlyItsSourceOptions()
+    {
+        using var fixture = new WatcherFixture();
+        var authoring = new CapturingAuthoringServices();
+        using var installation = RuntimeAssetAuthoringServices.Install(authoring);
+        fixture.Manager.InvalidateAuthoringContext();
+        string source = Path.Combine(fixture.AssetsRoot, "old.fbx");
+        string destination = Path.Combine(fixture.AssetsRoot, "new.fbx");
+        string oldOptions = Path.Combine(fixture.CacheRoot, "old.fbx.Model.import.yaml");
+        string newOptions = Path.Combine(fixture.CacheRoot, "new.fbx.Model.import.yaml");
+        File.WriteAllText(source, "source");
+        File.WriteAllText(oldOptions, "settings");
+        File.Move(source, destination);
+        fixture.CurrentMonitor.RaiseRenamed(source, destination);
+        AssetAuthoringTicket ticket = authoring.Ticket.ShouldNotBeNull();
+
+        fixture.Manager.TryMoveImportOptions(ticket, source, destination,
+            oldOptions, newOptions).ShouldBeTrue();
+        File.Exists(oldOptions).ShouldBeFalse();
+        File.ReadAllText(newOptions).ShouldBe("settings");
+
+        File.Delete(destination);
+        fixture.Manager.TryDeleteImportOptions(ticket, destination, newOptions).ShouldBeTrue();
+        File.Exists(newOptions).ShouldBeFalse();
+    }
+
+    [Test]
+    public void CreateDirectoryReentryCannotMoveImportOptionsIntoNewContext()
+    {
+        using var fixture = new WatcherFixture();
+        var authoring = new CapturingAuthoringServices();
+        using var installation = RuntimeAssetAuthoringServices.Install(authoring);
+        fixture.Manager.InvalidateAuthoringContext();
+        string source = Path.Combine(fixture.AssetsRoot, "old.fbx");
+        string destination = Path.Combine(fixture.AssetsRoot, "new.fbx");
+        string oldOptions = Path.Combine(fixture.CacheRoot, "old.fbx.Model.import.yaml");
+        string newOptions = Path.Combine(fixture.CacheRoot, "new.fbx.Model.import.yaml");
+        File.WriteAllText(source, "source");
+        File.WriteAllText(oldOptions, "original options");
+        File.Move(source, destination);
+        fixture.CurrentMonitor.RaiseRenamed(source, destination);
+        AssetAuthoringTicket ticket = authoring.Ticket.ShouldNotBeNull();
+
+        fixture.Backend.OnCreateDirectory = path =>
+        {
+            if (path != fixture.CacheRoot)
+                return;
+            fixture.Backend.OnCreateDirectory = null;
+            fixture.Manager.GameCachePath = Path.Combine(fixture.Root, "ReplacementCache");
+        };
+        fixture.Manager.TryMoveImportOptions(ticket, source, destination,
+            oldOptions, newOptions).ShouldBeFalse();
+        File.ReadAllText(oldOptions).ShouldBe("original options");
+        File.Exists(newOptions).ShouldBeFalse();
+    }
+
+    [Test]
+    public void FileExistsReentryCannotDeleteImportOptionsFromNewContext()
+    {
+        using var fixture = new WatcherFixture();
+        var authoring = new CapturingAuthoringServices();
+        using var installation = RuntimeAssetAuthoringServices.Install(authoring);
+        fixture.Manager.InvalidateAuthoringContext();
+        string source = Path.Combine(fixture.AssetsRoot, "item.fbx");
+        string options = Path.Combine(fixture.CacheRoot, "item.fbx.Model.import.yaml");
+        File.WriteAllText(source, "source");
+        File.WriteAllText(options, "original options");
+        fixture.CurrentMonitor.RaiseCreated(source);
+        AssetAuthoringTicket ticket = authoring.Ticket.ShouldNotBeNull();
+        File.Delete(source);
+
+        fixture.Backend.OnFileExists = path =>
+        {
+            if (path != options)
+                return;
+            fixture.Backend.OnFileExists = null;
+            fixture.Manager.GameCachePath = Path.Combine(fixture.Root, "ReplacementCache");
+        };
+        fixture.Manager.TryDeleteImportOptions(ticket, source, options).ShouldBeFalse();
+        File.ReadAllText(options).ShouldBe("original options");
+    }
+
+    [Test]
+    public void StaleTicketCannotPublishGeneratedRoot()
+    {
+        using var fixture = new WatcherFixture();
+        var authoring = new CapturingAuthoringServices();
+        using var installation = RuntimeAssetAuthoringServices.Install(authoring);
+        fixture.Manager.InvalidateAuthoringContext();
+        string source = Path.Combine(fixture.AssetsRoot, "item.fbx");
+        string root = Path.Combine(fixture.AssetsRoot, "item.asset");
+        string staged = Path.Combine(fixture.AssetsRoot, ".item.asset.test.publish");
+        File.WriteAllText(source, "source");
+        File.WriteAllText(staged, "generated");
+        fixture.CurrentMonitor.RaiseCreated(source);
+        AssetAuthoringTicket ticket = authoring.Ticket.ShouldNotBeNull();
+
+        fixture.Manager.GameAssetsPath = fixture.AssetsRoot;
+        fixture.Manager.TryPublishGeneratedRoot(ticket, staged, root).ShouldBeFalse();
+        File.Exists(staged).ShouldBeTrue();
+        File.Exists(root).ShouldBeFalse();
+    }
+
+    [Test]
+    public void BackendProbeInvalidationPreventsGeneratedRootPublication()
+    {
+        using var fixture = new WatcherFixture();
+        var authoring = new CapturingAuthoringServices();
+        using var installation = RuntimeAssetAuthoringServices.Install(authoring);
+        fixture.Manager.InvalidateAuthoringContext();
+        string source = Path.Combine(fixture.AssetsRoot, "item.fbx");
+        string root = Path.Combine(fixture.AssetsRoot, "item.asset");
+        string staged = Path.Combine(fixture.AssetsRoot, ".item.asset.test.publish");
+        File.WriteAllText(source, "source");
+        File.WriteAllText(staged, "generated");
+        fixture.CurrentMonitor.RaiseCreated(source);
+        AssetAuthoringTicket ticket = authoring.Ticket.ShouldNotBeNull();
+
+        fixture.Backend.OnFileExists = path =>
+        {
+            if (path != staged)
+                return;
+            fixture.Backend.OnFileExists = null;
+            fixture.Manager.GameCachePath = Path.Combine(fixture.Root, "ReplacementCache");
+        };
+        fixture.Manager.TryPublishGeneratedRoot(ticket, staged, root).ShouldBeFalse();
+        File.Exists(staged).ShouldBeTrue();
+        File.Exists(root).ShouldBeFalse();
+    }
+
     private sealed class WatcherFixture : IDisposable
     {
         private readonly IAssetFileSystem? _previousBackend;
@@ -182,6 +361,7 @@ public sealed class AssetWatcherContextTests
         public string Root { get; }
         public string AssetsRoot { get; }
         public string MetadataRoot { get; }
+        public string CacheRoot { get; }
         public RecordingBackend Backend { get; } = new();
         public AssetManager Manager { get; }
         public ManualMonitor CurrentMonitor => (ManualMonitor)Manager.GameWatcher.CurrentInstallation!.Monitor;
@@ -192,9 +372,11 @@ public sealed class AssetWatcherContextTests
                 "scratch", "asset-watcher-" + Guid.NewGuid().ToString("N")));
             AssetsRoot = Path.Combine(Root, "Assets");
             MetadataRoot = Path.Combine(Root, "Metadata");
+            CacheRoot = Path.Combine(Root, "Cache");
             string engineRoot = Path.Combine(Root, "EngineAssets");
             Directory.CreateDirectory(AssetsRoot);
             Directory.CreateDirectory(MetadataRoot);
+            Directory.CreateDirectory(CacheRoot);
             Directory.CreateDirectory(engineRoot);
             _previousBackend = AssetFileSystemServices.Current;
             _previousAssetsEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GameAssetsPath);
@@ -202,6 +384,7 @@ public sealed class AssetWatcherContextTests
             AssetFileSystemServices.Current = Backend;
             Manager = new AssetManager(engineRoot);
             Manager.GameMetadataPath = MetadataRoot;
+            Manager.GameCachePath = CacheRoot;
         }
 
         public string MetadataPath(string asset)
@@ -217,12 +400,25 @@ public sealed class AssetWatcherContextTests
         }
     }
 
-    private sealed class RecordingBackend : IAssetFileSystem, IAssetMetadataFileBackend
+    private sealed class CapturingAuthoringServices : IRuntimeAssetAuthoringServices
+    {
+        public AssetAuthoringTicket? Ticket { get; private set; }
+        public void QueueAutoImport(AssetAuthoringTicket ticket, string sourcePath, string reason)
+            => Ticket = ticket;
+        public void HandleSourceDeleted(AssetAuthoringTicket ticket, string sourcePath)
+            => Ticket = ticket;
+        public void HandleSourceRenamed(AssetAuthoringTicket ticket, string oldSourcePath, string newSourcePath)
+            => Ticket = ticket;
+    }
+
+    private sealed class RecordingBackend : IAssetFileSystem, IAssetAuthoringPathBackend
     {
         private readonly DesktopAssetFileSystem _files = new();
         public List<ManualMonitor> Monitors { get; } = [];
         public Action? OnCreateMonitor { get; set; }
         public Action<ManualMonitor>? OnEnableMonitor { get; set; }
+        public Action<string>? OnFileExists { get; set; }
+        public Action<string>? OnCreateDirectory { get; set; }
         public bool SupportsChangeNotifications => true;
         public IAssetChangeMonitor CreateChangeMonitor()
         {
@@ -238,13 +434,23 @@ public sealed class AssetWatcherContextTests
             => _files.EnumerateDirectories(path, pattern, option);
         public IEnumerable<string> EnumerateFileSystemEntries(string path)
             => _files.EnumerateFileSystemEntries(path);
-        public bool FileExists(string path) => _files.FileExists(path);
+        public bool FileExists(string path)
+        {
+            OnFileExists?.Invoke(path);
+            return _files.FileExists(path);
+        }
         public bool DirectoryExists(string path) => _files.DirectoryExists(path);
-        public void CreateDirectory(string path) => _files.CreateDirectory(path);
+        public void CreateDirectory(string path)
+        {
+            OnCreateDirectory?.Invoke(path);
+            _files.CreateDirectory(path);
+        }
         public void DeleteDirectory(string path) => _files.DeleteDirectory(path);
         public void DeleteFile(string path) => _files.DeleteFile(path);
         public void MoveFile(string source, string destination, bool overwrite) => _files.MoveFile(source, destination, overwrite);
         public void CopyFile(string source, string destination, bool overwrite) => _files.CopyFile(source, destination, overwrite);
+        public void ReplaceFile(string staged, string destination) => _files.ReplaceFile(staged, destination);
+        public bool HasLinkedComponent(string path) => _files.HasLinkedComponent(path);
         public string ReadAllText(string path) => _files.ReadAllText(path);
         public void WriteAllText(string path, string contents) => _files.WriteAllText(path, contents);
         public Guid TryExtractAssetGuid(string path) => _files.TryExtractAssetGuid(path);

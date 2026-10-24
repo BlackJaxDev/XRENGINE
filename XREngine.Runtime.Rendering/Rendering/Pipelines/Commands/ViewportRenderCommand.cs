@@ -2,6 +2,7 @@ using System;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.UI;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -295,21 +296,38 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public void ExecuteIfShould()
         {
-            bool shouldExecute = ShouldExecute;
-            if (shouldExecute)
+            UIWorldPassManifest? uiManifest = UIWorldPassManifest.Active;
+            try
             {
-                using var shouldExecuteScope = RuntimeRenderingHostServices.Profiling.StartProfileScope(CpuShouldExecuteProfilingName);
-                shouldExecute = ShouldExecuteThisFrame();
-            }
+                bool shouldExecute = ShouldExecute;
+                if (shouldExecute)
+                {
+                    using var shouldExecuteScope = RuntimeRenderingHostServices.Profiling.StartProfileScope(CpuShouldExecuteProfilingName);
+                    shouldExecute = ShouldExecuteThisFrame();
+                }
 
-            if (shouldExecute)
+                if (shouldExecute)
+                {
+                    using var cpuScope = RuntimeRenderingHostServices.Profiling.StartProfileScope(CpuProfilingName);
+                    RenderPipelineGpuProfiler gpuProfiler = RenderPipelineGpuProfiler.Instance;
+                    using var gpuScope = gpuProfiler.ShouldInstrumentCommandScopes
+                        ? gpuProfiler.StartScope(this)
+                        : default;
+                    Execute();
+                    uiManifest?.RecordExecuted(this);
+                }
+                else
+                    uiManifest?.RecordSkipped(this);
+            }
+            catch
             {
-                using var cpuScope = RuntimeRenderingHostServices.Profiling.StartProfileScope(CpuProfilingName);
-                RenderPipelineGpuProfiler gpuProfiler = RenderPipelineGpuProfiler.Instance;
-                using var gpuScope = gpuProfiler.ShouldInstrumentCommandScopes
-                    ? gpuProfiler.StartScope(this)
-                    : default;
-                Execute();
+                uiManifest?.RecordFailure(this);
+                throw;
+            }
+            finally
+            {
+                if (uiManifest is not null)
+                    ShouldExecute = true;
             }
             ShouldExecute = true;
         }

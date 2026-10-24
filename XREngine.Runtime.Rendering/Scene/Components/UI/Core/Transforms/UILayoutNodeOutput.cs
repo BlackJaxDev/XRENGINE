@@ -15,6 +15,12 @@ public struct UILayoutNodeOutput
     /// <summary>Scroll values captured and accepted with this layout result.</summary>
     public Vector2 AcceptedScrollOffset;
     public Vector2 AcceptedMaxScrollOffset;
+    /// <summary>Split values accepted before child-specific size limits apply.</summary>
+    public float AcceptedSplitExtent;
+    public float AcceptedSplitFirstSize;
+    public float AcceptedSplitSecondSize;
+    public int AcceptedSplitFixedSide;
+    public bool AcceptedSplitVertical;
     public BoundingRectangleF AllocatedBounds;
     public bool Visible;
     public UITextLayoutResult? TextResult;

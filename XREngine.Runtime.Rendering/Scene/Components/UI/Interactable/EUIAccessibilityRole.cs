@@ -14,5 +14,6 @@ public enum EUIAccessibilityRole
     ScrollRegion,
     TableRow,
     Tab,
-    TreeItem
+    TreeItem,
+    Splitter
 }

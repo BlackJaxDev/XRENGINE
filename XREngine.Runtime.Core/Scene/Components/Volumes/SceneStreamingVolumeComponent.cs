@@ -13,6 +13,8 @@ public class SceneStreamingVolumeComponent : TriggerVolumeComponent
     private bool _loadOnEnter = true;
     private bool _unloadOnLeave = true;
     private IRuntimeSceneStreamingHandle? _loadedScene;
+    private IRuntimeSceneStreamingHostServices? _loadedHost;
+    private IRuntimeWorldContext? _loadedWorld;
     private bool _loadedInWorld;
     private int _loadToken;
 
@@ -41,7 +43,7 @@ public class SceneStreamingVolumeComponent : TriggerVolumeComponent
     {
         base.OnEntered(component);
 
-        if (!LoadOnEnter || OverlappingComponents.Count != 1)
+        if (!LoadOnEnter || OverlappingComponents.Count != 1 || IsDestroyed || IsDestroyQueued)
             return;
 
         int token = Interlocked.Increment(ref _loadToken);
@@ -56,71 +58,109 @@ public class SceneStreamingVolumeComponent : TriggerVolumeComponent
             return;
 
         int token = Interlocked.Increment(ref _loadToken);
-        IRuntimeWorldContext? expectedWorld = World;
         DispatchToAppThread(
-            () => DetachIfLoaded(token, expectedWorld),
+            () => DetachIfLoaded(token),
             "SceneStreamingVolumeComponent.DetachOnLeave");
     }
 
     protected override void OnComponentDeactivated()
     {
         int token = Interlocked.Increment(ref _loadToken);
-        IRuntimeWorldContext? expectedWorld = World;
         DispatchToAppThread(
-            () => DetachIfLoaded(token, expectedWorld),
+            () => DetachIfLoaded(token),
             "SceneStreamingVolumeComponent.DetachOnDeactivate");
         base.OnComponentDeactivated();
+    }
+
+    protected override void OnDestroying()
+    {
+        Interlocked.Increment(ref _loadToken);
+        OverlappingComponents.Clear();
+        IRuntimeSceneStreamingHostServices? host = _loadedHost;
+        IRuntimeWorldContext? world = _loadedWorld;
+        IRuntimeSceneStreamingHandle? scene = _loadedScene;
+        _loadedHost = null;
+        _loadedWorld = null;
+        _loadedScene = null;
+        _loadedInWorld = false;
+        try
+        {
+            if (host is not null && world is not null && scene is not null)
+                DispatchToAppThread(() => host.DetachScene(world, scene),
+                    "SceneStreamingVolumeComponent.DetachOnDestroy");
+        }
+        finally
+        {
+            base.OnDestroying();
+        }
     }
 
     private async Task LoadAndAttachAsync(int token)
     {
         IRuntimeWorldContext? expectedWorld = World;
-        if (expectedWorld is null || string.IsNullOrWhiteSpace(SceneAssetPath))
+        IRuntimeSceneStreamingHostServices host = RuntimeSceneStreamingHostServices.Current;
+        string path = SceneAssetPath;
+        if (expectedWorld is null || string.IsNullOrWhiteSpace(path) || IsDestroyed || IsDestroyQueued)
             return;
 
-        IRuntimeSceneStreamingHandle? scene = await RuntimeSceneStreamingHostServices.Current
-            .LoadSceneAsync(SceneAssetPath)
+        IRuntimeSceneStreamingHandle? scene = await host
+            .LoadSceneAsync(path)
             .ConfigureAwait(false);
         if (scene is null)
             return;
 
         DispatchToAppThread(
-            () => AttachIfEligible(token, expectedWorld, scene),
+            () => AttachIfEligible(token, expectedWorld, host, scene),
             "SceneStreamingVolumeComponent.AttachLoadedScene");
     }
 
     private void AttachIfEligible(
         int token,
         IRuntimeWorldContext expectedWorld,
+        IRuntimeSceneStreamingHostServices host,
         IRuntimeSceneStreamingHandle scene)
     {
-        if (token != _loadToken
+        if (token != Volatile.Read(ref _loadToken)
+            || IsDestroyed || IsDestroyQueued
+            || SceneNode is { IsDestroyed: true } or { IsDestroyQueued: true }
             || !ReferenceEquals(World, expectedWorld)
             || OverlappingComponents.Count == 0
             || _loadedInWorld)
             return;
 
-        if (!RuntimeSceneStreamingHostServices.Current.AttachScene(expectedWorld, scene))
+        if (!host.AttachScene(expectedWorld, scene))
             return;
 
+        if (token != Volatile.Read(ref _loadToken) || IsDestroyed || IsDestroyQueued ||
+            SceneNode is { IsDestroyed: true } or { IsDestroyQueued: true } ||
+            !ReferenceEquals(World, expectedWorld))
+        {
+            host.DetachScene(expectedWorld, scene);
+            return;
+        }
+
         _loadedScene = scene;
+        _loadedHost = host;
+        _loadedWorld = expectedWorld;
         _loadedInWorld = true;
     }
 
-    private void DetachIfLoaded(int token, IRuntimeWorldContext? expectedWorld)
+    private void DetachIfLoaded(int token)
     {
-        if (token != _loadToken
+        if (token != Volatile.Read(ref _loadToken)
             || !_loadedInWorld
-            || expectedWorld is null
-            || !ReferenceEquals(World, expectedWorld)
-            || _loadedScene is not { } scene)
+            || _loadedScene is not { } scene
+            || _loadedWorld is not { } world
+            || _loadedHost is not { } host)
             return;
 
-        if (!RuntimeSceneStreamingHostServices.Current.DetachScene(expectedWorld, scene))
+        if (!host.DetachScene(world, scene))
             return;
 
         _loadedInWorld = false;
         _loadedScene = null;
+        _loadedHost = null;
+        _loadedWorld = null;
     }
 
     private static void DispatchToAppThread(Action action, string reason)

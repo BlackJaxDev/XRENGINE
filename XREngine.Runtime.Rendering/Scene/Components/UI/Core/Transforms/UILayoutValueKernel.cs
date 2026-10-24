@@ -351,7 +351,7 @@ internal static class UILayoutValueKernel
                 ArrangeList(node, region, nodes, children, outputs, output.Visible, cache);
                 break;
             case UILayoutOperator.DualSplit:
-                ArrangeDualSplit(node, region, nodes, children, outputs, output.Visible, cache);
+                ArrangeDualSplit(index, node, region, nodes, children, outputs, output.Visible, cache);
                 break;
             case UILayoutOperator.Tab:
                 ArrangeTabs(node, region, nodes, children, outputs, output.Visible, cache);
@@ -550,7 +550,7 @@ internal static class UILayoutValueKernel
     }
 
     private static void ArrangeDualSplit(
-        in UILayoutNodeInput node, BoundingRectangleF region,
+        int index, in UILayoutNodeInput node, BoundingRectangleF region,
         UILayoutValuePageView<UILayoutNodeInput> nodes, ReadOnlySpan<UILayoutChildInput> children,
         UILayoutOutputPageBuilder outputs, bool visible, UILayoutArrangeCache? cache)
     {
@@ -577,6 +577,12 @@ internal static class UILayoutValueKernel
             : fixedSide == 1 ? fixedSize : extent - fixedSize;
         float secondSize = extent - firstSize;
         float gap = node.OperatorValues.Z;
+        ref UILayoutNodeOutput splitOutput = ref outputs.Edit(index);
+        splitOutput.AcceptedSplitExtent = extent;
+        splitOutput.AcceptedSplitFirstSize = firstSize;
+        splitOutput.AcceptedSplitSecondSize = secondSize;
+        splitOutput.AcceptedSplitFixedSide = fixedSide;
+        splitOutput.AcceptedSplitVertical = vertical;
         Vector2 firstPos = vertical ? new(0, secondSize + gap) : Vector2.Zero;
         Vector2 secondPos = vertical ? Vector2.Zero : new(firstSize + gap, 0);
         Vector2 firstExtent = vertical ? new(region.Width, firstSize) : new(firstSize, region.Height);

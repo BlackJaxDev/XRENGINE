@@ -125,9 +125,17 @@ namespace XREngine
             string reason)
             => assets.GetThirdPartyImportService().TryQueueAutoImportForThirdPartyFile(sourcePath, reason);
 
+        internal static void QueueThirdPartyAutoImport(
+            this AssetManager assets, AssetAuthoringTicket ticket, string sourcePath, string reason)
+            => assets.GetThirdPartyImportService().TryQueueAutoImportForThirdPartyFile(ticket, sourcePath, reason);
+
         /// <summary>Applies editor-authoring cleanup when a third-party source is deleted.</summary>
         public static void HandleThirdPartySourceDeleted(this AssetManager assets, string sourcePath)
             => assets.GetThirdPartyImportService().HandleThirdPartyImportOptionsDeleted(sourcePath);
+
+        internal static void HandleThirdPartySourceDeleted(this AssetManager assets,
+            AssetAuthoringTicket ticket, string sourcePath)
+            => assets.GetThirdPartyImportService().HandleThirdPartyImportOptionsDeleted(ticket, sourcePath);
 
         /// <summary>Applies editor-authoring metadata changes when a third-party source is renamed.</summary>
         public static void HandleThirdPartySourceRenamed(
@@ -135,6 +143,10 @@ namespace XREngine
             string oldPath,
             string newPath)
             => assets.GetThirdPartyImportService().HandleThirdPartyImportOptionsRenamed(oldPath, newPath);
+
+        internal static void HandleThirdPartySourceRenamed(this AssetManager assets,
+            AssetAuthoringTicket ticket, string oldPath, string newPath)
+            => assets.GetThirdPartyImportService().HandleThirdPartyImportOptionsRenamed(ticket, oldPath, newPath);
     }
 
     /// <summary>Editor-owned transactional publication and reimport workflow.</summary>
@@ -148,13 +160,15 @@ namespace XREngine
             new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, object> _thirdPartyImportOptionsCache =
             new(StringComparer.OrdinalIgnoreCase);
+        private readonly AsyncLocal<AssetAuthoringTicket?> _watcherTicket = new();
 
         public ThirdPartyAssetImportService(AssetManager assets)
             => _assets = assets ?? throw new ArgumentNullException(nameof(assets));
 
-        private string GameAssetsPath => _assets.GameAssetsPath;
+        private string GameAssetsPath => _watcherTicket.Value?.AssetsRoot ?? _assets.GameAssetsPath;
         private string EngineAssetsPath => _assets.EngineAssetsPath;
-        private string? GameCachePath => _assets.GameCachePath;
+        private string? GameCachePath => _watcherTicket.Value is { } ticket
+            ? ticket.CacheRoot : _assets.GameCachePath;
         private bool MonitorGameAssetsForChanges
         {
             get => _assets.MonitorGameAssetsForChanges;
@@ -374,7 +388,8 @@ namespace XREngine
 
         public bool ReimportThirdPartyFile(string sourcePath, Action<ThirdPartyImportProgress>? progress = null)
             => _assets.RunAssetJobBlocking(
-                () => ImportThirdPartyToNativeAssetTransactional(sourcePath, forceOverwrite: true, progress),
+                () => RunManualImport(() => ImportThirdPartyToNativeAssetTransactional(
+                    sourcePath, forceOverwrite: true, progress)),
                 JobPriority.Normal,
                 bypassJobThread: false);
 
@@ -383,11 +398,11 @@ namespace XREngine
             Action<ThirdPartyImportProgress>? progress = null,
             CancellationToken cancellationToken = default)
             => _assets.RunAssetJobAsync(
-                () => ImportThirdPartyToNativeAssetTransactional(
+                () => RunManualImport(() => ImportThirdPartyToNativeAssetTransactional(
                     sourcePath,
                     forceOverwrite: true,
                     progress,
-                    cancellationToken: cancellationToken),
+                    cancellationToken: cancellationToken)),
                 JobPriority.Normal,
                 bypassJobThread: false);
 
@@ -403,12 +418,12 @@ namespace XREngine
             Action<ThirdPartyImportProgress>? progress = null,
             bool bypassJobThread = false)
             => _assets.RunAssetJobBlocking(
-                () => ImportThirdPartyToNativeAssetTransactional(
+                () => RunManualImport(() => ImportThirdPartyToNativeAssetTransactional(
                     sourcePath,
                     overwrite,
                     progress,
                     destinationAssetPath,
-                    importOptions),
+                    importOptions)),
                 JobPriority.Normal,
                 bypassJobThread);
 
@@ -421,15 +436,23 @@ namespace XREngine
             bool bypassJobThread = false,
             CancellationToken cancellationToken = default)
             => _assets.RunAssetJobAsync(
-                () => ImportThirdPartyToNativeAssetTransactional(
+                () => RunManualImport(() => ImportThirdPartyToNativeAssetTransactional(
                     sourcePath,
                     overwrite,
                     progress,
                     destinationAssetPath,
                     importOptions,
-                    cancellationToken),
+                    cancellationToken)),
                 JobPriority.Normal,
                 bypassJobThread);
+
+        private bool RunManualImport(Func<bool> work)
+        {
+            AssetAuthoringTicket? previous = _watcherTicket.Value;
+            _watcherTicket.Value = null;
+            try { return work(); }
+            finally { _watcherTicket.Value = previous; }
+        }
 
         internal void TryQueueAutoImportForThirdPartyFile(string path, string reason)
         {
@@ -462,6 +485,34 @@ namespace XREngine
             }, JobPriority.Low, bypassJobThread: false);
         }
 
+        internal void TryQueueAutoImportForThirdPartyFile(
+            AssetAuthoringTicket ticket, string path, string reason)
+        {
+            if (!_assets.IsLiveAuthoringSource(ticket, path) || HasNativeAssetExtension(path) ||
+                !TryGetThirdPartyExtension(path, out string? extension) ||
+                !ThirdPartyAssetTypeRegistry.TryResolve(extension, out Type? assetType, out _) ||
+                assetType is null)
+                return;
+
+            _ = _assets.RunAssetJobAsync(() =>
+            {
+                if (!_assets.IsLiveAuthoringSource(ticket, path))
+                    return false;
+                AssetAuthoringTicket? previous = _watcherTicket.Value;
+                _watcherTicket.Value = ticket;
+                try
+                {
+                    return ImportThirdPartyToNativeAssetTransactional(path, forceOverwrite: false);
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning($"Auto-import failed for '{path}' ({reason}). {exception.Message}");
+                    return false;
+                }
+                finally { _watcherTicket.Value = previous; }
+            }, JobPriority.Low, bypassJobThread: false);
+        }
+
         private bool ImportThirdPartyToNativeAssetTransactional(
             string sourcePath,
             bool forceOverwrite,
@@ -470,6 +521,9 @@ namespace XREngine
             object? suppliedImportOptions = null,
             CancellationToken cancellationToken = default)
         {
+            AssetAuthoringTicket? ticket = _watcherTicket.Value;
+            if (ticket is not null && !_assets.IsLiveAuthoringSource(ticket, sourcePath))
+                return false;
             cancellationToken.ThrowIfCancellationRequested();
             string? targetPath = generatedAssetPathOverride;
             if (string.IsNullOrWhiteSpace(targetPath) &&
@@ -482,6 +536,7 @@ namespace XREngine
                     generatedAssetPathOverride,
                     suppliedImportOptions,
                     cancellationToken);
+
             }
 
             targetPath = Path.GetFullPath(targetPath);
@@ -504,15 +559,21 @@ namespace XREngine
                         targetPath,
                         suppliedImportOptions,
                         cancellationToken);
-                    if (imported)
+                    bool current = ticket is null || _assets.IsCurrentAuthoringTicket(ticket);
+                    if (!current)
+                        backup.PreserveForRecovery();
+                    else if (imported)
                         backup.Commit();
                     else
                         backup.Rollback();
-                    return imported;
+                    return imported && current;
                 }
                 catch
                 {
-                    backup.Rollback();
+                    if (ticket is null || _assets.IsCurrentAuthoringTicket(ticket))
+                        backup.Rollback();
+                    else
+                        backup.PreserveForRecovery();
                     throw;
                 }
             }
@@ -825,11 +886,31 @@ namespace XREngine
             else
             {
                 // Non-prefab importers do not produce an externalized asset closure.
-                SerializeAssetForThirdPartyImport(asset, generatedAssetPath);
+                AssetAuthoringTicket? ticket = _watcherTicket.Value;
+                if (ticket is null)
+                    SerializeAssetForThirdPartyImport(asset, generatedAssetPath);
+                else
+                {
+                    if (!_assets.IsCurrentAuthoringTicket(ticket))
+                        throw new OperationCanceledException("The asset authoring context changed before serialization.");
+                    string stagedPath = Path.Combine(directory!,
+                        $".{Path.GetFileName(generatedAssetPath)}.{Guid.NewGuid():N}.publish");
+                    try
+                    {
+                        SerializeAssetForThirdPartyImport(asset, stagedPath);
+                        PublishTemporaryRootWithRetry(ticket, stagedPath, generatedAssetPath);
+                    }
+                    finally
+                    {
+                        if (File.Exists(stagedPath))
+                            File.Delete(stagedPath);
+                    }
+                }
             }
             LogThirdPartyImportPhase("SerializeAndPublishRootAsset", serializeStart, generatedAssetPath, assetType.Name);
 
-            _assets.NotifyExternalAssetPathWritten(generatedAssetPath);
+            if (_watcherTicket.Value is not { } activeTicket || _assets.IsCurrentAuthoringTicket(activeTicket))
+                _assets.NotifyExternalAssetPathWritten(generatedAssetPath);
             ReportThirdPartyImportProgress(progress, 1.0f, "Native asset ready.", generatedAssetPath);
             Debug.Log(
                 ELogCategory.Assets,
@@ -1790,6 +1871,9 @@ namespace XREngine
 
         private void PublishThirdPartyImportRootLast(string stagedRootAssetPath, string rootAssetPath)
         {
+            AssetAuthoringTicket? ticket = _watcherTicket.Value;
+            if (ticket is not null && !_assets.IsCurrentAuthoringTicket(ticket))
+                throw new OperationCanceledException("The asset authoring context changed before root publication.");
             string rootDirectory = Path.GetDirectoryName(rootAssetPath)
                 ?? throw new InvalidOperationException($"Generated root '{rootAssetPath}' has no directory.");
             Directory.CreateDirectory(rootDirectory);
@@ -1799,14 +1883,38 @@ namespace XREngine
             try
             {
                 File.Copy(stagedRootAssetPath, temporaryRootPath, overwrite: false);
-                PublishTemporaryRootWithRetry(temporaryRootPath, rootAssetPath);
+                if (ticket is null)
+                    PublishTemporaryRootWithRetry(temporaryRootPath, rootAssetPath);
+                else
+                    PublishTemporaryRootWithRetry(ticket, temporaryRootPath, rootAssetPath);
 
-                _assets.NotifyExternalAssetPathWritten(rootAssetPath);
+                if (ticket is null || _assets.IsCurrentAuthoringTicket(ticket))
+                    _assets.NotifyExternalAssetPathWritten(rootAssetPath);
             }
             finally
             {
                 if (File.Exists(temporaryRootPath))
                     File.Delete(temporaryRootPath);
+            }
+        }
+
+        private void PublishTemporaryRootWithRetry(
+            AssetAuthoringTicket ticket, string temporaryRootPath, string rootAssetPath)
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    if (!_assets.TryPublishGeneratedRoot(ticket, temporaryRootPath, rootAssetPath))
+                        throw new OperationCanceledException("The asset authoring context changed before root publication.");
+                    return;
+                }
+                catch (Exception exception) when (
+                    exception is IOException or UnauthorizedAccessException &&
+                    attempt < RootPublishRetryDelayMilliseconds.Length)
+                {
+                    Thread.Sleep(RootPublishRetryDelayMilliseconds[attempt]);
+                }
             }
         }
 
@@ -1948,6 +2056,12 @@ namespace XREngine
             {
                 _completed = true;
                 DeleteBackup();
+            }
+
+            public void PreserveForRecovery()
+            {
+                _completed = true;
+                Debug.LogWarning($"Import context changed. Keep backup '{_backupRoot}' for manual recovery of '{_targetAssetPath}'.");
             }
 
             public void Rollback()
@@ -2424,6 +2538,34 @@ namespace XREngine
             }
         }
 
+        internal void HandleThirdPartyImportOptionsRenamed(
+            AssetAuthoringTicket ticket, string oldPath, string newPath)
+        {
+            if (!_assets.IsCurrentAuthoringTicket(ticket) ||
+                HasNativeAssetExtension(oldPath) || HasNativeAssetExtension(newPath) ||
+                !TryGetThirdPartyExtension(newPath, out string? extension) ||
+                !ThirdPartyAssetTypeRegistry.TryResolve(extension, out Type? assetType, out _) ||
+                assetType is null)
+                return;
+
+            AssetAuthoringTicket? previous = _watcherTicket.Value;
+            _watcherTicket.Value = ticket;
+            try
+            {
+                if (!TryResolveImportOptionsPath(oldPath, assetType, out string oldOptionsPath) ||
+                    !TryResolveImportOptionsPath(newPath, assetType, out string newOptionsPath) ||
+                    !File.Exists(oldOptionsPath))
+                    return;
+                if (!_assets.TryMoveImportOptions(ticket, oldPath, newPath, oldOptionsPath, newOptionsPath))
+                    Debug.LogWarning($"Import options move was skipped because its context or destination changed: '{newOptionsPath}'.");
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"Failed to move import options for '{newPath}'. {exception.Message}");
+            }
+            finally { _watcherTicket.Value = previous; }
+        }
+
         internal void HandleThirdPartyImportOptionsDeleted(string sourcePath)
         {
             if (!IsPathUnderGameAssets(sourcePath))
@@ -2450,6 +2592,29 @@ namespace XREngine
             {
                 // best-effort cleanup.
             }
+        }
+
+        internal void HandleThirdPartyImportOptionsDeleted(
+            AssetAuthoringTicket ticket, string sourcePath)
+        {
+            if (!_assets.IsCurrentAuthoringTicket(ticket) || HasNativeAssetExtension(sourcePath) ||
+                !TryGetThirdPartyExtension(sourcePath, out string? extension) ||
+                !ThirdPartyAssetTypeRegistry.TryResolve(extension, out Type? assetType, out _) ||
+                assetType is null)
+                return;
+
+            AssetAuthoringTicket? previous = _watcherTicket.Value;
+            _watcherTicket.Value = ticket;
+            try
+            {
+                if (TryResolveImportOptionsPath(sourcePath, assetType, out string optionsPath))
+                    _assets.TryDeleteImportOptions(ticket, sourcePath, optionsPath);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"Failed to remove import options for '{sourcePath}'. {exception.Message}");
+            }
+            finally { _watcherTicket.Value = previous; }
         }
 
         private static DateTime? SafeGetLastWriteTimeUtc(string filePath)

@@ -9,6 +9,7 @@ public partial class AssetManager
     private long _authoringRevision;
     private AuthoringContext? _gameWatcherContext;
     private bool _authoringContextRebinding = true;
+    private string? _authoringProjectRoot;
 
     private sealed record AuthoringContext(
         long Revision,
@@ -20,6 +21,7 @@ public partial class AssetManager
         string AssetsRoot,
         string MetadataRoot,
         string? CacheRoot,
+        string? ProjectRoot,
         IRuntimeAssetAuthoringServices AuthoringServices);
 
     /// <summary>Invalidates work admitted for an earlier project installation.</summary>
@@ -39,11 +41,13 @@ public partial class AssetManager
     }
 
     /// <summary>Publishes project asset, metadata, and cache roots as one authoring context.</summary>
-    public void ConfigureAuthoringRoots(string? assetsRoot, string? metadataRoot, string? cacheRoot)
+    public void ConfigureAuthoringRoots(string? assetsRoot, string? metadataRoot, string? cacheRoot,
+        string? projectRoot = null)
     {
         string? assets = assetsRoot is null ? null : NormalizeConfiguredDirectoryPath(assetsRoot, nameof(assetsRoot));
         string? metadata = metadataRoot is null ? null : NormalizeConfiguredDirectoryPath(metadataRoot, nameof(metadataRoot));
         string? cache = NormalizeConfiguredDirectoryPath(cacheRoot, nameof(cacheRoot));
+        string? project = projectRoot is null ? null : Path.GetFullPath(projectRoot);
         lock (_metadataLock)
         {
             _authoringContextRebinding = true;
@@ -57,9 +61,20 @@ public partial class AssetManager
                 if (metadata is not null)
                     _gameMetadataPath = metadata;
                 _gameCachePath = cache;
+                _authoringProjectRoot = project;
                 InvalidateAuthoringContext();
             }
             finally { _authoringContextRebinding = false; }
+        }
+    }
+
+    /// <summary>Invalidates the project identity when the project closes.</summary>
+    public void UnloadAuthoringProject()
+    {
+        lock (_metadataLock)
+        {
+            _authoringProjectRoot = null;
+            InvalidateAuthoringContext();
         }
     }
 
@@ -85,6 +100,7 @@ public partial class AssetManager
             _authoringRevision, _runtimeAssetSource, RuntimeSourceEpoch, fileSystem, files, generation,
             Path.GetFullPath(_gameAssetsPath), Path.GetFullPath(_gameMetadataPath),
             string.IsNullOrWhiteSpace(_gameCachePath) ? null : Path.GetFullPath(_gameCachePath),
+            _authoringProjectRoot,
             RuntimeAssetAuthoringServices.Current);
     }
 

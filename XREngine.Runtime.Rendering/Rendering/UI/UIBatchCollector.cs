@@ -186,6 +186,7 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class TextBatchData
     {
         public ulong RunId;
+        public UICompositionOwner CompositionOwner;
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Atlas;
         public int AtlasType;
@@ -199,6 +200,7 @@ public sealed class UIBatchCollector : IDisposable
 
         public void Clear()
         {
+            CompositionOwner = default;
             CropRegion = null;
             Atlas = null;
             AtlasType = TextAtlasBitmap;
@@ -218,6 +220,7 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class MaterialQuadBatchData
     {
         public ulong RunId;
+        public UICompositionOwner CompositionOwner;
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Texture;
         public bool ImageSrgb;
@@ -226,6 +229,7 @@ public sealed class UIBatchCollector : IDisposable
 
         public void Clear()
         {
+            CompositionOwner = default;
             CropRegion = null;
             Texture = null;
             ImageSrgb = false;
@@ -275,6 +279,7 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class CollectPassState
     {
         public EBatchMarkerKind? ActiveKind;
+        public UICompositionOwner ActiveCompositionOwner;
         public int ActiveZIndex;
         public BoundingRectangle? ActiveCropRegion;
         public XRTexture2D? ActiveMaterialTexture;
@@ -291,6 +296,7 @@ public sealed class UIBatchCollector : IDisposable
         public void Reset()
         {
             ActiveKind = null;
+            ActiveCompositionOwner = default;
             ActiveZIndex = 0;
             ActiveCropRegion = null;
             ActiveMaterialTexture = null;
@@ -447,6 +453,7 @@ public sealed class UIBatchCollector : IDisposable
                         match.Pass != pass.Key) continue;
                     MaterialQuadBatchData old = match.Run;
                     if (_claimedPreviousRunIds.Contains(old.RunId) || current.CropRegion != old.CropRegion ||
+                        current.CompositionOwner != old.CompositionOwner ||
                         !ReferenceEquals(current.Texture, old.Texture) ||
                         current.ImageSrgb != old.ImageSrgb || current.Border != old.Border) continue;
                     current.RunId = old.RunId;
@@ -468,6 +475,7 @@ public sealed class UIBatchCollector : IDisposable
                         match.Pass != pass.Key) continue;
                     TextBatchData old = match.Run;
                     if (_claimedPreviousRunIds.Contains(old.RunId) || current.CropRegion != old.CropRegion ||
+                        current.CompositionOwner != old.CompositionOwner ||
                         !ReferenceEquals(current.Atlas, old.Atlas) || current.AtlasType != old.AtlasType ||
                         current.DistanceRange != old.DistanceRange ||
                         current.DistanceRangeMiddle != old.DistanceRangeMiddle ||
@@ -1133,7 +1141,7 @@ public sealed class UIBatchCollector : IDisposable
                 AddTextQuad(record.RenderPass, record.ZIndex, passes, record.Atlas,
                     in world, in color, in outline, record.OutlineThickness, in bounds,
                     record.AtlasType, record.DistanceRange, record.DistanceRangeMiddle,
-                    record.MsdfFillBias, record.DebugMode, layout, record.Crop, primitiveHandle);
+                    record.MsdfFillBias, record.DebugMode, layout, record.Crop, primitiveHandle, record.CompositionOwner);
             }
             else
             {
@@ -1143,7 +1151,7 @@ public sealed class UIBatchCollector : IDisposable
                 AddMaterialQuad(record.RenderPass, record.ZIndex, passes,
                     in world, in color, in bounds, record.Crop, record.Texture,
                     record.UV, record.ImageSrgb, record.IsBorder,
-                    record.BorderColor, record.BorderWidth, primitiveHandle);
+                    record.BorderColor, record.BorderWidth, primitiveHandle, record.CompositionOwner);
             }
         }
         _collectPublishedRecordIndex = -1;
@@ -1169,14 +1177,16 @@ public sealed class UIBatchCollector : IDisposable
         bool border = false,
         Vector4 borderColor = default,
         float borderWidth = 0.0f,
-        ulong primitiveHandle = 0)
+        ulong primitiveHandle = 0,
+        UICompositionOwner compositionOwner = default)
     {
         UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
 
         MaterialQuadBatchData batch;
-        if (state.ActiveKind == EBatchMarkerKind.Material && state.ActiveZIndex == zIndex &&
+        if (state.ActiveCompositionOwner == compositionOwner &&
+            state.ActiveKind == EBatchMarkerKind.Material && state.ActiveZIndex == zIndex &&
             state.ActiveCropRegion == cropRegion &&
             ReferenceEquals(state.ActiveMaterialTexture, texture) &&
             state.ActiveMaterialImageSrgb == imageSrgb &&
@@ -1190,6 +1200,8 @@ public sealed class UIBatchCollector : IDisposable
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
             batch.RunId = AllocateRunId();
+            batch.CompositionOwner = compositionOwner;
+            state.ActiveCompositionOwner = compositionOwner;
             batch.CropRegion = cropRegion;
             batch.Texture = texture;
             batch.ImageSrgb = imageSrgb;
@@ -1249,14 +1261,15 @@ public sealed class UIBatchCollector : IDisposable
         int debugMode,
         UITextLayoutResult layout,
         BoundingRectangle? cropRegion = null,
-        ulong primitiveHandle = 0)
+        ulong primitiveHandle = 0,
+        UICompositionOwner compositionOwner = default)
     {
         UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
 
         TextBatchData batch;
-        if (TextBatchMatches(state, zIndex, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
+        if (state.ActiveCompositionOwner == compositionOwner && TextBatchMatches(state, zIndex, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
@@ -1266,6 +1279,8 @@ public sealed class UIBatchCollector : IDisposable
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
             batch.RunId = AllocateRunId();
+            batch.CompositionOwner = compositionOwner;
+            state.ActiveCompositionOwner = compositionOwner;
             batch.CropRegion = cropRegion;
             batch.Atlas = fontAtlas;
             batch.AtlasType = atlasType;

@@ -32,6 +32,10 @@
     <Compile Include="../Rendering/UILayoutValueKernelTests.cs" Link="Rendering/UILayoutValueKernelTests.cs" />
     <Compile Include="../Rendering/UILayoutGridKernelTests.cs" Link="Rendering/UILayoutGridKernelTests.cs" />
     <Compile Include="../Rendering/UIBatchCollectionTests.cs" Link="Rendering/UIBatchCollectionTests.cs" />
+    <Compile Include="../Rendering/UICompositionSegmentTests.cs" Link="Rendering/UICompositionSegmentTests.cs" />
+    <Compile Include="../Rendering/UISplitterHandleTests.cs" Link="Rendering/UISplitterHandleTests.cs" />
+    <Compile Include="../Rendering/UIWorldPassManifestTests.cs" Link="Rendering/UIWorldPassManifestTests.cs" />
+    <Compile Include="../Scene/SceneStreamingVolumeComponentTests.cs" Link="Scene/SceneStreamingVolumeComponentTests.cs" />
     <Compile Include="../Rendering/UIImageAtlasTests.cs" Link="Rendering/UIImageAtlasTests.cs" />
     <Compile Include="../Rendering/UIDrawPayloadTests.cs" Link="Rendering/UIDrawPayloadTests.cs" />
     <Compile Include="../Rendering/UITextMaterialRefreshProbe.cs" Link="Rendering/UITextMaterialRefreshProbe.cs" />

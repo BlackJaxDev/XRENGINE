@@ -600,3 +600,92 @@ code contract advances reconciliation to 39 of 60 original implementation items;
 21 code items and four original owner decisions remain. Desktop test execution,
 Windows/IME, native graphics, visual checks, and performance acceptance remain
 open. The paragraph analyzer decision remains pending.
+
+## Layer Boundaries, Splitter Input, And Deferred Editor Work
+
+The next source set adds explicit composition owners and immutable contiguous
+painter spans. Unchanged spans retain their content identity across overlay
+changes and output mapping. Sibling output variants use distinct changed-content
+revisions. Unchanged membership shares the structural index. Changed publication
+comparisons still visit the record set; this is not sparse capture or native
+command-cache acceptance. Readers must retain the parent publication while using
+segment resources.
+
+A shared splitter uses accepted divider metrics from the layout kernel, before
+child constraints can alter pane geometry. The dock host uses that control.
+Hierarchy edits carry the panel's world through queued work and Undo. Streaming
+volumes reject delayed attachment after direct destruction and retain the exact
+host for detach.
+
+Watcher imports carry an opaque authoring ticket into queued work. Named options
+and generated-root commits use its captured filesystem provider and roots. Review
+found that stale-context cleanup deleted recovery backups; the repair retains
+those bytes and reports the location. A second repair routes both prefab and
+non-prefab root publication through captured-backend admission. Closure writes
+and already-running import callbacks still need shared reservations. This is not
+complete crash recovery.
+
+The world-pass tracker freezes a closed conditional graph and exact packet claim.
+It remains inactive. It currently rejects Switch and other unadapted command
+shapes; the default pipeline therefore cannot activate it yet. Missing required
+work differs from a proven-empty pass. Native completion, shared-resource taint
+recovery, and final output admission remain separate work.
+
+
+Headless build 69 failed with one missing `UIElementIdentity` namespace import in
+`UISplitterPointerMetrics`. No tests ran. The import is repaired. Additional
+regressions now cover provider reentry during options move/delete and retained
+backup bytes after stale-context disposal. The backup test is in the desktop
+project and needs Windows execution. Headless build 70 validates this source set.
+
+
+Headless build 70 compiled runtime code, then failed test compilation with one
+missing `UICanvasComponent` import and four nullable diagnostic assertions.
+The repairs add the exact import and explicit non-null assertions. Build 71
+passed with zero warnings/errors in 15.38s. Full run 41 follows.
+
+
+Full run 41 passed all 508 tests with zero warnings or skips in 9.294s on
+2026-10-24. Coverage includes composition span reuse and painter boundaries,
+presented splitter metrics, conditional-pass accounting, source-context provider
+reentry, and streaming attachment after destruction. Editor build 27 and desktop
+test build 9 will validate the matching source.
+
+
+Editor build 27 failed with one definite-assignment error in the dock splitter
+callback. The callback was installed before its handle transform was assigned.
+The repair moves callback installation after handle construction. No desktop test
+build ran on that source set.
+
+
+Editor build 28 passed with zero warnings/errors in 46.41s. The final dock-host
+callback installs after its handle exists. This editor-only repair does not
+change headless runtime or test inputs. Desktop test build 9 follows.
+
+
+Desktop test build 9 passed with zero warnings/errors in 1m29.60s. Desktop tests
+did not execute. Final graph review found that command identity checks did not
+compare exact container counts. An append to an empty root or pruned empty branch
+could evade structure validation. Publication waits for that repair and its
+regressions. The direct-world route remains inactive.
+
+
+The manifest now validates exact root, containing-container, and branch child
+counts, including empty and pruned children. Headless build 72 passed with zero
+warnings/errors in 1m29.43s. Full run 42 validates the repaired graph contract.
+
+
+Full run 42 passed all 510 tests with zero warnings or skips in 9.129s. Editor
+build 29 checks the matching final source before publication.
+
+
+Editor build 29 passed with zero warnings/errors in 2m17.23s. Desktop test build
+10 checks the same repaired source. These are managed Windows-target builds on
+Linux; no Windows execution or graphics acceptance is inferred.
+
+
+Desktop test build 10 passed with zero warnings/errors in 45.06s. Headless build
+72, full run 42, editor build 29, and desktop test build 10 match the same 9,924
+source/project file hashes. All 32 local document links and the whitespace check
+pass. Reconciliation stays at 39 of 60 implementation items, with 21 code items
+and four original owner decisions open. Paragraph analysis remains pending.

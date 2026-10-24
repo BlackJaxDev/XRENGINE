@@ -8,7 +8,7 @@ using XREngine.Rendering;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Provides host file discovery, metadata operations, and direct reads under ordinary filesystem permissions.</summary>
-public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IBvhDiskCacheBackend
+public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetAuthoringPathBackend, IRuntimeHostFileReadBackend, IBvhDiskCacheBackend
 {
     public bool SupportsChangeNotifications => true;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption searchOption)
@@ -31,6 +31,25 @@ public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
         => File.Move(sourcePath, destinationPath, overwrite);
     public void CopyFile(string sourcePath, string destinationPath, bool overwrite)
         => File.Copy(sourcePath, destinationPath, overwrite);
+    public void ReplaceFile(string stagedPath, string destinationPath)
+        => File.Replace(stagedPath, destinationPath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+    public bool HasLinkedComponent(string path)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string current = Path.GetPathRoot(fullPath)!;
+        foreach (string segment in fullPath[current.Length..].Split(Path.DirectorySeparatorChar,
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(current); }
+            catch (FileNotFoundException) { break; }
+            catch (DirectoryNotFoundException) { break; }
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                return true;
+        }
+        return false;
+    }
     public string ReadAllText(string path) => File.ReadAllText(path);
     public void WriteAllText(string path, string contents) => File.WriteAllText(path, contents);
     public DateTime GetLastWriteTimeUtc(string path) => File.GetLastWriteTimeUtc(path);

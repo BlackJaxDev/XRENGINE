@@ -1783,7 +1783,8 @@ public static partial class EditorImGuiUI
     /// <summary>
     /// Reparent a dragged node under a new parent with structural undo.
     /// </summary>
-    private static void ReparentHierarchyNode(SceneNode droppedNode, TransformBase newParent, RuntimeWorld world, XRScene? owningScene)
+    private static void ReparentHierarchyNode(SceneNode droppedNode, TransformBase newParent, RuntimeWorld world,
+        XRScene? owningScene, bool validateCapturedWorld = false)
     {
         var draggedTfm = droppedNode.Transform;
         var oldParent = draggedTfm.Parent;
@@ -1807,6 +1808,12 @@ public static partial class EditorImGuiUI
         Undo.RecordStructuralChange($"Reparent {nodeName}",
             undoAction: () =>
             {
+                if (validateCapturedWorld)
+                {
+                    RequireNativeHierarchyState(droppedNode, worldCapture, newParent);
+                    if (oldParent?.SceneNode is { } oldOwner)
+                        RequireNativeHierarchyState(oldOwner, worldCapture, oldParent.Parent);
+                }
                 if (wasRoot)
                 {
                     draggedTfm.SetParent(null, true, EParentAssignmentMode.Immediate);
@@ -1820,6 +1827,12 @@ public static partial class EditorImGuiUI
             },
             redoAction: () =>
             {
+                if (validateCapturedWorld)
+                {
+                    RequireNativeHierarchyState(droppedNode, worldCapture, oldParent);
+                    if (newParent.SceneNode is { } newOwner)
+                        RequireNativeHierarchyState(newOwner, worldCapture, newParent.Parent);
+                }
                 if (wasRoot)
                 {
                     worldCapture.RootNodes.Remove(droppedNode);
