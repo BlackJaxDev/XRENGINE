@@ -265,7 +265,13 @@ namespace XREngine.Rendering
             string? failureReason = state.FailureReason;
             bool complete = succeeded && failureReason is null;
             _currentUiPublicationReceiptId = 0UL;
-            return CompleteUiPublicationReceiptCore(receiptId, complete, failureReason, out completionFence);
+            bool completed = CompleteUiPublicationReceiptCore(receiptId, complete, failureReason, out completionFence);
+            // Backends that do not require atomic frames still report the named reason.
+            if (!completed)
+                UI.State.UIFailureDiagnostics.Report(failureReason ?? (succeeded
+                    ? "UI.Canvas.PublicationReceiptIncomplete: the backend did not complete the UI publication receipt."
+                    : "UI.Canvas.PublicationReceiptIncomplete: the published canvas did not author every required draw."));
+            return completed;
         }
 
         /// <summary>Cancel a reserved UI receipt before its first draw starts.</summary>
@@ -293,6 +299,7 @@ namespace XREngine.Rendering
                     return;
             if (_currentUiPublicationReceiptId == receiptId)
                 _currentUiPublicationReceiptId = 0UL;
+            UI.State.UIFailureDiagnostics.Report(reason);
             try { OnUiPublicationAuthoringFailed(receiptId, reason); }
             finally { _ = CompleteUiPublicationReceiptCore(receiptId, false, reason, out _); }
         }

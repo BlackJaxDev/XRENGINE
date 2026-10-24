@@ -257,6 +257,33 @@ completion alone does not prove that deferred GPU draws reached an output.
 Do not infer atomic rendering, Vulkan replay correctness, or visual parity from
 headless packet tests.
 
+## Native failure reporting
+
+`UIFailureDiagnostics.Report` records native UI failures that withhold or cancel
+accelerated output. Each reason starts with a failure code and a colon. A report
+increments `ReportedCount` and `UIWorkCounter.FailuresReported`, stores
+`LastFailure`, and logs a UI warning at most once per code every two seconds.
+
+OpenGL and Vulkan do not require atomic frames, so these paths report on those
+backends where an atomic backend throws:
+
+| Code | Cause |
+| --- | --- |
+| `UI.Canvas.BatchCapacityPending` | No isolated GPU cohort or receipt lease is free for the canvas. |
+| `UI.Canvas.ReceiptRejected` | The renderer did not reserve a publication receipt. |
+| `UI.Canvas.PublicationReceiptIncomplete`, or the first named authoring reason | A receipt did not complete. `CompleteUiPublicationReceipt` reports the reason that `FailCurrentUiPublicationAuthoring` stored. |
+| `UI.Canvas.RequiredPassMissing` and other abort reasons | `AbortUiPublicationReceipt` cancelled a receipt. |
+| `UI.Canvas.SurfacePending`, `UI.Canvas.QuadPending` | An offscreen surface belongs to another renderer generation. |
+| `UI.BatchRegistrationFailed` | A published batch draw did not register. The live command is not drawn in its place. |
+| `UI.Batch.GroupMissing`, `UI.TextCapture.AtlasPending` | A batch marker has no collected group, or a text record or group has no layout or atlas. |
+| `UI.WorldOutputUnsupported` | `XRViewport.EnableRetainedWorldUiColor` is set, but the output cannot admit checked world UI. The reason names the first failed condition. |
+
+Direct-world draws without checked indexed-draw proof use the unchecked route and
+increment `UIWorkCounter.WorldUncheckedDraws`. Eligibility routes are not
+failures: `StrictOneByOneRenderCalls`, standalone text that the shared text batch
+does not admit, and material quads without batch support draw individually by
+design. WebGPU keeps its atomic exceptions.
+
 ## Batch storage
 
 `UIBatchCollector` distinguishes owned solid, border, image, and text semantics.

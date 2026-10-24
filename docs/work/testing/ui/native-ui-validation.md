@@ -217,7 +217,7 @@ Architecture: [UI architecture](../../../architecture/ui/README.md)
 | Check | Procedure | Expected | Status | Last evidence |
 |---|---|---|---|---|
 | Check default switch readiness. | Review code, validation results, and editor settings before changing the default editor type. | Native UI is the default only after all readiness checks pass. ImGui remains an explicit compatibility or debug option. | Planned | none |
-| Check failure diagnostics. | Force unsupported native UI batch, accelerated, and backend cases. | Failures are explicit and actionable. Silent CPU or generic visual fallback does not hide errors. | Planned | none |
+| Check failure diagnostics. | Force unsupported native UI batch, accelerated, and backend cases. | Failures are explicit and actionable. Each forced case logs its `UIFailureDiagnostics` code (see the code table in retained execution) and increments `FailuresReported`. Silent CPU or generic visual fallback does not hide errors. | Planned | none |
 | Check documentation readiness. | Review UI architecture, feature, workflow, debugging, and validation docs. | Documentation matches implemented contracts and avoids baseline-recording requirements. | Planned | none |
 
 ## First Milestone: Async Retained UI

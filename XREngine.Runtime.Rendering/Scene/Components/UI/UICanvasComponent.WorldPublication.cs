@@ -1,3 +1,4 @@
+using XREngine.Rendering.UI.State;
 using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -239,7 +240,9 @@ public partial class UICanvasComponent
                     directRenderer.RequiresAtomicFrameAuthoring)
                 {
                     // The legacy route stays active until an output attempt has
-                    // selected and reserved every required world pass.
+                    // selected and reserved every required world pass. It is counted
+                    // so that diagnostics can tell it from checked output.
+                    UIRuntimeCounters.Add(UIWorkCounter.WorldUncheckedDraws);
                     draw();
                     return;
                 }
@@ -290,9 +293,10 @@ public partial class UICanvasComponent
                     publication.OffscreenReservationGeneration, renderer) != true)
             {
                 RequestOffscreenRecapture();
+                const string reason = "UI.Canvas.QuadPending: the sampled surface belongs to another renderer generation.";
                 if (renderer?.RequiresAtomicFrameAuthoring == true)
-                    throw new RenderResourcePreparationPendingException(
-                        "UI.Canvas.QuadPending: the sampled surface belongs to another renderer generation.");
+                    throw new RenderResourcePreparationPendingException(reason);
+                UIFailureDiagnostics.Report(reason);
                 return;
             }
             XRViewport? viewport = RuntimeEngine.Rendering.State.RenderingViewport;
@@ -302,7 +306,11 @@ public partial class UICanvasComponent
                 !renderer.TryBeginUiPublicationReceipt(publication, 1,
                     requiresSwapchainPresentation: presentsWindow,
                     out ulong receiptId))
+            {
+                UIFailureDiagnostics.Report(
+                    "UI.Canvas.ReceiptRejected: the renderer did not reserve a UI publication receipt for this world quad.");
                 return;
+            }
             try { BatchCollector.BeginPublicationReceipt(receiptId); }
             catch
             {

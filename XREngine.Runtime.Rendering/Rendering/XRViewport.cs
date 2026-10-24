@@ -185,6 +185,38 @@ namespace XREngine.Rendering
         /// </summary>
         public bool Suppress3DSceneRendering { get; set; }
 
+        /// <summary>
+        /// Returns the first reason that this viewport cannot admit checked retained world UI,
+        /// or null when every output condition holds. Each reason is a constant string.
+        /// </summary>
+        private string? ResolveRetainedWorldUiUnsupportedReason(XRCamera camera)
+        {
+            if (_renderPipeline.AssignedPipeline is not DefaultRenderPipeline worldUiPipeline ||
+                !worldUiPipeline.SupportsRetainedWorldUiColorProfile(camera))
+                return "UI.WorldOutputUnsupported: the render pipeline does not support the retained world UI color profile.";
+            if ((MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) !=
+                    EMeshSubmissionStrategy.CpuDirect)
+                return "UI.WorldOutputUnsupported: checked world UI requires CPU-direct mesh submission.";
+            if (Window is not { } worldUiWindow)
+                return "UI.WorldOutputUnsupported: checked world UI requires a window output.";
+            if (worldUiWindow.Viewports.Count != 1 ||
+                !ReferenceEquals(worldUiWindow.Viewports[0], this))
+                return "UI.WorldOutputUnsupported: checked world UI requires one viewport in its window.";
+            if (RuntimeRenderingHostServices.Presentation.IsWindowScenePanelPresentationEnabled &&
+                !RuntimeRenderingHostServices.Presentation.ForceFullViewport)
+                return "UI.WorldOutputUnsupported: checked world UI does not support scene panel presentation.";
+            if (worldUiWindow.HasUntrackedLateWorldUiOutput)
+                return "UI.WorldOutputUnsupported: the window has untracked late world UI output.";
+            if (!worldUiWindow.Renderer.SupportsCheckedWorldUiOutput)
+                return "UI.WorldOutputUnsupported: the active renderer does not support checked world UI output.";
+            if (!worldUiWindow.Renderer.CanAdmitUiWorldOutputImage(worldUiWindow, _renderPipeline))
+                return "UI.WorldOutputUnsupported: the renderer cannot admit the world UI output image.";
+            if (ResolveScreenSpaceUICanvas() is not null)
+                return "UI.WorldOutputUnsupported: checked world UI does not support a screen-space canvas in the same output.";
+            return null;
+        }
+
         /// <summary>Requests checked retained world UI for a supported window output.</summary>
         public bool EnableRetainedWorldUiColor
         {
@@ -1599,23 +1631,15 @@ namespace XREngine.Rendering
                 worldOverride is null && cameraOverride is null &&
                 stereoRightEyeCamera is null && renderCommandsOverride is null &&
                 collectionVolumeOverride is null &&
-                commandCollection == _renderPipeline.MeshRenderCommands &&
-                _renderPipeline.AssignedPipeline is DefaultRenderPipeline worldUiPipeline &&
-                worldUiPipeline.SupportsRetainedWorldUiColorProfile(camera) &&
-                (MeshSubmissionStrategyOverride ??
-                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) ==
-                    EMeshSubmissionStrategy.CpuDirect &&
-                Window is { } worldUiWindow &&
-                worldUiWindow.Viewports.Count == 1 &&
-                ReferenceEquals(worldUiWindow.Viewports[0], this) &&
-                (!RuntimeRenderingHostServices.Presentation.IsWindowScenePanelPresentationEnabled ||
-                    RuntimeRenderingHostServices.Presentation.ForceFullViewport) &&
-                !worldUiWindow.HasUntrackedLateWorldUiOutput &&
-                worldUiWindow.Renderer.SupportsCheckedWorldUiOutput &&
-                worldUiWindow.Renderer.CanAdmitUiWorldOutputImage(
-                    worldUiWindow, _renderPipeline) &&
-                ResolveScreenSpaceUICanvas() is null)
-                _ = commandCollection.TryReplaceDirectWorldCanvas(world.WorldContext, camera);
+                commandCollection == _renderPipeline.MeshRenderCommands)
+            {
+                // Checked world UI was requested for this output. A configuration that cannot
+                // admit it reports why instead of drawing the unchecked route without notice.
+                if (ResolveRetainedWorldUiUnsupportedReason(camera) is { } unsupported)
+                    UI.State.UIFailureDiagnostics.Report(unsupported);
+                else
+                    _ = commandCollection.TryReplaceDirectWorldCanvas(world.WorldContext, camera);
+            }
 
             PrepareBackendReadyFramePackage(commandCollection, !collectMirrors);
             if (world is RuntimeWorldRenderer sealedWorld)

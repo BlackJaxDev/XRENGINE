@@ -188,6 +188,7 @@
     <Compile Include="../Rendering/UIVirtualScaleTests.cs" Link="Rendering/UIVirtualScaleTests.cs" />
     <Compile Include="../Rendering/FocusVirtualListProvider.cs" Link="Rendering/FocusVirtualListProvider.cs" />
     <Compile Include="../Rendering/UITextLayoutKernelTests.cs" Link="Rendering/UITextLayoutKernelTests.cs" />
+    <Compile Include="../Rendering/UIFailureDiagnosticsTests.cs" Link="Rendering/UIFailureDiagnosticsTests.cs" />
     <Compile Include="../Rendering/UITextValueLayoutTests.cs" Link="Rendering/UITextValueLayoutTests.cs" />
     <Compile Include="../Rendering/UITextLazyStandaloneTests.cs" Link="Rendering/UITextLazyStandaloneTests.cs" />
     <Compile Include="../Rendering/UITextMutatingShapingBackend.cs" Link="Rendering/UITextMutatingShapingBackend.cs" />

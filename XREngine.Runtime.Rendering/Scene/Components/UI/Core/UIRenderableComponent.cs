@@ -489,7 +489,11 @@ namespace XREngine.Rendering.UI
                 {
                     if (RegisterWithBatchCollector(collector, passes))
                         return false; // Successfully batched — skip individual command
-                    // Registration failed (e.g. font not loaded yet); fall through to individual render
+                    // The publication promised a batch. Do not draw the live command in its
+                    // place; report the failure and omit this draw.
+                    UIFailureDiagnostics.Report(
+                        "UI.BatchRegistrationFailed: a published batch draw could not register with the canvas batch collector.");
+                    return false;
                 }
             }
 

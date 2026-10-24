@@ -39,5 +39,9 @@ public enum UIWorkCounter
     TextLayoutCacheHits,
     /// <summary>Text layouts that found no cached result and placed glyphs again.</summary>
     TextLayoutCacheMisses,
+    /// <summary>Native UI failures reported through <see cref="UIFailureDiagnostics"/>.</summary>
+    FailuresReported,
+    /// <summary>Direct-world UI draws that used the route without checked indexed-draw proof.</summary>
+    WorldUncheckedDraws,
     Count,
 }

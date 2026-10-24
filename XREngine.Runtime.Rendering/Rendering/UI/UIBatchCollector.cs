@@ -1221,7 +1221,15 @@ public sealed partial class UIBatchCollector : IDisposable
             ulong segmentRevision = segment?.Revision ?? 0;
             if (record.IsText)
             {
-                if (record.TextLayout is not { } layout || record.Atlas is null || layout.Glyphs.Length == 0)
+                if (record.TextLayout is not { } layout || record.Atlas is null)
+                {
+                    // Capture rejects these records; reaching this point loses visible text.
+                    // Collection runs before a receipt is active, so report it directly.
+                    UIFailureDiagnostics.Report(
+                        "UI.TextCapture.AtlasPending: a published text record has no layout or font atlas.");
+                    continue;
+                }
+                if (layout.Glyphs.Length == 0)
                     continue;
                 Matrix4x4 world = record.WorldMatrix;
                 Vector4 color = record.TextColor;
@@ -2680,11 +2688,15 @@ public sealed partial class UIBatchCollector : IDisposable
     private void RenderMaterialGroup(int renderPass, int groupIndex)
     {
         if (!_renderMaterialGroups.TryGetValue(renderPass, out var groups) ||
-            !groups.TryGet(groupIndex, out var batch) ||
-            batch.Entries.Count == 0)
+            !groups.TryGet(groupIndex, out var batch))
         {
+            // A marker names a group that collection did not produce; its draws are lost.
+            FailCurrentUiPublicationAuthoring(
+                "UI.Batch.GroupMissing: a published material batch marker has no collected group.");
             return;
         }
+        if (batch.Entries.Count == 0)
+            return;
 
         XRTexture2D? backdropTexture = null;
         BoundingRectangle backdropRegion = default;
@@ -2982,11 +2994,19 @@ public sealed partial class UIBatchCollector : IDisposable
     private void RenderTextGroup(int renderPass, int groupIndex)
     {
         if (!_renderTextGroups.TryGetValue(renderPass, out var groups) ||
-            !groups.TryGet(groupIndex, out var batchData) ||
-            batchData.Atlas is null ||
-            batchData.Entries.Count == 0 ||
-            batchData.TotalGlyphs == 0)
+            !groups.TryGet(groupIndex, out var batchData))
         {
+            // A marker names a group that collection did not produce; its text is lost.
+            FailCurrentUiPublicationAuthoring(
+                "UI.Batch.GroupMissing: a published text batch marker has no collected group.");
+            return;
+        }
+        if (batchData.Entries.Count == 0 || batchData.TotalGlyphs == 0)
+            return;
+        if (batchData.Atlas is null)
+        {
+            FailCurrentUiPublicationAuthoring(
+                "UI.TextCapture.AtlasPending: a published text batch group has no font atlas.");
             return;
         }
 

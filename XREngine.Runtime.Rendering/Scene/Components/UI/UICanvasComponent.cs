@@ -1,3 +1,4 @@
+using XREngine.Rendering.UI.State;
 using System.Numerics;
 using System.ComponentModel;
 using XREngine.Core.Attributes;
@@ -30,6 +31,10 @@ namespace XREngine.Components
         IRuntimeGameModeUserInterface
     {
         private const float DefaultAutoWorldCanvasDistance = 1500.0f;
+        private const string BatchCapacityPendingReason =
+            "UI.Canvas.BatchCapacityPending: no isolated GPU cohort is ready for this canvas.";
+        private const string ReceiptRejectedReason =
+            "UI.Canvas.ReceiptRejected: the renderer did not reserve a UI publication receipt for this canvas.";
 
         public UICanvasTransform CanvasTransform => GetCanvasTransformOrNull(true)!;
 
@@ -528,8 +533,8 @@ namespace XREngine.Components
                 if (requiresBackdrop)
                     backdropWindow!.FailOpenGlBackdropAttempt();
                 if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
-                    throw new RenderResourcePreparationPendingException(
-                        "UI.Canvas.BatchCapacityPending: no isolated GPU cohort is ready for this canvas.");
+                    throw new RenderResourcePreparationPendingException(BatchCapacityPendingReason);
+                UIFailureDiagnostics.Report(BatchCapacityPendingReason);
                 return;
             }
 
@@ -551,6 +556,7 @@ namespace XREngine.Components
                         publication, BatchCollector.ExpectedPublishedDrawIntentCount,
                         requiresSwapchainPresentation: true, out receiptId))
                 {
+                    UIFailureDiagnostics.Report(ReceiptRejectedReason);
                     if (requiresBackdrop)
                         backdropWindow!.FailOpenGlBackdropAttempt();
                     t_renderingCanvas = previousRenderingCanvas;
@@ -990,9 +996,10 @@ namespace XREngine.Components
             if (surface.CompletedGeneration == publication.OffscreenReservationGeneration)
             {
                 RequestOffscreenRecapture();
+                const string reason = "UI.Canvas.SurfacePending: the producer belongs to another renderer generation.";
                 if (activeRenderer?.RequiresAtomicFrameAuthoring == true)
-                    throw new RenderResourcePreparationPendingException(
-                        "UI.Canvas.SurfacePending: the producer belongs to another renderer generation.");
+                    throw new RenderResourcePreparationPendingException(reason);
+                UIFailureDiagnostics.Report(reason);
                 return;
             }
 
@@ -1000,8 +1007,8 @@ namespace XREngine.Components
             if (!BatchCollector.CanRenderPublishedBatches())
             {
                 if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
-                    throw new RenderResourcePreparationPendingException(
-                        "UI.Canvas.BatchCapacityPending: no isolated GPU cohort is ready for this canvas.");
+                    throw new RenderResourcePreparationPendingException(BatchCapacityPendingReason);
+                UIFailureDiagnostics.Report(BatchCapacityPendingReason);
                 return;
             }
 
@@ -1041,6 +1048,7 @@ namespace XREngine.Components
                         publication, BatchCollector.ExpectedPublishedDrawIntentCount,
                         requiresSwapchainPresentation: false, out receiptId))
                 {
+                    UIFailureDiagnostics.Report(ReceiptRejectedReason);
                     t_renderingCanvas = previousRenderingCanvas;
                     BatchCollector.BindRenderingPublication(null);
                     return;

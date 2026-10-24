@@ -1098,3 +1098,18 @@ The reconciliation remains **47 of 60**. This increment advances the open panel 
   axis strip bounds. Native pointer checks remain open.
 The full headless run passed **1030 of 1030 tests**. Editor and desktop test builds
 passed with 0 warnings and errors.
+
+## Explicit native UI failures
+
+The reconciliation is now **48 of 60**. The explicit failure item is complete.
+
+- An audit of the native batch, receipt, offscreen, world, and text paths found
+  branches that returned or drew another route without a report on OpenGL and
+  Vulkan, because those backends do not require atomic frames.
+- `UIFailureDiagnostics` now reports each of these by code, with a counter and a
+  throttled warning. A failed batch registration no longer draws the live command.
+  Checked world UI that cannot be admitted names the first failed condition.
+- `UIFailureDiagnosticsTests` covers counting, the per-code throttle, and empty
+  reasons. Forcing each failure on a live backend remains in the validation plan.
+
+The full headless run passed **1033 of 1033 tests**.
