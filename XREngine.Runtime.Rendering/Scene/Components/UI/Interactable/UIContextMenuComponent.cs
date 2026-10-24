@@ -32,12 +32,31 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public bool IsSeparator { get; }
 
+        /// <summary>
+        /// Items of the submenu that this item opens. The list is empty for an action item.
+        /// </summary>
+        public IReadOnlyList<ContextMenuItem> SubmenuItems => _submenuItems;
+
+        /// <summary>True if this item opens a submenu instead of running an action.</summary>
+        public bool HasSubmenu => _submenuItems.Length > 0;
+
+        private readonly ContextMenuItem[] _submenuItems = [];
+
         public ContextMenuItem(string label, Action? action, bool enabled = true)
         {
             Label = label;
             Action = action;
             Enabled = enabled;
             IsSeparator = false;
+        }
+
+        private ContextMenuItem(string label, ContextMenuItem[] submenuItems, bool enabled)
+        {
+            Label = label;
+            Action = null;
+            Enabled = enabled;
+            IsSeparator = false;
+            _submenuItems = submenuItems;
         }
 
         private ContextMenuItem()
@@ -52,6 +71,20 @@ namespace XREngine.Rendering.UI
         /// Creates a separator menu item.
         /// </summary>
         public static ContextMenuItem Separator() => new();
+
+        /// <summary>
+        /// Creates an item that opens a submenu. The item keeps a copy of
+        /// <paramref name="items"/>, so later changes to the caller's array have no effect.
+        /// </summary>
+        public static ContextMenuItem Submenu(string label, ContextMenuItem[] items, bool enabled = true)
+        {
+            ArgumentNullException.ThrowIfNull(items);
+            if (items.Length == 0)
+                throw new ArgumentException("A submenu needs at least one item.", nameof(items));
+            for (int index = 0; index < items.Length; index++)
+                ArgumentNullException.ThrowIfNull(items[index], nameof(items));
+            return new ContextMenuItem(label, (ContextMenuItem[])items.Clone(), enabled);
+        }
     }
 
     /// <summary>
@@ -98,6 +131,14 @@ namespace XREngine.Rendering.UI
         private bool _clearingMenuItems;
         private bool _hiding;
         private ulong _showRevision;
+        private UIContextMenuComponent? _ownerMenu;
+        private ulong _ownerShowRevision;
+        private UIContextMenuComponent? _submenu;
+        private SceneNode? _submenuNode;
+        private UIContextMenuItemComponent? _submenuRow;
+        private bool _openingSubmenu;
+        private int _firstFocusFramesLeft;
+        private const int FirstFocusFrameLimit = 8;
 
         /// <summary>
         /// Whether the context menu is currently visible and accepting input.
@@ -157,8 +198,15 @@ namespace XREngine.Rendering.UI
 
         public UIListTransform? VirtualList => _virtualList;
 
+        /// <summary>Gets the menu that opened this menu as a submenu, or null for a root menu.</summary>
+        public UIContextMenuComponent? OwnerMenu => _ownerMenu;
+
+        /// <summary>Gets the open submenu of this menu, or null.</summary>
+        public UIContextMenuComponent? OpenSubmenu => _submenu is { _isOpen: true } submenu ? submenu : null;
+
         private void ShowCore(Vector2 parentLocalPosition, ContextMenuItem[] items, IVirtualListProvider? provider,
-            Action<SceneNode>? contentBuilder = null, float contentHeight = 0, bool passive = false)
+            Action<SceneNode>? contentBuilder = null, float contentHeight = 0, bool passive = false,
+            bool subscribeForDismiss = true)
         {
             if (_tearingDown || IsDestroyed || _clearingMenuItems || _hiding)
                 return;
@@ -257,7 +305,8 @@ namespace XREngine.Rendering.UI
             }
             canvas.UpdateLayoutAsync();
             RegisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
-            if (!passive)
+            // The root menu handles dismissal for its whole submenu chain.
+            if (!passive && subscribeForDismiss)
                 SubscribeForDismiss();
         }
 
@@ -292,6 +341,8 @@ namespace XREngine.Rendering.UI
             transform.Translation = ClampMenuPosition(_pendingPosition, PreferredWidth, boundedHeight);
             transform.Visibility = EVisibility.Visible;
             canvas.UpdateLayoutAsync();
+            if (_firstFocusFramesLeft > 0)
+                RegisterTick(ETickGroup.Late, ETickOrder.Scene, RetryFirstItemFocus);
         }
 
         private Vector2 ClampMenuPosition(Vector2 position, float width, float height)
@@ -328,7 +379,12 @@ namespace XREngine.Rendering.UI
                     return;
                 _awaitingPlacement = false;
                 UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
+                StopFirstItemFocus();
                 UnsubscribeForDismiss();
+                // Deactivation keeps nodes; destroying them can change a hierarchy in teardown.
+                CloseSubmenu(refocusRow: false, destroyNode: clearMenuItems);
+                if (_tearingDown || IsDestroyed)
+                    return;
                 if (clearMenuItems)
                     ClearMenuItems();
                 if (_tearingDown || IsDestroyed)
@@ -340,6 +396,7 @@ namespace XREngine.Rendering.UI
                 _requestedHeight = 0;
                 _virtualList = null;
                 _placementCanvas = null;
+                _ownerMenu = null;
                 ReleaseItemButtons();
 
                 // Collapse the node so the background material stops rendering.
@@ -437,7 +494,7 @@ namespace XREngine.Rendering.UI
             buttonTfm.Margins = new Vector4(0.0f);
 
             ulong showRevision = _showRevision;
-            button.Bind(this, showRevision);
+            button.Bind(this, showRevision, item);
             if (item.Enabled)
             {
                 _itemButtons.Add(button);
@@ -451,9 +508,14 @@ namespace XREngine.Rendering.UI
                         showRevision != _showRevision || !button.CanInteract ||
                         !ReferenceEquals(button.Menu, this))
                         return;
+                    if (item.HasSubmenu)
+                    {
+                        OpenItemSubmenu(button, showRevision, focusFirstItem: false);
+                        return;
+                    }
                     item.Action?.Invoke();
                     if (!_tearingDown && !IsDestroyed && _isOpen && showRevision == _showRevision)
-                        Hide();
+                        HideMenuChain();
                 });
             }
             else
@@ -474,6 +536,17 @@ namespace XREngine.Rendering.UI
             label.VerticalAlignment = EVerticalAlignment.Center;
             label.BoundableTransform.Margins = new Vector4(ItemPadding, 0.0f, ItemPadding, 0.0f);
             label.RenderCommand2D.ZIndex = LabelZIndex;
+
+            if (!item.HasSubmenu)
+                return;
+            buttonNode.NewChild<UITextComponent>(out var arrow);
+            arrow.Text = ">";
+            arrow.FontSize = FontSize;
+            arrow.Color = label.Color;
+            arrow.HorizontalAlignment = EHorizontalAlignment.Right;
+            arrow.VerticalAlignment = EVerticalAlignment.Center;
+            arrow.BoundableTransform.Margins = new Vector4(ItemPadding, 0.0f, ItemPadding, 0.0f);
+            arrow.RenderCommand2D.ZIndex = LabelZIndex;
         }
 
         private void BuildSeparator(SceneNode parent)
@@ -558,6 +631,196 @@ namespace XREngine.Rendering.UI
             return false;
         }
 
+        /// <summary>
+        /// Opens the submenu of a row of the current show. The submenu is a sibling node of
+        /// this menu, so it is not clipped by this menu. It opens to the right of the row, or
+        /// to the left when the right side has no room. Returns false when the row belongs to
+        /// an earlier show, has no submenu, or a callback closed or replaced a menu.
+        /// </summary>
+        internal bool OpenItemSubmenu(UIContextMenuItemComponent row, ulong showRevision, bool focusFirstItem)
+        {
+            if (_tearingDown || IsDestroyed || !_isOpen || _openingSubmenu ||
+                showRevision != _showRevision || !ReferenceEquals(row.Menu, this) ||
+                row.Item is not { HasSubmenu: true, Enabled: true } item)
+                return false;
+            if (_submenu is { _isOpen: true } current && ReferenceEquals(_submenuRow, row))
+                return !focusFirstItem || current.FocusFirstItem();
+            CloseSubmenu(refocusRow: false);
+            if (_tearingDown || IsDestroyed || !_isOpen || showRevision != _showRevision ||
+                SceneNode.Parent is not { } host)
+                return false;
+
+            _openingSubmenu = true;
+            try
+            {
+                SceneNode node = host.NewChild();
+                node.Name = "ContextSubmenu";
+                node.SetTransform<UIBoundableTransform>();
+                UIContextMenuComponent submenu = node.AddComponent<UIContextMenuComponent>()!;
+                _submenu = submenu;
+                _submenuNode = node;
+                _submenuRow = row;
+                if (_tearingDown || IsDestroyed || !_isOpen || showRevision != _showRevision)
+                {
+                    CloseSubmenu(refocusRow: false);
+                    return false;
+                }
+                submenu.PreferredWidth = PreferredWidth;
+                submenu._ownerMenu = this;
+                submenu._ownerShowRevision = showRevision;
+                submenu._firstFocusFramesLeft = focusFirstItem ? FirstFocusFrameLimit : 0;
+                ContextMenuItem[] items = new ContextMenuItem[item.SubmenuItems.Count];
+                for (int index = 0; index < items.Length; index++)
+                    items[index] = item.SubmenuItems[index];
+                submenu.ShowCore(ResolveSubmenuPosition(item, submenu.PreferredWidth), items,
+                    null, subscribeForDismiss: false);
+                // A show callback can close this menu or replace the submenu.
+                if (_tearingDown || IsDestroyed || !_isOpen || showRevision != _showRevision ||
+                    !ReferenceEquals(_submenu, submenu) || !submenu._isOpen ||
+                    !ReferenceEquals(submenu._ownerMenu, this))
+                {
+                    if (ReferenceEquals(_submenu, submenu))
+                        CloseSubmenu(refocusRow: false);
+                    return false;
+                }
+                if (focusFirstItem && submenu.FocusFirstItem())
+                    submenu.StopFirstItemFocus();
+                return true;
+            }
+            finally
+            {
+                _openingSubmenu = false;
+            }
+        }
+
+        /// <summary>Closes this submenu from one of its rows and returns focus to the owner row.</summary>
+        internal bool CloseFromItem(UIContextMenuItemComponent row, ulong showRevision)
+        {
+            if (_tearingDown || IsDestroyed || !_isOpen || showRevision != _showRevision ||
+                !ReferenceEquals(row.Menu, this) || _ownerMenu is not { } owner ||
+                !ReferenceEquals(owner._submenu, this) || owner._showRevision != _ownerShowRevision)
+                return false;
+            owner.CloseSubmenu(refocusRow: true);
+            return true;
+        }
+
+        private Vector2 ResolveSubmenuPosition(ContextMenuItem item, float submenuWidth)
+        {
+            UIBoundableTransform transform = BoundableTransform;
+            float offset = 0;
+            foreach (ContextMenuItem candidate in _items)
+            {
+                if (ReferenceEquals(candidate, item))
+                    break;
+                offset += candidate.IsSeparator ? _separatorHeight : _itemHeight;
+            }
+            Vector2 topLeft = transform.Translation;
+            float x = topLeft.X + PreferredWidth;
+            if (transform.Parent is UIBoundableTransform parent && parent.ActualWidth > 0 &&
+                x + submenuWidth > parent.ActualWidth)
+                x = topLeft.X - submenuWidth;
+            return new Vector2(x, topLeft.Y - offset);
+        }
+
+        /// <summary>
+        /// Hides the open submenu. When <paramref name="destroyNode"/> is false, the hidden
+        /// submenu node stays attached and the next submenu open or hide destroys it.
+        /// </summary>
+        private void CloseSubmenu(bool refocusRow, bool destroyNode = true)
+        {
+            UIContextMenuComponent? submenu = _submenu;
+            SceneNode? node = _submenuNode;
+            UIContextMenuItemComponent? row = _submenuRow;
+            _submenu = null;
+            _submenuRow = null;
+            if (destroyNode)
+                _submenuNode = null;
+            if (submenu is not null && !submenu.IsDestroyed)
+            {
+                submenu._ownerMenu = null;
+                if (destroyNode)
+                    submenu.Hide();
+                else
+                    submenu.HideCore(clearMenuItems: false);
+            }
+            if (destroyNode && node is not null && !node.IsDestroyed)
+                node.Destroy(true);
+            if (refocusRow && row is not null && _isOpen && !_tearingDown && !IsDestroyed &&
+                ReferenceEquals(row.Menu, this) &&
+                UITransform.GetCanvasComponent()?.GetInputComponent() is { } input)
+                input.TryFocusPresented(row);
+        }
+
+        /// <summary>Hides the root of this submenu chain, which also hides every open submenu.</summary>
+        private void HideMenuChain()
+        {
+            UIContextMenuComponent root = this;
+            while (root._ownerMenu is { } owner && !owner.IsDestroyed && owner._isOpen &&
+                owner._showRevision == root._ownerShowRevision &&
+                ReferenceEquals(owner._submenu, root))
+                root = owner;
+            root.Hide();
+            if (!ReferenceEquals(root, this))
+                Hide();
+        }
+
+        /// <summary>Closes the innermost open submenu, or this menu when no submenu is open.</summary>
+        private void CloseInnermost()
+        {
+            if (_submenu is { _isOpen: true } submenu)
+            {
+                if (submenu._submenu is { _isOpen: true })
+                    submenu.CloseInnermost();
+                else
+                    CloseSubmenu(refocusRow: true);
+                return;
+            }
+            Hide();
+        }
+
+        private bool IsInsideMenuChain(SceneNode? candidate)
+            => IsDescendantOfSelf(candidate) ||
+                _submenu is { _isOpen: true } submenu && submenu.IsInsideMenuChain(candidate);
+
+        private bool ContainsMenu(UIContextMenuComponent menu)
+            => ReferenceEquals(menu, this) ||
+                _submenu is { _isOpen: true } submenu && submenu.ContainsMenu(menu);
+
+        /// <summary>Moves presented focus to the first enabled row of this menu.</summary>
+        internal bool FocusFirstItem()
+        {
+            if (_tearingDown || IsDestroyed || !_isOpen ||
+                UITransform.GetCanvasComponent()?.GetInputComponent() is not { } input)
+                return false;
+            ulong showRevision = _showRevision;
+            int count = _itemButtons.Count;
+            for (int index = 0; index < count; index++)
+            {
+                UIContextMenuItemComponent target = _itemButtons[index];
+                if (!target.CanInteract)
+                    continue;
+                if (input.TryFocusPresented(target))
+                    return showRevision == _showRevision && _isOpen;
+                if (showRevision != _showRevision || !_isOpen || _itemButtons.Count != count)
+                    return false;
+            }
+            return false;
+        }
+
+        // Rows become presented one publication after placement. Keyboard-opened submenus
+        // retry first-row focus for a few frames and then stop.
+        private void RetryFirstItemFocus()
+        {
+            if (_firstFocusFramesLeft <= 0 || FocusFirstItem() || --_firstFocusFramesLeft <= 0)
+                StopFirstItemFocus();
+        }
+
+        private void StopFirstItemFocus()
+        {
+            _firstFocusFramesLeft = 0;
+            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RetryFirstItemFocus);
+        }
+
         private void ReleaseItemButtons()
         {
             for (int index = 0; index < _itemButtons.Count; index++)
@@ -631,7 +894,7 @@ namespace XREngine.Rendering.UI
 
         private void OnEscapeDismiss()
         {
-            Hide();
+            CloseInnermost();
         }
 
         private void OnGamepadBackPressed(UIInteractableComponent? focused)
@@ -639,11 +902,12 @@ namespace XREngine.Rendering.UI
             if (!_isOpen || focused?.SceneNode is not { } focusedNode)
                 return;
             // Only the closest open menu owns Back, including when menus are nested.
+            // A root menu also handles Back for the submenus that it opened.
             for (SceneNode? node = focusedNode; node is not null; node = node.Parent)
                 if (node.GetComponent<UIContextMenuComponent>() is { IsOpen: true } menu)
                 {
-                    if (ReferenceEquals(menu, this))
-                        Hide();
+                    if (ContainsMenu(menu))
+                        CloseInnermost();
                     return;
                 }
         }
@@ -666,8 +930,8 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
-            // If clicked inside our menu subtree, the button handler will call Hide().
-            if (IsDescendantOfSelf(clicked.SceneNode))
+            // If clicked inside our menu subtree or an open submenu, the button handler acts.
+            if (IsInsideMenuChain(clicked.SceneNode))
                 return;
 
             // Otherwise it's an outside click — dismiss.
@@ -698,7 +962,19 @@ namespace XREngine.Rendering.UI
             _awaitingPlacement = false;
             _isOpen = false;
             UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
+            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RetryFirstItemFocus);
+            _firstFocusFramesLeft = 0;
             UnsubscribeForDismiss();
+            UIContextMenuComponent? submenu = _submenu;
+            SceneNode? submenuNode = _submenuNode;
+            _submenu = null;
+            _submenuNode = null;
+            _submenuRow = null;
+            _ownerMenu = null;
+            if (submenu is not null && !submenu.IsDestroyed)
+                submenu._ownerMenu = null;
+            if (submenuNode is not null && !submenuNode.IsDestroyed)
+                submenuNode.Destroy(true);
             _items = [];
             _virtualProvider = null;
             _contentBuilder = null;

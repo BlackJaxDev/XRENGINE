@@ -616,6 +616,20 @@ after the menu height is computed. When a callback moves the menu to another
 canvas, placement waits for that canvas. When it leaves the menu without a canvas,
 the menu closes.
 
+`ContextMenuItem.Submenu` creates a row that opens a submenu and keeps a copy of
+its items. A click on the row, or Right on the focused row, opens the submenu as a
+sibling node of the menu, so the menu clip does not cut it. It opens beside the
+row, on the left when the right side has no room. Right also focuses the first
+enabled submenu row after the submenu is placed and presented; the request retries
+for at most eight frames. Left closes the submenu that contains the focused row and
+returns focus to the row that opened it. Only the root menu subscribes to dismiss
+input. Escape and Back close the innermost submenu first. A click inside any open
+menu of the chain does not dismiss it. An action row in a submenu runs its action
+and hides the root, which hides the whole chain. A replaced show or Hide destroys
+the submenu node. Deactivation only hides the submenu, and the next open or Hide
+destroys the node, so teardown does not change the hierarchy. A row from an
+earlier show cannot open a submenu.
+
 ## Composition boundaries and split handles
 
 `UICompositionLayerComponent` assigns an explicit owner and kind to its subtree.

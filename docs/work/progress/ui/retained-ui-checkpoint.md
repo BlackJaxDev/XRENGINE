@@ -1069,3 +1069,20 @@ The reconciliation is now **47 of 60**. The text layout cache item is complete.
 
 The full headless run passed **1012 of 1012 tests**. Editor and desktop test
 builds passed with 0 warnings and errors. No runtime text profiling ran here.
+
+## Context menu submenus
+
+The reconciliation remains **47 of 60**. This increment advances the open shared
+controls item.
+
+- `ContextMenuItem.Submenu` rows open a sibling submenu beside the row. Right opens
+  it and focuses its first row after presentation. Left, Escape, and Back close the
+  innermost submenu and return focus to its row.
+- The root menu owns dismiss input for the chain. A submenu action hides the root.
+  Stale rows cannot open submenus. Teardown hides a submenu without destroying nodes.
+- `UIContextMenuNavigationTests` covers opening, focus, chain dismissal, innermost
+  close, stale rows, replaced shows, and canvas teardown.
+
+Native pointer, hover-open, and visual placement checks remain open.
+The full headless run passed **1016 of 1016 tests**. Editor and desktop test builds
+passed with 0 warnings and errors.

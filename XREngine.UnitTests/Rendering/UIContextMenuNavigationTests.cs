@@ -187,6 +187,143 @@ public sealed class UIContextMenuNavigationTests
         }
     }
 
+    [Test]
+    public void SubmenuOpensAsSiblingFocusesFirstRowAndLeafClosesTheChain()
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            int ran = 0;
+            int dismissed = 0;
+            menu.Dismissed += () => dismissed++;
+            menu.Show(new Vector2(8, 80),
+                new ContextMenuItem("Action", () => { }),
+                ContextMenuItem.Submenu("More",
+                [
+                    new ContextMenuItem("Disabled", () => { }, false),
+                    new ContextMenuItem("Leaf", () => ran++),
+                ]));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            input.PresentedFocusAccepted = true;
+            UIContextMenuItemComponent more = Rows(menu)[1];
+
+            menu.OpenItemSubmenu(more, more.ShowRevision, focusFirstItem: true).ShouldBeTrue();
+
+            UIContextMenuComponent submenu = menu.OpenSubmenu.ShouldNotBeNull();
+            SceneNode submenuNode = submenu.SceneNode;
+            submenu.OwnerMenu.ShouldBeSameAs(menu);
+            submenu.SceneNode.Parent.ShouldBeSameAs(menu.SceneNode.Parent);
+            List<UIContextMenuItemComponent> subRows = Rows(submenu);
+            subRows.Count.ShouldBe(1);
+            // Rows of an unplaced submenu cannot take focus; placement retries the request.
+            input.FocusedComponent.ShouldBeNull();
+            submenu.UITransform.Visibility = EVisibility.Visible;
+            submenu.FocusFirstItem().ShouldBeTrue();
+            input.FocusedComponent.ShouldBeSameAs(subRows[0]);
+            // The root handles dismissal for the whole chain.
+            input.SubscriberCount.ShouldBe(4);
+
+            subRows[0].OnInteract();
+
+            ran.ShouldBe(1);
+            menu.IsOpen.ShouldBeFalse();
+            submenuNode.IsDestroyed.ShouldBeTrue();
+            dismissed.ShouldBe(1);
+            input.SubscriberCount.ShouldBe(0);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void EscapeAndLeftCloseOnlyTheInnermostSubmenu()
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            menu.Show(new Vector2(8, 80),
+                ContextMenuItem.Submenu("More",
+                [
+                    ContextMenuItem.Submenu("Deeper", [new ContextMenuItem("Leaf", () => { })]),
+                ]));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            input.PresentedFocusAccepted = true;
+            UIContextMenuItemComponent more = Rows(menu)[0];
+            menu.OpenItemSubmenu(more, more.ShowRevision, focusFirstItem: true).ShouldBeTrue();
+            UIContextMenuComponent first = menu.OpenSubmenu.ShouldNotBeNull();
+            UIContextMenuItemComponent deeper = Rows(first)[0];
+            first.OpenItemSubmenu(deeper, deeper.ShowRevision, focusFirstItem: true).ShouldBeTrue();
+            UIContextMenuComponent second = first.OpenSubmenu.ShouldNotBeNull();
+            SceneNode firstNode = first.SceneNode;
+            SceneNode secondNode = second.SceneNode;
+
+            input.RaiseEscape();
+
+            secondNode.IsDestroyed.ShouldBeTrue();
+            first.IsOpen.ShouldBeTrue();
+            first.OpenSubmenu.ShouldBeNull();
+            input.FocusedComponent.ShouldBeSameAs(deeper);
+
+            first.CloseFromItem(deeper, deeper.ShowRevision).ShouldBeTrue();
+            firstNode.IsDestroyed.ShouldBeTrue();
+            menu.IsOpen.ShouldBeTrue();
+            input.FocusedComponent.ShouldBeSameAs(more);
+
+            input.RaiseEscape();
+            menu.IsOpen.ShouldBeFalse();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void ReplacedShowClosesItsSubmenuAndRejectsStaleRows()
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            ContextMenuItem[] children = [new ContextMenuItem("Leaf", () => { })];
+            ContextMenuItem more = ContextMenuItem.Submenu("More", children);
+            // The item keeps its own copy of the submenu rows.
+            children[0] = new ContextMenuItem("Replaced", () => { });
+            more.SubmenuItems[0].Label.ShouldBe("Leaf");
+            menu.Show(new Vector2(8, 80), more);
+            menu.UITransform.Visibility = EVisibility.Visible;
+            UIContextMenuItemComponent stale = Rows(menu)[0];
+            ulong staleRevision = stale.ShowRevision;
+            menu.OpenItemSubmenu(stale, staleRevision, focusFirstItem: false).ShouldBeTrue();
+            SceneNode oldSubmenuNode = menu.OpenSubmenu.ShouldNotBeNull().SceneNode;
+
+            menu.Show(new Vector2(8, 80), more);
+
+            oldSubmenuNode.IsDestroyed.ShouldBeTrue();
+            menu.OpenSubmenu.ShouldBeNull();
+            menu.OpenItemSubmenu(stale, staleRevision, focusFirstItem: false).ShouldBeFalse();
+            menu.OpenSubmenu.ShouldBeNull();
+            UIContextMenuItemComponent current = Rows(menu)[0];
+            menu.OpenItemSubmenu(current, current.ShowRevision, focusFirstItem: false).ShouldBeTrue();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void DestroyingTheCanvasWithAnOpenSubmenuDoesNotChangeTheHierarchyInTeardown()
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        UIContextMenuComponent menu = CreateMenu(root);
+        menu.Show(new Vector2(8, 80),
+            ContextMenuItem.Submenu("More", [new ContextMenuItem("Leaf", () => { })]));
+        menu.UITransform.Visibility = EVisibility.Visible;
+        UIContextMenuItemComponent more = Rows(menu)[0];
+        menu.OpenItemSubmenu(more, more.ShowRevision, focusFirstItem: false).ShouldBeTrue();
+
+        Should.NotThrow(() => root.Destroy(true));
+
+        root.IsDestroyed.ShouldBeTrue();
+        input.SubscriberCount.ShouldBe(0);
+    }
+
     private static bool Move(UIContextMenuComponent menu, UIContextMenuItemComponent from,
         int direction, bool toEdge = false)
         => menu.MoveItemFocus(from, from.ShowRevision, direction, toEdge);
