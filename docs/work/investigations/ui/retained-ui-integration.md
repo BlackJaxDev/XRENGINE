@@ -1376,3 +1376,74 @@ snapshot only in the editor nullable-flow helper and two desktop-only fixtures.
 All 39 local links in the five edited UI documents resolve; whitespace checks
 pass. No package declarations, dependency versions, branch names, or default
 renderer/editor settings changed in this increment.
+
+## Further lifetime and interaction checks
+
+The next narrow Runtime.Core build passed with zero warnings/errors in 59.76s.
+All 1,576 recorded inputs stayed unchanged. This checks the new object-lifetime
+admission support and reservation fence; it does not validate clone retirement
+or the later changes to animation, profiler, or world clipping. The matching
+log is `checkpoint20-core-build1.log` in the existing validation run.
+
+Headless build118 compiled the runtime projects, then stopped on three missing
+required initializer fields in the new reentry test probe. It reported zero
+warnings and three errors in 2m30.05s. The fixture now sets the same inert
+RenderPass, ZIndex, and Material values as the existing mutation probe. The production
+inputs in the headless build graph did not change for the retry. OpenGL-only
+review repairs continued outside that graph.
+
+Headless build119 passed with zero warnings/errors in 18.39s. Full run76 passed
+850 of 855 cases, with five failures and no warnings or skips, in 11.384s. The
+new ranking, registered pointer capture, and lifetime admission cases passed.
+The failures identified missing canonical shader snippets in the test service,
+a float-backed rectangle fixture that rounded its intended out-of-range input,
+a painter-census assumption, and a zero-length keyframe-track fixture whose
+initial insertion had already remapped the key times. The repairs preserve the
+original ownership and order assertions. A separate source review found that
+canvas collection must hold its own packet claim through callbacks; that repair
+and regression join the next validation snapshot.
+
+Headless build120 passed with zero warnings/errors in 1m11.59s. Full run77
+passed 854 of 856 cases in 17.332s; the repaired cases and the collection claim
+regression passed. Two existing canonical image batching cases failed. The initial hypothesis
+was that expanding raw shader Source.Text changed canonical identity. The test
+service was changed to preserve raw identity and register canonical snippets
+through the in-memory resolver, with exact prior-value restoration. Editor build51 started against the unchanged production
+snapshot while these test-only repairs continued.
+
+Editor build51 compiled both rendering backends and Bootstrap, then failed on
+four uses of EUnifyBias without its Data.Animation namespace import. It reported
+zero warnings and four errors in 2m33.58s. The import is repaired.
+
+Headless build121 passed with zero warnings/errors in 18.54s. Full run78 passed
+856 of 859 cases in 14.551s. Both new portable cached-playback cases passed,
+including a throwing track notification. The two image batching failures
+remained, so the source-identity hypothesis was not sufficient. The nested test
+scope also failed because the default UI font rejects a second installation.
+The fixture investigation continues without weakening image eligibility.
+
+Editor build52 passed with zero warnings/errors in 41.95s. Headless build122
+passed with zero warnings/errors in 19.44s. The focused crop fixture then passed
+8 of 9 cases in 1.049s and confirmed a production discovery defect: a resolved
+canonical image material had five parameters instead of its authored MatColor.
+The four extras were PpllMaxNodes, DepthPeelLayerIndex, DepthPeelEpsilon, and
+DepthPeelReversedDepth. They belong to the exact-transparency pipeline bindings.
+Material discovery had treated their declarations in resolved inactive snippet
+branches as authored parameters.
+
+XRMaterial now classifies those four names as engine-managed, alongside its
+existing engine uniform names. The strict image batch parameter guard and the
+backend uploads remain unchanged. Tests cover resolved construction, resync
+with the same authored color value, and an unrelated editable uniform. The
+snippet-only test scope avoids a second default-font installation.
+
+
+Headless build123 passed with zero warnings/errors in 1m33.97s. A test-only
+shader disposal repair changed one input during that build. Build124 therefore
+repeated compilation against the final frozen 10,647-file manifest and passed
+with zero warnings/errors in 11.29s. Full run79 passed 861 of 861 cases, with
+zero warnings, failures, or skips, in 14.420s. Editor build53 passed with zero
+warnings/errors in 2m15.57s. Desktop test build27 passed with zero warnings/errors
+in 51.25s. All recorded source inputs remained unchanged through these checks.
+Desktop fixtures were compiled only; Windows and native GPU acceptance remain
+open.

@@ -221,22 +221,6 @@ internal static partial class AnimationClipAuthoringActions
         => OrderWithInsertedKey([.. before.Where(candidate =>
             !ReferenceEquals(candidate, key))], key, second);
 
-    private static bool CanRestoreOriginalOrder(
-        IReadOnlyList<Keyframe> before, Keyframe key)
-    {
-        Keyframe[] restored = OrderWithMovedKey(before, key, key.Second);
-        if (restored.Length == before.Count)
-        {
-            bool same = true;
-            for (int index = 0; index < restored.Length; index++)
-                same &= ReferenceEquals(restored[index], before[index]);
-            if (same)
-                return true;
-        }
-        Debug.UI("[NativeAnimation] This equal-time key position needs exact track-order restore support before editing.");
-        return false;
-    }
-
     private static bool MatchesChildren(AnimationMember parent,
         IReadOnlyList<AnimationMember> expected, object container)
     {

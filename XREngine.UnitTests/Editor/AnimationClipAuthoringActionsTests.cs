@@ -10,6 +10,161 @@ namespace XREngine.UnitTests.Editor;
 public class AnimationClipAuthoringActionsTests
 {
     [Test]
+    public void TraversalAndKindEditsUseExactUndoHistory()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            AnimationClip clip = new();
+            EAnimTreeTraversalMethod originalTraversal = clip.TraversalMethod;
+            EAnimationClipKind originalKind = clip.ClipKind;
+            Assert.That(AnimationClipAuthoringActions.SetClipTraversalMethod(clip,
+                EAnimTreeTraversalMethod.Parallel), Is.True);
+            Assert.That(AnimationClipAuthoringActions.SetClipKind(clip,
+                EAnimationClipKind.GenericTransform), Is.True);
+            Assert.That(AnimationClipAuthoringActions.SetClipKind(clip,
+                (EAnimationClipKind)int.MaxValue), Is.False);
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(clip.ClipKind, Is.EqualTo(originalKind));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(clip.TraversalMethod, Is.EqualTo(originalTraversal));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(clip.TraversalMethod, Is.EqualTo(EAnimTreeTraversalMethod.Parallel));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(clip.ClipKind, Is.EqualTo(EAnimationClipKind.GenericTransform));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void IncomingValueAndUnifyKeepCompletePlanarStateInHistory()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                animation);
+            AnimationClip clip = new(member) { LengthInSeconds = 2 };
+            FloatKeyframe key = new(0.5f, 1f, 3f, 2f, 4f,
+                EVectorInterpType.Linear);
+            key.RestorePublishedHandles(1f, 3f, 2f, 4f,
+                EVectorInterpType.Linear, EVectorInterpType.Linear,
+                false, false, false);
+            animation.Keyframes.Add(key);
+            Assert.That(AnimationClipAuthoringActions.SetKeyIncomingValue(clip,
+                key, 5f), Is.True);
+            Assert.That((key.InValue, key.OutValue), Is.EqualTo((5f, 3f)));
+            Assert.That(AnimationClipAuthoringActions.UnifyKey(clip, key), Is.True);
+            Assert.That(key.InValue, Is.EqualTo(key.OutValue));
+            Assert.That(key.InTangent, Is.EqualTo(-key.OutTangent));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That((key.InValue, key.OutValue, key.InTangent, key.OutTangent),
+                Is.EqualTo((5f, 3f, 2f, 4f)));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That((key.InValue, key.OutValue), Is.EqualTo((1f, 3f)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void QuaternionIncomingValueKeepsOutgoingValueAndRestoresOnUndo()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimQuaternion animation = new(2, false, true);
+            AnimationMember member = new("Rotation", EAnimationMemberType.Property,
+                animation);
+            AnimationClip clip = new(member) { LengthInSeconds = 2 };
+            QuaternionKeyframe key = new(0.5f, Quaternion.Identity,
+                Quaternion.Identity, Quaternion.Identity,
+                ERadialInterpType.Smooth);
+            animation.Keyframes.Add(key);
+            Quaternion next = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.5f);
+            Assert.That(AnimationClipAuthoringActions.SetKeyIncomingValue(clip,
+                key, next), Is.True);
+            Assert.That(key.InValue, Is.EqualTo(next));
+            Assert.That(key.OutValue, Is.EqualTo(Quaternion.Identity));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(key.InValue, Is.EqualTo(Quaternion.Identity));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void AutoTangentsUseExactNeighborValuesAndUndoBothHandles()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                animation);
+            AnimationClip clip = new(member) { LengthInSeconds = 2 };
+            FloatKeyframe first = new(0f, 0f, 0f,
+                EVectorInterpType.Linear);
+            FloatKeyframe middle = new(1f, 1f, 0f,
+                EVectorInterpType.Linear);
+            FloatKeyframe last = new(2f, 3f, 0f,
+                EVectorInterpType.Linear);
+            middle.RestorePublishedHandles(1f, 1f, 0f, 0f,
+                EVectorInterpType.Linear, EVectorInterpType.Linear,
+                false, false, false);
+            animation.Keyframes.Add(first);
+            animation.Keyframes.Add(middle);
+            animation.Keyframes.Add(last);
+            Assert.That(AnimationClipAuthoringActions.AutoKeyTangents(clip,
+                middle), Is.True);
+            Assert.That((middle.InTangent, middle.OutTangent),
+                Is.EqualTo((-1f, 2f)));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That((middle.InTangent, middle.OutTangent),
+                Is.EqualTo((0f, 0f)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void AutoTangentCallbackNeighborEditIsKeptAndHistoryIsGuarded()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                animation);
+            AnimationClip clip = new(member) { LengthInSeconds = 2 };
+            FloatKeyframe first = new(0f, 0f, 0f,
+                EVectorInterpType.Linear);
+            FloatKeyframe middle = new(1f, 1f, 0f,
+                EVectorInterpType.Linear);
+            FloatKeyframe last = new(2f, 3f, 0f,
+                EVectorInterpType.Linear);
+            middle.RestorePublishedHandles(1f, 1f, 0f, 0f,
+                EVectorInterpType.Linear, EVectorInterpType.Linear,
+                false, false, false);
+            animation.Keyframes.Add(first);
+            animation.Keyframes.Add(middle);
+            animation.Keyframes.Add(last);
+            bool changed = false;
+            animation.Keyframes.Changed += _ =>
+            {
+                if (changed || middle.OutTangent != 2f)
+                    return;
+                changed = true;
+                first.OutValue = 9f;
+            };
+            Assert.That(AnimationClipAuthoringActions.AutoKeyTangents(clip,
+                middle), Is.False);
+            Assert.That(first.OutValue, Is.EqualTo(9f));
+            Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
+            Assert.That(first.OutValue, Is.EqualTo(9f));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void ReentrantSameClipActionIsRejectedBeforeItWrites()
     {
         Undo.ClearHistory();
@@ -88,7 +243,7 @@ public class AnimationClipAuthoringActionsTests
     }
 
     [Test]
-    public void EarlierEqualTimeKeyRejectsRemovalBeforeChangingTrackOrHistory()
+    public void EarlierEqualTimeKeyRestoresExactOrderThroughUndoAndRedo()
     {
         Undo.ClearHistory();
         try
@@ -103,11 +258,122 @@ public class AnimationClipAuthoringActionsTests
                 0.5f, out Keyframe? second), Is.True);
             Undo.ClearHistory();
             Assert.That(AnimationClipAuthoringActions.RemoveKey(clip, member,
-                first!), Is.False);
-            Assert.That(animation.Keyframes.Count, Is.EqualTo(2));
+                first!), Is.True);
+            Assert.That(animation.Keyframes.Count, Is.EqualTo(1));
+            Assert.That(animation.Keyframes.First, Is.SameAs(second));
+            Assert.That(first!.OwningTrack, Is.Null);
+            Assert.That(Undo.TryUndo(), Is.True);
             Assert.That(animation.Keyframes.First, Is.SameAs(first));
             Assert.That(animation.Keyframes.Last, Is.SameAs(second));
-            Assert.That(Undo.CanUndo, Is.False);
+            Assert.That(first.Next, Is.SameAs(second));
+            Assert.That(second!.Prev, Is.SameAs(first));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(animation.Keyframes.First, Is.SameAs(second));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void RemovedCachedKeyDoesNotControlPlaybackAfterEditOrReplay()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                animation);
+            AnimationClip clip = new(member) { LengthInSeconds = 2 };
+            FloatKeyframe first = new(0f, 0f, 0f,
+                EVectorInterpType.Linear);
+            FloatKeyframe middle = new(1f, 100f, 0f,
+                EVectorInterpType.Linear);
+            FloatKeyframe last = new(2f, 0f, 0f,
+                EVectorInterpType.Linear);
+            animation.Keyframes.Add(first);
+            animation.Keyframes.Add(middle);
+            animation.Keyframes.Add(last);
+            animation.Seek(1f, wrapLooped: false);
+            Assert.That(animation.CurrentPosition, Is.EqualTo(100f));
+            Assert.That(AnimationClipAuthoringActions.RemoveKey(clip,
+                member, middle), Is.True);
+            animation.Seek(1f, wrapLooped: false);
+            Assert.That(animation.CurrentPosition, Is.EqualTo(0f));
+            Assert.That(Undo.TryUndo(), Is.True);
+            animation.Seek(1f, wrapLooped: false);
+            Assert.That(animation.CurrentPosition, Is.EqualTo(100f));
+            Assert.That(Undo.TryRedo(), Is.True);
+            animation.Seek(1f, wrapLooped: false);
+            Assert.That(animation.CurrentPosition, Is.EqualTo(0f));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void EarlierTieTimeEditRestoresOriginalTiePosition()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                animation);
+            AnimationClip clip = new(member) { LengthInSeconds = 2,
+                SampleRate = 2 };
+            FloatKeyframe first = new(0.5f, 1f, 0f,
+                EVectorInterpType.Linear);
+            FloatKeyframe second = new(0.5f, 2f, 0f,
+                EVectorInterpType.Linear);
+            animation.Keyframes.Add(first);
+            animation.Keyframes.Add(second);
+            animation.Seek(0.5f, wrapLooped: false);
+            Assert.That(animation.CurrentPosition, Is.EqualTo(2f));
+            Assert.That(AnimationClipAuthoringActions.SetKeyFrame(clip,
+                first, 1), Is.True);
+            Assert.That(animation.Keyframes.First, Is.SameAs(first));
+            Assert.That(first.Next, Is.SameAs(second));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(animation.Keyframes.First, Is.SameAs(first));
+            Assert.That(AnimationClipAuthoringActions.SetKeyTime(clip,
+                first, 1f), Is.True);
+            Assert.That(animation.Keyframes.First, Is.SameAs(second));
+            animation.Seek(0.5f, wrapLooped: false);
+            Assert.That(animation.CurrentPosition, Is.EqualTo(2f));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(animation.Keyframes.First, Is.SameAs(first));
+            Assert.That(first.Next, Is.SameAs(second));
+            animation.Seek(0.5f, wrapLooped: false);
+            Assert.That(animation.CurrentPosition, Is.EqualTo(2f));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void SubEpsilonFrameEditReordersNearTieAndRestoresIt()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                animation);
+            AnimationClip clip = new(member) { LengthInSeconds = 2,
+                SampleRate = 4 };
+            FloatKeyframe first = new(0.24999995f, 1f, 0f,
+                EVectorInterpType.Linear);
+            FloatKeyframe second = new(0.24999995f, 2f, 0f,
+                EVectorInterpType.Linear);
+            animation.Keyframes.Add(first);
+            animation.Keyframes.Add(second);
+            Assert.That(animation.Keyframes.First, Is.SameAs(first));
+            Assert.That(AnimationClipAuthoringActions.SetKeyFrame(clip,
+                first, 1), Is.True);
+            Assert.That(first.Second, Is.EqualTo(0.25f));
+            Assert.That(animation.Keyframes.First, Is.SameAs(second));
+            Assert.That(animation.Keyframes.Last, Is.SameAs(first));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(first.Second, Is.EqualTo(0.24999995f));
+            Assert.That(animation.Keyframes.First, Is.SameAs(first));
+            Assert.That(animation.Keyframes.Last, Is.SameAs(second));
         }
         finally { Undo.ClearHistory(); }
     }

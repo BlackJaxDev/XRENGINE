@@ -61,6 +61,18 @@ namespace XREngine
                             pipelineName, historyGeneration, frameId, destination,
                             out copied, out truncated);
 
+                    /// <summary>Copies one page of ranked nodes from an exact history revision.</summary>
+                    public static bool TryCopyGpuNodeRankPage(string pipelineName,
+                        long historyGeneration, long expectedRevision,
+                        EGpuPipelineNodeRankMetric metric, int offset,
+                        Span<GpuPipelineNodeRankRow> destination,
+                        out long actualRevision, out int totalNodes,
+                        out int copied, out bool truncated)
+                        => RenderPipelineGpuProfiler.Instance.TryCopyRankPage(
+                            pipelineName, historyGeneration, expectedRevision,
+                            metric, offset, destination, out actualRevision,
+                            out totalNodes, out copied, out truncated);
+
                     public static bool TryDumpGpuRenderPipelineTimingHistory(
                         string pipelineName,
                         out string fileName,

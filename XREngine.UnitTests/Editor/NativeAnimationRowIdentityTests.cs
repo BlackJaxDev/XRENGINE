@@ -139,7 +139,7 @@ public sealed class NativeAnimationRowIdentityTests
             Selection.Clear();
             object first = new();
             ulong retired = (ulong)identify.Invoke(panel, [first])!;
-            retired.ShouldBeGreaterThan(44UL);
+            retired.ShouldBeGreaterThan(79UL);
             rebuild.Invoke(panel, null);
             ulong replacement = (ulong)identify.Invoke(panel, [new object()])!;
             replacement.ShouldBeGreaterThan(retired);

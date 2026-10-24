@@ -116,6 +116,7 @@ namespace XREngine.Data.Core
 
         public virtual void Generate()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Generate);
             ObjectConstructionIdentityGuard.RequireIdentityMutation(this);
             ObjectConstructionIdentityGuard.RequireOwningBatch(this, CurrentObjectCachePublicationScope?.ConstructionIdentityGuard);
             CurrentObjectCachePublicationScope?.RequireGeneratedOrigin(this);
@@ -142,6 +143,7 @@ namespace XREngine.Data.Core
 
         protected void PublishObjectCacheRegistration()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Publish);
             ObjectConstructionIdentityGuard.RequireIdentityMutation(this);
             ObjectConstructionIdentityGuard.RequireOwningBatch(this, CurrentObjectCachePublicationScope?.ConstructionIdentityGuard);
             if (CurrentObjectCachePublicationScope?.TryDeferOwnedPublication(this) == true)
@@ -153,6 +155,7 @@ namespace XREngine.Data.Core
         /// <summary>Enlists a constructor-deferred object in the active publication batch.</summary>
         protected void JoinDeferredObjectCachePublication()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Publish);
             if (!_constructorObjectCachePublicationDeferred)
                 return;
 
@@ -165,6 +168,7 @@ namespace XREngine.Data.Core
         /// <summary>Removes this object from global discovery until derived construction completes.</summary>
         protected void DeferExistingObjectCachePublication()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Unpublish);
             lock (ObjectCacheMutationLock)
             {
                 if (!_isRegisteredInObjectCache)
@@ -181,6 +185,7 @@ namespace XREngine.Data.Core
 
         protected virtual void PublishObjectCacheRegistrationUnderLock()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Publish);
             ObjectConstructionIdentityGuard.RequireOwningBatch(this,
                 CurrentObjectCachePublicationScope?.ConstructionIdentityGuard, requirePublishing: true);
             if (IsDestroyed)
@@ -226,6 +231,7 @@ namespace XREngine.Data.Core
                 for (int index = 0; index < objects.Count; index++)
                 {
                     XRObjectBase value = objects[index];
+                    using ObjectLifetimeMutationLease lifetime = new(value, EObjectLifetimeMutation.Publish);
                     if (value.IsDestroyed)
                     {
                         if (allowDestroyedMembers)
@@ -275,6 +281,7 @@ namespace XREngine.Data.Core
         /// </summary>
         protected void AbortFailedConstruction()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.AbortConstruction);
             if (IsDestroyed)
                 return;
 
@@ -315,6 +322,7 @@ namespace XREngine.Data.Core
         private void SetObjectID(Guid value, bool publishNotifications, bool persistentIdentity = false,
             bool allowOwnedPublicationCollision = false)
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Identity);
             ObjectConstructionIdentityGuard.RequireIdentityMutation(this, allowOwnedPublicationCollision);
             if (!allowOwnedPublicationCollision)
                 CurrentObjectCachePublicationScope?.RequireConstructionIdentityChange(this);
@@ -412,6 +420,8 @@ namespace XREngine.Data.Core
 
         public virtual void Destroy(bool now = false)
         {
+            using ObjectLifetimeMutationLease lifetime = new(this,
+                now ? EObjectLifetimeMutation.DestroyNow : EObjectLifetimeMutation.QueueDestruction);
             if (IsDestroyed)
                 return;
 

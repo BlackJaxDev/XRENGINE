@@ -16,6 +16,8 @@ public class AnimationPanel : NativeVirtualTextPanel
 {
     private const int RowPageSize = 128;
     private const int MaxRetainedRowIds = 8192;
+    private const ulong LastCommandRowId = 57;
+    private const ulong FirstDynamicRowId = 80;
     private static readonly Vector4[] PlotPalette = [new(0.93f, 0.39f, 0.32f, 1),
         new(0.22f, 0.67f, 0.92f, 1), new(0.37f, 0.80f, 0.49f, 1), new(0.92f, 0.77f, 0.24f, 1)];
     private readonly List<(ulong Id, string Text)> _rows = [];
@@ -61,7 +63,7 @@ public class AnimationPanel : NativeVirtualTextPanel
     private float _plotWindowStart;
     private readonly float[,] _plotSamples = new float[4, UIRetainedPlot.MaximumSegments / 4 + 1];
     private bool _graphView = true;
-    private ulong _nextId = 45;
+    private ulong _nextId = FirstDynamicRowId;
     private DateTime _lastRefresh;
     private bool _ownerSubscriptionsActive;
     private bool _destroying;
@@ -397,7 +399,7 @@ public class AnimationPanel : NativeVirtualTextPanel
         if (_destroying || !IsActiveInHierarchy ||
             !ReferenceEquals(CurrentClip(), _displayedClip))
             return;
-        if (id is >= 8 and <= 21 or >= 24 and <= 44)
+        if (id is >= 8 and <= 21 or >= 24 and <= LastCommandRowId)
         {
             ActivateCommand(id);
             RefreshRows();
@@ -492,6 +494,8 @@ public class AnimationPanel : NativeVirtualTextPanel
         _rows.Add((32, "Sample rate -1 fps"));
         _rows.Add((33, "Sample rate +1 fps"));
         _rows.Add((34, "Toggle clip loop"));
+        _rows.Add((45, "Cycle clip traversal"));
+        _rows.Add((46, "Cycle clip kind"));
         _rows.Add((35, "Plot zoom in"));
         _rows.Add((36, "Plot zoom out"));
         _rows.Add((37, "Plot previous window"));
@@ -521,6 +525,30 @@ public class AnimationPanel : NativeVirtualTextPanel
             _rows.Add((42, "Set incoming tangent from value field"));
             _rows.Add((43, "Set outgoing tangent from value field"));
             _rows.Add((44, "Set key frame from time field"));
+            _rows.Add((47, "Set incoming value from value field"));
+            _rows.Add((48, "Unify selected planar key"));
+            if (_selectedKey is IPlanarKeyframe)
+                _rows.Add((57, "Auto tangents from adjacent keys"));
+            if (_selectedKey is QuaternionKeyframe)
+            {
+                _rows.Add((49, "Incoming: Step"));
+                _rows.Add((50, "Incoming: Linear"));
+                _rows.Add((51, "Incoming: Smooth"));
+                _rows.Add((53, "Outgoing: Step"));
+                _rows.Add((54, "Outgoing: Linear"));
+                _rows.Add((55, "Outgoing: Smooth"));
+            }
+            else if (_selectedKey is IPlanarKeyframe)
+            {
+                _rows.Add((49, "Incoming: Step"));
+                _rows.Add((50, "Incoming: Linear"));
+                _rows.Add((51, "Incoming: Smooth"));
+                _rows.Add((52, "Incoming: Hermite"));
+                _rows.Add((53, "Outgoing: Step"));
+                _rows.Add((54, "Outgoing: Linear"));
+                _rows.Add((55, "Outgoing: Smooth"));
+                _rows.Add((56, "Outgoing: Hermite"));
+            }
             _rows.Add((28, "Previous key page"));
             _rows.Add((29, "Next key page"));
             _keyCount = 0;
@@ -776,6 +804,10 @@ public class AnimationPanel : NativeVirtualTextPanel
                 clip, Math.Min(960, clip.SampleRate + 1))); break;
             case 34: EditClipSettings(clip => AnimationClipAuthoringActions.SetClipLooped(
                 clip, !clip.Looped)); break;
+            case 45: EditClipSettings(clip => AnimationClipAuthoringActions.SetClipTraversalMethod(
+                clip, NextEnumValue(clip.TraversalMethod))); break;
+            case 46: EditClipSettings(clip => AnimationClipAuthoringActions.SetClipKind(
+                clip, NextEnumValue(clip.ClipKind))); break;
             case 35: _plotZoom = MathF.Min(32, _plotZoom * 1.5f); break;
             case 36: _plotZoom = MathF.Max(1, _plotZoom / 1.5f); break;
             case 37: _plotWindowStart = MathF.Max(0,
@@ -788,6 +820,10 @@ public class AnimationPanel : NativeVirtualTextPanel
             case 42: SetSelectedTangent(outgoing: false); break;
             case 43: SetSelectedTangent(outgoing: true); break;
             case 44: SetSelectedFrame(); break;
+            case 47: SetSelectedIncomingValue(); break;
+            case 48: EditSelectedKey(AnimationClipAuthoringActions.UnifyKey); break;
+            case 57: EditSelectedKey(AnimationClipAuthoringActions.AutoKeyTangents); break;
+            case >= 49 and <= 56: SetSelectedInterpolation(id); break;
         }
     }
 
@@ -820,6 +856,24 @@ public class AnimationPanel : NativeVirtualTextPanel
         }
     }
 
+    private void SetSelectedInterpolation(ulong commandId)
+    {
+        if (!TryGetCurrentKeyDraft(out AnimationClip? clip, out _,
+                out Keyframe? key))
+            return;
+        bool outgoing = commandId >= 53;
+        int modeIndex = (int)((commandId - 49) % 4);
+        if (key is QuaternionKeyframe quaternion)
+        {
+            if (modeIndex < 3)
+                AnimationClipAuthoringActions.SetKeyInterpolation(clip!,
+                    quaternion, outgoing, (ERadialInterpType)modeIndex);
+        }
+        else if (key is IPlanarKeyframe)
+            AnimationClipAuthoringActions.SetKeyInterpolation(clip!, key!,
+                outgoing, (EVectorInterpType)modeIndex);
+    }
+
     private void SetSelectedTangent(bool outgoing)
     {
         if (!TryGetCurrentKeyDraft(out AnimationClip? clip, out _,
@@ -840,11 +894,35 @@ public class AnimationPanel : NativeVirtualTextPanel
         AnimationClipAuthoringActions.SetKeyFrame(clip!, key!, frame);
     }
 
+    private void SetSelectedIncomingValue()
+    {
+        if (!TryGetCurrentKeyDraft(out AnimationClip? clip, out _,
+                out Keyframe? key) || _valueInput is not { } input ||
+            !TryParseValue(input.Text, key!.ValueType, out object? value))
+            return;
+        AnimationClipAuthoringActions.SetKeyIncomingValue(clip!, key, value!);
+    }
+
+    private void EditSelectedKey(Func<AnimationClip, Keyframe, bool> edit)
+    {
+        if (TryGetCurrentKeyDraft(out AnimationClip? clip, out _,
+                out Keyframe? key))
+            edit(clip!, key!);
+    }
+
     private void EditClipSettings(Func<AnimationClip, bool> edit)
     {
         AnimationClip? clip = CurrentClip();
         if (clip is not null && ReferenceEquals(clip, _displayedClip))
             edit(clip);
+    }
+
+    private static TEnum NextEnumValue<TEnum>(TEnum current)
+        where TEnum : struct, Enum
+    {
+        TEnum[] values = Enum.GetValues<TEnum>();
+        int index = Array.IndexOf(values, current);
+        return values[(index + 1) % values.Length];
     }
 
     private bool CandidateBelongsToCurrentSource(

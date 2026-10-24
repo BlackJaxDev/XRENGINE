@@ -1,7 +1,9 @@
 using Silk.NET.OpenGL;
+using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Shaders.Generator;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.OpenGL;
@@ -34,6 +36,7 @@ public partial class OpenGLRenderer
     private XRShader? _worldUiStepVertexShader, _worldUiStepFragmentShader;
     private long _worldUiStepVertexRevision, _worldUiStepFragmentRevision;
     private BoundingRectangle _worldUiRegion, _worldUiStepRegion;
+    private RenderFrameViewDescriptor _worldUiFrozenView;
     private long _worldUiContextGeneration;
     private int _worldUiResourceGeneration, _worldUiDrawCount, _worldUiStepDrawCount;
     private ulong _worldUiCommandGeneration;
@@ -62,12 +65,13 @@ public partial class OpenGLRenderer
 
     internal override bool SupportsCheckedWorldUiOutput => OperatingSystem.IsWindows();
 
-    private UIWorldOutputReadiness? _worldUiReady;
+    private OpenGLWorldUiReadiness? _worldUiReady;
 
     internal override void ObserveUiWorldOutputImageReadiness(
         XRWindow window, XRRenderPipelineInstance pipeline)
     {
         if (!SupportsCheckedWorldUiOutput || !AcceptsBackendWork ||
+            RuntimeEngine.Rendering.Settings.AllowShaderPipelines ||
             !ReferenceEquals(window.Renderer, this) ||
             !HasCurrentUiBackdropWindowContext(window) ||
             pipeline.ActiveGeneration is not { } generation ||
@@ -86,31 +90,37 @@ public partial class OpenGLRenderer
             return;
         }
 
-        UIWorldOutputReadiness? prior =
+        int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+        OpenGLWorldUiReadiness? prior =
             System.Threading.Volatile.Read(ref _worldUiReady);
-        if (prior?.Matches(window, pipeline, context, generation,
+        if (prior?.ShaderConfigVersion == shaderConfigVersion &&
+            prior.Snapshot.Matches(window, pipeline, context, generation,
                 context.OwnerGeneration, BackendGeneration,
                 pipeline.ResourceGeneration,
                 pipeline.Pipeline?.CommandGeneration ?? 0UL,
-                hasPendingGeneration: false) == true)
+                hasPendingGeneration: false))
             return;
 
         System.Threading.Volatile.Write(ref _worldUiReady,
-            new UIWorldOutputReadiness(window, pipeline, context, generation,
-                context.OwnerGeneration, BackendGeneration,
-                pipeline.ResourceGeneration,
-                pipeline.Pipeline?.CommandGeneration ?? 0UL));
+            new OpenGLWorldUiReadiness(
+                new UIWorldOutputReadiness(window, pipeline, context, generation,
+                    context.OwnerGeneration, BackendGeneration,
+                    pipeline.ResourceGeneration,
+                    pipeline.Pipeline?.CommandGeneration ?? 0UL),
+                shaderConfigVersion));
     }
 
     internal override bool CanAdmitUiWorldOutputImage(
         XRWindow window, XRRenderPipelineInstance pipeline)
     {
-        UIWorldOutputReadiness? ready =
+        OpenGLWorldUiReadiness? ready =
             System.Threading.Volatile.Read(ref _worldUiReady);
         IRuntimeWindowGlContext? context = window.DesktopGlContext;
         return SupportsCheckedWorldUiOutput && AcceptsBackendWork &&
+            !RuntimeEngine.Rendering.Settings.AllowShaderPipelines &&
             ReferenceEquals(window.Renderer, this) && ready is not null &&
-            ready.Matches(window, pipeline, context,
+            ready.ShaderConfigVersion == RuntimeEngine.Rendering.Settings.ShaderConfigVersion &&
+            ready.Snapshot.Matches(window, pipeline, context,
                 pipeline.ActiveGeneration, context?.OwnerGeneration ?? 0L,
                 BackendGeneration, pipeline.ResourceGeneration,
                 pipeline.Pipeline?.CommandGeneration ?? 0UL,
@@ -151,10 +161,12 @@ public partial class OpenGLRenderer
     internal override bool TryBeginUiWorldOutputAttempt(XRWindow window,
         XRRenderPipelineInstance pipeline, UIPublication publication,
         BoundingRectangle region, ulong dispatchToken, ulong receiptId,
+        in RenderFrameViewDescriptor frozenView,
         out ulong token)
     {
         token = 0UL;
         if (_worldUiAttempt != 0UL || !AcceptsBackendWork ||
+            RuntimeEngine.Rendering.Settings.AllowShaderPipelines ||
             !ReferenceEquals(XRWindow, window) ||
             !ReferenceEquals(window.Renderer, this) ||
             !HasCurrentUiBackdropWindowContext(window) ||
@@ -283,6 +295,7 @@ public partial class OpenGLRenderer
         _worldUiDispatch = dispatchToken;
         _worldUiReceipt = receiptId;
         _worldUiRegion = region;
+        _worldUiFrozenView = frozenView;
         _worldUiPhase = 0;
         _worldUiDrawCount = 0;
         _worldUiFailed = false;
@@ -790,8 +803,135 @@ public partial class OpenGLRenderer
             _worldUiDepth is not null &&
             WorldUiFboMatches(_worldUiForwardFbo, _worldUiHdr, _worldUiDepth) &&
             WorldUiRegionMatches(_worldUiRegion) &&
+            material is not null &&
+            WorldUiCropNativeMatches(command, mesh, material, program, nativeProgramId) &&
             topology == EPrimitiveType.Triangles && indexCount > 0u && instances > 0u &&
             mesh.ConditionalRenderQuery is null;
+
+    private unsafe bool WorldUiCropNativeMatches(UIPublishedWorldMeshCommand command,
+        GLMeshRenderer mesh, XRMaterial material, XRRenderProgram program,
+        uint nativeProgramId)
+    {
+        if (command.WorldCrop is null)
+            return true;
+        if (command.WorldCropMinMax is not { } minMax ||
+            command.WorldCropModelToCanvas is not { } modelToCanvas ||
+            !command.WorldMatrixIsModelMatrix ||
+            command.WorldCropFragmentShader is not { } fragment ||
+            fragment.SourceRevision != command.WorldCropFragmentRevision ||
+            !UIWorldCropShaderContract.IsCanonicalClippedFragment(fragment) ||
+            (int)material.BillboardMode != 0 ||
+            material.FragmentShaders.Count != 1 ||
+            !ReferenceEquals(material.FragmentShaders[0], fragment) ||
+            program.Shaders.Count != 2 ||
+            !TryGetAPIRenderObject(program, out var existing) ||
+            existing is not GLRenderProgram native ||
+            !native.TryGetBindingId(out uint actualProgramId) ||
+            actualProgramId != nativeProgramId ||
+            !native.HasActiveUniformType(UIWorldCropShaderContract.MinMaxUniform,
+                GLEnum.FloatVec4) ||
+            !native.HasActiveUniformType(UIWorldCropShaderContract.MatrixUniform,
+                GLEnum.FloatMat4) ||
+            !native.HasActiveUniformType("ModelMatrix", GLEnum.FloatMat4))
+            return false;
+
+        XRShader? programVertex = null;
+        XRShader? programFragment = null;
+        for (int index = 0; index < program.Shaders.Count; index++)
+        {
+            XRShader shader = program.Shaders[index];
+            if (shader.Type == EShaderType.Vertex)
+                programVertex = shader;
+            else if (shader.Type == EShaderType.Fragment)
+                programFragment = shader;
+            else
+                return false;
+        }
+        if (programVertex is null || !ReferenceEquals(programFragment, fragment))
+            return false;
+        if (!native.HasUnchangedInitialWorldUiSources(programVertex, fragment))
+            return false;
+
+        if (material.VertexShaders.Count == 0)
+        {
+            if (command.WorldCropVertexShader is not null ||
+                mesh.Data is not XRMeshRenderer.Version<DefaultVertexShaderGenerator> version ||
+                !ReferenceEquals(version.Parent, command.Mesh) ||
+                !string.Equals(programVertex.Source?.Text,
+                    version.VertexShaderSource, StringComparison.Ordinal) ||
+                !native.HasActiveUniformType("ViewMatrix_VTX", GLEnum.FloatMat4) ||
+                !native.HasActiveUniformType("ProjMatrix_VTX", GLEnum.FloatMat4) ||
+                !native.HasActiveUniformType("VRMode", GLEnum.Bool) ||
+                !WorldUiMatrixUniformMatches(nativeProgramId, "ViewMatrix_VTX",
+                    _worldUiFrozenView.ViewMatrix) ||
+                !WorldUiMatrixUniformMatches(nativeProgramId, "ProjMatrix_VTX",
+                    _worldUiFrozenView.ProjectionMatrix) ||
+                !WorldUiIntUniformMatches(nativeProgramId, "VRMode", 0) ||
+                native.TryGetActiveUniformType("BillboardMode", out GLEnum billboardType) &&
+                    (billboardType != GLEnum.Int ||
+                     !WorldUiIntUniformMatches(nativeProgramId, "BillboardMode", 0)))
+                return false;
+        }
+        else
+        {
+            bool exactOwnedVertex = false;
+            for (int index = 0; index < material.VertexShaders.Count; index++)
+                if (ReferenceEquals(material.VertexShaders[index], programVertex))
+                {
+                    exactOwnedVertex = true;
+                    break;
+                }
+            if (!exactOwnedVertex ||
+                !ReferenceEquals(command.WorldCropVertexShader, programVertex) ||
+                programVertex.SourceRevision != command.WorldCropVertexRevision ||
+                !UIWorldCropShaderContract.IsCanonicalVertex(programVertex) ||
+                !native.HasActiveUniformType("ViewProjectionMatrix_VTX", GLEnum.FloatMat4) ||
+                !WorldUiMatrixUniformMatches(nativeProgramId,
+                    "ViewProjectionMatrix_VTX", _worldUiFrozenView.ViewProjectionMatrix))
+                return false;
+        }
+
+        int cropLocation = RawGL.GetUniformLocation(nativeProgramId,
+            UIWorldCropShaderContract.MinMaxUniform);
+        if (cropLocation < 0)
+            return false;
+        float* cropValues = stackalloc float[4];
+        RawGL.GetUniform(nativeProgramId, cropLocation, cropValues);
+        if (cropValues[0] != minMax.X || cropValues[1] != minMax.Y ||
+            cropValues[2] != minMax.Z || cropValues[3] != minMax.W)
+            return false;
+        return WorldUiMatrixUniformMatches(nativeProgramId,
+                UIWorldCropShaderContract.MatrixUniform, modelToCanvas) &&
+            WorldUiMatrixUniformMatches(nativeProgramId,
+                "ModelMatrix", command.WorldMatrix) &&
+            RawGL.GetError() == GLEnum.NoError;
+    }
+
+    private unsafe bool WorldUiMatrixUniformMatches(uint programId, string name,
+        Matrix4x4 expected)
+    {
+        int location = RawGL.GetUniformLocation(programId, name);
+        if (location < 0)
+            return false;
+        float* actual = stackalloc float[16];
+        RawGL.GetUniform(programId, location, actual);
+        float* expectedValues = &expected.M11;
+        for (int index = 0; index < 16; index++)
+            if (actual[index] != expectedValues[index])
+                return false;
+        return true;
+    }
+
+    private unsafe bool WorldUiIntUniformMatches(uint programId, string name,
+        int expected)
+    {
+        int location = RawGL.GetUniformLocation(programId, name);
+        if (location < 0)
+            return false;
+        int actual = 0;
+        RawGL.GetUniform(programId, location, &actual);
+        return actual == expected;
+    }
 
     private static bool WorldUiSameRegion(in BoundingRectangle a,
         in BoundingRectangle b)

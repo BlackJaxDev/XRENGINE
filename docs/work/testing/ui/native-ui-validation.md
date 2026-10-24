@@ -13,20 +13,18 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings/errors through
-`Tools/Invoke-AgentBuild.ps1`. Headless build117 took 19.16s. Full run75 passes
-**837 of 837 tests**, with no warnings, failures, or skips, in 12.465s. New portable
-coverage includes exact hierarchy-list ownership and callback reentry, queued
-owner vetoes, legacy scene serialization, Console snapshot reuse, vector-key state
-and latch recovery, backend-independent solid/border/image/text contracts, and
-managed world-output admission. Vulkan native-authority fixtures compile in the
-desktop project; they do not run in the headless suite.
+`Tools/Invoke-AgentBuild.ps1`. Headless build124 took 11.29s. Full run79 passes
+**861 of 861 tests**, with no warnings, failures, or skips, in 14.420s. New coverage
+includes exact cold-lifetime admission, registered pointer capture across output
+changes, painter capture retries, collection teardown claims, bounded GPU ranking
+without warm allocations, exact track edits and cached playback, world crop
+contracts, and resolved image material parameter ownership.
 
-Editor build50 passed with zero warnings/errors in 46.64s. Desktop compilation26
-passed with zero warnings/errors in 49.54s. The Windows assembly did not execute
-on Linux. The final source snapshot contains 10,631 files. Later nullable-flow
-changes in one editor helper and repairs to two desktop-only fixtures are outside
-the headless inputs; its runtime and test inputs match the final source. These
-results are from 2026-10-24.
+The frozen source snapshot contains 10,647 files, unchanged through the final
+headless build and run, editor build53, and desktop test build27. Editor build53
+passed with zero warnings/errors in 2m15.57s. Desktop test build27 passed with
+zero warnings/errors in 51.25s. These results are from 2026-10-24. Desktop tests
+were compiled, not executed on Windows.
 
 The supported Vulkan static-cache contract is implemented, but native cache hits,
 fence retirement, image/font changes, and output/clip changes still require GPU

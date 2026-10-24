@@ -1,5 +1,6 @@
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
+using XREngine.Data.Core;
 
 namespace XREngine;
 
@@ -24,31 +25,47 @@ public abstract partial class XRWorldObjectBase
         }
     }
 
-    internal bool HasStructuralMutation => _hierarchyMutationCount != 0 || _hierarchyReservation is not null;
+    internal bool HasActiveStructuralMutation => Volatile.Read(ref _hierarchyMutationCount) != 0;
+    internal bool HasStructuralMutation => HasActiveStructuralMutation || Volatile.Read(ref _hierarchyReservation) is not null;
 
     internal void RequireStructuralMutation()
     {
-        if (_hierarchyReservation is not null)
+        if (Volatile.Read(ref _hierarchyReservation) is not null)
             throw new InvalidOperationException("The exact hierarchy object is reserved for an ownership operation.");
     }
 
     internal void EnterStructuralMutation()
     {
         RequireStructuralMutation();
-        SetField(ref _hierarchyMutationCount, checked(_hierarchyMutationCount + 1), publishNotifications: false);
+        Interlocked.Increment(ref _hierarchyMutationCount);
     }
 
     internal void ExitStructuralMutation()
-        => SetField(ref _hierarchyMutationCount, _hierarchyMutationCount - 1, publishNotifications: false);
+        => Interlocked.Decrement(ref _hierarchyMutationCount);
 
-    internal void SetStructuralReservation(HierarchyStructuralReservation reservation)
-        => SetField(ref _hierarchyReservation, reservation, publishNotifications: false);
+    internal bool TrySetStructuralReservation(HierarchyStructuralReservation reservation)
+        => Interlocked.CompareExchange(ref _hierarchyReservation, reservation, null) is null;
 
     internal void ReleaseStructuralReservation(HierarchyStructuralReservation reservation)
     {
-        if (ReferenceEquals(_hierarchyReservation, reservation))
-            SetField(ref _hierarchyReservation, null, publishNotifications: false);
+        Interlocked.CompareExchange(ref _hierarchyReservation, null, reservation);
     }
+
+    protected sealed override void OnLifetimeMutationBeginning(EObjectLifetimeMutation kind)
+    {
+        // Publication can hold the cache lock. Admission uses atomics and never waits
+        // on the structural gate. Reservation installation rechecks this counter.
+        Interlocked.Increment(ref _hierarchyMutationCount);
+        try { RequireStructuralMutation(); }
+        catch
+        {
+            Interlocked.Decrement(ref _hierarchyMutationCount);
+            throw;
+        }
+    }
+
+    protected sealed override void OnLifetimeMutationEnded(EObjectLifetimeMutation kind)
+        => Interlocked.Decrement(ref _hierarchyMutationCount);
 
     internal void PrepareHierarchyListOwner(IHierarchyListAuthority authority)
     {

@@ -29,6 +29,8 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
     private UIButtonComponent? _captureButton;
     private UIButtonComponent? _gpuDumpButton;
     private UIButtonComponent? _cpuDumpButton;
+    private UIButtonComponent? _externalProfilerButton;
+    private string _externalProfilerStatus = string.Empty;
     private string _gpuDumpStatus = string.Empty;
     private readonly List<NativeProfilerDisplayRow> _diagnosticScratch = [];
     private float _rootMinimumMilliseconds;
@@ -106,6 +108,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         _settingsOwnerRevision++;
         _diagnosticScratch.Clear();
         ClearSelectedGpuWorstTree();
+        ClearGpuRankPage();
         _gpuTraversal.Clear();
         _trendPlot = null;
         _invokesValid = false;
@@ -116,6 +119,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         UIButtonComponent? captureButton = _captureButton;
         UIButtonComponent? gpuDumpButton = _gpuDumpButton;
         UIButtonComponent? cpuDumpButton = _cpuDumpButton;
+        UIButtonComponent? externalProfilerButton = _externalProfilerButton;
         _viewCombo = null;
         _viewPopupHost = null;
         _viewLabel = null;
@@ -123,6 +127,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         _captureButton = null;
         _gpuDumpButton = null;
         _cpuDumpButton = null;
+        _externalProfilerButton = null;
         List<Exception>? errors = null;
         void Attempt(Action action)
         {
@@ -148,6 +153,8 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             Attempt(() => gpuDumpButton.UnregisterClickActions(OnGpuDumpClicked));
         if (cpuDumpButton is not null)
             Attempt(() => cpuDumpButton.UnregisterClickActions(OnCpuDumpClicked));
+        if (externalProfilerButton is not null)
+            Attempt(() => externalProfilerButton.UnregisterClickActions(OnExternalProfilerClicked));
         if (popupHost is not null && !popupHost.IsDestroyed && !popupHost.IsDestroyQueued)
             Attempt(() => popupHost.Destroy(true));
         Attempt(DetachTick);
@@ -174,6 +181,9 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         var cpuDump = NativeUIElements.CreateButton(commands, "Dump CPU", null, width: 96);
         _cpuDumpButton = cpuDump.Button;
         cpuDump.Button.RegisterClickActions(OnCpuDumpClicked);
+        var externalProfiler = NativeUIElements.CreateButton(commands, "External", null, width: 92);
+        _externalProfilerButton = externalProfiler.Button;
+        externalProfiler.Button.RegisterClickActions(OnExternalProfilerClicked);
         var gpuDump = NativeUIElements.CreateButton(commands, "Dump GPU", null, width: 88);
         _gpuDumpButton = gpuDump.Button;
         gpuDump.Button.RegisterClickActions(OnGpuDumpClicked);
@@ -318,6 +328,11 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         if (_rows.View == ENativeProfilerView.GpuTimings)
         {
             NativeProfilerDisplayRow gpuRow = _rows.GetItem(index);
+            if (gpuRow.GpuRankMetric >= 0)
+            {
+                SelectGpuRankPage(id, index, gpuRow);
+                return;
+            }
             if (gpuRow.GpuHistoryGeneration != 0)
             {
                 SelectGpuWorstFrame(id, index, gpuRow);
@@ -327,6 +342,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             if (pipeline is null) return;
             _selectedGpuPipeline = pipeline;
             ClearSelectedGpuWorstTree();
+            ClearGpuRankPage();
             ResetTrend(ENativeProfilerView.GpuTimings);
             SampleTrend();
             RefreshRows();
@@ -379,6 +395,12 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
                     static current => current.EnableGpuRenderPipelineProfiling,
                     static overrides => overrides.EnableGpuRenderPipelineProfilingOverride,
                     static (global, enabled) => global.EnableGpuRenderPipelineProfiling = enabled);
+                break;
+            case ENativeProfilerSetting.UdpSending:
+                NativeProfilerSettingWriter.Set(owner, !debug.EnableProfilerUdpSending,
+                    static current => current.EnableProfilerUdpSending,
+                    static overrides => overrides.EnableProfilerUdpSendingOverride,
+                    static (global, enabled) => global.EnableProfilerUdpSending = enabled);
                 break;
             case ENativeProfilerSetting.CpuRawLine:
                 NativeProfilerSettingWriter.Set(owner, !debug.ProfilerPanelShowCpuTimingRawMsLine,
@@ -490,6 +512,20 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             label.Text = result.Success ? "CPU saved" : "CPU dump failed";
     }
 
+    private void OnExternalProfilerClicked(UIInteractableComponent source)
+    {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy ||
+            !ReferenceEquals(_externalProfilerButton, source))
+            return;
+        bool launched = EditorImGuiUI.TryLaunchExternalProfiler(out string? error);
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy ||
+            !ReferenceEquals(_externalProfilerButton, source))
+            return;
+        _externalProfilerStatus = launched ? "External profiler started." :
+            error ?? "The external profiler did not start.";
+        RefreshRows();
+    }
+
     private void UpdateCaptureState()
     {
         if (_captureButton is not null)
@@ -526,7 +562,10 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             return;
         }
         DateTime now = DateTime.UtcNow;
-        if (now - _lastRefresh >= TimeSpan.FromMilliseconds(250))
+        float interval = Engine.EditorPreferences.Debug.ProfilerPanelUpdateIntervalSeconds;
+        if (!float.IsFinite(interval))
+            interval = 0.25f;
+        if (now - _lastRefresh >= TimeSpan.FromSeconds(interval))
         {
             _lastRefresh = now;
             UpdateCaptureState();

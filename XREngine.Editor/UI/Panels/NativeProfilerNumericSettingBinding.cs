@@ -21,6 +21,7 @@ internal sealed class NativeProfilerNumericSettingBinding(
             return setting switch
             {
                 ENativeProfilerSetting.SnapshotInterval => debug.CodeProfilerSnapshotIntervalMs.ToString(CultureInfo.CurrentCulture),
+                ENativeProfilerSetting.UpdateInterval => debug.ProfilerPanelUpdateIntervalSeconds.ToString(CultureInfo.CurrentCulture),
                 ENativeProfilerSetting.HistoryCapacity => debug.CodeProfilerThreadHistoryCapacity.ToString(CultureInfo.CurrentCulture),
                 ENativeProfilerSetting.DropThreshold => debug.CodeProfilerFpsDropMinDeltaMs.ToString(CultureInfo.CurrentCulture),
                 ENativeProfilerSetting.DebugOutputMinimum => debug.CodeProfilerDebugOutputMinElapsedMs.ToString(CultureInfo.CurrentCulture),
@@ -50,6 +51,12 @@ internal sealed class NativeProfilerNumericSettingBinding(
             throw new InvalidOperationException("The profiler settings owner changed. Reopen the field.");
         switch (setting)
         {
+            case ENativeProfilerSetting.UpdateInterval:
+                NativeProfilerSettingWriter.Set(owner, ParseFiniteFloat(value),
+                    static debug => debug.ProfilerPanelUpdateIntervalSeconds,
+                    static overrides => overrides.ProfilerPanelUpdateIntervalSecondsOverride,
+                    static (debug, parsed) => debug.ProfilerPanelUpdateIntervalSeconds = parsed);
+                break;
             case ENativeProfilerSetting.SnapshotInterval:
                 NativeProfilerSettingWriter.Set(owner, int.Parse(value, NumberStyles.Integer, CultureInfo.CurrentCulture),
                     static debug => debug.CodeProfilerSnapshotIntervalMs,
@@ -147,6 +154,7 @@ internal sealed class NativeProfilerNumericSettingBinding(
         => setting switch
         {
             ENativeProfilerSetting.SnapshotInterval => debug.CodeProfilerSnapshotIntervalMsOverride,
+            ENativeProfilerSetting.UpdateInterval => debug.ProfilerPanelUpdateIntervalSecondsOverride,
             ENativeProfilerSetting.HistoryCapacity => debug.CodeProfilerThreadHistoryCapacityOverride,
             ENativeProfilerSetting.DropThreshold => debug.CodeProfilerFpsDropMinDeltaMsOverride,
             ENativeProfilerSetting.DebugOutputMinimum => debug.CodeProfilerDebugOutputMinElapsedMsOverride,

@@ -713,6 +713,10 @@ public sealed class UIBatchCollectionTests
         XRMaterial image = UIMaterialComponent.CreateImageMaterial(texture, Vector4.One);
         UIMaterialComponent component = new(image);
 
+        UIMaterialComponent.HasCanonicalImageShader(image).ShouldBeTrue();
+        image.Parameters.Length.ShouldBe(1);
+        UIMaterialComponent.TryGetDesktopImageProfile(texture, false,
+            out _).ShouldBeTrue();
         component.SupportsBatchedRendering.ShouldBeTrue();
         image.SettingUniforms += static (_, _) => { };
         component.SupportsBatchedRendering.ShouldBeFalse();
@@ -734,6 +738,11 @@ public sealed class UIBatchCollectionTests
         };
 
         UIMaterialComponent component = new(UIMaterialComponent.CreateImageMaterial(texture, Vector4.One));
+        UIMaterialComponent.HasCanonicalImageShader(component.Material!)
+            .ShouldBeTrue();
+        component.Material!.Parameters.Length.ShouldBe(1);
+        UIMaterialComponent.TryGetDesktopImageProfile(texture, true,
+            out _).ShouldBeTrue();
         component.SupportsBatchedRendering.ShouldBeTrue();
 
         texture.SizedInternalFormat = ESizedInternalFormat.Rgba8;

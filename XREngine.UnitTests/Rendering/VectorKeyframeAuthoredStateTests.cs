@@ -64,4 +64,85 @@ public sealed class VectorKeyframeAuthoredStateTests
         static void Throw(BaseKeyframeTrack _) =>
             throw new InvalidOperationException("nested observer failed");
     }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ExactRemovalInvalidatesWarmedPlaybackEvenWhenNotificationThrows(bool throwObserver)
+    {
+        PropAnimFloat animation = new(2, false, true);
+        FloatKeyframe first = new(0f, 0f, 0f, EVectorInterpType.Linear);
+        FloatKeyframe middle = new(1f, 100f, 0f, EVectorInterpType.Linear);
+        FloatKeyframe last = new(2f, 0f, 0f, EVectorInterpType.Linear);
+        animation.Keyframes.Add(first);
+        animation.Keyframes.Add(middle);
+        animation.Keyframes.Add(last);
+        animation.Seek(1f, wrapLooped: false);
+        Assert.That(animation.CurrentPosition, Is.EqualTo(100f));
+        if (throwObserver)
+            animation.Keyframes.Changed += Throw;
+        try
+        {
+            if (throwObserver)
+                Assert.Throws<InvalidOperationException>(() => Edit([first, middle, last], [first, last]));
+            else
+                Assert.That(Edit([first, middle, last], [first, last]), Is.True);
+            animation.Seek(1f, wrapLooped: false);
+            Assert.That(animation.CurrentPosition, Is.Zero);
+        }
+        finally
+        {
+            if (throwObserver)
+                animation.Keyframes.Changed -= Throw;
+        }
+        Assert.That(Edit([first, last], [first, middle, last]), Is.True);
+        animation.Seek(1f, wrapLooped: false);
+        Assert.That(animation.CurrentPosition, Is.EqualTo(100f));
+
+        bool Edit(Keyframe[] expected, Keyframe[] desired)
+            => animation.Keyframes.TryApplyExactKeyEdit(expected, desired, middle,
+                middle.Second, middle.AuthoredFrameIndex, middle.Second, middle.AuthoredFrameIndex);
+        static void Throw(BaseKeyframeTrack _) => throw new InvalidOperationException("Observer failed");
+    }
+
+    [Test]
+    public void ExactTrackEditRejectsForeignKeyAndPublishesCompleteRemovalBeforeCallback()
+    {
+        KeyframeTrack<FloatKeyframe> track = new()
+        {
+            LengthInSeconds = 2f
+        };
+        FloatKeyframe first = new(0.25f, 1f, 0f,
+            EVectorInterpType.Linear);
+        FloatKeyframe second = new(0.75f, 2f, 0f,
+            EVectorInterpType.Linear);
+        track.Add(first);
+        track.Add(second);
+        KeyframeTrack<FloatKeyframe> foreign = new()
+        {
+            LengthInSeconds = 2f
+        };
+        FloatKeyframe foreignKey = new(0.5f, 3f, 0f,
+            EVectorInterpType.Linear);
+        foreign.Add(foreignKey);
+        Assert.That(track.HasExactOrder([first, second]), Is.True,
+            "The fixture must keep its authored order before rejection.");
+        ulong generation = track.ExactEditGeneration;
+        Assert.That(track.TryApplyExactKeyEdit([first, second],
+            [first, foreignKey], second, second.Second,
+            second.AuthoredFrameIndex, second.Second,
+            second.AuthoredFrameIndex), Is.False);
+        Assert.That(track.ExactEditGeneration, Is.EqualTo(generation));
+        Assert.That(track.HasExactOrder([first, second]), Is.True);
+        track.Changed += Changed;
+        Assert.Throws<InvalidOperationException>(() =>
+            track.TryApplyExactKeyEdit([first, second], [first], second,
+                second.Second, second.AuthoredFrameIndex,
+                second.Second, second.AuthoredFrameIndex));
+        Assert.That(track.ExactEditGeneration, Is.GreaterThan(generation));
+        Assert.That(track.HasExactOrder([first]), Is.True);
+        Assert.That(second.OwningTrack, Is.Null);
+
+        void Changed(BaseKeyframeTrack _) =>
+            throw new InvalidOperationException("observer failed");
+    }
 }

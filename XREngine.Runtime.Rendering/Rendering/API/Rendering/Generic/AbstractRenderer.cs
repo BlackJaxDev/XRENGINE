@@ -155,7 +155,8 @@ namespace XREngine.Rendering
         internal virtual bool TryBeginUiWorldOutputAttempt(
             XRWindow window, XRRenderPipelineInstance pipeline,
             UI.UIPublication publication, BoundingRectangle region,
-            ulong dispatchToken, ulong receiptId, out ulong token)
+            ulong dispatchToken, ulong receiptId,
+            in RenderFrameViewDescriptor frozenView, out ulong token)
         {
             token = 0UL;
             return false;

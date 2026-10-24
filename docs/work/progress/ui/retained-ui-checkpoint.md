@@ -6,8 +6,8 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **44 of 60 implementation items are complete**.
-The active TODO has 16 code items and four owner decisions. Later sections
+Latest code reconciliation: **46 of 60 implementation items are complete**.
+The active TODO has 14 code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -749,3 +749,52 @@ for all intermediate failures and repairs.
 
 No Windows execution, native IME, OpenGL/Vulkan output, visual acceptance,
 benchmark, or faster-than-ImGui result is claimed. ImGui remains the default.
+
+## Publication Safety And Native Authoring
+
+Code completion is **46 of the original 60 items**. Explicit publication lifetime
+and pointer capture now close in code. The active TODO retains 14 implementation
+items, four original owner decisions, and three pending proposals.
+
+| Area | Completed / original code items |
+|---|---:|
+| Worker layout | 9 / 9 |
+| Publication and input | 7 / 8 |
+| Persistent rendering and clipping | 15 / 17 |
+| Controls and virtual collections | 10 / 11 |
+| Fixtures and integration | 3 / 3 |
+| Editor adoption | 2 / 12 |
+
+- Collection holds an exact packet claim through callbacks and teardown. Painter
+  census changes commit only with an accepted candidate; recursive capture
+  rejects the outer packet. Sparse capture remains open.
+- Registered mouse tests preserve pressed geometry across output replacement,
+  block camera movement during capture, and release capture after recycle or
+  mouse-up. Worker, producer, output, input, and in-flight holders use explicit
+  lifetime claims. Normal retirement does not wait for garbage collection.
+- Canonical direct-world solid, image, and text draws carry frozen fragment crop
+  through the bounded combined-program OpenGL route. Native shader, model, and
+  camera checks are implemented. Vulkan world publication and broader output
+  profiles remain open; native clipping acceptance is unverified.
+- Exact typed track edits preserve equal-time order and invalidate cached playback
+  cursors before notification. Native controls add incoming values, planar tangent
+  actions, interpolation choices, traversal, and clip kind. Full animation parity
+  remains open.
+- GPU rankings publish bounded versioned pages. Native profiler actions reuse
+  the canonical external launcher and UDP setting, with captured preference
+  ownership and an editable update interval. Full profiler parity remains open.
+- Cold object lifetime admission protects structural reservations through
+  identity, cache, and destruction operations. Safe graph retirement and editor
+  Duplicate remain inactive.
+- Material discovery excludes four existing pipeline-owned transparency uniforms.
+  Resolved image shaders retain the strict single-MatColor batching contract.
+
+Headless build124 passed with zero warnings/errors in 11.29s. Full run79 passed
+**861 of 861 tests**, with no warnings, failures, or skips, in 14.420s. All 10,647
+recorded source inputs stayed unchanged through the final build and test run.
+Matching editor build53 passed with zero warnings/errors in 2m15.57s. Desktop
+test build27 passed with zero warnings/errors in 51.25s. The same source manifest
+remained unchanged through both builds. Desktop tests were compiled only.
+
+Windows execution, native IME, visual/GPU acceptance, soak tests, and equivalent
+ImGui performance measurements remain open. ImGui remains the default editor.

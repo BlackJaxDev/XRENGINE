@@ -42,6 +42,37 @@ internal static partial class AnimationClipAuthoringActions
             ownedProperties: [(clip, nameof(AnimationClip.SampleRate))]);
     }
 
+    public static bool SetClipTraversalMethod(AnimationClip clip,
+        EAnimTreeTraversalMethod method)
+    {
+        if (!Enum.IsDefined(method))
+            return false;
+        EAnimTreeTraversalMethod previous = clip.TraversalMethod;
+        if (previous == method)
+            return false;
+        return Apply(clip, "Set Animation Traversal",
+            () => clip.TraversalMethod = method,
+            () => clip.TraversalMethod = previous,
+            () => clip.TraversalMethod == method,
+            () => clip.TraversalMethod == previous,
+            ownedProperties: [(clip, nameof(AnimationClip.TraversalMethod))]);
+    }
+
+    public static bool SetClipKind(AnimationClip clip, EAnimationClipKind kind)
+    {
+        if (!Enum.IsDefined(kind))
+            return false;
+        EAnimationClipKind previous = clip.ClipKind;
+        if (previous == kind)
+            return false;
+        return Apply(clip, "Set Animation Clip Kind",
+            () => clip.ClipKind = kind,
+            () => clip.ClipKind = previous,
+            () => clip.ClipKind == kind,
+            () => clip.ClipKind == previous,
+            ownedProperties: [(clip, nameof(AnimationClip.ClipKind))]);
+    }
+
     public static bool SetClipLooped(AnimationClip clip, bool looped)
     {
         bool previous = clip.Looped;
@@ -122,15 +153,19 @@ internal static partial class AnimationClipAuthoringActions
         if (CaptureOrder(track!) is not { } before)
             return false;
         Func<bool>? payload = CaptureKeyPayload(key);
-        if (payload is null || !CanRestoreOriginalOrder(before, key))
+        if (payload is null)
             return false;
         float originalSecond = key.Second;
         int originalFrame = key.AuthoredFrameIndex;
         Keyframe[] after = [.. before.Where(candidate =>
             !ReferenceEquals(candidate, key))];
         return Apply(clip, "Remove Animation Key",
-            () => { if (ReferenceEquals(key.OwningTrack, track)) key.Remove(); },
-            () => { if (key.OwningTrack is null) Add(animation, key); },
+            () => { if (!track.TryApplyExactKeyEdit(before, after, key,
+                originalSecond, originalFrame, originalSecond, originalFrame))
+                throw new InvalidOperationException("Animation key changed before removal."); },
+            () => { if (!track.TryApplyExactKeyEdit(after, before, key,
+                originalSecond, originalFrame, originalSecond, originalFrame))
+                throw new InvalidOperationException("Animation key changed before restore."); },
             () => key.OwningTrack is null && key.Second == originalSecond &&
                 key.AuthoredFrameIndex == originalFrame && payload() &&
                 MatchesOrder(track, after),
@@ -158,17 +193,16 @@ internal static partial class AnimationClipAuthoringActions
         if (CaptureOrder(track) is not { } before)
             return false;
         Func<bool>? payload = CaptureKeyPayload(key);
-        if (payload is null || !CanRestoreOriginalOrder(before, key))
+        if (payload is null)
             return false;
         Keyframe[] after = OrderWithMovedKey(before, key, next);
-        Func<bool> live = CaptureClipLifetime(clip);
         return Apply(clip, "Move Animation Key",
-            () => key.Second = next,
-            () => { key.Second = previous;
-                if (!live() || !owns!() || !MatchesOrder(track, before) ||
-                    key.Second != previous || key.AuthoredFrameIndex != -1)
-                    throw new InvalidOperationException("Animation key changed during time restore.");
-                key.AuthoredFrameIndex = previousFrame; },
+            () => { if (!track.TryApplyExactKeyEdit(before, after, key,
+                previous, previousFrame, next, -1))
+                throw new InvalidOperationException("Animation key changed before time edit."); },
+            () => { if (!track.TryApplyExactKeyEdit(after, before, key,
+                next, -1, previous, previousFrame))
+                throw new InvalidOperationException("Animation key changed before time restore."); },
             () => ReferenceEquals(key.OwningTrack, track) &&
                 key.Second == next && key.AuthoredFrameIndex == -1 &&
                 payload() && MatchesOrder(track, after),
@@ -198,29 +232,17 @@ internal static partial class AnimationClipAuthoringActions
         if (CaptureOrder(track) is not { } before)
             return false;
         Func<bool>? payload = CaptureKeyPayload(key);
-        if (payload is null || !CanRestoreOriginalOrder(before, key))
+        if (payload is null)
             return false;
-        Keyframe[] after = OrderWithMovedKey(before, key, second);
-        Func<bool> live = CaptureClipLifetime(clip);
+        Keyframe[] after = previousSecond == second
+            ? before : OrderWithMovedKey(before, key, second);
         return Apply(clip, "Set Animation Key Frame",
-            () => { key.Second = second;
-                int intermediateFrame =
-                    MathF.Abs(previousSecond - second) > 0.000001f ?
-                        -1 : previousFrame;
-                if (!live() || !owns!() || !MatchesOrder(track, after) ||
-                    key.Second != second ||
-                    key.AuthoredFrameIndex != intermediateFrame)
-                    throw new InvalidOperationException("Animation key changed during frame edit.");
-                key.AuthoredFrameIndex = frame; },
-            () => { key.Second = previousSecond;
-                int intermediateFrame =
-                    MathF.Abs(previousSecond - second) > 0.000001f ?
-                        -1 : frame;
-                if (!live() || !owns!() || !MatchesOrder(track, before) ||
-                    key.Second != previousSecond ||
-                    key.AuthoredFrameIndex != intermediateFrame)
-                    throw new InvalidOperationException("Animation key changed during frame restore.");
-                key.AuthoredFrameIndex = previousFrame; },
+            () => { if (!track.TryApplyExactKeyEdit(before, after, key,
+                previousSecond, previousFrame, second, frame))
+                throw new InvalidOperationException("Animation key changed before frame edit."); },
+            () => { if (!track.TryApplyExactKeyEdit(after, before, key,
+                second, frame, previousSecond, previousFrame))
+                throw new InvalidOperationException("Animation key changed before frame restore."); },
             () => ReferenceEquals(key.OwningTrack, track) &&
                 key.Second == second && key.AuthoredFrameIndex == frame &&
                 payload() && MatchesOrder(track, after),
@@ -321,7 +343,7 @@ internal static partial class AnimationClipAuthoringActions
         if (value is null)
             return false;
         if (key is IPlanarKeyframe && value.GetType() == key.ValueType)
-            return EditPlanarValue(clip, key, value);
+            return EditPlanarValue(clip, key, value, outgoing: true);
         if (key is QuaternionKeyframe quaternion && value is Quaternion rotation)
         {
             if (!TryCaptureKeyOwner(clip, key, out BasePropAnim? animation,
@@ -362,6 +384,39 @@ internal static partial class AnimationClipAuthoringActions
         }
         return false;
     }
+
+    public static bool SetKeyIncomingValue(AnimationClip clip, Keyframe key,
+        object value)
+    {
+        if (value is null || value.GetType() != key.ValueType)
+            return false;
+        if (key is IPlanarKeyframe)
+            return EditPlanarValue(clip, key, value, outgoing: false);
+        if (key is not QuaternionKeyframe quaternion || value is not Quaternion next ||
+            !TryCaptureKeyOwner(clip, key, out BasePropAnim? animation,
+                out BaseKeyframeTrack? track, out Func<bool>? owns) ||
+            !ReferenceEquals(key.OwningTrack, track) ||
+            CaptureOrder(track!) is not { } order)
+            return false;
+        Quaternion previous = quaternion.InValue;
+        if (previous == next)
+            return false;
+        return Apply(clip, "Edit Animation Key Incoming Value",
+            () => quaternion.InValue = next,
+            () => quaternion.InValue = previous,
+            () => quaternion.InValue == next,
+            () => quaternion.InValue == previous,
+            () => owns!() && ReferenceEquals(key.OwningTrack, track) &&
+                MatchesOrder(track, order),
+            [(quaternion, nameof(QuaternionKeyframe.InValue))],
+            clip.RootMember!, animation!, track, key);
+    }
+
+    public static bool UnifyKey(AnimationClip clip, Keyframe key)
+        => key is IPlanarKeyframe && UnifyPlanarKey(clip, key);
+
+    public static bool AutoKeyTangents(AnimationClip clip, Keyframe key)
+        => key is IPlanarKeyframe && AutoPlanarTangents(clip, key);
 
     public static bool RemoveMember(AnimationClip clip, AnimationMember member)
     {

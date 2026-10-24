@@ -19,9 +19,13 @@ public partial class UICanvasComponent
     private readonly List<UIFocusScopeRecord> _publicationFocusScopeScratch = [];
     private readonly List<UIRenderRecord> _publicationRenderScratch = [];
     private readonly List<UIRenderRecord> _publicationOrderedRenderScratch = [];
-    private readonly List<long> _publicationPainterOrder = [];
+    private List<long> _publicationPainterOrder = [];
+    private List<long> _publicationPainterOrderCapture = [];
+    private readonly List<long> _publicationPainterOrderValidation = [];
     private readonly Dictionary<long, UIRenderRecord> _publicationRenderByMembership = [];
     private ulong _publicationPainterOrderRevision = ulong.MaxValue;
+    private bool _capturingPublication;
+    private bool _publicationCaptureReentered;
     private readonly Dictionary<UIElementIdentity, int> _publicationLayoutIndices = [];
     private readonly Dictionary<UIElementIdentity, int> _publicationSubtreeEnds = [];
     private readonly Dictionary<UIElementIdentity, (Vector2 Offset, Vector2 Maximum)> _scrollMetricRetry = [];
@@ -145,6 +149,20 @@ public partial class UICanvasComponent
 
     private void CapturePublicationCandidate()
     {
+        if (_capturingPublication)
+        {
+            _publicationCaptureReentered = true;
+            return;
+        }
+
+        _capturingPublication = true;
+        _publicationCaptureReentered = false;
+        try { CapturePublicationCandidateCore(); }
+        finally { _capturingPublication = false; }
+    }
+
+    private void CapturePublicationCandidateCore()
+    {
         long lifetime = Volatile.Read(ref _canvasLifetime);
         UICanvasTransform canvas = CanvasTransform;
         ulong layoutGeneration = canvas.CurrentLayoutGeneration;
@@ -157,8 +175,11 @@ public partial class UICanvasComponent
         ECanvasDrawSpace authoringDrawSpace = canvas.DrawSpace;
         bool authoringOffscreen = UseOffscreenRenderingForNonScreenSpaces();
         BoundingRectangleF canvasBounds = canvas.GetActualBounds();
+        ulong painterRevision = _publicationPainterOrderRevision;
         bool painterOrderChanged = VisualScene2D.TryCopyRenderableMembershipOrder(
-            ref _publicationPainterOrderRevision, _publicationPainterOrder);
+            ref painterRevision, _publicationPainterOrderCapture);
+        List<long> painterOrder = painterOrderChanged
+            ? _publicationPainterOrderCapture : _publicationPainterOrder;
         UIPublication? previous;
         lock (_publicationGate)
         {
@@ -201,7 +222,7 @@ public partial class UICanvasComponent
         _publicationRenderScratch.Clear();
         CaptureHitRecords(canvas, canvas, canvas.ElementIdentity, layoutPages,
             default, default, default, default);
-        OrderPublicationRenders();
+        OrderPublicationRenders(painterOrder);
         OrderPublicationFocusScopes();
         for (int index = 0; index < _publicationRenderScratch.Count; index++)
         {
@@ -260,7 +281,7 @@ public partial class UICanvasComponent
         {
             // A capture adapter can mutate the tree while it copies draw values.
             // Admit only the exact layout, journal, and painter census we read.
-            ulong painterRevision = _publicationPainterOrderRevision;
+            ulong validationPainterRevision = painterRevision;
             bool quadPlacementChanged = false;
             if (surfaceWriter is not null)
             {
@@ -268,7 +289,8 @@ public partial class UICanvasComponent
                 quadPlacementChanged = Matrix4x4.CreateScale(size.X, size.Y, 1.0f) * world !=
                     quadWorldMatrix;
             }
-            if (lifetime != _canvasLifetime ||
+            if (_publicationCaptureReentered ||
+                lifetime != _canvasLifetime ||
                 !ReferenceEquals(canvas, CanvasTransform) ||
                 canvas.CurrentLayoutGeneration != layoutGeneration ||
                 canvas.ChangeJournal.Revision != revision ||
@@ -280,7 +302,7 @@ public partial class UICanvasComponent
                 quadPlacementChanged ||
                 canvas.IsLayoutInvalidated || canvas.IsUpdatingLayout ||
                 VisualScene2D.TryCopyRenderableMembershipOrder(
-                    ref painterRevision, _publicationPainterOrder))
+                    ref validationPainterRevision, _publicationPainterOrderValidation))
                 return;
             UIPublication replacement = new UIPublication(
                 ++_nextPublicationGeneration, (ulong)lifetime, layoutGeneration, hitGeneration,
@@ -288,18 +310,49 @@ public partial class UICanvasComponent
                 Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
                 layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen,
                 surfaceWriter, quadPayload, quadWorldMatrix);
+            bool staleAfterBuild;
             try
             {
                 replacement.SetWorldCollectionRevision(worldCollectionRevision);
                 replacement.BuildWorldCommands(this);
+                bool postBuildQuadPlacementChanged = false;
+                if (surfaceWriter is not null)
+                {
+                    Matrix4x4 world = GetWorldSpaceCanvasMatrix(out Vector2 size);
+                    postBuildQuadPlacementChanged =
+                        Matrix4x4.CreateScale(size.X, size.Y, 1.0f) * world != quadWorldMatrix;
+                }
+                staleAfterBuild = _publicationCaptureReentered ||
+                    lifetime != _canvasLifetime ||
+                    !ReferenceEquals(canvas, CanvasTransform) ||
+                    canvas.CurrentLayoutGeneration != layoutGeneration ||
+                    canvas.ChangeJournal.Revision != revision ||
+                    DirectWorldChildrenRevision != worldCollectionRevision ||
+                    canvas.WorldMatrix != canvasWorldMatrix ||
+                    canvas.DrawSpace != authoringDrawSpace ||
+                    UseOffscreenRenderingForNonScreenSpaces() != authoringOffscreen ||
+                    canvas.GetActualBounds() != canvasBounds ||
+                    postBuildQuadPlacementChanged ||
+                    canvas.IsLayoutInvalidated || canvas.IsUpdatingLayout ||
+                    VisualScene2D.TryCopyRenderableMembershipOrder(
+                        ref validationPainterRevision, _publicationPainterOrderValidation);
             }
             catch
             {
                 replacement.Release();
                 throw;
             }
+            if (staleAfterBuild)
+            {
+                replacement.Release();
+                return;
+            }
             UIPublication? oldCandidate = _candidatePublication;
             _candidatePublication = replacement;
+            if (painterOrderChanged)
+                (_publicationPainterOrder, _publicationPainterOrderCapture) =
+                    (_publicationPainterOrderCapture, _publicationPainterOrder);
+            _publicationPainterOrderRevision = painterRevision;
             oldCandidate?.Release();
         }
         }
@@ -320,7 +373,7 @@ public partial class UICanvasComponent
         return end;
     }
 
-    private void OrderPublicationRenders()
+    private void OrderPublicationRenders(IReadOnlyList<long> painterOrder)
     {
         _publicationRenderByMembership.Clear();
         for (int index = 0; index < _publicationRenderScratch.Count; index++)
@@ -329,9 +382,9 @@ public partial class UICanvasComponent
             _publicationRenderByMembership[record.MembershipId] = record;
         }
         _publicationOrderedRenderScratch.Clear();
-        for (int index = 0; index < _publicationPainterOrder.Count; index++)
+        for (int index = 0; index < painterOrder.Count; index++)
             if (_publicationRenderByMembership.TryGetValue(
-                _publicationPainterOrder[index], out UIRenderRecord record))
+                painterOrder[index], out UIRenderRecord record))
                 _publicationOrderedRenderScratch.Add(record);
         _publicationRenderScratch.Clear();
         _publicationRenderScratch.AddRange(_publicationOrderedRenderScratch);
@@ -519,11 +572,21 @@ public partial class UICanvasComponent
 
     private void CollectPublishedCanvasDraws()
     {
-        if (_collectingPublication is not { } publication)
+        UIPublication? publication;
+        lock (_publicationGate)
+        {
+            publication = _collectingPublication;
+            publication?.Retain();
+        }
+        if (publication is null)
             return;
-        BatchCollector.CollectPublishedRuns(publication,
-            _renderPipeline.MeshRenderCommands,
-            _collectPublishedUnbatched ??= CollectPublishedUnbatched);
+        try
+        {
+            BatchCollector.CollectPublishedRuns(publication,
+                _renderPipeline.MeshRenderCommands,
+                _collectPublishedUnbatched ??= CollectPublishedUnbatched);
+        }
+        finally { publication.Release(); }
     }
 
     private void CollectPublishedUnbatched(UIRenderRecord record)
