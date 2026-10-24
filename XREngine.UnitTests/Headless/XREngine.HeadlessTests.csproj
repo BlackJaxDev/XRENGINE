@@ -34,6 +34,10 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerProjection.cs" Link="Editor/NativeProfilerProjection.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerWorstFrameSelector.cs" Link="Editor/NativeProfilerWorstFrameSelector.cs" />
     <Compile Include="../Editor/NativeProfilerWorstFrameSelectorTests.cs" Link="Editor/NativeProfilerWorstFrameSelectorTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/AnimationLengthEdit.cs" Link="Editor/AnimationLengthEdit.cs" />
+    <Compile Include="../Editor/AnimationLengthEditTests.cs" Link="Editor/AnimationLengthEditTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRootHistory.cs" Link="Editor/NativeProfilerRootHistory.cs" />
+    <Compile Include="../Editor/NativeProfilerRootHistoryTests.cs" Link="Editor/NativeProfilerRootHistoryTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRootAggregator.cs" Link="Editor/NativeProfilerRootAggregator.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRootAggregate.cs" Link="Editor/NativeProfilerRootAggregate.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRootChildAggregate.cs" Link="Editor/NativeProfilerRootChildAggregate.cs" />

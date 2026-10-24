@@ -217,6 +217,20 @@ namespace XREngine.Animation
             base.SetLength(lengthInSeconds, stretchAnimation, notifyChanged);
         }
 
+        internal bool TrySetKeyframedLengthWithoutNotification(float expectedLength,
+            int expectedFrameCount, float desiredLength, int desiredFrameCount)
+        {
+            if (_isBaked || HasAuthoredCadence ||
+                _lengthInSeconds != expectedLength || _bakedFrameCount != expectedFrameCount ||
+                !float.IsFinite(desiredLength) || desiredLength < 0 || desiredFrameCount < 0)
+                return false;
+            SetField(ref _lengthInSeconds, desiredLength, publishNotifications: false,
+                propertyName: nameof(LengthInSeconds));
+            SetField(ref _bakedFrameCount, desiredFrameCount, publishNotifications: false,
+                propertyName: nameof(BakedFrameCount));
+            return true;
+        }
+
         /// <summary>
         /// Bakes the interpolated data for fastest access by the game.
         /// However, this method takes up more space and does not support time dilation (speeding up and slowing down with proper in-betweens)

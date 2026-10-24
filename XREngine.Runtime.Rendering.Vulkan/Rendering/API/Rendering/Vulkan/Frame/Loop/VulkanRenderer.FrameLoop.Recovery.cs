@@ -35,6 +35,14 @@ namespace XREngine.Rendering.Vulkan
             ref VulkanFrameAttempt attempt,
             Exception primaryFailure)
         {
+            if (attempt.RequiresWorldUiOutput ||
+                attempt.AcceptedFramePlan is { RequiresWorldUiOutput: true } ||
+                _ownerRenderer.XRWindow.HasRequiredVulkanWorldUiImage)
+            {
+                _ = SettleFailedWorldUiOutput(ref attempt,
+                    $"Required Vulkan world UI output failed: {primaryFailure.Message}");
+                return;
+            }
             EVulkanDesktopPostAcquireFailureStage failureStage =
                 attempt.AcquireOwnership is
                     EVulkanDesktopAcquireOwnership
@@ -189,6 +197,8 @@ namespace XREngine.Rendering.Vulkan
                 ref attempt,
                 "Vulkan.FrameLifecycle.RecoveryFailureQueuePresent",
                 "settling a recovered desktop frame after an auxiliary failure");
+            if (attempt.Flow == EDesktopFrameFlow.Stop)
+                return;
             Result result = dispatch.Result;
             bool presentationReleaseEnqueued =
                 dispatch.Dispatched &&
@@ -410,6 +420,15 @@ namespace XREngine.Rendering.Vulkan
             // recovery branch can return or recreate the swapchain.
             _commandRuntime.FailSubmissionMarkersForCommandBuffer(
                 attempt.SceneCommandBuffer);
+
+            if (attempt.RequiresWorldUiOutput ||
+                attempt.AcceptedFramePlan is { RequiresWorldUiOutput: true } ||
+                _ownerRenderer.XRWindow.HasRequiredVulkanWorldUiImage)
+            {
+                _ = SettleFailedWorldUiOutput(ref attempt,
+                    $"Required Vulkan world UI output rejected at {rejectionStage}");
+                return true;
+            }
 
             RejectedDesktopFramePolicyDecision policy =
                 ResolveRejectedDesktopRecoveryPolicy(

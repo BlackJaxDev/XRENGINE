@@ -16,7 +16,7 @@ public class AnimationPanel : NativeVirtualTextPanel
 {
     private const int RowPageSize = 128;
     private const int MaxRetainedRowIds = 8192;
-    private const ulong LastCommandRowId = 57;
+    private const ulong LastCommandRowId = 58;
     private const ulong FirstDynamicRowId = 80;
     private static readonly Vector4[] PlotPalette = [new(0.93f, 0.39f, 0.32f, 1),
         new(0.22f, 0.67f, 0.92f, 1), new(0.37f, 0.80f, 0.49f, 1), new(0.92f, 0.77f, 0.24f, 1)];
@@ -63,6 +63,7 @@ public class AnimationPanel : NativeVirtualTextPanel
     private float _plotWindowStart;
     private readonly float[,] _plotSamples = new float[4, UIRetainedPlot.MaximumSegments / 4 + 1];
     private bool _graphView = true;
+    private bool _stretchLengthEdits;
     private ulong _nextId = FirstDynamicRowId;
     private DateTime _lastRefresh;
     private bool _ownerSubscriptionsActive;
@@ -491,6 +492,7 @@ public class AnimationPanel : NativeVirtualTextPanel
         _rows.Add((21, "Stop scene clip"));
         _rows.Add((30, "Length -0.1 s"));
         _rows.Add((31, "Length +0.1 s"));
+        _rows.Add((58, _stretchLengthEdits ? "Stretch keys with length: on" : "Stretch keys with length: off"));
         _rows.Add((32, "Sample rate -1 fps"));
         _rows.Add((33, "Sample rate +1 fps"));
         _rows.Add((34, "Toggle clip loop"));
@@ -795,9 +797,9 @@ public class AnimationPanel : NativeVirtualTextPanel
             case 28: _keyPage = Math.Max(0, _keyPage - 1); break;
             case 29: _keyPage++; break;
             case 30: EditClipSettings(clip => AnimationClipAuthoringActions.SetClipLength(
-                clip, MathF.Max(0, clip.LengthInSeconds - 0.1f))); break;
+                clip, MathF.Max(0, clip.LengthInSeconds - 0.1f), _stretchLengthEdits)); break;
             case 31: EditClipSettings(clip => AnimationClipAuthoringActions.SetClipLength(
-                clip, MathF.Min(3600, clip.LengthInSeconds + 0.1f))); break;
+                clip, MathF.Min(3600, clip.LengthInSeconds + 0.1f), _stretchLengthEdits)); break;
             case 32: EditClipSettings(clip => AnimationClipAuthoringActions.SetClipSampleRate(
                 clip, Math.Max(1, clip.SampleRate - 1))); break;
             case 33: EditClipSettings(clip => AnimationClipAuthoringActions.SetClipSampleRate(
@@ -823,6 +825,7 @@ public class AnimationPanel : NativeVirtualTextPanel
             case 47: SetSelectedIncomingValue(); break;
             case 48: EditSelectedKey(AnimationClipAuthoringActions.UnifyKey); break;
             case 57: EditSelectedKey(AnimationClipAuthoringActions.AutoKeyTangents); break;
+            case 58: SetField(ref _stretchLengthEdits, !_stretchLengthEdits); break;
             case >= 49 and <= 56: SetSelectedInterpolation(id); break;
         }
     }

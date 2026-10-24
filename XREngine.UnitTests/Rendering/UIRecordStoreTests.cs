@@ -156,4 +156,39 @@ public sealed class UIRecordStoreTests
         replaceRejected.ShouldBeTrue();
         store.ResourcesRetired.ShouldBeTrue();
     }
+
+    [Test]
+    public void MappedPacketKeepsPagedHitNavigationAcrossSourceRetirement()
+    {
+        UIHitRecord[] hits = new UIHitRecord[258];
+        for (int index = 0; index < hits.Length; index++)
+        {
+            Vector2 position = new(index * 20, 0);
+            hits[index] = new UIHitRecord(null!, index + 1,
+                new UIElementIdentity(index + 1, 1), 0,
+                Matrix4x4.CreateTranslation(-position.X, 0, 0),
+                new Vector2(10), new BoundingRectangleF(position, new Vector2(10)),
+                null, index, -1, index + 1, 0, 0, index,
+                index is 0 or 257, false);
+        }
+        UIPublication source = new(1, 1, 1, 1, 1,
+            ReadOnlyMemory<UILayoutNodeOutput>.Empty,
+            ReadOnlyMemory<UIElementIdentity>.Empty, hits, [],
+            new BoundingRectangleF(Vector2.Zero, new Vector2(5200)),
+            Matrix4x4.Identity, Matrix4x4.Identity);
+        UIPublication mapped = source.WithOutputMapping(Matrix4x4.Identity,
+            Matrix4x4.Identity, ECanvasDrawSpace.Screen, source.CanvasBounds,
+            Matrix4x4.Identity, Matrix4x4.Identity, 0, 1);
+        UIRecordStore<UIHitRecord> store = source.HitRecordStore;
+        source.Release();
+
+        store.ResourcesRetired.ShouldBeFalse();
+        mapped.GetHitRecordPage(0).Length.ShouldBe(256);
+        mapped.GetHitRecordPage(1).Length.ShouldBe(2);
+        UIFocusNavigation.FindTabTarget(mapped, 1, false).ShouldBe(257);
+        UIFocusNavigation.FindDirectionalTarget(mapped, 1, Vector2.UnitX).ShouldBe(257);
+
+        mapped.Release();
+        store.ResourcesRetired.ShouldBeTrue();
+    }
 }

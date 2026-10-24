@@ -96,6 +96,13 @@ namespace XREngine.Rendering.Vulkan
                 ThrowIfDesktopFrameFaultInjected(
                     EVulkanDesktopFrameFaultPoint.Submission);
             }
+            if (attempt.RequiresWorldUiOutput &&
+                (attempt.AcceptedFramePlan is not
+                     { RequiresWorldUiOutput: true } worldUiPlan ||
+                 !worldUiPlan.IsRequiredWorldUiReadyForSubmission(
+                     attempt.FrameNumber, attempt.OutputGeneration)))
+                return SettleFailedWorldUiOutput(ref attempt,
+                    "Required Vulkan world UI native recording was not complete before submission");
             CommandBuffer* commandBuffers =
                 stackalloc CommandBuffer[
                     (int)DesktopSubmitCommandBufferCapacity];
@@ -323,6 +330,10 @@ namespace XREngine.Rendering.Vulkan
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
                             // settlement flags before profiling/telemetry scopes can unwind.
                             attempt.Submitted = true;
+                            attempt.TransitionAcquireOwnership(
+                                EVulkanDesktopAcquireOwnership
+                                    .ConsumedBySubmissionImagePendingPresent);
+                            attempt.AdvanceTo(EDesktopFramePhase.Submitted);
                             VulkanUiPublicationReceiptLedger.InvalidateImage(
                                 _ownerRenderer, attempt.ImageIndex, attempt.OutputGeneration);
                             if (_primaryCommandArtifactOwners is { } uiArtifactOwners &&
@@ -332,10 +343,21 @@ namespace XREngine.Rendering.Vulkan
                             {
                                 foreach (ulong uiReceiptId in
                                     uiArtifactOwners[attempt.ImageIndex].RecordedUiPublicationReceipts)
+                                {
+                                    if (attempt.AcceptedFramePlan is
+                                        { RequiresWorldUiOutput: true } selectedWorldUiPlan &&
+                                        uiReceiptId == selectedWorldUiPlan.RequiredWorldUiReceiptId)
+                                        continue;
                                     _ = VulkanUiPublicationReceiptLedger.TryAttachSubmission(
                                         uiReceiptId, attempt.ImageIndex,
                                         attempt.OutputGeneration, attempt.FrameNumber);
+                                }
                             }
+                            if (attempt.AcceptedFramePlan is { RequiresWorldUiOutput: true } requiredWorldUiPlan &&
+                                !requiredWorldUiPlan.TryAttachRequiredWorldUiSubmission(
+                                    attempt.ImageIndex, attempt.OutputGeneration,
+                                    attempt.FrameNumber))
+                                requiredWorldUiPlan.FailRequiredWorldUiOutput();
                             attempt.AcceptedFramePlan?.CommitAttestedFrameViewHistory();
                             attempt.AcceptedFramePlan?.CommitRecordedAdvancedPickingSources();
                             _gpuDiagnosticReadbackSidecar?.MarkPrimarySubmissionAccepted(
@@ -348,10 +370,6 @@ namespace XREngine.Rendering.Vulkan
                             frameDataArena?.MarkFrameSlotSubmitted(
                                 checked((uint)attempt.FrameSlot),
                                 frameDataGeneration);
-                            attempt.TransitionAcquireOwnership(
-                                EVulkanDesktopAcquireOwnership
-                                    .ConsumedBySubmissionImagePendingPresent);
-                            attempt.AdvanceTo(EDesktopFramePhase.Submitted);
                             PublishAcceptedDesktopSubmissionReuseLedgers(ref attempt);
                             PublishDesktopReadbackReceipts(in attempt);
                             if (submitReceipt.PostSubmissionPublicationSucceeded &&

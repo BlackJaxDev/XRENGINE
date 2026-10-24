@@ -416,13 +416,16 @@ namespace XREngine.Components
                 return;
             UIHitRecord hit = default;
             bool found = false;
-            foreach (ref readonly UIHitRecord candidate in publication.Hits)
+            for (int index = 0; index < publication.HitRecordCount; index++)
+            {
+                UIHitRecord candidate = publication.GetHitRecord(index);
                 if (ReferenceEquals(candidate.RenderInfo.Owner, hitOwner) && IsCurrentHitRecord(candidate))
                 {
                     hit = candidate;
                     found = true;
                     break;
                 }
+            }
             if (!found)
                 return;
 
@@ -544,10 +547,11 @@ namespace XREngine.Components
             _queriedCapture = _pressedTarget;
             _queriedCaptureRevision = _pressedInteractionRevision;
             UIRuntimeCounters.Add(UIWorkCounter.HitQueries);
-            foreach (ref readonly UIHitRecord record in publication.Hits)
+            for (int page = 0; page < publication.HitRecordPageCount; page++)
+                foreach (ref readonly UIHitRecord record in publication.GetHitRecordPage(page))
                 if (IsCurrentHitRecord(record) && record.Contains(CursorPositionWorld2D))
                     UIElementIntersections.Add(record.RenderInfo);
-            UIRuntimeCounters.Add(UIWorkCounter.HitCandidates, publication.Hits.Length);
+            UIRuntimeCounters.Add(UIWorkCounter.HitCandidates, publication.HitRecordCount);
             }
             finally { publication.Release(); }
         }
@@ -604,7 +608,8 @@ namespace XREngine.Components
                     _queriedHitGeneration = 0;
                 }
                 if (publication is not null)
-                    foreach (ref readonly UIHitRecord record in publication.Hits)
+                    for (int page = 0; page < publication.HitRecordPageCount; page++)
+                foreach (ref readonly UIHitRecord record in publication.GetHitRecordPage(page))
                         _inputRecords.Add(record.MembershipId, record);
                 SynchronizeFocusScope(publication);
             }
@@ -1201,14 +1206,14 @@ namespace XREngine.Components
             if (direction is { } navigation && FocusedComponent is { } focused &&
                 IsPointerTargetEligible(focused) && focused.TryConsumeFocusDirection(navigation))
                 return;
-            for (int attempt = 0; attempt < publication.Hits.Length; attempt++)
+            for (int attempt = 0; attempt < publication.HitRecordCount; attempt++)
             {
                 int index = direction is { } movement
-                    ? UIFocusNavigation.FindDirectionalTarget(publication.Hits, current, movement, publication.ActiveFocusScopeIdentity)
-                    : UIFocusNavigation.FindTabTarget(publication.Hits, current, reverse, publication.ActiveFocusScopeIdentity);
+                    ? UIFocusNavigation.FindDirectionalTarget(publication, current, movement, publication.ActiveFocusScopeIdentity)
+                    : UIFocusNavigation.FindTabTarget(publication, current, reverse, publication.ActiveFocusScopeIdentity);
                 if (index < 0)
                     return;
-                UIHitRecord record = publication.Hits[index];
+                UIHitRecord record = publication.GetHitRecord(index);
                 if (IsCurrentHitRecord(record) && record.RenderInfo.Owner is UIInteractableComponent target)
                 {
                     FocusMouseTarget(target);

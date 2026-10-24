@@ -924,6 +924,8 @@ public static partial class Undo
 
     private static void RecordSceneNodeDestroy(SceneNode node)
     {
+        if (OwnedHierarchyUndoReleaseScope.Contains(node))
+            return;
         if (Volatile.Read(ref _suppressRecordingCount) > 0 || !EditorState.InEditMode)
             return;
 

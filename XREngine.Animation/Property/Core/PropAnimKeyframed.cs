@@ -43,17 +43,67 @@ namespace XREngine.Animation
         }
 
         private bool _updatingLength = false;
+        private BaseKeyframeTrack? _exactLengthTrack;
+        private float _exactLength;
+        private float _exactTrackLength;
+        private int _exactLengthFrameCount;
+        private ulong _exactLengthGeneration;
         private void KeyframesLengthChanged(float oldValue, BaseKeyframeTrack track)
         {
             if (_updatingLength)
                 return;
+            if (ReferenceEquals(track.ExactLengthNotificationOwner, this) &&
+                ReferenceEquals(track, _exactLengthTrack) &&
+                track.ExactEditGeneration == _exactLengthGeneration &&
+                track.LengthInSeconds == _exactTrackLength &&
+                _lengthInSeconds == _exactLength &&
+                _bakedFrameCount == _exactLengthFrameCount)
+                return;
 
             _updatingLength = true;
-            SetLength(track.LengthInSeconds, false, true);
-            _updatingLength = false;
+            try
+            {
+                SetLength(track.LengthInSeconds, false, true);
+            }
+            finally
+            {
+                _updatingLength = false;
+            }
         }
 
         protected override BaseKeyframeTrack InternalKeyframes => Keyframes;
+
+        internal override bool HasExclusiveLengthRelay
+            => _keyframes.HasExclusiveLengthRelay(KeyframesLengthChanged);
+
+        internal override bool CanBeginExactLengthEdit
+            => !_updatingLength && _exactLengthTrack is null;
+
+        internal override void PublishExactLengthChange(float previousTrackLength,
+            Action validateState)
+        {
+            if (_updatingLength || _exactLengthTrack is not null)
+                throw new InvalidOperationException("Animation length notification is already active.");
+            BaseKeyframeTrack track = _keyframes;
+            _exactLengthTrack = track;
+            _exactLength = _lengthInSeconds;
+            _exactTrackLength = track.LengthInSeconds;
+            _exactLengthFrameCount = _bakedFrameCount;
+            _exactLengthGeneration = track.ExactEditGeneration;
+            try
+            {
+                track.PublishLengthChanged(previousTrackLength, this);
+                validateState();
+                track.OnChanged();
+                validateState();
+                OnLengthChanged();
+                validateState();
+            }
+            finally
+            {
+                _exactLengthTrack = null;
+            }
+        }
 
         [Category("Keyframed Property Animation")]
         public KeyframeTrack<TKeyframe> Keyframes

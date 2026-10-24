@@ -849,3 +849,31 @@ recorded source inputs stayed unchanged through all checks. Editor build55 passe
 with zero warnings/errors in 2m36.95s. Desktop test build29 passed with zero
 warnings/errors in 57.71s. Inspector and animation fixtures are desktop-only;
 no Windows execution or GPU acceptance is claimed.
+
+
+## Indexed Consumers And Editor Timing
+
+The code reconciliation remains **46 of 60**. This increment extends existing
+items without closing sparse capture, world rendering, or editor parity.
+
+- Input/focus and render collection read immutable record pages. Collector
+  ownership handles callback reentry and failed cleanup. Composition still uses
+  contiguous records, and capture still scans the full tree.
+- Built-in unbaked keyframed length and stretch edits commit complete timing
+  before notifications and restore exact Undo snapshots. Baked and frame-cadence
+  adapters remain unsupported with an explicit diagnostic.
+- Profiler CPU/GPU root history cells are virtualized and reuse bounded scratch
+  storage. They handle first layout, resize, recycle, and teardown reentry.
+- Clone custody reserves ownership before construction, keeps receipts through
+  history, and retains unknown or failed cleanup. Duplicate remains inactive
+  until lifecycle incarnation checks can prove continuous ownership.
+- Vulkan accepted-plan and presentation support retains exact required input and
+  rejects failed output without presentation. Native recording completion is
+  still unavailable, so the checked world capability stays disabled.
+
+Headless build134 passed with zero warnings/errors in 1m39.20s. Full run84 passed
+**937 of 937 tests**, without warnings, failures, or skips, in 12.715s. All 10,699
+source inputs stayed unchanged. Matching editor build58 passed with zero
+warnings/errors in 2m17.11s. Desktop test build30 passed with zero warnings/errors
+in 55.72s. All source inputs stayed unchanged. No Windows execution or GPU
+acceptance is claimed.

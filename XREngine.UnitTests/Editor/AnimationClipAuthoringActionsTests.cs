@@ -11,6 +11,76 @@ namespace XREngine.UnitTests.Editor;
 public class AnimationClipAuthoringActionsTests
 {
     [Test]
+    public void ConsecutiveLengthBatchesUndoAndRedoAllUniqueChildren()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(1.0f, false, true);
+            FloatKeyframe key = new(0.5f, 2f, 0f, EVectorInterpType.Linear);
+            animation.Keyframes.Add(key);
+            AnimationClip clip = new(new AnimationMember("Root", EAnimationMemberType.Group,
+                new AnimationMember("First", EAnimationMemberType.Property, animation),
+                new AnimationMember("Alias", EAnimationMemberType.Property, animation))) { LengthInSeconds = 2 };
+            int notices = 0;
+            animation.LengthChanged += _ => notices++;
+            Assert.That(AnimationClipAuthoringActions.SetClipLength(clip, 2, true), Is.True);
+            Assert.That((clip.LengthInSeconds, animation.LengthInSeconds, key.Second), Is.EqualTo((2f, 2f, 1f)));
+            Assert.That(notices, Is.EqualTo(1));
+            Assert.That(AnimationClipAuthoringActions.SetClipLength(clip, 4, true), Is.True);
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That((clip.LengthInSeconds, animation.LengthInSeconds, key.Second), Is.EqualTo((2f, 1f, 0.5f)));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That((clip.LengthInSeconds, animation.LengthInSeconds, key.Second), Is.EqualTo((4f, 4f, 2f)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void LengthObserverSeesWholeBatchAndThrowRestoresIt()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat first = new(1.0f, false, true);
+            PropAnimFloat second = new(2.0f, false, true);
+            AnimationClip clip = new(new AnimationMember("Root", EAnimationMemberType.Group,
+                new AnimationMember("First", EAnimationMemberType.Property, first),
+                new AnimationMember("Second", EAnimationMemberType.Property, second))) { LengthInSeconds = 2 };
+            bool once = true;
+            clip.PropertyChanged += (_, change) =>
+            {
+                if (!once || change.PropertyName != nameof(AnimationClip.LengthInSeconds)) return;
+                once = false;
+                Assert.That((first.LengthInSeconds, first.Keyframes.LengthInSeconds,
+                    second.LengthInSeconds, second.Keyframes.LengthInSeconds), Is.EqualTo((4f, 4f, 4f, 4f)));
+                throw new InvalidOperationException("observer failed");
+            };
+            Assert.That(AnimationClipAuthoringActions.SetClipLength(clip, 4), Is.False);
+            Assert.That((clip.LengthInSeconds, first.LengthInSeconds, second.LengthInSeconds), Is.EqualTo((2f, 1f, 2f)));
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void LengthBatchRejectsUnsupportedCadenceBeforeClipWrite()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(48, 24f, false, true);
+            AnimationClip clip = new(new AnimationMember("Value", EAnimationMemberType.Property, animation)) { LengthInSeconds = 2 };
+            Assert.That(AnimationClipAuthoringActions.SetClipLength(clip, 4), Is.False);
+            Assert.That((clip.LengthInSeconds, animation.LengthInSeconds), Is.EqualTo((2f, 2f)));
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void LoopEditUpdatesUniqueChildAnimationsAndRestoresMixedPriorValues()
     {
         Undo.ClearHistory();

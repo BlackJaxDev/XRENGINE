@@ -212,6 +212,10 @@ internal sealed partial class VulkanFrameLoop
         Queue queue,
         ref PresentInfoKHR presentInfo,
         in VulkanWsiPresentReservation presentReservation,
+        VulkanAcceptedFramePlan? requiredWorldUiPlan,
+        uint expectedImageIndex,
+        ulong expectedOutputGeneration,
+        ulong expectedSourceFrameId,
         out Result result,
         out string failureReason,
         out Exception? postDispatchFailure,
@@ -257,6 +261,16 @@ internal sealed partial class VulkanFrameLoop
             VulkanWsiPresentCompletion completion = presentReservation.Owner
                 ?? throw new InvalidOperationException("Desktop presentation was not reserved before acquisition.");
             completion.RequireReservedForDispatch(in presentReservation);
+            if (requiredWorldUiPlan is not null &&
+                (!requiredWorldUiPlan.RequiresWorldUiOutput ||
+                 !requiredWorldUiPlan.IsRequiredWorldUiReadyForPresent(
+                     expectedImageIndex, expectedOutputGeneration,
+                     expectedSourceFrameId)))
+            {
+                result = Result.ErrorUnknown;
+                failureReason = "Required Vulkan world UI output lost its proof before native present.";
+                return false;
+            }
             Fence presentFence = presentReservation.Fence;
             void* previousNext = presentInfo.PNext;
             SwapchainPresentFenceInfoEXT fenceInfo = new()

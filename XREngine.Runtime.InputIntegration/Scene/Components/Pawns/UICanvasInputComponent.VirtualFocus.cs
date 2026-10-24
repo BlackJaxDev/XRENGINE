@@ -130,48 +130,49 @@ public partial class UICanvasInputComponent
             return;
         }
 
-        foreach (ref readonly UIHitRecord record in publication.Hits)
-        {
-            if (record.VirtualListIdentity != _pendingVirtualFocusListIdentity ||
-                !record.VirtualRowIdentity.IsValid ||
-                record.VirtualRowLease.ItemId != _pendingVirtualFocusItemId ||
-                record.VirtualRowLease.Incarnation == 0 ||
-                record.VirtualProviderIncarnation != _pendingVirtualFocusProviderIncarnation ||
-                requestEpoch != _virtualFocusRequestEpoch ||
-                record.FocusScopeIdentity != publication.ActiveFocusScopeIdentity || !record.IsTabStop ||
-                !IsCurrentHitRecord(record) || record.RenderInfo.Owner is not UIInteractableComponent target)
-                continue;
-
-            UIListTransform acceptedList = list;
-            ulong acceptedProviderIncarnation = _pendingVirtualFocusProviderIncarnation;
-            ulong acceptedLifetime = _pendingVirtualFocusLifetime;
-            ClearPendingVirtualFocus();
-            _acceptingVirtualFocusList = acceptedList;
-            _acceptingVirtualFocusTarget = target;
-            _acceptingVirtualFocusListIdentity = record.VirtualListIdentity;
-            _acceptingVirtualFocusRowIdentity = record.VirtualRowIdentity;
-            _acceptingVirtualFocusTargetIdentity = record.Identity;
-            _acceptingVirtualFocusLease = record.VirtualRowLease;
-            _acceptingVirtualFocusProviderIncarnation = acceptedProviderIncarnation;
-            _acceptingVirtualFocusCanvasLifetime = acceptedLifetime;
-            _acceptingVirtualFocusEpoch = _virtualFocusRequestEpoch;
-            _resolvingVirtualFocus = true;
-            try { FocusMouseTarget(target); }
-            finally
+        for (int page = 0; page < publication.HitRecordPageCount; page++)
+            foreach (ref readonly UIHitRecord record in publication.GetHitRecordPage(page))
             {
-                _resolvingVirtualFocus = false;
-                _acceptingVirtualFocusList = null;
-                _acceptingVirtualFocusTarget = null;
-                _acceptingVirtualFocusListIdentity = default;
-                _acceptingVirtualFocusRowIdentity = default;
-                _acceptingVirtualFocusTargetIdentity = default;
-                _acceptingVirtualFocusLease = default;
-                _acceptingVirtualFocusProviderIncarnation = 0;
-                _acceptingVirtualFocusCanvasLifetime = 0;
-                _acceptingVirtualFocusEpoch = 0;
+                if (record.VirtualListIdentity != _pendingVirtualFocusListIdentity ||
+                    !record.VirtualRowIdentity.IsValid ||
+                    record.VirtualRowLease.ItemId != _pendingVirtualFocusItemId ||
+                    record.VirtualRowLease.Incarnation == 0 ||
+                    record.VirtualProviderIncarnation != _pendingVirtualFocusProviderIncarnation ||
+                    requestEpoch != _virtualFocusRequestEpoch ||
+                    record.FocusScopeIdentity != publication.ActiveFocusScopeIdentity || !record.IsTabStop ||
+                    !IsCurrentHitRecord(record) || record.RenderInfo.Owner is not UIInteractableComponent target)
+                    continue;
+
+                UIListTransform acceptedList = list;
+                ulong acceptedProviderIncarnation = _pendingVirtualFocusProviderIncarnation;
+                ulong acceptedLifetime = _pendingVirtualFocusLifetime;
+                ClearPendingVirtualFocus();
+                _acceptingVirtualFocusList = acceptedList;
+                _acceptingVirtualFocusTarget = target;
+                _acceptingVirtualFocusListIdentity = record.VirtualListIdentity;
+                _acceptingVirtualFocusRowIdentity = record.VirtualRowIdentity;
+                _acceptingVirtualFocusTargetIdentity = record.Identity;
+                _acceptingVirtualFocusLease = record.VirtualRowLease;
+                _acceptingVirtualFocusProviderIncarnation = acceptedProviderIncarnation;
+                _acceptingVirtualFocusCanvasLifetime = acceptedLifetime;
+                _acceptingVirtualFocusEpoch = _virtualFocusRequestEpoch;
+                _resolvingVirtualFocus = true;
+                try { FocusMouseTarget(target); }
+                finally
+                {
+                    _resolvingVirtualFocus = false;
+                    _acceptingVirtualFocusList = null;
+                    _acceptingVirtualFocusTarget = null;
+                    _acceptingVirtualFocusListIdentity = default;
+                    _acceptingVirtualFocusRowIdentity = default;
+                    _acceptingVirtualFocusTargetIdentity = default;
+                    _acceptingVirtualFocusLease = default;
+                    _acceptingVirtualFocusProviderIncarnation = 0;
+                    _acceptingVirtualFocusCanvasLifetime = 0;
+                    _acceptingVirtualFocusEpoch = 0;
+                }
+                return;
             }
-            return;
-        }
     }
 
     public bool IsDispatchingVirtualItemFocus(UIListTransform list, ulong itemId,

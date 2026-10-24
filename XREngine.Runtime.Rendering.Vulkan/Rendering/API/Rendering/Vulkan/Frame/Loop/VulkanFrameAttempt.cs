@@ -282,6 +282,8 @@ internal ref struct VulkanFrameAttempt
     public int PresentNowMeshRequestCount;
     /// <summary>Slot-owned logical transaction accepted before WSI acquisition.</summary>
     public VulkanAcceptedFramePlan? AcceptedFramePlan;
+    /// <summary>Keep the selected world UI output obligation through plan resets.</summary>
+    public bool RequiresWorldUiOutput;
     /// <summary>
     /// Indicates that this attempt must preserve resize-release continuity instead
     /// of publishing its incomplete successor scene.

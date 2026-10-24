@@ -16,6 +16,8 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
     private readonly NativeProfilerWorstFrameSelector _worstCpuFrame = new();
     private readonly UIVirtualTableProvider<NativeProfilerDisplayRow> _tableProvider;
     private readonly Dictionary<UIBoundableTransform, NativeProfilerValueCellState> _valueCells = [];
+    private readonly Dictionary<UIBoundableTransform, NativeProfilerPlotCellState> _plotCells = [];
+    private readonly List<NativeProfilerPlotCellState> _plotCellStates = [];
     private NativeProfilerSettingOwner? _settingsOwner;
     private long _settingsOwnerRevision;
     private DateTime _lastRefresh;
@@ -67,7 +69,9 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             UIVirtualTableColumn<NativeProfilerDisplayRow>.Text("name", "Name", 320, row => row.Scope),
             new UIVirtualTableColumn<NativeProfilerDisplayRow>("value", "Value", 100,
                 CreateValueCell, BindValueCell, UnbindValueCell, BindValueCell),
-            UIVirtualTableColumn<NativeProfilerDisplayRow>.Text("details", "Details", 420, row => row.Self));
+            UIVirtualTableColumn<NativeProfilerDisplayRow>.Text("details", "Details", 420, row => row.Self),
+            new UIVirtualTableColumn<NativeProfilerDisplayRow>("plot", "History (CPU Hz / GPU ms)", 160,
+                CreatePlotCell, BindPlotCell, UnbindPlotCell, BindPlotCell));
         RowProviderOverride = _tableProvider;
         _tableProvider.Activated += OnProfilerRowActivated;
     }
@@ -143,6 +147,11 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         _valueCells.Clear();
         foreach (NativeProfilerValueCellState cell in valueCells)
             Attempt(cell.Unbind);
+        NativeProfilerPlotCellState[] plotCells = [.. _plotCells.Values];
+        _plotCells.Clear();
+        _plotCellStates.Clear();
+        foreach (NativeProfilerPlotCellState cell in plotCells)
+            Attempt(cell.Retire);
         if (combo is not null)
         {
             Attempt(() => combo.Opening -= OnViewOpening);
@@ -238,6 +247,28 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         UIBoundableTransform bounds = cell.SetTransform<UIBoundableTransform>();
         _valueCells.Add(bounds, new NativeProfilerValueCellState(cell, CreateSettingBinding));
         return bounds;
+    }
+
+    private UIBoundableTransform CreatePlotCell(SceneNode parent)
+    {
+        SceneNode cell = new(parent) { Name = "plot" };
+        UIBoundableTransform bounds = cell.SetTransform<UIBoundableTransform>();
+        NativeProfilerPlotCellState state = new(cell, _rows);
+        _plotCells.Add(bounds, state);
+        _plotCellStates.Add(state);
+        return bounds;
+    }
+
+    private void BindPlotCell(UIBoundableTransform cell, NativeProfilerDisplayRow row, ulong _)
+    {
+        if (!_terminal && _plotCells.TryGetValue(cell, out NativeProfilerPlotCellState? state))
+            state.Bind(row);
+    }
+
+    private void UnbindPlotCell(UIBoundableTransform cell)
+    {
+        if (_plotCells.TryGetValue(cell, out NativeProfilerPlotCellState? state))
+            state.Unbind();
     }
 
     private IProfilerSettingBinding CreateSettingBinding(ENativeProfilerSetting setting)
@@ -564,6 +595,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         if (_paused)
         {
             AdvanceRows();
+            RefreshPlotLayouts();
             return;
         }
         DateTime now = DateTime.UtcNow;
@@ -580,7 +612,19 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             SampleTrend();
         }
         AdvanceRows();
+        RefreshPlotLayouts();
         AnimateTrend();
+    }
+
+    private void RefreshPlotLayouts()
+    {
+        int initialCount = _plotCellStates.Count;
+        for (int index = 0; index < initialCount; index++)
+        {
+            if (_terminal || !_ownerActive || !IsActiveInHierarchy)
+                return;
+            _plotCellStates[index].RefreshLayout();
+        }
     }
 
     protected override void RefreshRows()

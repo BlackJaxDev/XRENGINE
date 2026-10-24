@@ -125,21 +125,23 @@ public partial class UICanvasInputComponent
     private UIHitRecord? FindPresentedPointerHit(UIPublication publication, Vector2 position, out bool blocked)
     {
         UIHitRecord? blocker = null;
-        foreach (ref readonly UIHitRecord record in publication.Hits)
-            if (record.BlocksInputBehind && IsCurrentHitRecord(record) && record.Contains(position) &&
-                (blocker is not { } prior || IsBetterInputCandidate(record.Depth,
-                    record.LayerIndex, record.IndexWithinLayer, prior.Depth, prior.LayerIndex, prior.IndexWithinLayer)))
-                blocker = record;
+        for (int page = 0; page < publication.HitRecordPageCount; page++)
+            foreach (ref readonly UIHitRecord record in publication.GetHitRecordPage(page))
+                if (record.BlocksInputBehind && IsCurrentHitRecord(record) && record.Contains(position) &&
+                    (blocker is not { } prior || IsBetterInputCandidate(record.Depth,
+                        record.LayerIndex, record.IndexWithinLayer, prior.Depth, prior.LayerIndex, prior.IndexWithinLayer)))
+                    blocker = record;
         UIHitRecord? best = null;
-        foreach (ref readonly UIHitRecord record in publication.Hits)
-        {
-            if (!record.IsInteractable || !IsCurrentHitRecord(record) || !record.Contains(position) ||
-                blocker is { } front && !record.IsInSubtreeOf(front))
-                continue;
-            if (best is not { } prior || IsBetterInputCandidate(record.Depth,
-                record.LayerIndex, record.IndexWithinLayer, prior.Depth, prior.LayerIndex, prior.IndexWithinLayer))
-                best = record;
-        }
+        for (int page = 0; page < publication.HitRecordPageCount; page++)
+            foreach (ref readonly UIHitRecord record in publication.GetHitRecordPage(page))
+            {
+                if (!record.IsInteractable || !IsCurrentHitRecord(record) || !record.Contains(position) ||
+                    blocker is { } front && !record.IsInSubtreeOf(front))
+                    continue;
+                if (best is not { } prior || IsBetterInputCandidate(record.Depth,
+                    record.LayerIndex, record.IndexWithinLayer, prior.Depth, prior.LayerIndex, prior.IndexWithinLayer))
+                    best = record;
+            }
         blocked = blocker is not null;
         return best;
     }

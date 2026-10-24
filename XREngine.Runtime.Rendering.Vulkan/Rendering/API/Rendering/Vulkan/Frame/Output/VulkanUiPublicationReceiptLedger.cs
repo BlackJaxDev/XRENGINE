@@ -99,7 +99,8 @@ internal static class VulkanUiPublicationReceiptLedger
     }
 
     internal static int CopySealedForFrame(
-        VulkanRenderer owner, ulong frameId, Span<ulong> destination)
+        VulkanRenderer owner, ulong frameId, Span<ulong> destination,
+        ulong excludedReceiptId)
     {
         lock (Gate)
         {
@@ -107,7 +108,8 @@ internal static class VulkanUiPublicationReceiptLedger
             for (int index = 0; index < Entries.Length; index++)
                 if (Entries[index] is { } entry &&
                     entry.State is { Sealed: true, Failed: false, Claimed: false } &&
-                    ReferenceEquals(entry.Owner, owner) && entry.FrameId == frameId)
+                    ReferenceEquals(entry.Owner, owner) && entry.FrameId == frameId &&
+                    entry.Id != excludedReceiptId)
                 {
                     if (count == destination.Length)
                         return -1;
@@ -117,7 +119,8 @@ internal static class VulkanUiPublicationReceiptLedger
             for (int index = 0; index < Entries.Length; index++)
                 if (Entries[index] is { } entry &&
                     entry.State is { Sealed: true, Failed: false, Claimed: false } &&
-                    ReferenceEquals(entry.Owner, owner) && entry.FrameId == frameId)
+                    ReferenceEquals(entry.Owner, owner) && entry.FrameId == frameId &&
+                    entry.Id != excludedReceiptId)
                 {
                     destination[copied++] = entry.Id;
                     _ = entry.State.TryClaim();

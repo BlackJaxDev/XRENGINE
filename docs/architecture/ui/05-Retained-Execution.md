@@ -1129,8 +1129,11 @@ tree. Copy-on-write replacement copies one leaf and its path. A render leaf owns
 its payload, texture, and atlas claims. Mapped publications share the root claim.
 Constructor failure unwinds acquired claims; terminal release attempts all
 claims and reports failures. Final cleanup closes admission before callbacks.
-The current packet still exposes flat consumers and captures the full tree.
-This ownership step does not establish sparse capture or lower frame cost.
+Render collection and input/focus readers use indexed store access. A collector
+retains the store identity while it uses persistent runs. Collection epochs reject
+callback reentry, and old claims retire after the outer collection stops writing.
+Hit records use the same paged storage. Composition and capture still process
+the full record set. These changes do not establish sparse capture or lower frame cost.
 
 `OwnedHierarchyLifetime` retains a constructor ledger and attempts cleanup once.
 It accepts an exact detached structural forest, rejects unsupported allocations
@@ -1138,12 +1141,27 @@ and public destruction overrides before effects, and reserves lifecycle and
 structural ownership through callbacks. Private one-use permits perform exact
 removals and synchronous canonical cleanup. A failed attempt keeps its state and
 ledger; it does not retry uncertain destruction. The caller must retain the
-receipt. Editor history custody and Duplicate activation remain separate work.
+receipt. `HierarchyCloneCustodyStore` reserves a strong entry before canonical
+construction and keeps it through the exact structural history action. Detached
+history release attempts one retirement; applied history release keeps a verified
+document claim. Unknown allocations, failed cleanup, or a document that ends
+without release retain the receipt and block new cloning. Exact owned-node
+destruction snapshots are suppressed during retirement; unrelated callback edits
+remain recordable. Duplicate activation and document-end cleanup remain open.
 
 Native loop edits capture the full member tree, unique child animations, source
 owners, and prior values. The receipt checks prechange callbacks, commits all
 loop fields before notifications, and guards Undo/Redo against changed ownership.
-Length and stretch changes still need their own complete receipt.
+Length and stretch edits use an exact receipt for built-in unbaked keyframed
+animations. It captures member aliases, source ownership, track order, key times,
+authored frame indices, and payloads. All timing fields commit before callbacks.
+Undo restores captured values and keeps playback clocks unchanged. Track
+generations detect edits during notifications, while later replay checks exact
+snapshots so an intervening edit and Undo do not invalidate earlier history.
+Nested ordinary track-length edits still reach the canonical animation relay.
+Baked, valid frame-cadence, custom, shared-track, malformed, and overflowing
+profiles reject before writes with a diagnostic. Those profiles need separate
+adapters; they do not receive a scalar-only fallback.
 
 Inspector enum dispatch precedes numeric type dispatch. Ordinary enum rows use
 the shared combo; flags retain named text input. The row owner coalesces nested
@@ -1157,4 +1175,21 @@ are not claimed cancellable.
 Vulkan authoring can carry an exact world draw token into a pending mesh request.
 The checked world capability remains disabled until native stage lineage,
 submission, no-present failure settlement, and accepted input promotion are
-complete. These preparatory fields do not enable Vulkan world publication.
+complete. The accepted-plan seam binds the engine render-frame ID separately from the
+Vulkan attempt ID. Required output checks its exact staged input tuple, native
+proof, and submitted output before presentation. Rejected required output uses
+a no-present settlement path. Input promotion uses the plan-owned tuple rather
+than a mutable window field after presentation callbacks. Pooled proof ownership
+survives a failed verdict; uncertain release quarantines the slot. Native recording
+completion remains unreachable, so these fields do not enable Vulkan world publication.
+
+
+## Virtual profiler histories
+
+CPU roots retain up to 720 per-call frequency samples by root name and scope kind.
+Unobserved retained roots append zero; expired roots release their histories. A
+virtual table cell owns one reusable plot and fixed scratch arrays. It draws at
+most 31 line segments and clears the old series on recycle. GPU root cells use
+the producer's bounded timing history and show milliseconds. Render Stats also
+exposes GPU memory, FBO bandwidth, render-matrix swaps, and CPU spatial-tree
+counters. Native runtime acceptance and detailed resource diagnostics remain open.

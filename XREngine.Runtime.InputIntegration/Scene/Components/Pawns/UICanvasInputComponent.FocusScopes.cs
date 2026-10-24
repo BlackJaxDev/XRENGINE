@@ -60,8 +60,8 @@ public partial class UICanvasInputComponent
             }
             if (restore is null)
             {
-                int index = UIFocusNavigation.FindTabTarget(publication.Hits, 0, false, next);
-                if (index >= 0 && publication.Hits[index].RenderInfo.Owner is UIInteractableComponent target &&
+                int index = UIFocusNavigation.FindTabTarget(publication, 0, false, next);
+                if (index >= 0 && publication.GetHitRecord(index).RenderInfo.Owner is UIInteractableComponent target &&
                     IsFocusTargetInScope(target, publication))
                     restore = target;
             }

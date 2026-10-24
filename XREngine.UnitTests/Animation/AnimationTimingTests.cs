@@ -10,6 +10,21 @@ namespace XREngine.UnitTests.Animation;
 public sealed class AnimationTimingTests
 {
     [Test]
+    public void TrackLength_AfterThrowingAnimationNotification_ContinuesToUpdateAnimation()
+    {
+        var animation = new PropAnimFloat(2.0f, looped: false, useKeyframes: true);
+        static void Fail(BaseAnimation _) => throw new InvalidOperationException("Length callback failed");
+        animation.LengthChanged += Fail;
+
+        Assert.Throws<InvalidOperationException>(() => animation.Keyframes.LengthInSeconds = 3.0f);
+        animation.LengthChanged -= Fail;
+        animation.Keyframes.LengthInSeconds = 4.0f;
+
+        animation.LengthInSeconds.ShouldBe(4.0f);
+        animation.Keyframes.LengthInSeconds.ShouldBe(4.0f);
+    }
+
+    [Test]
     public void Remove_WithThrowingChangedHandler_LeavesTrackLinksConsistent()
     {
         var animation = new PropAnimFloat(2.0f, looped: false, useKeyframes: true);

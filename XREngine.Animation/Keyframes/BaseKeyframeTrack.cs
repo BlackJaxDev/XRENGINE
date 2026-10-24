@@ -12,7 +12,34 @@ namespace XREngine.Animation
         public event DelLengthChange? LengthChanged;
 
         protected internal void OnChanged() => Changed?.Invoke(this);
-        protected internal void OnLengthChanged(float prevLength) => LengthChanged?.Invoke(prevLength, this);
+        [MemoryPackIgnore]
+        internal object? ExactLengthNotificationOwner { get; private set; }
+
+        protected internal void OnLengthChanged(float prevLength)
+            => PublishLengthChanged(prevLength, null);
+
+        internal void PublishLengthChanged(float prevLength, object? exactOwner)
+        {
+            object? previousOwner = ExactLengthNotificationOwner;
+            ExactLengthNotificationOwner = exactOwner;
+            try { LengthChanged?.Invoke(prevLength, this); }
+            finally { ExactLengthNotificationOwner = previousOwner; }
+        }
+
+        internal bool HasExclusiveLengthRelay(DelLengthChange expected)
+        {
+            int matches = 0;
+            if (LengthChanged is null)
+                return false;
+            foreach (Delegate handler in LengthChanged.GetInvocationList())
+            {
+                if (handler.Equals(expected))
+                    matches++;
+                else if (handler.Target is BasePropAnimKeyframed)
+                    return false;
+            }
+            return matches == 1;
+        }
 
         protected internal abstract Keyframe? FirstKey { get; internal set; }
         protected internal abstract Keyframe? LastKey { get; internal set; }
@@ -23,6 +50,39 @@ namespace XREngine.Animation
         internal bool CanAdvanceExactEditGeneration => ExactEditGeneration < ulong.MaxValue;
 
         internal void AdvanceExactEditGeneration() => ExactEditGeneration++;
+
+        internal bool TrySetExactLength(float expectedLength, float desiredLength,
+            ReadOnlySpan<Keyframe> order, ReadOnlySpan<float> expectedSeconds,
+            ReadOnlySpan<int> expectedFrames, ReadOnlySpan<float> desiredSeconds,
+            ReadOnlySpan<int> desiredFrames)
+        {
+            if (!CanAdvanceExactEditGeneration || _lengthInSeconds != expectedLength ||
+                !float.IsFinite(desiredLength) || desiredLength < 0 ||
+                order.Length != expectedSeconds.Length || order.Length != expectedFrames.Length ||
+                order.Length != desiredSeconds.Length || order.Length != desiredFrames.Length ||
+                !HasExactOrder(order))
+                return false;
+            float lastSecond = float.NegativeInfinity;
+            for (int index = 0; index < order.Length; index++)
+            {
+                Keyframe key = order[index];
+                if (key.Second != expectedSeconds[index] ||
+                    key.AuthoredFrameIndex != expectedFrames[index] ||
+                    !float.IsFinite(desiredSeconds[index]) || desiredSeconds[index] < 0 ||
+                    desiredSeconds[index] < lastSecond || desiredFrames[index] < -1)
+                    return false;
+                lastSecond = desiredSeconds[index];
+            }
+            SetField(ref _lengthInSeconds, desiredLength, publishNotifications: false,
+                propertyName: nameof(LengthInSeconds));
+            for (int index = 0; index < order.Length; index++)
+                order[index].SetExactEditState(this,
+                    index == 0 ? null : order[index - 1],
+                    index + 1 == order.Length ? null : order[index + 1],
+                    desiredSeconds[index], desiredFrames[index]);
+            AdvanceExactEditGeneration();
+            return true;
+        }
 
         internal bool HasExactOrder(ReadOnlySpan<Keyframe> order)
         {

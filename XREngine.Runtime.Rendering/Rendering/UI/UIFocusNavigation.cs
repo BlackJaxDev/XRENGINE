@@ -9,13 +9,22 @@ public static class UIFocusNavigation
     /// <summary>Finds the next tab stop by authored index, tree order, and stable membership.</summary>
     public static int FindTabTarget(ReadOnlySpan<UIHitRecord> records, long currentMembership, bool reverse,
         UIElementIdentity? scope = null)
+        => FindTabTargetCore(new UIHitRecordView(records), currentMembership, reverse, scope);
+
+    /// <summary>Finds a tab stop in one retained publication.</summary>
+    public static int FindTabTarget(UIPublication publication, long currentMembership, bool reverse,
+        UIElementIdentity? scope = null)
+        => FindTabTargetCore(new UIHitRecordView(publication), currentMembership, reverse, scope);
+
+    private static int FindTabTargetCore(UIHitRecordView records, long currentMembership,
+        bool reverse, UIElementIdentity? scope)
     {
-        int current = FindCurrent(records, currentMembership);
+        int current = FindCurrent(ref records, currentMembership);
         int best = -1;
         int wrap = -1;
         for (int index = 0; index < records.Length; index++)
         {
-            ref readonly UIHitRecord record = ref records[index];
+            UIHitRecord record = records[index];
             if (!CanFocus(record) || scope.HasValue && record.FocusScopeIdentity != scope.Value)
                 continue;
             if (wrap < 0 || Compare(record, records[wrap]) * (reverse ? -1 : 1) < 0)
@@ -31,12 +40,21 @@ public static class UIFocusNavigation
     /// <summary>Finds the nearest focus target in a directional half-plane.</summary>
     public static int FindDirectionalTarget(ReadOnlySpan<UIHitRecord> records, long currentMembership, Vector2 direction,
         UIElementIdentity? scope = null)
+        => FindDirectionalTargetCore(new UIHitRecordView(records), currentMembership, direction, scope);
+
+    /// <summary>Finds a directional target in one retained publication.</summary>
+    public static int FindDirectionalTarget(UIPublication publication, long currentMembership,
+        Vector2 direction, UIElementIdentity? scope = null)
+        => FindDirectionalTargetCore(new UIHitRecordView(publication), currentMembership, direction, scope);
+
+    private static int FindDirectionalTargetCore(UIHitRecordView records, long currentMembership,
+        Vector2 direction, UIElementIdentity? scope)
     {
         if (!float.IsFinite(direction.X) || !float.IsFinite(direction.Y) || direction.LengthSquared() == 0)
             return -1;
-        int current = FindCurrent(records, currentMembership);
+        int current = FindCurrent(ref records, currentMembership);
         if (current < 0)
-            return FindTabTarget(records, currentMembership, false, scope);
+            return FindTabTargetCore(records, currentMembership, false, scope);
         direction = Vector2.Normalize(direction);
         Vector2 origin = Center(records[current]);
         float bestScore = float.PositiveInfinity;
@@ -72,7 +90,7 @@ public static class UIFocusNavigation
                 record.Bounds.MaxY > clip.MinY && record.Bounds.MinX < clip.MaxX &&
                 record.Bounds.MinY < clip.MaxY);
 
-    private static int FindCurrent(ReadOnlySpan<UIHitRecord> records, long membership)
+    private static int FindCurrent(ref UIHitRecordView records, long membership)
     {
         for (int index = 0; index < records.Length; index++)
             if (records[index].MembershipId == membership)

@@ -2,8 +2,10 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Components;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.UI;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -61,6 +63,58 @@ public sealed class UIWorldOutputAttemptContractTests
         window.CompleteOpenGlWorldUi(43, succeeded: true);
         Invoke<bool>(window, "CanPresentOpenGlRenderDispatch", token)
             .ShouldBeFalse();
+    }
+
+    [Test]
+    public void VulkanWorldInputRequiresTheExactStagedPublicationTuple()
+    {
+        XRWindow window = NewWindow();
+        XRViewport viewport = (XRViewport)RuntimeHelpers.GetUninitializedObject(
+            typeof(XRViewport));
+        UICanvasComponent canvas = (UICanvasComponent)
+            RuntimeHelpers.GetUninitializedObject(typeof(UICanvasComponent));
+        UIPublication publication = (UIPublication)
+            RuntimeHelpers.GetUninitializedObject(typeof(UIPublication));
+        UIPublication replacement = (UIPublication)
+            RuntimeHelpers.GetUninitializedObject(typeof(UIPublication));
+        UICanvasComponent otherCanvas = (UICanvasComponent)
+            RuntimeHelpers.GetUninitializedObject(typeof(UICanvasComponent));
+        List<(XRViewport Viewport, UICanvasComponent Canvas,
+            UIPublication Publication, ulong ReceiptId)> staged =
+            [(viewport, canvas, publication, 71UL)];
+        SetField(window, "_windowUiFrame", staged);
+        SetField(window, "_windowUiFrameId", 19UL);
+
+        window.HasStagedVulkanWorldUiPublication(
+            19UL, viewport, canvas, publication, 71UL).ShouldBeTrue();
+        window.HasStagedVulkanWorldUiPublication(
+            20UL, viewport, canvas, publication, 71UL).ShouldBeFalse();
+        window.HasStagedVulkanWorldUiPublication(
+            19UL, viewport, otherCanvas, publication, 71UL).ShouldBeFalse();
+        window.HasStagedVulkanWorldUiPublication(
+            19UL, viewport, canvas, replacement, 71UL).ShouldBeFalse();
+        window.HasStagedVulkanWorldUiPublication(
+            19UL, viewport, canvas, publication, 72UL).ShouldBeFalse();
+
+        staged.Add((viewport, canvas, replacement, 72UL));
+        window.HasStagedVulkanWorldUiPublication(
+            19UL, viewport, canvas, publication, 71UL).ShouldBeFalse();
+    }
+
+    [Test]
+    public void VulkanWorldInputOrdersFramesWithinTheExactRenderer()
+    {
+        object first = new();
+        object replacement = new();
+
+        XRWindow.IsRequiredVulkanWorldUiOutputCurrent(
+            first, first, first, 9UL, 9UL, 42UL, 41UL).ShouldBeFalse();
+        XRWindow.IsRequiredVulkanWorldUiOutputCurrent(
+            first, first, first, 9UL, 9UL, 42UL, 43UL).ShouldBeTrue();
+        XRWindow.IsRequiredVulkanWorldUiOutputCurrent(
+            replacement, first, first, 9UL, 10UL, 42UL, 44UL).ShouldBeFalse();
+        XRWindow.IsRequiredVulkanWorldUiOutputCurrent(
+            replacement, replacement, first, 9UL, 1UL, 42UL, 1UL).ShouldBeTrue();
     }
 
     private static XRWindow NewWindow()
