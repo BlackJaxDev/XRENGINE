@@ -1036,4 +1036,21 @@ and Undo item.
 
 The regression test is in the desktop test project, so it compiles here but does
 not run; Windows execution remains open.
+Editor build7 and desktop test build6 passed with 0 warnings and errors, and the
+full headless run passed **1009 of 1009 tests** on unchanged source.
 
+## Vulkan world UI draws re-verify the pipeline at issue
+
+The reconciliation remains **46 of 60**. Vulkan world publication stays disabled.
+
+- Before a world UI indexed draw issues, the renderer resolves the pipeline again
+  without creation. If the result differs from the pipeline bound before uniform
+  callbacks, the draw fails with a diagnostic reason.
+- The renderer then binds the verified pipeline again, before it forces the
+  witnessed descriptor sets. The forced bind ignores the tracked bind state, so a
+  callback that binds another pipeline on the same command buffer cannot change
+  the pipeline the draw uses. Forced binds do not count as bind churn.
+- World UI draws never use the non-indexed fallback, so that path is unchanged.
+
+No Vulkan device ran here. The change compiles in the editor and desktop test
+builds only; GPU correctness and live Vulkan acceptance remain open.

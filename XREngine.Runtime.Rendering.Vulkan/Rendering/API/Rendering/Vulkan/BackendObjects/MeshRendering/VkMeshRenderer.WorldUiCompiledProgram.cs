@@ -255,6 +255,31 @@ internal unsafe partial class VkMeshRenderer
         return true;
     }
 
+    /// <summary>
+    /// Confirms that the pipeline bound before callback-bearing preparation is still the
+    /// pipeline that the draw state resolves to, then binds it again. A uniform callback can
+    /// record another pipeline on the same command buffer, or change the state that selects
+    /// the pipeline. The forced bind makes the draw use the verified pipeline, even when the
+    /// tracked bind state does not see the callback's bind. Pipeline creation stays disabled.
+    /// </summary>
+    private bool ForceWorldUiPipelineAtIssue(
+        in DrawRecordingState state,
+        PrimitiveTopology topology,
+        Pipeline expected)
+    {
+        if (expected.Handle == 0 ||
+            !EnsurePipelineCore(
+                state.Material, topology, state.Draw, state.RenderPass,
+                state.UseDynamicRendering, state.DynamicRenderingFormats,
+                state.PassIndex, state.PassMetadata, state.DepthStencilReadOnly,
+                state.PipelineName, allowPipelineCreation: false,
+                foregroundRequired: false, out Pipeline current, out _, out _) ||
+            current.Handle != expected.Handle)
+            return false;
+        CommandOperations.ForceWorldUiPipeline(state.CommandBuffer, expected);
+        return true;
+    }
+
     /// <summary>Restores the witnessed sets after callback-bearing preparation.</summary>
     private bool ForceWorldUiDescriptorSetsAtIssue(
         CommandBuffer commandBuffer,

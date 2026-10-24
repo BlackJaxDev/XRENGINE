@@ -338,7 +338,13 @@ namespace XREngine.Rendering.Vulkan
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
         }
 
-        internal void BindPipelineTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, Pipeline pipeline)
+        /// <summary>
+        /// Binds <paramref name="pipeline"/> unless the tracked state already holds it.
+        /// When <paramref name="forceWorldUiNativeBind"/> is true, the bind always occurs.
+        /// World UI draws use this after callback-bearing preparation, because a callback
+        /// can record another pipeline on the same command buffer.
+        /// </summary>
+        internal void BindPipelineTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, Pipeline pipeline, bool forceWorldUiNativeBind = false)
         {
             if (pipeline.Handle == 0)
                 return;
@@ -346,13 +352,14 @@ namespace XREngine.Rendering.Vulkan
             if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
             {
                 laneContext.RecordDependency(new VulkanResourceLifetimeKey(ObjectType.Pipeline, pipeline.Handle));
-                if (!laneContext.ShouldBindPipeline(bindPoint, pipeline))
+                if (!laneContext.ShouldBindPipeline(bindPoint, pipeline) && !forceWorldUiNativeBind)
                 {
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBindSkips: 1);
                     return;
                 }
                 Api!.CmdBindPipeline(commandBuffer, bindPoint, pipeline);
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBinds: 1);
+                if (!forceWorldUiNativeBind)
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBinds: 1);
                 return;
             }
 
@@ -370,13 +377,13 @@ namespace XREngine.Rendering.Vulkan
                 ulong handle = pipeline.Handle;
                 if (bindPoint == PipelineBindPoint.Graphics)
                 {
-                    shouldBind = state.GraphicsPipeline != handle;
+                    shouldBind = forceWorldUiNativeBind || state.GraphicsPipeline != handle;
                     if (shouldBind)
                         state.GraphicsPipeline = handle;
                 }
                 else
                 {
-                    shouldBind = state.ComputePipeline != handle;
+                    shouldBind = forceWorldUiNativeBind || state.ComputePipeline != handle;
                     if (shouldBind)
                         state.ComputePipeline = handle;
                 }
@@ -392,7 +399,8 @@ namespace XREngine.Rendering.Vulkan
             }
 
             Api!.CmdBindPipeline(commandBuffer, bindPoint, pipeline);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBinds: 1);
+            if (!forceWorldUiNativeBind)
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBinds: 1);
         }
 
         internal unsafe void SetViewportScissorTracked(

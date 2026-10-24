@@ -364,22 +364,24 @@ internal unsafe partial class VkMeshRenderer
 				if (state.Draw.WorldUiCommand is { } worldUiCommand &&
 					(!HasExactWorldUiCropProgram(state.Draw,
 						worldUiCommand, out retainedWorldInterface) ||
+					 !ForceWorldUiPipelineAtIssue(in state, topology, pipeline) ||
 					 !ForceWorldUiDescriptorSetsAtIssue(
 						 state.CommandBuffer, in worldDescriptorWitness,
 						 state.Material)))
 				{
-					state.FailureReason = "retained world UI compiled shader or descriptor owner changed";
+					state.FailureReason = "retained world UI compiled shader, pipeline or descriptor owner changed";
 					return false;
 				}
 				if (state.WorldUiProofRequired &&
 					state.Draw.WorldUiCommand is null &&
 					(!HasExactWorldUiFactoryProgram(state.Draw,
 						state.Material, out retainedWorldInterface) ||
+					 !ForceWorldUiPipelineAtIssue(in state, topology, pipeline) ||
 					 !ForceWorldUiDescriptorSetsAtIssue(
 						 state.CommandBuffer, in worldDescriptorWitness,
 						 state.Material)))
 				{
-					state.FailureReason = "world UI output stage compiled shader or descriptor owner changed";
+					state.FailureReason = "world UI output stage compiled shader, pipeline or descriptor owner changed";
 					return false;
 				}
 				VulkanWorldUiDrawToken worldDrawToken = default;

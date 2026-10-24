@@ -1253,6 +1253,12 @@ than a mutable window field after presentation callbacks. Pooled proof ownership
 survives a failed verdict; uncertain release quarantines the slot. Native recording
 completion remains unreachable, so these fields do not enable Vulkan world publication.
 
+At native issue, a world UI indexed draw resolves its pipeline again without
+creation and requires the handle bound before uniform callbacks. It then binds that
+pipeline and the witnessed descriptor sets with forced binds that ignore tracked
+bind state. A mismatch fails the draw. World UI draws never use the non-indexed
+fallback.
+
 
 ## Virtual profiler histories
 
