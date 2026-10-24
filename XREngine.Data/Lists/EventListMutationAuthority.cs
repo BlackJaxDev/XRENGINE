@@ -27,4 +27,6 @@ public abstract class EventListMutationAuthority<T>
     protected internal abstract void PrepareAdd(T item);
     protected internal abstract void Added(T item);
     protected internal abstract void Removed(T item);
+    protected internal virtual void EnterLifetimeMutation(EventList<T> list) { }
+    protected internal virtual void ExitLifetimeMutation(EventList<T> list) { }
 }

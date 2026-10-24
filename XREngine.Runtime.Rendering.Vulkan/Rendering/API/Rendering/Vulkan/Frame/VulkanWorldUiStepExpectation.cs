@@ -13,6 +13,7 @@ internal struct VulkanWorldUiStepExpectation
     internal XRFrameBuffer? Destination;
     internal XRMeshRenderer? Mesh;
     internal XRMaterial? Material;
+    internal XRQuadFrameBuffer? FactoryQuad;
     internal BoundingRectangle Region;
     internal ulong Token;
     internal bool Authored;

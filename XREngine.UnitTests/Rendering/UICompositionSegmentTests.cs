@@ -23,13 +23,16 @@ public sealed class UICompositionSegmentTests
         UICompositionSegmentSet first = UICompositionSegmentSet.Build([left, overlay, right], null);
         UICompositionSegmentSet second = UICompositionSegmentSet.Build(
             [left, overlay with { QuadColor = Vector4.Zero }, right], first);
-
-        second.Segments.Length.ShouldBe(3);
-        second.Segments[0].ShouldBeSameAs(first.Segments[0]);
-        second.Segments[2].ShouldBeSameAs(first.Segments[2]);
-        second.Segments[1].Identity.ShouldBe(first.Segments[1].Identity);
-        second.Segments[1].Revision.ShouldBeGreaterThan(first.Segments[1].Revision);
-        second.Segments[0].Identity.ShouldNotBe(second.Segments[2].Identity);
+        try
+        {
+            second.Segments.Length.ShouldBe(3);
+            second.Segments[0].ShouldBeSameAs(first.Segments[0]);
+            second.Segments[2].ShouldBeSameAs(first.Segments[2]);
+            second.Segments[1].Identity.ShouldBe(first.Segments[1].Identity);
+            second.Segments[1].Revision.ShouldBeGreaterThan(first.Segments[1].Revision);
+            second.Segments[0].Identity.ShouldNotBe(second.Segments[2].Identity);
+        }
+        finally { second.Release(); first.Release(); }
     }
 
     [Test]
@@ -38,9 +41,13 @@ public sealed class UICompositionSegmentTests
         UIRenderRecord chrome = Quad(1, Chrome);
         UICompositionSegmentSet first = UICompositionSegmentSet.Build([chrome], null);
         UICompositionSegmentSet second = UICompositionSegmentSet.Build([Quad(2, Overlay), chrome], first);
-        second.Segments[1].ShouldBeSameAs(first.Segments[0]);
         UICompositionSegmentSet third = UICompositionSegmentSet.Build([chrome], second);
-        third.Segments[0].ShouldBeSameAs(first.Segments[0]);
+        try
+        {
+            second.Segments[1].ShouldBeSameAs(first.Segments[0]);
+            third.Segments[0].ShouldBeSameAs(first.Segments[0]);
+        }
+        finally { third.Release(); second.Release(); first.Release(); }
     }
 
     [Test]
@@ -50,10 +57,14 @@ public sealed class UICompositionSegmentTests
         UICompositionSegmentSet first = UICompositionSegmentSet.Build([firstRecord], null);
         UICompositionSegmentSet clipped = UICompositionSegmentSet.Build(
             [firstRecord with { Crop = new BoundingRectangle(1, 2, 3, 4) }], first);
-        clipped.Segments[0].Revision.ShouldBeGreaterThan(first.Segments[0].Revision);
         UICompositionSegmentSet moved = UICompositionSegmentSet.Build(
             [firstRecord with { CompositionOwner = Overlay }], clipped);
-        moved.Segments[0].Identity.ShouldNotBe(clipped.Segments[0].Identity);
+        try
+        {
+            clipped.Segments[0].Revision.ShouldBeGreaterThan(first.Segments[0].Revision);
+            moved.Segments[0].Identity.ShouldNotBe(clipped.Segments[0].Identity);
+        }
+        finally { moved.Release(); clipped.Release(); first.Release(); }
     }
 
     [Test]
@@ -91,9 +102,13 @@ public sealed class UICompositionSegmentTests
         UICompositionSegmentSet source = UICompositionSegmentSet.Build([original], null);
         UICompositionSegmentSet first = UICompositionSegmentSet.Build([original with { QuadColor = Vector4.Zero }], source);
         UICompositionSegmentSet second = UICompositionSegmentSet.Build([original with { QuadColor = new Vector4(2) }], source);
-        first.Segments[0].Identity.ShouldBe(second.Segments[0].Identity);
-        first.Segments[0].Revision.ShouldNotBe(second.Segments[0].Revision);
-        first.Segments[0].Records[0].QuadColor.ShouldNotBe(second.Segments[0].Records[0].QuadColor);
+        try
+        {
+            first.Segments[0].Identity.ShouldBe(second.Segments[0].Identity);
+            first.Segments[0].Revision.ShouldNotBe(second.Segments[0].Revision);
+            first.Segments[0].Records[0].QuadColor.ShouldNotBe(second.Segments[0].Records[0].QuadColor);
+        }
+        finally { second.Release(); first.Release(); source.Release(); }
     }
 
     [Test]
@@ -160,6 +175,104 @@ public sealed class UICompositionSegmentTests
             commands.GetUpdatingPassCommandCount(pass).ShouldBe(3);
         }
         finally { publication.Release(); }
+    }
+
+    [Test]
+    public void EditedSegmentReleasesOnlyItsReplacedLeaf()
+    {
+        int[] claims = new int[4];
+        UIRenderRecord[] records = new UIRenderRecord[768];
+        UICompositionOwner[] owners =
+        [Chrome, Overlay, new(new UIElementIdentity(300, 1), EUICompositionLayerKind.StaticChrome)];
+        for (int index = 0; index < records.Length; index++)
+            records[index] = Quad(index + 1, owners[index / 256]);
+        int Category(UIRenderRecord record) => record.MembershipId is >= 257 and <= 512 &&
+            record.QuadColor == Vector4.Zero ? 3 : (int)((record.MembershipId - 1) / 256);
+        UIRecordStore<UIRenderRecord> firstStore = UIRecordStore<UIRenderRecord>.Create(records,
+            record => claims[Category(record)]++, record => claims[Category(record)]--);
+        UICompositionSegmentSet first = UICompositionSegmentSet.Build(firstStore, null);
+        UIRenderRecord[] edited = new UIRenderRecord[256];
+        for (int index = 0; index < edited.Length; index++)
+            edited[index] = records[256 + index] with { QuadColor = Vector4.Zero };
+        UIRecordStore<UIRenderRecord> secondStore = firstStore.WithReplacedPage(1, edited);
+        UICompositionSegmentSet second = UICompositionSegmentSet.Build(secondStore, first);
+
+        second.Segments[0].ShouldBeSameAs(first.Segments[0]);
+        second.Segments[2].ShouldBeSameAs(first.Segments[2]);
+        second.Segments[1].ShouldNotBeSameAs(first.Segments[1]);
+        firstStore.Release();
+        first.Release();
+        claims.ShouldBe(new[] { 256, 0, 256, 256 });
+        secondStore.Release();
+        second.Release();
+        claims.ShouldBe(new[] { 0, 0, 0, 0 });
+    }
+
+    [Test]
+    public void CompatibilityRecordsMaterializeOnceWhileSegmentBuildReadsPages()
+    {
+        UIRenderRecord[] records = [Quad(1, Chrome), Quad(2, Chrome)];
+        UIRecordStore<UIRenderRecord> store = UIRecordStore<UIRenderRecord>.Create(records);
+        UICompositionSegmentSet? first = null;
+        UICompositionSegmentSet? second = null;
+        bool countersEnabled = UIRuntimeCounters.Enabled;
+        try
+        {
+            UIRuntimeCounters.Enabled = true;
+            long before = UIRuntimeCounters.Read(UIWorkCounter.PublicationFlatCellsMaterialized);
+            first = UICompositionSegmentSet.Build(store, null);
+            second = UICompositionSegmentSet.Build(store, first);
+            UIRuntimeCounters.Read(UIWorkCounter.PublicationFlatCellsMaterialized).ShouldBe(before);
+            second.Segments[0].Records.Length.ShouldBe(2);
+            second.Segments[0].Records.Length.ShouldBe(2);
+            UIRuntimeCounters.Read(UIWorkCounter.PublicationFlatCellsMaterialized).ShouldBe(before + 2);
+        }
+        finally
+        {
+            UIRuntimeCounters.Enabled = countersEnabled;
+            try { second?.Release(); }
+            finally
+            {
+                try { first?.Release(); }
+                finally { store.Release(); }
+            }
+        }
+    }
+
+    [Test]
+    public void FailedMembershipBuildReleasesEveryStagedRange()
+    {
+        UIRenderRecord[] records = [Quad(1, Chrome), Quad(1, Overlay)];
+        int claims = 0;
+        UIRecordStore<UIRenderRecord> store = UIRecordStore<UIRenderRecord>.Create(records,
+            _ => claims++, _ => claims--);
+        Should.Throw<ArgumentException>(() => UICompositionSegmentSet.Build(store, null));
+        store.Release();
+        claims.ShouldBe(0);
+    }
+
+    [Test]
+    public void CollectorKeepsExactCompositionSetAfterPacketOwnersRetire()
+    {
+        using UITestShaderScope shaders = new();
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        UIPublication source = new(1, 1, 1, 1, 1, default, default, [],
+            [Quad(1, Chrome)], new BoundingRectangleF(0, 0, 100, 100),
+            Matrix4x4.Identity, Matrix4x4.Identity);
+        UIPublication mapped = source.WithOutputMapping(Matrix4x4.Identity,
+            Matrix4x4.Identity, ECanvasDrawSpace.Screen, source.CanvasBounds,
+            Matrix4x4.Identity, Matrix4x4.Identity, 0, 1);
+        UICompositionSegmentSet set = source.CompositionStorage;
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = new(new Dictionary<int, IComparer<RenderCommand>?> { [pass] = null });
+        collector.CollectPublishedRuns(mapped, commands, _ => Assert.Fail("Unexpected unbatched draw."));
+        collector.SwapBuffers();
+        mapped.Release();
+        source.Release();
+
+        set.ResourcesRetired.ShouldBeFalse();
+        collector.Clear();
+        set.ResourcesRetired.ShouldBeTrue();
     }
 
     private static UIRenderRecord Quad(long identity, UICompositionOwner owner) => new()

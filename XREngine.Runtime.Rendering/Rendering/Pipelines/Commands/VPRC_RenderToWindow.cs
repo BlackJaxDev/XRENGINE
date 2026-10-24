@@ -346,6 +346,7 @@ void main()
 
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
+    private DefaultRenderPipeline? _worldUiFactoryOwner;
     private long _canonicalGeometryRevision = -1;
     private long _canonicalVertexShaderRevision = -1;
     private long _canonicalFragmentShaderRevision = -1;
@@ -376,6 +377,14 @@ void main()
     public bool ClearStencil { get; set; }
     public bool FlipSourceYOnVulkan { get; set; }
 
+    internal void SetWorldUiFactoryOwner(DefaultRenderPipeline owner)
+    {
+        if (_worldUiFactoryOwner is not null &&
+            !ReferenceEquals(_worldUiFactoryOwner, owner))
+            throw new InvalidOperationException("Window present factory owner changed.");
+        _worldUiFactoryOwner = owner;
+    }
+
     internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
     {
         if (WebPipelineRasterProgram.IsActive)
@@ -384,8 +393,16 @@ void main()
             ?? instance.ActiveGeneration?.Key.Stereo
             ?? false;
 
+        bool createdMaterial = _material is null;
         _material ??= CreatePresentMaterial(PresentShaderCode);
+        bool createdQuad = _quad is null;
         _quad ??= CreatePresentQuad(_material, useMultiview: false);
+        if (createdMaterial && createdQuad &&
+            ReferenceEquals(ParentPipeline, _worldUiFactoryOwner) &&
+            _material.FragmentShaders.Count == 1 &&
+            string.Equals(_material.FragmentShaders[0].Source?.Text,
+                PresentShaderCode, StringComparison.Ordinal))
+            _worldUiFactoryOwner!.StampWorldUiPresentQuad(_quad);
         if (_canonicalGeometryRevision < 0 && _quad.FullScreenMesh.Mesh is { } geometry &&
             _material.VertexShaders.Count == 1 && _material.FragmentShaders.Count == 1)
         {
@@ -411,6 +428,7 @@ void main()
         _webLinearCopy = false;
         if (_quad is not null)
         {
+            _worldUiFactoryOwner?.ForgetWorldUiPresentQuad(_quad);
             _quad.Destroy();
             _quad = null;
         }
@@ -654,11 +672,30 @@ void main()
             renderer.TrackWindowPresentSource(sourceTexture, sourceFrameBuffer);
 
         using var areaScope = instance.RenderState.PushRenderArea(region);
-        if (ClearColor || ClearDepth || ClearStencil)
-            RuntimeEngine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);
+        UIWorldRenderAttempt? worldAttempt = UIWorldRenderAttempt.Active;
+        ulong worldStepToken = 0UL;
+        if (worldAttempt is not null)
+        {
+            if (isLeaseBackedOutputTarget || useBoundOutputFbo ||
+                sourceIsStereoArray || !ReferenceEquals(quad, _quad) ||
+                !ReferenceEquals(ParentPipeline, _worldUiFactoryOwner) ||
+                _material is null || ClearColor || ClearDepth || ClearStencil ||
+                !string.Equals(SourceTextureName,
+                    DefaultRenderPipeline.FinalPostProcessOutputTextureName,
+                    StringComparison.Ordinal) ||
+                !renderer.TryBeginUiWorldOutputStep(worldAttempt.NativeToken,
+                    EUIWorldOutputStage.WindowPresent, sourceTexture, null,
+                    quad.FullScreenMesh, _material, region,
+                    out worldStepToken))
+                throw new InvalidOperationException(
+                    "World UI window presentation proof was rejected.");
+        }
 
         try
         {
+            if (ClearColor || ClearDepth || ClearStencil)
+                RuntimeEngine.Rendering.State.Clear(ClearColor, ClearDepth,
+                    ClearStencil);
             _resolvedSourceTexture = sourceTexture;
             _resolvedSourceFrameBuffer = sourceFrameBuffer;
             _resolvedSourceRenderer = renderer;
@@ -683,9 +720,15 @@ void main()
             // draw snapshot is captured. Eager quad preflight runs before that
             // publication and would reject the draw for its not-yet-bound source.
             quad.EnqueueRender();
+            if (worldStepToken != 0UL &&
+                !renderer.CompleteUiWorldOutputStep(worldStepToken))
+                throw new InvalidOperationException(
+                    "World UI window presentation was not proved.");
         }
         finally
         {
+            if (worldStepToken != 0UL)
+                renderer.AbortUiWorldOutputStep(worldStepToken);
             _resolvedSourceTexture = null;
             _resolvedSourceFrameBuffer = null;
             _resolvedSourceRenderer = null;

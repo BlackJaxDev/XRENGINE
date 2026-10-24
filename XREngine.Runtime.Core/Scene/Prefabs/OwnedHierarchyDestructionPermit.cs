@@ -14,6 +14,13 @@ internal sealed class OwnedHierarchyDestructionPermit(OwnedHierarchyRetirement r
     internal bool TryEnter()
         => Environment.CurrentManagedThreadId == _thread && Interlocked.CompareExchange(ref _state, 1, 0) == 0;
 
+    internal void AdvanceLifetime(long previous, long current)
+    {
+        if (!Active)
+            throw new InvalidOperationException("Only the consumed exact destruction permit can advance lifetime progress.");
+        Retirement.AdvanceLifetime(Target, previous, current);
+    }
+
     internal void Exit()
     {
         if (!Active || Interlocked.CompareExchange(ref _state, 2, 1) != 1)

@@ -13,7 +13,7 @@ public sealed class UIPublication
     private static readonly Action<UIRenderRecord> ReleaseRenderRecordAction = ReleaseRenderRecord;
     private readonly UIHitRecord[] _hits;
     private readonly UIRecordStore<UIHitRecord>? _hitStore;
-    private readonly UICompositionSegmentSet _compositionSegments;
+    private readonly UICompositionSegmentSet _compositionSegments = UICompositionSegmentSet.Empty;
     private readonly UIRenderRecord[] _renders = [];
     private readonly UIScrollRecord[] _scrollReceivers;
     private readonly UIFocusScopeRecord[] _focusScopes;
@@ -57,10 +57,6 @@ public sealed class UIPublication
             ReferenceEquals(renders, previous._renders)
             ? (previous.HasVisibleBackdrop, previous.HasVisiblePreRenderDraw)
             : ScanBackdropPresence(renders);
-        _compositionSegments = previous is not null && previous.CanvasLifetime == canvasLifetime
-            ? ReferenceEquals(renders, previous._renders) ? previous._compositionSegments
-                : UICompositionSegmentSet.Build(renders, previous._compositionSegments)
-            : UICompositionSegmentSet.Build(renders, null);
         OffscreenSurface = offscreenSurface;
         OffscreenReservationGeneration = offscreenSurface?.ReservationGeneration ?? 0;
         OffscreenQuadPayload = offscreenQuadPayload;
@@ -93,6 +89,11 @@ public sealed class UIPublication
                 ? RetainStore(previous._renderStore!)
                 : UIRecordStore<UIRenderRecord>.Create(renders,
                     RetainRenderRecordAction, ReleaseRenderRecordAction);
+            _compositionSegments = previous is not null && previous.CanvasLifetime == canvasLifetime
+                ? ReferenceEquals(renders, previous._renders)
+                    ? RetainCompositionSet(previous._compositionSegments)
+                    : UICompositionSegmentSet.Build(_renderStore, previous._compositionSegments)
+                : UICompositionSegmentSet.Build(_renderStore, null);
             RetainCanvasResources();
         }
         catch
@@ -277,9 +278,6 @@ public sealed class UIPublication
         (HasVisibleBackdrop, HasVisiblePreRenderDraw) = ReferenceEquals(_renders, source._renders)
             ? (source.HasVisibleBackdrop, source.HasVisiblePreRenderDraw)
             : ScanBackdropPresence(_renders);
-        _compositionSegments = ReferenceEquals(_renders, source._renders)
-            ? source._compositionSegments
-            : UICompositionSegmentSet.Build(_renders, source._compositionSegments);
         OffscreenSurface = source.OffscreenSurface;
         OffscreenReservationGeneration = source.OffscreenReservationGeneration;
         OffscreenQuadPayload = source.OffscreenQuadPayload;
@@ -302,6 +300,9 @@ public sealed class UIPublication
                 ? RetainStore(source._renderStore!)
                 : UIRecordStore<UIRenderRecord>.Create(_renders,
                     RetainRenderRecordAction, ReleaseRenderRecordAction);
+            _compositionSegments = ReferenceEquals(_renders, source._renders)
+                ? RetainCompositionSet(source._compositionSegments)
+                : UICompositionSegmentSet.Build(_renderStore, source._compositionSegments);
             RetainCanvasResources();
         }
         catch
@@ -344,6 +345,12 @@ public sealed class UIPublication
     {
         store.Retain();
         return store;
+    }
+
+    private static UICompositionSegmentSet RetainCompositionSet(UICompositionSegmentSet set)
+    {
+        set.Retain();
+        return set;
     }
 
     private static void RetainRenderRecord(UIRenderRecord record)
@@ -442,6 +449,12 @@ public sealed class UIPublication
     {
         if (Interlocked.Exchange(ref _resourcesRetired, 1) != 0)
             return;
+        try { _compositionSegments.Release(); }
+        catch (Exception failure)
+        {
+            try { System.Diagnostics.Trace.TraceError("UI publication composition cleanup failed: {0}", failure); }
+            catch { }
+        }
         try { _renderStore?.Release(); }
         catch (Exception failure)
         {

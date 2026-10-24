@@ -2060,6 +2060,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     {
         var cmds = new ViewportRenderCommandContainer(this);
         var present = cmds.Add<VPRC_RenderToWindow>();
+        present.SetWorldUiFactoryOwner(this);
         string? sourceTextureName = ResolveVendorUpscaleSourceTextureName(sourceFboName);
         if (!string.IsNullOrWhiteSpace(sourceTextureName))
             present.SourceTextureName = sourceTextureName;

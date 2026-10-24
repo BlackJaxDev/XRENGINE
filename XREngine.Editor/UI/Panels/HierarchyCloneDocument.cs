@@ -50,6 +50,8 @@ internal sealed class HierarchyCloneDocument
             using HierarchyStructuralReservation reservation =
                 HierarchyStructuralReservation.TryAcquire([.. endpoints]) ??
                 throw new InvalidOperationException("The clone's current document links are still being changed.");
+            if (!ownership.HasSealedIdentities || ownership.Identities.Any(identity => !identity.IsCurrent))
+                throw new InvalidOperationException("The document transfer has a changed construction lifetime.");
             foreach (XRObjectBase allocation in ownership.Objects)
             {
                 if (allocation is not XRWorldObjectBase structural)

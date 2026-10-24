@@ -236,6 +236,11 @@ namespace XREngine.Rendering.Vulkan
 
         private unsafe void BeginRenderingForTarget(scoped ref PrimaryCommandBufferRecordingState recordingState, XRFrameBuffer? target, int passIndex, in FrameOpContext context, bool secondaryContents = false, VulkanAdvancedVisibilityClearPolicy? clearPolicy = null)
         {
+            VulkanAcceptedFramePlan? worldUiPlan =
+                recordingState.AcceptedFramePlan;
+            VulkanWorldUiNativeProof? worldUiProof =
+                worldUiPlan?.WorldUiProof;
+            ulong worldUiNativeToken = worldUiProof?.NativeToken ?? 0UL;
             // Assumes no active render pass.
             if (target is null)
             {
@@ -392,6 +397,27 @@ namespace XREngine.Rendering.Vulkan
                         secondaryContents,
                         recordingState.Policy.PreferKhrDynamicRendering);
 
+                    if (worldUiProof is not null)
+                    {
+                        ClearColorValue issuedColor =
+                            scopePlan.ColorAttachments[0].ClearValue.Color;
+                        ClearDepthStencilValue issuedDepth =
+                            scopePlan.DepthAttachment.ClearValue.DepthStencil;
+                        ColorF4 color = new(issuedColor.Float32_0,
+                            issuedColor.Float32_1, issuedColor.Float32_2,
+                            issuedColor.Float32_3);
+                        if (secondaryContents || worldUiPlan is null ||
+                            !worldUiProof.ObserveNativeClear(worldUiPlan,
+                                worldUiNativeToken, null,
+                                scopePlan.RenderArea,
+                                colorLoadOp == AttachmentLoadOp.Clear,
+                                depthLoadOp == AttachmentLoadOp.Clear,
+                                false, color, issuedDepth.Depth,
+                                issuedDepth.Stencil))
+                            throw new VulkanPlanPreconditionException(
+                                "A selected world UI swapchain render reset lost its native owner.");
+                    }
+
                     recordingState.RenderScope.Activate(
                         null,
                         usesDynamicRendering: true,
@@ -459,6 +485,25 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.CommandBuffer,
                     &renderPassInfo,
                     secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
+
+                if (worldUiProof is not null)
+                {
+                    ClearColorValue issuedColor = clearValues[0].Color;
+                    ClearDepthStencilValue issuedDepth =
+                        clearValues[1].DepthStencil;
+                    ColorF4 color = new(issuedColor.Float32_0,
+                        issuedColor.Float32_1, issuedColor.Float32_2,
+                        issuedColor.Float32_3);
+                    if (secondaryContents || worldUiPlan is null ||
+                        !worldUiProof.ObserveNativeClear(worldUiPlan,
+                            worldUiNativeToken, null,
+                            renderPassInfo.RenderArea,
+                            legacySwapchainLoadOp == AttachmentLoadOp.Clear,
+                            true, false, color, issuedDepth.Depth,
+                            issuedDepth.Stencil))
+                        throw new VulkanPlanPreconditionException(
+                            "A selected world UI swapchain render reset lost its native owner.");
+                }
 
                 recordingState.RenderScope.Activate(
                     null,
@@ -806,6 +851,49 @@ namespace XREngine.Rendering.Vulkan
                     secondaryContents,
                     recordingState.Policy.PreferKhrDynamicRendering);
 
+                if (worldUiProof is not null)
+                {
+                    bool colorCleared = false;
+                    bool mixedColorClear = false;
+                    ColorF4 issuedColor = default;
+                    for (int colorIndex = 0; colorIndex < scopePlan.ColorAttachments.Length; colorIndex++)
+                    {
+                        DynamicRenderingAttachmentPlan attachment =
+                            scopePlan.ColorAttachments[colorIndex];
+                        if (attachment.LoadOp != AttachmentLoadOp.Clear)
+                            continue;
+                        ClearColorValue value = attachment.ClearValue.Color;
+                        ColorF4 next = new(value.Float32_0, value.Float32_1,
+                            value.Float32_2, value.Float32_3);
+                        if (colorCleared &&
+                            (issuedColor.R != next.R || issuedColor.G != next.G ||
+                             issuedColor.B != next.B || issuedColor.A != next.A))
+                            mixedColorClear = true;
+                        issuedColor = next;
+                        colorCleared = true;
+                    }
+                    bool depthCleared = scopePlan.HasDepthAttachment &&
+                        scopePlan.DepthAttachment.LoadOp == AttachmentLoadOp.Clear;
+                    bool stencilCleared = scopePlan.HasStencilAttachment &&
+                        scopePlan.StencilAttachment.LoadOp == AttachmentLoadOp.Clear;
+                    if (colorCleared || depthCleared || stencilCleared)
+                    {
+                        float issuedDepth = depthCleared ?
+                            scopePlan.DepthAttachment.ClearValue.DepthStencil.Depth : 0f;
+                        uint issuedStencil = stencilCleared ?
+                            scopePlan.StencilAttachment.ClearValue.DepthStencil.Stencil : 0u;
+                        if (secondaryContents || clearPolicy is not null ||
+                            mixedColorClear || worldUiPlan is null ||
+                            !worldUiProof.ObserveNativeClear(
+                                worldUiPlan, worldUiNativeToken, target,
+                                scopePlan.RenderArea, colorCleared,
+                                depthCleared, stencilCleared,
+                                issuedColor, issuedDepth, issuedStencil))
+                            throw new VulkanPlanPreconditionException(
+                                "The world UI render-pass reset did not match its pinned native target.");
+                    }
+                }
+
                 recordingState.RenderScope.Activate(
                     target,
                     usesDynamicRendering: true,
@@ -886,6 +974,58 @@ namespace XREngine.Rendering.Vulkan
                 fboPassInfo.ClearValueCount = attachmentCountFbo;
                 fboPassInfo.PClearValues = clearValuesFbo;
                 CmdBeginRenderPassTracked(recordingState.CommandBuffer, &fboPassInfo, secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
+                if (worldUiProof is not null)
+                {
+                    bool colorCleared = false;
+                    bool depthCleared = false;
+                    bool stencilCleared = false;
+                    bool mixedColorClear = false;
+                    ColorF4 issuedColor = default;
+                    float issuedDepth = 0f;
+                    uint issuedStencil = 0u;
+                    for (int attachmentIndex = 0; attachmentIndex < fboSignature.Length; attachmentIndex++)
+                    {
+                        FrameBufferAttachmentSignature attachment = fboSignature[attachmentIndex];
+                        ClearValue value = clearValuesFbo[attachmentIndex];
+                        if (attachment.Role == AttachmentRole.Color &&
+                            attachment.LoadOp == AttachmentLoadOp.Clear)
+                        {
+                            ColorF4 next = new(value.Color.Float32_0,
+                                value.Color.Float32_1, value.Color.Float32_2,
+                                value.Color.Float32_3);
+                            if (colorCleared &&
+                                (issuedColor.R != next.R || issuedColor.G != next.G ||
+                                 issuedColor.B != next.B || issuedColor.A != next.A))
+                                mixedColorClear = true;
+                            issuedColor = next;
+                            colorCleared = true;
+                        }
+                        if ((attachment.AspectMask & ImageAspectFlags.DepthBit) != 0 &&
+                            attachment.LoadOp == AttachmentLoadOp.Clear)
+                        {
+                            depthCleared = true;
+                            issuedDepth = value.DepthStencil.Depth;
+                        }
+                        if ((attachment.AspectMask & ImageAspectFlags.StencilBit) != 0 &&
+                            attachment.StencilLoadOp == AttachmentLoadOp.Clear)
+                        {
+                            stencilCleared = true;
+                            issuedStencil = value.DepthStencil.Stencil;
+                        }
+                    }
+                    if (colorCleared || depthCleared || stencilCleared)
+                    {
+                        if (secondaryContents || clearPolicy is not null ||
+                            mixedColorClear || worldUiPlan is null ||
+                            !worldUiProof.ObserveNativeClear(
+                                worldUiPlan, worldUiNativeToken, target,
+                                fboPassInfo.RenderArea, colorCleared,
+                                depthCleared, stencilCleared,
+                                issuedColor, issuedDepth, issuedStencil))
+                            throw new VulkanPlanPreconditionException(
+                                "The world UI render-pass reset did not match its pinned native target.");
+                    }
+                }
                 if (HasLegacyDirectionalShadowAtlasDepthClear(fboSignature))
                     VulkanShadowAtlasDiagnostics.RecordWriterDepthClear(fboName, legacyClearState.ClearDepth, fboRenderArea);
             }

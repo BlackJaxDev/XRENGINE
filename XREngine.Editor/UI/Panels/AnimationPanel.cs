@@ -7,17 +7,18 @@ using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Editor.UI;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.UI.State;
 using XREngine.Scene;
 
 namespace XREngine.Editor;
 
 /// <summary>Edits clip keys and shows playback for the selected component.</summary>
-public class AnimationPanel : NativeVirtualTextPanel
+public partial class AnimationPanel : NativeVirtualTextPanel
 {
     private const int RowPageSize = 128;
     private const int MaxRetainedRowIds = 8192;
     private const ulong LastCommandRowId = 58;
-    private const ulong FirstDynamicRowId = 80;
+    private const ulong FirstDynamicRowId = 1024;
     private static readonly Vector4[] PlotPalette = [new(0.93f, 0.39f, 0.32f, 1),
         new(0.22f, 0.67f, 0.92f, 1), new(0.37f, 0.80f, 0.49f, 1), new(0.92f, 0.77f, 0.24f, 1)];
     private readonly List<(ulong Id, string Text)> _rows = [];
@@ -25,6 +26,7 @@ public class AnimationPanel : NativeVirtualTextPanel
     private readonly Dictionary<ulong, int> _memberDepths = [];
     private readonly Dictionary<object, ulong> _ids = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ulong, AnimationMember> _memberRows = [];
+    private readonly List<AnimationMember> _visiblePlotMembers = [];
     private readonly Dictionary<ulong, Keyframe> _keyRows = [];
     private readonly Dictionary<ulong, EditorImGuiUI.AnimationClipPathCandidate> _pathRows = [];
     private AnimationClip? _displayedClip;
@@ -45,6 +47,7 @@ public class AnimationPanel : NativeVirtualTextPanel
     private int _keyCount;
     private int _statusRowIndex = -1;
     private bool _projectionDirty = true;
+    private bool _sourceTopologyDirty = true;
     private ulong _sourceRevision;
     private ulong _buildingSourceRevision;
     private AnimationClip? _observedClip;
@@ -54,7 +57,27 @@ public class AnimationPanel : NativeVirtualTextPanel
     private readonly HashSet<BaseKeyframeTrack> _observedTracks =
         new(ReferenceEqualityComparer.Instance);
     private UIRetainedPlot? _plot;
-    private readonly List<(Keyframe Key, Vector2 Point)> _plotKeyHits = [];
+    private AnimationPlotInputComponent? _plotInput;
+    private AnimationPlotPointerSnapshot? _plotSnapshot;
+    private ulong _plotViewRevision;
+    private ulong _plotBuildRevision;
+    private bool _plotBuilding;
+    private bool _plotRefreshPending;
+    private int _plotRetryDepth;
+    private AnimationMember[] _plotBuildMembers = [];
+    private BasePropAnim?[] _plotBuildAnimations = [];
+    private AnimationMember? _plotBuildSelectedMember;
+    private BasePropAnim? _plotBuildSelectedAnimation;
+    private float _plotBuildClipLength;
+    private readonly Func<bool> _plotValidator;
+    private UIRetainedPlot? _activePlotBuildPlot;
+    private AnimationClip? _activePlotBuildClip;
+    private ulong _activePlotBuildSourceRevision;
+    private ulong _activePlotBuildViewRevision;
+    private ulong _activePlotBuildRevision;
+    private bool _plotBuildHidden;
+    private readonly List<(AnimationMember Member, Keyframe Key,
+        BaseKeyframeTrack? Track, float Second, Vector2 Point)> _plotKeyHits = [];
     private float _plottedWidth;
     private float _plottedHeight;
     private float _plottedStart;
@@ -71,6 +94,7 @@ public class AnimationPanel : NativeVirtualTextPanel
 
     public AnimationPanel()
     {
+        _plotValidator = ValidateActivePlotBuild;
         RowProviderOverride = _projectedRows;
         _projectedRows.Activated = OnRowActivated;
     }
@@ -130,6 +154,8 @@ public class AnimationPanel : NativeVirtualTextPanel
             Attempt(() => search.Cancelled -= CancelPathSearch);
         }
         _plotKeyHits.Clear();
+        _plotSnapshot = null;
+        _plotInput = null;
         Attempt(() => base.OnDestroying());
         if (failures.Count != 0)
             throw new AggregateException("Animation panel teardown failed.", failures);
@@ -138,6 +164,7 @@ public class AnimationPanel : NativeVirtualTextPanel
     private void ReleaseOwnerSubscriptions()
     {
         ReleaseProjectionSources();
+        _plotSnapshot = null;
         if (!_ownerSubscriptionsActive)
             return;
         _ownerSubscriptionsActive = false;
@@ -191,7 +218,11 @@ public class AnimationPanel : NativeVirtualTextPanel
     protected override float FooterHeight => 180;
 
     protected override void CreateFooter(SceneNode parent)
-        => _plot = new UIRetainedPlot(parent, "AnimationPlot");
+    {
+        _plot = new UIRetainedPlot(parent, "AnimationPlot");
+        _plotInput = _plot.Root.AddComponent<AnimationPlotInputComponent>()!;
+        _plotInput.Panel = this;
+    }
 
     private static AnimationClipComponent? SelectedComponent()
         => Selection.SceneNode?.GetComponent<AnimationClipComponent>();
@@ -390,7 +421,7 @@ public class AnimationPanel : NativeVirtualTextPanel
             }
         }
         if (clip is not null && _plot is { } plot &&
-            (MathF.Abs(plot.Width - _plottedWidth) > 0.5f ||
+            (_plotRefreshPending || MathF.Abs(plot.Width - _plottedWidth) > 0.5f ||
              MathF.Abs(plot.Height - _plottedHeight) > 0.5f))
             RefreshPlot(clip);
     }
@@ -437,12 +468,15 @@ public class AnimationPanel : NativeVirtualTextPanel
         _statusRowIndex = -1;
         _memberDepths.Clear();
         _memberRows.Clear();
+        _visiblePlotMembers.Clear();
         _keyRows.Clear();
         _pathRows.Clear();
         AnimationClip? clip = CurrentClip();
         if (!ReferenceEquals(clip, _displayedClip))
         {
             ReleaseProjectionSources();
+            _plotSnapshot = null;
+            _plotViewRevision++;
             _displayedClip = clip;
             _selectedMember = null;
             _selectedKey = null;
@@ -503,6 +537,11 @@ public class AnimationPanel : NativeVirtualTextPanel
         _rows.Add((37, "Plot previous window"));
         _rows.Add((38, "Fit full clip"));
         _rows.Add((39, "Plot next window"));
+        float visibleDuration = clip.LengthInSeconds / MathF.Max(1, _plotZoom);
+        float windowStart = Math.Clamp(_plotWindowStart, 0,
+            MathF.Max(0, clip.LengthInSeconds - visibleDuration));
+        float windowEnd = windowStart + visibleDuration;
+        _rows.Add((66, $"Time axis: {windowStart:0.###}–{windowEnd:0.###} s | frames {MathF.Round(windowStart * clip.SampleRate)}–{MathF.Round(windowEnd * clip.SampleRate)}"));
         _rows.Add((26, "Previous member page"));
         _rows.Add((27, "Next member page"));
         if (SelectedComponent() is { } component && ReferenceEquals(component.Animation, clip))
@@ -519,8 +558,28 @@ public class AnimationPanel : NativeVirtualTextPanel
         else
             _rows.Add((0, "This clip has no animation members."));
 
+        if (_selectedMember is { Animation: not null } selectedPlotMember)
+        {
+            for (int index = 0; index < _visiblePlotMembers.Count; index++)
+                if (ReferenceEquals(_visiblePlotMembers[index], selectedPlotMember))
+                {
+                    _visiblePlotMembers.RemoveAt(index);
+                    break;
+                }
+            _visiblePlotMembers.Insert(0, selectedPlotMember);
+        }
+        if (!_graphView && _visiblePlotMembers.Count > 0)
+        {
+            int visibleLanes = Math.Min(5, _visiblePlotMembers.Count);
+            _rows.Add((65, $"Timeline lanes: {visibleLanes} of {_visiblePlotMembers.Count} | selected member first"));
+            for (int lane = 0; lane < visibleLanes; lane++)
+                _rows.Add(((ulong)(70 + lane),
+                    $"  Lane {lane + 1}: {_visiblePlotMembers[lane].MemberName}"));
+        }
+
         if (_selectedMember is { Animation: { } animation } selected)
         {
+            AddSelectedMemberDetails(selected);
             _rows.Add((7, "Keys for " + (selected.MemberName ?? "<unnamed>")));
             _rows.Add((40, "Cycle incoming interpolation"));
             _rows.Add((41, "Cycle outgoing interpolation"));
@@ -574,6 +633,8 @@ public class AnimationPanel : NativeVirtualTextPanel
                 return;
             }
         }
+        else if (_selectedMember is { } selectedWithoutAnimation)
+            AddSelectedMemberDetails(selectedWithoutAnimation);
         if (_candidateRoot is not null)
         {
             _candidateMatchCount = 0;
@@ -621,6 +682,8 @@ public class AnimationPanel : NativeVirtualTextPanel
             {
                 ulong id = IdFor(member);
                 _memberRows[id] = member;
+                if (member.Animation is not null)
+                    _visiblePlotMembers.Add(member);
                 _memberDepths[id] = depth;
                 _rows.Add((id, string.Empty));
             }
@@ -633,9 +696,40 @@ public class AnimationPanel : NativeVirtualTextPanel
             _memberPage = pages - 1;
             _rows.RemoveRange(firstRow, _rows.Count - firstRow);
             _memberRows.Clear();
+            _visiblePlotMembers.Clear();
             _memberDepths.Clear();
             AddMemberRows(root);
         }
+    }
+
+    private void AddSelectedMemberDetails(AnimationMember member)
+    {
+        _rows.Add((59, $"Selected: {member.MemberName} [{member.MemberType}]"));
+        if (member.MemberNotFound)
+            _rows.Add((60, "This member was not resolved at runtime."));
+        if (member.MemberType == EAnimationMemberType.Method)
+        {
+            object?[] arguments = member.MethodArguments ?? [];
+            _rows.Add((61, $"Method: argument {member.AnimatedMethodArgumentIndex} is animated | Cache return: {member.CacheReturnValue}"));
+            int shown = Math.Min(arguments.Length, 32);
+            for (int index = 0; index < shown; index++)
+                _rows.Add(((ulong)(100 + index),
+                    $"  Arg {index}: {(index == member.AnimatedMethodArgumentIndex ? "animated" : "static")} | {FormatDetailValue(arguments[index])}"));
+            if (arguments.Length > shown)
+                _rows.Add((132, $"{arguments.Length - shown} more method arguments"));
+        }
+        if (member.Animation is not { } animation)
+        {
+            _rows.Add((62, "No animation asset is attached to this member."));
+            return;
+        }
+        _rows.Add((62, $"Attached animation: {animation.GetType().Name} | {animation.LengthInSeconds:0.###} s | Loop: {animation.Looped}"));
+        if (animation is BasePropAnimBakeable bakeable)
+            _rows.Add((63, bakeable.IsBaked
+                ? $"Baked: {bakeable.BakedFrameCount} frames at {bakeable.BakedFramesPerSecond} fps"
+                : "Keyframed animation"));
+        if (member.DefaultValue is { } defaultValue)
+            _rows.Add((64, "Member default: " + FormatDetailValue(defaultValue)));
     }
 
     private void SetProjectedRows()
@@ -648,9 +742,10 @@ public class AnimationPanel : NativeVirtualTextPanel
 
     private void ObserveProjectionSources(AnimationClip clip)
     {
-        if (ReferenceEquals(_observedClip, clip) && !_projectionDirty)
+        if (ReferenceEquals(_observedClip, clip) && !_sourceTopologyDirty)
             return;
         ReleaseProjectionSources();
+        _sourceTopologyDirty = false;
         _observedClip = clip;
         clip.PropertyChanged += ProjectionClipChanged;
         if (clip.RootMember is not { } root)
@@ -691,24 +786,26 @@ public class AnimationPanel : NativeVirtualTextPanel
             track.Changed -= ProjectionTrackChanged;
         _observedTracks.Clear();
         _projectionDirty = true;
+        _sourceTopologyDirty = true;
     }
 
     private void ProjectionClipChanged(object? sender,
-        IXRPropertyChangedEventArgs _)
+        IXRPropertyChangedEventArgs change)
     {
         if (ReferenceEquals(sender, _observedClip))
-            MarkProjectionDirty();
+            MarkProjectionDirty(change.PropertyName == nameof(AnimationClip.RootMember));
     }
 
     private void ProjectionMemberChanged(object? sender,
-        IXRPropertyChangedEventArgs _)
+        IXRPropertyChangedEventArgs change)
     {
         if (sender is AnimationMember member &&
             _observedMembers.ContainsKey(member))
-            MarkProjectionDirty();
+            MarkProjectionDirty(change.PropertyName is nameof(AnimationMember.Animation) or
+                nameof(AnimationMember.Children));
     }
 
-    private void ProjectionChildrenChanged() => MarkProjectionDirty();
+    private void ProjectionChildrenChanged() => MarkProjectionDirty(topologyChanged: true);
 
     private void ProjectionTrackChanged(BaseKeyframeTrack track)
     {
@@ -716,12 +813,13 @@ public class AnimationPanel : NativeVirtualTextPanel
             MarkProjectionDirty();
     }
 
-    private void MarkProjectionDirty()
+    private void MarkProjectionDirty(bool topologyChanged = false)
     {
         if (_destroying || !_ownerSubscriptionsActive || !IsActiveInHierarchy)
             return;
         _sourceRevision++;
         _projectionDirty = true;
+        _sourceTopologyDirty |= topologyChanged;
     }
 
     private static BaseKeyframeTrack? TrackFor(BasePropAnim? animation)
@@ -777,7 +875,7 @@ public class AnimationPanel : NativeVirtualTextPanel
             case 13: Seek(CurrentClip()?.LengthInSeconds ?? 0); break;
             case 14: SelectedMatchingComponent()?.Pause(); break;
             case 15: SelectedMatchingComponent()?.Resume(); break;
-            case 16: _graphView = !_graphView; break;
+            case 16: _graphView = !_graphView; _plotViewRevision++; break;
             case 17: RebuildCandidates(); break;
             case 18:
                 if (CurrentClip() is { } clip &&
@@ -810,13 +908,13 @@ public class AnimationPanel : NativeVirtualTextPanel
                 clip, NextEnumValue(clip.TraversalMethod))); break;
             case 46: EditClipSettings(clip => AnimationClipAuthoringActions.SetClipKind(
                 clip, NextEnumValue(clip.ClipKind))); break;
-            case 35: _plotZoom = MathF.Min(32, _plotZoom * 1.5f); break;
-            case 36: _plotZoom = MathF.Max(1, _plotZoom / 1.5f); break;
+            case 35: _plotZoom = MathF.Min(32, _plotZoom * 1.5f); _plotViewRevision++; break;
+            case 36: _plotZoom = MathF.Max(1, _plotZoom / 1.5f); _plotViewRevision++; break;
             case 37: _plotWindowStart = MathF.Max(0,
-                _plotWindowStart - MathF.Max(0.01f, _plottedDuration * 0.75f)); break;
-            case 38: _plotZoom = 1; _plotWindowStart = 0; break;
+                _plotWindowStart - MathF.Max(0.01f, _plottedDuration * 0.75f)); _plotViewRevision++; break;
+            case 38: _plotZoom = 1; _plotWindowStart = 0; _plotViewRevision++; break;
             case 39: _plotWindowStart +=
-                MathF.Max(0.01f, _plottedDuration * 0.75f); break;
+                MathF.Max(0.01f, _plottedDuration * 0.75f); _plotViewRevision++; break;
             case 40: CycleSelectedInterpolation(outgoing: false); break;
             case 41: CycleSelectedInterpolation(outgoing: true); break;
             case 42: SetSelectedTangent(outgoing: false); break;
@@ -963,7 +1061,73 @@ public class AnimationPanel : NativeVirtualTextPanel
 
     private void RefreshPlot(AnimationClip clip)
     {
+        if (_plotBuilding)
+        {
+            _plotBuildRevision++;
+            _plotRefreshPending = true;
+            return;
+        }
+        _plotBuilding = true;
+        ulong buildRevision = ++_plotBuildRevision;
+        try
+        {
+            using IDisposable? transaction = _plotInput?.UserInterfaceCanvas?
+                .CanvasTransform.BeginMutationTransaction();
+            RefreshPlotCore(clip, buildRevision);
+        }
+        finally
+        {
+            _plotBuilding = false;
+            if (_plotRefreshPending && !_destroying && _plotRetryDepth == 0)
+            {
+                _plotRefreshPending = false;
+                if (CurrentClip() is { } current)
+                {
+                    _plotRetryDepth++;
+                    try { RefreshPlot(current); }
+                    finally { _plotRetryDepth--; }
+                }
+            }
+        }
+    }
+
+    private void RefreshPlotCore(AnimationClip clip, ulong buildRevision)
+    {
         if (_plot is not { } plot)
+            return;
+        ulong sourceRevision = _sourceRevision;
+        ulong viewRevision = _plotViewRevision;
+        AnimationMember[] visibleMembers = [.. _visiblePlotMembers];
+        _plotBuildMembers = visibleMembers;
+        _plotBuildAnimations = new BasePropAnim?[visibleMembers.Length];
+        for (int index = 0; index < visibleMembers.Length; index++)
+            _plotBuildAnimations[index] = visibleMembers[index].Animation;
+        _plotBuildSelectedMember = _selectedMember;
+        _plotBuildSelectedAnimation = _selectedMember?.Animation;
+        _plotBuildClipLength = clip.LengthInSeconds;
+        _activePlotBuildPlot = plot;
+        _activePlotBuildClip = clip;
+        _activePlotBuildSourceRevision = sourceRevision;
+        _activePlotBuildViewRevision = viewRevision;
+        _activePlotBuildRevision = buildRevision;
+        _plotBuildHidden = false;
+        _plotSnapshot = null;
+        _plotInput?.BoundableTransform.RecordUIChange(
+            UIChangeDomain.Visual | UIChangeDomain.HitTest);
+        if (!IsPlotBuildCurrent(plot, clip, sourceRevision, viewRevision,
+                buildRevision))
+            return;
+        UIBoundableTransform? plotRoot = plot.Root.GetTransformAs<UIBoundableTransform>(true);
+        if (plotRoot is null)
+            return;
+        plotRoot.Visibility = EVisibility.Hidden;
+        _plotBuildHidden = true;
+        if (!IsPlotBuildCurrent(plot, clip, sourceRevision, viewRevision,
+                buildRevision))
+            return;
+        plotRoot.InvalidateArrange();
+        if (!IsPlotBuildCurrent(plot, clip, sourceRevision, viewRevision,
+                buildRevision))
             return;
         _plotKeyHits.Clear();
         plot.Begin();
@@ -971,9 +1135,9 @@ public class AnimationPanel : NativeVirtualTextPanel
         float height = plot.Height;
         _plottedWidth = width;
         _plottedHeight = height;
-        if (width < 24 || height < 24 || clip.LengthInSeconds <= 0 || _selectedMember?.Animation is not { } animation)
+        if (width < 24 || height < 24 || clip.LengthInSeconds <= 0)
         {
-            plot.End();
+            if (_plotValidator()) plot.End(_plotValidator);
             return;
         }
         _plottedDuration = clip.LengthInSeconds / MathF.Max(1, _plotZoom);
@@ -982,29 +1146,29 @@ public class AnimationPanel : NativeVirtualTextPanel
         _plottedStart = _plotWindowStart;
         if (!_graphView)
         {
-            float y = height * 0.5f;
-            plot.AddLine(new Vector2(8, y), new Vector2(width - 8, y), new Vector4(0.4f, 0.45f, 0.5f, 1));
-            if (animation is IEnumerable keys)
-                foreach (object? item in keys)
-                    if (item is Keyframe key)
-                    {
-                        if (key.Second < _plottedStart ||
-                            key.Second > _plottedStart + _plottedDuration)
-                            continue;
-                        if (_plotKeyHits.Count >= UIRetainedPlot.MaximumSegments - 1)
-                            break;
-                        float x = 8 + (key.Second - _plottedStart) /
-                            _plottedDuration * (width - 16);
-                        Vector4 color = ReferenceEquals(key, _selectedKey) ? Vector4.One : new Vector4(0.93f, 0.77f, 0.27f, 1);
-                        plot.AddLine(new Vector2(x, y - 9), new Vector2(x, y + 9), color, 3);
-                        _plotKeyHits.Add((key, new Vector2(x, y)));
-                    }
-            plot.End();
+            DrawTimeAxis(plot, width, height);
+            if (!IsPlotBuildCurrent(plot, clip, sourceRevision, viewRevision,
+                    buildRevision))
+            {
+                if (_plotValidator()) plot.End(_plotValidator);
+                return;
+            }
+            DrawPlotLanes(plot, width, height, visibleMembers);
+            if (_plotValidator()) plot.End(_plotValidator);
+            if (IsPlotBuildCurrent(plot, clip, sourceRevision, viewRevision,
+                    buildRevision))
+                PublishPlotSnapshot(clip);
+            return;
+        }
+
+        if (_selectedMember?.Animation is not { } animation)
+        {
+            if (_plotValidator()) plot.End(_plotValidator);
             return;
         }
 
         int count = Math.Clamp((int)(width / 8), 2,
-            (UIRetainedPlot.MaximumSegments - 32) / 4 + 1);
+            (UIRetainedPlot.MaximumSegments - 40) / 4 + 1);
         int channels = 0;
         float minimum = float.PositiveInfinity;
         float maximum = float.NegativeInfinity;
@@ -1012,6 +1176,12 @@ public class AnimationPanel : NativeVirtualTextPanel
         {
             float second = _plottedStart + _plottedDuration * index / (count - 1);
             object? value = animation.GetValueGeneric(second);
+            if (!IsPlotBuildCurrent(plot, clip, sourceRevision, viewRevision,
+                    buildRevision))
+            {
+                if (_plotValidator()) plot.End(_plotValidator);
+                return;
+            }
             int valueChannels = WriteChannels(value, index);
             channels = Math.Max(channels, valueChannels);
             for (int channel = 0; channel < valueChannels; channel++)
@@ -1025,38 +1195,165 @@ public class AnimationPanel : NativeVirtualTextPanel
         }
         if (!float.IsFinite(minimum) || !float.IsFinite(maximum))
         {
-            plot.End();
+            if (_plotValidator()) plot.End(_plotValidator);
             return;
         }
         float span = Math.Max(0.001f, maximum - minimum);
+        DrawTimeAxis(plot, width, height);
+        if (!_plotValidator())
+            return;
+        float zeroY = 12 + (0 - minimum) / span * (height - 36);
+        if (zeroY >= 12 && zeroY <= height - 24)
+            plot.AddLine(new Vector2(8, zeroY), new Vector2(width - 8, zeroY),
+                new Vector4(0.36f, 0.39f, 0.44f, 1), 1, _plotValidator);
+        if (!_plotValidator())
+            return;
         for (int channel = 0; channel < channels; channel++)
             for (int index = 1; index < count; index++)
             {
                 Vector2 from = new(8 + (index - 1) * (width - 16) / (count - 1),
-                    12 + (_plotSamples[channel, index - 1] - minimum) / span * (height - 24));
+                    12 + (_plotSamples[channel, index - 1] - minimum) / span * (height - 36));
                 Vector2 to = new(8 + index * (width - 16) / (count - 1),
-                    12 + (_plotSamples[channel, index] - minimum) / span * (height - 24));
-                plot.AddLine(from, to, PlotPalette[channel]);
+                    12 + (_plotSamples[channel, index] - minimum) / span * (height - 36));
+                if (!_plotValidator()) return;
+                plot.AddLine(from, to, PlotPalette[channel], validate: _plotValidator);
             }
+        if (!_plotValidator())
+            return;
         if (animation is IEnumerable graphKeys)
-            foreach (object? item in graphKeys)
+        {
+            var frozenKeys = CapturePlotKeys(graphKeys, _plottedStart,
+                _plottedStart + _plottedDuration, 24);
+            if (!_plotValidator())
+                return;
+            foreach (var item in frozenKeys)
             {
-                if (item is not Keyframe key)
-                    continue;
-                if (key.Second < _plottedStart ||
-                    key.Second > _plottedStart + _plottedDuration)
-                    continue;
-                if (_plotKeyHits.Count >= 32)
+                if (!_plotValidator())
+                    return;
+                Keyframe key = item.Key;
+                if (_plotKeyHits.Count >= 24)
                     break;
-                float x = 8 + (key.Second - _plottedStart) /
+                float x = 8 + (item.Second - _plottedStart) /
                     _plottedDuration * (width - 16);
                 Vector4 color = ReferenceEquals(key, _selectedKey) ?
                     Vector4.One : new Vector4(0.93f, 0.77f, 0.27f, 1);
                 plot.AddLine(new Vector2(x, height - 20),
-                    new Vector2(x, height - 8), color, 3);
-                _plotKeyHits.Add((key, new Vector2(x, height - 14)));
+                    new Vector2(x, height - 8), color, 3, _plotValidator);
+                if (!_plotValidator())
+                    return;
+                _plotKeyHits.Add((_selectedMember!, key, item.Track,
+                    item.Second, new Vector2(x, height - 14)));
             }
-        plot.End();
+        }
+        if (_plotValidator()) plot.End(_plotValidator);
+        if (IsPlotBuildCurrent(plot, clip, sourceRevision, viewRevision,
+                buildRevision))
+            PublishPlotSnapshot(clip);
+    }
+
+    private bool IsPlotBuildCurrent(UIRetainedPlot plot, AnimationClip clip,
+        ulong sourceRevision, ulong viewRevision, ulong buildRevision)
+    {
+        if (_destroying || !ReferenceEquals(_plot, plot) ||
+            !ReferenceEquals(_plotInput?.Panel, this) ||
+            !ReferenceEquals(CurrentClip(), clip) ||
+            !ReferenceEquals(_displayedClip, clip) ||
+            _sourceRevision != sourceRevision ||
+            _plotViewRevision != viewRevision ||
+            _plotBuildRevision != buildRevision ||
+            (_plotBuildHidden && plot.Root.GetTransformAs<UIBoundableTransform>(true)?
+                .Visibility != EVisibility.Hidden) ||
+            clip.LengthInSeconds != _plotBuildClipLength ||
+            !ReferenceEquals(_selectedMember, _plotBuildSelectedMember) ||
+            !ReferenceEquals(_selectedMember?.Animation, _plotBuildSelectedAnimation) ||
+            _plotBuildMembers.Length != _plotBuildAnimations.Length)
+            return false;
+        for (int index = 0; index < _plotBuildMembers.Length; index++)
+            if (!ReferenceEquals(_plotBuildMembers[index].Animation,
+                    _plotBuildAnimations[index]))
+                return false;
+        return true;
+    }
+
+    private bool ValidateActivePlotBuild()
+        => _activePlotBuildPlot is { } plot &&
+            _activePlotBuildClip is { } clip &&
+            IsPlotBuildCurrent(plot, clip, _activePlotBuildSourceRevision,
+                _activePlotBuildViewRevision, _activePlotBuildRevision);
+
+    private void DrawTimeAxis(UIRetainedPlot plot, float width, float height)
+    {
+        float axisY = height - 22;
+        plot.AddLine(new Vector2(8, axisY), new Vector2(width - 8, axisY),
+            new Vector4(0.45f, 0.49f, 0.55f, 1), 1, _plotValidator);
+        if (!_plotValidator())
+            return;
+        for (int tick = 0; tick <= 4; tick++)
+        {
+            float x = 8 + tick * (width - 16) / 4;
+            plot.AddLine(new Vector2(x, axisY - 4), new Vector2(x, axisY + 4),
+                new Vector4(0.45f, 0.49f, 0.55f, 1), 1, _plotValidator);
+            if (!_plotValidator())
+                return;
+        }
+    }
+
+    private void DrawPlotLanes(UIRetainedPlot plot, float width, float height,
+        AnimationMember[] visibleMembers)
+    {
+        int laneCount = Math.Min(5, visibleMembers.Length);
+        if (laneCount == 0)
+            return;
+        var frozenKeys = new List<(Keyframe Key, BaseKeyframeTrack? Track,
+            float Second)>[laneCount];
+        for (int lane = 0; lane < laneCount; lane++)
+            frozenKeys[lane] = visibleMembers[lane].Animation is IEnumerable keys
+                ? CapturePlotKeys(keys, _plottedStart,
+                    _plottedStart + _plottedDuration, 96) : [];
+        if (!_plotValidator())
+            return;
+        float laneHeight = (height - 34) / laneCount;
+        for (int lane = 0; lane < laneCount; lane++)
+        {
+            AnimationMember member = visibleMembers[lane];
+            float y = 6 + (lane + 0.5f) * laneHeight;
+            plot.AddLine(new Vector2(8, y), new Vector2(width - 8, y),
+                new Vector4(0.32f, 0.36f, 0.42f, 1), 1, _plotValidator);
+            if (!_plotValidator())
+                return;
+            foreach (var item in frozenKeys[lane])
+            {
+                Keyframe key = item.Key;
+                if (_plotKeyHits.Count >= 96)
+                    return;
+                float x = 8 + (item.Second - _plottedStart) /
+                    _plottedDuration * (width - 16);
+                Vector4 color = ReferenceEquals(key, _selectedKey) ? Vector4.One :
+                    ReferenceEquals(member, _selectedMember) ? PlotPalette[lane % 4] :
+                    new Vector4(0.93f, 0.77f, 0.27f, 1);
+                plot.AddLine(new Vector2(x, y - 6), new Vector2(x, y + 6),
+                    color, 3, _plotValidator);
+                if (!_plotValidator())
+                    return;
+                _plotKeyHits.Add((member, key, item.Track, item.Second,
+                    new Vector2(x, y)));
+            }
+        }
+    }
+
+    private static List<(Keyframe Key, BaseKeyframeTrack? Track, float Second)>
+        CapturePlotKeys(IEnumerable source, float start, float end, int limit)
+    {
+        List<(Keyframe, BaseKeyframeTrack?, float)> result = [];
+        foreach (object? item in source)
+        {
+            if (item is not Keyframe key || key.Second < start || key.Second > end)
+                continue;
+            result.Add((key, key.OwningTrack, key.Second));
+            if (result.Count == limit)
+                break;
+        }
+        return result;
     }
 
     private int WriteChannels(object? value, int index)
@@ -1092,6 +1389,24 @@ public class AnimationPanel : NativeVirtualTextPanel
         BoolKeyframe boolean => boolean.Value,
         _ => null
     });
+
+    private static string FormatDetailValue(object? value) => value switch
+    {
+        null => "<none>",
+        string text => text.Length <= 120 ? text : text[..120] + "…",
+        bool or float or Vector2 or Vector3 or Vector4 or Quaternion => FormatValue(value),
+        byte number => number.ToString(CultureInfo.InvariantCulture),
+        sbyte number => number.ToString(CultureInfo.InvariantCulture),
+        short number => number.ToString(CultureInfo.InvariantCulture),
+        ushort number => number.ToString(CultureInfo.InvariantCulture),
+        int number => number.ToString(CultureInfo.InvariantCulture),
+        uint number => number.ToString(CultureInfo.InvariantCulture),
+        long number => number.ToString(CultureInfo.InvariantCulture),
+        ulong number => number.ToString(CultureInfo.InvariantCulture),
+        double number => number.ToString("G17", CultureInfo.InvariantCulture),
+        decimal number => number.ToString(CultureInfo.InvariantCulture),
+        _ => "<" + value.GetType().Name[..Math.Min(value.GetType().Name.Length, 64)] + ">"
+    };
 
     private static string FormatValue(object? value) => value switch
     {

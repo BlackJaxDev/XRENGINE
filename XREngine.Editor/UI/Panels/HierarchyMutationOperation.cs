@@ -23,6 +23,14 @@ internal sealed class HierarchyMutationOperation
     private bool? _uncertainActiveValue;
     private bool _uncertainLocalValues;
     private readonly Action? _requireIdentity;
+    private IUndoPropertyReplayGuard? _propertyReplayGuard;
+
+    internal void SetPropertyReplayGuard(IUndoPropertyReplayGuard guard)
+    {
+        if (_propertyReplayGuard is not null)
+            throw new InvalidOperationException("The hierarchy property replay guard is already assigned.");
+        _propertyReplayGuard = guard;
+    }
 
     public HierarchyMutationOperation(HierarchyPlacement before, HierarchyPlacement destination,
         bool preserveWorld, bool? activeAfter = null, Action? requireIdentity = null)
@@ -80,7 +88,7 @@ internal sealed class HierarchyMutationOperation
         catch (InvalidOperationException) { return; }
         // Activation must follow structural attachment in both directions.
         handle.RemoveOwnedProperty(Node, nameof(SceneNode.IsActiveSelf));
-        _beforeTransform.ReconcileProperties(handle);
+        _beforeTransform.ReconcileProperties(handle, _propertyReplayGuard);
     }
 
     public void RequireBefore(bool includeProperties)

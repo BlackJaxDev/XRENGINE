@@ -84,6 +84,9 @@ internal sealed class UIRecordStore<T> where T : struct
     }
 
     internal ReadOnlySpan<T> GetPage(int pageIndex)
+        => GetLeaf(pageIndex).Values!;
+
+    internal UIRecordStoreNode<T> GetLeaf(int pageIndex)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _claims) == 0, this);
         if ((uint)pageIndex >= (uint)PageCount)
@@ -97,7 +100,7 @@ internal sealed class UIRecordStore<T> where T : struct
             divisor /= BranchWidth;
             node = node.Children![(pageIndex / divisor) % BranchWidth]!;
         }
-        return node.Values!;
+        return node;
     }
 
     internal ref readonly T this[int index]

@@ -13,16 +13,19 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings/errors through
-`Tools/Invoke-AgentBuild.ps1`. Headless build134 took 1m39.20s. Full run84 passes
-**937 of 937 tests**, with no warnings, failures, or skips, in 12.715s. Coverage
-includes indexed record readers, collector callback admission, exact animation
-timing and relay behavior, profiler history identity, and renderer output ordering.
+`Tools/Invoke-AgentBuild.ps1`. Headless build137 took 18.38s. Full run86 passes
+**964 of 964 tests**, with no warnings, failures, or skips, in 11.408s. Coverage
+includes composition leaf claims, committed transaction admission, frozen pointer
+metadata, plot callback guards, resource publication and allocations, lifetime
+stamps, and exact owned hierarchy admission.
 
-The frozen source snapshot contains 10,699 files. Matching editor build58 passed
-with zero warnings/errors in 2m17.11s. Desktop test build30 passed with zero
-warnings/errors in 55.72s. All source inputs stayed unchanged through the checks.
-Desktop inspector, animation batch Undo, and clone-custody fixtures remain
-compile-only in this environment; no Windows execution is claimed.
+The frozen checked source snapshot contains 10,723 files. Matching editor build59
+passed with zero warnings/errors in 2m26.63s. Desktop test build32 passed with
+zero warnings/errors in 50.45s. The only later source correction was a missing
+namespace import in a desktop-only fixture; production and portable inputs
+were unchanged.
+Desktop inspector, animation input/build and batch Undo, and clone replay fixtures
+remain compile-only in this environment; no Windows execution is claimed.
 
 The supported Vulkan static-cache contract is implemented, but native cache hits,
 fence retirement, image/font changes, and output/clip changes still require GPU

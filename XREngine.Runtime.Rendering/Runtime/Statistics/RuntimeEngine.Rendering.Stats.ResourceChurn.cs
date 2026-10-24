@@ -10,7 +10,7 @@ namespace XREngine
         {
             public static partial class Stats
             {
-                public static class ResourceChurn
+                public static partial class ResourceChurn
                 {
                     public readonly record struct SnapshotRow(
                         string ResourceKind,
@@ -28,7 +28,10 @@ namespace XREngine
                     private const int MaxRows = 32;
                     private static readonly object _lock = new();
                     private static readonly Dictionary<ChurnKey, int> _currentRows = new();
-                    private static SnapshotRow[] _lastRows = [];
+                    private static readonly KeyValuePair<ChurnKey, int>[] _topRows = new KeyValuePair<ChurnKey, int>[MaxRows];
+                    private static SnapshotRow[] _lastRows = new SnapshotRow[MaxRows];
+                    private static SnapshotRow[] _nextRows = new SnapshotRow[MaxRows];
+                    private static int _lastRowCount;
                     private static int _createdCount;
                     private static int _recreatedCount;
                     private static int _resizedCount;
@@ -37,6 +40,8 @@ namespace XREngine
                     private static int _lastRecreatedCount;
                     private static int _lastResizedCount;
                     private static int _lastDestroyedCount;
+                    private static int _lastOmittedRowCount;
+                    private static long _lastRevision;
 
                     public static int CreatedCount => Volatile.Read(ref _lastCreatedCount);
                     public static int RecreatedCount => Volatile.Read(ref _lastRecreatedCount);
@@ -57,79 +62,113 @@ namespace XREngine
 
                         reason = string.IsNullOrWhiteSpace(reason) ? string.Empty : reason;
 
-                        switch (eventName)
-                        {
-                            case "Created":
-                                Interlocked.Increment(ref _createdCount);
-                                break;
-                            case "Recreated":
-                                Interlocked.Increment(ref _recreatedCount);
-                                break;
-                            case "Resized":
-                                Interlocked.Increment(ref _resizedCount);
-                                break;
-                            case "Destroyed":
-                                Interlocked.Increment(ref _destroyedCount);
-                                break;
-                        }
-
                         lock (_lock)
                         {
+                            switch (eventName)
+                            {
+                                case "Created": _createdCount++; break;
+                                case "Recreated": _recreatedCount++; break;
+                                case "Resized": _resizedCount++; break;
+                                case "Destroyed": _destroyedCount++; break;
+                            }
                             ChurnKey key = new(resourceKind, resourceName, eventName, reason);
                             _currentRows.TryGetValue(key, out int count);
                             _currentRows[key] = count + 1;
                         }
                     }
 
+                    /// <summary>Copies a coherent, bounded last-frame publication without cloning its rows.</summary>
+                    public static int CopyLastFrameRows(Span<SnapshotRow> destination,
+                        out long revision, out SnapshotCounts counts, out int omittedRowCount)
+                    {
+                        lock (_lock)
+                        {
+                            revision = _lastRevision;
+                            counts = new(_lastCreatedCount, _lastRecreatedCount,
+                                _lastResizedCount, _lastDestroyedCount);
+                            omittedRowCount = _lastOmittedRowCount;
+                            int copied = Math.Min(destination.Length, _lastRowCount);
+                            _lastRows.AsSpan(0, copied).CopyTo(destination);
+                            return _lastRowCount;
+                        }
+                    }
+
                     public static SnapshotRow[] GetLastFrameRows()
                     {
                         lock (_lock)
-                            return _lastRows.Length == 0 ? [] : (SnapshotRow[])_lastRows.Clone();
+                        {
+                            if (_lastRowCount == 0)
+                                return [];
+                            SnapshotRow[] copy = new SnapshotRow[_lastRowCount];
+                            Array.Copy(_lastRows, copy, _lastRowCount);
+                            return copy;
+                        }
                     }
 
                     internal static void SnapshotAndReset()
                     {
-                        Volatile.Write(ref _lastCreatedCount, Interlocked.Exchange(ref _createdCount, 0));
-                        Volatile.Write(ref _lastRecreatedCount, Interlocked.Exchange(ref _recreatedCount, 0));
-                        Volatile.Write(ref _lastResizedCount, Interlocked.Exchange(ref _resizedCount, 0));
-                        Volatile.Write(ref _lastDestroyedCount, Interlocked.Exchange(ref _destroyedCount, 0));
-
                         lock (_lock)
                         {
-                            if (_currentRows.Count == 0)
+                            int omitted = 0;
+                            int take = 0;
+                            if (_currentRows.Count != 0)
                             {
-                                _lastRows = [];
-                                return;
+                                foreach (KeyValuePair<ChurnKey, int> row in _currentRows)
+                                {
+                                    int insert = 0;
+                                    while (insert < take && CompareRows(_topRows[insert], row) <= 0)
+                                        insert++;
+                                    if (insert >= MaxRows)
+                                        continue;
+                                    if (take < MaxRows)
+                                        take++;
+                                    for (int move = take - 1; move > insert; move--)
+                                        _topRows[move] = _topRows[move - 1];
+                                    _topRows[insert] = row;
+                                }
+
+                                omitted = _currentRows.Count - take;
+                                for (int i = 0; i < take; i++)
+                                {
+                                    var row = _topRows[i];
+                                    _nextRows[i] = new SnapshotRow(
+                                        row.Key.ResourceKind,
+                                        row.Key.ResourceName,
+                                        row.Key.EventName,
+                                        row.Key.Reason,
+                                        row.Value);
+                                }
+                                Array.Clear(_topRows);
                             }
 
-                            List<KeyValuePair<ChurnKey, int>> rows = new(_currentRows);
-                            rows.Sort(static (a, b) =>
-                            {
-                                int countCompare = b.Value.CompareTo(a.Value);
-                                if (countCompare != 0)
-                                    return countCompare;
-                                int eventCompare = string.CompareOrdinal(a.Key.EventName, b.Key.EventName);
-                                if (eventCompare != 0)
-                                    return eventCompare;
-                                return string.CompareOrdinal(a.Key.ResourceName, b.Key.ResourceName);
-                            });
-
-                            int take = Math.Min(MaxRows, rows.Count);
-                            SnapshotRow[] snapshot = new SnapshotRow[take];
-                            for (int i = 0; i < take; i++)
-                            {
-                                var row = rows[i];
-                                snapshot[i] = new SnapshotRow(
-                                    row.Key.ResourceKind,
-                                    row.Key.ResourceName,
-                                    row.Key.EventName,
-                                    row.Key.Reason,
-                                    row.Value);
-                            }
-
-                            _lastRows = snapshot;
+                            (_lastRows, _nextRows) = (_nextRows, _lastRows);
+                            Array.Clear(_nextRows);
+                            _lastRowCount = take;
+                            _lastOmittedRowCount = omitted;
+                            Volatile.Write(ref _lastCreatedCount, _createdCount);
+                            Volatile.Write(ref _lastRecreatedCount, _recreatedCount);
+                            Volatile.Write(ref _lastResizedCount, _resizedCount);
+                            Volatile.Write(ref _lastDestroyedCount, _destroyedCount);
+                            _createdCount = 0;
+                            _recreatedCount = 0;
+                            _resizedCount = 0;
+                            _destroyedCount = 0;
                             _currentRows.Clear();
+                            _lastRevision++;
                         }
+                    }
+
+                    private static int CompareRows(KeyValuePair<ChurnKey, int> left,
+                        KeyValuePair<ChurnKey, int> right)
+                    {
+                        int result = right.Value.CompareTo(left.Value);
+                        if (result != 0) return result;
+                        result = string.CompareOrdinal(left.Key.EventName, right.Key.EventName);
+                        if (result != 0) return result;
+                        result = string.CompareOrdinal(left.Key.ResourceName, right.Key.ResourceName);
+                        if (result != 0) return result;
+                        result = string.CompareOrdinal(left.Key.ResourceKind, right.Key.ResourceKind);
+                        return result != 0 ? result : string.CompareOrdinal(left.Key.Reason, right.Key.Reason);
                     }
                 }
             }

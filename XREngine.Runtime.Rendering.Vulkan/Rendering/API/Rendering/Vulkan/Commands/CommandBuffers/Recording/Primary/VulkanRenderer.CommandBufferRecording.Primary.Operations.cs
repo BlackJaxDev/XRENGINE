@@ -1667,7 +1667,8 @@ internal sealed partial class VulkanCommandRuntime
             IsRequiredProducerSourceOperation(ref state, info.OperationIndex);
         bool staticUi = IsEligibleStaticUiDraw(state.Ops.Stream,
             info.OperationIndex, dynamicOverlay: false);
-        if ((!requiredProducerMember || staticUi) &&
+        if (state.AcceptedFramePlan?.WorldUiProof is null &&
+            (!requiredProducerMember || staticUi) &&
             state.CommandChainSchedule is not null &&
             state.ScheduledCommandChainKeysByOpIndex is not null &&
             state.ScheduledCommandChainCache is not null &&
@@ -1749,15 +1750,18 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordClearPayload(scoped ref PrimaryCommandBufferRecordingState state, in ClearPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
+        VulkanAcceptedFramePlan? acceptedPlan = state.AcceptedFramePlan;
+        VulkanWorldUiNativeProof? worldUiProof = acceptedPlan?.WorldUiProof;
+        ulong worldUiNativeToken = worldUiProof?.NativeToken ?? 0UL;
         if (info.BeginsRendering && (!state.RenderScope.IsActive || state.RenderScope.Target != target)) { EndActiveRenderPass(ref state); BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext); }
         uint layers = state.RenderScope.UsesDynamicRendering ? Math.Max(state.RenderScope.DynamicRenderingFormats.LayerCount, 1u) : 0u;
         uint viewMask = state.RenderScope.UsesDynamicRendering ? state.RenderScope.DynamicRenderingFormats.ViewMask : 0u;
         bool recorded = false;
         if (target is null && state.SwapchainClearedThisFrame && payload.ClearColor)
         {
-            if (payload.ClearDepth || payload.ClearStencil) { RecordClearPayload(state.CommandBuffer, state.ImageIndex, in payload, target, state.RenderScope.RenderArea, in state.SwapchainTarget, layers, viewMask, true); recorded = true; }
+            if (payload.ClearDepth || payload.ClearStencil) { RecordClearPayload(state.CommandBuffer, state.ImageIndex, in payload, target, state.RenderScope.RenderArea, in state.SwapchainTarget, layers, viewMask, true, worldUiProof, acceptedPlan, worldUiNativeToken); recorded = true; }
         }
-        else { RecordClearPayload(state.CommandBuffer, state.ImageIndex, in payload, target, state.RenderScope.RenderArea, in state.SwapchainTarget, layers, viewMask); recorded = true; }
+        else { RecordClearPayload(state.CommandBuffer, state.ImageIndex, in payload, target, state.RenderScope.RenderArea, in state.SwapchainTarget, layers, viewMask, false, worldUiProof, acceptedPlan, worldUiNativeToken); recorded = true; }
         state.CurrentPrimaryOperationRecorded = recorded;
         if (recorded && payload.ClearColor)
         {

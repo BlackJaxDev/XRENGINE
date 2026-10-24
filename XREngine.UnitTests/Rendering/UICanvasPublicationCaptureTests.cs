@@ -292,6 +292,152 @@ public sealed class UICanvasPublicationCaptureTests
     }
 
     [Test]
+    public void OpenTransactionCannotPublishItsPartialHitState()
+    {
+        UICanvasTransform transform = new() { Width = 100, Height = 100 };
+        SceneNode root = new("Open publication transaction", transform);
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UIPointerMetadataProbe probe = root.NewChild("Pointer")
+                .AddComponent<UIPointerMetadataProbe>()!;
+            probe.BoundableTransform.Width = 20;
+            probe.BoundableTransform.Height = 20;
+            transform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => transform.PumpLayoutResults(), TimeSpan.FromSeconds(5))
+                .ShouldBeTrue();
+            int captures = 0;
+            probe.OnCapture = () => captures++;
+            object completed = new();
+            using (transform.ChangeJournal.BeginTransaction())
+            {
+                probe.Metadata = completed;
+                probe.BoundableTransform.RecordUIChange(UIChangeDomain.HitTest);
+                Capture(canvas);
+                Candidate(canvas).ShouldBeNull();
+                captures.ShouldBe(0);
+            }
+            Capture(canvas);
+            Candidate(canvas).ShouldNotBeNull().Hits[0].PointerGeometry.Metadata
+                .ShouldBeSameAs(completed);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void CaptureCallbackThatOpensTransactionCannotReplaceCommittedPacket()
+    {
+        UICanvasTransform transform = new() { Width = 100, Height = 100 };
+        SceneNode root = new("Publication transaction callback", transform);
+        root.SetWorldContext(new TestWorldContext());
+        IDisposable? pending = null;
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UIPointerMetadataProbe probe = root.NewChild("Pointer")
+                .AddComponent<UIPointerMetadataProbe>()!;
+            probe.BoundableTransform.Width = 20;
+            probe.BoundableTransform.Height = 20;
+            probe.Metadata = new object();
+            transform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => transform.PumpLayoutResults(), TimeSpan.FromSeconds(5))
+                .ShouldBeTrue();
+            Capture(canvas);
+            UIPublication first = Candidate(canvas).ShouldNotBeNull();
+            probe.BoundableTransform.RecordUIChange(UIChangeDomain.HitTest);
+            probe.OnCapture = () =>
+            {
+                pending = transform.ChangeJournal.BeginTransaction();
+                probe.Metadata = new object();
+                probe.BoundableTransform.RecordUIChange(UIChangeDomain.HitTest);
+            };
+            Capture(canvas);
+            pending.ShouldNotBeNull();
+            Candidate(canvas).ShouldBeSameAs(first);
+            probe.OnCapture = null;
+            pending!.Dispose();
+            pending = null;
+            Capture(canvas);
+            Candidate(canvas).ShouldNotBeNull().ShouldNotBeSameAs(first);
+        }
+        finally { pending?.Dispose(); root.Destroy(true); }
+    }
+
+    [Test]
+    public void HeldHitPacketKeepsItsPointerMetadataAfterNewCapture()
+    {
+        UICanvasTransform transform = new() { Width = 100, Height = 100 };
+        SceneNode root = new("Pointer metadata publication", transform);
+        root.SetWorldContext(new TestWorldContext());
+        UIPublication? held = null;
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UIPointerMetadataProbe probe = root.NewChild("Pointer")
+                .AddComponent<UIPointerMetadataProbe>()!;
+            probe.BoundableTransform.Width = 20;
+            probe.BoundableTransform.Height = 30;
+            probe.BoundableTransform.MinAnchor = Vector2.Zero;
+            probe.BoundableTransform.MaxAnchor = Vector2.Zero;
+            object original = new();
+            probe.Metadata = original;
+            transform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => transform.PumpLayoutResults(), TimeSpan.FromSeconds(5))
+                .ShouldBeTrue();
+            Capture(canvas);
+            held = Candidate(canvas).ShouldNotBeNull();
+            held.Retain();
+            probe.AcceptedSize.ShouldBe(new Vector2(20, 30));
+            held.Hits[0].PointerGeometry.Metadata.ShouldBeSameAs(original);
+
+            object replacement = new();
+            probe.Metadata = replacement;
+            probe.BoundableTransform.RecordUIChange(UIChangeDomain.HitTest);
+            Capture(canvas);
+            UIPublication next = Candidate(canvas).ShouldNotBeNull();
+            next.ShouldNotBeSameAs(held);
+            next.Hits[0].PointerGeometry.Metadata.ShouldBeSameAs(replacement);
+            held.Hits[0].PointerGeometry.Metadata.ShouldBeSameAs(original);
+            held.Hits[0].PointerGeometry.LocalSize.ShouldBe(new Vector2(20, 30));
+        }
+        finally { held?.Release(); root.Destroy(true); }
+    }
+
+    [Test]
+    public void PointerMetadataCallbackCannotPublishAMixedGeneration()
+    {
+        UICanvasTransform transform = new() { Width = 100, Height = 100 };
+        SceneNode root = new("Pointer metadata reentry", transform);
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UIPointerMetadataProbe probe = root.NewChild("Pointer")
+                .AddComponent<UIPointerMetadataProbe>()!;
+            probe.BoundableTransform.Width = 20;
+            probe.BoundableTransform.Height = 20;
+            probe.Metadata = new object();
+            transform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => transform.PumpLayoutResults(), TimeSpan.FromSeconds(5))
+                .ShouldBeTrue();
+            Capture(canvas);
+            UIPublication first = Candidate(canvas).ShouldNotBeNull();
+            probe.BoundableTransform.RecordUIChange(UIChangeDomain.HitTest);
+            probe.OnCapture = () => probe.BoundableTransform.RecordUIChange(UIChangeDomain.HitTest);
+            Capture(canvas);
+            Candidate(canvas).ShouldBeSameAs(first);
+
+            probe.OnCapture = null;
+            Capture(canvas);
+            UIPublication next = Candidate(canvas).ShouldNotBeNull();
+            next.ShouldNotBeSameAs(first);
+            next.ChangeRevision.ShouldBe(transform.ChangeJournal.Revision);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
     public void CaptureMutationRejectsMixedCandidateAndCleanRetrySucceeds()
     {
         UICanvasTransform transform = new() { Width = 100, Height = 100 };
