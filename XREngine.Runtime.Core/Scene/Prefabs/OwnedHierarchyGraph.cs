@@ -14,11 +14,11 @@ internal sealed class OwnedHierarchyGraph
     {
         _context = context;
         context.RequireAllocation(root);
-        if (root.IsTransformNull)
+        if (root.OwnedRetirementTransform is not { } transform)
             throw new InvalidOperationException("An owned clone has no transform.");
         List<OwnedHierarchyGraphEntry> entries = [];
         HashSet<XRObjectBase> visited = new(ReferenceEqualityComparer.Instance);
-        Capture(root.Transform, null, entries, visited);
+        Capture(transform, null, entries, visited);
         _entries = [.. entries];
         if (!ReferenceEquals(_entries[0].Node, root))
             throw new InvalidOperationException("The cloned root does not own its transform.");
@@ -29,14 +29,17 @@ internal sealed class OwnedHierarchyGraph
         List<OwnedHierarchyGraphEntry> entries, HashSet<XRObjectBase> visited)
     {
         RequireNew(transform, visited);
-        SceneNode? node = transform.SceneNode;
+        SceneNode? node = transform.OwnedRetirementNode;
         if (node is not null)
             RequireNew(node, visited);
-        XRComponent[] components = node is null ? [] : [.. node.Components];
+        EventList<XRComponent>? componentList = node?.OwnedRetirementComponents;
+        XRComponent[] components = componentList is null ? [] : [.. componentList];
         foreach (XRComponent component in components)
             RequireNew(component, visited);
-        TransformBase[] children = [.. transform.Children];
-        entries.Add(new(transform, parent, node, children, components));
+        EventList<TransformBase> childList = transform.OwnedRetirementChildren ??
+            throw new InvalidOperationException("An owned clone has no child list.");
+        TransformBase[] children = [.. childList];
+        entries.Add(new(transform, parent, node, childList, children, componentList, components));
         foreach (TransformBase child in children)
             Capture(child, transform, entries, visited);
     }
@@ -54,23 +57,28 @@ internal sealed class OwnedHierarchyGraph
         {
             TransformBase transform = entry.Transform;
             if (transform.IsDestroyed || transform.IsDestroyQueued || transform.World is not null ||
-                !ReferenceEquals(transform.Parent, entry.Parent) ||
-                !ReferenceEquals(transform.SceneNode, entry.Node) ||
-                transform.Children.Count != entry.Children.Length)
+                !ReferenceEquals(transform.OwnedRetirementParent, entry.Parent) ||
+                !ReferenceEquals(transform.OwnedRetirementNode, entry.Node) ||
+                !ReferenceEquals(transform.OwnedRetirementChildren, entry.ChildList) ||
+                entry.ChildList.IsDestroyed || entry.ChildList.IsDestroyQueued ||
+                entry.ChildList.Count != entry.Children.Length)
                 throw new InvalidOperationException("The owned clone's transform links changed during construction.");
             for (int index = 0; index < entry.Children.Length; index++)
-                if (!ReferenceEquals(transform.Children[index], entry.Children[index]))
+                if (!ReferenceEquals(entry.ChildList[index], entry.Children[index]))
                     throw new InvalidOperationException("The owned clone's child links changed during construction.");
             if (entry.Node is not { } node)
                 continue;
-            if (node.IsDestroyed || node.IsDestroyQueued || node.World is not null || node.IsTransformNull ||
-                !ReferenceEquals(node.Transform, transform) || node.Components.Count != entry.Components.Length)
+            if (node.IsDestroyed || node.IsDestroyQueued || node.World is not null ||
+                !ReferenceEquals(node.OwnedRetirementTransform, transform) ||
+                !ReferenceEquals(node.OwnedRetirementComponents, entry.ComponentList) ||
+                entry.ComponentList is null || entry.ComponentList.IsDestroyed || entry.ComponentList.IsDestroyQueued ||
+                entry.ComponentList?.Count != entry.Components.Length)
                 throw new InvalidOperationException("The owned clone's node links changed during construction.");
             for (int index = 0; index < entry.Components.Length; index++)
             {
                 XRComponent component = entry.Components[index];
-                if (!ReferenceEquals(node.Components[index], component) || component.IsDestroyed || component.IsDestroyQueued ||
-                    component.World is not null || !ReferenceEquals(component.SceneNode, node))
+                if (!ReferenceEquals(entry.ComponentList![index], component) || component.IsDestroyed || component.IsDestroyQueued ||
+                    component.World is not null || !ReferenceEquals(component.OwnedRetirementNode, node))
                     throw new InvalidOperationException("The owned clone's component links changed during construction.");
             }
         }

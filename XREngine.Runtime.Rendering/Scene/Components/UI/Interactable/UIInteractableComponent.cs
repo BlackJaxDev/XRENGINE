@@ -320,6 +320,14 @@ namespace XREngine.Rendering.UI
             InteractAction?.Invoke(this);
         }
 
+        protected override UIChangeDomain GetUIChangeDomain(string? propertyName)
+            => propertyName switch
+            {
+                nameof(IsTabStop) or nameof(TabIndex) => UIChangeDomain.HitTest,
+                nameof(IsEnabled) => UIChangeDomain.Visual | UIChangeDomain.HitTest,
+                _ => base.GetUIChangeDomain(propertyName),
+            };
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -362,7 +370,6 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(IsTabStop):
                 case nameof(TabIndex):
-                    RecordControlStateChange(UIChangeDomain.HitTest);
                     break;
             }
         }

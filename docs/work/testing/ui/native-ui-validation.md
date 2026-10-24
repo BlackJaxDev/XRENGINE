@@ -13,19 +13,19 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings/errors through
-`Tools/Invoke-AgentBuild.ps1`. Headless build137 took 18.38s. Full run86 passes
-**964 of 964 tests**, with no warnings, failures, or skips, in 11.408s. Coverage
-includes composition leaf claims, committed transaction admission, frozen pointer
-metadata, plot callback guards, resource publication and allocations, lifetime
-stamps, and exact owned hierarchy admission.
+`Tools/Invoke-AgentBuild.ps1`. Headless build141 took 38.98s. Full run90 passes
+**979 of 979 tests**, with no warnings, failures, or skips, in 15.220s. Coverage
+includes paged composition claims, throwing-observer invalidation, bounded
+profiler output pages, queued object identities, channel value helpers, configured
+owned-clone admission, and the earlier retained layout/input/render contracts.
 
-The frozen checked source snapshot contains 10,723 files. Matching editor build59
-passed with zero warnings/errors in 2m26.63s. Desktop test build32 passed with
-zero warnings/errors in 50.45s. The only later source correction was a missing
-namespace import in a desktop-only fixture; production and portable inputs
-were unchanged.
-Desktop inspector, animation input/build and batch Undo, and clone replay fixtures
-remain compile-only in this environment; no Windows execution is claimed.
+The frozen checked source snapshot contains 10,763 files and stayed unchanged
+through the checks. Matching editor build61 passed with zero warnings/errors in
+53.89s. Desktop test build34 passed with zero warnings/errors in 58.93s.
+Desktop inspector request, animation input/Undo, native Duplicate/menu, and clone
+replay fixtures remain compile-only in this environment; no Windows execution
+is claimed. Their runtime checks must include callback reentry, history pruning,
+source changes, and selection restoration on the supported desktop host.
 
 The supported Vulkan static-cache contract is implemented, but native cache hits,
 fence retirement, image/font changes, and output/clip changes still require GPU

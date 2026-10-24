@@ -13,6 +13,23 @@ internal sealed class HierarchyCloneCustodyStore
 
     internal static HierarchyCloneCustodyStore Shared { get; } = new();
 
+    internal string? GetBlockReason()
+    {
+        RequireOwnerThread();
+        lock (_sync)
+        {
+            if (_pending is not null) return "A duplicate is still being created.";
+            foreach (HierarchyCloneCustody entry in _entries)
+            {
+                if (entry.State == EHierarchyCloneCustodyState.Document && !entry.Document.IsCurrent())
+                    entry.RetainFailure(new InvalidOperationException("The clone document ended before its retained allocations were released."));
+                if (entry.BlocksConstruction)
+                    return "A retained duplicate needs recovery. New duplicates are blocked.";
+            }
+            return null;
+        }
+    }
+
     internal HierarchyCloneCustody Reserve(RuntimeWorld world)
     {
         RequireOwnerThread();

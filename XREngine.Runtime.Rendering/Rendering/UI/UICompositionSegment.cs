@@ -19,10 +19,24 @@ public sealed class UICompositionSegment
         Owner = owner;
     }
 
+    private UICompositionSegment(ulong identity, ulong revision, UICompositionOwner owner,
+        UIRecordRange<UIRenderRecord> range)
+    {
+        _range = range;
+        Identity = identity;
+        Revision = revision;
+        Owner = owner;
+    }
+
+    internal UICompositionSegment WithReplacedPage(ulong revision,
+        int rangePageIndex, UIRecordStore<UIRenderRecord> records)
+        => new(Identity, revision, Owner, _range.WithReplacedPage(rangePageIndex, records));
+
     public ulong Identity { get; }
     public ulong Revision { get; }
     public UICompositionOwner Owner { get; }
     internal int Count => _range.Length;
+    internal int Start => _range.Offset;
     internal int PageCount => _range.PageCount;
     internal bool ResourcesRetired => Volatile.Read(ref _retired) != 0;
 

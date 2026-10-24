@@ -14,6 +14,8 @@ internal sealed class HierarchyCloneCustody
     private IReadOnlyList<ObjectConstructionIdentity>? _identities;
     private HierarchyLifetimeAdmission? _initialAdmission;
     private bool _historyAttached;
+    private HierarchyCloneSelection? _selection;
+    private HierarchyDuplicateSource? _operationShape;
 
     internal HierarchyCloneCustody(HierarchyCloneCustodyStore store, HierarchyCloneDocument document)
     {
@@ -40,14 +42,19 @@ internal sealed class HierarchyCloneCustody
         _historyAttached = true;
     }
 
-    internal SceneNode Clone(SceneNode source)
+    internal void CaptureSelection() => _selection = new();
+    internal void SelectApplied() => _selection?.Select(Node!);
+
+    internal SceneNode Clone(SceneNode source,
+        Action<SceneNode, ObjectConstructionContext, Action>? configure = null,
+        Action? requireSource = null)
     {
         _store.RequireOwnerThread();
         if (State != EHierarchyCloneCustodyState.Reserved || _construction is not null)
             throw new InvalidOperationException("A clone custody entry permits only one construction.");
         // Store the result before allocating or calling another helper. Failed
         // construction keeps the exact ledger and its original exception.
-        _construction = SceneNodePrefabUtility.CloneHierarchyOwned(source);
+        _construction = SceneNodePrefabUtility.CloneHierarchyOwned(source, configure, requireSource);
         if (!_construction.Ownership.HasSealedIdentities)
             throw new InvalidOperationException("The clone construction could not seal its lifetime identities.");
         _identities = _construction.Ownership.Identities;
@@ -65,13 +72,26 @@ internal sealed class HierarchyCloneCustody
 
     internal void RequireOperation(HierarchyMutationOperation operation)
     {
-        RequireIdentity();
+        RequireOperationIdentity();
         if (!ReferenceEquals(operation.Node, Node) ||
             !ReferenceEquals(operation.Before.World, Document.World) ||
             operation.Before.Parent is not null || operation.Before.Scenes.Length != 0 ||
             operation.Before.InWorldRoots)
             throw new InvalidOperationException("The clone mutation does not own its detached construction.");
         operation.RequireBefore(includeProperties: true);
+    }
+
+    internal void RequireOperationIdentity()
+    {
+        RequireIdentity();
+        try
+        {
+            if (_operationShape is null)
+                throw new InvalidOperationException("The clone has no captured operation graph.");
+            _operationShape.RequireCloneShape();
+            Document.RequireOperationRoot(Node!);
+        }
+        catch (Exception failure) { RetainFailure(failure); throw; }
     }
 
     internal void RequireIdentity()
@@ -100,6 +120,7 @@ internal sealed class HierarchyCloneCustody
         if (_initialAdmission is not null)
             throw new InvalidOperationException("The initial clone edit already holds lifetime admission.");
         _initialAdmission = AcquireAdmission();
+        _operationShape = new(Node!);
     }
 
     internal void EndInitialAdmission()
@@ -115,6 +136,7 @@ internal sealed class HierarchyCloneCustody
         RequireIdentity();
         RequireUsable();
         State = EHierarchyCloneCustodyState.Applied;
+        SelectApplied();
     }
 
     internal void MarkDetached()
@@ -123,6 +145,7 @@ internal sealed class HierarchyCloneCustody
         RequireIdentity();
         RequireUsable();
         State = EHierarchyCloneCustodyState.Detached;
+        _selection?.Restore();
     }
 
     internal void BeginUndo()
@@ -195,6 +218,9 @@ internal sealed class HierarchyCloneCustody
             }
             if (State != EHierarchyCloneCustodyState.Detached)
                 throw new InvalidOperationException("The clone has an incomplete operation and remains retained.", Failure);
+            foreach (SceneNode selected in Selection.SceneNodes)
+                if (_construction.Ownership.Contains(selected))
+                    throw new InvalidOperationException("The detached clone is still selected and remains retained.");
             State = EHierarchyCloneCustodyState.Retiring;
             using (OwnedHierarchyUndoReleaseScope release = new(_construction.Ownership))
                 if (_lifetime?.TryRetire() != true)

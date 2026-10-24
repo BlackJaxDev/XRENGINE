@@ -22,11 +22,18 @@ internal sealed class HierarchyMenuSession
     public ulong Request;
     public Vector2 Position;
     public bool AwaitingShow;
+    public HierarchyDuplicateRequest? DuplicateRequest;
+    public string? DuplicateUnavailable;
+    public bool ConfirmingDeepDuplicate;
 
     public void Rename() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.Rename);
     public void AddChild() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.AddChild);
     public void Focus() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.Focus);
     public void Delete() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.Delete);
+    public void Duplicate() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.Duplicate);
+    public void DeepDuplicate() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.DeepDuplicate);
+    public void ConfirmDeepDuplicate() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.ConfirmDeepDuplicate);
+    public void CancelDuplicate() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.CancelDuplicate);
     public void ToggleScene() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.ToggleScene);
     public void UnloadScene() => Owner?.InvokeHierarchyMenuAction(this, EHierarchyMenuAction.UnloadScene);
 
@@ -42,5 +49,8 @@ internal sealed class HierarchyMenuSession
         Node = null;
         Scene = null;
         AwaitingShow = false;
+        DuplicateRequest = null;
+        DuplicateUnavailable = null;
+        ConfirmingDeepDuplicate = false;
     }
 }

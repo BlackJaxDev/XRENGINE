@@ -113,6 +113,10 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         _settingsOwner = null;
         _settingsOwnerRevision++;
         _diagnosticScratch.Clear();
+        ReleaseFrozenOutputManifest();
+        Array.Clear(_outputPageEntries);
+        _hasVulkanPublication = false;
+        _lastVulkanPublication = default;
         ClearSelectedGpuWorstTree();
         ClearGpuRankPage();
         _gpuTraversal.Clear();
@@ -384,6 +388,11 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             RefreshRows();
             return;
         }
+        if (_rows.View == ENativeProfilerView.FrameOutputs)
+        {
+            ChangeOutputPage(_rows.GetItem(index).OutputPageAction);
+            return;
+        }
         if (_rows.View != ENativeProfilerView.Settings) return;
         NativeProfilerSettingOwner? owner = _settingsOwner;
         if (owner is not { IsCurrent: true }) return;
@@ -577,6 +586,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         if (_paused)
         {
             _rows.CancelPending();
+            FreezeOutputManifest();
             if (_rows.View == ENativeProfilerView.Settings)
             {
                 int previousCount = _rows.Count;
@@ -586,7 +596,11 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
                     SignalRowsChanged(previousCount);
             }
         }
-        else RefreshRows();
+        else
+        {
+            ReleaseFrozenOutputManifest();
+            RefreshRows();
+        }
     }
 
     private void RefreshTick()

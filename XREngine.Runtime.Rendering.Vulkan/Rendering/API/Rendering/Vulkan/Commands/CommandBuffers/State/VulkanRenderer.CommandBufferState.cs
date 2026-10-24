@@ -528,7 +528,8 @@ namespace XREngine.Rendering.Vulkan
             PipelineLayout layout,
             uint firstSet,
             ReadOnlySpan<DescriptorSet> sets,
-            ReadOnlySpan<uint> dynamicOffsets)
+            ReadOnlySpan<uint> dynamicOffsets,
+            bool forceWorldUiNativeBind = false)
         {
             if (sets.Length == 0)
                 return;
@@ -549,7 +550,8 @@ namespace XREngine.Rendering.Vulkan
                     hash.Add(dynamicOffsets[i]);
 
                 ulong signature = unchecked((ulong)hash.ToHashCode());
-                if (!laneContext.ShouldBindDescriptorSets(bindPoint, signature))
+                if (!laneContext.ShouldBindDescriptorSets(bindPoint, signature) &&
+                    !forceWorldUiNativeBind)
                 {
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBindSkips: 1);
                     return;
@@ -560,7 +562,8 @@ namespace XREngine.Rendering.Vulkan
                     Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, (uint)dynamicOffsets.Length, offsetPtr);
 
                 laneContext.InvalidateDescriptorHeapBindingState();
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBinds: 1);
+                if (!forceWorldUiNativeBind)
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBinds: 1);
                 return;
             }
 
@@ -590,13 +593,15 @@ namespace XREngine.Rendering.Vulkan
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 if (bindPoint == PipelineBindPoint.Graphics)
                 {
-                    shouldBind = state.GraphicsDescriptorSignature != legacySignature;
+                    shouldBind = forceWorldUiNativeBind ||
+                        state.GraphicsDescriptorSignature != legacySignature;
                     if (shouldBind)
                         state.GraphicsDescriptorSignature = legacySignature;
                 }
                 else
                 {
-                    shouldBind = state.ComputeDescriptorSignature != legacySignature;
+                    shouldBind = forceWorldUiNativeBind ||
+                        state.ComputeDescriptorSignature != legacySignature;
                     if (shouldBind)
                         state.ComputeDescriptorSignature = legacySignature;
                 }
@@ -616,7 +621,8 @@ namespace XREngine.Rendering.Vulkan
                 Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, (uint)dynamicOffsets.Length, offsetPtr);
 
             InvalidateDescriptorHeapBindingState(commandBuffer);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBinds: 1);
+            if (!forceWorldUiNativeBind)
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBinds: 1);
         }
 
         internal unsafe void PushConstantsTracked<T>(

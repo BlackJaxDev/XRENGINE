@@ -23,5 +23,7 @@ public enum UIWorkCounter
     PublicationRecordClaimsRetained,
     PublicationRecordClaimsReleased,
     PublicationFlatCellsMaterialized,
+    PublicationSegmentSlotsMaterialized,
+    PublicationSegmentSlotsCopied,
     Count,
 }

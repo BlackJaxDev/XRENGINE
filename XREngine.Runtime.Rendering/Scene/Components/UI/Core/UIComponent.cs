@@ -24,10 +24,12 @@ namespace XREngine.Rendering.UI
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            base.OnPropertyChanged(propName, prev, field);
-            if (SceneNode is null || SceneNode.IsTransformNull || Transform is not UITransform transform)
-                return;
-            transform.RecordUIChange(GetUIChangeDomain(propName));
+            try { base.OnPropertyChanged(propName, prev, field); }
+            finally
+            {
+                if (SceneNode is not null && !SceneNode.IsTransformNull && Transform is UITransform transform)
+                    transform.RecordUIChange(GetUIChangeDomain(propName));
+            }
         }
 
         /// <summary>Classifies component state. Custom controls override this for layout or topology inputs.</summary>

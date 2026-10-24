@@ -44,10 +44,58 @@ public sealed class UICompositionSegmentTests
         UICompositionSegmentSet third = UICompositionSegmentSet.Build([chrome], second);
         try
         {
-            second.Segments[1].ShouldBeSameAs(first.Segments[0]);
-            third.Segments[0].ShouldBeSameAs(first.Segments[0]);
+            second.Segments[1].Identity.ShouldBe(first.Segments[0].Identity);
+            second.Segments[1].ShouldNotBeSameAs(first.Segments[0]);
+            third.Segments[0].Identity.ShouldBe(first.Segments[0].Identity);
+            third.Segments[0].ShouldNotBeSameAs(second.Segments[1]);
         }
         finally { third.Release(); second.Release(); first.Release(); }
+    }
+
+    [Test]
+    public void MovedSegmentUsesItsNewOffsetForLaterLocalUpdate()
+    {
+        UIRenderRecord chrome = Quad(1, Chrome);
+        UIRenderRecord overlay = Quad(2, Overlay);
+        UIRecordStore<UIRenderRecord> firstStore = UIRecordStore<UIRenderRecord>.Create([chrome]);
+        UICompositionSegmentSet first = UICompositionSegmentSet.Build(firstStore, null);
+        UIRecordStore<UIRenderRecord> movedStore =
+            UIRecordStore<UIRenderRecord>.Create([overlay, chrome]);
+        UICompositionSegmentSet moved = UICompositionSegmentSet.Build(movedStore, first);
+        UIRecordStore<UIRenderRecord>? editedStore = null;
+        UICompositionSegmentSet? edited = null;
+        try
+        {
+            UIRenderRecord[] changed =
+            [overlay, chrome with { QuadColor = Vector4.Zero }];
+            editedStore = movedStore.WithReplacedPage(0, changed);
+            moved.TryWithReplacedRenderPage(1, 1, 0, editedStore,
+                out UICompositionSegmentSet updated).ShouldBeTrue();
+            edited = updated;
+            edited.GetSegment(1).GetRecord(0).QuadColor.ShouldBe(Vector4.Zero);
+            edited.GetSegment(0).ShouldBeSameAs(moved.GetSegment(0));
+        }
+        finally
+        {
+            try { edited?.Release(); }
+            finally
+            {
+                try { editedStore?.Release(); }
+                finally
+                {
+                    try { moved.Release(); }
+                    finally
+                    {
+                        try { movedStore.Release(); }
+                        finally
+                        {
+                            try { first.Release(); }
+                            finally { firstStore.Release(); }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     [Test]
@@ -235,6 +283,67 @@ public sealed class UICompositionSegmentTests
             {
                 try { first?.Release(); }
                 finally { store.Release(); }
+            }
+        }
+    }
+
+    [Test]
+    public void TouchedSegmentReplacesOnePagedSlotBranchWithoutFlattening()
+    {
+        UIRenderRecord[] records = new UIRenderRecord[300];
+        for (int index = 0; index < records.Length; index++)
+            records[index] = Quad(index + 1,
+                new UICompositionOwner(new UIElementIdentity(index + 1000, 1),
+                    EUICompositionLayerKind.StaticChrome));
+        UIRecordStore<UIRenderRecord> firstStore = UIRecordStore<UIRenderRecord>.Create(records);
+        UICompositionSegmentSet first = UICompositionSegmentSet.Build(firstStore, null);
+        UIRecordStore<UIRenderRecord>? secondStore = null;
+        UICompositionSegmentSet? second = null;
+        bool countersEnabled = UIRuntimeCounters.Enabled;
+        try
+        {
+            UIRenderRecord[] edited = firstStore.GetPage(1).ToArray();
+            edited[280 - UIRecordStore<UIRenderRecord>.PageSize] =
+                edited[280 - UIRecordStore<UIRenderRecord>.PageSize] with
+                { QuadColor = Vector4.Zero };
+            secondStore = firstStore.WithReplacedPage(1, edited);
+            UIRuntimeCounters.Enabled = true;
+            long flattened = UIRuntimeCounters.Read(UIWorkCounter.PublicationSegmentSlotsMaterialized);
+            long copied = UIRuntimeCounters.Read(UIWorkCounter.PublicationSegmentSlotsCopied);
+            first.TryWithReplacedRenderPage(280, 279, 1, secondStore,
+                out _).ShouldBeFalse();
+            UIRecordStore<UIRenderRecord> shortStore =
+                UIRecordStore<UIRenderRecord>.Create(records.AsSpan(0, 299));
+            try
+            {
+                first.TryWithReplacedRenderPage(280, 280, 1, shortStore,
+                    out _).ShouldBeFalse();
+            }
+            finally { shortStore.Release(); }
+            first.TryWithReplacedRenderPage(280, 280, 1, secondStore,
+                out UICompositionSegmentSet updated).ShouldBeTrue();
+            second = updated;
+            second.GetSegment(0).ShouldBeSameAs(first.GetSegment(0));
+            second.GetSegment(279).ShouldBeSameAs(first.GetSegment(279));
+            second.GetSegment(280).ShouldNotBeSameAs(first.GetSegment(280));
+            second.GetSegment(299).ShouldBeSameAs(first.GetSegment(299));
+            UIRuntimeCounters.Read(UIWorkCounter.PublicationSegmentSlotsMaterialized)
+                .ShouldBe(flattened);
+            UIRuntimeCounters.Read(UIWorkCounter.PublicationSegmentSlotsCopied)
+                .ShouldBeInRange(copied + 1, copied + UIRecordStore<UIRenderRecord>.PageSize);
+        }
+        finally
+        {
+            UIRuntimeCounters.Enabled = countersEnabled;
+            try { second?.Release(); }
+            finally
+            {
+                try { secondStore?.Release(); }
+                finally
+                {
+                    try { first.Release(); }
+                    finally { firstStore.Release(); }
+                }
             }
         }
     }

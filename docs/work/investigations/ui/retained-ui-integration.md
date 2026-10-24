@@ -1698,3 +1698,39 @@ or portable source changed. Desktop callbacks and clone replay remain compile-on
 Windows, native GPU, visual, IME, and equal-workload performance acceptance are
 still open. The schema and fixture repairs did not change dependency declarations,
 saved formats, renderer defaults, or platform acceptance gates.
+
+
+## Composition ownership and inspector drop validation
+
+The first compile of this increment passed with no warnings or errors. The first
+headless run passed 969 of 970 tests. Its new throwing-observer fixture read
+`WorldMatrix` before the normal deferred matrix update. The fixture now checks
+local/world dirty flags and layout invalidation, then recalculates matrices
+before checking the value. The production invalidation path did not need a
+change for this failure.
+
+The next run passed 974 of 975 tests. The new queued-payload identity fixture used
+a recreated scene node. Its cleanup hit the structural-list owner guard. The
+fixture now uses an `AnimationClip`, which matches the asynchronous asset-drop
+boundary and does not carry scene structural lists. It still destroys, recreates,
+and restores the old ID, then verifies that the queued receipt remains invalid.
+
+The resulting headless build passed with no warnings or errors in 22.57s. All
+975 tests passed in 14.590s, with no warnings, failures, or skips. The 10,759-file
+source manifest was unchanged through this build and run. Desktop inspector
+request regressions cover notification attribution, pending-request replacement,
+getter reentry, subscription reentry, and completed-write Undo. They still need
+the desktop test host; portable tests establish only the binding/lifetime helpers.
+
+
+Editor build60 exposed three nullable warnings in the animation value callbacks.
+The action handlers now explicitly reject null clip/member/key values. Desktop
+build33 found two missing namespace imports in new animation fixtures. These
+were compile repairs; they did not alter the animation timing contract.
+
+After the final clone admission guards and four portable clone-configuration
+cases, headless build141 passed with zero warnings/errors in 38.98s. Full run90
+passed 979 of 979 tests in 15.220s without warnings, failures, or skips. Editor
+build61 and desktop test build34 passed with zero warnings/errors in 53.89s and
+58.93s. The same 10,763 source inputs remained unchanged through all three builds
+and the headless run. Desktop command fixtures were compiled, not executed.

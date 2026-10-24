@@ -13,6 +13,11 @@ namespace XREngine.Animation
         private DelGetValue<Quaternion> _getValue;
         private BakedValueStore<Quaternion>? _baked = null;
 
+        internal override object? ExactBakedStore => _baked;
+        internal override int ExactBakedStoreCount => _baked?.Count ?? 0;
+        internal override (bool Constrain, bool Lerp) ExactSamplingFlags =>
+            (ConstrainKeyframedFPS, LerpConstrainedFPS);
+
         internal Quaternion[] CapturePublishedBakedValues() => _baked?.CaptureValues() ?? [];
 
         internal void RestorePublishedBakedValues(Quaternion[] values, EAnimationValueCompressionAlgorithm encodedCompression)

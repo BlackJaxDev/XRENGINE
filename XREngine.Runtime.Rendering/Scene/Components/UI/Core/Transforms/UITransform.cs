@@ -609,7 +609,31 @@ namespace XREngine.Rendering.UI
         //}
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            base.OnPropertyChanged(propName, prev, field);
+            // Update matrix state before a public observer can stop notification.
+            if (propName is nameof(Translation) or nameof(DepthTranslation) or
+                nameof(Scale) or nameof(RotationRadians))
+                MarkLocalModified(true);
+            try { base.OnPropertyChanged(propName, prev, field); }
+            catch
+            {
+                // The field changed before an observer reported failure.
+                UIChangeDomain domains = propName switch
+                {
+                    nameof(Children) or nameof(Parent) => UIChangeDomain.Topology | UIChangeDomain.HitTest,
+                    nameof(DepthTranslation) or nameof(Scale) or nameof(RotationRadians) =>
+                        UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest,
+                    nameof(Visibility) => UIChangeDomain.Visual | UIChangeDomain.Clip | UIChangeDomain.HitTest,
+                    nameof(StylingClass) or nameof(StylingID) or nameof(ParentCanvas) => UIChangeDomain.All,
+                    nameof(ActualLocalBottomLeftTranslation) =>
+                        UIChangeDomain.Visual | UIChangeDomain.Clip | UIChangeDomain.HitTest,
+                    nameof(PlacementInfo) => UIChangeDomain.Topology,
+                    _ => UIChangeDomain.All,
+                };
+                RecordUIChange(domains);
+                // A derived transform can skip its layout handler after this failure.
+                UILayoutSystem.InvalidateMeasure(this);
+                throw;
+            }
             if (propName == nameof(Children))
             {
                 if (prev is EventList<TransformBase> oldChildren)
@@ -622,15 +646,11 @@ namespace XREngine.Rendering.UI
             {
                 case nameof(Translation):
                     InvalidateArrange();
-                    MarkLocalModified(true);
                     break;
                 case nameof(DepthTranslation):
                 case nameof(Scale):
                 case nameof(RotationRadians):
                     RecordUIChange(UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
-                    // These properties directly affect CreateLocalMatrix,
-                    // so the matrix must be marked dirty independently of layout.
-                    MarkLocalModified(true);
                     break;
                 case nameof(Visibility):
                     RecordUIChange(UIChangeDomain.Visual | UIChangeDomain.HitTest | UIChangeDomain.Clip);

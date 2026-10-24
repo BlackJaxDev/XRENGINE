@@ -9,4 +9,5 @@ internal readonly record struct NativeProfilerDisplayRow(
     ulong GpuWorstFrameId = 0, long GpuHistoryGeneration = 0,
     int GpuRankMetric = -1, int GpuRankPageAction = 0,
     long GpuRankRevision = 0, string? CpuPlotName = null,
-    ProfilerScopeKind CpuPlotKind = default, string? GpuPlotName = null);
+    ProfilerScopeKind CpuPlotKind = default, string? GpuPlotName = null,
+    int OutputPageAction = 0);

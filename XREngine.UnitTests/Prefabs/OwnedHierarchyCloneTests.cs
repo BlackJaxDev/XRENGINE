@@ -14,6 +14,75 @@ public sealed class OwnedHierarchyCloneTests
     public void RestoreRuntimeMode() => XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);
 
     [Test]
+    public void ConfigurationRunsUnderConstructionOwnershipAndKeepsAdditionalAllocations()
+    {
+        SceneNode template = new("Template");
+        TextFile? extra = null;
+        bool configured = false;
+        ObjectConstructionResult<SceneNode> result = SceneNodePrefabUtility.CloneHierarchyOwned(template,
+            (clone, context, validate) =>
+            {
+                configured = true;
+                context.RequireAllocation(clone);
+                extra = new TextFile();
+                clone.Name = "Configured";
+                validate();
+            });
+        try
+        {
+            Assert.That(configured, Is.True);
+            Assert.That(result.Succeeded, Is.True, result.Failure?.ToString());
+            Assert.That(result.Value!.Name, Is.EqualTo("Configured"));
+            Assert.That(result.Ownership.Contains(extra!), Is.True);
+            Assert.That(result.Ownership.HasSealedIdentities, Is.True);
+        }
+        finally { RetireTestAllocations(result.Ownership); template.Destroy(true); }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void ConfigurationCannotCompleteWithAnEndedEmptyStructuralList(bool components)
+    {
+        SceneNode template = new("Template");
+        XRObjectBase? list = null;
+        ObjectConstructionResult<SceneNode> result = SceneNodePrefabUtility.CloneHierarchyOwned(template,
+            (clone, _, _) =>
+            {
+                list = components ? (XRObjectBase)clone.Components : clone.Transform.Children;
+                list.Destroy(true);
+            });
+        try
+        {
+            Assert.That(result.Succeeded, Is.False);
+            Assert.That(result.Failure, Is.TypeOf<InvalidOperationException>());
+            Assert.That(result.Ownership.Contains(list!), Is.True);
+            Assert.That(list!.IsDestroyed, Is.True);
+        }
+        finally { list?.Generate(); RetireTestAllocations(result.Ownership); template.Destroy(true); }
+    }
+
+    [Test]
+    public void SourceValidationRunsAfterSerializationBeforeOwnedConfiguration()
+    {
+        SceneNode template = new("Template");
+        int checks = 0;
+        bool configured = false;
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => SceneNodePrefabUtility.CloneHierarchyOwned(template,
+                (_, _, _) => configured = true,
+                () =>
+                {
+                    if (++checks == 2) throw new InvalidOperationException("The serialized source changed.");
+                }));
+            Assert.That(checks, Is.EqualTo(2));
+            Assert.That(configured, Is.False);
+            Assert.That(template.IsDestroyed, Is.False);
+        }
+        finally { template.Destroy(true); }
+    }
+
+    [Test]
     public void CanonicalYamlCloneHasOwnedStructureAndIndependentIdentities()
     {
         SceneNode template = new("Template");

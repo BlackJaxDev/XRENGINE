@@ -910,3 +910,35 @@ build59 passed with zero warnings/errors in 2m26.63s. Desktop test build32 passe
 has 10,723 files. A desktop-only fixture import was corrected after the editor
 build; production and portable test inputs were unchanged. The three
 owner proposals and four original owner decisions remain pending.
+
+
+## Paged composition and guarded native editor commands
+
+The reconciliation remains **46 of 60**. This increment advances the open
+publication, control, and editor items:
+
+- Composition ownership uses paged segment slots and paged leaf claims. Local
+  page changes retain unaffected pages. Full packet capture is still open.
+- Inspector drops pin the row, source values, and queued asset lifetime. A
+  completed write keeps its Undo record when a later callback retires the row.
+- Native animation edits individual vector/quaternion channels through canonical
+  Undo actions. Baked and frame-cadence length adapters preserve exact samples
+  and reject unsafe bounds. Wheel and frame-axis pointer behavior remain open.
+- Profiler frame-output pages expose every output through bounded page copies.
+  Detailed Vulkan rows use one correlated frame publication and label counters
+  sampled at a separate cadence.
+- Single-root Duplicate and Deep Duplicate use native confirmation, exact
+  source/clone admission, guarded history custody, and selection restoration.
+  Multi-root requests and unsupported ordinary asset-sharing profiles remain
+  explicit follow-on work. The asset-recovery proposal remains pending.
+- Vulkan selected-world preparation retains compiled shader and descriptor
+  witnesses and forces the witnessed descriptor bind after callbacks. Uniform,
+  sampled-resource, pipeline, writer, and final-output proofs remain open; the
+  checked world capability stays disabled.
+
+Headless build141 passed with zero warnings/errors in 38.98s. Full run90 passed
+**979 of 979 tests**, without warnings, failures, or skips, in 15.220s. Editor
+build61 passed with zero warnings/errors in 53.89s. Desktop test build34 passed
+with zero warnings/errors in 58.93s. All 10,763 source inputs remained unchanged. Desktop execution, native graphics, IME, visual, and
+performance acceptance remain open. The three owner proposals and four original
+owner decisions remain pending.

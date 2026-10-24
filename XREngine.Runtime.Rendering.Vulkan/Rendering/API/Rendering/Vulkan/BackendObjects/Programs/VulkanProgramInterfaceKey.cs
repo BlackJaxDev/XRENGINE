@@ -71,6 +71,18 @@ internal sealed class VulkanProgramInterfaceKey : IEquatable<VulkanProgramInterf
 
     internal int ShaderConfigVersion { get; }
     internal int StageCount => _stages.Length;
+    /// <summary>Reads one stage from the immutable compiled interface.</summary>
+    internal bool TryGetStage(EProgramStageMask slot, out VulkanProgramInterfaceStage stage)
+    {
+        for (int index = 0; index < _stages.Length; index++)
+            if (_stages[index].Slot == slot)
+            {
+                stage = _stages[index];
+                return true;
+            }
+        stage = default;
+        return false;
+    }
     internal bool ClipDepthRemap { get; }
     internal EShaderType? ClipDepthRemapStage { get; }
     internal ulong TransformFeedbackLayoutVersion { get; }

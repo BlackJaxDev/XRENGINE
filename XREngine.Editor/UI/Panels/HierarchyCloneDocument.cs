@@ -35,6 +35,16 @@ internal sealed class HierarchyCloneDocument
             ReferenceEquals(World.ScenePolicy, _policy) && ReferenceEquals(integration, _integration);
     }
 
+    internal void RequireOperationRoot(SceneNode node)
+    {
+        if (!IsCurrent())
+            throw new InvalidOperationException("The duplicate document changed during its command.");
+        RequireRootLinks(node);
+        foreach (SceneRootMembership membership in node.CaptureSceneRootMemberships())
+            if (membership.Count != 1)
+                throw new InvalidOperationException("Duplicate requires one occurrence in each source root collection.");
+    }
+
     internal void RequireCustody(ObjectConstructionOwnership ownership)
     {
         if (!IsCurrent())

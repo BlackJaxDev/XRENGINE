@@ -775,8 +775,9 @@ visible and requires explicit recovery or reissue.
 
 The current promotion path rejects first-time editor-scene allocation before
 mutation. Hidden-parent asset spawning uses a separate shared spawn path and is
-still unsupported. Duplicate/Deep Duplicate, context/scene menus, and broader
-hierarchy parity remain open; the guarded commands do not close those items.
+still unsupported. Native context/scene menus and bounded single-root Duplicate
+use the guarded command routes. Multi-root duplication and broader hierarchy
+parity remain open.
 
 ## Accepted text measurements and editor navigation
 
@@ -839,8 +840,9 @@ before a queued command runs. The popup belongs to the canvas and uses the
 accepted canvas point directly. Setup failure retires only the candidate node
 and its handlers; it cannot clear a newer session. Node actions cover rename,
 child creation, camera focus, and deletion. Scene actions use canonical visibility
-and unload commands. Duplicate workflows and owned clone failure recovery remain
-open; these menus do not enable a placeholder implementation.
+and unload commands. Single-root Duplicate and Deep Duplicate use the owned
+clone request described below. Unsupported sharing shapes and multi-root
+duplication remain explicit follow-on work.
 
 
 ## Draft owners, tab focus, and linked-list edits
@@ -968,12 +970,13 @@ used. Read-only display callbacks are also checked after user `ToString` calls.
 pre-adoption guards and final structural validation. It verifies ownership again
 after cache publication. A failed clone retains its allocation ledger and removes
 only its exact cache entries. The original `CloneHierarchy` path is unchanged.
-The new API does not authorize recursive graph destruction or editor Duplicate.
+The clone API alone does not authorize recursive graph destruction. Editor
+Duplicate adds document, lifetime, and history custody before activation.
 `XRScene.SceneRoots` now tracks exact root occurrences and owner back-links.
 The legacy serialized `RootNodes` list remains a copied serialization facade;
 runtime mutations use the guarded collection. YAML, cooked, and envelope fixtures
-preserve the existing format. Safe clone graph retirement and active editor
-Duplicate remain open.
+preserve the existing format. Bounded clone retirement uses the ownership
+ledger and retains unknown allocations or uncertain cleanup.
 
 Child and component lists install `HierarchyListAuthority` in their constructor.
 The authority cannot be replaced or removed. Silent, interface, indexed, range,
@@ -990,8 +993,8 @@ snapshots until storage actually retires. Normal writes reject queued owners;
 mandatory removal can release an exact terminal component when its owner is
 queued and that destruction is later vetoed. These ownership facts do not
 authorize destruction. `HierarchyStructuralReservation` only blocks new structural
-mutations after admitted operations finish; active Duplicate and graph retirement
-remain open.
+mutations after admitted operations finish. Active clone commands also require
+the lifetime and custody proofs described below.
 
 `UndoHistoryResource` attaches a resource to its exact open structural step and
 then to the committed history action. History pruning, cancellation, and clear
@@ -1094,8 +1097,8 @@ a lifetime admission lease. Core structural reservations install with an atomic
 compare/exchange and then recheck active leases. The hook does not wait on the
 structural gate while a cache lock is held. Owned cache rollback admits each
 exact unpublication independently, attempts the remaining entries after failure,
-and retains rejected entries for recovery. This support does not yet authorize
-clone graph destruction or activate Duplicate.
+and retains rejected entries for recovery. Clone graph retirement and Duplicate
+use additional custody proofs; this lease alone cannot authorize destruction.
 
 Material parameter discovery excludes the exact-transparency pipeline globals
 PpllMaxNodes, DepthPeelLayerIndex, DepthPeelEpsilon, and DepthPeelReversedDepth.
@@ -1155,21 +1158,23 @@ history release attempts one retirement; applied history release keeps a verifie
 document claim. Unknown allocations, failed cleanup, or a document that ends
 without release retain the receipt and block new cloning. Exact owned-node
 destruction snapshots are suppressed during retirement; unrelated callback edits
-remain recordable. Duplicate activation and document-end cleanup remain open.
+remain recordable. Single-root Duplicate is active through these guards.
+Document-end cleanup and broader duplication profiles remain open.
 
 Native loop edits capture the full member tree, unique child animations, source
 owners, and prior values. The receipt checks prechange callbacks, commits all
 loop fields before notifications, and guards Undo/Redo against changed ownership.
-Length and stretch edits use an exact receipt for built-in unbaked keyframed
-animations. It captures member aliases, source ownership, track order, key times,
+Length and stretch edits use exact receipts for supported built-in keyframed
+and baked animations. It captures member aliases, source ownership, track order, key times,
 authored frame indices, and payloads. All timing fields commit before callbacks.
 Undo restores captured values and keeps playback clocks unchanged. Track
 generations detect edits during notifications, while later replay checks exact
 snapshots so an intervening edit and Undo do not invalidate earlier history.
 Nested ordinary track-length edits still reach the canonical animation relay.
-Baked, valid frame-cadence, custom, shared-track, malformed, and overflowing
-profiles reject before writes with a diagnostic. Those profiles need separate
-adapters; they do not receive a scalar-only fallback.
+Baked and authored frame-cadence adapters retain exact sample storage and
+reject unsafe interpolation bounds. Custom, shared-track, malformed, and
+overflowing profiles reject before writes with a diagnostic; they do not receive
+a scalar-only fallback.
 
 Inspector enum dispatch precedes numeric type dispatch. Ordinary enum rows use
 the shared combo; flags retain named text input. The row owner coalesces nested
@@ -1230,5 +1235,83 @@ metadata. Aborted builds stay hidden. Stroke writes check owner validity after
 callback boundaries, and nested build requests coalesce into a bounded retry.
 Method details limit argument rows and text length; they do not call arbitrary
 argument `ToString` implementations. Source subscriptions change only when their
-topology changes. Baked/frame-cadence length adapters, full channel editing, and
+topology changes. Channel editing and built-in baked/frame-cadence length
+adapters use the guarded routes below. Wheel/frame-axis pointer behavior and
 native runtime acceptance remain open.
+
+
+### Composition page claims and drop admission
+
+`UICompositionSegmentSet` owns paged segment slots. A local render-page replacement
+copies only the affected slot page and record-leaf claim page. Segment ranges use
+their actual source offsets. A full rebuild rebases moved ranges before later
+local edits. Failed ownership transfer releases only the claims it owns. This is
+a storage contract; full canvas capture and segment discovery still remain on
+the fallback path until sparse packet capture is integrated.
+
+Hit-order and transform invalidation survive a property observer that throws.
+Scale changes mark local and world matrices dirty before observers run. Matrix
+values still change through the normal matrix update. Publication rejects the
+canvas while its layout is invalid.
+
+Inspector reference drops retain an exact row token, provider revision, target
+array, and object lifetime. Loaded asset identity is captured before completion
+is queued. A retired row or changed asset lifetime cannot acquire a later write.
+`InspectorAssetDropRequest` observes reference changes through the whole admitted
+setter, Undo, and dirty-state settlement. It allows one exact same-thread engine
+notification for that setter. Another relevant change invalidates the remaining
+writes, even if the value returns to its original reference. A completed setter
+keeps its Undo record. Non-notifying targets are rechecked at getter boundaries;
+this does not provide a lock against concurrent application writers.
+
+### Profiler output pages and animation channels
+
+The native profiler copies one bounded output page under the frame-manifest lock.
+The copy returns its publication revision, total count, and clamped page index.
+All output pages remain reachable. Pause takes one immutable full snapshot so
+page changes stay on the selected frame; resume returns to bounded page copies.
+Vulkan stage and wait rows use one correlated telemetry publication. Separate
+render-stat counters are labeled with their separate sampling cadence.
+
+Native animation channel edits reconstruct the selected float, vector, or
+quaternion component and use the existing authoring Undo actions. Value-field
+refresh pins the authoring epoch and denies submission during refresh or while
+text settlement is pending. Built-in baked length edits retain the existing
+sample store and authored cadence. They reject timing bounds that could address
+outside that store. These edits do not resample or rebake an animation.
+
+
+### Vulkan compiled program and descriptor witnesses
+
+The indexed world-UI preparation retains the exact compiled shader artifacts and
+shared program interface through draw issue. It captures each native descriptor
+set publication and its dynamic offsets at binding. After callback-bearing
+preparation, the selected proof path revalidates those publications and forces
+the exact native binds immediately before the indexed draw. Ordinary descriptor
+deduplication remains unchanged.
+
+This witness does not prove uniform bytes, sampled image identity, pipeline
+identity, intervening writers, or final presentation lineage. Checked Vulkan
+world-UI output remains disabled until all required proofs are complete.
+
+
+### Native duplicate command admission
+
+Native hierarchy menus expose single-root Duplicate and Deep Duplicate through
+the canonical clone route. Duplicate preserves supported direct asset references;
+unknown containers and callback-defined getters report that ordinary duplication
+is unavailable. Deep Duplicate retains the canonical serialized asset behavior.
+Multiple selected roots remain unavailable until grouped replay and compensation
+are implemented.
+
+The request pins its source graph, document placement, asset slots, and object
+lifetimes before construction. It admits execution once. Reciprocal parent links,
+structural-list lifetimes, descendant worlds, and hidden scene-root membership
+must agree at command boundaries. Command replay checks the original clone graph
+shape; history release uses current document custody so a valid later edit does
+not cause false recovery. Failed compensation retains its custody receipt and
+diagnostic instead of destroying a graph whose ownership changed.
+
+Selection restoration applies only while the action still owns the exact ordered
+selection. A callback or later user selection takes priority. Selection callbacks
+are followed by graph and placement checks before the command settles.

@@ -109,6 +109,11 @@ namespace XREngine.Rendering.UI
             }
         }
 
+        protected override UIChangeDomain GetUIChangeDomain(string? propertyName)
+            => propertyName == nameof(IsOpen)
+                ? UIChangeDomain.HitTest
+                : base.GetUIChangeDomain(propertyName);
+
         /// <summary>
         /// Fired after the menu is dismissed (by item click, outside click, or Escape).
         /// </summary>

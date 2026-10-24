@@ -14,7 +14,12 @@ internal static class HierarchyMutation
         try
         {
             opening = Undo.BeginStructuralMutation(description,
-                () => Replay(() => { operation!.UndoMembership(); cloneCustody?.MarkDetached(); }, cloneCustody),
+                () => Replay(() =>
+                {
+                    operation!.UndoMembership();
+                    cloneCustody?.MarkDetached();
+                    operation.RequireBefore(includeProperties: true);
+                }, cloneCustody),
                 () => Replay(() => { cloneCustody?.BeginRedo(); operation!.RedoMembership(); }, cloneCustody));
             cloneCustody?.AttachHistory(opening);
             try
@@ -49,9 +54,19 @@ internal static class HierarchyMutation
                 }
                 if (restored)
                 {
-                    operation?.ReconcileProperties(opening);
-                    if (operation is not null)
-                        cloneCustody?.MarkDetached();
+                    try
+                    {
+                        operation?.ReconcileProperties(opening);
+                        if (operation is not null)
+                        {
+                            cloneCustody?.MarkDetached();
+                            operation.RequireBefore(includeProperties: true);
+                        }
+                    }
+                    catch { restored = false; }
+                }
+                if (restored)
+                {
                     opening.RemoveRestoredStep();
                     cloneCustody?.ReleaseRestored(opening);
                     releaseRestoredCreation?.Invoke();
@@ -67,6 +82,7 @@ internal static class HierarchyMutation
             }
             AddClosingGuard(description, operation!, cloneCustody);
             cloneCustody?.MarkApplied();
+            operation!.RequireAfter(includeProperties: true);
         }
         finally
         {
@@ -86,7 +102,12 @@ internal static class HierarchyMutation
     {
         using StructuralChangeHandle guard = Undo.BeginStructuralMutation(description,
             () => Replay(() => { cloneCustody?.BeginUndo(); operation.RequireUndoEntry(); }, cloneCustody),
-            () => Replay(() => { operation.CompleteRedo(); cloneCustody?.MarkApplied(); }, cloneCustody));
+            () => Replay(() =>
+            {
+                operation.CompleteRedo();
+                cloneCustody?.MarkApplied();
+                operation.RequireAfter(includeProperties: true);
+            }, cloneCustody));
     }
 
     private static void Replay(Action action, HierarchyCloneCustody? cloneCustody)

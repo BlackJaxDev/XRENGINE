@@ -25,6 +25,12 @@ internal sealed class AnimationLengthEdit
     private readonly int _fps;
     private readonly int _cadenceFrames;
     private readonly int _cadenceFps;
+    private readonly bool _isBaked;
+    private readonly object? _bakedStore;
+    private readonly int _bakedStoreCount;
+    private readonly EAnimationValueCompressionAlgorithm _compression;
+    private readonly EAnimationValueCompressionAlgorithm _encodedCompression;
+    private readonly (bool Constrain, bool Lerp) _samplingFlags;
     private ulong _generation;
 
     private AnimationLengthEdit(BasePropAnimKeyframed animation, BaseKeyframeTrack track,
@@ -45,6 +51,12 @@ internal sealed class AnimationLengthEdit
         _afterFrameCount = checked((int)Math.Ceiling(seconds * _fps));
         _cadenceFrames = animation.AuthoredFrameCount;
         _cadenceFps = animation.AuthoredFramesPerSecond;
+        _isBaked = animation.IsBaked;
+        _bakedStore = animation.ExactBakedStore;
+        _bakedStoreCount = animation.ExactBakedStoreCount;
+        _compression = animation.BakedValueCompressionAlgorithm;
+        _encodedCompression = animation.EncodedBakedValueCompressionAlgorithm;
+        _samplingFlags = animation.ExactSamplingFlags;
         _generation = track.ExactEditGeneration;
         _beforeSeconds = new float[order.Length];
         _afterSeconds = new float[order.Length];
@@ -92,9 +104,6 @@ internal sealed class AnimationLengthEdit
         };
         if (keyType is null || animation is not BasePropAnimKeyframed keyframed)
             return false;
-        reason = "Baked or frame-cadence animations need a separate length adapter.";
-        if (keyframed.IsBaked || keyframed.HasAuthoredCadence)
-            return false;
         reason = "The animation track is shared, busy, or has invalid timing.";
         if (!keyframed.CanBeginExactLengthEdit || !keyframed.HasExclusiveLengthRelay ||
             !float.IsFinite(keyframed.LengthInSeconds) || keyframed.LengthInSeconds < 0 ||
@@ -122,6 +131,13 @@ internal sealed class AnimationLengthEdit
             edit = null;
             return false;
         }
+        reason = "The requested length would read beyond retained baked samples.";
+        if (!edit.HasSafeBakedSampling(after: false) ||
+            !edit.HasSafeBakedSampling(after: true))
+        {
+            edit = null;
+            return false;
+        }
         reason = string.Empty;
         return true;
     }
@@ -143,9 +159,15 @@ internal sealed class AnimationLengthEdit
             _animation.ID != _identity || _document.ID != _documentIdentity ||
             !ReferenceEquals(_animation.SourceAsset, _document) ||
             !ReferenceEquals(currentTrack, _track) ||
-            _animation.IsBaked || _animation.HasAuthoredCadence ||
+            _animation.IsBaked != _isBaked ||
             _animation.AuthoredFrameCount != _cadenceFrames ||
             _animation.AuthoredFramesPerSecond != _cadenceFps ||
+            (_isBaked &&
+                (!ReferenceEquals(_animation.ExactBakedStore, _bakedStore) ||
+                 _animation.ExactBakedStoreCount != _bakedStoreCount ||
+                 _animation.BakedValueCompressionAlgorithm != _compression ||
+                 _animation.EncodedBakedValueCompressionAlgorithm != _encodedCompression ||
+                 _animation.ExactSamplingFlags != _samplingFlags)) ||
             _animation.BakedFramesPerSecond != _fps || !_animation.HasExclusiveLengthRelay ||
             _animation.LengthInSeconds != (after ? _afterLength : _beforeLength) ||
             _animation.BakedFrameCount != (after ? _afterFrameCount : _beforeFrameCount) ||
@@ -165,12 +187,32 @@ internal sealed class AnimationLengthEdit
         => _track.ExactEditGeneration == _generation && Matches(after);
 
     public bool CanCommit(bool forward) => _animation.CanBeginExactLengthEdit &&
-        _track.CanAdvanceExactEditGeneration && Matches(after: !forward);
+        _track.CanAdvanceExactEditGeneration && Matches(after: !forward) &&
+        HasSafeBakedSampling(after: forward);
+
+    private bool HasSafeBakedSampling(bool after)
+    {
+        if (!_isBaked)
+            return true;
+        if (_bakedStore is null)
+            return false;
+        if (!_samplingFlags.Lerp)
+            return true;
+        if (_fps == 0)
+            return true;
+        float length = after ? _afterLength : _beforeLength;
+        float product = length * _fps;
+        if (!float.IsFinite(product) || product < 0 || product >= 2147483648d)
+            return false;
+        int reachable = Math.Max(after ? _afterFrameCount : _beforeFrameCount,
+            checked((int)Math.Ceiling(product)));
+        return reachable == 0 || reachable <= _bakedStoreCount;
+    }
 
     /// <summary>The caller validates the complete batch before any raw write.</summary>
     public void Commit(bool forward)
     {
-        if (!_animation.TrySetKeyframedLengthWithoutNotification(
+        if (!_animation.TrySetExactLengthWithoutNotification(
                 forward ? _beforeLength : _afterLength,
                 forward ? _beforeFrameCount : _afterFrameCount,
                 forward ? _afterLength : _beforeLength,

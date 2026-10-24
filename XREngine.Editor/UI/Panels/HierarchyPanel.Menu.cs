@@ -26,6 +26,7 @@ public partial class HierarchyPanel
     private ulong _contextMenuRequest;
     private bool _showingHierarchyMenu;
     private bool _creatingHierarchyMenu;
+    internal HierarchyCloneCustodyStore CloneCustodyStore = HierarchyCloneCustodyStore.Shared;
 
     private void SubscribeRightClick()
     {
@@ -133,6 +134,15 @@ public partial class HierarchyPanel
             ProviderIncarnation = list.VirtualProviderIncarnation, Input = input, Request = request,
             Position = position, Canvas = canvas, AwaitingShow = true
         };
+        if (row.Node is { } duplicateSource)
+        {
+            try
+            {
+                session.DuplicateRequest = new(CaptureNativeHierarchyDuplicateTargets(duplicateSource), world, context.IsOwnerCurrent);
+                session.DuplicateUnavailable = session.DuplicateRequest.UnsupportedReason ?? CloneCustodyStore.GetBlockReason();
+            }
+            catch (InvalidOperationException failure) { session.DuplicateUnavailable = failure.Message; }
+        }
         DismissHierarchyMenu();
         if (request != _contextMenuRequest || !context.CanStart())
         {
@@ -183,11 +193,26 @@ public partial class HierarchyPanel
         _showingHierarchyMenu = true;
         try
         {
-            if (session.Node is not null)
+            if (session.ConfirmingDeepDuplicate && session.DuplicateRequest is { } duplicate)
+                menu.Show(session.Position,
+                    new ContextMenuItem($"Deep duplicate '{duplicate.Name}'?", null, enabled: false),
+                    new ContextMenuItem("Embedded assets are copied; saved asset references stay shared.", null, enabled: false),
+                    new ContextMenuItem("Unsupported cleanup retains the copy and blocks new duplicates.", null, enabled: false),
+                    ContextMenuItem.Separator(),
+                    new ContextMenuItem("Deep Duplicate", session.ConfirmDeepDuplicate,
+                        duplicate.CanStart() && CloneCustodyStore.GetBlockReason() is null),
+                    new ContextMenuItem("Cancel", session.CancelDuplicate));
+            else if (session.Node is not null)
                 menu.Show(session.Position,
                     new ContextMenuItem("Rename", session.Rename),
                     new ContextMenuItem("Add Child", session.AddChild),
                     new ContextMenuItem("Focus Camera", session.Focus),
+                    ContextMenuItem.Separator(),
+                    new ContextMenuItem("Duplicate", session.Duplicate,
+                        session.DuplicateUnavailable is null && session.DuplicateRequest?.OrdinaryUnavailable is null),
+                    new ContextMenuItem("Deep Duplicate...", session.DeepDuplicate, session.DuplicateUnavailable is null),
+                    new ContextMenuItem(session.DuplicateUnavailable ?? session.DuplicateRequest?.OrdinaryUnavailable ??
+                        "Duplicate shares supported asset references.", null, enabled: false),
                     ContextMenuItem.Separator(),
                     new ContextMenuItem("Delete", session.Delete));
             else if (session.Scene is { } scene)
@@ -334,6 +359,20 @@ public partial class HierarchyPanel
         {
             case EHierarchyMenuAction.Rename: BeginRename(node); break;
             case EHierarchyMenuAction.Focus: TryFocusCameraOnNode(node); break;
+            case EHierarchyMenuAction.Duplicate:
+                QueueHierarchyDuplicate(session, preserveAssetReferences: true);
+                break;
+            case EHierarchyMenuAction.DeepDuplicate when session.DuplicateRequest?.CanStart() == true:
+                session.ConfirmingDeepDuplicate = true;
+                session.AwaitingShow = true;
+                ScheduleHierarchyWork();
+                break;
+            case EHierarchyMenuAction.ConfirmDeepDuplicate when session.ConfirmingDeepDuplicate:
+                QueueHierarchyDuplicate(session, preserveAssetReferences: false);
+                break;
+            case EHierarchyMenuAction.CancelDuplicate:
+                DismissHierarchyMenu();
+                break;
             case EHierarchyMenuAction.AddChild when node is not null:
                 QueueNativeHierarchyCreateChild(node, context.World, child =>
                 {
@@ -366,5 +405,14 @@ public partial class HierarchyPanel
                 });
                 break;
         }
+    }
+
+    private void QueueHierarchyDuplicate(HierarchyMenuSession session, bool preserveAssetReferences)
+    {
+        if (session.DuplicateUnavailable is not null || session.DuplicateRequest is not { } request || !request.CanStart() ||
+            preserveAssetReferences && request.OrdinaryUnavailable is not null || !request.TryQueue())
+            return;
+        HierarchyCloneCustodyStore store = CloneCustodyStore;
+        EnqueueSceneEdit(() => request.Execute(preserveAssetReferences, store));
     }
 }

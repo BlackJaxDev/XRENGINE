@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Runtime.InteropServices;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering.UI;
 
@@ -8,7 +9,12 @@ internal sealed class UICompositionSegmentSet
 {
     private static long _nextIdentity;
     private static long _nextRevision;
-    private readonly UICompositionSegment[] _segments;
+    private static readonly Action<UICompositionSegmentSlot> RetainSlot =
+        static slot => slot.Segment.Retain();
+    private static readonly Action<UICompositionSegmentSlot> ReleaseSlot =
+        static slot => slot.Segment.Release();
+    private readonly UIRecordStore<UICompositionSegmentSlot>? _segmentStore;
+    private UICompositionSegment[]? _flatSegments;
     private readonly Dictionary<long, int> _byMembership;
     private readonly bool _immortal;
     private int _claims = 1;
@@ -19,9 +25,54 @@ internal sealed class UICompositionSegmentSet
     private UICompositionSegmentSet(UICompositionSegment[] segments,
         Dictionary<long, int> byMembership, bool immortal = false)
     {
-        _segments = segments;
         _byMembership = byMembership;
         _immortal = immortal;
+        if (immortal)
+            return;
+        UICompositionSegmentSlot[] slots = new UICompositionSegmentSlot[segments.Length];
+        for (int index = 0; index < slots.Length; index++)
+            slots[index] = new UICompositionSegmentSlot(segments[index]);
+        _segmentStore = UIRecordStore<UICompositionSegmentSlot>.Create(slots,
+            RetainSlot, ReleaseSlot);
+    }
+
+    private static UICompositionSegmentSet TakeOwnedSegments(
+        UICompositionSegment[] segments, Dictionary<long, int> byMembership)
+    {
+        UICompositionSegmentSet set;
+        try { set = new UICompositionSegmentSet(segments, byMembership); }
+        catch (Exception failure)
+        {
+            try { ReleaseSegments(segments); }
+            catch (Exception cleanupFailure)
+            {
+                throw new AggregateException("UI composition set build and cleanup failed.",
+                    failure, cleanupFailure);
+            }
+            throw;
+        }
+        try
+        {
+            ReleaseSegments(segments);
+            return set;
+        }
+        catch (Exception failure)
+        {
+            try { set.Release(); }
+            catch (Exception cleanupFailure)
+            {
+                throw new AggregateException("UI composition set transfer and cleanup failed.",
+                    failure, cleanupFailure);
+            }
+            throw;
+        }
+    }
+
+    private UICompositionSegmentSet(UIRecordStore<UICompositionSegmentSlot> segmentStore,
+        Dictionary<long, int> byMembership)
+    {
+        _segmentStore = segmentStore;
+        _byMembership = byMembership;
     }
 
     internal bool ResourcesRetired => !_immortal && Volatile.Read(ref _retired) != 0;
@@ -30,8 +81,24 @@ internal sealed class UICompositionSegmentSet
         get
         {
             ObjectDisposedException.ThrowIf(ResourcesRetired, this);
-            return _segments;
+            if (_flatSegments is { } flat)
+                return flat;
+            UIRecordStore<UICompositionSegmentSlot>? store = _segmentStore;
+            if (store is null)
+                return [];
+            flat = new UICompositionSegment[store.Length];
+            for (int index = 0; index < flat.Length; index++)
+                flat[index] = store[index].Segment;
+            UIRuntimeCounters.Add(UIWorkCounter.PublicationSegmentSlotsMaterialized, flat.Length);
+            return Interlocked.CompareExchange(ref _flatSegments, flat, null) ?? flat;
         }
+    }
+
+    internal int Count => _segmentStore?.Length ?? 0;
+    internal UICompositionSegment GetSegment(int index)
+    {
+        ObjectDisposedException.ThrowIf(ResourcesRetired, this);
+        return _segmentStore![index].Segment;
     }
 
     internal bool TryGet(long membershipId, out UICompositionSegment segment)
@@ -39,7 +106,7 @@ internal sealed class UICompositionSegmentSet
         ObjectDisposedException.ThrowIf(ResourcesRetired, this);
         if (_byMembership.TryGetValue(membershipId, out int index))
         {
-            segment = _segments[index];
+            segment = GetSegment(index);
             return true;
         }
         segment = null!;
@@ -94,7 +161,7 @@ internal sealed class UICompositionSegmentSet
     {
         if (Interlocked.Exchange(ref _retired, 1) != 0)
             return;
-        ReleaseSegments(_segments);
+        _segmentStore?.Release();
     }
 
     private static void ReleaseSegments(ReadOnlySpan<UICompositionSegment> segments)
@@ -107,15 +174,63 @@ internal sealed class UICompositionSegmentSet
             throw new AggregateException("UI composition segment cleanup failed.", failures);
     }
 
+    internal bool TryWithReplacedRenderPage(int segmentIndex, int segmentStart,
+        int recordPageIndex, UIRecordStore<UIRenderRecord> records,
+        out UICompositionSegmentSet updated)
+    {
+        updated = null!;
+        ObjectDisposedException.ThrowIf(ResourcesRetired, this);
+        if ((uint)segmentIndex >= (uint)Count ||
+            records.Length != _byMembership.Count ||
+            (uint)recordPageIndex >= (uint)records.PageCount)
+            return false;
+        UICompositionSegment prior = GetSegment(segmentIndex);
+        if (segmentStart != prior.Start)
+            return false;
+        long pageStart = (long)recordPageIndex * UIRecordStore<UIRenderRecord>.PageSize;
+        long segmentEnd = (long)segmentStart + prior.Count;
+        int first = (int)Math.Max(segmentStart, pageStart);
+        int end = (int)Math.Min(segmentEnd,
+            pageStart + UIRecordStore<UIRenderRecord>.PageSize);
+        if (first >= end || segmentStart < 0 || segmentEnd > records.Length)
+            return false;
+        for (int index = first; index < end; index++)
+        {
+            UIRenderRecord oldRecord = prior.GetRecord(index - segmentStart);
+            ref readonly UIRenderRecord record = ref records[index];
+            if (record.MembershipId != oldRecord.MembershipId ||
+                record.CompositionOwner != prior.Owner)
+                return false;
+        }
+
+        UICompositionSegment replacement = prior.WithReplacedPage(NextRevision(),
+            recordPageIndex - segmentStart / UIRecordStore<UIRenderRecord>.PageSize,
+            records);
+        try
+        {
+            int slotPage = segmentIndex / UIRecordStore<UICompositionSegmentSlot>.PageSize;
+            UICompositionSegmentSlot[] slots = _segmentStore!.GetPage(slotPage).ToArray();
+            slots[segmentIndex % UIRecordStore<UICompositionSegmentSlot>.PageSize] =
+                new UICompositionSegmentSlot(replacement);
+            UIRuntimeCounters.Add(UIWorkCounter.PublicationSegmentSlotsCopied, slots.Length);
+            UIRecordStore<UICompositionSegmentSlot> store =
+                _segmentStore.WithReplacedPage(slotPage, slots);
+            updated = new UICompositionSegmentSet(store, _byMembership);
+            return true;
+        }
+        finally { replacement.Release(); }
+    }
+
     private bool TryUpdateSameTopology(UIRecordStore<UIRenderRecord> records,
         out UICompositionSegmentSet updated)
     {
         updated = null!;
-        if (_segments.Length == 0 || _byMembership.Count != records.Length)
+        if (Count == 0 || _byMembership.Count != records.Length)
             return false;
         int offset = 0;
-        foreach (UICompositionSegment segment in _segments)
+        for (int segmentIndex = 0; segmentIndex < Count; segmentIndex++)
         {
+            UICompositionSegment segment = GetSegment(segmentIndex);
             for (int index = 0; index < segment.Count; index++)
             {
                 ref readonly UIRenderRecord record = ref records[offset + index];
@@ -128,8 +243,9 @@ internal sealed class UICompositionSegmentSet
 
         bool anyChanged = false;
         offset = 0;
-        foreach (UICompositionSegment prior in _segments)
+        for (int segmentIndex = 0; segmentIndex < Count; segmentIndex++)
         {
+            UICompositionSegment prior = GetSegment(segmentIndex);
             anyChanged |= !prior.ContentEquals(records, offset, prior.Count);
             offset += prior.Count;
         }
@@ -140,14 +256,15 @@ internal sealed class UICompositionSegmentSet
             return true;
         }
 
-        UICompositionSegment[] changed = new UICompositionSegment[_segments.Length];
+        UICompositionSegment[] changed = new UICompositionSegment[Count];
         int retained = 0;
         offset = 0;
+        bool transferred = false;
         try
         {
-            for (; retained < _segments.Length; retained++)
+            for (; retained < Count; retained++)
             {
-                UICompositionSegment prior = _segments[retained];
+                UICompositionSegment prior = GetSegment(retained);
                 if (prior.ContentEquals(records, offset, prior.Count))
                 {
                     prior.Retain();
@@ -158,11 +275,14 @@ internal sealed class UICompositionSegmentSet
                         NextRevision(), prior.Owner, records, offset, prior.Count);
                 offset += prior.Count;
             }
-            updated = new UICompositionSegmentSet(changed, _byMembership);
+            transferred = true;
+            updated = TakeOwnedSegments(changed, _byMembership);
             return true;
         }
         catch (Exception failure)
         {
+            if (transferred)
+                throw;
             try { ReleaseSegments(changed.AsSpan(0, retained)); }
             catch (Exception cleanupFailure)
             {
@@ -201,6 +321,7 @@ internal sealed class UICompositionSegmentSet
         List<UICompositionSegment> segments = [];
         Dictionary<long, int> byMembership = new(records.Length);
         HashSet<ulong> reused = [];
+        bool transferred = false;
         try
         {
             int start = 0;
@@ -214,14 +335,15 @@ internal sealed class UICompositionSegmentSet
                 if (previous is not null)
                     for (int index = start; index < end; index++)
                         if (previous._byMembership.TryGetValue(records[index].MembershipId, out int candidateIndex) &&
-                            previous._segments[candidateIndex] is { } candidate &&
+                            previous.GetSegment(candidateIndex) is { } candidate &&
                             candidate.Owner == owner && reused.Add(candidate.Identity))
                         {
                             prior = candidate;
                             break;
                         }
                 UICompositionSegment segment;
-                if (prior is not null && prior.ContentEquals(records, start, end - start))
+                if (prior is not null && prior.Start == start &&
+                    prior.ContentEquals(records, start, end - start))
                 {
                     prior.Retain();
                     segment = prior;
@@ -242,10 +364,14 @@ internal sealed class UICompositionSegmentSet
                     byMembership.Add(records[index].MembershipId, segments.Count - 1);
                 start = end;
             }
-            return new UICompositionSegmentSet(segments.ToArray(), byMembership);
+            UICompositionSegment[] staged = segments.ToArray();
+            transferred = true;
+            return TakeOwnedSegments(staged, byMembership);
         }
         catch (Exception failure)
         {
+            if (transferred)
+                throw;
             try { ReleaseSegments(CollectionsMarshal.AsSpan(segments)); }
             catch (Exception cleanupFailure)
             {

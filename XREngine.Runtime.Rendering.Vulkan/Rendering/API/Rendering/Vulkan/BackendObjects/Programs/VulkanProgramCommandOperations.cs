@@ -45,6 +45,9 @@ internal sealed class VulkanProgramCommandOperations(VulkanCommandRuntime comman
     internal void BindVertexBufferTracked(CommandBuffer commandBuffer, uint binding, Silk.NET.Vulkan.Buffer buffer, ulong offset) => commands.BindVertexBufferTracked(commandBuffer, binding, buffer, offset);
     internal void BindDescriptorSetsTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, PipelineLayout layout, uint firstSet, DescriptorSet[] sets) => commands.BindDescriptorSetsTracked(commandBuffer, bindPoint, layout, firstSet, sets);
     internal void BindDescriptorSetsTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, PipelineLayout layout, uint firstSet, ReadOnlySpan<DescriptorSet> sets, ReadOnlySpan<uint> dynamicOffsets) => commands.BindDescriptorSetsTracked(commandBuffer, bindPoint, layout, firstSet, sets, dynamicOffsets);
+    internal void ForceWorldUiDescriptorSets(CommandBuffer commandBuffer, PipelineLayout layout, uint firstSet, ReadOnlySpan<DescriptorSet> sets, ReadOnlySpan<uint> dynamicOffsets)
+        => commands.BindDescriptorSetsTracked(commandBuffer, PipelineBindPoint.Graphics,
+            layout, firstSet, sets, dynamicOffsets, forceWorldUiNativeBind: true);
     internal void PushConstantsTracked<T>(CommandBuffer commandBuffer, PipelineLayout layout, ShaderStageFlags stages, uint offset, in T value) where T : unmanaged => commands.PushConstantsTracked(commandBuffer, layout, stages, offset, in value);
     internal bool TryPushDescriptorHeapProgramData(CommandBuffer commandBuffer, VkRenderProgram program, DescriptorHeapPushDataPayload? payload, out string reason)
     {

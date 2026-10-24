@@ -214,6 +214,7 @@ public partial class ProfilerPanel
         CaptureSpatialTree(rows);
         CaptureResourceChurn(rows);
         CaptureShadowAtlasSolve(rows);
+        CaptureVulkanFrameDiagnostics(rows);
     }
 
     private void CaptureResourceChurn(List<NativeProfilerDisplayRow> rows)

@@ -230,5 +230,16 @@
     <Compile Include="../Animation/CountingIKSolverComponent.cs" Link="Animation/CountingIKSolverComponent.cs" />
     <Compile Include="../Animation/VrBodyMeasurementTests.cs" Link="Animation/VrBodyMeasurementTests.cs" />
     <Compile Include="../Animation/VrCalibrationSessionStoreTests.cs" Link="Animation/VrCalibrationSessionStoreTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerOutputPage.cs" Link="Editor/NativeProfilerOutputPage.cs" />
+    <Compile Include="../Editor/NativeProfilerOutputPageTests.cs" Link="Editor/NativeProfilerOutputPageTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerVulkanTelemetryRows.cs" Link="Editor/NativeProfilerVulkanTelemetryRows.cs" />
+    <Compile Include="../Editor/NativeProfilerVulkanTelemetryRowsTests.cs" Link="Editor/NativeProfilerVulkanTelemetryRowsTests.cs" />
+    <Compile Include="../Rendering/FrameOutputManifestPageTests.cs" Link="Rendering/FrameOutputManifestPageTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorDropObjectIdentity.cs" Link="Editor/EditorDropObjectIdentity.cs" />
+    <Compile Include="../../XREngine.Editor/UI/InspectorPropertyDropBinding.cs" Link="Editor/InspectorPropertyDropBinding.cs" />
+    <Compile Include="../Editor/InspectorPlainDropTarget.cs" Link="Editor/InspectorPlainDropTarget.cs" />
+    <Compile Include="../Editor/InspectorPropertyDropBindingTests.cs" Link="Editor/InspectorPropertyDropBindingTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/AnimationKeyChannels.cs" Link="Editor/AnimationKeyChannels.cs" />
+    <Compile Include="../Editor/AnimationKeyChannelsTests.cs" Link="Editor/AnimationKeyChannelsTests.cs" />
   </ItemGroup>
 </Project>

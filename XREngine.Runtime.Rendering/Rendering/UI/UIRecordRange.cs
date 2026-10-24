@@ -6,21 +6,27 @@ namespace XREngine.Rendering.UI;
 /// <summary>Owns the exact record leaves that intersect one ordered range.</summary>
 internal sealed class UIRecordRange<T> where T : struct
 {
-    private readonly UIRecordStoreNode<T>[] _leaves;
+    private static readonly Action<UIRecordLeafClaim<T>> RetainLeaf =
+        static claim => claim.Leaf.Retain();
+    private static readonly Action<UIRecordLeafClaim<T>> ReleaseLeaf =
+        static claim => claim.Leaf.Release();
+    private readonly UIRecordStore<UIRecordLeafClaim<T>> _leafStore;
     private readonly int _firstPage;
     private readonly int _offset;
     private int _retired;
 
-    private UIRecordRange(UIRecordStoreNode<T>[] leaves, int firstPage, int offset, int length)
+    private UIRecordRange(UIRecordStore<UIRecordLeafClaim<T>> leafStore,
+        int firstPage, int offset, int length)
     {
-        _leaves = leaves;
+        _leafStore = leafStore;
         _firstPage = firstPage;
         _offset = offset;
         Length = length;
     }
 
     internal int Length { get; }
-    internal int PageCount => _leaves.Length;
+    internal int Offset => _offset;
+    internal int PageCount => _leafStore.Length;
     internal bool ResourcesRetired => Volatile.Read(ref _retired) != 0;
 
     internal static UIRecordRange<T> Create(UIRecordStore<T> store, int offset, int length)
@@ -31,28 +37,27 @@ internal sealed class UIRecordRange<T> where T : struct
         int firstPage = offset / UIRecordStore<T>.PageSize;
         int endPage = length == 0 ? firstPage :
             (offset + length - 1) / UIRecordStore<T>.PageSize + 1;
-        UIRecordStoreNode<T>[] leaves = new UIRecordStoreNode<T>[endPage - firstPage];
-        int retained = 0;
-        try
-        {
-            for (; retained < leaves.Length; retained++)
-            {
-                UIRecordStoreNode<T> leaf = store.GetLeaf(firstPage + retained);
-                leaf.Retain();
-                leaves[retained] = leaf;
-            }
-            return new UIRecordRange<T>(leaves, firstPage, offset, length);
-        }
-        catch (Exception failure)
-        {
-            List<Exception>? failures = null;
-            for (int index = 0; index < retained; index++)
-                try { leaves[index].Release(); }
-                catch (Exception cleanupFailure) { (failures ??= [failure]).Add(cleanupFailure); }
-            if (failures is not null)
-                throw new AggregateException("UI record range construction and cleanup failed.", failures);
-            throw;
-        }
+        UIRecordLeafClaim<T>[] leaves = new UIRecordLeafClaim<T>[endPage - firstPage];
+        for (int index = 0; index < leaves.Length; index++)
+            leaves[index] = new UIRecordLeafClaim<T>(store.GetLeaf(firstPage + index));
+        UIRecordStore<UIRecordLeafClaim<T>> leafStore =
+            UIRecordStore<UIRecordLeafClaim<T>>.Create(leaves, RetainLeaf, ReleaseLeaf);
+        return new UIRecordRange<T>(leafStore, firstPage, offset, length);
+    }
+
+    internal UIRecordRange<T> WithReplacedPage(int pageIndex, UIRecordStore<T> records)
+    {
+        ObjectDisposedException.ThrowIf(ResourcesRetired, this);
+        if ((uint)pageIndex >= (uint)PageCount ||
+            records.Length < _offset + Length)
+            throw new ArgumentOutOfRangeException(nameof(pageIndex));
+        int slotPage = pageIndex / UIRecordStore<UIRecordLeafClaim<T>>.PageSize;
+        UIRecordLeafClaim<T>[] slots = _leafStore.GetPage(slotPage).ToArray();
+        slots[pageIndex % UIRecordStore<UIRecordLeafClaim<T>>.PageSize] =
+            new UIRecordLeafClaim<T>(records.GetLeaf(_firstPage + pageIndex));
+        UIRecordStore<UIRecordLeafClaim<T>> leafStore =
+            _leafStore.WithReplacedPage(slotPage, slots);
+        return new UIRecordRange<T>(leafStore, _firstPage, _offset, Length);
     }
 
     internal T this[int index]
@@ -63,8 +68,8 @@ internal sealed class UIRecordRange<T> where T : struct
             if ((uint)index >= (uint)Length)
                 throw new IndexOutOfRangeException();
             int absolute = _offset + index;
-            return _leaves[absolute / UIRecordStore<T>.PageSize - _firstPage]
-                .Values![absolute % UIRecordStore<T>.PageSize];
+            return _leafStore[absolute / UIRecordStore<T>.PageSize - _firstPage]
+                .Leaf.Values![absolute % UIRecordStore<T>.PageSize];
         }
     }
 
@@ -77,7 +82,7 @@ internal sealed class UIRecordRange<T> where T : struct
         int start = Math.Max(_offset, absolutePage * UIRecordStore<T>.PageSize);
         int end = Math.Min(_offset + Length,
             (absolutePage + 1) * UIRecordStore<T>.PageSize);
-        return _leaves[pageIndex].Values!.AsSpan(
+        return _leafStore[pageIndex].Leaf.Values!.AsSpan(
             start - absolutePage * UIRecordStore<T>.PageSize, end - start);
     }
 
@@ -116,12 +121,5 @@ internal sealed class UIRecordRange<T> where T : struct
     }
 
     private void ReleaseLeaves()
-    {
-        List<Exception>? failures = null;
-        foreach (UIRecordStoreNode<T> leaf in _leaves)
-            try { leaf.Release(); }
-            catch (Exception failure) { (failures ??= []).Add(failure); }
-        if (failures is not null)
-            throw new AggregateException("UI record range cleanup failed.", failures);
-    }
+        => _leafStore.Release();
 }

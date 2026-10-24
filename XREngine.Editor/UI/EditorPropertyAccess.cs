@@ -63,14 +63,23 @@ internal sealed class EditorPropertyAccess
     /// <summary>Checks a retained caller's ownership before entering each new write.</summary>
     public void SetValue(object? value, Action validateWrite) => Write(value, null, validateWrite);
 
+    /// <summary>Assigns an exact reference with optional notification attribution for a retained drop.</summary>
+    public void SetReferenceValue(object? value, Action validateWrite,
+        IEditorScalarWriteObserver? observer = null)
+        => Write(value, null, validateWrite, observer, referenceEquality: true);
+
     /// <summary>Updates each target from its own value, preserving other mixed components.</summary>
     public void UpdateValue(Func<object?, object?> update) => Write(null, update);
 
-    private void Write(object? value, Func<object?, object?>? update, Action? validateWrite = null)
+    private void Write(object? value, Func<object?, object?>? update, Action? validateWrite = null,
+        IEditorScalarWriteObserver? observer = null, bool referenceEquality = false)
     {
         validateWrite?.Invoke();
         if (_access.Set is not { } setter)
             return;
+        if (referenceEquality && _targets.Any(target => target is IEditorListElementBinding or
+                IEditorLinkedElementBinding or IEditorDictionaryElementBinding))
+            throw new InvalidOperationException("A reference drop requires direct scalar property owners.");
         if (_targets.Any(target => target is IEditorListElementBinding))
         {
             if (!_targets.All(target => target is IEditorListElementBinding))
@@ -111,18 +120,26 @@ internal sealed class EditorPropertyAccess
                 object target = _targets[index];
                 object? oldValue = _access.Get(target);
                 object? next = ResolveNext(oldValue);
-                if (Equals(oldValue, next))
+                observer?.ValidateValue(target, oldValue);
+                if (referenceEquality ? ReferenceEquals(oldValue, next) : Equals(oldValue, next))
                     continue;
                 // A transformer writes the real source inside this same undo group.
                 if (target is XRBase tracked && target is not InspectorPropertyEditors.DataTransformerBase)
                     Undo.Track(tracked);
                 validateWrite?.Invoke();
-                setter(target, next);
+                observer?.EnterSetter(target, oldValue, next);
+                bool returned = false;
+                try
+                {
+                    setter(target, next);
+                    returned = true;
+                }
+                finally { observer?.ExitSetter(target, returned); }
                 if (target is not XRBase)
                 {
                     // Plain objects do not publish the engine events used by Undo.Track.
                     object? committedValue = _access.Get(target);
-                    if (!Equals(oldValue, committedValue))
+                    if (referenceEquality ? !ReferenceEquals(oldValue, committedValue) : !Equals(oldValue, committedValue))
                         Undo.RecordStructuralChange($"Set {_property.Name}",
                             () => RestoreValue(target, oldValue),
                             () => RestoreValue(target, committedValue));

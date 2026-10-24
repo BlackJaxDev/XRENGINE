@@ -17,7 +17,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 {
     private const int RowPageSize = 128;
     private const int MaxRetainedRowIds = 8192;
-    private const ulong LastCommandRowId = 58;
+    private const ulong LastCommandRowId = 59;
     private const ulong FirstDynamicRowId = 1024;
     private static readonly Vector4[] PlotPalette = [new(0.93f, 0.39f, 0.32f, 1),
         new(0.22f, 0.67f, 0.92f, 1), new(0.37f, 0.80f, 0.49f, 1), new(0.92f, 0.77f, 0.24f, 1)];
@@ -34,6 +34,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private Keyframe? _selectedKey;
     private UITextInputComponent? _timeInput;
     private UITextInputComponent? _valueInput;
+    private bool _refreshingValueInput;
+    private bool _valueInputRefreshPending;
     private UITextInputComponent? _searchInput;
     private SceneNode? _candidateRoot;
     private IReadOnlyList<EditorImGuiUI.AnimationClipPathCandidate> _candidates = [];
@@ -49,6 +51,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private bool _projectionDirty = true;
     private bool _sourceTopologyDirty = true;
     private ulong _sourceRevision;
+    private ulong _authoringEpoch;
     private ulong _buildingSourceRevision;
     private AnimationClip? _observedClip;
     private readonly Dictionary<AnimationMember,
@@ -87,6 +90,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private readonly float[,] _plotSamples = new float[4, UIRetainedPlot.MaximumSegments / 4 + 1];
     private bool _graphView = true;
     private bool _stretchLengthEdits;
+    private int _valueChannel = -1;
     private ulong _nextId = FirstDynamicRowId;
     private DateTime _lastRefresh;
     private bool _ownerSubscriptionsActive;
@@ -101,6 +105,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     protected override void OnComponentActivated()
     {
+        _authoringEpoch++;
         if (_destroying)
             return;
         base.OnComponentActivated();
@@ -115,12 +120,14 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     protected override void OnComponentDeactivated()
     {
+        _authoringEpoch++;
         ReleaseOwnerSubscriptions();
         base.OnComponentDeactivated();
     }
 
     protected override void OnDestroying()
     {
+        _authoringEpoch++;
         _destroying = true;
         UITextInputComponent? time = _timeInput;
         UITextInputComponent? value = _valueInput;
@@ -314,27 +321,47 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     private void SubmitValue(UITextInputComponent input)
     {
-        if (!TryGetCurrentKeyDraft(out AnimationClip? clip,
-                out _, out Keyframe? key) ||
-            !TryParseValue(input.Text, key!.ValueType, out object? value))
+        if (_valueInputRefreshPending || _refreshingValueInput)
         {
             RefreshValueInput();
             return;
         }
-        AnimationClipAuthoringActions.SetKeyValue(clip!, key, value!);
-        RefreshRows();
+        ulong epoch = _authoringEpoch;
+        ulong sourceRevision = _sourceRevision;
+        int channel = _valueChannel;
+        if (!TryGetCurrentKeyDraft(out AnimationClip? clip,
+                out AnimationMember? member, out Keyframe? key) ||
+            clip is null || member is null || key is null ||
+            !TryParseSelectedValue(input.Text, key!, KeyChannelPart.OutValue, out object? value) ||
+            !CanApplySelectedValue(epoch, sourceRevision, channel, input, clip!, member!, key!))
+        {
+            if (ReferenceEquals(_valueInput, input))
+                RefreshValueInput();
+            return;
+        }
+        AnimationClipAuthoringActions.SetKeyValue(clip, key, value!);
+        if (_authoringEpoch == epoch && !_destroying && IsActiveInHierarchy)
+            RefreshRows();
     }
 
     private bool TryGetCurrentKeyDraft(out AnimationClip? clip,
         out AnimationMember? member, out Keyframe? key)
     {
+        ulong epoch = _authoringEpoch;
+        ulong sourceRevision = _sourceRevision;
         clip = CurrentClip();
         member = _selectedMember;
         key = _selectedKey;
-        return clip is not null && ReferenceEquals(clip, _displayedClip) &&
+        return !_destroying && clip is not null &&
+            ReferenceEquals(clip, _displayedClip) &&
             member is not null && key is not null &&
             AnimationClipAuthoringActions.ContainsMember(clip, member) &&
-            MemberContainsKey(member, key);
+            MemberContainsKey(member, key) &&
+            _authoringEpoch == epoch && _sourceRevision == sourceRevision &&
+            ReferenceEquals(CurrentClip(), clip) &&
+            ReferenceEquals(_displayedClip, clip) &&
+            ReferenceEquals(_selectedMember, member) &&
+            ReferenceEquals(_selectedKey, key);
     }
 
     private static bool MemberContainsKey(AnimationMember member, Keyframe key)
@@ -349,8 +376,50 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     private void RefreshValueInput()
     {
-        if (_valueInput is not null)
-            _valueInput.Text = _selectedKey is null ? string.Empty : FormatKeyValue(_selectedKey);
+        if (_refreshingValueInput)
+        {
+            _valueInputRefreshPending = true;
+            return;
+        }
+        _refreshingValueInput = true;
+        try
+        {
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                _valueInputRefreshPending = false;
+                UITextInputComponent? input = _valueInput;
+                if (input is null || _destroying)
+                    return;
+                if (!IsActiveInHierarchy)
+                {
+                    _valueInputRefreshPending = true;
+                    return;
+                }
+                ulong epoch = _authoringEpoch;
+                ulong sourceRevision = _sourceRevision;
+                int channel = _valueChannel;
+                AnimationClip? clip = CurrentClip();
+                AnimationMember? member = _selectedMember;
+                Keyframe? key = _selectedKey;
+                string text = key is null ? string.Empty : FormatSelectedValue(key);
+                bool Current() => !_destroying && IsActiveInHierarchy &&
+                    _authoringEpoch == epoch && _sourceRevision == sourceRevision &&
+                    _valueChannel == channel && ReferenceEquals(_valueInput, input) &&
+                    ReferenceEquals(_selectedMember, member) &&
+                    ReferenceEquals(_selectedKey, key) && ReferenceEquals(CurrentClip(), clip);
+                if (Current())
+                    try { input.Text = text; }
+                    catch
+                    {
+                        _valueInputRefreshPending = true;
+                        throw;
+                    }
+                if (!_valueInputRefreshPending && Current() && input.Text == text)
+                    return;
+            }
+            _valueInputRefreshPending = true;
+        }
+        finally { _refreshingValueInput = false; }
     }
 
     private static bool TryParseValue(string text, Type type, out object? value)
@@ -395,6 +464,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     {
         if (_destroying)
             return;
+        if (_valueInputRefreshPending)
+            RefreshValueInput();
         DateTime now = DateTime.UtcNow;
         TimeSpan interval = SelectedMatchingComponent()?.IsPlaying == true ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(1);
         if (now - _lastRefresh < interval)
@@ -428,13 +499,16 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     protected override void OnRowActivated(ulong id)
     {
+        _authoringEpoch++;
         if (_destroying || !IsActiveInHierarchy ||
             !ReferenceEquals(CurrentClip(), _displayedClip))
             return;
         if (id is >= 8 and <= 21 or >= 24 and <= LastCommandRowId)
         {
+            ulong epoch = _authoringEpoch;
             ActivateCommand(id);
-            RefreshRows();
+            if (_authoringEpoch == epoch && !_destroying && IsActiveInHierarchy)
+                RefreshRows();
             return;
         }
         if (_memberRows.TryGetValue(id, out AnimationMember? member) &&
@@ -459,6 +533,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     protected override void RefreshRows()
     {
+        _authoringEpoch++;
         if (_destroying)
             return;
         if (_ids.Count >= MaxRetainedRowIds)
@@ -509,7 +584,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
         _rows.Add((1, "Clip: " + (clip.Name ?? "<unnamed>")));
         _rows.Add((2, $"Length: {clip.LengthInSeconds:F3} s | Sample rate: {clip.SampleRate} fps | Loop: {clip.Looped}"));
-        _rows.Add((6, "Toolbar fields: key time (seconds), then selected key value (comma-separated components). Press Enter to apply."));
+        _rows.Add((6, "Toolbar fields: key time (seconds), then selected value (all components or one channel). Press Enter to apply."));
         _rows.Add((8, "Add key to selected member"));
         _rows.Add((9, "Remove selected key"));
         _rows.Add((10, "Seek to start"));
@@ -580,6 +655,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         if (_selectedMember is { Animation: { } animation } selected)
         {
             AddSelectedMemberDetails(selected);
+            _rows.Add((59, $"Value field channel: {ChannelLabel(_selectedKey)} (click to cycle)"));
             _rows.Add((7, "Keys for " + (selected.MemberName ?? "<unnamed>")));
             _rows.Add((40, "Cycle incoming interpolation"));
             _rows.Add((41, "Cycle outgoing interpolation"));
@@ -924,6 +1000,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             case 48: EditSelectedKey(AnimationClipAuthoringActions.UnifyKey); break;
             case 57: EditSelectedKey(AnimationClipAuthoringActions.AutoKeyTangents); break;
             case 58: SetField(ref _stretchLengthEdits, !_stretchLengthEdits); break;
+            case 59: CycleValueChannel(); break;
             case >= 49 and <= 56: SetSelectedInterpolation(id); break;
         }
     }
@@ -977,11 +1054,18 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     private void SetSelectedTangent(bool outgoing)
     {
-        if (!TryGetCurrentKeyDraft(out AnimationClip? clip, out _,
-                out Keyframe? key) || _valueInput is not { } input ||
-            !TryParseValue(input.Text, key!.ValueType, out object? value))
+        ulong epoch = _authoringEpoch;
+        ulong sourceRevision = _sourceRevision;
+        int channel = _valueChannel;
+        if (!TryGetCurrentKeyDraft(out AnimationClip? clip, out AnimationMember? member,
+                out Keyframe? key) || clip is null || member is null || key is null ||
+            _valueInput is not { } input ||
+            !TryParseSelectedValue(input.Text, key!, outgoing ?
+                KeyChannelPart.OutTangent : KeyChannelPart.InTangent, out object? value) ||
+            !CanApplySelectedValue(epoch, sourceRevision, channel, input,
+                clip!, member, key!))
             return;
-        AnimationClipAuthoringActions.SetKeyTangent(clip!, key, outgoing,
+        AnimationClipAuthoringActions.SetKeyTangent(clip, key, outgoing,
             value!);
     }
 
@@ -997,11 +1081,17 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     private void SetSelectedIncomingValue()
     {
-        if (!TryGetCurrentKeyDraft(out AnimationClip? clip, out _,
-                out Keyframe? key) || _valueInput is not { } input ||
-            !TryParseValue(input.Text, key!.ValueType, out object? value))
+        ulong epoch = _authoringEpoch;
+        ulong sourceRevision = _sourceRevision;
+        int channel = _valueChannel;
+        if (!TryGetCurrentKeyDraft(out AnimationClip? clip, out AnimationMember? member,
+                out Keyframe? key) || clip is null || member is null || key is null ||
+            _valueInput is not { } input ||
+            !TryParseSelectedValue(input.Text, key!, KeyChannelPart.InValue, out object? value) ||
+            !CanApplySelectedValue(epoch, sourceRevision, channel, input,
+                clip!, member, key!))
             return;
-        AnimationClipAuthoringActions.SetKeyIncomingValue(clip!, key, value!);
+        AnimationClipAuthoringActions.SetKeyIncomingValue(clip, key, value!);
     }
 
     private void EditSelectedKey(Func<AnimationClip, Keyframe, bool> edit)

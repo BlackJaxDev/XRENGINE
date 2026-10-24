@@ -292,6 +292,72 @@ public sealed class UICanvasPublicationCaptureTests
     }
 
     [Test]
+    public void ThrowingObserversCannotHideCommittedHitAndTransformChanges()
+    {
+        UICanvasTransform transform = new() { Width = 100, Height = 100 };
+        SceneNode root = new("Publication invalidation after notification failure", transform);
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            root.AddComponent<UICanvasComponent>();
+            UIVirtualButtonComponent button = root.NewChild("Button")
+                .AddComponent<UIVirtualButtonComponent>()!;
+            long before = transform.ChangeJournal.Revision;
+            button.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(UIInteractableComponent.IsTabStop))
+                    throw new InvalidOperationException("Observer failed after commit.");
+            };
+            Should.Throw<InvalidOperationException>(() => button.IsTabStop = false);
+            button.IsTabStop.ShouldBeFalse();
+            transform.ChangeJournal.Revision.ShouldBeGreaterThan(before);
+
+            before = transform.ChangeJournal.Revision;
+            button.RenderInfo2D.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(button.RenderInfo2D.LayerIndex))
+                    throw new InvalidOperationException("Observer failed after commit.");
+            };
+            Should.Throw<InvalidOperationException>(() => button.RenderInfo2D.LayerIndex = 3);
+            button.RenderInfo2D.LayerIndex.ShouldBe(3);
+            transform.ChangeJournal.Revision.ShouldBeGreaterThan(before);
+
+            before = transform.ChangeJournal.Revision;
+            button.BoundableTransform.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(UITransform.Scale))
+                    throw new InvalidOperationException("Observer failed after commit.");
+            };
+            Matrix4x4 oldWorld = button.BoundableTransform.WorldMatrix;
+            Matrix4x4 oldInverse = button.BoundableTransform.InverseWorldMatrix;
+            Should.Throw<InvalidOperationException>(() =>
+                button.BoundableTransform.Scale = new Vector3(2));
+            button.BoundableTransform.Scale.ShouldBe(new Vector3(2));
+            button.BoundableTransform.IsLocalMatrixDirty.ShouldBeTrue();
+            button.BoundableTransform.IsWorldMatrixDirty.ShouldBeTrue();
+            transform.IsLayoutInvalidated.ShouldBeTrue();
+            transform.RecalculateMatrixHierarchyImmediate();
+            button.BoundableTransform.WorldMatrix.ShouldNotBe(oldWorld);
+            button.BoundableTransform.InverseWorldMatrix.ShouldNotBe(oldInverse);
+            transform.ChangeJournal.Revision.ShouldBeGreaterThan(before);
+
+            transform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => transform.PumpLayoutResults(), TimeSpan.FromSeconds(5))
+                .ShouldBeTrue();
+            transform.IsLayoutInvalidated.ShouldBeFalse();
+            button.BoundableTransform.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(UITransform.Visibility))
+                    throw new InvalidOperationException("Observer failed after commit.");
+            };
+            Should.Throw<InvalidOperationException>(() =>
+                button.BoundableTransform.Visibility = EVisibility.Hidden);
+            transform.IsLayoutInvalidated.ShouldBeTrue();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
     public void OpenTransactionCannotPublishItsPartialHitState()
     {
         UICanvasTransform transform = new() { Width = 100, Height = 100 };

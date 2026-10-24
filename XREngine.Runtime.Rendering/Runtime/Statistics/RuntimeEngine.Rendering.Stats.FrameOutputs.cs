@@ -31,6 +31,7 @@ namespace XREngine
                     private static FrameOutputEntrySnapshot[]? _lastOutputsSnapshot;
                     private static int _lastOutputCount;
                     private static FrameOutputManifestSnapshot _lastManifest = FrameOutputManifestSnapshot.Empty;
+                    private static long _lastManifestRevision;
                     private static ulong _wholeFrameId;
                     private static long _wholeFrameTicks;
                     private static int _wholeFrameHistoryHead;
@@ -61,11 +62,40 @@ namespace XREngine
                     private static int _forceFlushes;
 
                     public static FrameOutputManifestSnapshot LastManifest
+                        => GetLastManifest(out _);
+
+                    /// <summary>Gets one immutable full manifest and its publication revision.</summary>
+                    public static FrameOutputManifestSnapshot GetLastManifest(out long revision)
                     {
-                        get
+                        lock (Sync)
                         {
-                            lock (Sync)
-                                return _lastManifest with { Outputs = GetOrCreateLastOutputsSnapshotNoLock() };
+                            revision = _lastManifestRevision;
+                            return _lastManifest with { Outputs = GetOrCreateLastOutputsSnapshotNoLock() };
+                        }
+                    }
+
+                    /// <summary>
+                    /// Copies one page and its matching manifest from the same completed frame.
+                    /// The returned manifest has an empty Outputs array; the caller-owned span
+                    /// contains the selected page. Returns the total output count.
+                    /// </summary>
+                    public static int CopyLastManifestPage(Span<FrameOutputEntrySnapshot> destination,
+                        int requestedPageIndex, out FrameOutputManifestSnapshot manifest,
+                        out int actualPageIndex, out long revision)
+                    {
+                        if (destination.IsEmpty)
+                            throw new ArgumentException("A page destination must contain at least one row.", nameof(destination));
+                        lock (Sync)
+                        {
+                            int total = _lastOutputCount;
+                            int pageCount = total == 0 ? 0 : 1 + (total - 1) / destination.Length;
+                            actualPageIndex = Math.Clamp(requestedPageIndex, 0, Math.Max(0, pageCount - 1));
+                            int start = actualPageIndex * destination.Length;
+                            int copied = Math.Min(destination.Length, total - start);
+                            _lastOutputs.AsSpan(start, copied).CopyTo(destination);
+                            manifest = _lastManifest;
+                            revision = _lastManifestRevision;
+                            return total;
                         }
                     }
 
@@ -190,6 +220,7 @@ namespace XREngine
                                 workloadIdentityHash,
                                 work,
                                 []);
+                            _lastManifestRevision++;
 
                             foreach (OutputAccumulator output in CurrentOutputs.Values)
                                 OutputAccumulatorPool.Push(output);

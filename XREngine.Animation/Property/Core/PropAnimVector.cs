@@ -49,6 +49,11 @@ namespace XREngine.Animation
 
         private BakedValueStore<TValue>? _baked;
 
+        internal override object? ExactBakedStore => _baked;
+        internal override int ExactBakedStoreCount => _baked?.Count ?? 0;
+        internal override (bool Constrain, bool Lerp) ExactSamplingFlags =>
+            (ConstrainKeyframedFPS, LerpConstrainedFPS);
+
         internal TValue[] CapturePublishedBakedValues()
             => _baked?.CaptureValues() ?? [];
 

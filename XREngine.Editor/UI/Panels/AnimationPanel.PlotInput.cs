@@ -158,6 +158,7 @@ public partial class AnimationPanel
             return;
         _selectedMember = member;
         _selectedKey = key;
+        _authoringEpoch++;
         RefreshTimeInput();
         if (!CanCommitPlotSelection(snapshot, member, key, inputGeneration,
                 viewRevision, buildRevision, sourceRevision) ||

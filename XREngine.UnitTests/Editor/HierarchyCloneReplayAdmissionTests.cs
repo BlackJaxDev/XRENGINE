@@ -180,7 +180,7 @@ public sealed class HierarchyCloneReplayAdmissionTests
                 beforeTracking?.Invoke(clone);
                 HierarchyMutationOperation operation = new(HierarchyPlacement.Capture(clone, world),
                     HierarchyPlacement.Attached(clone, world, parent.Transform), preserveWorld: true,
-                    activeAfter: true, requireIdentity: custody.RequireIdentity);
+                    activeAfter: true, requireIdentity: custody.RequireOperationIdentity);
                 operation.SetPropertyReplayGuard(new HierarchyClonePropertyReplayGuard(custody, operation));
                 return operation;
             }, cloneCustody: custody);

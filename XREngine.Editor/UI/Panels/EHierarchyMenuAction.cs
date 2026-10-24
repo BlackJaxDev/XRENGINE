@@ -6,6 +6,10 @@ internal enum EHierarchyMenuAction
     AddChild,
     Focus,
     Delete,
+    Duplicate,
+    DeepDuplicate,
+    ConfirmDeepDuplicate,
+    CancelDuplicate,
     ToggleScene,
     UnloadScene
 }

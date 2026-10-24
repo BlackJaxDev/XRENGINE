@@ -167,22 +167,30 @@ public sealed class AnimationLengthEditTests
     }
 
     [Test]
-    public void AuthoredCadenceRejectsBeforeWrite()
+    public void AuthoredCadenceRemainsExactAcrossLengthEdit()
     {
         PropAnimFloat animation = new(48, 24.0f, false, true);
         Assert.That(AnimationLengthEdit.TryCapture(animation, animation.Keyframes, [], [],
-            4, false, out _, out _), Is.False);
-        Assert.That(animation.LengthInSeconds, Is.EqualTo(2));
+            4, false, out var edit, out string reason), Is.True, reason);
+        edit!.Commit(true);
+        Assert.That(animation.LengthInSeconds, Is.EqualTo(4));
         Assert.That(animation.AuthoredFrameCount, Is.EqualTo(48));
+        edit.Commit(false);
+        Assert.That(animation.LengthInSeconds, Is.EqualTo(2));
     }
 
     [Test]
-    public void BakedAnimationRejectsBeforeWrite()
+    public void BakedAnimationPreservesStoredSamplesDuringLengthEdit()
     {
         PropAnimFloat animation = new(2.0f, false, false);
         Assert.That(animation.IsBaked, Is.True);
+        object? store = animation.ExactBakedStore;
         Assert.That(AnimationLengthEdit.TryCapture(animation, animation.Keyframes, [], [],
-            4, false, out _, out _), Is.False);
+            4, false, out var edit, out string reason), Is.True, reason);
+        edit!.Commit(true);
+        Assert.That(animation.LengthInSeconds, Is.EqualTo(4));
+        Assert.That(animation.ExactBakedStore, Is.SameAs(store));
+        edit.Commit(false);
         Assert.That(animation.LengthInSeconds, Is.EqualTo(2));
     }
 

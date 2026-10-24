@@ -1,4 +1,5 @@
 using XREngine.Scene;
+using XREngine.Data.Core;
 
 namespace XREngine.Editor;
 
@@ -7,13 +8,16 @@ internal static class HierarchyCloneMutation
 {
     internal static HierarchyCloneCustody Execute(string description, SceneNode source, RuntimeWorld world,
         Func<SceneNode, HierarchyPlacement> destination, Action<SceneNode>? onApplied = null,
-        Func<bool>? ownerIsCurrent = null, HierarchyCloneCustodyStore? store = null)
+        Func<bool>? ownerIsCurrent = null, HierarchyCloneCustodyStore? store = null,
+        Action<SceneNode, ObjectConstructionContext, Action>? configure = null,
+        Action? requireSource = null, bool selectClone = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
         HierarchyCloneCustody custody = (store ?? HierarchyCloneCustodyStore.Shared).Reserve(world);
         try
         {
+            if (selectClone) custody.CaptureSelection();
             HierarchyCommandContext context = new(world, [source], ownerIsCurrent ?? (() => true));
             HierarchyMutation.Execute(description, () =>
             {
@@ -21,7 +25,7 @@ internal static class HierarchyCloneMutation
                 {
                     if (!context.CanStart())
                         throw new InvalidOperationException("The clone source changed before construction.");
-                    SceneNode clone = custody.Clone(source);
+                    SceneNode clone = custody.Clone(source, configure, requireSource);
                     custody.BeginInitialAdmission();
                     if (!context.CanStart())
                         throw new InvalidOperationException("The clone source changed during construction.");
@@ -36,7 +40,7 @@ internal static class HierarchyCloneMutation
                     HierarchyPlacement after = destination(clone);
                     custody.RequireIdentity();
                     HierarchyMutationOperation operation = new(before, after, preserveWorld: false, activeAfter: active,
-                        requireIdentity: custody.RequireIdentity);
+                        requireIdentity: custody.RequireOperationIdentity);
                     operation.SetPropertyReplayGuard(new HierarchyClonePropertyReplayGuard(custody, operation));
                     return operation;
                 }
@@ -45,7 +49,11 @@ internal static class HierarchyCloneMutation
                     custody.RetainFailure(failure);
                     throw;
                 }
-            }, () => onApplied?.Invoke(custody.Node!), context.IsOwnerCurrent, cloneCustody: custody);
+            }, () =>
+            {
+                custody.SelectApplied();
+                onApplied?.Invoke(custody.Node!);
+            }, context.IsOwnerCurrent, cloneCustody: custody);
             return custody;
         }
         finally { custody.CompleteCommand(); }

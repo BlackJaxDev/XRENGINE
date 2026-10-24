@@ -258,6 +258,89 @@ public sealed class NativeHierarchyMenuTests
     }
 
     [Test]
+    public void DeepDuplicateConfirmationRetainsItsContextAndQueuesOnlyOnce()
+    {
+        SceneNode source = new("Source");
+        using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", new XRScene("Scene", source)));
+        var (canvas, panel, input) = CreatePanel(world);
+        HierarchyCloneCustodyStore store = new();
+        panel.CloneCustodyStore = store;
+        Selection.SceneNodes = [source];
+        try
+        {
+            Open(panel, input, Field<UIInteractableComponent>(Row(panel, source), "Button"));
+            UIContextMenuComponent menu = Menu(panel)!;
+            HierarchyMenuSession session = Session(panel)!;
+            Item(menu, "Deep Duplicate...").Action!();
+            menu.Hide();
+            Assert.That(session.Owner, Is.SameAs(panel));
+            Tick(panel);
+            Assert.That(menu.IsOpen, Is.True);
+            Assert.That(session.ConfirmingDeepDuplicate, Is.True);
+            ContextMenuItem confirm = Item(menu, "Deep Duplicate");
+            Assert.That(confirm.Enabled, Is.True);
+            confirm.Action!();
+            confirm.Action!();
+            Assert.That(Edits.Count, Is.EqualTo(1));
+            menu.Hide();
+            RunQueuedEdit();
+            HierarchyCloneCustody custody = store.CaptureEntries().Single();
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Applied));
+            Assert.That(Selection.SceneNodes, Is.EqualTo(new[] { custody.Node }));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(Selection.SceneNodes, Is.EqualTo(new[] { source }));
+            Undo.ClearHistory();
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Released));
+        }
+        finally { canvas.Destroy(true); source.Destroy(true); }
+    }
+
+    [Test]
+    public void StaleConfirmationCannotAllocateAfterSourceLifetimeChanges()
+    {
+        SceneNode source = new("Source");
+        using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", new XRScene("Scene", source)));
+        var (canvas, panel, input) = CreatePanel(world);
+        HierarchyCloneCustodyStore store = new();
+        panel.CloneCustodyStore = store;
+        try
+        {
+            Open(panel, input, Field<UIInteractableComponent>(Row(panel, source), "Button"));
+            UIContextMenuComponent menu = Menu(panel)!;
+            Item(menu, "Deep Duplicate...").Action!();
+            menu.Hide();
+            Tick(panel);
+            ContextMenuItem confirm = Item(menu, "Deep Duplicate");
+            source.AdoptPersistentID(Guid.NewGuid());
+            confirm.Action!();
+            Assert.That(Edits.IsEmpty, Is.True);
+            Assert.That(store.CaptureEntries(), Is.Empty);
+        }
+        finally { canvas.Destroy(true); source.Destroy(true); }
+    }
+
+    [Test]
+    public void MultipleSelectedRootsDoNotSilentlyDuplicateOnlyTheClickedNode()
+    {
+        SceneNode first = new("First"), second = new("Second");
+        using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", new XRScene("Scene", first, second)));
+        var (canvas, panel, input) = CreatePanel(world);
+        panel.CloneCustodyStore = new();
+        Selection.SceneNodes = [first, second];
+        try
+        {
+            Open(panel, input, Field<UIInteractableComponent>(Row(panel, first), "Button"));
+            UIContextMenuComponent menu = Menu(panel)!;
+            Assert.That(Item(menu, "Duplicate").Enabled, Is.False);
+            Assert.That(Item(menu, "Deep Duplicate...").Enabled, Is.False);
+            Assert.That(Item(menu, "Duplicate one selected root at a time.").Enabled, Is.False);
+            Item(menu, "Duplicate").Action!();
+            Assert.That(Edits.IsEmpty, Is.True);
+        }
+        finally { canvas.Destroy(true); first.Destroy(true); second.Destroy(true); }
+    }
+
+    [Test]
     public void DirectDestroyReleasesPendingSessionAndItsCanvasMenuNode()
     {
         SceneNode source = new("Source");

@@ -66,16 +66,18 @@ public class AnimationClipAuthoringActionsTests
     }
 
     [Test]
-    public void LengthBatchRejectsUnsupportedCadenceBeforeClipWrite()
+    public void LengthBatchPreservesAuthoredCadence()
     {
         Undo.ClearHistory();
         try
         {
             PropAnimFloat animation = new(48, 24f, false, true);
             AnimationClip clip = new(new AnimationMember("Value", EAnimationMemberType.Property, animation)) { LengthInSeconds = 2 };
-            Assert.That(AnimationClipAuthoringActions.SetClipLength(clip, 4), Is.False);
+            Assert.That(AnimationClipAuthoringActions.SetClipLength(clip, 4), Is.True);
+            Assert.That((clip.LengthInSeconds, animation.LengthInSeconds), Is.EqualTo((4f, 4f)));
+            Assert.That((animation.AuthoredFrameCount, animation.AuthoredFramesPerSecond), Is.EqualTo((48, 24)));
+            Assert.That(Undo.TryUndo(), Is.True);
             Assert.That((clip.LengthInSeconds, animation.LengthInSeconds), Is.EqualTo((2f, 2f)));
-            Assert.That(Undo.CanUndo, Is.False);
         }
         finally { Undo.ClearHistory(); }
     }

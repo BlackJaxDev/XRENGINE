@@ -8,6 +8,9 @@ namespace XREngine.Animation
         
         private BakedValueStore<bool>? _baked = null;
 
+        internal override object? ExactBakedStore => _baked;
+        internal override int ExactBakedStoreCount => _baked?.Count ?? 0;
+
         internal bool[] CapturePublishedBakedValues() => _baked?.CaptureValues() ?? [];
 
         internal void RestorePublishedBakedValues(bool[] values, EAnimationValueCompressionAlgorithm encodedCompression)

@@ -64,14 +64,21 @@ internal unsafe partial class VkRenderProgram
                 continue;
             VulkanShaderArtifact artifact = shader.LastArtifact ??
                 throw new InvalidOperationException("A linked Vulkan shader has no compiled artifact.");
+            if (!shader.TryGetCurrentCompiledArtifact(
+                    out long compiledRevision, out _, out ulong moduleHandle,
+                    out string? artifactIdentity, out string? entryPoint) ||
+                !string.Equals(artifact.Identity, artifactIdentity,
+                    StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "A linked Vulkan shader has no current compiled module.");
             stages[stageCount++] = new VulkanProgramInterfaceStage(
                 slot,
                 shader.Data,
                 shader,
-                shader.Data.SourceRevision,
-                shader.ShaderStageCreateInfo.Module.Handle,
-                artifact.Identity,
-                artifact.EntryPoint);
+                compiledRevision,
+                moduleHandle,
+                artifactIdentity!,
+                entryPoint!);
         }
         if (stageCount != stages.Length)
             Array.Resize(ref stages, stageCount);
