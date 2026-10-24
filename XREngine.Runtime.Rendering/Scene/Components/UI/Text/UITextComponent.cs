@@ -256,6 +256,7 @@ namespace XREngine.Rendering.UI
 
         protected override void OnDestroying()
         {
+            RetireAcceptedLayoutObservers();
             UITextShapingBackendRegistry.Changed -= ShapingBackendChanged;
             System.Threading.Volatile.Write(ref _layoutFontObserverDisposed, 1);
             if (_observedLayoutFont is not null)
@@ -687,12 +688,15 @@ namespace XREngine.Rendering.UI
                 case nameof(FontSize):
                 case nameof(WrapMode):
                 case nameof(UseShapedText):
-                case nameof(ShapeLanguage):
-                case nameof(ShapeDirection):
-                case nameof(OpenTypeFeatures):
                 case nameof(HorizontalAlignment):
                 case nameof(VerticalAlignment):
                     UpdateText(false);
+                    break;
+                case nameof(ShapeLanguage):
+                case nameof(ShapeDirection):
+                case nameof(OpenTypeFeatures):
+                    if (UseShapedText)
+                        UpdateText(false);
                     break;
                 case nameof(RenderPass):
                     {

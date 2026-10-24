@@ -43,6 +43,7 @@ public partial class FontGlyphSet
     }
 
     private long _layoutMetricsRevision;
+    internal long LayoutMetricsRevision => Volatile.Read(ref _layoutMetricsRevision);
     private static long _globalLayoutMetricsGeneration;
     internal static long GlobalLayoutMetricsGeneration => Volatile.Read(ref _globalLayoutMetricsGeneration);
     private long _cachedLayoutMetricsRevision = -1;

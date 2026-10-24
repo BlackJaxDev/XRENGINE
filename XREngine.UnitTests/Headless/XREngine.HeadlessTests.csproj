@@ -95,6 +95,10 @@
     <Compile Include="../Rendering/UIVideoFakeMediaSession.cs" Link="Rendering/UIVideoFakeMediaSession.cs" />
     <Compile Include="../Rendering/UIVideoFakeGpuActions.cs" Link="Rendering/UIVideoFakeGpuActions.cs" />
     <Compile Include="../Rendering/UIVideoDeferredRenderHost.cs" Link="Rendering/UIVideoDeferredRenderHost.cs" />
+    <Compile Include="../Rendering/UITabKeyboardTests.cs" Link="Rendering/UITabKeyboardTests.cs" />
+    <Compile Include="../Rendering/UIPointerHoverGenerationTests.cs" Link="Rendering/UIPointerHoverGenerationTests.cs" />
+    <Compile Include="../Rendering/UIVirtualTableNavigationSource.cs" Link="Rendering/UIVirtualTableNavigationSource.cs" />
+    <Compile Include="../Rendering/UIVirtualTableNavigationTests.cs" Link="Rendering/UIVirtualTableNavigationTests.cs" />
     <Compile Include="../Rendering/UIInputAllocationTests.cs" Link="Rendering/UIInputAllocationTests.cs" />
     <Compile Include="../Rendering/FocusRegistrationProbe.cs" Link="Rendering/FocusRegistrationProbe.cs" />
     <Compile Include="../Rendering/UIPublicationReceiptStateTests.cs" Link="Rendering/UIPublicationReceiptStateTests.cs" />

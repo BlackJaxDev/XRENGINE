@@ -771,3 +771,67 @@ The current promotion path rejects first-time editor-scene allocation before
 mutation. Hidden-parent asset spawning uses a separate shared spawn path and is
 still unsupported. Duplicate/Deep Duplicate, context/scene menus, and broader
 hierarchy parity remain open; the guarded commands do not close those items.
+
+## Accepted text measurements and editor navigation
+
+`UITextComponent.AcceptedLayoutChanged` reports an immutable text result after
+`UILayoutCanvasSession` has applied and committed the canvas output. It does not
+report GPU presentation. Input still uses the window's presented publication.
+The owner visits changed output pages, checks the exact text identity and committed
+page, and invokes subscribers without an invocation-list allocation. An observer
+cannot reenter the layout pump. Each callback rechecks its source; cancellation
+or replacement stops delivery from the retired result. An unrelated size change
+does not invalidate another text component's committed measurement.
+
+`TryGetAcceptedLayoutResult` checks the cached page and current text inputs without
+capturing another layout input. Inspector string details subscribe to their exact
+text child, apply the accepted intrinsic height plus padding, and retire the
+subscription with the detail owner. Initial height is provisional. This removes
+the character-count estimate without adding per-frame measurement polling.
+The shaping face identity includes face bytes, face index, em size, and sorted
+immutable glyph metrics. Paragraph analysis and fallback-chain behavior remain
+outside the installed single-run shaping contract.
+
+Virtual table rows share the same exact lease admission as tree rows. Up, Down,
+Home, End, and vertical DPad navigation use indexed stable IDs. A request can
+realize a row, but selection changes only after that exact row is presented and
+receives the pending focus request. Focused child editors retain their arrow
+keys. Focused tabs route Ctrl+W through the shared close event and
+Ctrl+Shift+PageUp/PageDown through the shared reorder event. Reused slots use their
+current tab ID.
+
+## Hover callbacks and displayed pointer geometry
+
+Hit collection records the accepted input revision. Before hover dispatch, a
+new publication requires another query. Nested collection or dispatch cannot
+modify the active transition lists. The dispatcher records a target before its
+enter callback, so an exception or replacement generation cannot lose the
+partially entered target's cleanup. Recycled targets cannot reach direct hover
+or movement callbacks through an old record.
+
+Focus callbacks can replace the packet during `RefreshPresentedInput`. The
+outer read rechecks the packet, canvas, and output before resolving more focus
+or returning its acquired claim. A stale read releases only its own claim.
+Camera input resolves the current displayed hit and explicit blocker; it does
+not compare a displayed target with live bounds from a pending layout. An owned
+pointer drag also blocks camera input. `TopMostInteractable` remains the current
+interactable result; a decorative modal blocker can block without one.
+`TryGetPresentedPointerPosition` gives menu actions the same accepted canvas
+point and rejects a replaced target.
+
+Collection detail retirement invalidates the generation before unbinding rows.
+Dictionary, linked-list, and generic builders own one local branch. Stale or
+throwing source callbacks retire that branch through final cleanup. Retained
+value editors also check the captured detail generation and source collection
+before writes. This terminal admission does not replace their existing mutation
+transactions; full canonical Undo coverage remains open.
+
+Hierarchy context menus resolve auxiliary controls through the exact leased row.
+A request captures its panel, world, source, row lease, input owner, and scene or
+node before dismissal callbacks run. It rechecks those owners before opening and
+before a queued command runs. The popup belongs to the canvas and uses the
+accepted canvas point directly. Setup failure retires only the candidate node
+and its handlers; it cannot clear a newer session. Node actions cover rename,
+child creation, camera focus, and deletion. Scene actions use canonical visibility
+and unload commands. Duplicate workflows and owned clone failure recovery remain
+open; these menus do not enable a placeholder implementation.

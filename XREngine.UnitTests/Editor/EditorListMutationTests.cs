@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Reflection;
 using NUnit.Framework;
 using XREngine.Editor;
 using XREngine.Editor.UI;
@@ -207,10 +209,94 @@ public sealed class EditorListMutationTests
         target.Values = [3, 4];
         lifetime.Refresh!();
         Assert.That(probe.Deactivated, Is.True);
-        Assert.That(lifetime.Refresh, Is.Null);
+        Assert.That(lifetime.Refresh is null, Is.True);
         Assert.That(container.Transform.Children.Count, Is.EqualTo(oldChildCount));
         Assert.That(oldChild.IsActiveSelf, Is.False);
         sceneRoot.Destroy(true);
+    }
+
+    [TestCase(nameof(EditorCollectionGetterTarget.Dictionary))]
+    [TestCase(nameof(EditorCollectionGetterTarget.Linked))]
+    [TestCase(nameof(EditorCollectionGetterTarget.Generic))]
+    public void RetireDuringCollectionSourceProbeStopsBranchBuild(string propertyName)
+    {
+        EditorCollectionGetterTarget target = new();
+        var property = typeof(EditorCollectionGetterTarget).GetProperty(propertyName)!;
+        SceneNode detail = new("Collection detail");
+        detail.SetTransform<UIBoundableTransform>();
+        int getterCalls = 0;
+        target.OnGet = () =>
+        {
+            getterCalls++;
+            if (getterCalls == 2)
+                detail.Components.OfType<InspectorListDetailRefreshComponent>().Single().Retire();
+        };
+        Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(
+            property.PropertyType, out var create), Is.True);
+        create!(detail, property, [target]);
+        InspectorListDetailRefreshComponent lifetime = detail.Components
+            .OfType<InspectorListDetailRefreshComponent>().Single();
+        SceneNode container = detail.Transform.Children.Single().SceneNode!;
+        Assert.That(getterCalls, Is.EqualTo(2));
+        Assert.That(lifetime.Refresh is null, Is.True);
+        Assert.That(container.Transform.Children, Is.Empty);
+        detail.Destroy(true);
+    }
+
+    [TestCase(nameof(EditorCollectionGetterTarget.Dictionary))]
+    [TestCase(nameof(EditorCollectionGetterTarget.Linked))]
+    public void ThrowAfterRetirementLeavesNoPublishedCollectionBranch(string propertyName)
+    {
+        EditorCollectionGetterTarget target = new();
+        var property = typeof(EditorCollectionGetterTarget).GetProperty(propertyName)!;
+        SceneNode detail = new("Collection detail");
+        detail.SetTransform<UIBoundableTransform>();
+        int getterCalls = 0;
+        target.OnGet = () =>
+        {
+            getterCalls++;
+            if (getterCalls != 3) return;
+            detail.Components.OfType<InspectorListDetailRefreshComponent>().Single().Retire();
+            throw new InvalidOperationException("Injected post-branch getter failure.");
+        };
+        Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(
+            property.PropertyType, out var create), Is.True);
+        Assert.That(() => create!(detail, property, [target]), Throws.Exception);
+        SceneNode container = detail.Transform.Children.Single().SceneNode!;
+        Assert.That(getterCalls, Is.EqualTo(3));
+        Assert.That(container.Transform.Children.All(child => child.SceneNode?.IsActiveSelf == false), Is.True);
+        detail.Destroy(true);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void RetiredNonListElementEditorCannotWriteItsOldCollection(bool linked)
+    {
+        EditorCollectionMutationTarget target = new();
+        string propertyName = linked ? nameof(target.Linked) : nameof(target.Dictionary);
+        PropertyInfo property = typeof(EditorCollectionMutationTarget).GetProperty(propertyName)!;
+        SceneNode host = new("Retired collection host");
+        Type contextType = typeof(InspectorPropertyEditors.CollectionTypes)
+            .GetNestedType("CollectionEditorContext", BindingFlags.NonPublic)!;
+        object context = Activator.CreateInstance(contextType,
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
+            binder: null, args: [property, new object?[] { target }, property.PropertyType, host],
+            culture: null)!;
+        Type bindingType = typeof(InspectorPropertyEditors.CollectionTypes)
+            .GetNestedType(linked ? "LinkedListElementBinding`1" : "DictionaryValueBinding`2",
+                BindingFlags.NonPublic)!;
+        bindingType = linked ? bindingType.MakeGenericType(typeof(int)) :
+            bindingType.MakeGenericType(typeof(string), typeof(int));
+        object binding = Activator.CreateInstance(bindingType,
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
+            binder: null, args: linked
+                ? [property, target, 0, context, 0UL]
+                : [property, target, "one", context, 0UL],
+            culture: null)!;
+        contextType.GetMethod("Retire")!.Invoke(context, null);
+        bindingType.GetProperty("Value")!.SetValue(binding, 9);
+        Assert.That(linked ? target.Linked.First!.Value : target.Dictionary["one"], Is.EqualTo(1));
+        host.Destroy(true);
     }
 
     [Test]

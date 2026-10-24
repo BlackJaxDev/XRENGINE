@@ -31,10 +31,10 @@ public static partial class EditorImGuiUI
         => UnloadSceneFromWorld(scene, world);
 
     internal static void QueueNativeHierarchyCreateChild(SceneNode parent, RuntimeWorld world, Action<SceneNode>? onCreated,
-        Func<bool>? ownerIsCurrent = null)
+        Func<bool>? ownerIsCurrent = null, Func<bool>? admissionIsCurrent = null)
         => EnqueueSceneEdit(() =>
         {
-            if (!CanApplyNativeHierarchyEdit(parent, world, ownerIsCurrent))
+            if (admissionIsCurrent?.Invoke() == false || !CanApplyNativeHierarchyEdit(parent, world, ownerIsCurrent))
                 return;
             HierarchyNodeConstruction? construction = null;
             SceneNode? child = null;
@@ -51,10 +51,10 @@ public static partial class EditorImGuiUI
         });
 
     internal static void QueueNativeHierarchyDelete(SceneNode node, RuntimeWorld world,
-        Func<bool>? ownerIsCurrent = null)
+        Func<bool>? ownerIsCurrent = null, Func<bool>? admissionIsCurrent = null)
         => EnqueueSceneEdit(() =>
         {
-            if (!CanApplyNativeHierarchyEdit(node, world, ownerIsCurrent))
+            if (admissionIsCurrent?.Invoke() == false || !CanApplyNativeHierarchyEdit(node, world, ownerIsCurrent))
                 return;
             HierarchyMutation.Execute("Delete Node",
                 () => new(HierarchyPlacement.Capture(node, world), HierarchyPlacement.Detached(node, world),

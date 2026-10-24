@@ -463,6 +463,11 @@ namespace XREngine.Components
         private Vector2 _queriedCursorPosition;
         private UIInteractableComponent? _queriedCapture;
         private long _queriedCaptureRevision;
+        private ulong _inputPublicationRevision;
+        private ulong _collectedInputRevision;
+        private bool _intersectionSwapActive;
+        private bool _intersectionCollectActive;
+        private bool _intersectionDispatchActive;
         private readonly Dictionary<long, UIHitRecord> _inputRecords = [];
 
         private void MouseMove(float x, float y)
@@ -473,15 +478,28 @@ namespace XREngine.Components
 
         private void CollectVisible()
         {
-            if (_inputDeactivating || _inputTerminal)
+            if (_inputDeactivating || _inputTerminal || _intersectionDispatchActive || _intersectionCollectActive)
                 return;
+            _intersectionCollectActive = true;
+            try { CollectPresentedIntersections(); }
+            finally { _intersectionCollectActive = false; }
+        }
+
+        private void CollectPresentedIntersections()
+        {
             UIElementIntersections.Clear();
             UIPublication? publication = RefreshPresentedInput();
+            _collectedInputRevision = _inputPublicationRevision;
             if (publication is null)
                 return;
             try
             {
 
+            if (!ReferenceEquals(publication, _inputPublication))
+            {
+                _collectedInputRevision = ulong.MaxValue;
+                return;
+            }
             if (!publication.TryMapPointer(_cursorOutputPosition, out Vector2 canvasPosition, _pressedTarget is null))
             {
                 // The next swap clears the prior intersections. A later return to
@@ -524,11 +542,13 @@ namespace XREngine.Components
             UIPublication? publication = canvas is { IsActiveInHierarchy: true } && output is not null &&
                 canvas.TryAcquirePresentedPublication(output, out UIPublication? acquired)
                 ? acquired : null;
+            bool transferRead = false;
             try
             {
             bool outputChanged = !ReferenceEquals(canvas, _inputCanvas) || !ReferenceEquals(output, _inputOutput);
             if (outputChanged || !ReferenceEquals(publication, _inputPublication))
             {
+                _inputPublicationRevision++;
                 _inputCanvas = canvas;
                 _inputOutput = output;
                 if (outputChanged)
@@ -550,7 +570,12 @@ namespace XREngine.Components
                 if (!hitRecordsChanged)
                 {
                     SynchronizeFocusScope(publication);
+                    if (!IsCurrentInputRead(publication, canvas, output))
+                        return null;
                     ResolvePresentedVirtualFocus(publication);
+                    if (!IsCurrentInputRead(publication, canvas, output))
+                        return null;
+                    transferRead = true;
                     return publication;
                 }
                 _inputRecords.Clear();
@@ -564,15 +589,25 @@ namespace XREngine.Components
                         _inputRecords.Add(record.MembershipId, record);
                 SynchronizeFocusScope(publication);
             }
+            if (!IsCurrentInputRead(publication, canvas, output))
+                return null;
             ResolvePresentedVirtualFocus(publication);
+            if (!IsCurrentInputRead(publication, canvas, output))
+                return null;
+            transferRead = true;
             return publication;
             }
-            catch
+            finally
             {
-                publication?.Release();
-                throw;
+                if (!transferRead)
+                    publication?.Release();
             }
         }
+
+        private bool IsCurrentInputRead(UIPublication? publication, UICanvasComponent? canvas, object? output)
+            => !_inputDeactivating && !_inputTerminal && ReferenceEquals(publication, _inputPublication) &&
+                ReferenceEquals(canvas, GetCameraCanvas()) &&
+                ReferenceEquals(output, OwningPawn?.Viewport ?? (object?)canvas);
 
         private bool IsCurrentHitRecord(in UIHitRecord record)
             => record.RenderInfo.Owner is UIComponent component && component.IsActiveInHierarchy &&
@@ -624,11 +659,51 @@ namespace XREngine.Components
 
         private void SwapBuffers()
         {
-            if (_inputDeactivating || _inputTerminal)
+            if (_inputDeactivating || _inputTerminal || _intersectionSwapActive || _intersectionCollectActive)
                 return;
-            using IDisposable? sample = RuntimeRenderingHostServices.Current.StartProfileScope("UICanvasInputComponent.SwapBuffers");
+            _intersectionSwapActive = true;
+            try
+            {
+                using IDisposable? sample = RuntimeRenderingHostServices.Current.StartProfileScope("UICanvasInputComponent.SwapBuffers");
+                UIPublication? current = RefreshPresentedInput();
+                current?.Release();
+                if (_collectedInputRevision != _inputPublicationRevision)
+                    CollectVisible();
+                if (_collectedInputRevision != _inputPublicationRevision || _inputDeactivating || _inputTerminal)
+                    return;
+                _intersectionDispatchActive = true;
+                DispatchIntersections();
+            }
+            catch
+            {
+                TopMostElement = null;
+                TopMostInteractable = null;
+                _queriedCanvasLifetime = 0;
+                throw;
+            }
+            finally
+            {
+                _intersectionDispatchActive = false;
+                _intersectionSwapActive = false;
+            }
+        }
 
+        private void RemoveInvalidIntersections()
+        {
+            int retained = 0;
+            for (int index = 0; index < UIElementIntersections.Count; index++)
+            {
+                RenderInfo2D item = UIElementIntersections[index];
+                if (_inputRecords.TryGetValue(item.MembershipId, out UIHitRecord record) && IsCurrentHitRecord(record))
+                    UIElementIntersections[retained++] = item;
+            }
+            UIElementIntersections.RemoveRange(retained, UIElementIntersections.Count - retained);
+        }
+
+        private void DispatchIntersections()
+        {
             // If any intersected element has BlocksInputBehind, remove items not in its subtree.
+            RemoveInvalidIntersections();
             FilterBlockedInput();
 
             TopMostElement = null;
@@ -670,7 +745,13 @@ namespace XREngine.Components
                 }
             }
 
-            ValidateAndSwapIntersections();
+            if (!ValidateAndSwapIntersections())
+            {
+                TopMostElement = null;
+                TopMostInteractable = null;
+                _queriedCanvasLifetime = 0;
+                return;
+            }
             if (_pressedTarget is { } captured)
             {
                 if (!HasCurrentPointerPressOwner())
@@ -717,31 +798,50 @@ namespace XREngine.Components
 
         private long _inputLifecycleRevision;
 
-        private void ValidateAndSwapIntersections()
+        private bool ValidateAndSwapIntersections()
         {
+            _currentIntersectionIdentities.Clear();
             foreach (RenderInfo2D item in UIElementIntersections)
                 _currentIntersectionIdentities.Add(item);
             long lifecycle = _inputLifecycleRevision;
-            for (int index = 0; index < LastUIElementIntersections.Count; index++)
+            ulong publicationRevision = _inputPublicationRevision;
+            int priorCount = LastUIElementIntersections.Count;
+            for (int index = 0; index < priorCount; index++)
             {
-                ValidateIntersection(LastUIElementIntersections[index]);
-                if (_inputLifecycleRevision != lifecycle)
-                    return;
+                RenderInfo2D item = LastUIElementIntersections[index];
+                if (!ValidateIntersection(item, true, _currentIntersectionIdentities.Contains(item),
+                    lifecycle, publicationRevision))
+                    return false;
             }
             for (int index = 0; index < UIElementIntersections.Count; index++)
             {
                 RenderInfo2D item = UIElementIntersections[index];
-                if (!_lastIntersectionIdentities.Contains(item))
-                    ValidateIntersection(item);
-                if (_inputLifecycleRevision != lifecycle)
-                    return;
+                if (!_lastIntersectionIdentities.Add(item))
+                    continue;
+                // Record the callback owner before dispatch. A retired generation
+                // can then clear every partially entered target on the next query.
+                LastUIElementIntersections.Add(item);
+                if (!ValidateIntersection(item, false, true, lifecycle, publicationRevision))
+                    return false;
             }
-
-            (LastUIElementIntersections, UIElementIntersections) = (UIElementIntersections, LastUIElementIntersections);
-            (_lastIntersectionIdentities, _currentIntersectionIdentities) = (_currentIntersectionIdentities, _lastIntersectionIdentities);
+            int retained = 0;
+            for (int index = 0; index < LastUIElementIntersections.Count; index++)
+            {
+                RenderInfo2D item = LastUIElementIntersections[index];
+                if (_currentIntersectionIdentities.Contains(item))
+                    LastUIElementIntersections[retained++] = item;
+                else
+                    _lastIntersectionIdentities.Remove(item);
+            }
+            LastUIElementIntersections.RemoveRange(retained, LastUIElementIntersections.Count - retained);
             UIElementIntersections.Clear();
             _currentIntersectionIdentities.Clear();
+            return true;
         }
+
+        private bool IsCurrentIntersectionDispatch(long lifecycle, ulong publicationRevision)
+            => !_inputDeactivating && !_inputTerminal && _inputLifecycleRevision == lifecycle &&
+                _inputPublicationRevision == publicationRevision;
 
         private void OnGamepadInteractButtonDown()
         {
@@ -1190,55 +1290,40 @@ namespace XREngine.Components
         private HashSet<RenderInfo2D> _lastIntersectionIdentities = new(ReferenceEqualityComparer.Instance);
         private HashSet<RenderInfo2D> _currentIntersectionIdentities = new(ReferenceEqualityComparer.Instance);
 
-        private void ValidateIntersection(RenderInfo2D item)
+        private bool ValidateIntersection(RenderInfo2D item, bool wasIntersecting,
+            bool isIntersecting, long lifecycle, ulong publicationRevision)
         {
             if (item.Owner is not UIInteractableComponent inter)
-                return;
-
-            // Membership uses immutable reference identity. Painter order is only a list order.
-            bool wasIntersecting = _lastIntersectionIdentities.Contains(item);
-            bool isIntersecting = _currentIntersectionIdentities.Contains(item);
-
-            if (wasIntersecting)
+                return IsCurrentIntersectionDispatch(lifecycle, publicationRevision);
+            bool eligible = isIntersecting && IsPointerTargetEligible(inter);
+            if (!IsCurrentIntersectionDispatch(lifecycle, publicationRevision))
+                return false;
+            inter.IsMouseOver = eligible;
+            if (!IsCurrentIntersectionDispatch(lifecycle, publicationRevision))
+                return false;
+            // An enter callback may recycle or deactivate the target without
+            // changing the presented packet. Revalidate before the next callback.
+            eligible = eligible && IsPointerTargetEligible(inter);
+            if (!IsCurrentIntersectionDispatch(lifecycle, publicationRevision))
+                return false;
+            inter.IsMouseDirectlyOver = eligible && inter == TopMostInteractable;
+            if (!IsCurrentIntersectionDispatch(lifecycle, publicationRevision))
+                return false;
+            if (wasIntersecting && eligible && inter.NeedsMouseMove && IsPointerTargetEligible(inter))
             {
-                //Mouse was over this renderable last update
-                if (!isIntersecting)
-                {
-                    //Lost mouse over
-                    inter.IsMouseOver = false;
-                    inter.IsMouseDirectlyOver = false;
-                }
+                if (!IsCurrentIntersectionDispatch(lifecycle, publicationRevision))
+                    return false;
+                if (ReferenceEquals(inter, _pressedTarget))
+                    DispatchCapturedPointerMove(inter);
                 else
                 {
-                    //Had mouse over and still does now — re-evaluate direct-over in case TopMost changed
-                    bool shouldBeDirectlyOver = inter == TopMostInteractable && IsPointerTargetEligible(inter);
-                    if (inter.IsMouseDirectlyOver != shouldBeDirectlyOver)
-                        inter.IsMouseDirectlyOver = shouldBeDirectlyOver;
-
-                    if (inter.NeedsMouseMove && IsPointerTargetEligible(inter))
-                        if (ReferenceEquals(inter, _pressedTarget))
-                            DispatchCapturedPointerMove(inter);
-                        else
-                        {
-                            UIPointerGeometry geometry = PresentedGeometry(inter);
-                            inter.MouseMoved(
-                                PresentedLocal(inter, LastCursorPositionWorld2D),
-                                PresentedLocal(inter, CursorPositionWorld2D), in geometry);
-                        }
+                    UIPointerGeometry geometry = PresentedGeometry(inter);
+                    inter.MouseMoved(
+                        PresentedLocal(inter, LastCursorPositionWorld2D),
+                        PresentedLocal(inter, CursorPositionWorld2D), in geometry);
                 }
             }
-            else if (isIntersecting) //Mouse was not over this renderable last update
-            {
-                //Got mouse over
-                inter.IsMouseOver = true;
-                inter.IsMouseDirectlyOver = inter == TopMostInteractable && IsPointerTargetEligible(inter);
-            }
-            else
-            {
-                //Not over this renderable
-                inter.IsMouseOver = false;
-                inter.IsMouseDirectlyOver = false;
-            }
+            return IsCurrentIntersectionDispatch(lifecycle, publicationRevision);
         }
 
     }

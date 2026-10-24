@@ -70,4 +70,78 @@ public partial class UICanvasInputComponent
         }
         finally { publication.Release(); }
     }
+    /// <summary>Checks camera blocking against displayed geometry, including an owned pointer drag.</summary>
+    public bool IsPointerBlockingCamera()
+    {
+        if (!IsActiveInHierarchy || _inputDeactivating || _inputTerminal)
+            return false;
+        if (_pressedTarget is not null && HasCurrentPointerPressOwner())
+            return true;
+        if (RefreshPresentedInput() is not { } publication)
+            return false;
+        try
+        {
+            TopMostInteractable = null;
+            if (!IsActiveInHierarchy || _inputDeactivating || _inputTerminal ||
+                !ReferenceEquals(publication, _inputPublication))
+                return false;
+            Vector2 outputPosition = GetOwningInput() is LocalInputInterface { Mouse: { } mouse }
+                ? mouse.CursorPosition : _cursorOutputPosition;
+            if (!publication.TryMapPointer(outputPosition, out Vector2 position))
+                return false;
+            UIHitRecord? best = FindPresentedPointerHit(publication, position, out bool blocked);
+            TopMostInteractable = best?.RenderInfo.Owner as UIInteractableComponent;
+            return TopMostInteractable is not null || blocked;
+        }
+        finally { publication.Release(); }
+    }
+
+    /// <summary>Samples one displayed hit and mapping for a queued menu or editor action.</summary>
+    public bool TryGetPresentedPointerPosition(UIInteractableComponent target, out Vector2 canvasPosition)
+    {
+        canvasPosition = default;
+        if (!IsActiveInHierarchy || _inputDeactivating || _inputTerminal ||
+            RefreshPresentedInput() is not { } publication)
+            return false;
+        try
+        {
+            if (!IsActiveInHierarchy || _inputDeactivating || _inputTerminal ||
+                !ReferenceEquals(publication, _inputPublication))
+                return false;
+            Vector2 outputPosition = GetOwningInput() is LocalInputInterface { Mouse: { } mouse }
+                ? mouse.CursorPosition : _cursorOutputPosition;
+            if (!publication.TryMapPointer(outputPosition, out Vector2 position) ||
+                !publication.CanvasBounds.Contains(position))
+                return false;
+            UIHitRecord? selected = FindPresentedPointerHit(publication, position, out _);
+            if (selected is not { } hit || !ReferenceEquals(hit.RenderInfo.Owner, target))
+                return false;
+            canvasPosition = position;
+            return true;
+        }
+        finally { publication.Release(); }
+    }
+
+    private UIHitRecord? FindPresentedPointerHit(UIPublication publication, Vector2 position, out bool blocked)
+    {
+        UIHitRecord? blocker = null;
+        foreach (ref readonly UIHitRecord record in publication.Hits)
+            if (record.BlocksInputBehind && IsCurrentHitRecord(record) && record.Contains(position) &&
+                (blocker is not { } prior || IsBetterInputCandidate(record.Depth,
+                    record.LayerIndex, record.IndexWithinLayer, prior.Depth, prior.LayerIndex, prior.IndexWithinLayer)))
+                blocker = record;
+        UIHitRecord? best = null;
+        foreach (ref readonly UIHitRecord record in publication.Hits)
+        {
+            if (!record.IsInteractable || !IsCurrentHitRecord(record) || !record.Contains(position) ||
+                blocker is { } front && !record.IsInSubtreeOf(front))
+                continue;
+            if (best is not { } prior || IsBetterInputCandidate(record.Depth,
+                record.LayerIndex, record.IndexWithinLayer, prior.Depth, prior.LayerIndex, prior.IndexWithinLayer))
+                best = record;
+        }
+        blocked = blocker is not null;
+        return best;
+    }
+
 }

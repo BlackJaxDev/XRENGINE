@@ -29,6 +29,227 @@ public sealed class UITextValueLayoutTests
         };
 
     [Test]
+    public void ShapedInputReusesExactSettingsAndInvalidatesLanguageFeaturesSizeAndDpi()
+    {
+        FontGlyphSet font = CreateFont();
+        UIRuneMetrics metric = new(Vector2.Zero, new(8, 8), 9, new(0, 0, 8, 8));
+        font.InstallRuntimeShapingFace(new UIFontFaceSnapshot([1], 0, 8,
+            new Dictionary<uint, UIRuneMetrics> { [51] = metric }));
+        XREngine.Scene.SceneNode root = new("Shaping key", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        XREngine.Scene.SceneNode child = new(root) { Name = "Label" };
+        child.SetTransform<UIBoundableTransform>();
+        IUITextShapingBackend? original = UITextShapingBackendRegistry.Current;
+        try
+        {
+            UITextShapingBackendRegistry.Current = new UITextMutatingShapingBackend(_ => { });
+            UITextComponent text = child.AddComponent<UITextComponent>()!;
+            text.Font = font;
+            text.FontSize = 8;
+            text.Text = "A";
+            text.UseShapedText = true;
+            UITextLayoutInput first = text.CaptureLayoutInput().ShouldNotBeNull();
+            text.CaptureLayoutInput().ShouldBeSameAs(first);
+
+            text.ShapeLanguage = "fr-FR";
+            UITextLayoutInput language = text.CaptureLayoutInput().ShouldNotBeNull();
+            language.ShouldNotBeSameAs(first);
+            language.ShapingRequest!.Language.ShouldBe("fr-FR");
+            text.OpenTypeFeatures = "liga=0";
+            UITextLayoutInput features = text.CaptureLayoutInput().ShouldNotBeNull();
+            features.ShouldNotBeSameAs(language);
+            features.ShapingRequest!.Features.ShouldContain("liga=0");
+            text.FontSize = 10;
+            UITextLayoutInput size = text.CaptureLayoutInput().ShouldNotBeNull();
+            size.ShouldNotBeSameAs(features);
+            ((UICanvasTransform)root.Transform).DpiScale = 2;
+            UITextLayoutInput dpi = text.CaptureLayoutInput().ShouldNotBeNull();
+            dpi.ShouldNotBeSameAs(size);
+            dpi.DpiScale.ShouldBe(2);
+            text.CaptureLayoutInput().ShouldBeSameAs(dpi);
+            text.Text = ".";
+            UITextLayoutInput neutral = text.CaptureLayoutInput().ShouldNotBeNull();
+            text.ShapeDirection = UITextDirection.RightToLeft;
+            UITextLayoutInput direction = text.CaptureLayoutInput().ShouldNotBeNull();
+            direction.ShouldNotBeSameAs(neutral);
+            direction.ShapingRequest!.Direction.ShouldBe(UITextDirection.RightToLeft);
+        }
+        finally
+        {
+            UITextShapingBackendRegistry.Current = original;
+            root.Destroy(true);
+            font.Atlas?.Destroy(true);
+            font.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void AcceptedLayoutNotificationWaitsForCommitAndRejectsStaleResults()
+    {
+        FontGlyphSet font = CreateFont();
+        XREngine.Scene.SceneNode root = new("Accepted text", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        UICanvasTransform canvas = (UICanvasTransform)root.Transform;
+        canvas.Width = 100;
+        canvas.Height = 40;
+        XREngine.Scene.SceneNode child = new(root) { Name = "Label" };
+        UIBoundableTransform bounds = child.SetTransform<UIBoundableTransform>();
+        bounds.Width = 80;
+        bounds.Height = 20;
+        bounds.MaxAnchor = Vector2.Zero;
+        try
+        {
+            UITextComponent text = child.AddComponent<UITextComponent>()!;
+            text.Font = font;
+            text.FontSize = 8;
+            text.Text = "A";
+            int notifications = 0;
+            UITextLayoutResult? seen = null;
+            text.AcceptedLayoutChanged += (_, result, _) =>
+            {
+                notifications++;
+                seen = result;
+            };
+            text.TryGetAcceptedLayoutResult(out _, out _).ShouldBeFalse();
+
+            canvas.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            notifications.ShouldBe(1);
+            text.TryGetAcceptedLayoutResult(out UITextLayoutResult current, out Vector2 actualSize)
+                .ShouldBeTrue();
+            current.ShouldBeSameAs(seen);
+            text.NotifyAcceptedLayout(current, actualSize);
+            notifications.ShouldBe(1);
+            text.OpenTypeFeatures = "liga=0";
+            text.TryGetAcceptedLayoutResult(out UITextLayoutResult unshaped, out _).ShouldBeTrue();
+            unshaped.ShouldBeSameAs(current);
+
+            bool rejected = false;
+            canvas.LayoutingFinished += InvalidateBeforeCommit;
+            text.Text = "AA";
+            bounds.InvalidateMeasure();
+            canvas.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() =>
+            {
+                canvas.PumpLayoutResults();
+                return rejected;
+            }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            canvas.LayoutingFinished -= InvalidateBeforeCommit;
+            notifications.ShouldBe(1);
+            text.TryGetAcceptedLayoutResult(out _, out _).ShouldBeFalse();
+
+            SpinWait.SpinUntil(() =>
+            {
+                canvas.UpdateLayoutAsync();
+                return canvas.PumpLayoutResults();
+            }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            notifications.ShouldBe(2);
+            text.TryGetAcceptedLayoutResult(out UITextLayoutResult latest, out Vector2 latestSize).ShouldBeTrue();
+            latest.ShouldNotBeSameAs(current);
+
+            bool canceled = false;
+            int lateNotifications = 0;
+            text.AcceptedLayoutChanged += (_, _, _) =>
+            {
+                canceled = true;
+                canvas.CancelLayoutJob();
+            };
+            text.AcceptedLayoutChanged += (_, _, _) => lateNotifications++;
+            text.Text = "AAAA";
+            bounds.InvalidateMeasure();
+            canvas.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() =>
+            {
+                canvas.PumpLayoutResults();
+                return canceled;
+            }, TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            lateNotifications.ShouldBe(0);
+            text.TryGetAcceptedLayoutResult(out _, out _).ShouldBeFalse();
+
+            child.Destroy(true);
+            text.NotifyAcceptedLayout(latest, latestSize);
+            notifications.ShouldBe(3);
+            text.TryGetAcceptedLayoutResult(out _, out _).ShouldBeFalse();
+
+            void InvalidateBeforeCommit(UICanvasTransform _)
+            {
+                if (rejected)
+                    return;
+                rejected = true;
+                text.Text = "AAA";
+                bounds.InvalidateMeasure();
+            }
+        }
+        finally
+        {
+            root.Destroy(true);
+            font.Atlas?.Destroy(true);
+            font.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void OneAcceptedTextListenerCanInvalidateCanvasWithoutStarvingAnother()
+    {
+        FontGlyphSet font = CreateFont();
+        XREngine.Scene.SceneNode root = new("Two accepted labels", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        UICanvasTransform canvas = (UICanvasTransform)root.Transform;
+        canvas.Width = 100;
+        canvas.Height = 40;
+        try
+        {
+            XREngine.Scene.SceneNode firstNode = new(root) { Name = "First" };
+            UIBoundableTransform firstBounds = firstNode.SetTransform<UIBoundableTransform>();
+            firstBounds.Width = 80;
+            firstBounds.Height = 20;
+            firstBounds.MaxAnchor = Vector2.Zero;
+            UITextComponent first = firstNode.AddComponent<UITextComponent>()!;
+            first.Font = font;
+            first.FontSize = 8;
+            first.Text = "A";
+
+            XREngine.Scene.SceneNode secondNode = new(root) { Name = "Second" };
+            UIBoundableTransform secondBounds = secondNode.SetTransform<UIBoundableTransform>();
+            secondBounds.Width = 80;
+            secondBounds.Height = 20;
+            secondBounds.MaxAnchor = Vector2.Zero;
+            UITextComponent second = secondNode.AddComponent<UITextComponent>()!;
+            second.Font = font;
+            second.FontSize = 8;
+            second.Text = "A";
+
+            int secondNotifications = 0;
+            first.AcceptedLayoutChanged += (_, _, _) => firstBounds.Height = 21;
+            second.AcceptedLayoutChanged += (sender, result, size) =>
+            {
+                canvas.IsLayoutInvalidated.ShouldBeTrue();
+                sender.TryGetAcceptedLayoutResult(out UITextLayoutResult current, out Vector2 actual)
+                    .ShouldBeTrue();
+                current.ShouldBeSameAs(result);
+                actual.ShouldBe(size);
+                secondNotifications++;
+            };
+
+            canvas.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => canvas.PumpLayoutResults(), TimeSpan.FromSeconds(5)).ShouldBeTrue();
+            secondNotifications.ShouldBe(1);
+        }
+        finally
+        {
+            root.Destroy(true);
+            font.Atlas?.Destroy(true);
+            font.Destroy(true);
+        }
+    }
+
+    [Test]
     public void ShapingRunsOnlyAfterOwnerCaptureAndBackendReplacementInvalidatesInput()
     {
         FontGlyphSet font = CreateFont();

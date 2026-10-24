@@ -24,6 +24,13 @@ public interface IUICanvasInputSource
     bool IsDispatchingVirtualItemFocus(UIListTransform list, ulong itemId, UIInteractableComponent target)
         => false;
 
+    /// <summary>Samples a current displayed target in canvas coordinates.</summary>
+    bool TryGetPresentedPointerPosition(UIInteractableComponent target, out Vector2 canvasPosition)
+    {
+        canvasPosition = default;
+        return false;
+    }
+
     event Action<UIInteractableComponent?>? LeftClickDown;
     event Action<UIInteractableComponent>? RightClick;
     event Action? EscapePressed;

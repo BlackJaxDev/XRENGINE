@@ -20,16 +20,12 @@ namespace XREngine.Editor;
 
 public partial class HierarchyPanel
 {
-    private sealed class HierarchyMenuActions(HierarchyPanel owner)
-    {
-        public HierarchyPanel? Owner = owner;
-        public void Rename() { if (Owner is { } current) current.BeginRename(current._contextMenuTargetNode); }
-        public void AddChild() { if (Owner is { } current) current.CreateChildSceneNode(current._contextMenuTargetNode); }
-        public void Focus() { if (Owner is { } current) current.TryFocusCameraOnNode(current._contextMenuTargetNode); }
-        public void Delete() { if (Owner is { } current) current.DeleteNode(current._contextMenuTargetNode); }
-    }
-
-    private HierarchyMenuActions? _contextMenuActions;
+    private HierarchyMenuSession? _contextMenuSession;
+    private Action? _contextMenuDismissed;
+    private SceneNode? _contextMenuNode;
+    private ulong _contextMenuRequest;
+    private bool _showingHierarchyMenu;
+    private bool _creatingHierarchyMenu;
 
     private void SubscribeRightClick()
     {
@@ -75,76 +71,300 @@ public partial class HierarchyPanel
     {
         UIContextMenuComponent? menu = _contextMenu;
         _contextMenu = null;
-        if (_contextMenuActions is { } actions)
-            actions.Owner = null;
-        _contextMenuActions = null;
-        _contextMenuTargetNode = null;
-        if (menu is null)
-            return;
-        UIBoundableTransform? transform = menu.Transform as UIBoundableTransform;
+        SceneNode? menuNode = _contextMenuNode;
+        _contextMenuNode = null;
+        _contextMenuRequest++;
+        _contextMenuSession?.Release();
+        _contextMenuSession = null;
+        Action? dismissed = _contextMenuDismissed;
+        _contextMenuDismissed = null;
+        if (menu is not null && dismissed is not null)
+            menu.Dismissed -= dismissed;
         Exception? failure = null;
-        // Component destruction keeps the child transforms in place during scene transfer.
-        AttemptHierarchyRelease(() => menu.Destroy(true), ref failure);
-        if (transform is not null)
-            AttemptHierarchyRelease(() => transform.Visibility = EVisibility.Collapsed, ref failure);
+        RetireHierarchyMenu(menu, menuNode, ref failure);
         ThrowHierarchyFailure(failure);
+    }
+
+    private static void RetireHierarchyMenu(UIContextMenuComponent? menu, SceneNode? node, ref Exception? failure)
+    {
+        if (menu is not null)
+            AttemptHierarchyRelease(() => menu.Destroy(true), ref failure);
+        if (node is null)
+            return;
+        if (node.Transform is UIBoundableTransform transform)
+            AttemptHierarchyRelease(() => transform.Visibility = EVisibility.Collapsed, ref failure);
+        // Retire input now. Remove the owned canvas child after scene transfer callbacks finish.
+        AttemptHierarchyRelease(() => node.Destroy(false), ref failure);
     }
 
     private void OnRightClickInteractable(UIInteractableComponent target)
     {
-        // Only handle right-clicks on our node buttons
-        if (!CanUseHierarchy || target.UserData is not SceneNode node)
-            return;
-
-        // Verify the cursor is actually within this panel's bounds.
-        // The canvas-wide RightClick event can fire with a stale TopMostInteractable
-        // from a previous frame if the cursor moved off the panel between SwapBuffers
-        // and the input event. Reject those to avoid opening the context menu when
-        // the user is right-clicking in the 3D viewport.
-        var input = _rightClickInput;
-        if (input is not null)
+        ulong request = ++_contextMenuRequest;
+        if (!TryResolveHierarchyMenuRow(target, out HierarchyRow? row) || row is null ||
+            TryGetActiveWorld() is not { } world || !IsCurrentHierarchyWorld(world) ||
+            _treeListTransform is not { } list || _virtualTree is not { } provider ||
+            !list.TryGetVirtualRowLease(row.Transform, out UIVirtualRowLease lease) ||
+            _rightClickInput is not { } input ||
+            !input.TryGetPresentedPointerPosition(target, out Vector2 position) ||
+            BoundableTransform.GetCanvasTransform() is not { } canvas)
         {
-            var cursor = input.CursorPositionWorld2D;
-            if (!BoundableTransform.Contains(cursor))
-                return;
+            DismissHierarchyMenu();
+            return;
         }
-
-        // Also verify the target interactable actually belongs to this panel's subtree.
-        // This guards against other UI elements that happen to store SceneNode UserData.
-        if (target.SceneNode is null || !IsDescendantOf(target.SceneNode, SceneNode))
-            return;
-
-        _contextMenuTargetNode = node;
-
-        // Ensure context menu component exists
-        if (_contextMenu is null)
+        if (row.Node is { } targetNode && !CanApplyNativeHierarchyEdit(targetNode, world))
         {
-            uint revision = _hierarchyRevision;
-            var menuNode = SceneNode.NewChild<UIContextMenuComponent>(out var menu);
-            if (!CanUseHierarchy || revision != _hierarchyRevision)
-            {
-                menu.Destroy(true);
-                return;
-            }
+            DismissHierarchyMenu();
+            return;
+        }
+        if (row.Node is null && (row.Scene is null || world.TargetWorld?.Scenes.Contains(row.Scene) != true))
+        {
+            DismissHierarchyMenu();
+            return;
+        }
+        uint revision = _hierarchyRevision;
+        HierarchyCommandContext context = new(world, row.Node is { } node ? [node] : [],
+            () => revision == _hierarchyRevision && IsCurrentHierarchyWorld(world) &&
+                ReferenceEquals(BoundableTransform.GetCanvasTransform(), canvas) &&
+                ReferenceEquals(GetCanvasInput(), input) && ReferenceEquals(_rightClickInput, input), row.Scene);
+        HierarchyMenuSession session = new()
+        {
+            Owner = this, Context = context, Revision = revision, Node = row.Node, Scene = row.Scene,
+            List = list, Provider = provider, Row = row.Transform, Lease = lease,
+            ProviderIncarnation = list.VirtualProviderIncarnation, Input = input, Request = request,
+            Position = position, Canvas = canvas, AwaitingShow = true
+        };
+        DismissHierarchyMenu();
+        if (request != _contextMenuRequest || !context.CanStart())
+        {
+            session.Release();
+            return;
+        }
+        _contextMenuSession = session;
+        if (!IsHierarchyMenuSessionCurrent(session))
+        {
+            DismissHierarchyMenu();
+            return;
+        }
+        // Finish the right-click dispatch before an old menu's dismissal callback can run.
+        ScheduleHierarchyWork();
+    }
+
+    private void DismissHierarchyMenu()
+    {
+        HierarchyMenuSession? session = _contextMenuSession;
+        _contextMenuSession = null;
+        session?.Release();
+        if (!_showingHierarchyMenu)
+            _contextMenu?.Hide();
+    }
+
+    private void CompleteHierarchyMenuRequest()
+    {
+        if (_showingHierarchyMenu || _creatingHierarchyMenu)
+        {
+            ScheduleHierarchyWork();
+            return;
+        }
+        if (_contextMenuSession is not { AwaitingShow: true } session)
+            return;
+        if (!IsHierarchyMenuSessionCurrent(session))
+        {
+            DismissHierarchyMenu();
+            return;
+        }
+        UIContextMenuComponent? menu = EnsureHierarchyContextMenu(session);
+        if (menu is null || !IsHierarchyMenuSessionCurrent(session))
+        {
+            if (ReferenceEquals(_contextMenuSession, session))
+                DismissHierarchyMenu();
+            return;
+        }
+        Exception? failure = null;
+        _showingHierarchyMenu = true;
+        try
+        {
+            if (session.Node is not null)
+                menu.Show(session.Position,
+                    new ContextMenuItem("Rename", session.Rename),
+                    new ContextMenuItem("Add Child", session.AddChild),
+                    new ContextMenuItem("Focus Camera", session.Focus),
+                    ContextMenuItem.Separator(),
+                    new ContextMenuItem("Delete", session.Delete));
+            else if (session.Scene is { } scene)
+                menu.Show(session.Position,
+                    new ContextMenuItem(scene.Name ?? "Untitled Scene", null, enabled: false),
+                    ContextMenuItem.Separator(),
+                    new ContextMenuItem(scene.IsVisible ? "Hide Scene" : "Show Scene", session.ToggleScene),
+                    new ContextMenuItem("Unload Scene", session.UnloadScene));
+        }
+        catch (Exception error) { failure = error; }
+        finally { _showingHierarchyMenu = false; }
+        if (ReferenceEquals(_contextMenuSession, session))
+        {
+            session.AwaitingShow = false;
+            if (failure is not null || !menu.IsOpen || !IsHierarchyMenuSessionCurrent(session))
+                AttemptHierarchyRelease(DismissHierarchyMenu, ref failure);
+        }
+        else if (ReferenceEquals(_contextMenu, menu))
+            AttemptHierarchyRelease(menu.Hide, ref failure);
+        ThrowHierarchyFailure(failure);
+    }
+
+    private bool TryResolveHierarchyMenuRow(UIInteractableComponent target, out HierarchyRow? row)
+    {
+        row = null;
+        if (!CanUseHierarchy || target.IsDestroyed || target.IsDestroyQueued ||
+            _treeListTransform is not { } list || _virtualTree is not { } provider ||
+            !ReferenceEquals(list.VirtualProvider, provider))
+            return false;
+        for (TransformBase? current = target.Transform; current is not null && !ReferenceEquals(current, Transform); current = current.Parent)
+        {
+            if (current is not UIBoundableTransform candidate || !_hierarchyRows.TryGetValue(candidate, out HierarchyRow? found))
+                continue;
+            if (!IsHierarchyRowCurrent(found) || found.Transform.Visibility != EVisibility.Visible ||
+                !list.TryGetVirtualRowLease(found.Transform, out UIVirtualRowLease lease) || lease.ItemId != found.ItemId ||
+                !provider.TryGetNode(found.ItemId, out _) ||
+                !ReferenceEquals(found.Node, _hierarchyNodes.GetValueOrDefault(found.ItemId)) ||
+                !ReferenceEquals(found.Scene, _hierarchyScenes.GetValueOrDefault(found.ItemId)))
+                return false;
+            row = found;
+            return true;
+        }
+        return false;
+    }
+
+    private UIContextMenuComponent? EnsureHierarchyContextMenu(HierarchyMenuSession session)
+    {
+        if (!IsHierarchyMenuSessionCurrent(session) || session.Canvas is not { } canvas)
+            return null;
+        if (_contextMenu is not null)
+            return ReferenceEquals(_contextMenuNode?.Transform.Parent, canvas) ? _contextMenu : null;
+        SceneNode? menuNode = null;
+        UIContextMenuComponent? menu = null;
+        Action? dismissed = null;
+        bool completed = false;
+        Exception? failure = null;
+        _creatingHierarchyMenu = true;
+        try
+        {
+            menuNode = new("HierarchyContextMenu", new UIBoundableTransform()) { IsActiveSelf = false };
+            _contextMenuNode = menuNode;
+            menu = menuNode.AddComponent<UIContextMenuComponent>()!;
+            if (!IsHierarchyMenuSessionCurrent(session) || !ReferenceEquals(_contextMenuNode, menuNode))
+                return null;
             _contextMenu = menu;
-            menuNode.Name = "HierarchyContextMenu";
-            if (!CanUseHierarchy || revision != _hierarchyRevision)
-                return;
+            dismissed = () =>
+            {
+                if (!ReferenceEquals(_contextMenu, menu))
+                    return;
+                if (_contextMenuSession is { AwaitingShow: false } dismissedSession)
+                {
+                    _contextMenuSession = null;
+                    dismissedSession.Release();
+                }
+            };
+            _contextMenuDismissed = dismissed;
+            menu.Dismissed += dismissed;
+            ((UIBoundableTransform)menuNode.Transform).Visibility = EVisibility.Collapsed;
+            if (!IsHierarchyMenuSessionCurrent(session) || !ReferenceEquals(_contextMenu, menu))
+                return null;
+            menuNode.Transform.SetParent(canvas, false, EParentAssignmentMode.Immediate);
+            if (!IsHierarchyMenuSessionCurrent(session) || !ReferenceEquals(_contextMenu, menu))
+                return null;
+            menuNode.IsActiveSelf = true;
+            if (!IsHierarchyMenuSessionCurrent(session) || !ReferenceEquals(_contextMenu, menu) ||
+                !ReferenceEquals(menuNode.Transform.Parent, canvas))
+                return null;
+            completed = true;
+            return menu;
         }
-        if (_contextMenuActions is { } previousActions)
-            previousActions.Owner = null;
-        HierarchyMenuActions actions = new(this);
-        _contextMenuActions = actions;
+        catch (Exception error)
+        {
+            failure = error;
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                if (!completed)
+                {
+                    if (ReferenceEquals(_contextMenuSession, session))
+                    {
+                        _contextMenuSession = null;
+                        session.Release();
+                    }
+                    if (ReferenceEquals(_contextMenu, menu))
+                        _contextMenu = null;
+                    if (ReferenceEquals(_contextMenuNode, menuNode))
+                        _contextMenuNode = null;
+                    if (ReferenceEquals(_contextMenuDismissed, dismissed))
+                        _contextMenuDismissed = null;
+                    if (menu is not null && dismissed is not null)
+                        menu.Dismissed -= dismissed;
+                    RetireHierarchyMenu(menu, menuNode, ref failure);
+                }
+            }
+            finally { _creatingHierarchyMenu = false; }
+            ThrowHierarchyFailure(failure);
+        }
+    }
 
-        Vector2 pos = input is not null
-            ? BoundableTransform.CanvasToLocal(input.CursorPositionWorld2D)
-            : Vector2.Zero;
+    private bool IsHierarchyMenuSessionCurrent(HierarchyMenuSession session)
+        => ReferenceEquals(_contextMenuSession, session) && ReferenceEquals(session.Owner, this) &&
+            session.Revision == _hierarchyRevision && session.Context?.CanStart() == true &&
+            session.Request == _contextMenuRequest && ReferenceEquals(session.Input, _rightClickInput) &&
+            ReferenceEquals(session.Input, GetCanvasInput()) &&
+            session.Canvas is { IsDestroyed: false, IsDestroyQueued: false } &&
+            ReferenceEquals(session.Canvas, BoundableTransform.GetCanvasTransform()) &&
+            ReferenceEquals(session.List, _treeListTransform) && ReferenceEquals(session.Provider, _virtualTree) &&
+            session.List is { } list && ReferenceEquals(list.VirtualProvider, session.Provider) &&
+            list.VirtualProviderIncarnation == session.ProviderIncarnation && session.Row is { } row &&
+            list.TryGetVirtualRowLease(row, out UIVirtualRowLease lease) && lease == session.Lease &&
+            _hierarchyRows.TryGetValue(row, out HierarchyRow? state) && IsHierarchyRowCurrent(state) &&
+            ReferenceEquals(state.Node, session.Node) && ReferenceEquals(state.Scene, session.Scene);
 
-        _contextMenu.Show(pos,
-            new ContextMenuItem("Rename", actions.Rename),
-            new ContextMenuItem("Add Child", actions.AddChild),
-            new ContextMenuItem("Focus Camera", actions.Focus),
-            ContextMenuItem.Separator(),
-            new ContextMenuItem("Delete", actions.Delete));
+    internal void InvokeHierarchyMenuAction(HierarchyMenuSession session, EHierarchyMenuAction action)
+    {
+        if (session.AwaitingShow || _showingHierarchyMenu ||
+            !IsHierarchyMenuSessionCurrent(session) || session.Context is not { } context)
+            return;
+        SceneNode? node = session.Node;
+        switch (action)
+        {
+            case EHierarchyMenuAction.Rename: BeginRename(node); break;
+            case EHierarchyMenuAction.Focus: TryFocusCameraOnNode(node); break;
+            case EHierarchyMenuAction.AddChild when node is not null:
+                QueueNativeHierarchyCreateChild(node, context.World, child =>
+                {
+                    _collapsedNodes.Remove(node.ID);
+                    BeginRename(child);
+                }, context.IsOwnerCurrent, context.CanStart);
+                break;
+            case EHierarchyMenuAction.Delete when node is not null:
+                if (ReferenceEquals(node, _nodePendingRename))
+                    CancelRename();
+                QueueNativeHierarchyDelete(node, context.World, context.IsOwnerCurrent, context.CanStart);
+                break;
+            case EHierarchyMenuAction.ToggleScene when session.Scene is { } scene:
+                bool visible = !scene.IsVisible;
+                EnqueueSceneEdit(() =>
+                {
+                    if (!context.CanStart())
+                        return;
+                    ToggleNativeSceneVisibility(scene, context.World, visible);
+                });
+                break;
+            case EHierarchyMenuAction.UnloadScene when session.Scene is { } unloadScene:
+                EnqueueSceneEdit(() =>
+                {
+                    if (!context.CanStart())
+                        return;
+                    UnloadNativeScene(unloadScene, context.World);
+                    if (context.IsOwnerCurrent())
+                        RebuildVirtualTree();
+                });
+                break;
+        }
     }
 }

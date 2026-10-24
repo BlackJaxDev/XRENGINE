@@ -224,7 +224,9 @@ public static class EditorPanelHost
                 (layout.OpenMask & (1 << index)) != 0)
                 ClosePanel(index);
             else if (result == NativeDockTransferResult.Rejected)
-                Debug.UI("[NativeDock] The destination did not accept the panel.");
+                Debug.UI("[NativeDock] Panel transfer could not be confirmed.");
+            else if (result == NativeDockTransferResult.NoTarget)
+                Debug.UI("[NativeDock] Open another native editor window in this world, then retry the panel transfer.");
         }
 
         void DetachSelected()

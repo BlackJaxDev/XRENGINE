@@ -1110,3 +1110,63 @@ cases now select Set/Remove with a Boolean parameter and retain the same test
 body. Desktop compilation 19 passed with zero warnings/errors in 51.78s. This
 fixture-only change does not affect production or headless inputs. No desktop
 execution, Windows/GPU acceptance, or performance result is claimed.
+
+## Displayed input and accepted text measurement
+
+Published checkpoint `21902a31b514a0b442b9b153eae53b76bad0d3a3` preserves
+native editor mutation and window ownership. The remote SHA was verified. A
+read-only check found no attached check runs, Actions runs, or commit statuses.
+
+The next input audit found that a contact refresh could replace the hit dictionary
+between collection and hover dispatch. Focus callbacks could also replace packet A
+with B while the outer refresh still returned A. Exact read admission and dispatch
+reentry guards now reject these stale paths. Camera blocking previously used live
+bounds after a displayed hit; it now uses accepted pointer geometry. Hierarchy
+menu placement uses the same input contract.
+
+Headless build 100 stopped with two CS0246 errors in new test imports and zero
+warnings, after 2m36.51s. The environment transport briefly disconnected during
+this build. After reconnection, the original process was still running; no second
+build was started. The missing imports were corrected. Build 101 passed with zero
+warnings/errors in 16.10s. Full run 63 passed 676 of 677 tests in 10.735s. Its one
+failure expected the old tab ID after a visual slot was rebound. The actual move
+used the current ID, as required. The assertion was corrected without changing
+production code. Build 102 passed with zero warnings/errors in 17.83s; full run 64
+passed 677 of 677 tests with no warnings, failures, or skips in 10.126s.
+
+Further review added exact packet-return, collection reentry, and menu-point
+regressions. Accepted text measurement now has a post-commit observer seam.
+Review removed an invocation-list allocation, prevented nested layout pumping,
+and replaced global canvas-dirty rejection with exact committed text-page checks.
+This prevents one inspector resize from suppressing another valid measurement.
+These additions require the next compilation and test run; run 64 does not cover
+them. Editor menu and collection lifecycle tests also require compilation.
+
+Build 103 passed with zero warnings/errors in 1m17.63s. Full run 65 passed
+681 of 682 tests in 16.022s. The accepted-text notification fixture used an
+inactive root; a later text edit did not schedule another canvas job, so its
+rejection callback never ran. The fixture now explicitly invalidates measure
+before requesting that job, including inside its rejection callback. The test
+still requires a real rejected commit and later accepted result.
+
+The same review found that the accepted-result predicate checked unused OpenType
+features when shaping was off, although the input cache ignored that setting.
+The predicate now follows the shaping policy, and shape-only settings do not
+replace unshaped output. A regression requires reuse of the exact accepted
+result. The bounded source review cleared both corrections before build 104.
+
+Build 104 passed with zero warnings/errors in 1m10.59s. Full run 66 passed
+682 of 682 tests, with no warnings, failures, or skips, in 10.069s. The frozen
+snapshot contains 10,488 source files. Editor build 41 then succeeded with one
+CS8604 warning and zero errors in 2m43.27s. Dictionary removal had already checked
+`key is not null` when it computed a Boolean, but that Boolean does not carry
+nullable flow proof into the removal branch. The branch now states the same
+non-null condition explicitly. This editor-only correction does not change the
+headless inputs. Editor build 42 verifies the warning repair.
+
+Editor build 42 passed with zero warnings/errors in 40.99s. Desktop compilation
+20 succeeded with one CS8604 warning and zero errors in 49.04s. A nullable
+callback assertion selected NUnit's delegate-execution overload. The assertion
+now checks the Boolean null condition explicitly. Desktop compilation 21 passed
+with zero warnings/errors in 45.76s. This desktop-only test change leaves the
+validated production and headless inputs unchanged. Desktop tests did not run.

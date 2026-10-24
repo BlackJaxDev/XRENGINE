@@ -13,8 +13,8 @@ internal sealed class UITestCanvasInputProbe : XRComponent, IUICanvasInputSource
 
     public UITestCanvasInputProbe() { }
 
-    public bool IsCtrlHeld => false;
-    public bool IsShiftHeld => false;
+    public bool IsCtrlHeld { get; set; }
+    public bool IsShiftHeld { get; set; }
     public bool IsAltHeld => false;
     public Vector2 CursorPositionWorld2D => Vector2.Zero;
     public UIInteractableComponent? FocusedComponent { get; set; }

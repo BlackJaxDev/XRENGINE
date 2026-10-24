@@ -48,7 +48,6 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     private UIContextMenuComponent? _contextMenu;
     private SceneNode? _nodePendingRename;
     private Guid? _renameFocusRestoreId;
-    private SceneNode? _contextMenuTargetNode;
 
     // Scene section state.
     private readonly HashSet<Guid> _collapsedSections = new();

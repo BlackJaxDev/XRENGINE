@@ -130,6 +130,20 @@ public sealed class UITabStripComponent : UIComponent
             if (slot.Id != 0)
                 TabActivated?.Invoke(slot.Id);
         };
+        button.KeyboardCloseRequested += sender =>
+        {
+            if (ReferenceEquals(sender, slot.Button) && slot.Id != 0 && FindIndex(slot.Id) >= 0)
+                CloseRequested?.Invoke(slot.Id);
+        };
+        button.KeyboardMoveRequested += (sender, direction) =>
+        {
+            if (!ReferenceEquals(sender, slot.Button) || slot.Id == 0 || direction == 0)
+                return;
+            int index = FindIndex(slot.Id);
+            int next = index + Math.Sign(direction);
+            if (index >= 0 && next >= 0 && next < _count)
+                MoveRequested?.Invoke(slot.Id, Math.Sign(direction));
+        };
         return slot;
     }
 }

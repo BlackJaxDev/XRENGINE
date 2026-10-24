@@ -28,11 +28,18 @@ public partial class HierarchyPanel
 
     private void HandleNodeButtonInteraction(UIInteractableComponent obj)
     {
-        if (!CanUseHierarchy)
+        if (!TryResolveHierarchyMenuRow(obj, out HierarchyRow? row) || row?.Node is not { } node ||
+            !ReferenceEquals(row.Button, obj) || _treeListTransform is not { } list ||
+            !list.TryGetVirtualRowLease(row.Transform, out UIVirtualRowLease lease))
             return;
-        _contextMenu?.Hide();
+        uint revision = _hierarchyRevision;
+        ulong providerIncarnation = list.VirtualProviderIncarnation;
+        DismissHierarchyMenu();
 
-        if (!CanUseHierarchy || obj.UserData is not SceneNode node)
+        if (!CanUseHierarchy || revision != _hierarchyRevision ||
+            !ReferenceEquals(_treeListTransform, list) || list.VirtualProviderIncarnation != providerIncarnation ||
+            !IsHierarchyRowCurrent(row) || !ReferenceEquals(row.Node, node) || !ReferenceEquals(obj.UserData, node) ||
+            !list.TryGetVirtualRowLease(row.Transform, out UIVirtualRowLease currentLease) || currentLease != lease)
             return;
 
         var input = GetCanvasInput();

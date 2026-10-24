@@ -13,34 +13,21 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. Full run 62 passes **667 of 667** tests,
-with no warnings, failures, or skips, in 10.551 seconds. Headless build 99 took
-1m13.26s. Coverage adds scene-root route ownership, sparse list identities and
-sequence edits, confirmed dock transfers, close-request ownership, same-lease
-cell refresh, reentrant callback retirement, and exact grid/material teardown.
-These results are from 2026-10-24. The source snapshot contains 10,472 files;
-all headless inputs remained unchanged through compilation and execution.
+through `Tools/Invoke-AgentBuild.ps1`. Full run 66 passes **682 of 682** tests,
+with no warnings, failures, or skips, in 10.069 seconds. Headless build 104 took
+1m10.59s. New portable coverage includes presentation changes during hover and
+focus callbacks, camera blocking, accepted menu points, table/tab navigation,
+font identity, accepted text notification, rejection, cancellation, and observer
+reentry. These results are from 2026-10-24. The frozen source snapshot contains
+10,488 files; headless inputs stayed unchanged through compilation and execution.
 
-Editor build 40 passed with zero warnings/errors in 53.36s. Its final source
-snapshot contains 10,473 files. Editor-only fixes followed the headless run;
-headless inputs stayed unchanged. Desktop-test compilation 19 passed with zero
-warnings/errors in 51.78s. One desktop-only test parameter was corrected after
-the editor build; production and headless inputs are unchanged. No desktop tests
-executed.
-
-The editor build compiles Windows targets on Linux. The desktop test-project
-build compiles shaping and Vulkan regression tests. Desktop tests did not execute:
-prior NUnit discovery rejects the assembly with "Only supported on Windows7.0".
-Inspector and dock-host mutations compile; their Windows live Undo, pointer,
-window, and lifecycle workflows remain pending. Do not bypass the assembly
-platform check or count a zero-test exit as a pass.
-
-These are checkpoint results, not platform or performance acceptance. See the
-[integration investigation](../../investigations/ui/retained-ui-integration.md)
-for check history and remaining safety work.
-
-Windows execution, IME, graphics, visual checks, GPU uploads, command replay,
-multi-window workflows, and comparisons with ImGui remain untested here.
+Editor build 42 passed with zero warnings/errors in 40.99s after one editor-only
+nullable-flow correction. Desktop compilation 21 passed with zero warnings/errors
+in 45.76s after a desktop-only assertion correction. The Windows assembly did not
+execute on Linux. Menu, collection, and inspector lifecycle
+fixtures remain compile-only here. See the [investigation record](../../investigations/ui/retained-ui-integration.md)
+for intermediate warnings, failed tests, and fixes. Windows, OpenGL/Vulkan, visual,
+IME, native resource, benchmark, and equal-workload ImGui acceptance remain open.
 
 ## Published Change-Tracking Validation (2026-10-23)
 
