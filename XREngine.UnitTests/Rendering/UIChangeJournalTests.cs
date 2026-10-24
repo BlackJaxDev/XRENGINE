@@ -8,6 +8,185 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class UIChangeJournalTests
 {
     [Test]
+    public void CommittedReadersDoNotConsumeLayoutChangesOrEachOther()
+    {
+        UIChangeJournal journal = new(3);
+        UICommittedChangeCursor first = journal.InitialCommittedCursor;
+        UICommittedChangeCursor second = journal.InitialCommittedCursor;
+        UIElementIdentity element = new(1, 1);
+        journal.Record(element, default, UIChangeDomain.Visual);
+
+        UIElementChange[] layout = new UIElementChange[1];
+        journal.TryDrain(layout, out _).ShouldBeTrue();
+        UIElementChange[] publication = new UIElementChange[1];
+        journal.TryCopyCommittedSince(first, publication, out UICommittedChangeRead firstRead)
+            .ShouldBeTrue();
+        firstRead.Count.ShouldBe(1);
+        firstRead.EndCursor.Sequence.ShouldBe(1);
+        publication[0].Element.ShouldBe(element);
+
+        publication[0] = default;
+        journal.TryCopyCommittedSince(second, publication, out UICommittedChangeRead secondRead)
+            .ShouldBeTrue();
+        secondRead.ShouldBe(firstRead);
+        publication[0].Element.ShouldBe(element);
+        journal.PendingCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void NestedTransactionPublishesOneCompleteCoalescedBatch()
+    {
+        UIChangeJournal journal = new(3);
+        UICommittedChangeCursor start = journal.InitialCommittedCursor;
+        UIElementIdentity first = new(1, 1);
+        UIElementIdentity second = new(2, 1);
+        UIElementIdentity parent = new(3, 1);
+        UIElementChange[] changes = new UIElementChange[3];
+        using (journal.BeginTransaction())
+        {
+            journal.Record(first, default, UIChangeDomain.Visual);
+            using (journal.BeginTransaction())
+            {
+                journal.Record(second, default, UIChangeDomain.HitTest);
+                journal.Record(first, parent, UIChangeDomain.Clip);
+            }
+            journal.TryGetCommittedCursor(out _).ShouldBeFalse();
+            journal.TryCopyCommittedSince(start, changes,
+                out UICommittedChangeRead pending).ShouldBeFalse();
+            pending.Status.ShouldBe(UICommittedChangeReadStatus.Busy);
+            journal.TryDrain(changes, out _).ShouldBeFalse();
+        }
+
+        journal.TryCopyCommittedSince(start, changes,
+            out UICommittedChangeRead committed).ShouldBeTrue();
+        committed.Count.ShouldBe(2);
+        committed.EndCursor.Sequence.ShouldBe(1);
+        committed.EndCursor.Revision.ShouldBe(1);
+        changes[0].Parent.ShouldBe(parent);
+        changes[0].Domains.ShouldBe(UIChangeDomain.Visual | UIChangeDomain.Clip);
+        changes[1].Element.ShouldBe(second);
+        journal.TryDrain(changes, out UIChangeBatch layout).ShouldBeTrue();
+        layout.Count.ShouldBe(2);
+    }
+
+    [Test]
+    public void ShortPublicationDestinationDoesNotAdvanceReader()
+    {
+        UIChangeJournal journal = new(3);
+        UICommittedChangeCursor start = journal.InitialCommittedCursor;
+        journal.Record(new UIElementIdentity(1, 1), default, UIChangeDomain.Visual);
+        journal.Record(new UIElementIdentity(2, 1), default, UIChangeDomain.HitTest);
+        UIElementChange[] shortBuffer = new UIElementChange[1];
+        journal.TryCopyCommittedSince(start, shortBuffer,
+            out UICommittedChangeRead pending).ShouldBeFalse();
+        pending.Status.ShouldBe(UICommittedChangeReadStatus.NeedCapacity);
+        pending.Count.ShouldBe(2);
+        shortBuffer[0].ShouldBe(default);
+
+        UIElementChange[] complete = new UIElementChange[2];
+        journal.TryCopyCommittedSince(start, complete,
+            out UICommittedChangeRead accepted).ShouldBeTrue();
+        accepted.Count.ShouldBe(2);
+        complete[0].Element.ShouldBe(new UIElementIdentity(1, 1));
+        complete[1].Element.ShouldBe(new UIElementIdentity(2, 1));
+    }
+
+    [Test]
+    public void PublicationOverflowRequiresResyncUntilReaderAcceptsNewBaseline()
+    {
+        UIChangeJournal journal = new(2);
+        UICommittedChangeCursor start = journal.InitialCommittedCursor;
+        journal.Record(new UIElementIdentity(1, 1), default, UIChangeDomain.Visual);
+        journal.Record(new UIElementIdentity(2, 1), default, UIChangeDomain.Visual);
+        journal.Record(new UIElementIdentity(3, 1), default, UIChangeDomain.Visual);
+        journal.TryCopyCommittedSince(start, new UIElementChange[2],
+            out UICommittedChangeRead overflow).ShouldBeFalse();
+        overflow.Status.ShouldBe(UICommittedChangeReadStatus.FullResync);
+        overflow.EndCursor.Sequence.ShouldBe(3);
+        journal.TryDrain(new UIElementChange[2], out _).ShouldBeTrue();
+        journal.TryCopyCommittedSince(start, new UIElementChange[2],
+            out UICommittedChangeRead stillOverflow).ShouldBeFalse();
+        stillOverflow.Status.ShouldBe(UICommittedChangeReadStatus.FullResync);
+
+        journal.Record(new UIElementIdentity(4, 1), default, UIChangeDomain.HitTest);
+        UIElementChange[] next = new UIElementChange[1];
+        journal.TryCopyCommittedSince(overflow.EndCursor, next,
+            out UICommittedChangeRead recovered).ShouldBeTrue();
+        recovered.Count.ShouldBe(1);
+        next[0].Element.ShouldBe(new UIElementIdentity(4, 1));
+    }
+
+    [Test]
+    public void EvictionKeepsCaughtUpReaderAndNeverSplitsTransaction()
+    {
+        UIChangeJournal journal = new(3);
+        UICommittedChangeCursor start = journal.InitialCommittedCursor;
+        using (journal.BeginTransaction())
+        {
+            journal.Record(new UIElementIdentity(1, 1), default, UIChangeDomain.Visual);
+            journal.Record(new UIElementIdentity(2, 1), default, UIChangeDomain.Visual);
+        }
+        UIElementChange[] changes = new UIElementChange[3];
+        journal.TryCopyCommittedSince(start, changes, out UICommittedChangeRead first)
+            .ShouldBeTrue();
+        first.Count.ShouldBe(2);
+        journal.Record(new UIElementIdentity(3, 1), default, UIChangeDomain.Visual);
+        journal.Record(new UIElementIdentity(4, 1), default, UIChangeDomain.Visual);
+
+        journal.TryCopyCommittedSince(start, changes,
+            out UICommittedChangeRead stale).ShouldBeFalse();
+        stale.Status.ShouldBe(UICommittedChangeReadStatus.FullResync);
+        journal.TryCopyCommittedSince(first.EndCursor, changes,
+            out UICommittedChangeRead current).ShouldBeTrue();
+        current.Count.ShouldBe(2);
+        changes[0].Element.ShouldBe(new UIElementIdentity(3, 1));
+        changes[1].Element.ShouldBe(new UIElementIdentity(4, 1));
+    }
+
+    [Test]
+    public void TransactionOverflowIsBusyUntilCloseThenRequiresResync()
+    {
+        UIChangeJournal journal = new(1);
+        UICommittedChangeCursor start = journal.InitialCommittedCursor;
+        using (journal.BeginTransaction())
+        {
+            journal.Record(new UIElementIdentity(1, 1), default, UIChangeDomain.Visual);
+            journal.RecordRemoval(new UIElementIdentity(2, 1));
+            journal.TryCopyCommittedSince(start, new UIElementChange[1],
+                out UICommittedChangeRead busy).ShouldBeFalse();
+            busy.Status.ShouldBe(UICommittedChangeReadStatus.Busy);
+        }
+        journal.TryCopyCommittedSince(start, new UIElementChange[1],
+            out UICommittedChangeRead overflow).ShouldBeFalse();
+        overflow.Status.ShouldBe(UICommittedChangeReadStatus.FullResync);
+        overflow.EndCursor.Sequence.ShouldBe(1);
+        journal.RequiresFullResync.ShouldBeTrue();
+    }
+
+    [Test]
+    public void PublicationCursorRejectsAnotherJournalAndFutureSequence()
+    {
+        UIChangeJournal first = new(1);
+        UIChangeJournal second = new(1);
+        first.TryCopyCommittedSince(second.InitialCommittedCursor,
+            Span<UIElementChange>.Empty, out UICommittedChangeRead foreign).ShouldBeFalse();
+        foreign.Status.ShouldBe(UICommittedChangeReadStatus.InvalidCursor);
+        UICommittedChangeCursor future = first.InitialCommittedCursor with { Sequence = 1 };
+        first.TryCopyCommittedSince(future, Span<UIElementChange>.Empty,
+            out UICommittedChangeRead invalid).ShouldBeFalse();
+        invalid.Status.ShouldBe(UICommittedChangeReadStatus.InvalidCursor);
+        first.Record(new UIElementIdentity(1, 1), default, UIChangeDomain.Visual);
+        UICommittedChangeCursor wrongRevision = first.InitialCommittedCursor with
+        {
+            Sequence = 1,
+            Revision = 0,
+        };
+        first.TryCopyCommittedSince(wrongRevision, Span<UIElementChange>.Empty,
+            out UICommittedChangeRead wrong).ShouldBeFalse();
+        wrong.Status.ShouldBe(UICommittedChangeReadStatus.InvalidCursor);
+    }
+
+    [Test]
     public void Record_CoalescesDomainsAndKeepsNewestParent()
     {
         var journal = new UIChangeJournal(2);

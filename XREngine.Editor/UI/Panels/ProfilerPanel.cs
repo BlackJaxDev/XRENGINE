@@ -13,6 +13,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
     private const int MaximumIndexStepsPerTick = 2048;
     private static readonly ENativeProfilerView[] ViewOptions = Enum.GetValues<ENativeProfilerView>();
     private readonly NativeProfilerRows _rows = new();
+    private readonly NativeProfilerWorstFrameSelector _worstCpuFrame = new();
     private readonly UIVirtualTableProvider<NativeProfilerDisplayRow> _tableProvider;
     private readonly Dictionary<UIBoundableTransform, NativeProfilerValueCellState> _valueCells = [];
     private NativeProfilerSettingOwner? _settingsOwner;
@@ -87,6 +88,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
     protected override void OnComponentDeactivated()
     {
         _ownerActive = false;
+        _worstCpuFrame.Reset();
         _rows.CancelPending();
         try { DetachTick(); }
         finally
@@ -113,6 +115,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         _trendPlot = null;
         _invokesValid = false;
         _spikes.Release();
+        _worstCpuFrame.Reset();
         UIComboBoxComponent? combo = _viewCombo;
         NativePropertyPopupHost? popupHost = _viewPopupHost;
         UIButtonComponent? pauseButton = _pauseButton;
@@ -278,6 +281,8 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         if (view == ENativeProfilerView.CpuRoots)
             _rows.SetRootParameters(_rootMinimumMilliseconds, _rootMaximumMilliseconds, _sortRootsByTime);
         ResetTrend(view);
+        if (view == ENativeProfilerView.CpuTimings)
+            _worstCpuFrame.Reset();
         _invokesValid = false;
         _fpsViewInitialized = false;
         if (_viewLabel is not null) _viewLabel.Text = ViewLabel(view);
@@ -592,6 +597,10 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         switch (_rows.View)
         {
             case ENativeProfilerView.CpuTimings:
+                Engine.Profiler.TryGetSnapshot(out var timingFrame, out _);
+                _worstCpuFrame.Observe(timingFrame, DateTime.UtcNow);
+                _rows.Request(_worstCpuFrame.DisplayFrame, _worstCpuFrame.IsCompletedWindow);
+                return false;
             case ENativeProfilerView.CpuRoots:
                 Engine.Profiler.TryGetSnapshot(out var cpu, out _);
                 _rows.Request(cpu);

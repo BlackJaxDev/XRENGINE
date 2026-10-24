@@ -13,18 +13,18 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings/errors through
-`Tools/Invoke-AgentBuild.ps1`. Headless build124 took 11.29s. Full run79 passes
-**861 of 861 tests**, with no warnings, failures, or skips, in 14.420s. New coverage
-includes exact cold-lifetime admission, registered pointer capture across output
-changes, painter capture retries, collection teardown claims, bounded GPU ranking
-without warm allocations, exact track edits and cached playback, world crop
-contracts, and resolved image material parameter ownership.
+`Tools/Invoke-AgentBuild.ps1`. Headless build127 took 18.37s. Full run80 passes
+**872 of 872 tests**, with no warnings, failures, or skips, in 14.422s. New coverage
+includes independent committed journal reads and the real runtime-host profiler
+selector. Existing publication, input, lifetime, animation, rendering, and layout
+cases remain green. The headless harness now references the existing portable
+Runtime.Host project; no package versions changed.
 
-The frozen source snapshot contains 10,647 files, unchanged through the final
-headless build and run, editor build53, and desktop test build27. Editor build53
-passed with zero warnings/errors in 2m15.57s. Desktop test build27 passed with
-zero warnings/errors in 51.25s. These results are from 2026-10-24. Desktop tests
-were compiled, not executed on Windows.
+The frozen source snapshot contains 10,655 files. Editor build54 passed with zero
+warnings/errors in 2m25.55s. Desktop test build28 passed with zero warnings/errors
+in 50.36s. All source inputs remained unchanged through these checks on
+2026-10-24. Desktop inspector preview and row-label fixtures were compiled only;
+no Windows execution is claimed here.
 
 The supported Vulkan static-cache contract is implemented, but native cache hits,
 fence retirement, image/font changes, and output/clip changes still require GPU

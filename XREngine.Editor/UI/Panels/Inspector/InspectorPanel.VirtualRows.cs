@@ -23,6 +23,7 @@ public partial class InspectorPanel
         public readonly Dictionary<Type, SceneNode> PrimitiveEditors = [];
         public PropertyInfo? Property;
         public IDisposable? DropTarget;
+        public InspectorStringPreviewBinding? StringPreview;
     }
 
     private sealed class AssetDropRequest(PropertyInfo property, object?[] targets,
@@ -384,6 +385,8 @@ public partial class InspectorPanel
         if (_destroyingOwner)
             return;
         PropertyRow state = _propertyRows[row];
+        state.StringPreview?.Dispose();
+        state.StringPreview = null;
         state.DropTarget?.Dispose();
         state.DropTarget = null;
         state.Property = property;
@@ -432,7 +435,16 @@ public partial class InspectorPanel
         bool isString = property.PropertyType == typeof(string);
         bool primitive = !isString && typeCode is not (TypeCode.Object or TypeCode.DateTime or TypeCode.Empty or TypeCode.DBNull);
         state.DetailButtonTransform.Visibility = primitive ? EVisibility.Collapsed : EVisibility.Visible;
-        state.DetailLabel.Text = isString ? GetStringPreview(property, targets) : "Open details";
+        state.DetailLabel.Text = "Open details";
+        if (isString && targets is { Length: > 0 })
+        {
+            InspectorStringPreviewBinding preview = new(property, targets,
+                value => state.DetailLabel.Text = value);
+            state.StringPreview = preview;
+            preview.Refresh();
+            if (!ReferenceEquals(state.StringPreview, preview))
+                return;
+        }
         foreach (SceneNode editor in state.PrimitiveEditors.Values)
             editor.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Collapsed;
         if (!primitive)
@@ -570,6 +582,8 @@ public partial class InspectorPanel
     {
         if (!_propertyRows.TryGetValue(row, out PropertyRow? state))
             return;
+        state.StringPreview?.Dispose();
+        state.StringPreview = null;
         state.DropTarget?.Dispose();
         state.DropTarget = null;
         state.Property = null;
@@ -636,24 +650,6 @@ public partial class InspectorPanel
         text.BoundableTransform.MaxAnchor = Vector2.One;
         bounds.Height = 180;
         host.AddComponent<InspectorStringDetailSizeComponent>()?.Bind(text, bounds);
-    }
-
-    private static string GetStringPreview(PropertyInfo property, object?[]? targets)
-    {
-        if (targets?.FirstOrDefault(target => target is not null) is not { } target)
-            return "Open text details";
-        try
-        {
-            string value = property.GetValue(target) as string ?? string.Empty;
-            int breakIndex = value.IndexOfAny(['\r', '\n']);
-            if (breakIndex >= 0)
-                value = value[..breakIndex];
-            return value.Length > 56 ? value[..56] + "…" : value.Length == 0 ? "Open text details" : value;
-        }
-        catch (Exception)
-        {
-            return "Open text details";
-        }
     }
 
     private void HideDetailEditor()
@@ -745,6 +741,8 @@ public partial class InspectorPanel
         _propertyRows.Clear();
         foreach (PropertyRow row in rows)
         {
+            row.StringPreview?.Dispose();
+            row.StringPreview = null;
             IDisposable? dropTarget = row.DropTarget;
             row.DropTarget = null;
             dropTarget?.Dispose();

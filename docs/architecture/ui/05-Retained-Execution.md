@@ -944,8 +944,11 @@ rejects an older page request. Existing canonical dumps keep their full details.
 
 The native profiler exposes the canonical external-profiler action, the existing
 UDP preference, and the configured update interval. Preference writes use the
-same captured owner policy. Stale-root persistence, all-root plots, the rolling
-worst CPU hierarchy, and detailed diagnostics remain open. Desktop test execution
+same captured owner policy. CPU hierarchy selection keeps the worst sampled
+thread-time snapshot in each completed 0.5-second window. The selector retains
+only its candidate and displayed frame, resets on session changes and backward
+clock observations, and follows the canonical boundary-frame rule. Stale-root
+persistence, all-root plots, and detailed diagnostics remain open. Desktop test execution
 and live Windows/GPU acceptance remain separate.
 
 `EditorDictionaryMutation` supports exact BCL dictionaries with string keys and
@@ -1098,3 +1101,20 @@ Their declarations can occur in resolved inactive snippet branches, but the
 pipeline owns their uploads. Canonical image materials retain only their authored
 MatColor parameter through discovery and resync; unrelated user uniforms remain
 editable. The strict image batch parameter contract remains in effect.
+
+
+## Independent committed changes and inspector previews
+
+`UIChangeJournal` exposes a journal-bound committed cursor in addition to the
+existing destructive layout drain. Publication readers copy whole committed
+transactions from a fixed-capacity log. Open transactions return Busy. Separate
+transaction staging coalesces identities without depending on unread layout
+changes. Eviction removes complete transactions; an expired cursor requires full
+resynchronization. Reading the current cursor does no log scan. This API prepares
+sparse publication; the current record capture still scans the full tree.
+
+Virtual inspector string previews subscribe through `EditorPropertyAccess`.
+Changes update the existing label on the scene edit queue. Multiple selected
+values show an explicit mixed state. The preview stops at its first line and
+limits text by complete text elements. Recycling and owner cleanup unsubscribe
+the preview; a getter that retires the binding cannot publish stale text.
