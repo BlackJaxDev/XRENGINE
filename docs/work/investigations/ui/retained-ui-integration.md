@@ -1243,3 +1243,16 @@ Desktop test compilation 22 passed with zero warnings/errors in 48.02s. Its
 Windows test assembly did not execute. All final checks use the frozen source;
 no source changed after the successful full headless run. The three pending
 proposals and four original owner decisions remain unresolved.
+
+
+## Cached Diagnostics And Collection Integration (2026-10-24)
+
+The next frozen input contains 10,556 source files. Headless build 112 passed with
+zero warnings/errors in 2m26.02s. Full run 72 passed 758/758 tests in 11.663s, with
+no warnings, failures, or skips. New portable tests cover Console cache identities,
+bounded Profiler projection and cancellation, owned-clone adoption/publication,
+world-image traversal admission, and Vulkan border contract identity. Editor-only
+adapter tests compiled in desktop build 23 with zero warnings/errors in 50.98s;
+they did not execute on Linux. Editor build 44 passed with zero warnings/errors
+in 2m35.43s. All three builds and the headless run used identical frozen source
+inputs. Build and run evidence is under `Build/_AgentValidation/20261023-080000-native-ui-completion/logs/`.

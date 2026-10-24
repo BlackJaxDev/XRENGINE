@@ -176,6 +176,10 @@ namespace XREngine.Scene
             bool allowGpuCollection, UIWorldCollectPacketSet? worldPacketSet)
         {
             using var sample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
+            if (worldPacketSet?.ExpectedWorld is { } packetWorld)
+                commands.ObserveWorldUiPacketSet(packetWorld, worldPacketSet);
+            else
+                commands.ObserveUnsupportedWorldUiTraversal();
             int visibleRenderables = 0;
             bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
             int commandsBefore = modelDiagActive ? commands.GetUpdatingCommandCount() : 0;
@@ -249,6 +253,12 @@ namespace XREngine.Scene
         private long _frozenWorldPacketSourceRevision;
         private readonly HashSet<RenderInfo3D> _renderableSet = [];
         private readonly object _renderablesSync = new();
+        internal bool ContainsRegisteredDrawable(RenderInfo3D info)
+        {
+            lock (_renderablesSync)
+                return _renderableSet.Contains(info) &&
+                    !_registeredPacketSourceOnly.ContainsKey(info);
+        }
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
         private long _shadowCasterMembershipRevision;
         private bool IsGpuCulling => _isGpuDispatchActive;

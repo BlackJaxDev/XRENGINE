@@ -108,6 +108,14 @@ public sealed class UIPublication
     public ulong LayoutGeneration { get; }
     public ulong HitGeneration { get; }
     public long ChangeRevision { get; }
+    internal long WorldCollectionRevision { get; private set; }
+
+    internal void SetWorldCollectionRevision(long revision)
+    {
+        if (_worldCommands is not null || revision <= 0)
+            throw new InvalidOperationException("The world collection revision must precede frozen commands.");
+        WorldCollectionRevision = revision;
+    }
     public ReadOnlyMemory<UILayoutNodeOutput> Layout
         => _flatLayout ??= LayoutPages?.ToArray() ?? [];
     public UILayoutOutputPageView? LayoutPages { get; }
@@ -170,7 +178,9 @@ public sealed class UIPublication
                 RenderCommandMesh3D template = record.FrozenWorldCommand ??
                     throw new InvalidOperationException("A visible direct-world UI draw has no frozen command.");
                 commands.Add(new UIPublishedWorldMeshCommand(canvas, this, template,
-                    record.WorldCastsShadows, record.WorldLayer, record.WorldCullingVolume));
+                    record.WorldCastsShadows, record.WorldLayer, record.WorldCullingVolume,
+                    record.WorldRenderInfo, record.SourceWorldCommand,
+                    record.WorldRegistrationIncarnation, record.Crop));
             }
             _worldCommands = commands.ToArray();
         }
@@ -226,6 +236,7 @@ public sealed class UIPublication
         LayoutGeneration = source.LayoutGeneration;
         HitGeneration = source.HitGeneration;
         ChangeRevision = source.ChangeRevision;
+        WorldCollectionRevision = source.WorldCollectionRevision;
         _flatLayout = source._flatLayout;
         LayoutPages = source.LayoutPages;
         Identities = source.Identities;

@@ -2705,7 +2705,7 @@ public sealed partial class UIBatchCollector : IDisposable
             backdropMaterial.SetFloat("BlurStrength", batch.Backdrop.BlurStrength);
         }
 
-        UIStaticDrawCandidate cacheCandidate = CaptureStaticDrawCandidate(renderer, materialQuadMesh, batch);
+        UIStaticDrawCandidate cacheCandidate = CaptureStaticDrawCandidate(renderer, materialQuadMesh, batch, cohort);
         using UIStaticDrawScope cacheScope = new(in cacheCandidate);
         ulong backdropDrawScope = 0UL;
         ulong backdropOutputScope = 0UL;
@@ -2794,9 +2794,9 @@ public sealed partial class UIBatchCollector : IDisposable
     }
 
     private UIStaticDrawCandidate CaptureStaticDrawCandidate(AbstractRenderer renderer,
-        XRMeshRenderer mesh, MaterialQuadBatchData batch)
+        XRMeshRenderer mesh, MaterialQuadBatchData batch, MaterialGPUResources? cohort)
     {
-        if (renderer.BackendId != RendererBackendId.Vulkan || batch.Texture is not null || batch.Border ||
+        if (renderer.BackendId != RendererBackendId.Vulkan || cohort is null || batch.Texture is not null ||
             batch.Backdrop.IsDefined ||
             !batch.CompositionOwner.IsExplicit || batch.CompositionOwner.Kind != EUICompositionLayerKind.StaticChrome ||
             batch.CompositionSegmentIdentity == 0 || batch.CompositionSegmentRevision == 0 ||
@@ -2807,11 +2807,37 @@ public sealed partial class UIBatchCollector : IDisposable
             !ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage))
             return default;
 
+        XRDataBuffer? borderColor = null;
+        XRDataBuffer? borderWidth = null;
+        ulong borderColorRevision = 0;
+        ulong borderWidthRevision = 0;
+        if (batch.Border)
+        {
+            if (!ReferenceEquals(mesh, cohort.BorderMesh) ||
+                cohort.Uv is not { } uv || cohort.BorderWidth is not { } width ||
+                !mesh.Buffers.TryGetValue("QuadUvBuffer", out XRDataBuffer? meshUv) ||
+                !mesh.Buffers.TryGetValue("QuadBorderWidthBuffer", out XRDataBuffer? meshWidth) ||
+                !ReferenceEquals(meshUv, uv) || !ReferenceEquals(meshWidth, width))
+                return default;
+            borderColor = uv;
+            borderWidth = width;
+            borderColorRevision = uv.Revision;
+            borderWidthRevision = width.Revision;
+        }
+
         UIIndexedDrawIntent intent = UIIndexedDrawIntent.Capture(mesh,
             EPrimitiveType.Triangles, checked((uint)batch.Entries.Count));
         UIStaticDrawContract contract = new(publication.CanvasLifetime, batch.CompositionOwner,
             batch.CompositionSegmentIdentity, batch.CompositionSegmentRevision, batch.RunId,
-            renderer.BackendGeneration, intent) { CapturedMesh = mesh.Mesh };
+            renderer.BackendGeneration, intent)
+        {
+            CapturedMesh = mesh.Mesh,
+            IsBorder = batch.Border,
+            BorderColorBuffer = borderColor,
+            BorderColorRevision = borderColorRevision,
+            BorderWidthBuffer = borderWidth,
+            BorderWidthRevision = borderWidthRevision,
+        };
         return contract.IsDefined ? new(contract, renderer, receipt.Id) : default;
     }
 

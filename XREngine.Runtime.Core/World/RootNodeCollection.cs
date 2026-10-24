@@ -50,6 +50,7 @@ namespace XREngine
             if (node is null)
                 return;
 
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(node, _world);
             IRuntimeWorldContext? previousWorld = node.World;
             bool cacheStarted = false;
             lock (_rootNodesLock)

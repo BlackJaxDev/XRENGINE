@@ -23,6 +23,9 @@ internal sealed class NativeTextList : IVirtualListProvider
 
     public ulong GetItemId(int index) => _items[index].Id;
 
+    public bool TryGetBoundId(UIBoundableTransform row, out ulong id)
+        => _boundIds.TryGetValue(row, out id);
+
     public void Replace(IEnumerable<(ulong Id, string Text)> items)
     {
         _items.Clear();

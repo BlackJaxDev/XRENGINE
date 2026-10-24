@@ -31,8 +31,11 @@ namespace XREngine.Rendering.UI
             // The callback does not pass the camera or the pass collection to ShouldRender3D. When it rejects a main view,
             // it rejects the shadow cameras too, so the declaration keeps a hidden or screen-space item out of the
             // shadow-only caster census.
-            RenderInfo3D.SetCameraIndependentPreCollectCommandsCallback(PreCollectRenderInfo3D);
+            _canonicalWorldPreCollect = PreCollectRenderInfo3D;
+            RenderInfo3D.SetCameraIndependentPreCollectCommandsCallback(_canonicalWorldPreCollect);
             RenderInfo2D.PreCollectCommandsCallback = ShouldRender2D;
+            RenderInfo3D.PropertyChanged += WorldCollectionDrawPropertyChanged;
+            RenderCommand3D.PropertyChanged += WorldCollectionDrawPropertyChanged;
             _publicationCommandObserver = new UIDrawCommandObserver(RenderCommand2D, PublicationDrawChanged);
         }
 
@@ -54,6 +57,8 @@ namespace XREngine.Rendering.UI
         private bool _worldCollectionTerminal;
         private UICanvasTransform? _worldCollectionCanvasTransform;
         private UICanvasComponent? _worldCollectionCanvasComponent;
+        private UICanvasComponent? _registeredDirectWorldCanvas;
+        private RenderInfo.DelAddRenderCommandsCallback? _canonicalWorldPreCollect;
         private SceneNode? _worldCollectionCanvasNode;
         private readonly List<UITransform> _worldCollectionAncestors = [];
 
@@ -114,10 +119,45 @@ namespace XREngine.Rendering.UI
                 !canvasComponent.UseOffscreenRenderingForNonScreenSpaces() &&
                 (Transform as UITransform)?.IsVisibleInHierarchy == true;
             SetCanvasWorldCollectionSuppressed(!directWorld);
+            ReconcileDirectWorldCanvas(directWorld ? canvasComponent : null);
         }
+
+        private void ReconcileDirectWorldCanvas(UICanvasComponent? canvas)
+        {
+            if (ReferenceEquals(_registeredDirectWorldCanvas, canvas))
+                return;
+            UICanvasComponent? old = _registeredDirectWorldCanvas;
+            _registeredDirectWorldCanvas = null;
+            old?.UnregisterDirectWorldChild(RenderCommand3D);
+            if (canvas is not null)
+            {
+                canvas.RegisterDirectWorldChild(RenderCommand3D);
+                _registeredDirectWorldCanvas = canvas;
+            }
+        }
+
+        private void WorldCollectionDrawPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if ((sender == RenderInfo3D && e.PropertyName is
+                    nameof(RenderInfo3D.IsVisible) or nameof(RenderInfo3D.WorldInstance) or
+                    nameof(RenderInfo3D.Layer) or nameof(RenderInfo3D.CastsShadows) or
+                    nameof(RenderInfo3D.LocalCullingVolume) or nameof(RenderInfo3D.CullingOffsetMatrix)) ||
+                (sender == RenderCommand3D && e.PropertyName is
+                    nameof(RenderCommand3D.Enabled) or nameof(RenderCommand3D.RenderPass) or
+                    nameof(RenderCommandMesh3D.Mesh) or nameof(RenderCommandMesh3D.MaterialOverride) or
+                    nameof(RenderCommandMesh3D.RenderOptionsOverride) or
+                    nameof(RenderCommandMesh3D.WorldMatrix) or nameof(RenderCommandMesh3D.Instances) or
+                    nameof(RenderCommandMesh3D.WorldCullingVolumeOverride)))
+                _registeredDirectWorldCanvas?.NotifyDirectWorldChildChanged();
+        }
+
+        internal bool HasCanonicalWorldPreCollect(RenderInfo3D info)
+            => ReferenceEquals(info, RenderInfo3D) &&
+                ReferenceEquals(info.PreCollectCommandsCallback, _canonicalWorldPreCollect);
 
         private void ReleaseCanvasWorldCollection()
         {
+            ReconcileDirectWorldCanvas(null);
             if (_worldCollectionCanvasTransform is not null)
                 _worldCollectionCanvasTransform.PropertyChanged -= CanvasWorldTransformPropertyChanged;
             _worldCollectionCanvasTransform = null;
@@ -304,6 +344,8 @@ namespace XREngine.Rendering.UI
             TryRelease(ReleaseCanvasWorldCollection, ref failures);
             TryRelease(ReleaseBatchPrimitiveRegistration, ref failures);
             TryRelease(_publicationCommandObserver.Dispose, ref failures);
+            RenderInfo3D.PropertyChanged -= WorldCollectionDrawPropertyChanged;
+            RenderCommand3D.PropertyChanged -= WorldCollectionDrawPropertyChanged;
             try { base.OnDestroying(); }
             catch (Exception exception) { (failures ??= []).Add(exception); }
             TryRelease(() => _publicationPayloadBuilder?.Dispose(), ref failures);
@@ -599,6 +641,9 @@ namespace XREngine.Rendering.UI
                 SupportsBatch = supportsBatch,
                 FrozenCommand = frozenCommand,
                 FrozenWorldCommand = frozenWorldCommand,
+                WorldRenderInfo = RenderInfo3D,
+                SourceWorldCommand = RenderCommand3D,
+                WorldRegistrationIncarnation = RenderInfo3D.WorldRegistrationIncarnation,
                 WorldCastsShadows = RenderInfo3D.CastsShadows,
                 WorldLayer = RenderInfo3D.Layer,
                 WorldCullingVolume = RenderInfo3D.CaptureWorldCullingVolume(),

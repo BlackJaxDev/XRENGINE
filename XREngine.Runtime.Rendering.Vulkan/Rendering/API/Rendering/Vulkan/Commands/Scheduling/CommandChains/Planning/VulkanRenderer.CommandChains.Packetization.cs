@@ -1672,6 +1672,12 @@ internal sealed partial class VulkanCommandRuntime
             hash.Add(contract.Intent.IndexCount);
             hash.Add(contract.Intent.Instances);
             hash.Add((int)contract.Intent.ElementType);
+            hash.Add(contract.IsBorder);
+            if (contract.IsBorder)
+            {
+                hash.Add(contract.BorderColorRevision);
+                hash.Add(contract.BorderWidthRevision);
+            }
         }
         return hash.ToHash();
     }

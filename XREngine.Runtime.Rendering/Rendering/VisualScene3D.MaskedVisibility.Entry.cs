@@ -19,6 +19,10 @@ public partial class VisualScene3D
         UIWorldCollectPacketSet? worldPacketSet = RetainFrozenWorldPacketSetForCollection();
         try
         {
+        if (worldPacketSet?.ExpectedWorld is { } packetWorld)
+            commands.ObserveWorldUiPacketSet(packetWorld, worldPacketSet);
+        else
+            commands.ObserveUnsupportedWorldUiTraversal();
         IRuntimeCullingCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
         IVolume? collectionVolume = collectionVolumeOverride
             ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);

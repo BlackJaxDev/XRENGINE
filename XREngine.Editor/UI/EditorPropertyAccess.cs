@@ -86,6 +86,16 @@ internal sealed class EditorPropertyAccess
             _changed?.Invoke();
             return;
         }
+        if (_targets.Any(target => target is IEditorDictionaryElementBinding))
+        {
+            if (!_targets.All(target => target is IEditorDictionaryElementBinding))
+                throw new InvalidOperationException("The dictionary editor targets do not share one mutation route.");
+            EditorDictionaryMutation.Set(_targets.Cast<IEditorDictionaryElementBinding>().ToArray(),
+                oldValue => update is null ? value : update(oldValue),
+                ((IEditorDictionaryElementBinding)_targets[0]).Refresh);
+            _changed?.Invoke();
+            return;
+        }
         using var interaction = Undo.BeginUserInteraction();
         using var change = Undo.BeginChange($"Set {_property.Name}");
         _writing = true;

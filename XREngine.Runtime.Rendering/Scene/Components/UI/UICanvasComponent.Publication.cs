@@ -152,6 +152,7 @@ public partial class UICanvasComponent
             return;
 
         long revision = canvas.ChangeJournal.Revision;
+        long worldCollectionRevision = DirectWorldChildrenRevision;
         Matrix4x4 canvasWorldMatrix = canvas.WorldMatrix;
         ECanvasDrawSpace authoringDrawSpace = canvas.DrawSpace;
         bool authoringOffscreen = UseOffscreenRenderingForNonScreenSpaces();
@@ -167,7 +168,8 @@ public partial class UICanvasComponent
         try
         {
         if (previous is not null && previous.LayoutGeneration == layoutGeneration &&
-            previous.ChangeRevision == revision && !painterOrderChanged &&
+            previous.ChangeRevision == revision &&
+            previous.WorldCollectionRevision == worldCollectionRevision && !painterOrderChanged &&
             previous.AuthoringCanvasWorldMatrix == canvasWorldMatrix &&
             previous.AuthoringDrawSpace == authoringDrawSpace &&
             previous.AuthoringOffscreen == authoringOffscreen &&
@@ -270,6 +272,7 @@ public partial class UICanvasComponent
                 !ReferenceEquals(canvas, CanvasTransform) ||
                 canvas.CurrentLayoutGeneration != layoutGeneration ||
                 canvas.ChangeJournal.Revision != revision ||
+                DirectWorldChildrenRevision != worldCollectionRevision ||
                 canvas.WorldMatrix != canvasWorldMatrix ||
                 canvas.DrawSpace != authoringDrawSpace ||
                 UseOffscreenRenderingForNonScreenSpaces() != authoringOffscreen ||
@@ -285,7 +288,11 @@ public partial class UICanvasComponent
                 Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
                 layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen,
                 surfaceWriter, quadPayload, quadWorldMatrix);
-            try { replacement.BuildWorldCommands(this); }
+            try
+            {
+                replacement.SetWorldCollectionRevision(worldCollectionRevision);
+                replacement.BuildWorldCommands(this);
+            }
             catch
             {
                 replacement.Release();

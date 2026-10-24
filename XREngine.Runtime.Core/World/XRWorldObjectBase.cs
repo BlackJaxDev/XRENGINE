@@ -103,8 +103,11 @@ public abstract class XRWorldObjectBase : XRObjectBase
         get => _world;
         internal protected set
         {
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(this, value);
             using var mutation = PhysicsChainWorld.BeginWorldObjectMutation(this, _world, value);
-            SetField(ref _world, value);
+            SetFieldValidated(ref _world, value, this,
+                static (owner, original, current, next) =>
+                    XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(owner, next));
         }
     }
 

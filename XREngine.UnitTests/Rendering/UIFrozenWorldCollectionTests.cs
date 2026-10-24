@@ -137,6 +137,44 @@ public sealed class UIFrozenWorldCollectionTests
     }
 
     [Test]
+    public void CommandImageRetainsItsExactWorldPacketSelectionUntilDiscard()
+    {
+        var world = new TestWorldContext();
+        UIPublication packet = NewPacket(12);
+        var set = new UIWorldCollectPacketSet();
+        set.TryBegin(12, world).ShouldBeTrue();
+        set.TryAdd(new object(), packet).ShouldBeTrue();
+        set.TrySeal().ShouldBeTrue();
+
+        var commands = new RenderCommandCollection();
+        commands.ObserveWorldUiPacketSet(world, set);
+        set.Release();
+        commands.TryRetainUpdatingWorldUiPackets(world, out UIWorldCollectPacketSet? selected)
+            .ShouldBeTrue();
+        selected.ShouldBeSameAs(set);
+        commands.TryRetainUpdatingWorldUiPackets(new TestWorldContext(), out _)
+            .ShouldBeFalse();
+        commands.DiscardUpdatingCommands();
+        selected!.Release();
+        Should.Throw<ObjectDisposedException>(packet.Retain);
+    }
+
+    [Test]
+    public void UnstampedTraversalPreventsLaterPacketFromClaimingTheImage()
+    {
+        var world = new TestWorldContext();
+        var set = new UIWorldCollectPacketSet();
+        set.TryBegin(13, world).ShouldBeTrue();
+        set.TrySeal().ShouldBeTrue();
+        var commands = new RenderCommandCollection();
+        commands.ObserveUnsupportedWorldUiTraversal();
+        commands.ObserveWorldUiPacketSet(world, set);
+        commands.TryRetainUpdatingWorldUiPackets(world, out _).ShouldBeFalse();
+        commands.DiscardUpdatingCommands();
+        set.Release();
+    }
+
+    [Test]
     public void CollectPacketSetRejectsMoreThanSixtyFourCanvasPackets()
     {
         var set = new UIWorldCollectPacketSet();

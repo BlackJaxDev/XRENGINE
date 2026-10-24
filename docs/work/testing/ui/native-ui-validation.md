@@ -13,19 +13,17 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. Headless build 111 took 15.36s. Focused
-publication run 70 passed five of five tests in 0.928s. Full run 71 passes
-**728 of 728** tests with no warnings, failures, or skips in 10.870s. New portable
-coverage includes multiline submit/cancel, exact draft and target ownership,
-stable tab focus and callback reentry, combo/menu action ownership, nested frozen
-clips across mixed batch/fallback records, and 23 construction/publication cases.
-The frozen snapshot contains 10,519 source files. These results are from 2026-10-24.
+through `Tools/Invoke-AgentBuild.ps1`. Headless build 112 took 2m26.02s. Full run
+72 passes **758 of 758** tests with no warnings, failures, or skips in 11.663s.
+New portable coverage includes Console row identity and formatting reuse, bounded
+Profiler indexing and cancellation, owned-clone adoption/publication, world-image
+traversal admission, and Vulkan border contract identity. The frozen snapshot
+contains 10,556 source files. These results are from 2026-10-24.
 
-Editor build 43 passed with zero warnings/errors in 2m37.59s. Its production
-inputs match the headless result; the only later change was the clipping fixture's
-matrix update. Desktop test compilation 22 passed with zero warnings/errors in 48.02s. The Windows
-assembly does not execute on Linux. Editor collection and inspector lifecycle
-fixtures remain compile-only here. See the [investigation record](../../investigations/ui/retained-ui-integration.md)
+Editor build 44 passed with zero warnings/errors in 2m35.43s. Its source inputs
+match the headless result. Desktop compilation 23 passed with zero warnings/errors
+in 50.98s. The Windows assembly did not execute on Linux. Editor collection and inspector lifecycle fixtures remain
+compile-only here. See the [investigation record](../../investigations/ui/retained-ui-integration.md)
 for intermediate build/test failures and repairs. Windows, OpenGL/Vulkan, visual,
 IME, native resource, benchmark, and equal-workload ImGui acceptance remain open.
 

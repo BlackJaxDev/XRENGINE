@@ -19,6 +19,20 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
 
     protected SceneNode? Commands { get; private set; }
     protected int RowCount => RowProvider.Count;
+    protected float MaximumScrollOffset(int rowCount)
+        => MathF.Max(0, rowCount * 24.0f - ViewportHeight());
+    protected bool TryGetBoundTextRowId(UIInteractableComponent target, out ulong id)
+    {
+        id = 0;
+        if (_terminal || !_ownerActive || _list is null ||
+            !ReferenceEquals(_list.VirtualProvider, _rows) ||
+            target.IsDestroyed || target.IsDestroyQueued ||
+            target.BoundableTransform is not { } row ||
+            !_rows.TryGetBoundId(row, out id) ||
+            !_list.TryGetVirtualRowLease(row, out UIVirtualRowLease lease) || lease.ItemId != id)
+            return false;
+        return true;
+    }
     public float ScrollOffset
     {
         get => _ownerActive && !_terminal && IsActiveInHierarchy

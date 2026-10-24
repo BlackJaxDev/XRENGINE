@@ -20,6 +20,8 @@ internal readonly record struct VulkanPreparedCommandChainKey(
     private readonly RecordedPacketKey _recordedPacketKey = RecordedPacketKey;
     internal VulkanIndirectDrawCommandIdentity IndirectCommand { get; init; }
     internal UIStaticDrawContract StaticUiContract { get; init; }
+    internal VulkanRecordedBufferIdentity StaticUiBorderColorBuffer { get; init; }
+    internal VulkanRecordedBufferIdentity StaticUiBorderWidthBuffer { get; init; }
 
     public RecordedPacketKey RecordedPacketKey
     {
@@ -47,6 +49,8 @@ internal readonly record struct VulkanPreparedCommandChainKey(
             DescriptorHeapDraws.Equals(other.DescriptorHeapDraws) &&
             IndirectCommand.Matches(other.IndirectCommand) &&
             StaticUiContract == other.StaticUiContract &&
+            StaticUiBorderColorBuffer == other.StaticUiBorderColorBuffer &&
+            StaticUiBorderWidthBuffer == other.StaticUiBorderWidthBuffer &&
             IsComplete == other.IsComplete &&
             recordedPacketKey.Matches(in otherRecordedPacketKey);
     }
