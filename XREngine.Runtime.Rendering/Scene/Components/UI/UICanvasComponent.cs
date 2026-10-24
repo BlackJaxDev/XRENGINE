@@ -77,6 +77,13 @@ namespace XREngine.Components
         private bool _loggedStaleNonScreenFrameWarning = false;
         private bool _forceDirectRenderingForBackdropBlur = false;
         private bool _autoDisableOffscreenForBackdropBlur = true;
+        private bool _worldCollectionUnavailable;
+        private bool _worldCollectionTerminal;
+
+        internal bool WorldCollectionUnavailable => _worldCollectionUnavailable || _worldCollectionTerminal;
+
+        /// <summary>Signals a change that can alter child 3D collection.</summary>
+        internal event Action? WorldCollectionModeChanged;
 
         private bool _preferOffscreenRenderingForNonScreenSpaces = true;
         /// <summary>
@@ -87,7 +94,13 @@ namespace XREngine.Components
         public bool PreferOffscreenRenderingForNonScreenSpaces
         {
             get => _preferOffscreenRenderingForNonScreenSpaces;
-            set => SetField(ref _preferOffscreenRenderingForNonScreenSpaces, value);
+            set
+            {
+                bool wasOffscreen = UseOffscreenRenderingForNonScreenSpaces();
+                if (SetField(ref _preferOffscreenRenderingForNonScreenSpaces, value) &&
+                    wasOffscreen != UseOffscreenRenderingForNonScreenSpaces())
+                    WorldCollectionModeChanged?.Invoke();
+            }
         }
 
         public bool UseOffscreenRenderingForNonScreenSpaces()
@@ -102,7 +115,11 @@ namespace XREngine.Components
         public bool AutoDisableOffscreenForBackdropBlur
         {
             get => _autoDisableOffscreenForBackdropBlur;
-            set => SetField(ref _autoDisableOffscreenForBackdropBlur, value);
+            set
+            {
+                if (SetField(ref _autoDisableOffscreenForBackdropBlur, value))
+                    RefreshNonScreenRenderingMode();
+            }
         }
 
         private void EnsureOffscreenResourcesInitialized()
@@ -226,7 +243,10 @@ namespace XREngine.Components
 
         protected override void OnTransformChanging()
         {
+            SetField(ref _worldCollectionUnavailable, true, publishNotifications: false);
             base.OnTransformChanging();
+
+            WorldCollectionModeChanged?.Invoke();
 
             if (!SceneNode.IsTransformNull && Transform is UICanvasTransform tfm)
             {
@@ -241,6 +261,8 @@ namespace XREngine.Components
 
             if (!SceneNode.IsTransformNull && Transform is UICanvasTransform tfm)
                 tfm.PropertyChanged += OnCanvasTransformPropertyChanged;
+            SetField(ref _worldCollectionUnavailable, false, publishNotifications: false);
+            WorldCollectionModeChanged?.Invoke();
         }
 
         private void OnCanvasTransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -567,6 +589,7 @@ namespace XREngine.Components
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            WorldCollectionModeChanged?.Invoke();
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
             // Layout runs on UpdateFrame, before RuntimeWorld post-update processing (PostUpdateFrame).
@@ -584,6 +607,7 @@ namespace XREngine.Components
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
+            WorldCollectionModeChanged?.Invoke();
             RemoveTimerHooks();
             GetCanvasTransformOrNull()?.CancelLayoutJob();
             ClearPublications();
@@ -591,6 +615,9 @@ namespace XREngine.Components
 
         protected override void OnDestroying()
         {
+            SetField(ref _worldCollectionTerminal, true, publishNotifications: false);
+            SetField(ref _worldCollectionUnavailable, true, publishNotifications: false);
+            WorldCollectionModeChanged?.Invoke();
             RemoveTimerHooks();
             GetCanvasTransformOrNull()?.CancelLayoutJob();
             ClearPublications();
@@ -1103,6 +1130,7 @@ namespace XREngine.Components
 
         private void RefreshNonScreenRenderingMode()
         {
+            bool wasOffscreen = UseOffscreenRenderingForNonScreenSpaces();
             var canvasTransform = CanvasTransform;
             bool forceDirect = false;
 
@@ -1112,7 +1140,9 @@ namespace XREngine.Components
             if (_forceDirectRenderingForBackdropBlur == forceDirect)
                 return;
 
-            _forceDirectRenderingForBackdropBlur = forceDirect;
+            SetField(ref _forceDirectRenderingForBackdropBlur, forceDirect, publishNotifications: false);
+            if (wasOffscreen != UseOffscreenRenderingForNonScreenSpaces())
+                WorldCollectionModeChanged?.Invoke();
             //if (_renderModeDiagCount < 20)
             //{
             //    Debug.UI($"[UICanvas:RenderMode] drawSpace={canvasTransform.DrawSpace} preferOffscreen={_preferOffscreenRenderingForNonScreenSpaces} forceDirectForBackdropBlur={_forceDirectRenderingForBackdropBlur} effectiveOffscreen={UseOffscreenRenderingForNonScreenSpaces()}");

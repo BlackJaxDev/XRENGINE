@@ -1,5 +1,6 @@
 using XREngine.Core.Files;
 using XREngine.Rendering;
+using XREngine.Rendering.Shaders;
 using XREngine.Rendering.Models.Materials;
 using System.Numerics;
 
@@ -44,7 +45,14 @@ internal sealed class UITestShaderScope : IRuntimeShaderServices, IDisposable
         if (typeof(T) != typeof(XRShader))
             return new T();
         string shaderPath = Path.Combine(ShaderDirectory, relativePath.Replace('\\', Path.DirectorySeparatorChar));
-        TextFile source = TextFile.FromText(File.ReadAllText(shaderPath));
+        string shaderText = File.ReadAllText(shaderPath);
+        if (shaderText.Contains("#pragma snippet \"BvhRaycastCore\"", StringComparison.Ordinal))
+            shaderText = ShaderSnippets.ResolveCanonical(shaderText,
+                new Dictionary<string, string>
+                {
+                    ["BvhRaycastCore"] = File.ReadAllText(Path.Combine(ShaderDirectory, "Snippets", "BvhRaycastCore.glsl"))
+                });
+        TextFile source = TextFile.FromText(shaderText);
         source.FilePath = relativePath;
         return (T)(XRAsset)new XRShader(XRShader.ResolveType(Path.GetExtension(relativePath)), source)
         {

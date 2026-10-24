@@ -30,7 +30,7 @@ namespace XREngine.Rendering
     /// Can either be a window or render texture.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport, IRuntimePointerContactSource
+    public sealed partial class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport, IRuntimePointerContactSource
     {
         #region Fields
 
@@ -275,7 +275,7 @@ namespace XREngine.Rendering
             get => _window;
             set
             {
-                if (!SetField(ref _window, value))
+                if (_detachingSceneBinding || !SetField(ref _window, value))
                     return;
 
                 RefreshRenderPipelineOutputBinding();
@@ -607,7 +607,11 @@ namespace XREngine.Rendering
         public CameraComponent? CameraComponent
         {
             get => _cameraComponent;
-            set => SetField(ref _cameraComponent, value);
+            set
+            {
+                if (!_detachingSceneBinding)
+                    SetField(ref _cameraComponent, value);
+            }
         }
 
         /// <summary>
@@ -620,7 +624,11 @@ namespace XREngine.Rendering
         public XRCamera? Camera
         {
             get => _camera;
-            set => SetField(ref _camera, value);
+            set
+            {
+                if (!_detachingSceneBinding)
+                    SetField(ref _camera, value);
+            }
         }
 
         /// <summary>
@@ -1224,6 +1232,7 @@ namespace XREngine.Rendering
         /// <returns>True if the change should proceed, false to cancel the change.</returns>
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
+            ulong bindingRevision = _sceneBindingRevision;
             bool change = base.OnPropertyChanging(propName, field, @new);
             if (change)
             {
@@ -1244,7 +1253,8 @@ namespace XREngine.Rendering
                         break;
                 }
             }
-            return change;
+            return change && (propName is not (nameof(CameraComponent) or nameof(Camera) or nameof(Window)) ||
+                !_detachingSceneBinding && bindingRevision == _sceneBindingRevision);
         }
 
         /// <summary>

@@ -17,6 +17,7 @@ public static partial class EditorUnitTests
 
             SceneNode panel = new(canvasRoot) { Name = "Native control gallery" };
             UIListTransform list = panel.SetTransform<UIListTransform>();
+            panel.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.StaticChrome;
             list.MinAnchor = new Vector2(0, 1);
             list.MaxAnchor = new Vector2(0, 1);
             list.NormalizedPivot = new Vector2(0, 1);
@@ -26,8 +27,10 @@ public static partial class EditorUnitTests
             list.ItemSpacing = 6;
             list.ItemAlignment = EListAlignment.TopOrLeft;
             list.BlocksInputBehind = true;
+            AddGalleryBackground(panel, new ColorF4(0.12f, 0.12f, 0.12f, 0.8f));
 
-            NativeUIElements.CreateButton(panel, "Button", _ => { }, height: 26);
+            SceneNode buttonNode = NativeUIElements.CreateButton(panel, "Button", _ => { }, height: 26).Node;
+            buttonNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
 
             SceneNode toggleNode = MakeGalleryRow(panel, "Checkbox");
             var toggle = NativeUIElements.CreateCheckboxToggle(toggleNode).Toggle;
@@ -99,17 +102,19 @@ public static partial class EditorUnitTests
                 new("Gallery cyan", 2, 2, new byte[] { 0, 180, 220, 255, 0, 230, 255, 255, 0, 230, 255, 255, 0, 180, 220, 255 }),
                 new("Gallery amber", 2, 2, new byte[] { 255, 180, 0, 255, 255, 220, 0, 255, 255, 220, 0, 255, 255, 180, 0, 255 }),
             ], pageSize: 8));
-            SceneNode imageRow = MakeGalleryRow(panel, "Shared image atlas");
+            SceneNode imageRow = MakeGalleryRow(panel, "Shared image atlas", EUICompositionLayerKind.StaticChrome);
             NativeUIElements.CreateImage(imageRow, atlasOwner, "Gallery cyan");
             var amber = NativeUIElements.CreateImage(imageRow, atlasOwner, "Gallery amber");
             amber.Image.BoundableTransform.Translation = new Vector2(28, 0);
             AddGalleryLabel(imageRow, "Shared image atlas").BoundableTransform.Margins = new Vector4(60, 0, 4, 0);
         }
 
-        private static SceneNode MakeGalleryRow(SceneNode parent, string label)
+        private static SceneNode MakeGalleryRow(SceneNode parent, string label,
+            EUICompositionLayerKind kind = EUICompositionLayerKind.Overlay)
         {
             SceneNode row = new(parent) { Name = label };
             UIBoundableTransform tfm = row.SetTransform<UIBoundableTransform>();
+            row.AddComponent<UICompositionLayerComponent>()!.Kind = kind;
             tfm.Width = 270;
             tfm.Height = 28;
             tfm.BlocksInputBehind = true;
@@ -120,6 +125,7 @@ public static partial class EditorUnitTests
         {
             SceneNode node = new(canvasRoot) { Name = name };
             node.SetTransform<UIBoundableTransform>().Visibility = EVisibility.Collapsed;
+            node.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
             return node.AddComponent<UIContextMenuComponent>()!;
         }
 

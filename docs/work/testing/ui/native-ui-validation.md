@@ -13,17 +13,15 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. All **531 of 531** tests pass, with no
-warnings, failures, or skips, in 9.286 seconds. The build took 1m28.85s. Coverage
-adds terminal callback ownership, audio reactivation, bounded Switch graphs,
-canvas-lifetime batch reuse, and exact retained mesh identity. These results are
-from 2026-10-24.
+through `Tools/Invoke-AgentBuild.ps1`. All **541 of 541** tests pass, with no
+warnings, failures, or skips, in 9.028 seconds. The final incremental build took
+15.96s. Coverage adds canvas collection transitions, nested transform replacement,
+retained batch reattachment, and non-vetoable viewport owner cleanup. These
+results are from 2026-10-24. Final source verification covers 9,941 files.
 
-The matching editor build passed with zero warnings/errors in 2m12.98s. The
-desktop test project compiled with zero warnings/errors in 45.41s. Final source
-verification covers 9,936 files. The two Vulkan-only pass-admission edits after
-the headless build are outside its project inputs; the editor and desktop builds
-include them. Desktop execution remains subject to the Windows requirement.
+The matching editor build passed with zero warnings/errors in 2m44.39s. The
+desktop test project compiled with zero warnings/errors in 50.22s. Desktop
+execution remains subject to the Windows requirement.
 
 The editor build compiles Windows targets on Linux. The desktop test-project
 build compiles shaping and Vulkan regression tests. Desktop tests did not execute:

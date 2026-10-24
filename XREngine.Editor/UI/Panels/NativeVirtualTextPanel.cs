@@ -64,7 +64,8 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
             contentSplit.FixedSize = FooterHeight;
             contentSplit.SplitterSize = 0;
         }
-        content.NewChildWithTransform(out UIListTransform list, "Rows");
+        SceneNode rowsNode = content.NewChildWithTransform(out UIListTransform list, "Rows");
+        rowsNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.ScrollingContent;
         list.DisplayHorizontal = false;
         list.ItemAlignment = EListAlignment.TopOrLeft;
         list.ItemSize = 24;

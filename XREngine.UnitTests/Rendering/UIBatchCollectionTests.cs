@@ -503,6 +503,200 @@ public sealed class UIBatchCollectionTests
     }
 
     [Test]
+    public void CanvasWorldCollectionTracksDrawSpaceModeActivityAndVisibility()
+    {
+        using IDisposable materialTarget = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        XREngine.Scene.SceneNode root = new("World collection canvas", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        root.SetWorldContext(new XREngine.UnitTests.Physics.TestWorldContext());
+        XREngine.Components.UICanvasComponent canvas = root.AddComponent<XREngine.Components.UICanvasComponent>()!;
+        XREngine.Scene.SceneNode parent = new(root) { Name = "Parent" };
+        parent.SetTransform<UIBoundableTransform>();
+        XREngine.Scene.SceneNode item = new(parent) { Name = "Item" };
+        item.SetTransform<UIBoundableTransform>();
+        UIMaterialComponent component = item.AddComponent<UIMaterialComponent>()!;
+        UICanvasTransform canvasTransform = (UICanvasTransform)root.Transform;
+        UIBoundableTransform parentTransform = (UIBoundableTransform)parent.Transform;
+        RegistrationTargetProbe target = new();
+        try
+        {
+            component.RenderInfo3D.IsVisible = true;
+            component.RenderInfo3D.CastsShadows = true;
+            root.IsActiveSelf = true;
+            component.RenderInfo3D.WorldInstance = target;
+            target.Entries.ShouldBeEmpty();
+
+            canvasTransform.DrawSpace = ECanvasDrawSpace.World;
+            target.Entries.ShouldBeEmpty();
+            canvas.PreferOffscreenRenderingForNonScreenSpaces = false;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+
+            parentTransform.Visibility = EVisibility.Hidden;
+            target.Entries.ShouldBeEmpty();
+            parentTransform.Visibility = EVisibility.Visible;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+
+            canvas.IsActive = false;
+            target.Entries.ShouldBeEmpty();
+            canvas.IsActive = true;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+
+            component.IsActive = false;
+            target.Entries.ShouldBeEmpty();
+            item.Transform.Parent = root.Transform;
+            parentTransform.Visibility = EVisibility.Hidden;
+            parentTransform.Visibility = EVisibility.Visible;
+            item.Transform.Parent = parent.Transform;
+            typeof(UIRenderableComponent).GetField("_worldCollectionCanvasComponent",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(component).ShouldBeNull();
+            typeof(UIRenderableComponent).GetField("_worldCollectionCanvasTransform",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(component).ShouldBeNull();
+            typeof(UIRenderableComponent).GetField("_worldCollectionCanvasNode",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(component).ShouldBeNull();
+            component.IsActive = true;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+
+            canvas.PreferOffscreenRenderingForNonScreenSpaces = true;
+            target.Entries.ShouldBeEmpty();
+            canvasTransform.DrawSpace = ECanvasDrawSpace.Screen;
+            canvas.PreferOffscreenRenderingForNonScreenSpaces = false;
+            target.Entries.ShouldBeEmpty();
+
+            component.RenderInfo3D.IsVisible.ShouldBeTrue();
+            component.RenderInfo3D.CastsShadows.ShouldBeTrue();
+            canvasTransform.DrawSpace = ECanvasDrawSpace.World;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+        }
+        finally { root.Destroy(true); }
+        target.Entries.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void CanvasWorldCollectionFollowsReparentingAndCanvasReplacement()
+    {
+        using IDisposable materialTarget = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        XREngine.Scene.SceneNode first = new("First canvas", new UICanvasTransform { DrawSpace = ECanvasDrawSpace.World })
+        {
+            IsActiveSelf = false
+        };
+        XREngine.Scene.SceneNode second = new("Second canvas", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        XREngine.UnitTests.Physics.TestWorldContext world = new();
+        first.SetWorldContext(world);
+        second.SetWorldContext(world);
+        XREngine.Components.UICanvasComponent firstCanvas = first.AddComponent<XREngine.Components.UICanvasComponent>()!;
+        firstCanvas.PreferOffscreenRenderingForNonScreenSpaces = false;
+        XREngine.Components.UICanvasComponent secondCanvas = second.AddComponent<XREngine.Components.UICanvasComponent>()!;
+        secondCanvas.PreferOffscreenRenderingForNonScreenSpaces = false;
+        XREngine.Scene.SceneNode item = new(first) { Name = "Reparented item" };
+        item.SetTransform<UIBoundableTransform>();
+        UIMaterialComponent component = item.AddComponent<UIMaterialComponent>()!;
+        RegistrationTargetProbe target = new();
+        try
+        {
+            first.IsActiveSelf = true;
+            second.IsActiveSelf = true;
+            component.RenderInfo3D.WorldInstance = target;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+
+            item.Transform.Parent = second.Transform;
+            target.Entries.ShouldBeEmpty();
+            ((UICanvasTransform)second.Transform).DrawSpace = ECanvasDrawSpace.World;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+
+            second.DetachComponent(secondCanvas).ShouldBeTrue();
+            target.Entries.ShouldBeEmpty();
+            XREngine.Components.UICanvasComponent replacement = second.AddComponent<XREngine.Components.UICanvasComponent>()!;
+            target.Entries.ShouldBeEmpty();
+            replacement.PreferOffscreenRenderingForNonScreenSpaces = false;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+
+            replacement.Destroy(true);
+            target.Entries.ShouldBeEmpty();
+
+            component.Destroy(true);
+            target.Entries.ShouldBeEmpty();
+            ((UICanvasTransform)first.Transform).DrawSpace = ECanvasDrawSpace.Screen;
+            ((UICanvasTransform)second.Transform).DrawSpace = ECanvasDrawSpace.Screen;
+        }
+        finally
+        {
+            first.Destroy(true);
+            second.Destroy(true);
+            secondCanvas.Destroy(true);
+        }
+        target.Entries.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void NestedCanvasWorldCollectionFollowsItsOwnTransformReplacement()
+    {
+        using IDisposable materialTarget = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+            EngineMaterialConstructionTarget.DesktopGlsl);
+        XREngine.Scene.SceneNode outer = new("Outer canvas", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        outer.SetWorldContext(new XREngine.UnitTests.Physics.TestWorldContext());
+        outer.AddComponent<XREngine.Components.UICanvasComponent>();
+        XREngine.Scene.SceneNode nested = new(outer) { Name = "Nested canvas" };
+        nested.SetTransform<UICanvasTransform>();
+        UICanvasTransform original = (UICanvasTransform)nested.Transform;
+        original.DrawSpace = ECanvasDrawSpace.World;
+        XREngine.Components.UICanvasComponent nestedCanvas = nested.AddComponent<XREngine.Components.UICanvasComponent>()!;
+        nestedCanvas.PreferOffscreenRenderingForNonScreenSpaces = false;
+        XREngine.Scene.SceneNode item = new(nested) { Name = "Nested item" };
+        item.SetTransform<UIBoundableTransform>();
+        UIMaterialComponent component = item.AddComponent<UIMaterialComponent>()!;
+        RegistrationTargetProbe target = new();
+        UICanvasTransform? screenReplacement = null;
+        try
+        {
+            outer.IsActiveSelf = true;
+            component.RenderInfo3D.IsVisible = true;
+            component.RenderInfo3D.CastsShadows = false;
+            component.RenderInfo3D.WorldInstance = target;
+            component.SetBatchSolidColor(Vector4.One);
+            target.Entries.ShouldContain(component.RenderInfo3D);
+            nestedCanvas.BatchCollector.GetRetainedPrimitiveHandle(component.RenderInfo2D.MembershipId,
+                ((UIBoundableTransform)item.Transform).ElementIdentity).ShouldNotBe(0ul);
+
+            ((UICanvasTransform)outer.Transform).DrawSpace = ECanvasDrawSpace.World;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+
+            screenReplacement = new UICanvasTransform { DrawSpace = ECanvasDrawSpace.Screen };
+            nested.SetTransform(screenReplacement);
+            target.Entries.ShouldBeEmpty();
+            nestedCanvas.BatchCollector.GetRetainedPrimitiveHandle(component.RenderInfo2D.MembershipId,
+                ((UIBoundableTransform)item.Transform).ElementIdentity).ShouldNotBe(0ul);
+
+            UICanvasTransform worldReplacement = new() { DrawSpace = ECanvasDrawSpace.World };
+            nested.SetTransform(worldReplacement);
+            target.Entries.ShouldContain(component.RenderInfo3D);
+            nestedCanvas.BatchCollector.GetRetainedPrimitiveHandle(component.RenderInfo2D.MembershipId,
+                ((UIBoundableTransform)item.Transform).ElementIdentity).ShouldNotBe(0ul);
+            original.DrawSpace = ECanvasDrawSpace.Screen;
+            screenReplacement.DrawSpace = ECanvasDrawSpace.World;
+            target.Entries.ShouldContain(component.RenderInfo3D);
+            component.RenderInfo3D.IsVisible.ShouldBeTrue();
+            component.RenderInfo3D.CastsShadows.ShouldBeFalse();
+        }
+        finally
+        {
+            outer.Destroy(true);
+            original.Destroy(true);
+            screenReplacement?.Destroy(true);
+        }
+        target.Entries.ShouldBeEmpty();
+    }
+
+    [Test]
     public void CanonicalDesktopImageIsEligibleForOwnedTextureBatch()
     {
         using IDisposable target = RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
