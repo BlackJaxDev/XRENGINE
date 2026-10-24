@@ -12,20 +12,8 @@ internal static partial class AnimationClipAuthoringActions
     private static readonly object ReservationGate = new();
     private static readonly HashSet<object> ReservedOwners =
         new(ReferenceEqualityComparer.Instance);
-    public static bool SetClipLength(AnimationClip clip, float seconds)
-    {
-        if (!float.IsFinite(seconds) || seconds < 0 || seconds > 3600)
-            return false;
-        float previous = clip.LengthInSeconds;
-        if (MathF.Abs(previous - seconds) < 0.000001f)
-            return false;
-        return Apply(clip, "Set Animation Length",
-            () => clip.LengthInSeconds = seconds,
-            () => clip.LengthInSeconds = previous,
-            () => clip.LengthInSeconds == seconds,
-            () => clip.LengthInSeconds == previous,
-            ownedProperties: [(clip, nameof(AnimationClip.LengthInSeconds))]);
-    }
+    public static bool SetClipLength(AnimationClip clip, float seconds, bool stretch = false)
+        => SetClipAndMemberLengths(clip, seconds, stretch);
 
     public static bool SetClipSampleRate(AnimationClip clip, int framesPerSecond)
     {

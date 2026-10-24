@@ -522,11 +522,12 @@ public sealed partial class UIBatchCollector : IDisposable
         EBatchMarkerKind Kind, int GroupIndex);
     private List<PublishedMarker> _collectPublishedMarkers = [];
     private List<PublishedMarker> _renderPublishedMarkers = [];
-    private UIRenderRecord[]? _collectPublishedStorage;
-    private UIRenderRecord[]? _renderPublishedStorage;
+    private UIRecordStore<UIRenderRecord>? _collectPublishedStorage;
+    private UIRecordStore<UIRenderRecord>? _renderPublishedStorage;
     private UICompositionSegmentSet? _collectCompositionStorage;
     private UICompositionSegmentSet? _renderCompositionStorage;
     private int _collectPublishedRecordIndex = -1;
+    private long _publishedCollectionEpoch;
     private bool _reusePublishedRuns;
     /// <summary>Draws authored by the currently published frozen UI packet.</summary>
     public int ExpectedPublishedDrawIntentCount
@@ -535,9 +536,10 @@ public sealed partial class UIBatchCollector : IDisposable
         {
             int count = _renderPublishedMarkers.Count;
             if (_renderPublishedStorage is { } records)
-                foreach (UIRenderRecord record in records)
-                    if (record.Visible && !record.SupportsBatch && record.FrozenCommand is not null)
-                        count++;
+                for (int page = 0; page < records.PageCount; page++)
+                    foreach (ref readonly UIRenderRecord record in records.GetPage(page))
+                        if (record.Visible && !record.SupportsBatch && record.FrozenCommand is not null)
+                            count++;
             return count;
         }
     }
@@ -547,9 +549,10 @@ public sealed partial class UIBatchCollector : IDisposable
         get
         {
             if (_renderPublishedStorage is { } records)
-                foreach (UIRenderRecord record in records)
-                    if (record.Visible && record.SupportsBatch && record.IsText && record.TextLayout is null)
-                        return true;
+                for (int page = 0; page < records.PageCount; page++)
+                    foreach (ref readonly UIRenderRecord record in records.GetPage(page))
+                        if (record.Visible && record.SupportsBatch && record.IsText && record.TextLayout is null)
+                            return true;
             return false;
         }
     }
@@ -1125,39 +1128,58 @@ public sealed partial class UIBatchCollector : IDisposable
         ArgumentNullException.ThrowIfNull(publication);
         ArgumentNullException.ThrowIfNull(passes);
         ArgumentNullException.ThrowIfNull(collectUnbatched);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        long collectionEpoch = Interlocked.Increment(ref _publishedCollectionEpoch);
         BeginPublicationCollection(publication.Generation);
-        ReadOnlySpan<UIRenderRecord> records = publication.Renders;
-        _reusePublishedRuns = ReferenceEquals(publication.RenderStorage, _renderPublishedStorage) &&
+        UIRecordStore<UIRenderRecord> records = publication.RenderRecordStore;
+        _reusePublishedRuns = ReferenceEquals(records, _renderPublishedStorage) &&
             ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage);
         if (_reusePublishedRuns)
         {
             RetainedRunReuseCount++;
             int markerIndex = 0;
-            for (int index = 0; index < records.Length; index++)
+            for (int page = 0, index = 0; page < records.PageCount; page++)
             {
-                UIRenderRecord record = records[index];
-                if (!record.Visible) continue;
-                while (markerIndex < _renderPublishedMarkers.Count &&
-                    _renderPublishedMarkers[markerIndex].RecordIndex == index)
+                foreach (ref readonly UIRenderRecord record in records.GetPage(page))
                 {
-                    PublishedMarker marker = _renderPublishedMarkers[markerIndex++];
-                    passes.AddCPU(AcquireMarker(marker.Pass, marker.ZIndex, marker.Kind, marker.GroupIndex));
+                    if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
+                        return;
+                    int recordIndex = index++;
+                    if (!record.Visible) continue;
+                    while (markerIndex < _renderPublishedMarkers.Count &&
+                        _renderPublishedMarkers[markerIndex].RecordIndex == recordIndex)
+                    {
+                        PublishedMarker marker = _renderPublishedMarkers[markerIndex++];
+                        passes.AddCPU(AcquireMarker(marker.Pass, marker.ZIndex, marker.Kind, marker.GroupIndex));
+                    }
+                    if (!record.SupportsBatch)
+                    {
+                        collectUnbatched(record);
+                        if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
+                            return;
+                    }
                 }
-                if (!record.SupportsBatch)
-                    collectUnbatched(record);
             }
             return;
         }
 
-        _collectPublishedStorage = publication.RenderStorage;
+        records.Retain();
+        UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
+        _collectPublishedStorage = records;
         _collectCompositionStorage = publication.CompositionStorage;
         _collectPublishedMarkers.Clear();
+        try
+        {
         lock (_primitiveSlotGate)
             _membershipEpoch++;
-        for (int index = 0; index < records.Length; index++)
+        for (int page = 0, index = 0; page < records.PageCount; page++)
         {
+            foreach (ref readonly UIRenderRecord record in records.GetPage(page))
+            {
+            if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
+                return;
             _collectPublishedRecordIndex = index;
-            UIRenderRecord record = records[index];
+            index++;
             ulong primitiveHandle = RetainPrimitive(in record);
             if (!record.Visible)
                 continue;
@@ -1165,6 +1187,8 @@ public sealed partial class UIBatchCollector : IDisposable
             {
                 BreakBatchRun(record.RenderPass);
                 collectUnbatched(record);
+                if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
+                    return;
                 continue;
             }
             publication.TryGetCompositionSegment(record.MembershipId, out UICompositionSegment segment);
@@ -1195,10 +1219,15 @@ public sealed partial class UIBatchCollector : IDisposable
                     record.BorderColor, record.BorderWidth, primitiveHandle, record.CompositionOwner, segmentIdentity, segmentRevision,
                     record.Backdrop, record.TextureSnapshot);
             }
+            }
         }
+        if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
+            return;
         _collectPublishedRecordIndex = -1;
         ReconcileCollectedRunIds();
         RetireMissingPrimitives();
+        }
+        finally { oldCollectStorage?.Release(); }
     }
 
     /// <summary>
@@ -1472,6 +1501,8 @@ public sealed partial class UIBatchCollector : IDisposable
     /// </summary>
     public void DiscardCollectedCandidate()
     {
+        Interlocked.Increment(ref _publishedCollectionEpoch);
+        UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
         CollectedPublicationGeneration = 0;
         _reusePublishedRuns = false;
         _collectPublishedRecordIndex = -1;
@@ -1486,6 +1517,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
+        oldCollectStorage?.Release();
     }
 
     /// <summary>
@@ -1494,6 +1526,7 @@ public sealed partial class UIBatchCollector : IDisposable
     /// </summary>
     public void SwapBuffers()
     {
+        Interlocked.Increment(ref _publishedCollectionEpoch);
         UIRuntimeCounters.Add(UIWorkCounter.BatchCollectionResets);
         if (_reusePublishedRuns)
         {
@@ -1508,6 +1541,7 @@ public sealed partial class UIBatchCollector : IDisposable
         (_collectMaterialGroups, _renderMaterialGroups) = (_renderMaterialGroups, _collectMaterialGroups);
         (_collectTextGroups, _renderTextGroups) = (_renderTextGroups, _collectTextGroups);
         (_collectPublishedMarkers, _renderPublishedMarkers) = (_renderPublishedMarkers, _collectPublishedMarkers);
+        UIRecordStore<UIRenderRecord>? oldRenderStorage = _renderPublishedStorage;
         _renderPublishedStorage = _collectPublishedStorage;
         _renderCompositionStorage = _collectCompositionStorage;
         _collectPublishedStorage = null;
@@ -1522,6 +1556,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
+        oldRenderStorage?.Release();
     }
 
     /// <summary>
@@ -1530,6 +1565,9 @@ public sealed partial class UIBatchCollector : IDisposable
     /// </summary>
     public void Clear()
     {
+        Interlocked.Increment(ref _publishedCollectionEpoch);
+        UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
+        UIRecordStore<UIRenderRecord>? oldRenderStorage = _renderPublishedStorage;
         CollectedPublicationGeneration = 0;
         _reusePublishedRuns = false;
         _collectPublishedRecordIndex = -1;
@@ -1560,6 +1598,8 @@ public sealed partial class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
+        try { oldCollectStorage?.Release(); }
+        finally { oldRenderStorage?.Release(); }
     }
 
     #endregion
@@ -2850,7 +2890,7 @@ public sealed partial class UIBatchCollector : IDisposable
             _activeReceipt is not { } receipt || !ReferenceEquals(receipt.Renderer, renderer) ||
             _renderingPublication is not { AuthoringDrawSpace: ECanvasDrawSpace.Screen,
                 DrawSpace: ECanvasDrawSpace.Screen, AuthoringOffscreen: false } publication ||
-            !ReferenceEquals(publication.RenderStorage, _renderPublishedStorage) ||
+            !ReferenceEquals(publication.RenderRecordStore, _renderPublishedStorage) ||
             !ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage))
             return default;
 
@@ -3141,7 +3181,7 @@ public sealed partial class UIBatchCollector : IDisposable
             { AuthoringDrawSpace: ECanvasDrawSpace.Screen,
               DrawSpace: ECanvasDrawSpace.Screen,
               AuthoringOffscreen: false } publication ||
-            !ReferenceEquals(publication.RenderStorage, _renderPublishedStorage) ||
+            !ReferenceEquals(publication.RenderRecordStore, _renderPublishedStorage) ||
             !ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage) ||
             gpu.GlyphTransformsBuf is null || gpu.GlyphTexCoordsBuf is null ||
             gpu.TextInstanceBuf is null || gpu.GlyphTextIndexBuf is null ||
@@ -3824,7 +3864,9 @@ public sealed partial class UIBatchCollector : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        BindRenderingPublication(null);
+        List<Exception>? failures = null;
+        try { BindRenderingPublication(null); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
         lock (CollectorRegistryGate)
         {
             for (int index = CollectorRegistry.Count - 1; index >= 0; index--)
@@ -3832,45 +3874,72 @@ public sealed partial class UIBatchCollector : IDisposable
                     ReferenceEquals(collector, this))
                     CollectorRegistry.RemoveAt(index);
         }
-        Clear();
-        DisposeBackdropSurfaces();
+        try { Clear(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { DisposeBackdropSurfaces(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
         foreach (var pair in _materialRunGPU)
             foreach (MaterialGPUResources cohort in pair.Value)
             {
                 if (cohort.Receipt is { } lease && !lease.IsRetired)
                 {
-                    lock (CollectorRegistryGate)
-                        DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, cohort, null));
+                    try
+                    {
+                        lock (CollectorRegistryGate)
+                            DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, cohort, null));
+                    }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
                     continue;
                 }
                 if (cohort.Receipt is not null)
                 {
-                    ForceReleaseReceipt(cohort.Receipt);
+                    try { ForceReleaseReceipt(cohort.Receipt); }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
                     cohort.Receipt = null;
                 }
-                DestroyMaterialGPU(cohort);
+                try { DestroyMaterialGPU(cohort); }
+                catch (Exception failure)
+                {
+                    (failures ??= []).Add(failure);
+                    lock (CollectorRegistryGate)
+                        DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, cohort, null));
+                }
             }
         _materialRunGPU.Clear();
         if (_legacyMaterialGpuCreated)
-            DestroyLegacyMaterialGPU();
+            try { DestroyLegacyMaterialGPU(); }
+            catch (Exception failure) { (failures ??= []).Add(failure); }
         foreach (var pair in _textGPU)
             foreach (TextGPUResources gpu in pair.Value)
             {
                 if (gpu.Receipt is { } lease && !lease.IsRetired)
                 {
-                    lock (CollectorRegistryGate)
-                        DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, null, gpu));
+                    try
+                    {
+                        lock (CollectorRegistryGate)
+                            DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, null, gpu));
+                    }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
                     continue;
                 }
                 if (gpu.Receipt is not null)
                 {
-                    ForceReleaseReceipt(gpu.Receipt);
+                    try { ForceReleaseReceipt(gpu.Receipt); }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
                     gpu.Receipt = null;
                 }
-                gpu.Dispose();
+                try { gpu.Dispose(); }
+                catch (Exception failure)
+                {
+                    (failures ??= []).Add(failure);
+                    lock (CollectorRegistryGate)
+                        DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, null, gpu));
+                }
             }
         _textGPU.Clear();
         _gpuCohortCount = 0;
+        if (failures is not null)
+            throw new AggregateException("UI batch collector cleanup failed.", failures);
     }
 
     private static void DestroyMaterialGPU(MaterialGPUResources gpu)

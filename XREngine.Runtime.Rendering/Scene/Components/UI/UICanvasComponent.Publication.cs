@@ -85,6 +85,18 @@ public partial class UICanvasComponent
                 old.Release();
     }
 
+    /// <summary>Clear only the old presented packet before its release callbacks run.</summary>
+    internal void ClearPresentedPublicationIfSame(
+        object output, UIPublication expected)
+    {
+        UIPublication? removed = null;
+        lock (_publicationGate)
+            if (_presentedPublications.TryGetValue(output, out UIPublication? current) &&
+                ReferenceEquals(current, expected))
+                _presentedPublications.TryRemove(output, out removed);
+        removed?.Release();
+    }
+
     /// <summary>Releases all packet references for a detached output.</summary>
     public void RemovePublicationOutput(object output)
     {

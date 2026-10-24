@@ -22,10 +22,13 @@ internal sealed class HierarchyMutationOperation
     private HierarchyMutationFailureState? _redoFailure;
     private bool? _uncertainActiveValue;
     private bool _uncertainLocalValues;
+    private readonly Action? _requireIdentity;
 
     public HierarchyMutationOperation(HierarchyPlacement before, HierarchyPlacement destination,
-        bool preserveWorld, bool? activeAfter = null)
+        bool preserveWorld, bool? activeAfter = null, Action? requireIdentity = null)
     {
+        _requireIdentity = requireIdentity;
+        _requireIdentity?.Invoke();
         Before = before;
         After = destination;
         _beforeTransform = new(before.Transform);
@@ -35,6 +38,7 @@ internal sealed class HierarchyMutationOperation
         _currentRoutes = before.RuntimeRoutes;
         _currentEditorRoutes = before.EditorRoutes;
         _currentScenePlacement = before;
+        _requireIdentity?.Invoke();
     }
 
     public void PrepareInitial()
@@ -81,6 +85,7 @@ internal sealed class HierarchyMutationOperation
 
     public void RequireBefore(bool includeProperties)
     {
+        _requireIdentity?.Invoke();
         if (!Before.Matches() || includeProperties &&
             (Node.IsActiveSelf != _beforeActive || !_beforeTransform.Matches()))
             throw new InvalidOperationException("The hierarchy edit's original owner or values changed.");
@@ -88,6 +93,7 @@ internal sealed class HierarchyMutationOperation
 
     public void RequireAfter(bool includeProperties)
     {
+        _requireIdentity?.Invoke();
         if (!After.Matches() || includeProperties &&
             (Node.IsActiveSelf != _afterActive || _afterTransform is null || !_afterTransform.Matches()))
             throw new InvalidOperationException("The hierarchy edit's destination owner or values changed.");
@@ -182,6 +188,8 @@ internal sealed class HierarchyMutationOperation
         catch { }
         try { RestoreProperties(Before, _beforeTransform, _beforeActive); }
         catch { }
+        try { _requireIdentity?.Invoke(); }
+        catch { return false; }
         return !_uncertainLocalValues && _uncertainActiveValue is null && Before.Matches() &&
             Node.IsActiveSelf == _beforeActive && _beforeTransform.Matches();
     }
@@ -276,6 +284,7 @@ internal sealed class HierarchyMutationOperation
 
     private void RequireRepairOwner(HierarchyPlacement goal, HierarchyPlacement other)
     {
+        _requireIdentity?.Invoke();
         if (!goal.CanRepairWith(other) || !_currentScenePlacement.HasExactScenes() ||
             !goal.World.HasHierarchyRootRoutes(_currentRoutes) ||
             goal.Integration?.HasHierarchySourceRoutes(Node, _currentEditorRoutes) == false)

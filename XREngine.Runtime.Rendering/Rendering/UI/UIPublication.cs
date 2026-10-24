@@ -12,6 +12,7 @@ public sealed class UIPublication
     private static readonly Action<UIRenderRecord> RetainRenderRecordAction = RetainRenderRecord;
     private static readonly Action<UIRenderRecord> ReleaseRenderRecordAction = ReleaseRenderRecord;
     private readonly UIHitRecord[] _hits;
+    private readonly UIRecordStore<UIHitRecord>? _hitStore;
     private readonly UICompositionSegmentSet _compositionSegments;
     private readonly UIRenderRecord[] _renders = [];
     private readonly UIScrollRecord[] _scrollReceivers;
@@ -22,7 +23,7 @@ public sealed class UIPublication
     private bool _retainedQuadPayload;
     private int _claims = 1;
     private int _resourcesRetired;
-    private readonly Dictionary<long, UIRenderRecord> _renderByMembership;
+    private readonly Dictionary<long, int> _renderByMembership;
     private UIPublishedWorldMeshCommand[]? _worldCommands;
     private readonly object _worldCommandGate = new();
 
@@ -79,12 +80,15 @@ public sealed class UIPublication
             _renderByMembership = previous._renderByMembership;
         else
         {
-            _renderByMembership = new Dictionary<long, UIRenderRecord>(renders.Length);
+            _renderByMembership = new Dictionary<long, int>(renders.Length);
             for (int index = 0; index < renders.Length; index++)
-                _renderByMembership.Add(renders[index].MembershipId, renders[index]);
+                _renderByMembership.Add(renders[index].MembershipId, index);
         }
         try
         {
+            _hitStore = previous is not null && ReferenceEquals(hits, previous._hits)
+                ? RetainStore(previous._hitStore!)
+                : UIRecordStore<UIHitRecord>.Create(hits);
             _renderStore = previous is not null && ReferenceEquals(renders, previous._renders)
                 ? RetainStore(previous._renderStore!)
                 : UIRecordStore<UIRenderRecord>.Create(renders,
@@ -128,6 +132,11 @@ public sealed class UIPublication
     public UILayoutOutputPageView? LayoutPages { get; }
     public ReadOnlyMemory<UIElementIdentity> Identities { get; }
     public ReadOnlySpan<UIHitRecord> Hits => _hits;
+    public int HitRecordCount => _hitStore!.Length;
+    public int HitRecordPageCount => _hitStore!.PageCount;
+    public ReadOnlySpan<UIHitRecord> GetHitRecordPage(int pageIndex)
+        => _hitStore!.GetPage(pageIndex);
+    public UIHitRecord GetHitRecord(int index) => _hitStore![index];
     public ReadOnlySpan<UIRenderRecord> Renders => _renders;
     internal bool HasVisibleBackdrop { get; }
     internal bool HasVisiblePreRenderDraw { get; }
@@ -139,8 +148,12 @@ public sealed class UIPublication
     public ReadOnlySpan<UIFocusScopeRecord> FocusScopes => _focusScopes;
     public UIElementIdentity ActiveFocusScopeIdentity { get; }
     internal UIHitRecord[] HitStorage => _hits;
+    internal UIRecordStore<UIHitRecord> HitRecordStore => _hitStore!;
     internal UIRenderRecord[] RenderStorage => _renders;
     internal UIRecordStore<UIRenderRecord> RenderRecordStore => _renderStore!;
+    internal int RenderRecordCount => _renderStore!.Length;
+    internal ReadOnlySpan<UIRenderRecord> GetRenderRecordPage(int pageIndex)
+        => _renderStore!.GetPage(pageIndex);
     internal UIScrollRecord[] ScrollStorage => _scrollReceivers;
     internal UIFocusScopeRecord[] FocusScopeStorage => _focusScopes;
     internal ReadOnlySpan<UIPublishedWorldMeshCommand> WorldCommands
@@ -212,7 +225,15 @@ public sealed class UIPublication
     public float FarClipZ { get; }
 
     public bool TryGetRenderRecord(long membershipId, out UIRenderRecord record)
-        => _renderByMembership.TryGetValue(membershipId, out record);
+    {
+        if (_renderByMembership.TryGetValue(membershipId, out int index))
+        {
+            record = _renderStore![index];
+            return true;
+        }
+        record = default;
+        return false;
+    }
 
     internal UIPublication WithOutputMapping(Matrix4x4 canvasToOutput, Matrix4x4 outputToCanvas,
         ECanvasDrawSpace drawSpace, BoundingRectangleF outputRegion, Matrix4x4 worldToCanvas,
@@ -270,12 +291,13 @@ public sealed class UIPublication
             _renderByMembership = source._renderByMembership;
         else
         {
-            _renderByMembership = new Dictionary<long, UIRenderRecord>(_renders.Length);
+            _renderByMembership = new Dictionary<long, int>(_renders.Length);
             for (int index = 0; index < _renders.Length; index++)
-                _renderByMembership.Add(_renders[index].MembershipId, _renders[index]);
+                _renderByMembership.Add(_renders[index].MembershipId, index);
         }
         try
         {
+            _hitStore = RetainStore(source._hitStore!);
             _renderStore = ReferenceEquals(_renders, source._renders)
                 ? RetainStore(source._renderStore!)
                 : UIRecordStore<UIRenderRecord>.Create(_renders,
@@ -318,7 +340,7 @@ public sealed class UIPublication
         return (backdrop, preRender);
     }
 
-    private static UIRecordStore<UIRenderRecord> RetainStore(UIRecordStore<UIRenderRecord> store)
+    private static UIRecordStore<T> RetainStore<T>(UIRecordStore<T> store) where T : struct
     {
         store.Retain();
         return store;
@@ -424,6 +446,12 @@ public sealed class UIPublication
         catch (Exception failure)
         {
             try { System.Diagnostics.Trace.TraceError("UI publication record cleanup failed: {0}", failure); }
+            catch { }
+        }
+        try { _hitStore?.Release(); }
+        catch (Exception failure)
+        {
+            try { System.Diagnostics.Trace.TraceError("UI publication hit cleanup failed: {0}", failure); }
             catch { }
         }
         if (_retainedSurface)

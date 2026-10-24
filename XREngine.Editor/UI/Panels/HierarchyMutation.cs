@@ -4,7 +4,8 @@ namespace XREngine.Editor;
 internal static class HierarchyMutation
 {
     public static void Execute(string description, Func<HierarchyMutationOperation> prepare,
-        Action? onApplied = null, Func<bool>? ownerIsCurrent = null, Action? releaseRestoredCreation = null)
+        Action? onApplied = null, Func<bool>? ownerIsCurrent = null, Action? releaseRestoredCreation = null,
+        HierarchyCloneCustody? cloneCustody = null)
     {
         using var interaction = Undo.BeginUserInteraction();
         Undo.ChangeScope scope = Undo.BeginChange(description);
@@ -13,11 +14,13 @@ internal static class HierarchyMutation
         try
         {
             opening = Undo.BeginStructuralMutation(description,
-                () => operation!.UndoMembership(),
-                () => operation!.RedoMembership());
+                () => Replay(() => { operation!.UndoMembership(); cloneCustody?.MarkDetached(); }, cloneCustody),
+                () => Replay(() => { cloneCustody?.BeginRedo(); operation!.RedoMembership(); }, cloneCustody));
+            cloneCustody?.AttachHistory(opening);
             try
             {
                 operation = prepare();
+                cloneCustody?.RequireOperation(operation);
                 RequireOwner(ownerIsCurrent);
                 Undo.TrackSceneNode(operation.Node);
                 operation.PrepareInitial();
@@ -29,7 +32,7 @@ internal static class HierarchyMutation
                 operation.RequireAfter(includeProperties: true);
                 operation.ReconcileProperties(opening);
             }
-            catch
+            catch (Exception failure)
             {
                 bool restored = operation is null || operation.RestoreInitial();
                 if (operation is not null)
@@ -47,18 +50,23 @@ internal static class HierarchyMutation
                 if (restored)
                 {
                     operation?.ReconcileProperties(opening);
+                    if (operation is not null)
+                        cloneCustody?.MarkDetached();
                     opening.RemoveRestoredStep();
+                    cloneCustody?.ReleaseRestored(opening);
                     releaseRestoredCreation?.Invoke();
                 }
                 else
                 {
+                    cloneCustody?.RetainFailure(failure);
                     operation!.CaptureFailure();
                     operation.ReconcileProperties(opening);
-                    AddClosingGuard(description, operation);
+                    AddClosingGuard(description, operation, cloneCustody);
                 }
                 throw;
             }
-            AddClosingGuard(description, operation!);
+            AddClosingGuard(description, operation!, cloneCustody);
+            cloneCustody?.MarkApplied();
         }
         finally
         {
@@ -69,11 +77,22 @@ internal static class HierarchyMutation
         }
     }
 
-    private static void AddClosingGuard(string description, HierarchyMutationOperation operation)
+    private static void AddClosingGuard(string description, HierarchyMutationOperation operation,
+        HierarchyCloneCustody? cloneCustody)
     {
         using StructuralChangeHandle guard = Undo.BeginStructuralMutation(description,
-            operation.RequireUndoEntry,
-            operation.CompleteRedo);
+            () => Replay(() => { cloneCustody?.BeginUndo(); operation.RequireUndoEntry(); }, cloneCustody),
+            () => Replay(() => { operation.CompleteRedo(); cloneCustody?.MarkApplied(); }, cloneCustody));
+    }
+
+    private static void Replay(Action action, HierarchyCloneCustody? cloneCustody)
+    {
+        try { action(); }
+        catch (Exception failure)
+        {
+            cloneCustody?.RetainFailure(failure);
+            throw;
+        }
     }
 
     private static void RequireOwner(Func<bool>? ownerIsCurrent)

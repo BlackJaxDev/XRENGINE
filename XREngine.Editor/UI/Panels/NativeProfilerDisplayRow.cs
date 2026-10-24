@@ -1,3 +1,5 @@
+using XREngine.Data.Profiling;
+
 namespace XREngine.Editor;
 
 /// <summary>Contains the display text for one realized profiler row.</summary>
@@ -6,4 +8,5 @@ internal readonly record struct NativeProfilerDisplayRow(
     long OwnerRevision = 0, string? PipelineName = null,
     ulong GpuWorstFrameId = 0, long GpuHistoryGeneration = 0,
     int GpuRankMetric = -1, int GpuRankPageAction = 0,
-    long GpuRankRevision = 0);
+    long GpuRankRevision = 0, string? CpuPlotName = null,
+    ProfilerScopeKind CpuPlotKind = default, string? GpuPlotName = null);

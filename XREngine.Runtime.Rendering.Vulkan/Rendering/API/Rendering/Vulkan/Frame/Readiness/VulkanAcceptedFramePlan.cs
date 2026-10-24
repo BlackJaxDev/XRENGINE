@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Vulkan;
 /// All storage is allocated with the arena, never while executing an accepted
 /// foreground frame.
 /// </summary>
-internal sealed class VulkanAcceptedFramePlan
+internal sealed partial class VulkanAcceptedFramePlan
 {
     internal const int TerminalCapacity = 512;
     internal const int UiCapacity = 1024;
@@ -94,6 +94,7 @@ internal sealed class VulkanAcceptedFramePlan
     internal ResourcePlannerRuntimeState PlannerState { get; private set; }
     internal VulkanFramePlanningSnapshot FrozenPlanningSnapshot { get; private set; }
     internal bool IsSealed { get; private set; }
+    private bool _capturesDesktopWorldUi;
     internal FramePlan LogicalPlan => _logicalPlan ??
         throw new InvalidOperationException(
             "The accepted frame has no sealed logical plan publication.");
@@ -125,9 +126,15 @@ internal sealed class VulkanAcceptedFramePlan
 
     private void BindUiPublicationReceipts(FramePlan logicalPlan, VulkanRenderer owner)
     {
+        ulong excludedWorldReceiptId = 0UL;
+        if (!_capturesDesktopWorldUi &&
+            owner.TryGetDesktopWindowHost(out var desktopHost) &&
+            desktopHost is XRWindow desktopWindow)
+            _ = desktopWindow.TryGetRequiredVulkanWorldUiAttempt(
+                out _, out _, out _, out excludedWorldReceiptId, out _);
         int count = VulkanUiPublicationReceiptLedger.CopySealedForFrame(
             owner, RuntimeEngine.Rendering.State.RenderFrameId,
-            _uiPublicationReceiptIds);
+            _uiPublicationReceiptIds, excludedWorldReceiptId);
         if (count < 0)
             throw new VulkanAcceptedFramePlanCapacityException(
                 EVulkanAcceptedFrameLane.Ui, _uiPublicationReceiptIds.Length,
@@ -902,13 +909,18 @@ internal sealed class VulkanAcceptedFramePlan
         int frameSlot,
         ulong frameId,
         ulong sceneEpoch,
-        in VulkanPresentNowTargetCompatibilityKey targetCompatibility)
+        in VulkanPresentNowTargetCompatibilityKey targetCompatibility,
+        VulkanRenderer owner,
+        bool captureDesktopWorldUi)
     {
         Reset();
         FrameSlot = frameSlot;
         FrameId = frameId;
         SceneEpoch = sceneEpoch;
         TargetCompatibility = targetCompatibility;
+        _capturesDesktopWorldUi = captureDesktopWorldUi;
+        if (captureDesktopWorldUi)
+            CaptureRequiredWorldUiOutput(owner);
     }
 
     /// <summary>
@@ -1639,6 +1651,7 @@ internal sealed class VulkanAcceptedFramePlan
         BindFrameViewHistory(logicalPlan);
         BindOutputCompletions(logicalPlan);
         BindUiPublicationReceipts(logicalPlan, owner);
+        BindRequiredWorldUiOutput(in outputContract, owner);
     }
 
     /// <summary>
@@ -1674,6 +1687,7 @@ internal sealed class VulkanAcceptedFramePlan
             _authoredTextureUploadOperationCount).Clear();
         _authoredOperationCount = 0;
         _authoredTextureUploadOperationCount = 0;
+        TerminalizeRequiredWorldUiOutput();
     }
 
     internal bool TryGetFailedDependency(
@@ -1781,6 +1795,8 @@ internal sealed class VulkanAcceptedFramePlan
         PlannerState = default;
         FrozenPlanningSnapshot = default;
         IsSealed = false;
+        _capturesDesktopWorldUi = false;
+        ClearRequiredWorldUiOutput();
     }
 
     private bool HasExactProducerCohort(

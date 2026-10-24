@@ -13,6 +13,7 @@ internal sealed class NativeProfilerRootAggregate(string name, ProfilerScopeKind
     public float PeakMilliseconds { get; private set; }
     public DateTime LastSeenUtc { get; private set; }
     public bool IsInactive { get; private set; }
+    public bool WasObserved { get; private set; } = true;
 
     public void Reset(string newName, ProfilerScopeKind newKind)
     {
@@ -24,6 +25,7 @@ internal sealed class NativeProfilerRootAggregate(string name, ProfilerScopeKind
         PeakMilliseconds = 0f;
         LastSeenUtc = default;
         IsInactive = false;
+        WasObserved = true;
     }
 
     public void MarkSeen(DateTime now) => LastSeenUtc = now;
@@ -37,6 +39,7 @@ internal sealed class NativeProfilerRootAggregate(string name, ProfilerScopeKind
         PeakMilliseconds = source.PeakMilliseconds;
         LastSeenUtc = source.LastSeenUtc;
         IsInactive = inactive;
+        WasObserved = false;
     }
 
     public void Add(float total, float self)

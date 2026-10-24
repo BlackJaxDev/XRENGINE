@@ -2,6 +2,9 @@ using System.Globalization;
 using XREngine.Rendering;
 using FrameStats = XREngine.RuntimeEngine.Rendering.Stats.Frame;
 using GpuStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
+using MatrixStats = XREngine.RuntimeEngine.Rendering.Stats.RenderMatrix;
+using SpatialStats = XREngine.RuntimeEngine.Rendering.Stats.Octree;
+using VramStats = XREngine.RuntimeEngine.Rendering.Stats.Vram;
 
 namespace XREngine.Editor;
 
@@ -203,6 +206,61 @@ public partial class ProfilerPanel
         rows.Add(new("Readback bytes", RuntimeEngine.Rendering.Stats.GpuReadback.GpuReadbackBytes.ToString(CultureInfo.InvariantCulture), "Last render frame"));
         rows.Add(new("Visible renderers", RuntimeEngine.Rendering.Stats.SceneAssets.VisibleRendererCount.ToString(CultureInfo.InvariantCulture), "Last render frame"));
         rows.Add(new("Visible triangles", RuntimeEngine.Rendering.Stats.SceneAssets.VisibleTriangleCount.ToString(CultureInfo.InvariantCulture), "Last render frame"));
+        CaptureRenderMemory(rows);
+        CaptureRenderMatrix(rows);
+        CaptureSpatialTree(rows);
+    }
+
+    private static void CaptureRenderMemory(List<NativeProfilerDisplayRow> rows)
+    {
+        const double bytesPerMiB = 1024.0 * 1024.0;
+        rows.Add(new("GPU memory", (VramStats.AllocatedVRAMBytes / bytesPerMiB).ToString("F2", CultureInfo.InvariantCulture),
+            "MiB currently allocated"));
+        rows.Add(new("GPU buffer memory", (VramStats.AllocatedBufferBytes / bytesPerMiB).ToString("F2", CultureInfo.InvariantCulture), "MiB"));
+        rows.Add(new("GPU texture memory", (VramStats.AllocatedTextureBytes / bytesPerMiB).ToString("F2", CultureInfo.InvariantCulture), "MiB"));
+        rows.Add(new("GPU renderbuffer memory", (VramStats.AllocatedRenderBufferBytes / bytesPerMiB).ToString("F2", CultureInfo.InvariantCulture), "MiB"));
+        rows.Add(new("FBO write bandwidth", (VramStats.FBOBandwidthBytes / bytesPerMiB).ToString("F2", CultureInfo.InvariantCulture),
+            "MiB in the last render frame"));
+        AddCount(rows, "FBO binds", VramStats.FBOBindCount);
+    }
+
+    private static void CaptureRenderMatrix(List<NativeProfilerDisplayRow> rows)
+    {
+        if (!MatrixStats.RenderMatrixStatsReady)
+        {
+            rows.Add(new("Render matrix updates", "Waiting", "No completed swap sample is available."));
+            return;
+        }
+        AddCount(rows, "Render matrices applied", MatrixStats.RenderMatrixApplied);
+        AddCount(rows, "Render matrix batches", MatrixStats.RenderMatrixBatchCount);
+        AddCount(rows, "Largest matrix batch", MatrixStats.RenderMatrixMaxBatchSize);
+        AddCount(rows, "SetRenderMatrix calls", MatrixStats.RenderMatrixSetCalls);
+        AddCount(rows, "Matrix listener calls", MatrixStats.RenderMatrixListenerInvocations);
+    }
+
+    private static void CaptureSpatialTree(List<NativeProfilerDisplayRow> rows)
+    {
+        if (!SpatialStats.OctreeStatsReady)
+        {
+            rows.Add(new("CPU spatial tree", "Waiting", "No completed spatial-tree sample is available."));
+            return;
+        }
+        rows.Add(new("CPU spatial tree", SpatialStats.CpuSpatialTreeMode, "Last completed frame"));
+        rows.Add(new("Spatial collect time", SpatialStats.CpuSpatialTreeCollectMs.ToString("F3", CultureInfo.InvariantCulture),
+            $"max {SpatialStats.CpuSpatialTreeMaxCollectMs.ToString("F3", CultureInfo.InvariantCulture)} ms"));
+        AddCount(rows, "Spatial nodes", SpatialStats.CpuSpatialTreeNodeCount);
+        AddCount(rows, "Spatial items", SpatialStats.CpuSpatialTreeItemCount);
+        rows.Add(new("Root / unbounded items", SpatialStats.CpuSpatialTreeRootItemCount.ToString(CultureInfo.InvariantCulture),
+            SpatialStats.CpuSpatialTreeUnboundedItemCount.ToString(CultureInfo.InvariantCulture)));
+        rows.Add(new("Max items / node", SpatialStats.CpuSpatialTreeMaxNodeItemCount.ToString(CultureInfo.InvariantCulture),
+            $"depth {SpatialStats.CpuSpatialTreeMaxDepth}"));
+        AddCount(rows, "Spatial collect calls", SpatialStats.OctreeCollectCallCount);
+        AddCount(rows, "Spatial visible renderables", SpatialStats.OctreeVisibleRenderableCount);
+        AddCount(rows, "Spatial emitted commands", SpatialStats.OctreeEmittedCommandCount);
+        rows.Add(new("Spatial swap", SpatialStats.OctreeSwapExecutedCommandCount.ToString(CultureInfo.InvariantCulture),
+            $"drained {SpatialStats.OctreeSwapDrainedCommandCount} | buffered {SpatialStats.OctreeSwapBufferedCommandCount} | {SpatialStats.OctreeSwapExecuteMs.ToString("F3", CultureInfo.InvariantCulture)} ms"));
+        rows.Add(new("Spatial raycasts", SpatialStats.OctreeRaycastProcessedCommandCount.ToString(CultureInfo.InvariantCulture),
+            $"dropped {SpatialStats.OctreeRaycastDroppedCommandCount} | traversal {SpatialStats.OctreeRaycastTraversalMs.ToString("F3", CultureInfo.InvariantCulture)} ms"));
     }
 
     private void CaptureGpuTimings(List<NativeProfilerDisplayRow> rows)
@@ -239,6 +297,14 @@ public partial class ProfilerPanel
         }
         rows.Add(new("History plot", _selectedGpuPipeline ?? (roots.Length > 0 ? roots[0].Name : "Waiting"),
             "Activate a root timing row to select its captured history."));
+        for (int index = 0; index < roots.Length; index++)
+        {
+            var root = roots[index];
+            rows.Add(new($"Root history: {root.Name}",
+                root.ElapsedMs.ToString("F3", CultureInfo.InvariantCulture),
+                "GPU ms; activate to inspect this root.",
+                PipelineName: root.Name, GpuPlotName: root.Name));
+        }
         CaptureGpuHistoryDetails(rows, roots);
         _gpuTraversal.Clear();
         _gpuTraversal.Add(new(roots, 0, 0));

@@ -22,6 +22,8 @@ namespace XREngine.Rendering.Vulkan
                 ref attempt,
                 "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",
                 $"presenting rejected Vulkan frame {attempt.FrameNumber} ({rejectionStage})");
+            if (attempt.Flow == EDesktopFrameFlow.Stop)
+                return false;
             Result presentResult = dispatch.Result;
             bool presentationReleaseEnqueued =
                 dispatch.Dispatched &&

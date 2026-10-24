@@ -1543,3 +1543,78 @@ passed with zero warnings/errors in 57.71s. All 10,679 source inputs stayed
 unchanged from headless build132 and full run82. Desktop inspector and animation
 fixtures compiled; this environment did not execute them. Windows, native GPU,
 visual, IME, and equal-workload performance acceptance remain open.
+
+
+## Indexed Consumers And Exact Authored Timing
+
+The next source increment is not yet built. It migrates render/input readers to
+record pages, adds virtual profiler history cells, and prepares Vulkan plan and
+no-present guards while the checked world capability remains disabled. Review
+found collector reentry after a release callback, incomplete cleanup after a
+fallible release, pooled proof ownership races, and a late native-present verdict
+gap. The owners repaired those boundaries before compilation.
+
+Animation length edits now stage the clip, unique built-in keyframed children,
+track lengths, cached frame counts, and key times before callbacks. The first
+review found that retaining an old track generation would reject an earlier Undo
+after a later edit and Undo. Persistent replay now compares exact snapshots;
+generation checks apply only to the active commit and notification sequence. New
+regressions cover this sequence, complete observer state, nested ordinary track
+changes, exact frame restoration, shared tracks, and unsupported cadence. The
+ordinary track-to-animation relay now clears its reentry latch in finally after
+a throwing callback. Baked and frame-cadence adapters remain open.
+
+Headless build133 started against a frozen 10,698-file source snapshot. During
+read-only review, two further Vulkan handoff gaps were found: post-present
+callbacks could reset a required plan and select the mutable legacy handoff, and
+release callbacks could replace window input before its selected entry committed.
+The world owner will repair both after compilation stops. The inactive native
+capability prevents this incomplete route from being selected. Clone document
+proof also needs to accept exact loaded-and-ready external scenes, matching the
+canonical scene ownership predicate. No source changed during the build.
+
+Headless build133 passed with zero warnings/errors in 2m43.03s. All 10,698 source
+inputs stayed unchanged. Full run83 passed 935 of 936 tests in 12.569s, with one
+error and no warnings or skips. The error is a new profiler fixture that assumed
+a root row order inconsistent with the current time sort. Animation length,
+callback relay, indexed input, collector release, and exact world input cases
+passed. The profiler owner will check both root identities without assuming an
+unrequested order. Source edits resumed only after the run stopped.
+
+Custody review also requires post-construction structural IDs to remain pinned
+through operation, replay, and release. The editor-only receipt will add that
+check before the next compilation. Duplicate stays inactive: ID equality alone
+cannot prove a destruction/regeneration lifetime boundary. A callback-free
+lifetime stamp or continuous ownership authority is required before activation.
+
+Editor build56 stopped with zero warnings and one CS7036 error in 3m16.56s.
+`VulkanFrameLoop.ExplicitProduction.cs` still called the changed plan arena
+without its renderer argument. The explicit route must also avoid claiming an
+unrelated window image; requests that carry a required world command must reject
+before authoring until that output profile has proof. This build did not reach
+editor compilation. Review also confirmed that backend catalog generation is
+shared across renderer instances, so the required input ledger must identify the
+exact renderer before ordering generations within it. The owner is repairing
+these edges and exact old-publication cleanup after the build stopped.
+
+Editor build57 passed with zero warnings/errors in 3m59.18s. The final source
+review cleared the inactive plan/WSI support boundary. A read-only test audit
+then found that the renderer-ordering fixture used a backend type unavailable
+to the portable project. The production identity/order predicate now has an
+internal static entry point in the same window partial; the fixture uses plain
+object identities. No backend reference or dependency was added. Headless
+build134 uses the repaired frozen 10,699-file source snapshot.
+
+Headless build134 passed with zero warnings/errors in 1m39.20s. Full run84 passed
+937 of 937 tests, with no warnings, failures, or skips, in 12.715s. All 10,699
+source inputs stayed unchanged. The profiler row-order repair and portable
+renderer-identity case pass. Editor build58 is checking the same final snapshot.
+
+Editor build58 passed with zero warnings/errors in 2m17.11s. Desktop test build30
+is checking the final inspector, animation Undo, and clone-custody fixtures.
+
+Desktop test build30 passed with zero warnings/errors in 55.72s. All 10,699 source
+inputs stayed unchanged through headless build134, full run84, editor build58,
+and desktop test build30. The fourteen new clone-custody cases and animation batch
+Undo fixtures compiled; this environment did not execute them. Windows workflow,
+native GPU, visual, IME, and equal-workload performance acceptance remain open.

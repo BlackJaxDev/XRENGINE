@@ -98,7 +98,7 @@ public sealed partial class UIBatchCollector
             HasVisiblePreRenderDraw() ||
             _renderingPublication is not { AuthoringDrawSpace: ECanvasDrawSpace.Screen,
                 DrawSpace: ECanvasDrawSpace.Screen, AuthoringOffscreen: false } publication ||
-            !ReferenceEquals(publication.RenderStorage, _renderPublishedStorage) ||
+            !ReferenceEquals(publication.RenderRecordStore, _renderPublishedStorage) ||
             !ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage) ||
             _activeReceipt is null ||
             !renderer.TryGetCurrentUiBackdropOutputOverwriteProof(window, out var proof) ||

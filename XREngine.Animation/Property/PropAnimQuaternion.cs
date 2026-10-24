@@ -206,6 +206,8 @@ namespace XREngine.Animation
         }
 
         private QuaternionKeyframe? _prevKeyframe;
+        private KeyframeTrack<QuaternionKeyframe>? _prevKeyframeTrack;
+        private ulong _prevKeyframeExactEditGeneration;
 
         protected override void OnProgressed(float delta)
         {
@@ -217,7 +219,16 @@ namespace XREngine.Animation
                 return;
             }
 
-            _prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime);
+            if (!ReferenceEquals(_prevKeyframeTrack, Keyframes) ||
+                _prevKeyframeExactEditGeneration != Keyframes.ExactEditGeneration ||
+                _prevKeyframe is not null &&
+                !ReferenceEquals(_prevKeyframe.OwningTrack, Keyframes))
+            {
+                _prevKeyframe = null;
+                _prevKeyframeTrack = Keyframes;
+                _prevKeyframeExactEditGeneration = Keyframes.ExactEditGeneration;
+            }
+            _prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime) ?? Keyframes.First;
 
             if (Keyframes.Count == 0)
             {

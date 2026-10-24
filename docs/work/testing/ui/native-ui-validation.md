@@ -13,17 +13,16 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings/errors through
-`Tools/Invoke-AgentBuild.ps1`. Headless build132 took 26.61s. Full run82 passes
-**917 of 917 tests**, with no warnings, failures, or skips, in 13.830s. Coverage
-includes paged record claims, exact graph retirement and lifecycle admission,
-profiler persistence, and binding getter reentry. The existing portable Host
-reference now also supports real profiler root and row fixtures.
+`Tools/Invoke-AgentBuild.ps1`. Headless build134 took 1m39.20s. Full run84 passes
+**937 of 937 tests**, with no warnings, failures, or skips, in 12.715s. Coverage
+includes indexed record readers, collector callback admission, exact animation
+timing and relay behavior, profiler history identity, and renderer output ordering.
 
-The frozen source snapshot contains 10,679 files. Editor build55 passed with zero
-warnings/errors in 2m36.95s. Desktop test build29 passed with zero warnings/errors
-in 57.71s. All source inputs stayed unchanged through these checks. Desktop
-inspector and animation fixtures remain compile-only in this environment; no
-Windows execution is claimed.
+The frozen source snapshot contains 10,699 files. Matching editor build58 passed
+with zero warnings/errors in 2m17.11s. Desktop test build30 passed with zero
+warnings/errors in 55.72s. All source inputs stayed unchanged through the checks.
+Desktop inspector, animation batch Undo, and clone-custody fixtures remain
+compile-only in this environment; no Windows execution is claimed.
 
 The supported Vulkan static-cache contract is implemented, but native cache hits,
 fence retirement, image/font changes, and output/clip changes still require GPU

@@ -2,7 +2,9 @@ using System;
 using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using Silk.NET.Vulkan;
+using XREngine.Components;
 using XREngine.Rendering.DLSS;
+using XREngine.Rendering.UI;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan
@@ -34,10 +36,57 @@ namespace XREngine.Rendering.Vulkan
             if (!attempt.InteractiveResizeOverlayOnly)
                 _imguiBackend?.RenderPendingViewports();
 
+            if (attempt.RequiresWorldUiOutput &&
+                (attempt.AcceptedFramePlan is not
+                    { RequiresWorldUiOutput: true } worldUiPlan ||
+                 !attempt.ScenePrimaryRecordedThisFrame ||
+                 !attempt.Submitted || attempt.GraphicsSignalValue == 0UL ||
+                 !worldUiPlan.IsRequiredWorldUiReadyForPresent(
+                     attempt.ImageIndex, attempt.OutputGeneration,
+                     attempt.FrameNumber)))
+                return SettleFailedWorldUiOutput(ref attempt,
+                    "Required Vulkan world UI output lost its exact submitted proof before present");
+
+            XRViewport? requiredViewport = null;
+            UICanvasComponent? requiredCanvas = null;
+            UIPublication? requiredPublication = null;
+            ulong requiredReceiptId = 0UL;
+            if (attempt.RequiresWorldUiOutput &&
+                (attempt.AcceptedFramePlan is not
+                    { RequiresWorldUiOutput: true } requiredPlan ||
+                 !requiredPlan.TryGetRequiredWorldUiPublication(
+                     out requiredViewport, out requiredCanvas,
+                     out requiredPublication, out requiredReceiptId) ||
+                 requiredViewport is null || requiredCanvas is null ||
+                 requiredPublication is null))
+                return SettleFailedWorldUiOutput(ref attempt,
+                    "Required Vulkan world UI input lost its selected publication before present");
+
+            requiredPublication?.Retain();
+            try
+            {
+                return PresentSubmittedDesktopFrameAfterInputCapture(
+                    ref attempt, requiredViewport, requiredCanvas,
+                    requiredPublication, requiredReceiptId);
+            }
+            finally
+            {
+                requiredPublication?.Release();
+            }
+        }
+
+        private EDesktopFrameFlow PresentSubmittedDesktopFrameAfterInputCapture(
+            ref VulkanFrameAttempt attempt, XRViewport? requiredViewport,
+            UICanvasComponent? requiredCanvas,
+            UIPublication? requiredPublication, ulong requiredReceiptId)
+        {
+
             VulkanDesktopPresentDispatchOutcome dispatch = QueueDesktopPresentCore(
                 ref attempt,
                 "Vulkan.FrameLifecycle.QueuePresent",
                 disableFrameGenerationReason: null);
+            if (attempt.Flow == EDesktopFrameFlow.Stop)
+                return EDesktopFrameFlow.Stop;
             Result result = dispatch.Result;
             attempt.PresentResult = result;
             attempt.PresentDispatched = dispatch.Dispatched;
@@ -159,11 +208,20 @@ namespace XREngine.Rendering.Vulkan
             {
                 bool newUiSource = attempt.ScenePrimaryRecordedThisFrame &&
                     attempt.Submitted && attempt.GraphicsSignalValue != 0UL;
-                _ownerRenderer.XRWindow.MarkVulkanUiPresented(
-                    attempt.ImageIndex,
-                    attempt.OutputGeneration,
-                    newUiSource ? attempt.FrameNumber : attempt.PresentedSourceFrameId,
-                    newUiSource);
+                if (attempt.RequiresWorldUiOutput &&
+                    requiredViewport is not null && requiredCanvas is not null &&
+                    requiredPublication is not null)
+                    _ownerRenderer.XRWindow.MarkRequiredVulkanWorldUiPresented(
+                        attempt.ImageIndex, attempt.OutputGeneration,
+                        attempt.FrameNumber, requiredViewport, requiredCanvas,
+                        requiredPublication, requiredReceiptId,
+                        _ownerRenderer);
+                else if (!attempt.RequiresWorldUiOutput)
+                    _ownerRenderer.XRWindow.MarkVulkanUiPresented(
+                        attempt.ImageIndex,
+                        attempt.OutputGeneration,
+                        newUiSource ? attempt.FrameNumber : attempt.PresentedSourceFrameId,
+                        newUiSource);
                 CaptureResizeReleaseHandoffFromSuccessfulHeldPresent(
                     ref attempt);
                 TryCompleteResizeReleaseHandoffAfterSuccessorPresent(
@@ -287,16 +345,49 @@ namespace XREngine.Rendering.Vulkan
                     auxiliaryFailure = ex;
                 }
 
+                bool requiredWorldUi =
+                    attempt.RequiresWorldUiOutput ||
+                    _ownerRenderer.XRWindow.HasRequiredVulkanWorldUiImage ||
+                    attempt.AcceptedFramePlan is { RequiresWorldUiOutput: true };
+                VulkanAcceptedFramePlan? worldUiPlan =
+                    attempt.AcceptedFramePlan;
+                if (requiredWorldUi &&
+                    (worldUiPlan is not { RequiresWorldUiOutput: true } ||
+                     !attempt.ScenePrimaryRecordedThisFrame ||
+                     !attempt.Submitted || attempt.GraphicsSignalValue == 0UL ||
+                     !worldUiPlan.IsRequiredWorldUiReadyForPresent(
+                         attempt.ImageIndex, attempt.OutputGeneration,
+                         attempt.FrameNumber)))
+                {
+                    _ = SettleFailedWorldUiOutput(ref attempt,
+                        "Required Vulkan world UI output lost its proof before native present");
+                    return new VulkanDesktopPresentDispatchOutcome(
+                        Result.ErrorUnknown, dispatched: false,
+                        auxiliaryFailure: auxiliaryFailure);
+                }
+
                 dispatched = TryPresentToQueueTracked(
                         _deviceContext.PresentQueue,
                         ref presentInfo,
                         in attempt.PresentReservation,
+                        requiredWorldUi ? worldUiPlan : null,
+                        attempt.ImageIndex,
+                        attempt.OutputGeneration,
+                        attempt.FrameNumber,
                         out result,
                         out string failureReason,
                         out Exception? postDispatchFailure,
                         out TimeSpan queueAdmissionWait,
                         out TimeSpan nativePresentElapsed,
                         caller: "RenderFrameCallback");
+                if (!dispatched && requiredWorldUi)
+                {
+                    _ = SettleFailedWorldUiOutput(ref attempt,
+                        $"Required Vulkan world UI output could not reach native present: {failureReason}");
+                    return new VulkanDesktopPresentDispatchOutcome(
+                        result, dispatched: false,
+                        auxiliaryFailure: auxiliaryFailure);
+                }
                 attempt.Timing.QueuePresentAdmission += queueAdmissionWait;
                 attempt.Timing.NativeQueuePresent += nativePresentElapsed;
                 attempt.Timing.RecordCausalWait(new VulkanFrameCausalWait(

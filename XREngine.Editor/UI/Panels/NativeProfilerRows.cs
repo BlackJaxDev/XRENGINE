@@ -17,6 +17,8 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
     private readonly NativeProfilerRootAggregator _roots = new();
     private readonly List<int> _rootOrder = [];
     private readonly List<int> _rootChildOrder = [];
+    private readonly Dictionary<(string Name, ProfilerScopeKind Kind), NativeProfilerRootHistory> _rootHistories = [];
+    private readonly List<(string Name, ProfilerScopeKind Kind)> _rootHistoryKeysToRemove = [];
     private readonly Comparison<int> _rootTimeComparison;
     private readonly Comparison<int> _rootNameComparison;
     private readonly Dictionary<int, NativeProfilerDisplayRow> _formatted = [];
@@ -40,6 +42,8 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
     private string? _selectedRootName;
     private ProfilerScopeKind _selectedRootKind;
     private int _selectedRootIndex = -1;
+    private int _rootHistorySerial;
+    private long _rootHistorySessionEpoch = long.MinValue;
 
     public int Count => _view switch
     {
@@ -56,6 +60,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
     public ulong Revision { get; private set; } = 1;
     internal int LastIndexWork { get; private set; }
     internal int FormattedRowCount => _formatted.Count;
+    internal int RootHistoryRevision => _rootHistorySerial;
 
     public NativeProfilerRows()
     {
@@ -75,7 +80,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
             NativeProfilerRootAggregate root = _roots[index];
             if (root.Kind != kind || !string.Equals(root.Name, name, StringComparison.Ordinal))
                 continue;
-            if (root.IsInactive)
+            if (!root.WasObserved)
                 return false;
             milliseconds = root.TotalMilliseconds;
             return true;
@@ -89,6 +94,11 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         root = index >= 0 && index < _rootOrder.Count ? _roots[_rootOrder[index]] : null;
         return root is not null;
     }
+
+    internal int CopyRootHistory(string name, ProfilerScopeKind kind, Span<float> destination,
+        int requested)
+        => _rootHistories.TryGetValue((name, kind), out NativeProfilerRootHistory? history)
+            ? history.CopyLatest(destination, requested) : 0;
 
     internal bool SelectRoot(string name, ProfilerScopeKind kind)
     {
@@ -203,6 +213,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
             LastIndexWork = _roots.LastWorkCount;
             if (changed)
             {
+                UpdateRootHistories();
                 BuildRootOrder();
                 PublishView();
             }
@@ -270,6 +281,39 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         }
         _rootOrder.Sort(_sortRootsByTime ? _rootTimeComparison : _rootNameComparison);
         BuildRootChildOrder();
+    }
+
+    private void UpdateRootHistories()
+    {
+        Frame? frame = _roots.PublishedFrame;
+        if (frame is null)
+            return;
+        if (frame.SessionEpoch != _rootHistorySessionEpoch)
+        {
+            _rootHistories.Clear();
+            _rootHistorySessionEpoch = frame.SessionEpoch;
+        }
+        _rootHistorySerial++;
+        for (int index = 0; index < _roots.Count; index++)
+        {
+            NativeProfilerRootAggregate root = _roots[index];
+            var key = (root.Name, root.Kind);
+            if (!_rootHistories.TryGetValue(key, out NativeProfilerRootHistory? history))
+            {
+                history = new NativeProfilerRootHistory();
+                _rootHistories.Add(key, history);
+            }
+            float hertz = !root.WasObserved || root.Calls == 0 ? 0f :
+                1000f / Math.Max(root.TotalMilliseconds / root.Calls, 0.0001f);
+            history.Append(hertz);
+            history.LastSeenSerial = _rootHistorySerial;
+        }
+        _rootHistoryKeysToRemove.Clear();
+        foreach (var entry in _rootHistories)
+            if (entry.Value.LastSeenSerial != _rootHistorySerial)
+                _rootHistoryKeysToRemove.Add(entry.Key);
+        for (int index = 0; index < _rootHistoryKeysToRemove.Count; index++)
+            _rootHistories.Remove(_rootHistoryKeysToRemove[index]);
     }
 
     private void BuildRootChildOrder()
@@ -391,7 +435,8 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
             NativeProfilerRootAggregate root = _roots[_rootOrder[rootIndex]];
             return new($"{root.Name} [{root.Kind}]" + (root.IsInactive ? " (inactive)" : string.Empty),
                 root.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture),
-                $"self {root.SelfMilliseconds:F3} ms | avg {root.TotalMilliseconds / root.Calls:F3} ms | peak {root.PeakMilliseconds:F3} ms | {root.Calls} calls | activate to inspect");
+                $"self {root.SelfMilliseconds:F3} ms | avg {root.TotalMilliseconds / root.Calls:F3} ms | peak {root.PeakMilliseconds:F3} ms | {root.Calls} calls | activate to inspect",
+                CpuPlotName: root.Name, CpuPlotKind: root.Kind);
         }
         rootIndex -= _rootOrder.Count;
         if (_roots.SkippedRootCalls != 0)
@@ -449,6 +494,9 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         _projection.Clear();
         _roots.Clear();
         _rootOrder.Clear();
+        _rootHistories.Clear();
+        _rootHistoryKeysToRemove.Clear();
+        _rootHistorySessionEpoch = long.MinValue;
         _rootChildOrder.Clear();
         _selectedRootIndex = -1;
         _selectedRootName = null;

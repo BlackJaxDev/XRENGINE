@@ -106,6 +106,78 @@ public sealed class UIBatchCollectionTests
     }
 
     [Test]
+    public void PageBoundariesPreserveUnbatchedPainterOrderAndCollectorClaim()
+    {
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        UIRenderRecord[] records = new UIRenderRecord[260];
+        for (int index = 0; index < records.Length; index++)
+            records[index] = new UIRenderRecord
+            {
+                RenderInfo = null!, MembershipId = index + 1,
+                Identity = new UIElementIdentity(index + 1, 1),
+                WorldMatrix = Matrix4x4.Identity, Bounds = new Vector4(0, 0, 8, 8),
+                RenderPass = pass, ZIndex = index, Material = null,
+                Visible = true, SupportsBatch = false,
+            };
+        UIPublication publication = CreatePublication(records, 1);
+        UIRecordStore<UIRenderRecord> store = publication.RenderRecordStore;
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = CreateCollection(pass);
+        List<long> order = [];
+
+        collector.CollectPublishedRuns(publication, commands,
+            record => order.Add(record.MembershipId));
+        order.ShouldBe(Enumerable.Range(1, 260).Select(static index => (long)index).ToArray());
+        collector.SwapBuffers();
+        publication.Release();
+        store.ResourcesRetired.ShouldBeFalse();
+        collector.Clear();
+        store.ResourcesRetired.ShouldBeTrue();
+    }
+
+    [Test]
+    public void ClearDuringUnbatchedCallbackStopsStaleCollection()
+    {
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        UIRenderRecord[] records = new UIRenderRecord[2];
+        for (int index = 0; index < records.Length; index++)
+            records[index] = new UIRenderRecord
+            {
+                RenderInfo = null!, MembershipId = index + 1,
+                Identity = new UIElementIdentity(index + 1, 1),
+                WorldMatrix = Matrix4x4.Identity, Bounds = Vector4.One,
+                RenderPass = pass, ZIndex = index, Material = null,
+                Visible = true, SupportsBatch = false,
+            };
+        UIPublication publication = CreatePublication(records, 1);
+        using UIBatchCollector collector = new();
+        int visited = 0;
+        collector.CollectPublishedRuns(publication, CreateCollection(pass), _ =>
+        {
+            visited++;
+            collector.Clear();
+        });
+        visited.ShouldBe(1);
+        collector.CollectedPublicationGeneration.ShouldBe(0ul);
+        publication.Release();
+    }
+
+    [Test]
+    public void DisposedCollectorRejectsPublishedCollection()
+    {
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        UIBatchCollector collector = new();
+        collector.Dispose();
+        UIPublication publication = CreatePublication([], 1);
+        try
+        {
+            Should.Throw<ObjectDisposedException>(() =>
+                collector.CollectPublishedRuns(publication, CreateCollection(pass), _ => { }));
+        }
+        finally { publication.Release(); }
+    }
+
+    [Test]
     public void RecycledMembershipSlotChangesGeneration()
     {
         const int pass = (int)EDefaultRenderPass.TransparentForward;
