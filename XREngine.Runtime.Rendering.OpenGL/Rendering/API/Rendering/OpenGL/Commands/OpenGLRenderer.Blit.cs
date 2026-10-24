@@ -1,4 +1,5 @@
 using XREngine.Extensions;
+using XREngine.Rendering.UI;
 using ImGuiNET;
 using Silk.NET.OpenGL;
 using Silk.NET.OpenGL.Extensions.ARB;
@@ -16,7 +17,6 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
-using XREngine.Rendering.UI;
 using XREngine.Rendering.Shaders.Generator;
 using PixelFormat = Silk.NET.OpenGL.PixelFormat;
 using XREngine.Components;
@@ -28,6 +28,146 @@ namespace XREngine.Rendering.OpenGL;
 
 public partial class OpenGLRenderer
 {
+    public override FrameBufferBlitSubmission TryBlitBackbufferRegionToFBO(
+        XRWindow window, XREngine.Data.Geometry.BoundingRectangle region,
+        XRFrameBuffer destination)
+    {
+        if (!AcceptsBackendWork || !ReferenceEquals(XRWindow, window) ||
+            window.ActiveOpenGlDispatchToken == 0UL ||
+            !HasCurrentUiBackdropWindowContext(window))
+            return FrameBufferBlitSubmission.Rejected("No matching OpenGL window dispatch is active.");
+        ulong expectedDispatchToken = window.ActiveOpenGlDispatchToken;
+        IRuntimeWindowGlContext? expectedContext = window.DesktopGlContext;
+        long expectedContextGeneration = expectedContext?.OwnerGeneration ?? 0L;
+        if (RawGL.GetInteger(GLEnum.DrawFramebufferBinding) != 0 ||
+            RawGL.GetInteger(GLEnum.SampleBuffers) != 0 ||
+            Api.GetFramebufferAttachmentParameter(FramebufferTarget.DrawFramebuffer,
+                (FramebufferAttachment)GLEnum.BackLeft,
+                FramebufferAttachmentParameterName.RedSize) != 8 ||
+            Api.GetFramebufferAttachmentParameter(FramebufferTarget.DrawFramebuffer,
+                (FramebufferAttachment)GLEnum.BackLeft,
+                FramebufferAttachmentParameterName.GreenSize) != 8 ||
+            Api.GetFramebufferAttachmentParameter(FramebufferTarget.DrawFramebuffer,
+                (FramebufferAttachment)GLEnum.BackLeft,
+                FramebufferAttachmentParameterName.BlueSize) != 8 ||
+            Api.GetFramebufferAttachmentParameter(FramebufferTarget.DrawFramebuffer,
+                (FramebufferAttachment)GLEnum.BackLeft,
+                FramebufferAttachmentParameterName.AlphaSize) != 8 ||
+            destination.Targets is not { Length: 1 } captureTargets ||
+            captureTargets[0].Target is not XRTexture2D captureTexture ||
+            captureTexture.SizedInternalFormat != ESizedInternalFormat.Rgba8)
+            return FrameBufferBlitSubmission.Rejected(
+                "Backbuffer capture requires a single-sample RGBA8 default color buffer and RGBA8 target.");
+        var extent = window.RenderFramebufferSize;
+        if (!UIBackdropOutputContract.AllowsBackbufferCopy(
+                in region, extent.X, extent.Y, destination.Width, destination.Height))
+            return FrameBufferBlitSubmission.Rejected("Backbuffer capture region or destination extent is invalid.");
+        EDrawBuffersAttachment[]? drawBuffers = destination.DrawBuffers;
+        if (drawBuffers is null || drawBuffers.Length != 1 ||
+            drawBuffers[0] != EDrawBuffersAttachment.ColorAttachment0)
+            return FrameBufferBlitSubmission.Rejected("Backbuffer capture needs one color-zero draw buffer.");
+        GLEnum priorError = Api.GetError();
+        if (priorError != GLEnum.NoError)
+            return FrameBufferBlitSubmission.Rejected(
+                $"OpenGL had a prior error before backbuffer capture: {priorError}.");
+        GLFrameBuffer? glDestination;
+        try
+        {
+            glDestination = GetOrCreateAPIRenderObject(destination, generateNow: true) as GLFrameBuffer;
+        }
+        catch (Exception error)
+        {
+            return FrameBufferBlitSubmission.Rejected(
+                $"Backbuffer capture target could not be prepared: {error.Message}");
+        }
+        if (expectedDispatchToken != window.ActiveOpenGlDispatchToken ||
+            !ReferenceEquals(expectedContext, window.DesktopGlContext) ||
+            expectedContextGeneration != window.DesktopGlContext?.OwnerGeneration ||
+            !HasCurrentUiBackdropWindowContext(window))
+            return FrameBufferBlitSubmission.Rejected(
+                "Backbuffer capture lost its original window GL context during target preparation.");
+        if (glDestination is null || !glDestination.IsGenerated ||
+            !glDestination.TryGetBindingId(out uint destinationId) || destinationId == 0)
+            return FrameBufferBlitSubmission.Rejected("Backbuffer capture target is not ready.");
+        GLEnum preparationError = Api.GetError();
+        if (preparationError != GLEnum.NoError)
+            return FrameBufferBlitSubmission.Rejected(
+                $"Backbuffer capture target preparation failed with {preparationError}.");
+
+        int previousReadFbo = RawGL.GetInteger(GLEnum.ReadFramebufferBinding);
+        int previousDrawFbo = RawGL.GetInteger(GLEnum.DrawFramebufferBinding);
+        bool scissorEnabled = RawGL.IsEnabled(GLEnum.ScissorTest);
+        int previousDefaultReadBuffer = 0;
+        int previousDestinationDrawBuffer = 0;
+        bool selectedDefaultRead = false;
+        bool selectedDestinationDraw = false;
+        bool issued = false;
+        string? failure = null;
+        try
+        {
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+            previousDefaultReadBuffer = RawGL.GetInteger(GLEnum.ReadBuffer);
+            selectedDefaultRead = true;
+            Api.ReadBuffer(ReadBufferMode.Back);
+            Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, destinationId);
+            previousDestinationDrawBuffer = RawGL.GetInteger(GLEnum.DrawBuffer);
+            selectedDestinationDraw = true;
+            Api.DrawBuffer(DrawBufferMode.ColorAttachment0);
+            GLEnum setupError = Api.GetError();
+            if (setupError != GLEnum.NoError)
+                failure = $"Backbuffer capture setup failed with {setupError}.";
+            else if (Api.CheckFramebufferStatus(FramebufferTarget.ReadFramebuffer) != GLEnum.FramebufferComplete ||
+                Api.CheckFramebufferStatus(FramebufferTarget.DrawFramebuffer) != GLEnum.FramebufferComplete)
+                failure = "Backbuffer capture framebuffer is incomplete.";
+            else
+            {
+                if (scissorEnabled)
+                    Api.Disable(EnableCap.ScissorTest);
+                GLEnum scissorError = Api.GetError();
+                if (scissorError != GLEnum.NoError)
+                    failure = $"Backbuffer capture scissor setup failed with {scissorError}.";
+                else
+                {
+                    Api.BlitFramebuffer(
+                        region.X, region.Y, region.X + region.Width, region.Y + region.Height,
+                        0, 0, (int)destination.Width, (int)destination.Height,
+                        ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Linear);
+                    GLEnum blitError = Api.GetError();
+                    if (blitError != GLEnum.NoError)
+                        failure = $"Backbuffer capture blit failed with {blitError}.";
+                    else
+                        issued = true;
+                }
+            }
+        }
+        finally
+        {
+            if (scissorEnabled)
+                Api.Enable(EnableCap.ScissorTest);
+            if (selectedDestinationDraw)
+            {
+                Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, destinationId);
+                Api.DrawBuffer((DrawBufferMode)previousDestinationDrawBuffer);
+            }
+            if (selectedDefaultRead)
+            {
+                Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+                Api.ReadBuffer((ReadBufferMode)previousDefaultReadBuffer);
+            }
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, unchecked((uint)previousReadFbo));
+            Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, unchecked((uint)previousDrawFbo));
+        }
+        GLEnum restoreError = Api.GetError();
+        if (restoreError != GLEnum.NoError)
+            return FrameBufferBlitSubmission.Rejected(
+                $"Backbuffer capture state restore failed with {restoreError}.");
+        if (!issued)
+            return FrameBufferBlitSubmission.Rejected(
+                failure ?? "Backbuffer capture did not issue a complete color copy.");
+        MarkImmediateHistoryWrite(destination);
+        return FrameBufferBlitSubmission.CompletedImmediately();
+    }
+
     public override FrameBufferBlitSubmission TryBlitFBOToFBO(
         XRFrameBuffer inFBO,
         XRFrameBuffer outFBO,

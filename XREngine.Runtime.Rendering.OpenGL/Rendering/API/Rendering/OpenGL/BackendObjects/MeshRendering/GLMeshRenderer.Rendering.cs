@@ -702,7 +702,8 @@ namespace XREngine.Rendering.OpenGL
                         if (indirectArguments is null)
                         {
                             RecordSceneAssetCost(bindingMaterial.Data, drawInstances);
-                            Renderer.RenderMesh(this, false, drawInstances);
+                            Renderer.RenderMesh(this, false, drawInstances, material.Data,
+                                materialProgram.Data, materialProgram.BindingId);
                         }
                         else if (!TrySubmitIndexedPointIndirect(indirectArguments, indirectByteOffset, out failureReason))
                         {

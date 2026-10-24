@@ -21,6 +21,9 @@ public sealed partial class XRWindow
         _worldUiConsumers = [];
     private ulong _nextOpenGlDispatchToken;
     private ulong _activeOpenGlDispatchToken;
+    internal ulong ActiveOpenGlDispatchToken => _activeOpenGlDispatchToken;
+    private readonly HashSet<ulong> _requiredOpenGlBackdropReceipts = [];
+    private bool _openGlBackdropFailed;
 
     private ulong BeginOpenGlRenderDispatch()
     {
@@ -30,17 +33,39 @@ public sealed partial class XRWindow
         if (token == 0UL)
             token = unchecked(++_nextOpenGlDispatchToken);
         _activeOpenGlDispatchToken = token;
+        _requiredOpenGlBackdropReceipts.Clear();
+        _openGlBackdropFailed = false;
         return token;
     }
 
+    internal void RequireOpenGlBackdrop(ulong receiptId)
+    {
+        if (_activeOpenGlDispatchToken == 0UL || receiptId == 0UL ||
+            !_requiredOpenGlBackdropReceipts.Add(receiptId))
+            throw new InvalidOperationException("A required OpenGL backdrop has no unique active output attempt.");
+    }
+
+    internal void CompleteOpenGlBackdrop(ulong receiptId, bool succeeded)
+    {
+        if (_activeOpenGlDispatchToken == 0UL || !_requiredOpenGlBackdropReceipts.Remove(receiptId))
+            throw new InvalidOperationException("An OpenGL backdrop was completed outside its required output attempt.");
+        if (!succeeded)
+            _openGlBackdropFailed = true;
+    }
+
+    internal void FailOpenGlBackdropAttempt() => _openGlBackdropFailed = true;
+
     private bool CanPresentOpenGlRenderDispatch(ulong dispatchToken)
-        => dispatchToken != 0UL && dispatchToken == _activeOpenGlDispatchToken;
+        => dispatchToken != 0UL && dispatchToken == _activeOpenGlDispatchToken &&
+            !_openGlBackdropFailed && _requiredOpenGlBackdropReceipts.Count == 0;
 
     private void CompleteOpenGlRenderDispatch(ulong dispatchToken, bool presented)
     {
         if (dispatchToken == 0UL || dispatchToken != _activeOpenGlDispatchToken)
             throw new InvalidOperationException("The OpenGL window dispatch token is not active.");
         _activeOpenGlDispatchToken = 0UL;
+        _requiredOpenGlBackdropReceipts.Clear();
+        _openGlBackdropFailed = false;
         if (presented)
             OnOpenGlRenderDispatched();
         else

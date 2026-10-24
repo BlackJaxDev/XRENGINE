@@ -10,6 +10,7 @@ namespace XREngine.Editor;
 
 public partial class InspectorPanel : EditorPanel
 {
+    private bool _destroyingOwner;
     private object?[]? _inspectedObjects;
     public object?[]? InspectedObjects
     {
@@ -20,6 +21,8 @@ public partial class InspectorPanel : EditorPanel
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
         base.OnPropertyChanged(propName, prev, field);
+        if (_destroyingOwner)
+            return;
         switch (propName)
         {
             case nameof(InspectedObjects):
@@ -42,6 +45,8 @@ public partial class InspectorPanel : EditorPanel
 
     protected override void OnComponentActivated()
     {
+        if (_destroyingOwner)
+            return;
         base.OnComponentActivated();
         SubscribePlayModeTransitions();
         bool hadPlaySnapshot = _playInspectedTargets is not null;
@@ -78,25 +83,55 @@ public partial class InspectorPanel : EditorPanel
 
     protected override void OnComponentDeactivated()
     {
+        if (_destroyingOwner)
+        {
+            ReleaseSelectionSubscriptions();
+            base.OnComponentDeactivated();
+            return;
+        }
         if (_playInspectedTargets is null)
             CaptureViewState();
         StopDetailFocusRestore(clearSavedBinding: false);
         base.OnComponentDeactivated();
-        Selection.SelectionChanged -= OnSelectionChanged;
-        NativeAssetSelection.SelectionChanged -= OnNativeAssetSelectionChanged;
+        ReleaseSelectionSubscriptions();
         ReleaseVirtualPropertyList();
     }
 
     protected override void OnDestroying()
     {
+        _destroyingOwner = true;
         UnsubscribePlayModeTransitions();
+        ReleaseSelectionSubscriptions();
+        StopDetailFocusRestore();
+        DetachTerminalProvider(_virtualPropertyList);
+        DetachTerminalProvider(_componentList);
+        DetachTerminalProvider(_componentPicker);
+        ReleaseVirtualPropertyOwners(terminal: true);
+        ReleaseComponentViewOwners();
+        base.OnDestroying();
+    }
+
+    private static void DetachTerminalProvider(UIListTransform? list)
+    {
+        if (list is null)
+            return;
+        try { list.DetachVirtualProviderForOwnerTeardown(); }
+        catch (AggregateException error)
+        {
+            Debug.LogException(error, "Virtual inspector row cleanup failed during owner destruction.");
+        }
+    }
+
+    private void ReleaseSelectionSubscriptions()
+    {
         Selection.SelectionChanged -= OnSelectionChanged;
         NativeAssetSelection.SelectionChanged -= OnNativeAssetSelectionChanged;
-        base.OnDestroying();
     }
 
     private void OnSelectionChanged(SceneNode[] obj)
     {
+        if (_destroyingOwner)
+            return;
         if (obj.Length == 0 && Engine.PlayMode.State == EPlayModeState.EnteringPlay)
             CapturePlayModeState();
         if (!IsLocked)
@@ -112,6 +147,8 @@ public partial class InspectorPanel : EditorPanel
 
     private void OnNativeAssetSelectionChanged(object? target)
     {
+        if (_destroyingOwner)
+            return;
         if (IsLocked)
             return;
         if (target is null)

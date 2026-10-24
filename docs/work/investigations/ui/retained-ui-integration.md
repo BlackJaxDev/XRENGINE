@@ -828,3 +828,85 @@ Windows test execution is available in this environment.
 Desktop test build 14 passed with zero warnings/errors in 50.22s. No desktop
 tests executed. All 32 local document links resolve, the whitespace check passes,
 and all 9,941 source/project hashes remain unchanged.
+
+## Native Asset Creation Recovery Boundary
+
+The native asset browser still has no new asset-creation command. A separate,
+unbuilt core prototype added exclusive file creation, captured authoring tickets,
+retained native asset/metadata pairs, and receipt-based Undo/Redo. Review found
+that raw archive files cannot reliably distinguish a normal rename from an
+incomplete operation. The proposed automatic metadata protection can also vanish
+when a project unloads. Automatic metadata writes can overwrite a concurrent
+foreign sidecar after a successful precheck.
+
+The prototype is preserved as an unpublished patch and exact source copies in
+the task evidence. Its source was removed from the integration tree before the
+next validation. No creation UI was exposed. A durable recovery ownership
+protocol needs a separate concrete design decision. This remains open code work;
+exclusive creation or passing ordinary moves alone would not complete it.
+
+The [recovery proposal](../../design/ui/native-asset-creation-recovery-design.md)
+defines a project-local journal, immutable backups, bounded capacity, startup
+gating, and explicit cleanup. Owner approval remains pending. The archived patch
+is 70,710 bytes; its manifest records the base commit and per-file hashes. The
+copies match those hashes and `git apply --check` passed before archiving.
+
+## Backdrop Capture And Direct Panel Teardown
+
+Headless build 82 passed with zero warnings/errors in 2m55.43s. Run 48 passed
+556 of 557 tests in 15.045s, with no warnings or skips. The only error came from
+the backdrop publication fixture waiting for a new layout result after a
+visual-only property change. A valid cached layout does not submit a new job.
+The fixture must accept that state rather than force layout invalidation.
+
+OpenGL build 1 failed on three missing `BoundingRectangle` references and one
+duplicate import warning. Build 2 failed on four absent `BackLeft` enum members
+and four obsolete enum warnings. The code now uses the core framebuffer
+attachment query names and the native `GLEnum.BackLeft` value. OpenGL build 3
+passed with zero warnings/errors in 17.89s. These builds do not validate native
+GL execution or compile the new fragment shader. `glslangValidator` is not
+installed in this environment.
+
+Review required exact native output proof, local consumer failure isolation,
+consumer-set retention across unbind/dispose, owner-affine pool polling, and
+known-idle claim retirement before receipt removal. The implementation contains
+those guards. A final performance review also found repeated render-record
+scans when blur was disabled; immutable publication metadata removes that work.
+The next headless run checks the corrected fixture and added lifetime cases.
+
+The hierarchy review keeps its broad completion item open. Incremental
+remove/reinsert can reset provider selection while the selection mirror keeps
+the old ID. Source listeners currently cover child collections, not all external
+name/active-state edits. A world without scene sections can also reuse a stale
+root snapshot. These are code gaps, not Windows-only acceptance checks.
+
+Direct-world publication remains inactive. Production does not call the attempt
+reservation, capture, packet binding, or packet-set sealing APIs. Reservation
+must precede light/shadow and scene collection and survive the collect/render
+swap. Independent packet acquisition during census and collection is not a
+coherent generation. Repeated view/cascade identities, grouped native receipts,
+partial-output recovery, and exact executed camera mapping remain necessary.
+
+Headless build 83 passed with zero warnings/errors in 1m24.06s. Full run 49
+passed all 567 tests with zero warnings or skips in 10.446s. This includes the
+fixed visual-only capture fixture, publication presence flags, collector
+consumer-set checks, copy-only writer retention, terminal list ownership,
+stable hierarchy selection, drop cleanup, and toggle binding/tick retirement.
+The frozen snapshot contains 10,394 source, project, and shader files. Editor
+build 35 checks the same snapshot. No native shader or GPU result is claimed.
+
+Editor build 35 failed in 2m37.62s with one error and one nullable warning.
+`UIContextMenuComponent` exposes `Transform`, not `BoundableTransform`; teardown
+now captures and type-checks that transform before destroying the menu. Scene
+input now captures a non-null world once for both camera validation and pointer
+ownership. Both corrections are editor-only and outside the headless project.
+Editor build 36 validates them. The headless snapshot remains recorded separately
+from the final source snapshot; only these two files differ.
+
+Editor build 36 passed with zero warnings/errors in 1m00.76s. The final source
+snapshot remains unchanged. Desktop test compilation 15 follows; desktop test
+execution and the native graphics checks remain unavailable here.
+
+Desktop test compilation 15 passed with zero warnings/errors in 57.51s. No
+desktop tests executed. All 37 local links in the changed documents resolve,
+the whitespace check passes, and the 10,394-file final snapshot is unchanged.

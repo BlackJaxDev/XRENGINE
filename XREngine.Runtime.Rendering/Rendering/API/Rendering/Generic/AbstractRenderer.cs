@@ -72,6 +72,16 @@ namespace XREngine.Rendering
         /// <inheritdoc />
         public virtual RendererBackendId BackendId => default;
         public long BackendGeneration { get; }
+
+        /// <summary>Gets a native proof for the active window dispatch, if one exists.</summary>
+        internal virtual bool TryGetCurrentUiBackdropOutputOverwriteProof(
+            XRWindow window, out UI.UIBackdropOutputOverwriteProof proof)
+        {
+            proof = default;
+            return false;
+        }
+
+        internal virtual void InvalidateUiBackdropOutputOverwriteProof() { }
         public virtual bool IsBackendReplacementFrameReady => true;
         /// <summary>
         /// Whether a render-command exception must abort the complete frame rather than
@@ -102,6 +112,13 @@ namespace XREngine.Rendering
             return false;
         }
 
+        internal virtual bool TryBeginUiIndexedDrawScope(
+            ReadOnlySpan<UI.UIIndexedDrawIntent> expected, out ulong scopeId)
+        {
+            scopeId = 0UL;
+            return false;
+        }
+
         /// <summary>Reports one actual native indexed draw in the active UI scope.</summary>
         internal virtual void AcknowledgeUiIndexedDraw(
             ulong scopeId, in UI.UIIndexedDrawIntent actual, bool nativeSucceeded)
@@ -112,6 +129,17 @@ namespace XREngine.Rendering
 
         /// <summary>Fails an unfinished native UI draw scope before frame submission.</summary>
         internal virtual void AbortUiIndexedDrawScope() { }
+
+        /// <summary>Checks the destination of one backdrop consumer at native draw issue.</summary>
+        internal virtual bool TryBeginUiBackdropConsumerDrawScope(
+            XRWindow window, BoundingRectangle region, ulong dispatchToken, out ulong scopeId)
+        {
+            scopeId = 0UL;
+            return false;
+        }
+
+        internal virtual bool CompleteUiBackdropConsumerDrawScope(ulong scopeId) => false;
+        internal virtual void AbortUiBackdropConsumerDrawScope() { }
 
         internal bool TryBeginUiPublicationReceipt(
             UI.UIPublication publication, int expectedDrawIntents,
@@ -1581,6 +1609,12 @@ namespace XREngine.Rendering
         #endregion
 
         #region Blitting
+        /// <summary>Copies one checked window backbuffer region into a full color target.</summary>
+        public virtual FrameBufferBlitSubmission TryBlitBackbufferRegionToFBO(
+            XRWindow window, BoundingRectangle region, XRFrameBuffer destination)
+            => FrameBufferBlitSubmission.Rejected(
+                "This renderer cannot check a window backbuffer capture.");
+
         /// <summary>
         /// Blits the contents of one framebuffer to another.
         /// </summary>

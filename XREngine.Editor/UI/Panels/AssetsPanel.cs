@@ -25,6 +25,9 @@ public class AssetsPanel : NativeVirtualTextPanel
     private UITextInputComponent? _searchInput;
     private UITextInputComponent? _nameInput;
     private IDisposable? _folderDropTarget;
+    private bool _ownerSubscriptionsActive;
+    private bool _destroying;
+    private bool _tableCallbacksAttached;
 
     public string? SelectedPath { get; private set; }
     public event Action<string>? AssetSelected;
@@ -57,19 +60,28 @@ public class AssetsPanel : NativeVirtualTextPanel
         _table = new UIVirtualTableProvider<AssetRow>(_tableRows,
             UIVirtualTableColumn<AssetRow>.Text("kind", "Type", 76, row => row.Path.Length == 0 ? "Error" : row.IsDirectory ? "Folder" : "Asset"),
             UIVirtualTableColumn<AssetRow>.Text("name", "Name", 420, row => row.Name));
-        _table.Activated += ActivateAssetRow;
-        _table.RowPointerMoved += DragPointerMoved;
-        _table.RowPointerLeft += source => _dragStarts.Remove(source);
         RowProviderOverride = _table;
     }
 
     protected override void OnComponentActivated()
     {
+        if (_destroying)
+            return;
         base.OnComponentActivated();
-        _folderDropTarget = EditorDragDropUtility.RegisterDropTarget(BoundableTransform,
+        if (_destroying || IsDestroyed || IsDestroyQueued)
+            return;
+        AttachTableCallbacks();
+        IDisposable registration = EditorDragDropUtility.RegisterDropTarget(BoundableTransform,
             DropFileIntoCurrentFolder,
             payload => EditorDragDropUtility.TryGetAssetOrFilePath(payload, out string? path) &&
                 path is not null && File.Exists(path) && Directory.Exists(CurrentFolder));
+        if (_destroying || IsDestroyed || IsDestroyQueued)
+        {
+            registration.Dispose();
+            return;
+        }
+        _folderDropTarget = registration;
+        _ownerSubscriptionsActive = true;
         SelectedPath = NativeAssetSelection.SelectedPath;
         Engine.Assets.GameFileCreated += FileChanged;
         Engine.Assets.GameFileDeleted += FileChanged;
@@ -82,8 +94,59 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     protected override void OnComponentDeactivated()
     {
-        _folderDropTarget?.Dispose();
+        ReleaseOwnerSubscriptions();
+        DetachTableCallbacks();
+        base.OnComponentDeactivated();
+    }
+
+    protected override void OnDestroying()
+    {
+        _destroying = true;
+        ReleaseOwnerSubscriptions();
+        DetachTableCallbacks();
+        ReleaseVirtualTextOwnerCallbacks();
+        if (_searchInput is { } search)
+        {
+            search.Submitted -= SubmitSearch;
+            search.Cancelled -= CancelSearch;
+        }
+        _searchInput = null;
+        _nameInput = null;
+        base.OnDestroying();
+    }
+
+    private void AttachTableCallbacks()
+    {
+        if (_tableCallbacksAttached)
+            return;
+        _tableCallbacksAttached = true;
+        _table.Activated += ActivateAssetRow;
+        _table.RowPointerMoved += DragPointerMoved;
+        _table.RowPointerLeft += DragPointerLeft;
+    }
+
+    private void DetachTableCallbacks()
+    {
+        if (!_tableCallbacksAttached)
+            return;
+        _tableCallbacksAttached = false;
+        _table.Activated -= ActivateAssetRow;
+        _table.RowPointerMoved -= DragPointerMoved;
+        _table.RowPointerLeft -= DragPointerLeft;
+        _dragStarts.Clear();
+    }
+
+    private void DragPointerLeft(UIVirtualTableRowComponent source) => _dragStarts.Remove(source);
+
+    private void ReleaseOwnerSubscriptions()
+    {
+        IDisposable? dropTarget = _folderDropTarget;
         _folderDropTarget = null;
+        bool subscribed = _ownerSubscriptionsActive;
+        _ownerSubscriptionsActive = false;
+        dropTarget?.Dispose();
+        if (!subscribed)
+            return;
         UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
         Engine.Assets.GameFileCreated -= FileChanged;
         Engine.Assets.GameFileDeleted -= FileChanged;
@@ -91,7 +154,6 @@ public class AssetsPanel : NativeVirtualTextPanel
         Engine.Assets.EngineFileCreated -= FileChanged;
         Engine.Assets.EngineFileDeleted -= FileChanged;
         Engine.Assets.EngineFileRenamed -= FileRenamed;
-        base.OnComponentDeactivated();
     }
 
     protected override void CreateCommands(SceneNode commands)
@@ -114,8 +176,20 @@ public class AssetsPanel : NativeVirtualTextPanel
         _searchInput = input;
         input.SingleLineMode = true;
         input.Text = _search;
-        input.Submitted += field => Search = field.Text.Trim();
-        input.Cancelled += field => field.Text = _search;
+        input.Submitted += SubmitSearch;
+        input.Cancelled += CancelSearch;
+    }
+
+    private void SubmitSearch(UITextInputComponent field)
+    {
+        if (!_destroying)
+            Search = field.Text.Trim();
+    }
+
+    private void CancelSearch(UITextInputComponent field)
+    {
+        if (!_destroying)
+            field.Text = _search;
     }
 
     private string RootFolder => _engineFiles
@@ -137,6 +211,8 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private void RefreshTick()
     {
+        if (_destroying)
+            return;
         DateTime now = DateTime.UtcNow;
         if (Interlocked.Exchange(ref _pendingRefresh, 0) == 0 && now - _lastRefresh < TimeSpan.FromSeconds(10))
             return;
@@ -149,6 +225,8 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     protected override void RefreshRows()
     {
+        if (_destroying)
+            return;
         _rows.Clear();
         _paths.Clear();
         string folder = CurrentFolder;
@@ -210,6 +288,8 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private void ActivateAssetRow(ulong id)
     {
+        if (_destroying)
+            return;
         if (!_paths.TryGetValue(id, out string? path))
             return;
         if (Directory.Exists(path))
@@ -224,6 +304,8 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private void DragPointerMoved(ulong id, UIVirtualTableRowComponent source, Vector2 localPoint)
     {
+        if (_destroying)
+            return;
         if (!EditorDragDropUtility.IsLeftMouseButtonHeldFor(source))
         {
             _dragStarts.Remove(source);

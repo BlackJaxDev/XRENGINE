@@ -20,66 +20,185 @@ namespace XREngine.Rendering.UI
         public event Action<UIValueChange<ECurrentState>>? ValueCommitted;
 
         private IUIValueBinding<ECurrentState>? _binding;
+        private IUIValueBinding<ECurrentState>? _subscribedBinding;
+        private Action<ECurrentState>? _subscribedHandler;
+        private IUIValueBinding<ECurrentState>? _requestedBinding;
+        private long _bindingRevision;
+        private bool _ownerActive;
+        private bool _tickRegistered;
+        private bool _terminal;
         /// <summary>Typed state source. A binding stays subscribed only while this control is active.</summary>
         public IUIValueBinding<ECurrentState>? Binding
         {
             get => _binding;
             set
             {
+                if (_terminal || IsDestroyed || IsDestroyQueued)
+                {
+                    if (value is not null)
+                        throw new ObjectDisposedException(nameof(UIToggleComponent));
+                    return;
+                }
                 if (ReferenceEquals(_binding, value))
                     return;
-                if (IsActiveInHierarchy && _binding is not null)
-                    _binding.ValueChanged -= OnBindingChanged;
-                SetField(ref _binding, value);
-                if (IsActiveInHierarchy && _binding is not null)
-                    _binding.ValueChanged += OnBindingChanged;
+                long revision = ++_bindingRevision;
+                _requestedBinding = value;
+                DetachBinding();
+                if (!OwnsBindingRevision(revision))
+                {
+                    if (!_terminal && !IsDestroyed && !IsDestroyQueued)
+                        SetField(ref _binding, _requestedBinding, publishNotifications: false);
+                    return;
+                }
+                try { SetField(ref _binding, value); }
+                finally
+                {
+                    if (!OwnsBindingRevision(revision))
+                        SetField(ref _binding, _requestedBinding, publishNotifications: false);
+                    else if (_ownerActive)
+                        AttachBinding(_binding, revision);
+                }
+                if (!OwnsBindingRevision(revision))
+                    return;
+                _requestedBinding = _binding;
                 SynchronizeBinding();
             }
+        }
+
+        private bool OwnsBindingRevision(long revision)
+            => !_terminal && !IsDestroyed && !IsDestroyQueued && _bindingRevision == revision;
+
+        private void AttachBinding(IUIValueBinding<ECurrentState>? binding, long revision)
+        {
+            if (binding is null || !_ownerActive || !OwnsBindingRevision(revision) ||
+                ReferenceEquals(_subscribedBinding, binding))
+                return;
+            Action<ECurrentState> handler = value => OnBindingChanged(binding, revision, value);
+            _subscribedBinding = binding;
+            _subscribedHandler = handler;
+            try { binding.ValueChanged += handler; }
+            catch
+            {
+                if (ReferenceEquals(_subscribedHandler, handler))
+                {
+                    _subscribedBinding = null;
+                    _subscribedHandler = null;
+                }
+                binding.ValueChanged -= handler;
+                throw;
+            }
+            if (!_ownerActive || !OwnsBindingRevision(revision) ||
+                !ReferenceEquals(_binding, binding) || !ReferenceEquals(_subscribedHandler, handler))
+            {
+                binding.ValueChanged -= handler;
+                return;
+            }
+        }
+
+        private void DetachBinding()
+        {
+            IUIValueBinding<ECurrentState>? subscribed = _subscribedBinding;
+            Action<ECurrentState>? handler = _subscribedHandler;
+            _subscribedBinding = null;
+            _subscribedHandler = null;
+            if (subscribed is not null && handler is not null)
+                subscribed.ValueChanged -= handler;
         }
 
         private ECurrentState _retainedState;
         private bool _writingBinding;
 
-        private void OnBindingChanged(ECurrentState value)
+        private void OnBindingChanged(IUIValueBinding<ECurrentState> source, long revision, ECurrentState value)
         {
-            if (!_writingBinding)
+            if (_ownerActive && OwnsBindingRevision(revision) &&
+                ReferenceEquals(_subscribedBinding, source) && !_writingBinding)
                 ChangeState(value, EUIValueChangeOrigin.Binding);
         }
 
         private void SynchronizeBinding()
         {
-            if (_binding is not null)
-                ChangeState(_binding.Value, EUIValueChangeOrigin.Binding);
+            IUIValueBinding<ECurrentState>? binding = _binding;
+            long revision = _bindingRevision;
+            if (binding is not null)
+            {
+                ECurrentState value = binding.Value;
+                if (OwnsBindingRevision(revision) && ReferenceEquals(_binding, binding))
+                    ChangeState(value, EUIValueChangeOrigin.Binding);
+            }
         }
 
         private void ChangeState(ECurrentState value, EUIValueChangeOrigin origin)
         {
             ECurrentState old = _retainedState;
-            if (old == value)
+            if (_terminal || IsDestroyed || IsDestroyQueued || old == value)
                 return;
-            SetField(ref _retainedState, value, nameof(CurrentState));
+            long revision = _bindingRevision;
+            if (!SetField(ref _retainedState, value, nameof(CurrentState)))
+                return;
+            if (!OwnsBindingRevision(revision))
+            {
+                if (_ownerActive)
+                    SynchronizeBinding();
+                return;
+            }
             LastState = value;
+            if (!OwnsBindingRevision(revision))
+                return;
             OnStateChanged?.Invoke(value);
-            if (origin == EUIValueChangeOrigin.User && _retainedState == value)
+            if (origin == EUIValueChangeOrigin.User && OwnsBindingRevision(revision) && _retainedState == value)
                 ValueCommitted?.Invoke(new(old, value, origin));
         }
 
         protected override void OnComponentActivated()
         {
+            if (_terminal)
+                return;
+            long entryRevision = _bindingRevision;
             base.OnComponentActivated();
-            if (_binding is not null)
-            {
-                _binding.ValueChanged += OnBindingChanged;
-                SynchronizeBinding();
-            }
+            if (_terminal || IsDestroyed || IsDestroyQueued || entryRevision != _bindingRevision)
+                return;
+            _ownerActive = true;
+            AttachBinding(_binding, _bindingRevision);
+            if (!_ownerActive || !OwnsBindingRevision(entryRevision))
+                return;
+            SynchronizeBinding();
+            if (!_ownerActive || !OwnsBindingRevision(entryRevision) || _tickRegistered)
+                return;
+            _tickRegistered = true;
             RegisterTick(Components.ETickGroup.Late, Components.ETickOrder.Scene, UpdateBox);
         }
         protected override void OnComponentDeactivated()
         {
-            if (_binding is not null)
-                _binding.ValueChanged -= OnBindingChanged;
-            UnregisterTick(Components.ETickGroup.Late, Components.ETickOrder.Scene, UpdateBox);
-            base.OnComponentDeactivated();
+            _ownerActive = false;
+            ++_bindingRevision;
+            try { ReleaseActiveOwners(); }
+            finally { base.OnComponentDeactivated(); }
+        }
+
+        protected override void OnDestroying()
+        {
+            _terminal = true;
+            _ownerActive = false;
+            ++_bindingRevision;
+            _requestedBinding = null;
+            SetField(ref _binding, null, publishNotifications: false);
+            try { ReleaseActiveOwners(); }
+            finally { base.OnDestroying(); }
+        }
+
+        private void ReleaseActiveOwners()
+        {
+            Exception? failure = null;
+            try { DetachBinding(); }
+            catch (Exception error) { failure = error; }
+            if (_tickRegistered)
+            {
+                _tickRegistered = false;
+                try { UnregisterTick(Components.ETickGroup.Late, Components.ETickOrder.Scene, UpdateBox); }
+                catch (Exception error) { failure = failure is null ? error : new AggregateException(failure, error); }
+            }
+            if (failure is not null)
+                throw failure;
         }
 
         private DateTime _lastUpdate = DateTime.MinValue;
@@ -100,6 +219,8 @@ namespace XREngine.Rendering.UI
 
         private void UpdateBox()
         {
+            if (_terminal)
+                return;
             if (_binding is not null)
                 return;
             if (DateTime.Now - _lastUpdate < UpdateInterval)
@@ -147,6 +268,8 @@ namespace XREngine.Rendering.UI
             }
             set
             {
+                if (_terminal || IsDestroyed || IsDestroyQueued)
+                    return;
                 if (_binding is not null || Property is null)
                 {
                     SetRetainedState(value, EUIValueChangeOrigin.Programmatic);
@@ -240,6 +363,8 @@ namespace XREngine.Rendering.UI
 
         public void SetValue(bool value)
         {
+            if (_terminal || IsDestroyed || IsDestroyQueued)
+                return;
             if (_binding is not null || Property is null)
             {
                 SetRetainedState(value ? ECurrentState.True : ECurrentState.False,
@@ -257,7 +382,7 @@ namespace XREngine.Rendering.UI
 
         public bool Toggle()
         {
-            if (!CanInteract || IsReadOnly)
+            if (_terminal || !CanInteract || IsReadOnly)
                 return false;
             if (_binding is not null || Property is null)
             {
@@ -278,6 +403,8 @@ namespace XREngine.Rendering.UI
         /// <summary>Sets retained state and writes it to the typed source when present.</summary>
         public void SetRetainedState(ECurrentState value, EUIValueChangeOrigin origin)
         {
+            if (_terminal || IsDestroyed || IsDestroyQueued)
+                return;
             IUIValueBinding<ECurrentState>? binding = _binding;
             if (binding is null || origin == EUIValueChangeOrigin.Binding)
             {
@@ -294,7 +421,7 @@ namespace XREngine.Rendering.UI
             {
                 _writingBinding = false;
             }
-            if (!ReferenceEquals(_binding, binding) || SceneNode is { IsDestroyed: true } ||
+            if (_terminal || IsDestroyed || !ReferenceEquals(_binding, binding) || SceneNode is { IsDestroyed: true } ||
                 wasActive && !IsActiveInHierarchy)
                 return;
             ChangeState(binding.Value, origin);

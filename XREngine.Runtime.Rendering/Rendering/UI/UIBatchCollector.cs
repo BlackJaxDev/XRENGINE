@@ -21,7 +21,7 @@ namespace XREngine.Rendering.UI;
 /// Each run can combine several primitives into one instanced draw.
 /// </para>
 /// </summary>
-public sealed class UIBatchCollector : IDisposable
+public sealed partial class UIBatchCollector : IDisposable
 {
     private static readonly object CollectorRegistryGate = new();
     private static readonly List<WeakReference<UIBatchCollector>> CollectorRegistry = [];
@@ -73,7 +73,9 @@ public sealed class UIBatchCollector : IDisposable
                     continue;
                 }
                 collector.RetireKnownIdleRenderer(renderer, backendGeneration);
+                collector.RetireBackdropKnownIdle(renderer, backendGeneration);
             }
+            RetireQuarantinedBackdropKnownIdle(renderer, backendGeneration);
         }
     }
 
@@ -231,6 +233,7 @@ public sealed class UIBatchCollector : IDisposable
         public XRTexture2D? Texture;
         public bool ImageSrgb;
         public bool Border;
+        public UIBackdropRequest Backdrop;
         public readonly List<MaterialQuadEntry> Entries = [];
 
         public void Clear()
@@ -242,6 +245,7 @@ public sealed class UIBatchCollector : IDisposable
             Texture = null;
             ImageSrgb = false;
             Border = false;
+            Backdrop = default;
             Entries.Clear();
         }
     }
@@ -676,6 +680,8 @@ public sealed class UIBatchCollector : IDisposable
     private XRDataBuffer<Vector4>? _matQuadBorderWidthBuf; // border binding 4: width per instance
     private XRDataBuffer<uint>? _matQuadDrawIndexBuf;      // desktop binding 5: draw order → stable slot
     private XRMeshRenderer? _matQuadBorderMesh;
+    private XRMeshRenderer? _matQuadBackdropMesh;
+    private XRTexture2D? _matQuadBackdropTexture;
     private Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> _materialTextureMeshes = [];
     private List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
     private const int MaxMaterialTextureMeshes = 64;
@@ -701,6 +707,8 @@ public sealed class UIBatchCollector : IDisposable
         public XRDataBuffer<Vector4>? BorderWidth;
         public XRDataBuffer<uint>? DrawIndex;
         public XRMeshRenderer? BorderMesh;
+        public XRMeshRenderer? BackdropMesh;
+        public XRTexture2D? BackdropTexture;
         public Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> TextureMeshes = [];
         public List<(XRTexture2D Texture, bool Srgb)> StaleTextures = [];
         public uint Capacity;
@@ -826,6 +834,7 @@ public sealed class UIBatchCollector : IDisposable
         AbstractRenderer renderer = AbstractRenderer.Current ??
             throw new InvalidOperationException("A UI publication receipt requires an active renderer.");
         SweepDeferredCohorts(renderer);
+        SweepBackdropSurfacesForRenderer(renderer);
         lock (CollectorRegistryGate)
         {
             if (UnclaimedReceiptLeases.Count + s_pendingReceiptReservations >= MaxUnclaimedReceiptLeases)
@@ -833,6 +842,7 @@ public sealed class UIBatchCollector : IDisposable
             s_pendingReceiptReservations++;
         }
         _activeReceipt = new ReceiptLease(renderer, receiptId);
+        BeginBackdropAuthoring();
         return _activeReceipt.Completion;
     }
 
@@ -850,6 +860,7 @@ public sealed class UIBatchCollector : IDisposable
         lease.Sealed = true;
         lease.Authored = authored;
         lease.Completion.Seal(authored, completionFence);
+        SealBackdropSurface(lease.Completion);
         lock (CollectorRegistryGate)
         {
             s_pendingReceiptReservations--;
@@ -1170,7 +1181,8 @@ public sealed class UIBatchCollector : IDisposable
                 AddMaterialQuad(record.RenderPass, record.ZIndex, passes,
                     in world, in color, in bounds, record.Crop, record.Texture,
                     record.UV, record.ImageSrgb, record.IsBorder,
-                    record.BorderColor, record.BorderWidth, primitiveHandle, record.CompositionOwner, segmentIdentity, segmentRevision);
+                    record.BorderColor, record.BorderWidth, primitiveHandle, record.CompositionOwner, segmentIdentity, segmentRevision,
+                    record.Backdrop);
             }
         }
         _collectPublishedRecordIndex = -1;
@@ -1199,7 +1211,8 @@ public sealed class UIBatchCollector : IDisposable
         ulong primitiveHandle = 0,
         UICompositionOwner compositionOwner = default,
         ulong compositionSegmentIdentity = 0,
-        ulong compositionSegmentRevision = 0)
+        ulong compositionSegmentRevision = 0,
+        UIBackdropRequest backdrop = default)
     {
         UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
@@ -1213,7 +1226,8 @@ public sealed class UIBatchCollector : IDisposable
             ReferenceEquals(state.ActiveMaterialTexture, texture) &&
             state.ActiveMaterialImageSrgb == imageSrgb &&
             state.ActiveMaterialBorder == border &&
-            groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
+            groups.TryGet(state.ActiveGroupIndex, out var existingBatch) &&
+            existingBatch.Backdrop == backdrop)
         {
             batch = existingBatch;
         }
@@ -1231,6 +1245,7 @@ public sealed class UIBatchCollector : IDisposable
             batch.Texture = texture;
             batch.ImageSrgb = imageSrgb;
             batch.Border = border;
+            batch.Backdrop = backdrop;
             state.ActiveKind = EBatchMarkerKind.Material;
             state.ActiveZIndex = zIndex;
             state.ActiveCropRegion = cropRegion;
@@ -1752,6 +1767,8 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadBorderWidthBuf = gpu.BorderWidth;
         _matQuadDrawIndexBuf = gpu.DrawIndex;
         _matQuadBorderMesh = gpu.BorderMesh;
+        _matQuadBackdropMesh = gpu.BackdropMesh;
+        _matQuadBackdropTexture = gpu.BackdropTexture;
         _materialTextureMeshes = gpu.TextureMeshes;
         _staleMaterialTextures = gpu.StaleTextures;
         _matQuadCapacity = gpu.Capacity;
@@ -1768,6 +1785,8 @@ public sealed class UIBatchCollector : IDisposable
         gpu.BorderWidth = _matQuadBorderWidthBuf;
         gpu.DrawIndex = _matQuadDrawIndexBuf;
         gpu.BorderMesh = _matQuadBorderMesh;
+        gpu.BackdropMesh = _matQuadBackdropMesh;
+        gpu.BackdropTexture = _matQuadBackdropTexture;
         gpu.TextureMeshes = _materialTextureMeshes;
         gpu.StaleTextures = _staleMaterialTextures;
         gpu.Capacity = _matQuadCapacity;
@@ -2551,6 +2570,14 @@ public sealed class UIBatchCollector : IDisposable
             return;
         }
 
+        XRTexture2D? backdropTexture = null;
+        BoundingRectangle backdropRegion = default;
+        if (batch.Backdrop.IsDefined && !TryGetBackdropCapture(out backdropTexture, out backdropRegion))
+        {
+            FailCurrentUiPublicationAuthoring("UI.BackdropBlur.CaptureMissing: no checked capture is ready in this output attempt.");
+            return;
+        }
+
         AbstractRenderer renderer = AbstractRenderer.Current ??
             throw new InvalidOperationException("UI batching requires an active renderer.");
         RendererBackendId backendId = renderer.BackendId;
@@ -2569,10 +2596,10 @@ public sealed class UIBatchCollector : IDisposable
         using var sample = RuntimeEngine.Profiler.Start();
         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
         bool profileGpu = profiler.ShouldInstrumentCommandScopes;
-        int variant = batch.Border ? 2 : batch.Texture is not null ? 1 : 0;
+        int variant = batch.Backdrop.IsDefined ? 3 : batch.Border ? 2 : batch.Texture is not null ? 1 : 0;
         bool uploadRequired = cohort is null || cohort.UploadedVariant != variant ||
             batch.Border && !cohort.HasUploadedBorder ||
-            batch.Texture is not null && !cohort.HasUploadedImage ||
+            (batch.Texture is not null || batch.Backdrop.IsDefined) && !cohort.HasUploadedImage ||
             !MaterialEntriesMatch(cohort, batch.Entries);
 
         try
@@ -2582,13 +2609,13 @@ public sealed class UIBatchCollector : IDisposable
                 using (profiler.StartScope($"UIBatchMaterialUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
                 {
                     EnsureMaterialQuadMesh();
-                    UploadMaterialQuadData(batch.Entries, batch.Texture is not null, batch.Border, cohort);
+                    UploadMaterialQuadData(batch.Entries, batch.Texture is not null || batch.Backdrop.IsDefined, batch.Border, cohort);
                 }
             }
             else if (uploadRequired)
             {
                 EnsureMaterialQuadMesh();
-                UploadMaterialQuadData(batch.Entries, batch.Texture is not null, batch.Border, cohort);
+                UploadMaterialQuadData(batch.Entries, batch.Texture is not null || batch.Backdrop.IsDefined, batch.Border, cohort);
             }
         }
         catch
@@ -2604,11 +2631,12 @@ public sealed class UIBatchCollector : IDisposable
         {
             RememberMaterialEntries(cohort, batch.Entries);
             cohort.HasUploadedBorder |= batch.Border;
-            cohort.HasUploadedImage |= batch.Texture is not null;
+            cohort.HasUploadedImage |= batch.Texture is not null || batch.Backdrop.IsDefined;
             cohort.UploadedVariant = variant;
         }
 
-        XRMeshRenderer materialQuadMesh = batch.Border ? EnsureMaterialBorderMesh() :
+        XRMeshRenderer materialQuadMesh = batch.Backdrop.IsDefined
+            ? EnsureBackdropMesh(backdropTexture!) : batch.Border ? EnsureMaterialBorderMesh() :
             batch.Texture is { } texture
                 ? EnsureMaterialTextureMesh(texture, batch.ImageSrgb) : _matQuadMesh!;
 
@@ -2670,11 +2698,38 @@ public sealed class UIBatchCollector : IDisposable
         if (materialQuadMesh.Material is { } material && material.RenderPass != renderPass)
             material.RenderPass = renderPass;
 
+        if (batch.Backdrop.IsDefined && materialQuadMesh.Material is { } backdropMaterial)
+        {
+            backdropMaterial.SetVector2("CaptureOrigin", new Vector2(backdropRegion.X, backdropRegion.Y));
+            backdropMaterial.SetVector2("CaptureSize", new Vector2(backdropRegion.Width, backdropRegion.Height));
+            backdropMaterial.SetFloat("BlurStrength", batch.Backdrop.BlurStrength);
+        }
+
         UIStaticDrawCandidate cacheCandidate = CaptureStaticDrawCandidate(renderer, materialQuadMesh, batch);
         using UIStaticDrawScope cacheScope = new(in cacheCandidate);
-        ApplyBatchCropping(batch.CropRegion);
+        ulong backdropDrawScope = 0UL;
+        ulong backdropOutputScope = 0UL;
+        if (batch.Backdrop.IsDefined)
+        {
+            UIIndexedDrawIntent expected = UIIndexedDrawIntent.Capture(materialQuadMesh,
+                EPrimitiveType.Triangles, checked((uint)batch.Entries.Count));
+            if (!renderer.TryBeginUiIndexedDrawScope([expected], out backdropDrawScope))
+            {
+                FailCurrentUiPublicationAuthoring("UI.BackdropBlur.DrawScopeRejected: the panel has no exact native draw scope.");
+                return;
+            }
+        }
+        bool backdropManagedDrawSucceeded = false;
         try
         {
+            if (batch.Backdrop.IsDefined &&
+                !renderer.TryBeginUiBackdropConsumerDrawScope(_activeBackdropWindow!,
+                    _activeBackdropRegion, _activeBackdropDispatch, out backdropOutputScope))
+                FailCurrentUiPublicationAuthoring(
+                    "UI.BackdropBlur.OutputScopeRejected: the panel has no exact native output scope.");
+            if (batch.Backdrop.IsDefined && backdropOutputScope == 0UL)
+                return;
+            ApplyBatchCropping(batch.CropRegion);
             if (profileGpu)
             {
                 using (profiler.StartScope($"UIBatchMaterialDraw[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
@@ -2688,10 +2743,30 @@ public sealed class UIBatchCollector : IDisposable
                 drawSubmitted = true;
                 materialQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
             }
+            backdropManagedDrawSucceeded = true;
         }
         finally
         {
-            DisableBatchCropping();
+            try
+            {
+                if (backdropDrawScope != 0UL)
+                {
+                    bool indexedComplete = renderer.CompleteUiIndexedDrawScope(backdropDrawScope);
+                    bool outputComplete = backdropOutputScope != 0UL &&
+                        renderer.CompleteUiBackdropConsumerDrawScope(backdropOutputScope);
+                    if (backdropManagedDrawSucceeded && indexedComplete && outputComplete)
+                        AcknowledgeBackdropConsumer(renderPass, batch.RunId);
+                    else
+                        FailCurrentUiPublicationAuthoring(
+                            "UI.BackdropBlur.ConsumerIncomplete: the required native panel draw or output was not acknowledged.");
+                }
+            }
+            finally
+            {
+                if (backdropDrawScope != 0UL)
+                    renderer.AbortUiBackdropConsumerDrawScope();
+                DisableBatchCropping();
+            }
         }
         }
         finally
@@ -2722,6 +2797,7 @@ public sealed class UIBatchCollector : IDisposable
         XRMeshRenderer mesh, MaterialQuadBatchData batch)
     {
         if (renderer.BackendId != RendererBackendId.Vulkan || batch.Texture is not null || batch.Border ||
+            batch.Backdrop.IsDefined ||
             !batch.CompositionOwner.IsExplicit || batch.CompositionOwner.Kind != EUICompositionLayerKind.StaticChrome ||
             batch.CompositionSegmentIdentity == 0 || batch.CompositionSegmentRevision == 0 ||
             _activeReceipt is not { } receipt || !ReferenceEquals(receipt.Renderer, renderer) ||
@@ -3604,6 +3680,7 @@ public sealed class UIBatchCollector : IDisposable
                     CollectorRegistry.RemoveAt(index);
         }
         Clear();
+        DisposeBackdropSurfaces();
         foreach (var pair in _materialRunGPU)
             foreach (MaterialGPUResources cohort in pair.Value)
             {
@@ -3659,6 +3736,9 @@ public sealed class UIBatchCollector : IDisposable
         XRMaterial? borderMaterial = gpu.BorderMesh?.Material;
         gpu.BorderMesh?.Destroy();
         borderMaterial?.Destroy();
+        XRMaterial? backdropMaterial = gpu.BackdropMesh?.Material;
+        gpu.BackdropMesh?.Destroy();
+        backdropMaterial?.Destroy();
         foreach (XRMeshRenderer texturedMesh in gpu.TextureMeshes.Values)
         {
             XRMaterial? texturedMaterial = texturedMesh.Material;
@@ -3685,6 +3765,9 @@ public sealed class UIBatchCollector : IDisposable
         XRMaterial? borderMaterial = _matQuadBorderMesh?.Material;
         _matQuadBorderMesh?.Destroy();
         borderMaterial?.Destroy();
+        XRMaterial? backdropMaterial = _matQuadBackdropMesh?.Material;
+        _matQuadBackdropMesh?.Destroy();
+        backdropMaterial?.Destroy();
         foreach (XRMeshRenderer texturedMesh in _materialTextureMeshes.Values)
         {
             XRMaterial? texturedMaterial = texturedMesh.Material;
@@ -3703,6 +3786,8 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadBorderWidthBuf = null;
         _matQuadDrawIndexBuf = null;
         _matQuadBorderMesh = null;
+        _matQuadBackdropMesh = null;
+        _matQuadBackdropTexture = null;
         _matQuadMesh = null;
     }
 

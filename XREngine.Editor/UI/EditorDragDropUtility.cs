@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Input.Devices;
@@ -230,18 +231,35 @@ public static class EditorDragDropUtility
 
         DragPayload payload = session.Payload;
         DropTargetRegistration? target = session.HoveredTarget;
-        SetHoveredTarget(session, null);
-        if (target is not null && target.IsValid && session.IsCurrent &&
-            target.CanAccept(payload) && session.IsCurrent && target.IsValid)
-            target.TryDrop(payload);
-        StopTickIfUnused();
+        try
+        {
+            SetHoveredTarget(session, null);
+            if (target is not null && target.IsValid && session.IsCurrent &&
+                target.CanAccept(payload) && session.IsCurrent && target.IsValid)
+                target.TryDrop(payload);
+        }
+        finally { StopTickIfUnused(); }
+    }
+
+    /// <summary>Releases the current session for a retiring source before hover callbacks run.</summary>
+    internal static void CancelDragsForSource(UIInteractableComponent source)
+    {
+        DragSession? owned = null;
+        foreach (DragSession session in _sessions.Values)
+            if (ReferenceEquals(session.Source, source))
+            {
+                owned = session;
+                break;
+            }
+        if (owned is not null)
+            CancelDrag(owned);
     }
 
     private static void CancelDrag(DragSession session)
     {
         RemoveSession(session);
-        SetHoveredTarget(session, null);
-        StopTickIfUnused();
+        try { SetHoveredTarget(session, null); }
+        finally { StopTickIfUnused(); }
     }
 
     private static bool IsRegisteredSession(DragSession session)
@@ -293,6 +311,7 @@ public static class EditorDragDropUtility
 
     private static void CleanupTargets()
     {
+        Exception? failure = null;
         for (int i = _dropTargets.Count - 1; i >= 0; i--)
         {
             if (i >= _dropTargets.Count)
@@ -300,10 +319,11 @@ public static class EditorDragDropUtility
             DropTargetRegistration registration = _dropTargets[i];
             if (registration.IsValid)
                 continue;
-            while (FindSessionHovering(registration) is { } session)
-                SetHoveredTarget(session, null);
-            _dropTargets.Remove(registration);
+            try { registration.Dispose(); }
+            catch (Exception exception) { failure ??= exception; }
         }
+        if (failure is not null)
+            ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
     private static DragSession? FindSessionHovering(DropTargetRegistration target)
@@ -365,11 +385,15 @@ public static class EditorDragDropUtility
     {
         if (!_tickSubscribed || _inputComponent is not null || _sessions.Count != 0)
             return;
-        CleanupTargets();
-        if (_inputComponent is not null || _sessions.Count != 0)
-            return;
-        RuntimeRenderingHostServices.Scheduling.UnsubscribePostUpdateFrame(OnPostUpdateFrame);
-        _tickSubscribed = false;
+        try { CleanupTargets(); }
+        finally
+        {
+            if (_inputComponent is null && _sessions.Count == 0)
+            {
+                RuntimeRenderingHostServices.Scheduling.UnsubscribePostUpdateFrame(OnPostUpdateFrame);
+                _tickSubscribed = false;
+            }
+        }
     }
 
     private sealed class DragSession(UIInteractableComponent source, UICanvasInputComponent input,
@@ -413,9 +437,9 @@ public static class EditorDragDropUtility
         private readonly WeakReference<UIBoundableTransform> _transformRef;
         public UICanvasComponent? Canvas => _transformRef.TryGetTarget(out var transform)
             ? transform.GetCanvasComponent() : null;
-        private readonly Func<DragPayload, bool> _onDrop;
-        private readonly Func<DragPayload, bool>? _canAccept;
-        private readonly Action<bool>? _hoverChanged;
+        private Func<DragPayload, bool>? _onDrop;
+        private Func<DragPayload, bool>? _canAccept;
+        private Action<bool>? _hoverChanged;
         private bool _hovering;
         private bool _disposed;
 
@@ -464,12 +488,12 @@ public static class EditorDragDropUtility
         {
             if (_disposed)
                 return false;
-            return _onDrop(payload);
+            return _onDrop?.Invoke(payload) ?? false;
         }
 
         public void SetHover(bool hovering)
         {
-            if (_hovering == hovering)
+            if (_hovering == hovering || _disposed && hovering)
                 return;
 
             _hovering = hovering;
@@ -478,8 +502,19 @@ public static class EditorDragDropUtility
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
             _disposed = true;
-            _hoverChanged?.Invoke(false);
+            _dropTargets.Remove(this);
+            while (FindSessionHovering(this) is { } session)
+                session.HoveredTarget = null;
+            Action<bool>? hoverChanged = _hoverChanged;
+            _onDrop = null;
+            _canAccept = null;
+            _hoverChanged = null;
+            _hovering = false;
+            // Release every retained owner before a user notification can reenter or throw.
+            hoverChanged?.Invoke(false);
         }
     }
 

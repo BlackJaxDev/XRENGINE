@@ -28,13 +28,15 @@ internal sealed class NativeSceneViewportInput : UIInteractableComponent
         if (!CanInteract || panel?.Window is not { IsFocused: true } window ||
             ownerViewport is null || !ReferenceEquals(ownerViewport.Window, window) ||
             sceneViewport is null || !ReferenceEquals(sceneViewport.Window, window) ||
-            sceneViewport.CameraComponent is null || sceneViewport.World is null ||
-            !ReferenceEquals(sceneViewport.World, ownerViewport.World) ||
+            sceneViewport.CameraComponent is not { } camera ||
+            sceneViewport.World is not { } world ||
+            !SceneViewPanel.CameraBelongsToWorld(camera, world) ||
+            !ReferenceEquals(world, ownerViewport.World) ||
             !ReferenceEquals(input.OwningPawn, pawn) ||
             !ReferenceEquals(input.GetCameraCanvas(), UserInterfaceCanvas))
             return false;
-        owner = new(this, input, sceneViewport, window, sceneViewport.CameraComponent,
-            sceneViewport.World, identity, revision, lifetime);
+        owner = new(this, input, sceneViewport, window, camera,
+            world, identity, revision, lifetime);
         return true;
     }
 }

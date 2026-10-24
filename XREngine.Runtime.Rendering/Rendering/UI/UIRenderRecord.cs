@@ -27,6 +27,7 @@ public readonly record struct UIRenderRecord
     public Vector4 UV { get; init; }
     public bool ImageSrgb { get; init; }
     public bool IsBorder { get; init; }
+    public UIBackdropRequest Backdrop { get; init; }
     public Vector4 BorderColor { get; init; }
     public float BorderWidth { get; init; }
     public Vector4 TextColor { get; init; }

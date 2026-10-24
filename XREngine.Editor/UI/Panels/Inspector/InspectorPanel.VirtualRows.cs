@@ -379,6 +379,8 @@ public partial class InspectorPanel
 
     private void BindPropertyRow(UIBoundableTransform row, PropertyInfo property, object?[]? targets)
     {
+        if (_destroyingOwner)
+            return;
         PropertyRow state = _propertyRows[row];
         state.DropTarget?.Dispose();
         state.DropTarget = null;
@@ -564,7 +566,8 @@ public partial class InspectorPanel
 
     private void UnbindPropertyRow(UIBoundableTransform row)
     {
-        PropertyRow state = _propertyRows[row];
+        if (!_propertyRows.TryGetValue(row, out PropertyRow? state))
+            return;
         state.DropTarget?.Dispose();
         state.DropTarget = null;
         state.Property = null;
@@ -690,23 +693,40 @@ public partial class InspectorPanel
 
     private void ReleaseVirtualPropertyList()
     {
-        foreach (AssetDropRequest request in _pendingAssetDrops.Values)
-        {
-            request.Invalidate();
-            request.StopObserving();
-        }
-        _pendingAssetDrops.Clear();
+        ReleaseVirtualPropertyOwners();
         HideDetailEditor();
         if (_virtualPropertyList is not null)
             _virtualPropertyList.VirtualProvider = null;
-        foreach (PropertyRow row in _propertyRows.Values)
-            row.DropTarget?.Dispose();
-        _propertyRows.Clear();
         _virtualPropertyProvider = null;
         _virtualPropertyGrid = null;
         _virtualPropertyList = null;
         _propertyScroll = null;
         _detailTransform = null;
         ReleaseComponentViews();
+    }
+
+    private void ReleaseVirtualPropertyOwners(bool terminal = false)
+    {
+        if (terminal)
+        {
+            _virtualPropertyProvider?.Reset([], null);
+            _detailProperty = null;
+            _detailEditor = null;
+        }
+        AssetDropRequest[] pending = [.. _pendingAssetDrops.Values];
+        _pendingAssetDrops.Clear();
+        foreach (AssetDropRequest request in pending)
+        {
+            request.Invalidate();
+            request.StopObserving();
+        }
+        PropertyRow[] rows = [.. _propertyRows.Values];
+        _propertyRows.Clear();
+        foreach (PropertyRow row in rows)
+        {
+            IDisposable? dropTarget = row.DropTarget;
+            row.DropTarget = null;
+            dropTarget?.Dispose();
+        }
     }
 }

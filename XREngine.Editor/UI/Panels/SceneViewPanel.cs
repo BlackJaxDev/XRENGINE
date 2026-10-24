@@ -206,7 +206,7 @@ public class SceneViewPanel : EditorPanel
         return null;
     }
 
-    private static bool CameraBelongsToWorld(CameraComponent? camera, IRuntimeRenderWorld? world)
+    internal static bool CameraBelongsToWorld(CameraComponent? camera, IRuntimeRenderWorld? world)
         => world is not null && camera is { IsDestroyed: false, IsDestroyQueued: false,
             SceneNode: { IsDestroyed: false, IsDestroyQueued: false } node } &&
             ReferenceEquals(node.World, world.WorldContext);

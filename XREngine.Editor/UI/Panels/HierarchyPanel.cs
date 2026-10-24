@@ -91,29 +91,33 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         }
     }
 
-    protected override void OnComponentActivated()
-    {
-        base.OnComponentActivated();
-        RestoreHierarchyState();
-        Selection.SelectionChanged += OnSelectionChanged;
-        SubscribeRightClick();
-        RegisterTick(ETickGroup.Late, ETickOrder.Scene, PollVirtualTreeSources);
-        RemakeChildren();
-        RestoreRenameFocus();
-    }
-    protected override void OnComponentDeactivated()
-    {
-        SaveHierarchyState();
-        base.OnComponentDeactivated();
-        Selection.SelectionChanged -= OnSelectionChanged;
-        UnsubscribeRightClick();
-        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, PollVirtualTreeSources);
-        ReleaseVirtualTree();
-    }
-
     private void OnSelectionChanged(SceneNode[] _) => UpdateNodeHighlights();
 
     public void RemakeChildren()
+    {
+        if (!CanUseHierarchy)
+            return;
+        if (_remakingHierarchy || _releasingHierarchy)
+        {
+            _remakePending = true;
+            return;
+        }
+        _remakingHierarchy = true;
+        _remakePending = false;
+        uint revision = _hierarchyRevision;
+        try
+        {
+            RemakeHierarchyChildren(revision);
+        }
+        finally
+        {
+            _remakingHierarchy = false;
+            if (_remakePending && CanUseHierarchy)
+                ScheduleHierarchyWork();
+        }
+    }
+
+    private void RemakeHierarchyChildren(uint revision)
     {
         using var sample = Engine.Profiler.Start("HierarchyPanel.RemakeChildren");
         float savedScroll = _scrollOffset;
@@ -124,16 +128,17 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             return;
         }
 
-        // Hide context menu before clearing children (it may be a child of this node).
-        // Null the reference so it will be recreated on next right-click.
-        if (_contextMenu is not null)
-        {
-            _contextMenu.Hide();
-            _contextMenu = null;
-        }
+        // Release the old menu before replacing the retained child subtree.
+        ReleaseHierarchyMenu();
+        if (!CanUseHierarchy || revision != _hierarchyRevision)
+            return;
 
         foreach (var child in SceneNode.Transform.Children.ToArray())
+        {
             child.SceneNode?.Destroy(true);
+            if (!CanUseHierarchy || revision != _hierarchyRevision)
+                return;
+        }
         _treeListTransform = null;
         _scrollbarTrackTransform = null;
         _scrollbarThumbTransform = null;
@@ -151,6 +156,8 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
     public void ToggleCollapse(SceneNode node)
     {
+        if (!CanUseHierarchy)
+            return;
         if (!_collapsedNodes.Remove(node.ID))
             _collapsedNodes.Add(node.ID);
         if (_virtualTree is not null && _hierarchyIds.TryGetValue(node.ID, out ulong id))
@@ -217,7 +224,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
     public bool HandleMouseScroll(float diff)
     {
-        if (_treeListTransform is null)
+        if (!CanUseHierarchy || _treeListTransform is null)
             return true; // still consume to prevent camera zoom
 
         float maxOffset = GetMaxScrollOffset();

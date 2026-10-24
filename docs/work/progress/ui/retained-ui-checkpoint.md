@@ -465,3 +465,55 @@ performance, and equal-workload ImGui comparison remain unverified.
 Desktop test compilation 14 passed with zero warnings/errors in 50.22s. No
 desktop tests executed. All 32 local documentation links and whitespace checks
 pass. The source snapshot remains unchanged.
+
+## Shared Backdrop Capture And Direct Owner Teardown
+
+Code reconciliation is **41 of 60 implementation items complete**. The active
+TODO retains 19 code items and four original owner decisions. Paragraph analysis
+and the separate native asset recovery proposal remain pending approval. The
+completed item is opt-in shared backdrop capture for the supported GL screen
+canvas profile. Native visual and completion-fence acceptance remain open.
+
+| Implementation area | Complete / original total | Open |
+|---|---:|---:|
+| Immutable layout and bounded scheduling | 9 / 9 | 0 |
+| Coherent publication and input | 5 / 8 | 3 |
+| Persistent render data and clipping | 13 / 17 | 4 |
+| Retained controls and virtual collections | 9 / 11 | 2 |
+| First-milestone fixture | 3 / 3 | 0 |
+| Editor adoption | 2 / 12 | 10 |
+| Total | 41 / 60 | 19 |
+
+- Disabled blur adds constant-time checks. Immutable publication flags identify
+  visible requests and incompatible pre-render content. Compatible panels use
+  one canvas-prefix capture with separate strengths. Native output proof and
+  exact consumer coverage gate presentation. Four renderer-affine surfaces and
+  a 128 MiB budget bound capture storage; receipt retirement prevents early reuse.
+- Native panels release exact callback and provider owners on direct destruction.
+  Retiring list rows cannot move into another provider during cleanup. Drop
+  disposal clears retained owners before callbacks, and source retirement stops
+  the current drag. Toggle bindings reject stale delivery and release their tick
+  even when destruction bypasses deactivation.
+- Hierarchy selection reaches offscreen virtual nodes without realizing rows.
+  Direct hierarchy destruction releases stored source, input, row, menu, and
+  drop owners. Broader hierarchy parity stays open because incremental reparent,
+  source refresh, root updates, and keyboard/rename workflows need more work.
+- The asset-creation prototype is archived as an unpublished patch and exact
+  source copies. No asset-creation command or persistent journal is implemented.
+  The [recovery proposal](../../design/ui/native-asset-creation-recovery-design.md)
+  is available for owner review.
+
+Headless build 83 passed with zero warnings/errors in 1m24.06s. Full run 49
+passed **567 of 567 tests**, with zero warnings or skips, in 10.446s. The frozen
+snapshot contains 10,394 source, project, and shader files. No Windows execution,
+native shader compilation, GPU/visual result, IME result, or performance gain
+is claimed.
+
+Editor build 36 passed with zero warnings/errors in 1m00.76s. It includes two
+editor-only corrections after the headless run: menu-transform lookup and a
+captured non-null scene world. Those files are outside headless project inputs.
+The final source snapshot retains those two differences explicitly.
+
+Desktop test compilation 15 passed with zero warnings/errors in 57.51s. No
+desktop tests executed. All 37 local document links and whitespace checks pass.
+The 10,394-file final source snapshot is unchanged.
