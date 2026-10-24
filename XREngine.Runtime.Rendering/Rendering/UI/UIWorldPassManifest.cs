@@ -165,13 +165,17 @@ internal sealed class UIWorldPassManifest : IDisposable
     {
         int count = _packetCount;
         _packetCount = 0;
+        List<Exception>? failures = null;
         for (int index = 0; index < count; index++)
         {
             UIPublication? packet = _packets[index];
             _packets[index] = null;
             _canvasKeys[index] = null;
-            packet?.Release();
+            try { packet?.Release(); }
+            catch (Exception error) { (failures ??= []).Add(error); }
         }
+        if (failures is not null)
+            throw new AggregateException("One or more world UI packets could not be released.", failures);
     }
 
     internal bool TryCaptureReserved(ViewportRenderCommandContainer root, ulong token,

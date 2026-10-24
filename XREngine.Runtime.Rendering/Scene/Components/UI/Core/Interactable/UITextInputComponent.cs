@@ -102,6 +102,10 @@ namespace XREngine.Rendering.UI
                 if (_binding is not null && !_terminal)
                     try { SynchronizeBinding(_binding, _bindingRevision, allowInactive: true); }
                     catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+                if (revision == _bindingRevision && ReferenceEquals(_binding, value) &&
+                    IsFocused && CommitOnSubmit && IsActiveInHierarchy && !_terminal)
+                    try { AdoptReplacementBindingForFocusedDraft(value, revision); }
+                    catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
                 if (failure is not null)
                     throw failure;
             }
@@ -187,6 +191,54 @@ namespace XREngine.Rendering.UI
         private static Exception CombineLifetimeFailure(Exception? first, Exception second)
             => first is null ? second : new AggregateException(first, second);
 
+        private bool IsCurrentDraftOwner(IUIValueBinding<string>? binding, long bindingRevision,
+            long focusEpoch, PropertyInfo? property, object?[]? targets, object?[]? targetItems = null)
+            => !_terminal && !IsDestroyed && !IsDestroyQueued && _bindingRevision == bindingRevision &&
+                _focusEpoch == focusEpoch && ReferenceEquals(_binding, binding) &&
+                ReferenceEquals(Property, property) && ReferenceEquals(Targets, targets) &&
+                (targetItems is null || TargetItemsMatch(targets, targetItems));
+
+        private static bool TargetItemsMatch(object?[]? targets, object?[]? snapshot)
+        {
+            if (targets is null || snapshot is null)
+                return targets is null && snapshot is null;
+            if (targets.Length != snapshot.Length)
+                return false;
+            for (int index = 0; index < targets.Length; index++)
+                if (!ReferenceEquals(targets[index], snapshot[index]))
+                    return false;
+            return true;
+        }
+
+        private void AdoptReplacementBindingForFocusedDraft(IUIValueBinding<string>? binding, long revision)
+        {
+            long focusEpoch = _focusEpoch;
+            PropertyInfo? property = Property;
+            object?[]? targets = Targets;
+            string accepted = binding?.Value ?? _editOriginalText;
+            if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets))
+                return;
+            Text = accepted;
+            if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets))
+                return;
+            _editOriginalText = accepted;
+            _editBindingRevision = revision;
+            _editProperty = property;
+            _editTargets = targets;
+            _editTargetItems = targets is null ? null : (object?[])targets.Clone();
+            if (Text != accepted)
+                return;
+            CursorPosition = Text.Length;
+            if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets))
+                return;
+            SelectionAnchor = CursorPosition;
+            IsInvalid = false;
+            if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets))
+                return;
+            _undo.Clear();
+            _redo.Clear();
+        }
+
         private string _text = string.Empty;
         public string Text
         {
@@ -209,6 +261,19 @@ namespace XREngine.Rendering.UI
         private bool _singleLineMode;
         private bool _commitOnSubmit;
         private string _editOriginalText = string.Empty;
+        private long _editBindingRevision;
+        private PropertyInfo? _editProperty;
+        private object?[]? _editTargets;
+        private object?[]? _editTargetItems;
+        private bool _propertyWriteActive;
+        private long _propertyWriteBindingRevision;
+        private long _propertyWriteFocusEpoch;
+        private PropertyInfo? _propertyWriteProperty;
+        private object?[]? _propertyWriteTargets;
+        private object?[]? _propertyWriteItems;
+        private string? _propertyWriteText;
+        private bool _committingDraft;
+        private bool _restoringDraft;
         private bool _isComposing;
         private long _focusEpoch;
         /// <summary>Changes on every focus transition so delayed IME events cannot reach a later edit session.</summary>
@@ -318,8 +383,8 @@ namespace XREngine.Rendering.UI
         /// <summary>Allows a temporary invalid draft while the user edits a value.</summary>
         public bool AllowInvalidDraft { get; set; }
         /// <summary>
-        /// When true, Enter submits the input (fires <see cref="Submitted"/>) instead of inserting a newline,
-        /// and Escape cancels the input (fires <see cref="Cancelled"/>).
+        /// When true, Enter submits the input. Multiline input uses Enter for a newline
+        /// and Ctrl+Enter to submit. Escape cancels either mode.
         /// </summary>
         public bool SingleLineMode
         {
@@ -328,12 +393,12 @@ namespace XREngine.Rendering.UI
         }
 
         /// <summary>
-        /// Fired when <see cref="SingleLineMode"/> is true and the user presses Enter.
+        /// Fired when the user submits a valid input.
         /// </summary>
         public event Action<UITextInputComponent>? Submitted;
 
         /// <summary>
-        /// Fired when <see cref="SingleLineMode"/> is true and the user presses Escape.
+        /// Fired when the user cancels an input outside IME composition.
         /// </summary>
         public event Action<UITextInputComponent>? Cancelled;
 
@@ -356,6 +421,10 @@ namespace XREngine.Rendering.UI
                 return;
             _focusEpoch++;
             _editOriginalText = Text;
+            _editBindingRevision = _bindingRevision;
+            _editProperty = Property;
+            _editTargets = Targets;
+            _editTargetItems = Targets is { } targets ? (object?[])targets.Clone() : null;
             if (SceneNode is not null)
                 TextComponent.Text = Text;
             base.OnGotFocus();
@@ -368,8 +437,16 @@ namespace XREngine.Rendering.UI
                 return;
             StopEditOverlay();
             CancelComposition();
-            if (CommitOnSubmit && Text != _editOriginalText && !CommitDraft())
-                RestoreDraft();
+            if (CommitOnSubmit && Text != _editOriginalText)
+            {
+                // Focus has already been cleared by the base setter. The draft still belongs
+                // to the binding/property captured when this edit session gained focus.
+                if (_editBindingRevision != _bindingRevision ||
+                    !ReferenceEquals(_editProperty, Property) ||
+                    !ReferenceEquals(_editTargets, Targets) ||
+                    !TargetItemsMatch(Targets, _editTargetItems) || !CommitDraft())
+                    RestoreDraft();
+            }
             if (SceneNode is not null)
                 TextComponent.Text = FormatText(Text);
             base.OnLostFocus();
@@ -597,6 +674,8 @@ namespace XREngine.Rendering.UI
                     return;
                 if (SingleLineMode)
                     UserSubmit();
+                else if (AnyControl)
+                    UserSubmit();
                 else
                     UserAddText(Environment.NewLine);
             }
@@ -610,7 +689,7 @@ namespace XREngine.Rendering.UI
                 return;
             if (IsComposing)
                 CancelComposition();
-            else if (SingleLineMode)
+            else
                 UserCancel();
         }
 
@@ -925,16 +1004,18 @@ namespace XREngine.Rendering.UI
             return true;
         }
 
-        /// <summary>Raises the same single-line submit action as the engine Enter key.</summary>
+        /// <summary>Commits a valid draft and raises the submit action.</summary>
         public virtual void UserSubmit()
         {
             if (_terminal || IsComposing)
                 return;
-            if (SingleLineMode && (!CommitOnSubmit || CommitDraft()))
+            long bindingRevision = _bindingRevision;
+            if ((!CommitOnSubmit || CommitDraft()) && !_terminal && !IsDestroyed &&
+                !IsDestroyQueued && bindingRevision == _bindingRevision)
                 Submitted?.Invoke(this);
         }
 
-        /// <summary>Raises the same single-line cancel action as the engine Escape key.</summary>
+        /// <summary>Restores a deferred draft and raises the cancel action.</summary>
         public virtual void UserCancel()
         {
             if (_terminal)
@@ -944,35 +1025,103 @@ namespace XREngine.Rendering.UI
                 CancelComposition();
                 return;
             }
-            if (SingleLineMode)
-            {
-                if (CommitOnSubmit)
-                    RestoreDraft();
+            long bindingRevision = _bindingRevision;
+            if (CommitOnSubmit && !RestoreDraft())
+                return;
+            if (!_terminal && !IsDestroyed && !IsDestroyQueued && bindingRevision == _bindingRevision)
                 Cancelled?.Invoke(this);
-            }
         }
 
         private bool CommitDraft()
         {
-            if (!PostValidateInput(Text))
-            {
-                IsInvalid = true;
+            if (_committingDraft || _restoringDraft)
                 return false;
+            SetField(ref _committingDraft, true, publishNotifications: false);
+            try
+            {
+                IUIValueBinding<string>? binding = _binding;
+                long revision = _bindingRevision;
+                long focusEpoch = _focusEpoch;
+                PropertyInfo? property = Property;
+                object?[]? targets = Targets;
+                object?[]? targetItems = targets is null ? null : (object?[])targets.Clone();
+                string draft = Text;
+                // Direct submissions also serve non-focused numeric scrubs. Focused edits
+                // require the captured draft owner; an off-focus submit has no such session.
+                if (IsFocused && (_editBindingRevision != revision ||
+                    !ReferenceEquals(_editProperty, property) ||
+                    !ReferenceEquals(_editTargets, targets) ||
+                    !TargetItemsMatch(targets, _editTargetItems)) ||
+                    !IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets, targetItems))
+                    return false;
+                bool valid = PostValidateInput(draft);
+                if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets, targetItems) || Text != draft)
+                    return false;
+                if (!valid)
+                {
+                    IsInvalid = true;
+                    return false;
+                }
+                IsInvalid = false;
+                if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets, targetItems) || Text != draft ||
+                    !SetValue(targetItems) || !IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets, targetItems))
+                    return false;
+                _editOriginalText = Text;
+                return true;
             }
-            IsInvalid = false;
-            SetValue();
-            _editOriginalText = Text;
-            return true;
+            finally { SetField(ref _committingDraft, false, publishNotifications: false); }
         }
 
-        private void RestoreDraft()
+        private bool RestoreDraft()
         {
-            Text = _binding?.Value ?? _editOriginalText;
-            CursorPosition = Text.Length;
-            SelectionAnchor = CursorPosition;
-            IsInvalid = false;
-            _undo.Clear();
-            _redo.Clear();
+            if (_restoringDraft || _committingDraft)
+                return false;
+            SetField(ref _restoringDraft, true, publishNotifications: false);
+            try
+            {
+                long focusEpoch = _focusEpoch;
+                for (int attempt = 0; attempt < 8; attempt++)
+                {
+                    IUIValueBinding<string>? binding = _binding;
+                    long revision = _bindingRevision;
+                    PropertyInfo? property = Property;
+                    object?[]? targets = Targets;
+                    if (binding is null && (!ReferenceEquals(_editProperty, property) ||
+                        !ReferenceEquals(_editTargets, targets) ||
+                        !TargetItemsMatch(targets, _editTargetItems)))
+                        return false;
+                    string accepted = binding?.Value ?? _editOriginalText;
+                    if (_focusEpoch != focusEpoch)
+                        return false;
+                    if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets))
+                        continue;
+                    Text = accepted;
+                    if (_focusEpoch != focusEpoch)
+                        return false;
+                    if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets))
+                        continue;
+                    if (Text != accepted)
+                        return false;
+                    CursorPosition = Text.Length;
+                    if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets))
+                        continue;
+                    SelectionAnchor = CursorPosition;
+                    IsInvalid = false;
+                    if (!IsCurrentDraftOwner(binding, revision, focusEpoch, property, targets))
+                        continue;
+                    _editOriginalText = accepted;
+                    _editBindingRevision = revision;
+                    _editProperty = property;
+                    _editTargets = targets;
+                    _editTargetItems = targets is null ? null : (object?[])targets.Clone();
+                    _undo.Clear();
+                    _redo.Clear();
+                    return true;
+                }
+                _editBindingRevision = long.MinValue;
+                return false;
+            }
+            finally { SetField(ref _restoringDraft, false, publishNotifications: false); }
         }
 
         public void UserRemoveText(int count, bool backward)
@@ -1041,40 +1190,76 @@ namespace XREngine.Rendering.UI
                 SetValue();
         }
 
-        private void SetValue()
+        private bool SetValue(object?[]? admittedTargetItems = null)
         {
             if (_terminal)
-                return;
-            if (_binding is not null)
+                return false;
+            IUIValueBinding<string>? binding = _binding;
+            long revision = _bindingRevision;
+            long focusEpoch = _focusEpoch;
+            PropertyInfo? prop = Property;
+            object?[]? targets = Targets;
+            object?[]? targetItems = admittedTargetItems ??
+                (targets is null ? null : (object?[])targets.Clone());
+            string draft = Text;
+            if (!IsCurrentDraftOwner(binding, revision, focusEpoch, prop, targets, targetItems))
+                return false;
+            if (binding is not null)
             {
-                IUIValueBinding<string> binding = _binding;
-                long revision = _bindingRevision;
                 IUIValueBinding<string>? previousWritingSource = _writingBindingSource;
                 _writingBindingSource = binding;
-                try { binding.SetValue(Text); }
+                try { binding.SetValue(draft); }
                 finally { _writingBindingSource = previousWritingSource; }
-                if (_terminal || revision != _bindingRevision || !ReferenceEquals(_binding, binding))
-                    return;
+                if (!IsCurrentDraftOwner(binding, revision, focusEpoch, prop, targets, targetItems) || Text != draft)
+                    return false;
                 string value = binding.Value;
-                if (_terminal || revision != _bindingRevision || !ReferenceEquals(_binding, binding))
-                    return;
+                if (!IsCurrentDraftOwner(binding, revision, focusEpoch, prop, targets, targetItems) || Text != draft)
+                    return false;
                 if (value != Text)
                     Text = value;
-                return;
+                return IsCurrentDraftOwner(binding, revision, focusEpoch, prop, targets, targetItems);
             }
-            var prop = Property;
-            var targets = Targets;
             if (prop is null || targets is null)
-                return;
-
-            ParseAndSet(prop, targets);
+                return true;
+            if (_propertyWriteActive)
+                return false;
+            _propertyWriteActive = true;
+            _propertyWriteBindingRevision = revision;
+            _propertyWriteFocusEpoch = focusEpoch;
+            _propertyWriteProperty = prop;
+            _propertyWriteTargets = targets;
+            _propertyWriteItems = targetItems;
+            _propertyWriteText = draft;
+            try
+            {
+                ParseAndSet(prop, targetItems!);
+                return CanContinuePropertyWrite();
+            }
+            finally
+            {
+                _propertyWriteActive = false;
+                _propertyWriteProperty = null;
+                _propertyWriteTargets = null;
+                _propertyWriteItems = null;
+                _propertyWriteText = null;
+            }
         }
+
+        protected bool CanContinuePropertyWrite()
+            => _propertyWriteActive && _propertyWriteProperty is not null &&
+                Text == _propertyWriteText &&
+                IsCurrentDraftOwner(null, _propertyWriteBindingRevision, _propertyWriteFocusEpoch,
+                    _propertyWriteProperty, _propertyWriteTargets, _propertyWriteItems);
 
         protected virtual void ParseAndSet(PropertyInfo prop, object?[] targets)
         {
             foreach (var target in targets)
             {
+                if (!CanContinuePropertyWrite())
+                    return;
                 var obj = Convert.ChangeType(Text, prop.PropertyType);
+                if (!CanContinuePropertyWrite())
+                    return;
                 prop.SetValue(target, obj);
             }
         }

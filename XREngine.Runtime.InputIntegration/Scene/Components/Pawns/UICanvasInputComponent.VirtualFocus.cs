@@ -31,6 +31,7 @@ public partial class UICanvasInputComponent
         ArgumentNullException.ThrowIfNull(list);
         if (_inputTerminal || _inputDeactivating)
             return false;
+        AdvanceFocusIntent();
         ClearPendingVirtualFocus();
         ulong requestEpoch = _virtualFocusRequestEpoch;
         UICanvasComponent? canvas = GetCameraCanvas();

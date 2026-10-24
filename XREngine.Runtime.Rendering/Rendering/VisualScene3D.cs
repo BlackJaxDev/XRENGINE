@@ -245,6 +245,7 @@ namespace XREngine.Scene
         public IReadOnlyList<RenderInfo3D> Renderables => _renderables;
         private readonly List<RenderInfo3D> _renderables = [];
         private readonly List<IFrozenWorldPacketSource> _frozenWorldPacketSources = [];
+        private readonly Dictionary<RenderInfo3D, IFrozenWorldPacketSource?> _registeredPacketSourceOnly = [];
         private long _frozenWorldPacketSourceRevision;
         private readonly HashSet<RenderInfo3D> _renderableSet = [];
         private readonly object _renderablesSync = new();
@@ -574,6 +575,17 @@ namespace XREngine.Scene
                     {
                         if (_renderableSet.Add(operation.renderable))
                         {
+                            if (operation.renderable.FrozenWorldPacketSourceOnly)
+                            {
+                                IFrozenWorldPacketSource? source = operation.renderable.FrozenWorldCommandSource as IFrozenWorldPacketSource;
+                                _registeredPacketSourceOnly.Add(operation.renderable, source);
+                                if (source is not null)
+                                {
+                                    _frozenWorldPacketSources.Add(source);
+                                    _frozenWorldPacketSourceRevision++;
+                                }
+                                continue;
+                            }
                             _renderables.Add(operation.renderable);
                             if (operation.renderable.FrozenWorldCommandSource is IFrozenWorldPacketSource packetSource)
                             {
@@ -603,6 +615,15 @@ namespace XREngine.Scene
                     }
                     else if (_renderableSet.Remove(operation.renderable))
                     {
+                        if (_registeredPacketSourceOnly.Remove(operation.renderable, out IFrozenWorldPacketSource? sourceOnly))
+                        {
+                            if (sourceOnly is not null)
+                            {
+                                _frozenWorldPacketSources.Remove(sourceOnly);
+                                _frozenWorldPacketSourceRevision++;
+                            }
+                            continue;
+                        }
                         UntrackRenderable(operation.renderable);
                         operation.renderable.SwapBuffersCallback -= OnRenderableSwapBuffers;
 

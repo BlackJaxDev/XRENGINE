@@ -15,20 +15,53 @@ public sealed class ObjectCachePublicationScope : IDisposable
     private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
     private bool _closed;
 
-    internal ObjectCachePublicationScope(ObjectCachePublicationScope? parent, bool independentBatch = false)
+    internal ObjectCachePublicationScope(ObjectCachePublicationScope? parent, bool independentBatch = false,
+        bool captureConstructions = false)
     {
         _parent = parent;
         _ownsBatch = parent is null || independentBatch;
-        _batch = _ownsBatch ? new ObjectCachePublicationBatch() : parent!._batch;
+        _batch = _ownsBatch ? new ObjectCachePublicationBatch(captureConstructions) : parent!._batch;
         XRObjectBase.CurrentObjectCachePublicationScope = this;
     }
 
-    internal void Enlist(XRObjectBase value) => _batch.Enlist(value);
+    internal ObjectConstructionOwnership? ConstructionOwnership => _batch.ConstructionOwnership;
+    internal ObjectConstructionIdentityGuard? ConstructionIdentityGuard => ConstructionOwnership?.IdentityGuard;
+
+    internal void RecordConstruction(XRObjectBase value) => ConstructionOwnership?.Record(value);
+
+    internal void RequireGeneratedOrigin(XRObjectBase value)
+    {
+        ObjectConstructionIdentityGuard.RequireOwningBatch(value, ConstructionIdentityGuard);
+        if (ConstructionOwnership is { } ownership && !ownership.Contains(value))
+            throw new InvalidOperationException("An owned construction cannot regenerate a borrowed object.");
+        RequireConstructionIdentityChange(value);
+    }
+
+    internal void RequireConstructionIdentityChange(XRObjectBase value)
+    {
+        for (ObjectCachePublicationScope? scope = this; scope is not null; scope = scope._parent)
+            if (scope._batch.IsPublishing && scope.ConstructionOwnership?.Contains(value) == true)
+                throw new InvalidOperationException("An owned object's identity cannot change during cache publication.");
+    }
+
+    internal void Enlist(XRObjectBase value)
+    {
+        RequireGeneratedOrigin(value);
+        _batch.Enlist(value);
+    }
+
+    internal bool TryDeferOwnedPublication(XRObjectBase value)
+    {
+        if (ConstructionOwnership is null)
+            return false;
+        Enlist(value);
+        return true;
+    }
 
     internal void RecordDestructionFailure(XRObjectBase value)
     {
         for (ObjectCachePublicationScope? scope = this; scope is not null; scope = scope._parent)
-            if (scope._batch.Contains(value))
+            if (scope._batch.Contains(value) || scope.ConstructionOwnership?.Contains(value) == true)
                 scope._batch.IsAborted = true;
     }
 
@@ -53,18 +86,34 @@ public sealed class ObjectCachePublicationScope : IDisposable
 
         if (_batch.IsAborted)
         {
-            XRObjectBase.AbortDeferredObjectCachePublication(_batch.Objects);
+            if (ConstructionOwnership is null)
+                XRObjectBase.AbortDeferredObjectCachePublication(_batch.Objects);
             throw new InvalidOperationException("The object-cache publication batch was aborted.");
         }
 
-        XRObjectBase.PublishDeferredObjectCacheBatch(_batch.Objects, allowDestroyedMembers);
+        if (_batch.PublishedEntries is { } published)
+        {
+            _batch.IsPublishing = true;
+            ConstructionOwnership!.BeginPublication();
+            try
+            {
+                XRObjectBase.PublishOwnedObjectCacheBatch(_batch.Objects, published);
+                EnsureCurrentThreadAndScope();
+                if (_batch.IsAborted)
+                    throw new InvalidOperationException("The owned construction failed during cache publication.");
+            }
+            finally { _batch.IsPublishing = false; }
+        }
+        else
+            XRObjectBase.PublishDeferredObjectCacheBatch(_batch.Objects, allowDestroyedMembers);
         _closed = true;
         XRObjectBase.CurrentObjectCachePublicationScope = _parent;
     }
 
     /// <summary>
-    /// Publishes an independently owned batch and transfers its exact allocation ledger
-    /// to a lifetime owner. Borrowed objects that existed before this batch are not included.
+    /// Publishes an independent batch and transfers its enlisted objects to a lifetime owner.
+    /// The caller must not regenerate borrowed objects in this batch. Use ConstructOwned
+    /// when the caller needs constructor-origin proof and retained failure ownership.
     /// Fully destroyed temporary allocations are omitted from publication; a failed
     /// destruction aborts the batch rather than publishing a partially cleaned object.
     /// </summary>
@@ -87,8 +136,23 @@ public sealed class ObjectCachePublicationScope : IDisposable
         _batch.IsAborted = true;
         XRObjectBase.CurrentObjectCachePublicationScope = _parent;
 
-        if (_ownsBatch)
+        if (_ownsBatch && ConstructionOwnership is null)
             XRObjectBase.AbortDeferredObjectCachePublication(_batch.Objects);
+    }
+
+    internal void RetainFailedConstruction()
+    {
+        if (!_ownsBatch || ConstructionOwnership is null)
+            throw new InvalidOperationException("Only an owned construction can retain a failed allocation ledger.");
+        if (Environment.CurrentManagedThreadId != _ownerThreadId)
+            throw new InvalidOperationException("Owned construction must finish on its original thread.");
+        bool inOrder = ReferenceEquals(XRObjectBase.CurrentObjectCachePublicationScope, this);
+        _closed = true;
+        _batch.IsAborted = true;
+        XRObjectBase.CurrentObjectCachePublicationScope = _parent;
+        XRObjectBase.RollBackOwnedObjectCacheBatch(_batch.PublishedEntries!);
+        if (!inOrder)
+            throw new InvalidOperationException("The owned factory did not close its nested publication scopes.");
     }
 
     private void EnsureCurrentThreadAndScope()

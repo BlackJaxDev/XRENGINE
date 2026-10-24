@@ -26,6 +26,7 @@ namespace XREngine.Rendering.UI
         private ulong _popupRevision;
         private ulong _optionsRevision;
         private ulong _bindingRevision;
+        private ulong _selectionRevision;
         private string _typeAhead = string.Empty;
         private long _lastTypeAheadTick;
         /// <summary>Limits the number of characters in a combo search prefix.</summary>
@@ -212,26 +213,66 @@ namespace XREngine.Rendering.UI
         {
             if (_tearingDown || IsDestroyed)
                 return false;
+            ulong selectionRevision = ++_selectionRevision;
+            IUIComboOptionSource? source = _virtualOptions;
+            UIComboOption[] options = _options;
+            ulong optionsRevision = _optionsRevision;
+            IUIValueBinding<ulong?>? binding = _binding;
+            ulong bindingRevision = _bindingRevision;
+            ulong sourceRevision = source?.Revision ?? 0;
+            if (!OwnsSelectionIntent(selectionRevision, source, sourceRevision, options,
+                optionsRevision, binding, bindingRevision))
+                return false;
             if (id is { } selected && !HasOption(selected))
                 return false;
-            IUIValueBinding<ulong?>? binding = _binding;
+            if (!OwnsSelectionIntent(selectionRevision, source, sourceRevision, options,
+                optionsRevision, binding, bindingRevision))
+                return false;
             if (binding is not null && origin != EUIValueChangeOrigin.Binding)
             {
+                bool wasWritingBinding = _writingBinding;
                 _writingBinding = true;
                 try { binding.SetValue(id); }
-                finally { _writingBinding = false; }
-                if (_tearingDown || IsDestroyed || !ReferenceEquals(_binding, binding))
+                finally { _writingBinding = wasWritingBinding; }
+                if (!OwnsSelectionIntent(selectionRevision, source, sourceRevision, options,
+                    optionsRevision, binding, bindingRevision))
                     return false;
                 id = binding.Value;
+                if (!OwnsSelectionIntent(selectionRevision, source, sourceRevision, options,
+                    optionsRevision, binding, bindingRevision))
+                    return false;
                 if (id is { } boundId && !HasOption(boundId))
+                    return false;
+                if (!OwnsSelectionIntent(selectionRevision, source, sourceRevision, options,
+                    optionsRevision, binding, bindingRevision))
                     return false;
             }
             if (_selectedId == id)
                 return true;
             ulong? previous = _selectedId;
-            SetField(ref _selectedId, id, nameof(SelectedId));
+            if (!SetField(ref _selectedId, id, nameof(SelectedId)) ||
+                !OwnsSelectionIntent(selectionRevision, source, sourceRevision, options,
+                    optionsRevision, binding, bindingRevision) || _selectedId != id)
+                return false;
             SelectionChanged?.Invoke(new(previous, id, origin));
-            return true;
+            return OwnsSelectionIntent(selectionRevision, source, sourceRevision, options,
+                optionsRevision, binding, bindingRevision) && _selectedId == id;
+        }
+
+        private bool OwnsSelectionIntent(ulong selectionRevision, IUIComboOptionSource? source,
+            ulong sourceRevision, UIComboOption[] options, ulong optionsRevision,
+            IUIValueBinding<ulong?>? binding, ulong bindingRevision)
+        {
+            if (_tearingDown || IsDestroyed || selectionRevision != _selectionRevision ||
+                optionsRevision != _optionsRevision || bindingRevision != _bindingRevision ||
+                !ReferenceEquals(_virtualOptions, source) || !ReferenceEquals(_options, options) ||
+                !ReferenceEquals(_binding, binding) ||
+                source is not null && source.Revision != sourceRevision)
+                return false;
+            return !_tearingDown && !IsDestroyed && selectionRevision == _selectionRevision &&
+                optionsRevision == _optionsRevision && bindingRevision == _bindingRevision &&
+                ReferenceEquals(_virtualOptions, source) && ReferenceEquals(_options, options) &&
+                ReferenceEquals(_binding, binding);
         }
 
         private void OnBindingChanged(ulong? id)
@@ -247,12 +288,22 @@ namespace XREngine.Rendering.UI
             ulong popupRevision = _popupRevision;
             ulong optionsRevision = _optionsRevision;
             ulong bindingRevision = _bindingRevision;
+            ulong selectionRevision = _selectionRevision;
+            IUIComboOptionSource? selectionSource = propName == nameof(SelectedId) ? _virtualOptions : null;
+            UIComboOption[]? selectionOptions = propName == nameof(SelectedId) ? _options : null;
+            IUIValueBinding<ulong?>? selectionBinding = propName == nameof(SelectedId) ? _binding : null;
+            ulong sourceRevision = selectionSource?.Revision ?? 0;
+            if (_tearingDown || IsDestroyed ||
+                propName == nameof(SelectedId) && selectionRevision != _selectionRevision)
+                return false;
             bool allowed = base.OnPropertyChanging(propName, field, value);
             return allowed && !_tearingDown && !IsDestroyed && (propName switch
             {
                 nameof(Popup) => popupRevision == _popupRevision,
                 nameof(VirtualOptions) => optionsRevision == _optionsRevision,
                 nameof(Binding) => bindingRevision == _bindingRevision,
+                nameof(SelectedId) => OwnsSelectionIntent(selectionRevision, selectionSource,
+                    sourceRevision, selectionOptions!, optionsRevision, selectionBinding, bindingRevision),
                 _ => true
             });
         }

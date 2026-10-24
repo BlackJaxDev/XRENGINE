@@ -18,6 +18,14 @@ internal sealed class UITestTreeKeyRegistration : IInputRegistration
         return true;
     }
 
+    public bool Release(EKey key)
+    {
+        if (!_keys.TryGetValue(key, out DelButtonState? callback))
+            return false;
+        callback(false);
+        return true;
+    }
+
     public void RegisterKeyStateChange(EKey key, DelButtonState callback)
     {
         if (Unregister)

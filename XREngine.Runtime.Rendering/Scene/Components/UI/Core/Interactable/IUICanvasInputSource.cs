@@ -14,6 +14,12 @@ public interface IUICanvasInputSource
     Vector2 CursorPositionWorld2D { get; }
     UIInteractableComponent? FocusedComponent { get; set; }
 
+    /// <summary>Changes when a focus request can replace a pending control focus.</summary>
+    ulong FocusIntentRevision => 0;
+
+    /// <summary>True when another control is waiting for accepted virtual focus.</summary>
+    bool HasPendingFocusRequest => false;
+
     /// <summary>Focuses a control only when its current row and scope are in the presented input packet.</summary>
     bool TryFocusPresented(UIInteractableComponent target);
 

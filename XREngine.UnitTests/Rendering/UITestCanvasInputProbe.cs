@@ -17,8 +17,29 @@ internal sealed class UITestCanvasInputProbe : XRComponent, IUICanvasInputSource
     public bool IsShiftHeld { get; set; }
     public bool IsAltHeld => false;
     public Vector2 CursorPositionWorld2D => Vector2.Zero;
-    public UIInteractableComponent? FocusedComponent { get; set; }
-    public bool TryFocusPresented(UIInteractableComponent target) => false;
+    private UIInteractableComponent? _focusedComponent;
+    public ulong FocusIntentRevision { get; private set; }
+    public bool HasPendingFocusRequest { get; set; }
+    public bool PresentedFocusAccepted { get; set; }
+    public int PresentedFocusAttempts { get; private set; }
+    public UIInteractableComponent? FocusedComponent
+    {
+        get => _focusedComponent;
+        set
+        {
+            FocusIntentRevision++;
+            _focusedComponent = value;
+        }
+    }
+    public bool TryFocusPresented(UIInteractableComponent target)
+    {
+        PresentedFocusAttempts++;
+        if (!PresentedFocusAccepted)
+            return false;
+        FocusedComponent = target;
+        target.IsFocused = true;
+        return true;
+    }
     public bool IsDispatchingVirtualItemFocus(UIListTransform list, ulong itemId,
         UIInteractableComponent target) => false;
     public bool VirtualFocusAccepted { get; set; }

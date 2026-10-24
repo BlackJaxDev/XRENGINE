@@ -294,7 +294,11 @@ public abstract class UINumericInputComponent<T> : UITextInputComponent where T 
         if (!TryParseInRange(Text, out T value))
             return;
         foreach (object? target in targets)
+        {
+            if (!CanContinuePropertyWrite())
+                return;
             prop.SetValue(target, value);
+        }
     }
 
     private bool TryParseInRange(string text, out T value)
