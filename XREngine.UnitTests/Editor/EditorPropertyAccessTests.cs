@@ -10,6 +10,33 @@ namespace XREngine.UnitTests.Editor;
 public class EditorPropertyAccessTests
 {
     [Test]
+    public void RetiredWriteAdmissionKeepsUndoForTheSetterAlreadyEntered()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            EditorGuardedPropertyTarget first = new() { Number = 12 };
+            EditorGuardedPropertyTarget second = new() { Number = 25 };
+            bool admitted = true;
+            first.AfterWrite = () => admitted = false;
+            EditorPropertyAccess access = new(
+                typeof(EditorGuardedPropertyTarget).GetProperty(nameof(first.Number))!, [first, second]);
+            Assert.Throws<InvalidOperationException>(() => access.SetValue(37, () =>
+            {
+                if (!admitted) throw new InvalidOperationException("The row was retired.");
+            }));
+            Assert.That(first.Number, Is.EqualTo(37));
+            Assert.That(second.Number, Is.EqualTo(25));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(first.Number, Is.EqualTo(12));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(first.Number, Is.EqualTo(37));
+            Assert.That(second.Number, Is.EqualTo(25));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void PlainTargetsRestoreTheirOwnValuesInOneUndoStep()
     {
         Undo.ClearHistory();

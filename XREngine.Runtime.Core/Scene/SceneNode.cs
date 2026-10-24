@@ -301,6 +301,7 @@ namespace XREngine.Scene
             {
                 if (_isActiveSelf == value)
                     return;
+                using HierarchyMutationLease structural = new(this);
                 using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
                 SetField(ref _isActiveSelf, value);
             }

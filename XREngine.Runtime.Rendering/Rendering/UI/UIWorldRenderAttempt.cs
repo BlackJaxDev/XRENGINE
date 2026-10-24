@@ -26,9 +26,22 @@ internal sealed class UIWorldRenderAttempt
     private bool _requiredByWindow;
     private bool _passReceiptActive;
     private bool _receiptSuspended;
+    private UIPublishedWorldMeshCommand? _currentDraw;
 
     internal static UIWorldRenderAttempt? Active => t_active;
     internal ulong NativeToken => _nativeToken;
+    internal UIPublishedWorldMeshCommand? CurrentDraw => _currentDraw;
+
+    internal DrawScope EnterDraw(UIPublishedWorldMeshCommand command)
+    {
+        if (!ReferenceEquals(t_active, this) || !_active ||
+            _currentDraw is not null ||
+            !ReferenceEquals(command.Publication, _publication))
+            throw new InvalidOperationException(
+                "A world UI draw has no unique active publication.");
+        _currentDraw = command;
+        return new DrawScope(this);
+    }
 
     internal bool TryBegin(XRViewport viewport, XRWindow window,
         XRRenderPipelineInstance pipeline, RenderCommandCollection commands,
@@ -51,7 +64,7 @@ internal sealed class UIWorldRenderAttempt
         _view = view;
         _region = region;
         if (
-            window.ActiveOpenGlDispatchToken == 0UL ||
+            window.ActiveWorldUiDispatchToken == 0UL ||
             !ReferenceEquals(window.Renderer, AbstractRenderer.Current) ||
             !ReferenceEquals(viewport.Window, window) ||
             !ReferenceEquals(packets.ExpectedWorld, viewport.World?.WorldContext) ||
@@ -83,12 +96,16 @@ internal sealed class UIWorldRenderAttempt
             _receiptSuspended = true;
 
             if (!renderer.TryBeginUiWorldOutputAttempt(window, pipeline, publication,
-                    region, window.ActiveOpenGlDispatchToken, _receiptId,
+                    region, window.ActiveWorldUiDispatchToken, _receiptId,
                     _view,
                     out _nativeToken))
                 return RejectBeforeAuthoring();
-            window.RequireOpenGlWorldUi(viewport, commands, packageGeneration,
-                _receiptId, _nativeToken);
+            if (renderer.BackendId == RendererBackendId.Vulkan)
+                window.RequireVulkanWorldUi(viewport, commands, packageGeneration,
+                    _receiptId, _nativeToken);
+            else
+                window.RequireOpenGlWorldUi(viewport, commands, packageGeneration,
+                    _receiptId, _nativeToken);
             _requiredByWindow = true;
             _active = true;
             return true;
@@ -213,10 +230,22 @@ internal sealed class UIWorldRenderAttempt
                 try { renderer.AbortUiWorldOutputAttempt(_nativeToken); }
                 catch (Exception error) { failure ??= error; }
             if (_requiredByWindow)
-                try { window.CompleteOpenGlWorldUi(_receiptId, completed); }
+                try
+                {
+                    if (renderer.BackendId == RendererBackendId.Vulkan)
+                        window.CompleteVulkanWorldUi(_receiptId, completed);
+                    else
+                        window.CompleteOpenGlWorldUi(_receiptId, completed);
+                }
                 catch (Exception error) { failure ??= error; }
             else if (!completed)
-                try { window.FailOpenGlWorldUiAttempt(); }
+                try
+                {
+                    if (renderer.BackendId == RendererBackendId.Vulkan)
+                        window.FailVulkanWorldUiAttempt();
+                    else
+                        window.FailOpenGlWorldUiAttempt();
+                }
                 catch (Exception error) { failure ??= error; }
             if (_manifestToken != 0UL)
                 try
@@ -247,6 +276,20 @@ internal sealed class UIWorldRenderAttempt
         _manifestToken = _receiptId = _nativeToken = 0UL;
         _active = _requiredByWindow = _passReceiptActive = false;
         _receiptSuspended = false;
+        _currentDraw = null;
+    }
+
+    internal readonly struct DrawScope : IDisposable
+    {
+        private readonly UIWorldRenderAttempt? _attempt;
+
+        internal DrawScope(UIWorldRenderAttempt attempt) => _attempt = attempt;
+
+        public void Dispose()
+        {
+            if (_attempt is not null)
+                _attempt._currentDraw = null;
+        }
     }
 
     internal readonly struct Scope : IDisposable

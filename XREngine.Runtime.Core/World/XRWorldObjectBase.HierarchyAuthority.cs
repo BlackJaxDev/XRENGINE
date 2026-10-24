@@ -8,6 +8,7 @@ public abstract partial class XRWorldObjectBase
 {
     private int _hierarchyMutationCount;
     private HierarchyStructuralReservation? _hierarchyReservation;
+    private OwnedHierarchyDestructionPermit? _ownedDestructionPermit;
     private Dictionary<IHierarchyListAuthority, int>? _hierarchyListOwners;
 
     /// <summary>Copies exact structural-list ownership at a mutation or release boundary.</summary>
@@ -43,6 +44,39 @@ public abstract partial class XRWorldObjectBase
     internal void ExitStructuralMutation()
         => Interlocked.Decrement(ref _hierarchyMutationCount);
 
+    internal void EnterReservedHierarchyMutation(HierarchyStructuralReservation reservation)
+    {
+        if (!ReferenceEquals(Volatile.Read(ref _hierarchyReservation), reservation))
+            throw new InvalidOperationException("The removal does not own this exact structural reservation.");
+        Interlocked.Increment(ref _hierarchyMutationCount);
+    }
+
+    internal void SetOwnedDestructionPermit(OwnedHierarchyDestructionPermit permit)
+    {
+        if (!ReferenceEquals(permit.Target, this) ||
+            !ReferenceEquals(Volatile.Read(ref _hierarchyReservation), permit.Retirement.Reservation) ||
+            Interlocked.CompareExchange(ref _ownedDestructionPermit, permit, null) is not null)
+            throw new InvalidOperationException("The destruction permit does not own this exact target.");
+    }
+
+    internal void ClearOwnedDestructionPermit(OwnedHierarchyDestructionPermit permit)
+        => Interlocked.CompareExchange(ref _ownedDestructionPermit, null, permit);
+
+    internal OwnedHierarchyRetirement? GetOwnedRetirement()
+    {
+        OwnedHierarchyDestructionPermit? permit = Volatile.Read(ref _ownedDestructionPermit);
+        return permit?.Active == true ? permit.Retirement : null;
+    }
+
+    internal bool UsesCanonicalOwnedDestruction()
+    {
+        // This cold admission check allocates two bound delegates. Their dispatch
+        // identity proves the selected implementation without reflected metadata.
+        Action<bool> dispatched = Destroy;
+        Action<bool> canonical = base.Destroy;
+        return dispatched == canonical;
+    }
+
     internal bool TrySetStructuralReservation(HierarchyStructuralReservation reservation)
         => Interlocked.CompareExchange(ref _hierarchyReservation, reservation, null) is null;
 
@@ -56,7 +90,16 @@ public abstract partial class XRWorldObjectBase
         // Publication can hold the cache lock. Admission uses atomics and never waits
         // on the structural gate. Reservation installation rechecks this counter.
         Interlocked.Increment(ref _hierarchyMutationCount);
-        try { RequireStructuralMutation(); }
+        try
+        {
+            if (Volatile.Read(ref _hierarchyReservation) is { } reservation)
+            {
+                OwnedHierarchyDestructionPermit? permit = Volatile.Read(ref _ownedDestructionPermit);
+                if (kind != EObjectLifetimeMutation.DestroyNow || permit is null ||
+                    !ReferenceEquals(permit.Retirement.Reservation, reservation) || !permit.TryEnter())
+                    throw new InvalidOperationException("The reserved hierarchy rejects this lifetime mutation.");
+            }
+        }
         catch
         {
             Interlocked.Decrement(ref _hierarchyMutationCount);
@@ -65,7 +108,14 @@ public abstract partial class XRWorldObjectBase
     }
 
     protected sealed override void OnLifetimeMutationEnded(EObjectLifetimeMutation kind)
-        => Interlocked.Decrement(ref _hierarchyMutationCount);
+    {
+        try
+        {
+            if (kind == EObjectLifetimeMutation.DestroyNow && Volatile.Read(ref _ownedDestructionPermit) is { } permit)
+                permit.Exit();
+        }
+        finally { Interlocked.Decrement(ref _hierarchyMutationCount); }
+    }
 
     internal void PrepareHierarchyListOwner(IHierarchyListAuthority authority)
     {

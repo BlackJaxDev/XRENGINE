@@ -122,7 +122,8 @@ public sealed class NativeProfilerRowsTests
         rows.Count.ShouldBe(1);
         rows.GetItem(0).Scope.ShouldContain("disabled");
         rows.SelectView(ENativeProfilerView.CpuTimings).ShouldBeTrue();
-        rows.GetItem(1).Scope.ShouldBe("Scope 0");
+        rows.GetItem(1).Scope.ShouldBe("Thread 1");
+        rows.GetItem(2).Scope.ShouldBe("  Scope 0");
         rows.GetItemId(1).ShouldNotBe(cpuId);
     }
 
@@ -175,6 +176,37 @@ public sealed class NativeProfilerRowsTests
         ];
         rows.SetDiagnostics(replacement).ShouldBeTrue();
         rows.GetItemId(0).ShouldNotBe(id);
+    }
+
+    [Test]
+    public void RootRowsMarkRetainedEntriesInactiveAndFreezeWithoutNewRequests()
+    {
+        NativeProfilerRows rows = new();
+        rows.SelectView(ENativeProfilerView.CpuRoots).ShouldBeTrue();
+        DateTime start = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Frame first = new(16, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0,
+            [new Thread(1, [new Node("Update", 4, ProfilerScopeKind.Unspecified,
+                [new Node("Work", 2, ProfilerScopeKind.Unspecified, [])])])], null);
+        rows.Request(first, nowUtc: start, persistenceSeconds: 1f);
+        Finish(rows);
+        rows.SelectRoot("Update", ProfilerScopeKind.Unspecified).ShouldBeTrue();
+        rows.GetItem(4).Scope.ShouldNotContain("inactive");
+        rows.GetItem(6).Scope.ShouldNotContain("inactive");
+
+        Frame absent = new(16, 1, 2, 0, 2, 2, 0, 0, 0, 0, 0,
+            Array.Empty<Thread>(), null);
+        rows.Request(absent, nowUtc: start.AddMilliseconds(500), persistenceSeconds: 1f);
+        Finish(rows);
+        rows.GetItem(4).Scope.ShouldContain("inactive");
+        rows.GetItem(6).Scope.ShouldContain("inactive");
+        rows.TryGetRootSample("Update", ProfilerScopeKind.Unspecified, out _, out _).ShouldBeFalse();
+        ulong pausedId = rows.GetItemId(4);
+        rows.Advance(7).ShouldBeFalse();
+        rows.GetItemId(4).ShouldBe(pausedId);
+
+        rows.Request(absent, nowUtc: start.AddMilliseconds(1001), persistenceSeconds: 1f);
+        Finish(rows);
+        rows.Count.ShouldBe(4);
     }
 
     private static Frame Snapshot(ulong frame, int count)

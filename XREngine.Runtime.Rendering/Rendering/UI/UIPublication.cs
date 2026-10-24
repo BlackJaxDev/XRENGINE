@@ -9,15 +9,15 @@ namespace XREngine.Rendering.UI;
 /// <summary>One complete owner-built canvas state. Readers retain this object while using it.</summary>
 public sealed class UIPublication
 {
+    private static readonly Action<UIRenderRecord> RetainRenderRecordAction = RetainRenderRecord;
+    private static readonly Action<UIRenderRecord> ReleaseRenderRecordAction = ReleaseRenderRecord;
     private readonly UIHitRecord[] _hits;
     private readonly UICompositionSegmentSet _compositionSegments;
     private readonly UIRenderRecord[] _renders = [];
     private readonly UIScrollRecord[] _scrollReceivers;
     private readonly UIFocusScopeRecord[] _focusScopes;
+    private readonly UIRecordStore<UIRenderRecord>? _renderStore;
     private UILayoutNodeOutput[]? _flatLayout;
-    private int _retainedPayloadCount;
-    private int _retainedTextureCount;
-    private int _retainedAtlasCount;
     private bool _retainedSurface;
     private bool _retainedQuadPayload;
     private int _claims = 1;
@@ -83,7 +83,14 @@ public sealed class UIPublication
             for (int index = 0; index < renders.Length; index++)
                 _renderByMembership.Add(renders[index].MembershipId, renders[index]);
         }
-        try { RetainDrawPayloads(); }
+        try
+        {
+            _renderStore = previous is not null && ReferenceEquals(renders, previous._renders)
+                ? RetainStore(previous._renderStore!)
+                : UIRecordStore<UIRenderRecord>.Create(renders,
+                    RetainRenderRecordAction, ReleaseRenderRecordAction);
+            RetainCanvasResources();
+        }
         catch
         {
             RetireDrawPayloads();
@@ -133,6 +140,7 @@ public sealed class UIPublication
     public UIElementIdentity ActiveFocusScopeIdentity { get; }
     internal UIHitRecord[] HitStorage => _hits;
     internal UIRenderRecord[] RenderStorage => _renders;
+    internal UIRecordStore<UIRenderRecord> RenderRecordStore => _renderStore!;
     internal UIScrollRecord[] ScrollStorage => _scrollReceivers;
     internal UIFocusScopeRecord[] FocusScopeStorage => _focusScopes;
     internal ReadOnlySpan<UIPublishedWorldMeshCommand> WorldCommands
@@ -266,7 +274,14 @@ public sealed class UIPublication
             for (int index = 0; index < _renders.Length; index++)
                 _renderByMembership.Add(_renders[index].MembershipId, _renders[index]);
         }
-        try { RetainDrawPayloads(); }
+        try
+        {
+            _renderStore = ReferenceEquals(_renders, source._renders)
+                ? RetainStore(source._renderStore!)
+                : UIRecordStore<UIRenderRecord>.Create(_renders,
+                    RetainRenderRecordAction, ReleaseRenderRecordAction);
+            RetainCanvasResources();
+        }
         catch
         {
             RetireDrawPayloads();
@@ -303,7 +318,62 @@ public sealed class UIPublication
         return (backdrop, preRender);
     }
 
-    private void RetainDrawPayloads()
+    private static UIRecordStore<UIRenderRecord> RetainStore(UIRecordStore<UIRenderRecord> store)
+    {
+        store.Retain();
+        return store;
+    }
+
+    private static void RetainRenderRecord(UIRenderRecord record)
+    {
+        bool payloadRetained = false;
+        bool textureRetained = false;
+        try
+        {
+            if (record.Payload is { } payload)
+            {
+                payload.Retain();
+                payloadRetained = true;
+            }
+            if (record.TextureSnapshot is { } texture)
+            {
+                texture.Retain();
+                textureRetained = true;
+            }
+            record.AtlasSnapshot?.Retain();
+        }
+        catch (Exception failure)
+        {
+            List<Exception>? cleanupFailures = null;
+            if (textureRetained)
+                try { record.TextureSnapshot!.Release(); }
+                catch (Exception cleanupFailure) { (cleanupFailures ??= []).Add(cleanupFailure); }
+            if (payloadRetained)
+                try { record.Payload!.Release(); }
+                catch (Exception cleanupFailure) { (cleanupFailures ??= []).Add(cleanupFailure); }
+            if (cleanupFailures is not null)
+            {
+                cleanupFailures.Insert(0, failure);
+                throw new AggregateException("UI render record retain and cleanup failed.", cleanupFailures);
+            }
+            throw;
+        }
+    }
+
+    private static void ReleaseRenderRecord(UIRenderRecord record)
+    {
+        List<Exception>? failures = null;
+        try { record.Payload?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { record.TextureSnapshot?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { record.AtlasSnapshot?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        if (failures is not null)
+            throw new AggregateException("UI render record cleanup failed.", failures);
+    }
+
+    private void RetainCanvasResources()
     {
         if (OffscreenSurface is not null)
         {
@@ -314,15 +384,6 @@ public sealed class UIPublication
         {
             OffscreenQuadPayload.Retain();
             _retainedQuadPayload = true;
-        }
-        for (int index = 0; index < _renders.Length; index++)
-        {
-            _renders[index].Payload?.Retain();
-            _retainedPayloadCount++;
-            _renders[index].TextureSnapshot?.Retain();
-            _retainedTextureCount++;
-            _renders[index].AtlasSnapshot?.Retain();
-            _retainedAtlasCount++;
         }
     }
 
@@ -359,35 +420,11 @@ public sealed class UIPublication
     {
         if (Interlocked.Exchange(ref _resourcesRetired, 1) != 0)
             return;
-        for (int index = 0; index < _renders.Length; index++)
+        try { _renderStore?.Release(); }
+        catch (Exception failure)
         {
-            try
-            {
-                if (index < _retainedPayloadCount)
-                    _renders[index].Payload?.Release();
-            }
-            catch (Exception)
-            {
-                // A terminal payload claim must not stop finalization of other claims.
-            }
-            try
-            {
-                if (index < _retainedTextureCount)
-                    _renders[index].TextureSnapshot?.Release();
-            }
-            catch (Exception)
-            {
-                // Keep retiring independent image claims.
-            }
-            try
-            {
-                if (index < _retainedAtlasCount)
-                    _renders[index].AtlasSnapshot?.Release();
-            }
-            catch (Exception)
-            {
-                // Keep retiring independent image claims.
-            }
+            try { System.Diagnostics.Trace.TraceError("UI publication record cleanup failed: {0}", failure); }
+            catch { }
         }
         if (_retainedSurface)
         {

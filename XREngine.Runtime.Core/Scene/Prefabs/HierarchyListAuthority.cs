@@ -84,6 +84,19 @@ internal sealed class HierarchyListAuthority<T>(XRWorldObjectBase owner) : Event
     protected override void Added(T item) => item?.AddHierarchyListOwner(this);
     protected override void Removed(T item) => item?.RemoveHierarchyListOwner(this);
 
+    internal void RemoveForRetirement(OwnedHierarchyRemovalPermit permit)
+    {
+        EOwnedHierarchyRemoval kind = Owner is SceneNode
+            ? EOwnedHierarchyRemoval.ComponentOccurrence : EOwnedHierarchyRemoval.ChildOccurrence;
+        if (_list is null || !IsCurrent || Owner.IsDestroyed || _list.IsDestroyed ||
+            permit.Removed is not T item)
+            throw new InvalidOperationException("The reserved removal has no live exact list owner.");
+        permit.Enter(Owner, kind, _list, item);
+        // These delegates are confined to rare lifetime cleanup. They advance the
+        // reserved graph in the same callback-free transaction as the storage write.
+        RemoveReservedOccurrence(_list, permit.Index, item, permit.RequireCommit, permit.Commit);
+    }
+
     internal void Retire()
     {
         lock (MutationGate)

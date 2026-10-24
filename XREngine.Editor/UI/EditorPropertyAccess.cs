@@ -60,11 +60,15 @@ internal sealed class EditorPropertyAccess
 
     public void SetValue(object? value) => Write(value, null);
 
+    /// <summary>Checks a retained caller's ownership before entering each new write.</summary>
+    public void SetValue(object? value, Action validateWrite) => Write(value, null, validateWrite);
+
     /// <summary>Updates each target from its own value, preserving other mixed components.</summary>
     public void UpdateValue(Func<object?, object?> update) => Write(null, update);
 
-    private void Write(object? value, Func<object?, object?>? update)
+    private void Write(object? value, Func<object?, object?>? update, Action? validateWrite = null)
     {
+        validateWrite?.Invoke();
         if (_access.Set is not { } setter)
             return;
         if (_targets.Any(target => target is IEditorListElementBinding))
@@ -72,7 +76,7 @@ internal sealed class EditorPropertyAccess
             if (!_targets.All(target => target is IEditorListElementBinding))
                 throw new InvalidOperationException("The list editor targets do not share one mutation route.");
             EditorListMutation.Set(_targets.Cast<IEditorListElementBinding>().ToArray(),
-                oldValue => update is null ? value : update(oldValue));
+                ResolveNext);
             _changed?.Invoke();
             return;
         }
@@ -81,7 +85,7 @@ internal sealed class EditorPropertyAccess
             if (!_targets.All(target => target is IEditorLinkedElementBinding))
                 throw new InvalidOperationException("The linked-list editor targets do not share one mutation route.");
             EditorLinkedMutation.Set(_targets.Cast<IEditorLinkedElementBinding>().ToArray(),
-                oldValue => update is null ? value : update(oldValue),
+                ResolveNext,
                 ((IEditorLinkedElementBinding)_targets[0]).Refresh);
             _changed?.Invoke();
             return;
@@ -91,7 +95,7 @@ internal sealed class EditorPropertyAccess
             if (!_targets.All(target => target is IEditorDictionaryElementBinding))
                 throw new InvalidOperationException("The dictionary editor targets do not share one mutation route.");
             EditorDictionaryMutation.Set(_targets.Cast<IEditorDictionaryElementBinding>().ToArray(),
-                oldValue => update is null ? value : update(oldValue),
+                ResolveNext,
                 ((IEditorDictionaryElementBinding)_targets[0]).Refresh);
             _changed?.Invoke();
             return;
@@ -103,14 +107,16 @@ internal sealed class EditorPropertyAccess
         {
             for (int index = 0; index < _targets.Length; index++)
             {
+                validateWrite?.Invoke();
                 object target = _targets[index];
                 object? oldValue = _access.Get(target);
-                object? next = update is null ? value : update(oldValue);
+                object? next = ResolveNext(oldValue);
                 if (Equals(oldValue, next))
                     continue;
                 // A transformer writes the real source inside this same undo group.
                 if (target is XRBase tracked && target is not InspectorPropertyEditors.DataTransformerBase)
                     Undo.Track(tracked);
+                validateWrite?.Invoke();
                 setter(target, next);
                 if (target is not XRBase)
                 {
@@ -128,6 +134,14 @@ internal sealed class EditorPropertyAccess
         {
             _writing = false;
             _changed?.Invoke();
+        }
+
+        object? ResolveNext(object? oldValue)
+        {
+            validateWrite?.Invoke();
+            object? next = update is null ? value : update(oldValue);
+            validateWrite?.Invoke();
+            return next;
         }
     }
 

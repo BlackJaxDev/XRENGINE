@@ -1608,7 +1608,6 @@ namespace XREngine.Rendering
                 Window is { } worldUiWindow &&
                 worldUiWindow.Viewports.Count == 1 &&
                 ReferenceEquals(worldUiWindow.Viewports[0], this) &&
-                worldUiWindow.DesktopGlContext is not null &&
                 (!RuntimeRenderingHostServices.Presentation.IsWindowScenePanelPresentationEnabled ||
                     RuntimeRenderingHostServices.Presentation.ForceFullViewport) &&
                 !worldUiWindow.HasUntrackedLateWorldUiOutput &&
@@ -2536,7 +2535,7 @@ namespace XREngine.Rendering
                         RenderScreenSpaceUIOverlay(targetFbo);
                         frozenHistoryCandidate.Discard();
                         if (activeCommands.HasRenderingWorldUiReplacement)
-                            Window?.FailOpenGlWorldUiAttempt();
+                            Window?.FailRetainedWorldUiAttempt();
                         return false;
                     }
                     frozenDesktopView = capturedView;
@@ -2550,7 +2549,7 @@ namespace XREngine.Rendering
                         out worldUiAttempt))
                 {
                     frozenHistoryCandidate.Discard();
-                    Window?.FailOpenGlWorldUiAttempt();
+                    Window?.FailRetainedWorldUiAttempt();
                     return false;
                 }
                 bool recorded = false;
@@ -2615,6 +2614,7 @@ namespace XREngine.Rendering
                     Window is { } readyWindow &&
                     _renderPipeline.AssignedPipeline is DefaultRenderPipeline readyProfile &&
                     readyProfile.SupportsRetainedWorldUiColorProfile(camera) &&
+                    readyWindow.Renderer.BackendId == RendererBackendId.OpenGL &&
                     readyWindow.Renderer.SupportsCheckedWorldUiOutput)
                 {
                     try
@@ -2679,8 +2679,7 @@ namespace XREngine.Rendering
                 (MeshSubmissionStrategyOverride ??
                     RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) !=
                     EMeshSubmissionStrategy.CpuDirect ||
-                window.ActiveOpenGlDispatchToken == 0UL ||
-                window.DesktopGlContext is null ||
+                window.ActiveWorldUiDispatchToken == 0UL ||
                 (RuntimeRenderingHostServices.Presentation.IsWindowScenePanelPresentationEnabled &&
                     !RuntimeRenderingHostServices.Presentation.ForceFullViewport) ||
                 !window.Renderer.SupportsCheckedWorldUiOutput ||

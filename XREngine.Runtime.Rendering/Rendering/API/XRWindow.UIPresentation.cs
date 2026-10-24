@@ -32,6 +32,127 @@ public sealed partial class XRWindow
     private XRViewport? _expectedOpenGlWorldViewport;
     private RenderCommandCollection? _expectedOpenGlWorldCommands;
     private long _expectedOpenGlWorldPackageGeneration;
+    private ulong _nextVulkanWorldDispatchToken;
+    private ulong _activeVulkanWorldDispatchToken;
+    private XRViewport? _expectedVulkanWorldViewport;
+    private RenderCommandCollection? _expectedVulkanWorldCommands;
+    private long _expectedVulkanWorldPackageGeneration;
+    private ulong _vulkanWorldReceipt;
+    private ulong _vulkanWorldNativeToken;
+    private bool _vulkanWorldAttemptCompleted;
+    private bool _vulkanWorldDispatchFailed;
+
+    internal ulong ActiveWorldUiDispatchToken =>
+        Renderer.BackendId == RendererBackendId.OpenGL
+            ? _activeOpenGlDispatchToken
+            : Renderer.BackendId == RendererBackendId.Vulkan
+                ? _activeVulkanWorldDispatchToken
+                : 0UL;
+
+    private void BeginVulkanWorldUiRenderDispatch()
+    {
+        if (_activeVulkanWorldDispatchToken != 0UL)
+            throw new InvalidOperationException("A Vulkan world UI dispatch is already active.");
+        ulong token = unchecked(++_nextVulkanWorldDispatchToken);
+        if (token == 0UL)
+            token = unchecked(++_nextVulkanWorldDispatchToken);
+        _activeVulkanWorldDispatchToken = token;
+        _expectedVulkanWorldViewport = null;
+        _expectedVulkanWorldCommands = null;
+        _expectedVulkanWorldPackageGeneration = 0;
+        _vulkanWorldReceipt = _vulkanWorldNativeToken = 0UL;
+        _vulkanWorldAttemptCompleted = _vulkanWorldDispatchFailed = false;
+        for (int index = 0; index < Viewports.Count; index++)
+        {
+            XRViewport viewport = Viewports[index];
+            if (!viewport.TryGetRenderingRetainedWorldUiImageKey(
+                    out RenderCommandCollection commands,
+                    out long packageGeneration))
+                continue;
+            if (_expectedVulkanWorldViewport is not null)
+            {
+                _vulkanWorldDispatchFailed = true;
+                break;
+            }
+            _expectedVulkanWorldViewport = viewport;
+            _expectedVulkanWorldCommands = commands;
+            _expectedVulkanWorldPackageGeneration = packageGeneration;
+        }
+    }
+
+    internal void RequireVulkanWorldUi(XRViewport viewport,
+        RenderCommandCollection commands, long packageGeneration,
+        ulong receiptId, ulong nativeToken)
+    {
+        if (_activeVulkanWorldDispatchToken == 0UL ||
+            _vulkanWorldDispatchFailed || _vulkanWorldReceipt != 0UL ||
+            receiptId == 0UL || nativeToken == 0UL ||
+            !ReferenceEquals(viewport, _expectedVulkanWorldViewport) ||
+            !ReferenceEquals(commands, _expectedVulkanWorldCommands) ||
+            packageGeneration != _expectedVulkanWorldPackageGeneration)
+            throw new InvalidOperationException(
+                "A Vulkan world UI receipt has no unique selected image.");
+        _vulkanWorldReceipt = receiptId;
+        _vulkanWorldNativeToken = nativeToken;
+    }
+
+    internal void CompleteVulkanWorldUi(ulong receiptId, bool authoringSucceeded)
+    {
+        if (_activeVulkanWorldDispatchToken == 0UL ||
+            receiptId == 0UL || receiptId != _vulkanWorldReceipt ||
+            _vulkanWorldAttemptCompleted)
+            throw new InvalidOperationException(
+                "A Vulkan world UI attempt ended outside its selected image.");
+        _vulkanWorldAttemptCompleted = authoringSucceeded;
+        if (!authoringSucceeded)
+            _vulkanWorldDispatchFailed = true;
+    }
+
+    internal void FailVulkanWorldUiAttempt() => _vulkanWorldDispatchFailed = true;
+
+    internal void FailRetainedWorldUiAttempt()
+    {
+        if (Renderer.BackendId == RendererBackendId.Vulkan)
+            FailVulkanWorldUiAttempt();
+        else
+            FailOpenGlWorldUiAttempt();
+    }
+
+    internal bool HasRequiredVulkanWorldUiImage =>
+        _expectedVulkanWorldViewport is not null;
+
+    internal bool TryGetRequiredVulkanWorldUiAttempt(
+        out XRViewport? viewport, out RenderCommandCollection? commands,
+        out long packageGeneration, out ulong receiptId, out ulong nativeToken)
+    {
+        viewport = _expectedVulkanWorldViewport;
+        commands = _expectedVulkanWorldCommands;
+        packageGeneration = _expectedVulkanWorldPackageGeneration;
+        receiptId = _vulkanWorldReceipt;
+        nativeToken = _vulkanWorldNativeToken;
+        if (_activeVulkanWorldDispatchToken == 0UL ||
+            _vulkanWorldDispatchFailed || !_vulkanWorldAttemptCompleted ||
+            viewport is null || commands is null || receiptId == 0UL ||
+            nativeToken == 0UL || Viewports.Count != 1 ||
+            !ReferenceEquals(Viewports[0], viewport) ||
+            !viewport.TryGetRenderingRetainedWorldUiImageKey(
+                out RenderCommandCollection currentCommands,
+                out long currentGeneration) ||
+            !ReferenceEquals(currentCommands, commands) ||
+            currentGeneration != packageGeneration)
+            return false;
+        return true;
+    }
+
+    private void EndVulkanWorldUiRenderDispatch()
+    {
+        _activeVulkanWorldDispatchToken = 0UL;
+        _expectedVulkanWorldViewport = null;
+        _expectedVulkanWorldCommands = null;
+        _expectedVulkanWorldPackageGeneration = 0;
+        _vulkanWorldReceipt = _vulkanWorldNativeToken = 0UL;
+        _vulkanWorldAttemptCompleted = _vulkanWorldDispatchFailed = false;
+    }
 
     private ulong BeginOpenGlRenderDispatch()
     {

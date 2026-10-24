@@ -16,7 +16,7 @@ public static partial class InspectorPropertyEditors
 {
 
     public static Action<SceneNode, PropertyInfo, object?[]?>? CreateNew(Type propType)
-        => Type.GetTypeCode(propType) switch
+        => propType.IsEnum ? CreateEnumEditor(propType) : Type.GetTypeCode(propType) switch
         {
             TypeCode.Object => CreateObjectEditor(propType),
             TypeCode.Boolean => PrimitiveTypes.CreateBooleanEditor(),
@@ -130,20 +130,14 @@ public static partial class InspectorPropertyEditors
             return static (node, property, targets) => TextEditor<UITextInputComponent>(node, property, targets);
         static void EnumEditor(SceneNode n, PropertyInfo prop, object?[]? objects)
         {
-            var binding = new EditorEnumPropertyBinding(prop, objects ?? []);
             var combo = n.AddComponent<UIComboBoxComponent>()!;
             var popup = n.AddComponent<NativePropertyPopupHost>()!;
             combo.Popup = popup.CreatePopup();
-            combo.VirtualOptions = binding;
-            combo.Binding = binding;
-            combo.IsReadOnly = !prop.CanWrite;
-            combo.AccessibilityLabel = prop.Name;
             n.AddComponent<UIMaterialComponent>()!.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Gray, 1);
             n.NewChild<UITextComponent>(out var label);
-            label.Text = combo.AccessibilityValue ?? "Mixed or undefined";
             label.VerticalAlignment = EVerticalAlignment.Center;
-            combo.SelectionChanged += _ => label.Text = combo.AccessibilityValue ?? "Mixed or undefined";
             combo.Opening += _ => combo.PopupPosition = popup.GetPosition();
+            n.AddComponent<InspectorEnumEditorComponent>()!.Configure(combo, label, prop, objects);
         }
         return EnumEditor;
     }

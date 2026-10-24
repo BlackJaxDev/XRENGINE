@@ -74,17 +74,7 @@ internal static partial class AnimationClipAuthoringActions
     }
 
     public static bool SetClipLooped(AnimationClip clip, bool looped)
-    {
-        bool previous = clip.Looped;
-        if (previous == looped)
-            return false;
-        return Apply(clip, "Set Animation Loop",
-            () => clip.Looped = looped,
-            () => clip.Looped = previous,
-            () => clip.Looped == looped,
-            () => clip.Looped == previous,
-            ownedProperties: [(clip, nameof(AnimationClip.Looped))]);
-    }
+        => SetClipAndMemberLoops(clip, looped);
 
     public static bool TryAddKey(AnimationClip clip, AnimationMember member, float second, out Keyframe? key)
     {

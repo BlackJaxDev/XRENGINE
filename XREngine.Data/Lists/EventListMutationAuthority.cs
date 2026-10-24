@@ -6,6 +6,15 @@ namespace System.Collections.Generic;
 /// </summary>
 public abstract class EventListMutationAuthority<T>
 {
+    /// <summary>
+    /// Removes one reserved occurrence for this exact authority. Validation and progress
+    /// hooks run inside the storage gate and must not call application code.
+    /// The authority must retain its private removal capability through notifications.
+    /// </summary>
+    protected void RemoveReservedOccurrence(EventList<T> list, int index, T item,
+        Action validate, Action committed)
+        => list.RemoveReservedOccurrence(this, index, item, validate, committed);
+
     protected internal abstract Lock MutationGate { get; }
     protected internal abstract void Initialize(EventList<T> list, IReadOnlyList<T> values);
     protected internal abstract void RequireCurrent(EventList<T> list);

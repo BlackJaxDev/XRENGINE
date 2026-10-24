@@ -216,6 +216,33 @@ public sealed class UIControlTeardownTests
         finally { root.Destroy(true); }
     }
 
+    [TestCase(false), TestCase(true)]
+    public void ComboGetterRebindKeepsReplacementSelection(bool duringActivation)
+    {
+        SceneNode root = CreateCanvas(out _);
+        root.IsActiveSelf = false;
+        SceneNode node = new(root, "Getter combo");
+        node.SetTransform<UIBoundableTransform>();
+        UIComboBoxComponent combo = node.AddComponent<UIComboBoxComponent>()!;
+        combo.SetOptions([new(1, "Old"), new(2, "Replacement")]);
+        UIRadioLifetimeBinding replacement = new(2);
+        UIRadioLifetimeBinding original = new(1);
+        try
+        {
+            if (duringActivation)
+                combo.Binding = original;
+            original.OnRead = () => combo.Binding = replacement;
+            if (duringActivation)
+                root.IsActiveSelf = true;
+            else
+                combo.Binding = original;
+            combo.Binding.ShouldBeSameAs(replacement);
+            combo.SelectedId.ShouldBe(2UL);
+            combo.AccessibilityValue.ShouldBe("Replacement");
+        }
+        finally { root.Destroy(true); }
+    }
+
     [Test]
     public void ComboSameIdReentryCancelsPendingSelection()
     {

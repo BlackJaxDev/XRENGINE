@@ -6,7 +6,9 @@ internal sealed class UIRadioLifetimeBinding(ulong? value) : IUIValueBinding<ulo
 {
     private Action<ulong?>? _changed;
     public bool ThrowOnRemove { get; set; }
-    public ulong? Value { get; private set; } = value;
+    private ulong? _value = value;
+    public Action? OnRead { get; set; }
+    public ulong? Value { get { OnRead?.Invoke(); return _value; } }
     public Action<ulong?>? CaptureDelivery() => _changed;
 
     public event Action<ulong?>? ValueChanged
@@ -22,7 +24,7 @@ internal sealed class UIRadioLifetimeBinding(ulong? value) : IUIValueBinding<ulo
 
     public void SetValue(ulong? value)
     {
-        Value = value;
+        _value = value;
         _changed?.Invoke(value);
     }
 }

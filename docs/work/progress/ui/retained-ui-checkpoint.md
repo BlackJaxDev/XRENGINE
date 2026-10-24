@@ -820,3 +820,32 @@ real profiler selector. No package version changed. Editor build54 passed with z
 2m25.55s. Desktop test build28 passed with zero warnings/errors in 50.36s.
 All 10,655 source inputs remained unchanged. Inspector-specific fixtures were
 compiled only; Windows execution and live acceptance remain open.
+
+
+## Shared Record Pages And Guarded Lifetime Support
+
+The code reconciliation remains **46 of 60**. The full sparse publication and
+editor adoption items remain open.
+
+- Render pages own shared resource claims. Mapped packets share the immutable
+  store; full capture and flat consumers remain in use.
+- A one-shot hierarchy lifetime receipt supports exact detached graph retirement.
+  Preflight, lifecycle admission, private removal permits, and failure retention
+  are implemented. History custody and Duplicate activation remain open.
+- Loop edits stage the clip and unique children before callbacks. Length/stretch
+  still need a separate complete receipt.
+- Native profiler roots and child paths persist for the configured period, mark
+  inactive values, and prune at deadlines. Unchanged same-frame reads do no index
+  work before a transition. All-root plots and detailed diagnostics remain open.
+- Enum rows use the combo path and guard recycled property ownership. Flags use
+  named text input. Retired bindings cannot start a new write; admitted writes
+  retain Undo settlement before later targets are rejected.
+- Vulkan authoring carries exact world draw identity, but its checked world
+  capability remains disabled pending the complete native proof.
+
+Headless build132 passed with zero warnings/errors in 26.61s. Full run82 passed
+**917 of 917 tests**, without warnings, failures, or skips, in 13.830s. All 10,679
+recorded source inputs stayed unchanged through all checks. Editor build55 passed
+with zero warnings/errors in 2m36.95s. Desktop test build29 passed with zero
+warnings/errors in 57.71s. Inspector and animation fixtures are desktop-only;
+no Windows execution or GPU acceptance is claimed.

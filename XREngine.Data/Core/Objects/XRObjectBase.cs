@@ -446,7 +446,8 @@ namespace XREngine.Data.Core
                 {
                     if (_isRegisteredInObjectCache)
                     {
-                        ObjectsCacheInternal.Remove(ID, out _);
+                        if (ObjectsCacheInternal.TryGetValue(ID, out XRObjectBase? current) && ReferenceEquals(current, this))
+                            ObjectsCacheInternal.TryRemove(ID, out _);
                         _isRegisteredInObjectCache = false;
                     }
                     IsDestroyed = true;

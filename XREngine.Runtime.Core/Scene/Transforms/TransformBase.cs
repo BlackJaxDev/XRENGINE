@@ -1639,7 +1639,8 @@ namespace XREngine.Scene.Transforms
                     else
                         Depth = 0;
                     RequireChangedParent(changedParent);
-                    SceneNode?.World = World;
+                    if (SceneNode is { } parentChangedNode && !ReferenceEquals(parentChangedNode.World, World))
+                        parentChangedNode.World = World;
                     HierarchyStore?.HierarchyChanged();
                     MarkWorldModified();
                     break;
@@ -1671,6 +1672,11 @@ namespace XREngine.Scene.Transforms
 
         protected override void OnDestroying()
         {
+            if (GetOwnedRetirement() is { } retirement)
+            {
+                DestroyOwnedHierarchy(retirement);
+                return;
+            }
             using var mutation = PhysicsChainWorld.BeginTransformDestructionMutation(this);
             //Unsubscribe from children events
             DetachChildListHandlers();
@@ -1718,7 +1724,11 @@ namespace XREngine.Scene.Transforms
         }
 
         internal void NotifySceneNodeActivated()
-            => OnSceneNodeActivated();
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
+            OnSceneNodeActivated();
+        }
 
         /// <summary>
         /// Called when play begins for the scene containing this transform.
@@ -1728,7 +1738,11 @@ namespace XREngine.Scene.Transforms
         }
 
         internal void NotifySceneNodeBeginPlay()
-            => OnSceneNodeBeginPlay();
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
+            OnSceneNodeBeginPlay();
+        }
 
         /// <summary>
         /// Called when the scene node this transform is attached to is deactivated in the scene.
@@ -1738,7 +1752,10 @@ namespace XREngine.Scene.Transforms
         }
 
         internal void NotifySceneNodeDeactivated()
-            => OnSceneNodeDeactivated();
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+            OnSceneNodeDeactivated();
+        }
 
         /// <summary>
         /// Called when play ends for the scene containing this transform.
@@ -1748,7 +1765,10 @@ namespace XREngine.Scene.Transforms
         }
 
         internal void NotifySceneNodeEndPlay()
-            => OnSceneNodeEndPlay();
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+            OnSceneNodeEndPlay();
+        }
 
         #endregion
 

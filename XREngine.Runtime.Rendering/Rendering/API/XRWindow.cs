@@ -3049,6 +3049,10 @@ namespace XREngine.Rendering
                 }
                 RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.ViewportsCallback, viewportsCallbackStart);
 
+                if (frameRenderer.BackendId == RendererBackendId.Vulkan &&
+                    frameRenderer.SupportsCheckedWorldUiOutput)
+                    BeginVulkanWorldUiRenderDispatch();
+
                 // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
                 // do not prevent Vulkan's RenderFrameCallback (acquire/record/submit/present) from
                 // executing. In OpenGL the window swap is handled by Silk.NET automatically, but
@@ -3261,6 +3265,9 @@ namespace XREngine.Rendering
             }
             finally
             {
+                if (frameRenderer.BackendId == RendererBackendId.Vulkan &&
+                    _activeVulkanWorldDispatchToken != 0UL)
+                    EndVulkanWorldUiRenderDispatch();
                 ReleaseRenderSurfaceLatch();
                 frameRenderer.Active = false;
                 if (ReferenceEquals(AbstractRenderer.Current, frameRenderer))

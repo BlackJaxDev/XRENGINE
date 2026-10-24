@@ -144,6 +144,9 @@ namespace XREngine.Rendering
         /// <summary>Reports whether the backend can check the complete world UI output chain.</summary>
         internal virtual bool SupportsCheckedWorldUiOutput => false;
 
+        /// <summary>True when native world output is checked after managed authoring.</summary>
+        internal virtual bool DefersUiWorldOutputNativeValidation => false;
+
         /// <summary>Publishes native readiness after an ordinary window render.</summary>
         internal virtual void ObserveUiWorldOutputImageReadiness(
             XRWindow window, XRRenderPipelineInstance pipeline) { }
