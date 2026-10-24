@@ -10,11 +10,21 @@ internal static class EditorMutationDirtyState
 {
     public static void Mark(object target)
     {
+        foreach (XRAsset document in ResolveDocuments(target))
+            document.MarkDirty();
+    }
+
+    /// <summary>Gets the exact source document that owns an editor target.</summary>
+    public static XRAsset? ResolveDocument(object target)
+    {
+        XRAsset[] documents = ResolveDocuments(target);
+        return documents.Length == 1 ? documents[0] : null;
+    }
+
+    private static XRAsset[] ResolveDocuments(object target)
+    {
         if (target is XRAsset asset)
-        {
-            asset.SourceAsset.MarkDirty();
-            return;
-        }
+            return [asset.SourceAsset];
 
         SceneNode? node = target switch
         {
@@ -23,18 +33,14 @@ internal static class EditorMutationDirtyState
             TransformBase transform => transform.SceneNode,
             _ => null
         };
-        if (node?.World is not RuntimeWorld world || world.TargetWorld is not { } document)
-            return;
+        if (node?.World is not RuntimeWorld world || world.IsDisposing)
+            return [];
         while (node.Parent is { } parent)
             node = parent;
-        for (int index = 0; index < document.Scenes.Count; index++)
-        {
-            XRScene scene = document.Scenes[index];
-            if (!scene.RootNodes.Contains(node))
-                continue;
-            scene.SourceAsset.MarkDirty();
-            return;
-        }
-        document.SourceAsset.MarkDirty();
+        XRScene[] scenes = XREngine.Editor.HierarchySceneOwnership.CaptureRootScenes(node, world);
+        if (scenes.Length > 0)
+            return scenes.Select(scene => scene.SourceAsset)
+                .Distinct<XRAsset>(ReferenceEqualityComparer.Instance).ToArray();
+        return world.TargetWorld is { } document ? [document.SourceAsset] : [];
     }
 }

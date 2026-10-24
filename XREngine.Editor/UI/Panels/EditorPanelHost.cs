@@ -142,6 +142,8 @@ public static class EditorPanelHost
         consolePanel.FilterChanged += filter => { layout.ConsoleFilter = filter; Save(); };
 
         string[] titles = ["Assets", "Console", "Profiler", "Animation"];
+        NativeDockWindowRegistration windowRegistration =
+            toolsNode.AddComponent<NativeDockWindowRegistration>()!;
         tabStrip.TabActivated += id => Select((int)id - 1);
         tabStrip.CloseRequested += _ => CloseSelected();
         tabStrip.MoveRequested += (_, direction) => MoveSelected(direction);
@@ -155,8 +157,18 @@ public static class EditorPanelHost
             NativeUIElements.CreateButton(actionsNode, "-", _ => Resize(-40), width: 64, height: 28);
             NativeUIElements.CreateButton(actionsNode, "+", _ => Resize(40), width: 64, height: 28);
         }
-        toolsNode.AddComponent<NativeDockWindowRegistration>()!.Configure(windowKey, Select);
+        windowRegistration.Configure(windowKey, ReceivePanel, toolsNode.World as RuntimeWorld);
         Refresh();
+
+        bool ReceivePanel(string panel)
+        {
+            int index = Array.IndexOf(NativeDockPanel.LegacyTools, panel);
+            if (index < 0 || toolsNode.IsDestroyed || !toolsNode.IsActiveInHierarchy)
+                return false;
+            Select(index);
+            return !toolsNode.IsDestroyed && toolsNode.IsActiveInHierarchy &&
+                layout.SelectedTab == index && (layout.OpenMask & (1 << index)) != 0;
+        }
 
         void Select(int index)
         {
@@ -170,7 +182,12 @@ public static class EditorPanelHost
         {
             if (layout.SelectedTab < 0)
                 return;
-            layout.OpenMask &= ~(1 << layout.SelectedTab);
+            ClosePanel(layout.SelectedTab);
+        }
+
+        void ClosePanel(int index)
+        {
+            layout.OpenMask &= ~(1 << index);
             layout.Sanitize();
             Refresh();
             Save();
@@ -190,8 +207,24 @@ public static class EditorPanelHost
 
         void MoveToAnotherWindow()
         {
-            if (layout.SelectedTab >= 0 && NativeDockWindowRegistry.TryMoveToAnotherWindow(windowKey, layout.SelectedTab))
-                CloseSelected();
+            int index = layout.SelectedTab;
+            if ((uint)index >= (uint)NativeDockPanel.LegacyTools.Length ||
+                (layout.OpenMask & (1 << index)) == 0 ||
+                !windowRegistration.TryGetRegistration(out string registeredKey, out object? ownerContext))
+                return;
+            ulong registrationRevision = windowRegistration.RegistrationRevision;
+            NativeDockTransferResult result = NativeDockWindowRegistry.TransferToAnotherWindow(
+                windowRegistration, NativeDockPanel.LegacyTools[index]);
+            if (result == NativeDockTransferResult.Committed &&
+                registrationRevision == windowRegistration.RegistrationRevision &&
+                windowRegistration.TryGetRegistration(out string currentKey, out object? currentContext) &&
+                currentKey == registeredKey && ReferenceEquals(currentContext, ownerContext) &&
+                ReferenceEquals(toolsNode.World, ownerContext) && !toolsNode.IsDestroyed &&
+                toolsNode.IsActiveInHierarchy && layout.SelectedTab == index &&
+                (layout.OpenMask & (1 << index)) != 0)
+                ClosePanel(index);
+            else if (result == NativeDockTransferResult.Rejected)
+                Debug.UI("[NativeDock] The destination did not accept the panel.");
         }
 
         void DetachSelected()

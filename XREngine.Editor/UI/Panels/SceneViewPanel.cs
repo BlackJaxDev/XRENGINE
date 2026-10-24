@@ -5,6 +5,7 @@ using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Components.Editing;
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 
 namespace XREngine.Editor;
 
@@ -26,6 +27,7 @@ public class SceneViewPanel : EditorPanel
     private bool _cameraBindingStopped = true;
     private bool _cameraTerminal;
     private ulong _cameraRequestRevision;
+    private bool _sceneControlsTickRegistered;
 
     public XRCamera? Camera => SceneViewport?.ActiveCamera;
     internal XRViewport? SceneViewport => _sceneViewport?.Viewport;
@@ -64,14 +66,17 @@ public class SceneViewPanel : EditorPanel
             _sceneInput.Panel = this;
         CreateToolbar();
         BindCamera();
-        if (!_cameraBindingStopped && !IsDestroyed && !IsDestroyQueued)
+        if (!_cameraBindingStopped && !IsDestroyed && !IsDestroyQueued && !_sceneControlsTickRegistered)
+        {
             RegisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateSceneControls);
+            _sceneControlsTickRegistered = true;
+        }
     }
 
     protected override void OnComponentDeactivated()
     {
         _cameraBindingStopped = true;
-        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateSceneControls);
+        UnregisterSceneControlsTick();
         try { base.OnComponentDeactivated(); }
         finally { ClearSceneCamera(); }
     }
@@ -80,11 +85,26 @@ public class SceneViewPanel : EditorPanel
     {
         _cameraTerminal = true;
         _cameraBindingStopped = true;
-        SetField(ref _cameraComponent, null, publishNotifications: false);
-        if (_sceneInput is not null && ReferenceEquals(_sceneInput.Panel, this))
-            _sceneInput.Panel = null;
-        try { ClearSceneCamera(); }
-        finally { base.OnDestroying(); }
+        List<Exception>? failures = null;
+        AttemptSceneCleanup(UnregisterSceneControlsTick, ref failures);
+        AttemptSceneCleanup(() => SetField(ref _cameraComponent, null, publishNotifications: false), ref failures);
+        AttemptSceneCleanup(() =>
+        {
+            if (_sceneInput is not null && ReferenceEquals(_sceneInput.Panel, this))
+                _sceneInput.Panel = null;
+        }, ref failures);
+        AttemptSceneCleanup(ClearSceneCamera, ref failures);
+        try { base.OnDestroying(); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
+        if (failures is { Count: 1 }) ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is { Count: > 1 })
+            throw new AggregateException("Scene view cleanup failed.", failures);
+    }
+
+    private static void AttemptSceneCleanup(Action release, ref List<Exception>? failures)
+    {
+        try { release(); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
     }
 
     private void ClearSceneCamera()
@@ -95,6 +115,13 @@ public class SceneViewPanel : EditorPanel
         _bindingCamera = true;
         try { ClearViewportCamera(surface.Viewport); }
         finally { _bindingCamera = wasBinding; }
+    }
+
+    private void UnregisterSceneControlsTick()
+    {
+        if (!_sceneControlsTickRegistered) return;
+        _sceneControlsTickRegistered = false;
+        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateSceneControls);
     }
 
     /// <summary>Clears independent viewport owners even if one notification fails.</summary>
@@ -130,6 +157,7 @@ public class SceneViewPanel : EditorPanel
 
     private void UpdateSceneControls()
     {
+        if (_cameraTerminal || _cameraBindingStopped) return;
         BindCamera();
         if (_translateButton is not null) _translateButton.IsSelected = TransformTool3D.TransformMode == ETransformMode.Translate;
         if (_rotateButton is not null) _rotateButton.IsSelected = TransformTool3D.TransformMode == ETransformMode.Rotate;

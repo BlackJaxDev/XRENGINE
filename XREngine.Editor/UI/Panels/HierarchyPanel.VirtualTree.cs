@@ -380,7 +380,9 @@ public partial class HierarchyPanel
             if (TryGetActiveWorld() is not { } world || !IsCurrentHierarchyWorld(world) ||
                 !IsLiveHierarchyNode(dragged, world))
                 return false;
-            QueueNativeHierarchyMoveToRoot(dragged, world, () => IsCurrentHierarchyWorld(world));
+            uint revision = _hierarchyRevision;
+            QueueNativeHierarchyMoveToRoot(dragged, world,
+                () => revision == _hierarchyRevision && IsCurrentHierarchyWorld(world));
             return true;
         }
         return HandleRootDrop(payload);
@@ -401,7 +403,9 @@ public partial class HierarchyPanel
         if (TryGetActiveWorld() is not { } world || !IsCurrentHierarchyWorld(world) ||
             !IsLiveHierarchyNode(dragged, world) || !IsLiveHierarchyNode(target, world))
             return false;
-        QueueNativeHierarchyReparent(dragged, target, world, () => IsCurrentHierarchyWorld(world));
+        uint revision = _hierarchyRevision;
+        QueueNativeHierarchyReparent(dragged, target, world,
+            () => revision == _hierarchyRevision && IsCurrentHierarchyWorld(world));
         return true;
     }
 
@@ -634,6 +638,7 @@ public partial class HierarchyPanel
             : isNode && IsCollapsed(node!) ? "\u25B6" : "\u25BC";
         bool managedScene = scene is not null && TryGetActiveWorld()?.TargetWorld?.Scenes.Contains(scene) == true;
         state.ToggleTransform.Visibility = isNode || managedScene ? EVisibility.Visible : EVisibility.Hidden;
+        state.Toggle.IsEnabled = isNode ? node!.CanDeactivate || !node.IsActiveSelf : managedScene;
         state.UnloadTransform.Visibility = managedScene ? EVisibility.Visible : EVisibility.Hidden;
         if (isNode)
         {
@@ -702,9 +707,11 @@ public partial class HierarchyPanel
             TryGetActiveWorld() is not { } nodeWorld || !IsCurrentHierarchyWorld(nodeWorld) ||
             !IsLiveHierarchyNode(node, nodeWorld))
             return;
+        uint revision = _hierarchyRevision;
         EnqueueSceneEdit(() =>
         {
-            if (!IsCurrentHierarchyWorld(nodeWorld) || !IsLiveHierarchyNode(node, nodeWorld))
+            if (revision != _hierarchyRevision || !IsCurrentHierarchyWorld(nodeWorld) ||
+                !IsLiveHierarchyNode(node, nodeWorld) || !node.CanDeactivate && node.IsActiveSelf)
                 return;
             using var _ = Undo.TrackChange("Toggle Node Active", node);
             node.IsActiveSelf = !node.IsActiveSelf;

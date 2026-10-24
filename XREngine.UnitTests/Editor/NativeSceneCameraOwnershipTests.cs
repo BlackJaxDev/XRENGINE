@@ -1,7 +1,9 @@
+using System.Reflection;
 using NUnit.Framework;
 using XREngine.Components;
 using XREngine.Editor;
 using XREngine.Rendering;
+using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Physics.Jitter2;
 using XREngine.UnitTests.Rendering;
@@ -11,6 +13,31 @@ namespace XREngine.UnitTests.Editor;
 [TestFixture, NonParallelizable]
 public sealed class NativeSceneCameraOwnershipTests
 {
+    [Test]
+    public void DirectDestroyRetiresSceneControlsTickBeforeTerminalCallbacks()
+    {
+        SceneNode node = new("Scene panel") { IsActiveSelf = false };
+        node.SetTransform<UIBoundableTransform>();
+        SceneViewPanel panel = node.AddComponent<SceneViewPanel>()!;
+        WorldTick tick = (WorldTick)Delegate.CreateDelegate(typeof(WorldTick), panel,
+            typeof(SceneViewPanel).GetMethod("UpdateSceneControls", BindingFlags.Instance | BindingFlags.NonPublic)!);
+        panel.RegisterTick(ETickGroup.Late, ETickOrder.Scene, tick);
+        typeof(SceneViewPanel).GetField("_sceneControlsTickRegistered", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(panel, true);
+        try
+        {
+            panel.Destroy(true);
+            Assert.That(typeof(SceneViewPanel)
+                .GetField("_sceneControlsTickRegistered", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(panel), Is.False);
+            Assert.That(typeof(XRWorldObjectBase).GetField("_tickCache", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(panel)!.GetType().GetProperty("Count")!.GetValue(
+                    typeof(XRWorldObjectBase).GetField("_tickCache", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .GetValue(panel)), Is.EqualTo(0));
+        }
+        finally { node.Destroy(true); }
+    }
+
     [Test]
     public void CameraClearContinuesAfterComponentNotificationThrows()
     {

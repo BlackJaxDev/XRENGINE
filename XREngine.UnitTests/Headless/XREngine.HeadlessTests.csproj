@@ -23,6 +23,23 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanel.cs" Link="Editor/NativeDockPanel.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockTree.cs" Link="Editor/NativeDockTree.cs" />
     <Compile Include="../Editor/NativeDockLayoutTests.cs" Link="Editor/NativeDockLayoutTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockWindowRegistry.cs" Link="Editor/NativeDockWindowRegistry.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockWindowRegistration.cs" Link="Editor/NativeDockWindowRegistration.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockTransferResult.cs" Link="Editor/NativeDockTransferResult.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockWindowPlacement.cs" Link="Editor/NativeDockWindowPlacement.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockSavedWindow.cs" Link="Editor/NativeDockSavedWindow.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockCloseApprovalGate.cs" Link="Editor/NativeDockCloseApprovalGate.cs" />
+    <Compile Include="../Editor/NativeDockTransferTests.cs" Link="Editor/NativeDockTransferTests.cs" />
+    <Compile Include="../Editor/NativeDockWindowPlacementTests.cs" Link="Editor/NativeDockWindowPlacementTests.cs" />
+    <Compile Include="../Editor/NativeDockCloseApprovalGateTests.cs" Link="Editor/NativeDockCloseApprovalGateTests.cs" />
+    <Compile Include="../Rendering/WindowCloseApprovalTests.cs" Link="Rendering/WindowCloseApprovalTests.cs" />
+    <Compile Include="../Rendering/CloseBackendProxy.cs" Link="Rendering/CloseBackendProxy.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorListRowSource.cs" Link="Editor/EditorListRowSource.cs" />
+    <Compile Include="../Editor/EditorListRowSourceTests.cs" Link="Editor/EditorListRowSourceTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EEditorListMutation.cs" Link="Editor/EEditorListMutation.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorListSequenceKernel.cs" Link="Editor/EditorListSequenceKernel.cs" />
+    <Compile Include="../Editor/EditorListSequenceKernelTests.cs" Link="Editor/EditorListSequenceKernelTests.cs" />
+    <Compile Include="../Scene/HierarchyTestPhysicsScene.cs" Link="Scene/HierarchyTestPhysicsScene.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeAssetPathPolicy.cs" Link="Editor/NativeAssetPathPolicy.cs" />
     <Compile Include="../Editor/NativeAssetPathPolicyTests.cs" Link="Editor/NativeAssetPathPolicyTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorPropertyDelegates.cs" Link="Editor/EditorPropertyDelegates.cs" />
@@ -50,6 +67,10 @@
     <Compile Include="../Rendering/UICompositionSegmentTests.cs" Link="Rendering/UICompositionSegmentTests.cs" />
     <Compile Include="../Rendering/UIActualControlCompositionTests.cs" Link="Rendering/UIActualControlCompositionTests.cs" />
     <Compile Include="../Rendering/UIControlTeardownTests.cs" Link="Rendering/UIControlTeardownTests.cs" />
+    <Compile Include="../Rendering/UIGridSubscriptionTeardownTests.cs" Link="Rendering/UIGridSubscriptionTeardownTests.cs" />
+    <Compile Include="../Rendering/UIVirtualTableRefreshTests.cs" Link="Rendering/UIVirtualTableRefreshTests.cs" />
+    <Compile Include="../Rendering/UIVirtualTableRefreshSource.cs" Link="Rendering/UIVirtualTableRefreshSource.cs" />
+    <Compile Include="../Rendering/UIRenderableMaterialTeardownTests.cs" Link="Rendering/UIRenderableMaterialTeardownTests.cs" />
     <Compile Include="../Rendering/UITestCanvasInputProbe.cs" Link="Rendering/UITestCanvasInputProbe.cs" />
     <Compile Include="../Audio/AudioSourceLifecycleProbe.cs" Link="Audio/AudioSourceLifecycleProbe.cs" />
     <Compile Include="../Rendering/XRViewportSceneBindingTests.cs" Link="Rendering/XRViewportSceneBindingTests.cs" />
@@ -59,6 +80,7 @@
     <Compile Include="../Rendering/UISplitterHandleTests.cs" Link="Rendering/UISplitterHandleTests.cs" />
     <Compile Include="../Rendering/UIWorldPassManifestTests.cs" Link="Rendering/UIWorldPassManifestTests.cs" />
     <Compile Include="../Scene/SceneStreamingVolumeComponentTests.cs" Link="Scene/SceneStreamingVolumeComponentTests.cs" />
+    <Compile Include="../Scene/RuntimeHierarchyRootRoutesTests.cs" Link="Scene/RuntimeHierarchyRootRoutesTests.cs" />
     <Compile Include="../Rendering/UIImageAtlasTests.cs" Link="Rendering/UIImageAtlasTests.cs" />
     <Compile Include="../Rendering/UIDrawPayloadTests.cs" Link="Rendering/UIDrawPayloadTests.cs" />
     <Compile Include="../Rendering/UITextMaterialRefreshProbe.cs" Link="Rendering/UITextMaterialRefreshProbe.cs" />

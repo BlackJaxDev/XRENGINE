@@ -62,6 +62,10 @@ public sealed class NativeHierarchyWorkflowTests
             Assert.That(Field<UITextComponent>(row, "ToggleGlyph").Text, Is.Empty);
             first.IsActiveSelf = true;
             Assert.That(Field<UITextComponent>(row, "ToggleGlyph").Text, Is.EqualTo("\u2713"));
+            first.CanDeactivate = false;
+            Assert.That(Field<UIButtonComponent>(row, "Toggle").IsEnabled, Is.False);
+            first.CanDeactivate = true;
+            Assert.That(Field<UIButtonComponent>(row, "Toggle").IsEnabled, Is.True);
             Poll(panel);
             Assert.That(Field<IDictionary>(panel, "_sourceListeners")[first], Is.SameAs(firstBinding));
             Assert.That(Field<IDictionary>(panel, "_sourceListeners")[second], Is.SameAs(secondBinding));

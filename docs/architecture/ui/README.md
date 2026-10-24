@@ -12,6 +12,7 @@ ImGui remains the default editor while native UI acceptance is open.
 | [Rendering reference](03-Rendering-Pipeline.md) | Retained canvas collection, resource ownership, clipping, and output receipts |
 | [Implementation TODO](../../work/todo/ui/native-ui-retained-performance-and-editor-parity-todo.md) | Open implementation items and owner decisions |
 | [Validation](../../work/testing/ui/native-ui-validation.md) | Build, runtime, visual, performance, and backend acceptance |
+| [Saved window key proposal](../../work/design/ui/native-window-layout-key-compatibility-design.md) | Pending compatibility decision; no primary-key migration |
 
 The historical layout audit remains available in
 [Native UI Layout Known Issues](../../work/audit/COMPLETED/native-ui-layout-known-issues.md).

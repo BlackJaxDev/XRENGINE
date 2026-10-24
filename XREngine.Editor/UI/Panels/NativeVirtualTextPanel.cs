@@ -11,6 +11,9 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
     private readonly NativeTextList _rows = new();
     private UIListTransform? _list;
     private float _storedScrollOffset;
+    private bool _terminal;
+    private bool _ownerActive;
+    private ulong _ownerRevision;
     protected IVirtualListProvider? RowProviderOverride { get; set; }
     private IVirtualListProvider RowProvider => RowProviderOverride ?? _rows;
 
@@ -18,10 +21,12 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
     protected int RowCount => RowProvider.Count;
     public float ScrollOffset
     {
-        get => _list?.ContentScrollOffset ?? _storedScrollOffset;
+        get => _ownerActive && !_terminal && IsActiveInHierarchy
+            ? _list?.ContentScrollOffset ?? _storedScrollOffset : _storedScrollOffset;
         set
         {
             _storedScrollOffset = float.IsFinite(value) ? Math.Max(0, value) : 0;
+            if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
             if (_list is not null)
             {
                 _list.ContentScrollOffset = _storedScrollOffset;
@@ -43,9 +48,18 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
+        if (_terminal || !IsActiveInHierarchy)
+            return;
+        _ownerActive = true;
+        ulong revision = ++_ownerRevision;
         if (_list is not null)
         {
-            _list.VirtualProvider = RowProvider;
+            UIListTransform current = _list;
+            current.VirtualProvider = RowProvider;
+            if (_terminal || !_ownerActive || !IsActiveInHierarchy ||
+                _ownerRevision != revision || !ReferenceEquals(_list, current))
+                return;
+            current.ContentScrollOffset = _storedScrollOffset;
             RefreshRows();
             return;
         }
@@ -60,6 +74,8 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
         commands.ItemSize = 88;
         commands.ItemSpacing = 2;
         CreateCommands(Commands);
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy || _ownerRevision != revision)
+            return;
         SceneNode content = root;
         if (FooterHeight > 0)
         {
@@ -75,19 +91,49 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
         list.ItemAlignment = EListAlignment.TopOrLeft;
         list.ItemSize = 24;
         list.ItemSpacing = 0;
-        list.VirtualProvider = RowProvider;
         _list = list;
+        list.VirtualProvider = RowProvider;
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy || _ownerRevision != revision ||
+            !ReferenceEquals(_list, list))
+            return;
         list.ContentScrollOffset = _storedScrollOffset;
         if (FooterHeight > 0)
             CreateFooter(content);
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy || _ownerRevision != revision)
+            return;
         RefreshRows();
     }
 
     protected override void OnComponentDeactivated()
     {
-        if (_list is not null)
-            _list.VirtualProvider = null;
-        base.OnComponentDeactivated();
+        if (_ownerActive && _list is not null)
+            _storedScrollOffset = _list.ContentScrollOffset;
+        _ownerActive = false;
+        _ownerRevision++;
+        try
+        {
+            if (_list is not null)
+                _list.VirtualProvider = null;
+        }
+        finally { base.OnComponentDeactivated(); }
+    }
+
+    protected override void OnDestroying()
+    {
+        _terminal = true;
+        _ownerActive = false;
+        _ownerRevision++;
+        ScrollOffsetChanged = null;
+        try { ReleaseVirtualTextOwnerCallbacks(); }
+        finally
+        {
+            try
+            {
+                if (_list is not null)
+                    _list.DetachVirtualProviderForOwnerTeardown();
+            }
+            finally { base.OnDestroying(); }
+        }
     }
 
     protected virtual void CreateCommands(SceneNode commands) { }
@@ -98,6 +144,7 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
 
     protected void SetRows(IEnumerable<(ulong Id, string Text)> rows)
     {
+        if (_terminal) return;
         int previousCount = _rows.Count;
         _rows.Replace(rows);
         SignalRowsChanged(previousCount);
@@ -105,7 +152,8 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
 
     protected void SignalRowsChanged(int previousCount)
     {
-        if (_list is not null)
+        if (_terminal) return;
+        if (_ownerActive && IsActiveInHierarchy && _list is not null)
         {
             if (RowProvider.Count != previousCount)
                 _list.InvalidateMeasure();
@@ -118,24 +166,27 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
     protected void AddCommand(string title, Action action)
     {
         if (Commands is not null)
-            NativeUIElements.CreateButton(Commands, title, _ => action(), width: 88, height: 28);
+            NativeUIElements.CreateButton(Commands, title,
+                _ => { if (_ownerActive && !_terminal && IsActiveInHierarchy) action(); }, width: 88, height: 28);
     }
 
     public bool HandleMouseScroll(float diff)
     {
-        if (_list is null)
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy || _list is null)
             return true;
+        UIListTransform list = _list;
         float maximum = MathF.Max(0, RowProvider.Count * 24.0f - ViewportHeight());
-        _list.ContentScrollOffset = Math.Clamp(_list.ContentScrollOffset - diff * 48.0f, 0, maximum);
-        _storedScrollOffset = _list.ContentScrollOffset;
+        list.ContentScrollOffset = Math.Clamp(list.ContentScrollOffset - diff * 48.0f, 0, maximum);
+        _storedScrollOffset = list.ContentScrollOffset;
         ScrollOffsetChanged?.Invoke(_storedScrollOffset);
-        _list.SetVirtualBounds(ViewportHeight(), 0);
+        if (_ownerActive && !_terminal && IsActiveInHierarchy && ReferenceEquals(_list, list))
+            list.SetVirtualBounds(ViewportHeight(), 0);
         return true;
     }
 
     private void UpdateScroll()
     {
-        if (_list is null)
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy || _list is null)
             return;
         _list.ContentScrollOffset = Math.Clamp(_list.ContentScrollOffset, 0, MathF.Max(0, RowProvider.Count * 24.0f - ViewportHeight()));
         _list.SetVirtualBounds(ViewportHeight(), 0);

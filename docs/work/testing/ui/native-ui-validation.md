@@ -13,17 +13,20 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. Full run 59 passes **616 of 616** tests,
-with no warnings, failures, or skips, in 11.988 seconds. Headless build 95 took
-18.25s. Coverage adds topology insertion/removal, real control composition,
-exact virtual focus, direct control/input destruction, and retained world
-collection readers. These results are from 2026-10-24. The frozen source
-snapshot contains 10,415 files.
+through `Tools/Invoke-AgentBuild.ps1`. Full run 62 passes **667 of 667** tests,
+with no warnings, failures, or skips, in 10.551 seconds. Headless build 99 took
+1m13.26s. Coverage adds scene-root route ownership, sparse list identities and
+sequence edits, confirmed dock transfers, close-request ownership, same-lease
+cell refresh, reentrant callback retirement, and exact grid/material teardown.
+These results are from 2026-10-24. The source snapshot contains 10,472 files;
+all headless inputs remained unchanged through compilation and execution.
 
-The matching editor build 37 passed with zero warnings/errors in 3m03.39s.
-Desktop test-project compilation 17 passed with zero warnings/errors in 44.86s.
-One desktop-only fixture syntax correction followed the headless/editor checks;
-production and headless inputs are unchanged. No desktop tests executed.
+Editor build 40 passed with zero warnings/errors in 53.36s. Its final source
+snapshot contains 10,473 files. Editor-only fixes followed the headless run;
+headless inputs stayed unchanged. Desktop-test compilation 19 passed with zero
+warnings/errors in 51.78s. One desktop-only test parameter was corrected after
+the editor build; production and headless inputs are unchanged. No desktop tests
+executed.
 
 The editor build compiles Windows targets on Linux. The desktop test-project
 build compiles shaping and Vulkan regression tests. Desktop tests did not execute:

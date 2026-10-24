@@ -16,6 +16,28 @@ namespace XREngine.Rendering.UI
         private bool _invertY;
         private readonly HashSet<UISizingDefinition> _observedDefinitions = [];
         private readonly HashSet<UISizingValue> _observedValues = [];
+        private readonly HashSet<UIGridChildPlacementInfo> _observedPlacements = [];
+        private bool _terminal;
+
+        protected override void OnDestroying()
+        {
+            _terminal = true;
+            _rows.CollectionChanged -= CollectionChanged;
+            _columns.CollectionChanged -= CollectionChanged;
+            foreach (UISizingDefinition definition in _observedDefinitions)
+                definition.PropertyChanged -= SizingDefinitionChanged;
+            foreach (UISizingValue value in _observedValues)
+                value.PropertyChanged -= SizingValueChanged;
+            foreach (UIGridChildPlacementInfo placement in _observedPlacements)
+            {
+                placement.PropertyChanging -= Info_PropertyChanging;
+                placement.PropertyChanged -= Info_PropertyChanged;
+            }
+            _observedDefinitions.Clear();
+            _observedValues.Clear();
+            _observedPlacements.Clear();
+            base.OnDestroying();
+        }
 
         public UIGridTransform()
         {
@@ -55,9 +77,10 @@ namespace XREngine.Rendering.UI
             get => _rows;
             set
             {
+                if (_terminal) return;
                 if (SetField(ref _rows, value,
-                    x => _rows.CollectionChanged -= CollectionChanged,
-                    x => _rows.CollectionChanged += CollectionChanged))
+                    old => old.CollectionChanged -= CollectionChanged,
+                    current => { if (!_terminal && ReferenceEquals(_rows, current)) current.CollectionChanged += CollectionChanged; }))
                     OnChildrenChanged();
             }
         }
@@ -66,18 +89,22 @@ namespace XREngine.Rendering.UI
             get => _columns;
             set
             {
+                if (_terminal) return;
                 if (SetField(ref _columns, value,
-                    x => _columns.CollectionChanged -= CollectionChanged,
-                    x => _columns.CollectionChanged += CollectionChanged))
+                    old => old.CollectionChanged -= CollectionChanged,
+                    current => { if (!_terminal && ReferenceEquals(_columns, current)) current.CollectionChanged += CollectionChanged; }))
                     OnChildrenChanged();
             }
         }
 
         private void CollectionChanged(object sender, TCollectionChangedEventArgs<UISizingDefinition> e)
-            => OnChildrenChanged();
+        {
+            if (!_terminal) OnChildrenChanged();
+        }
 
         private void OnChildrenChanged()
         {
+            if (_terminal) return;
             RefreshSizingSubscriptions();
             _indices = null;
             InvalidateLayout();
@@ -115,10 +142,14 @@ namespace XREngine.Rendering.UI
         }
 
         private void SizingDefinitionChanged(object? sender, IXRPropertyChangedEventArgs e)
-            => OnChildrenChanged();
+        {
+            if (!_terminal) OnChildrenChanged();
+        }
 
         private void SizingValueChanged(object? sender, IXRPropertyChangedEventArgs e)
-            => OnChildrenChanged();
+        {
+            if (!_terminal) OnChildrenChanged();
+        }
 
         public List<UITransform> GetComponentsInRow(int rowIndex)
         {
@@ -411,8 +442,11 @@ namespace XREngine.Rendering.UI
                     uic.PlacementInfo = info = new UIGridChildPlacementInfo(uic);
 
                 //Register events
-                info.PropertyChanging += Info_PropertyChanging;
-                info.PropertyChanged += Info_PropertyChanged;
+                if (!_terminal && _observedPlacements.Add(info))
+                {
+                    info.PropertyChanging += Info_PropertyChanging;
+                    info.PropertyChanged += Info_PropertyChanged;
+                }
 
                 //Add row/col associations
                 AddControlToRows(info);
@@ -432,6 +466,7 @@ namespace XREngine.Rendering.UI
                 //Unregister events
                 info.PropertyChanging -= Info_PropertyChanging;
                 info.PropertyChanged -= Info_PropertyChanged;
+                _observedPlacements.Remove(info);
 
                 //Remove row/col associations
                 RemoveControlFromRows(info);
@@ -446,6 +481,7 @@ namespace XREngine.Rendering.UI
 
         private void Info_PropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
         {
+            if (_terminal) return;
             if (sender is not UIGridChildPlacementInfo info)
                 return;
 
@@ -467,6 +503,7 @@ namespace XREngine.Rendering.UI
 
         private void Info_PropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
+            if (_terminal) return;
             if (sender is not UIGridChildPlacementInfo info)
                 return;
 

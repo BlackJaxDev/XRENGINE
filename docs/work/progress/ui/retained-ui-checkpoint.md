@@ -558,3 +558,44 @@ with zero warnings/errors in 3m03.39s. Desktop-test compilation 17 passed
 with zero warnings/errors in 44.86s. One desktop-only fixture argument was
 corrected after the headless/editor checks; their inputs remain unchanged. No Windows execution,
 GPU, visual, IME, benchmark, or faster-than-ImGui result is claimed.
+
+
+## Owned Editor Mutations And Window Lifetimes
+
+The original implementation reconciliation remains **42 of 60 complete**.
+This increment completes subparts of the 18 open code items. It does not close
+full inspector, hierarchy, docking, or text parity. Non-IList detail builders
+still need terminal callback admission. The three pending proposals and four
+original owner decisions remain open; no approval was inferred.
+
+- Table revisions refresh compatible cells without losing their row lease or
+  focused control. Callback transitions wait until the current callback returns;
+  old handlers retire before replacement bindings. Failed preparation cannot
+  admit a hidden replacement.
+- Inspector list details use sparse occurrence IDs and guarded grouped edits.
+  Supported BCL lists require a non-overridable compiler-generated source getter
+  and backing field. Custom/virtual sources and nested ownerless collections
+  remain read-only. Broader collection editing remains open.
+- Hierarchy create/delete/reparent/promotion preserve exact hidden and dual scene
+  memberships, runtime route metadata, and source dirty documents. Undo restores
+  placement before activation. Uncertain setter or matrix callback completion
+  keeps history and requires explicit recovery/reissue. First editor-scene
+  allocation, hidden-parent asset spawning, and menu/duplicate parity remain open.
+- Dock transfer requires a confirmed destination and unchanged registration
+  owners. Detached windows store optional bounds and consume exact approved-close
+  receipts. Primary-key migration is pending. The optional SDL/Vulkan split-pump
+  terminal handoff defect is documented separately; no shutdown rewrite landed.
+- Grid, material, editor-root, panel, watcher, and drop-target teardown release
+  exact owners. Material deactivation removes its shared listener while retained
+  draw payloads keep independent reader claims. Foreign editor child trees are
+  preserved. Asset load completion also executes when already on the render owner.
+
+Headless build 99 passed with zero warnings/errors in 1m13.26s. Full run 62
+passed **667 of 667 tests**, with zero warnings, failures, or skips, in 10.551s.
+Editor build 40 passed with zero warnings/errors in 53.36s. Desktop test-project
+compilation 19 passed with zero warnings/errors in 51.78s; those tests did not
+execute. The final snapshot contains 10,473 source files. One desktop-only test
+parameter changed after the editor build; headless and production inputs remain
+unchanged. All checks ran through the build wrapper or a previously built test
+executable. Windows, GPU, visual, IME, native resource, benchmark, and
+faster-than-ImGui acceptance remain unverified.

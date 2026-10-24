@@ -1013,3 +1013,100 @@ build 37. Source and document checks precede publication.
 Final verification confirms all 10,415 source hashes and 35 local documentation
 links. Whitespace checks pass. Author and committer identities match the existing
 configuration. The remote branch still points to the prior published checkpoint.
+
+## Native Window Dispatch And Close Ownership
+
+Review of detached-window restore, resize, and close found ignored return values
+from `Engine.InvokeOnMainThread`. Its default does not execute an action when the
+caller already owns the render thread. The native window paths now request
+immediate execution on that owner and retain queued execution from other threads.
+`NativeAssetSelection.LoadAsync` has the same completion risk when its await
+finishes synchronously; the repair retains selection revision and path admission.
+
+A close receipt must identify one approved request and its shutdown intent.
+A veto, backend exception, nested request, later manual close, or replacement
+window cannot authorize an older queued cleanup. Bounds must be read on the
+native window owner before its backend retires. The pinned Silk.NET 2.23.0 GLFW
+and SDL backends call `Closing` synchronously from `Close`; the desktop adapter
+cancels immediate Silk disposal until renderer cleanup completes.
+
+The optional externally owned event pump has a separate terminal risk. A final
+native close can stop the render timer before its queued editor cleanup and
+renderer-disposal jobs execute. An editor callback cannot safely mutate the scene
+on that foreign native thread. A read-only lifecycle trace is in progress to find
+a bounded render-owner completion route. No shutdown-order change or native
+runtime validation is claimed. The default collapsed-owner path does not require
+that cross-thread handoff.
+
+These changes are under review and validation. Primary saved-layout key migration
+remains a proposal; it is not part of these lifecycle repairs.
+
+Headless build 96 stopped with zero warnings and one CS0234 error in
+`RuntimeHierarchyRootRoutesTests`: the fixture imported Jitter from a
+Windows-targeted project absent from the portable graph. It took 2m31.30s; no
+tests ran. The correction uses a test-only physics scene for the routing fixture,
+without changing project platform targets or runtime physics behavior.
+
+Headless build 97 passed with zero warnings/errors in 1m50.49s. Full run 60
+passed 660 of 660 tests, with zero warnings, failures, or skips, in 11.726s.
+The 10,468-file source snapshot stayed unchanged for all headless inputs during
+compilation and execution. Seven editor-only files changed outside that graph.
+Matching editor and desktop-test compilation remain pending at this point.
+
+Headless build 98 passed with zero warnings/errors in 1m29.37s. Full run 61
+passed 663 of 666 tests in 11.554s, with three failures and no skips. The source
+snapshot contains 10,471 files; all headless inputs remained unchanged.
+Two existing frozen-draw tests rejected inactive text because
+`HasOnlyPublicationUniformHandler` required the owner's material handler to be
+present. The new deactivation rule correctly removes that handler. Publication
+admission must accept no callbacks or exactly the recognized callback, while
+still rejecting unrelated handlers. The third failure was the new provider
+teardown fixture reading a cell's scene node after teardown removed it; the
+fixture must verify cleanup order without assuming retained child topology.
+
+Headless build 99 passed with zero warnings/errors in 1m13.26s. Full run 62
+passed 667 of 667 tests, with zero warnings, failures, or skips, in 10.551s.
+The 10,472-file snapshot stayed unchanged for all headless inputs. Publication
+capture again accepts inactive text without admitting unrelated callbacks.
+The table teardown fixture verifies callback order and one cleanup while the
+cell is still valid. Matching editor build 38 is the next check.
+
+The final read-only review cleared the list receipt, shared row callback gate,
+material ownership, and hierarchy replay changes for compilation. List mutation
+is limited to supported BCL lists with non-overridable compiler-generated source
+accessors. Hierarchy Undo restores placement before active state. Its exact
+property reconciliation preserves unrelated steps. Setter or matrix-callback
+failure retains the source history and an uncertain completion state; retries
+cannot infer completed lifecycle work from field equality alone. This failure
+requires explicit recovery or reissue. No general runtime event-order rewrite
+or global Undo recording suppression was introduced.
+
+Editor build 38 stopped after 2m18.24s with seven errors and six nullable
+warnings. New inspector code used the wrong `XRWorldObjectBase` namespace,
+reference-comparer inference widened typed collections to `object`, and a detail
+context retirement callback lacked its method. Legacy dock setup captured its
+registration before definite assignment. These are editor-only integration
+repairs; the headless runtime snapshot is unchanged. No warning suppression or
+platform exclusion is part of the correction.
+
+Editor build 39 passed with zero warnings/errors in 40.18s after the namespace,
+typed-comparer, retirement-method, and definite-assignment corrections. A final
+read-only retirement review found an in-flight callback case: old-provider
+unbind can retire a detail context while its outer Rebuild or Bind call is
+still running. Entry-only guards are insufficient. The follow-up requires
+captured-generation checks after callback boundaries and cleanup of incomplete
+new controls before editor build 40. Runtime/headless inputs remain unchanged.
+
+Editor build 40 passed with zero warnings/errors in 53.36s after the detail
+retirement guard repair. Its 10,473-file source snapshot is unchanged. Desktop
+test compilation 18 is next. The broad implementation count stays 42 of 60:
+non-IList inspector builders still need callback-terminal admission, and the
+other text, world publication, and editor parity items remain open. Narrow
+completed subparts do not close those broader original items.
+
+Desktop test compilation 18 stopped with one CS0051 error and zero warnings in
+24.98s: a public test method exposed an internal enum parameter. The two test
+cases now select Set/Remove with a Boolean parameter and retain the same test
+body. Desktop compilation 19 passed with zero warnings/errors in 51.78s. This
+fixture-only change does not affect production or headless inputs. No desktop
+execution, Windows/GPU acceptance, or performance result is claimed.

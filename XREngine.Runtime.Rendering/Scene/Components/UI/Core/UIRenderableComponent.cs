@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 using XREngine.Rendering.UI.State;
 using XREngine.Components;
 using XREngine.Core.Attributes;
@@ -241,38 +242,82 @@ namespace XREngine.Rendering.UI
 
         protected override void OnComponentActivated()
         {
+            if (_worldCollectionTerminal) return;
+            if (_materialDeactivating)
+            {
+                _materialActivationPending = true;
+                return;
+            }
+            _materialOwnerActive = false;
+            ulong lifecycleRevision = ++_materialLifecycleRevision;
+            _materialBindingRevision++;
             RebindWorldCollectionAncestors();
             SyncCanvasWorldCollection();
             base.OnComponentActivated();
             SyncBatchPrimitiveRegistration();
+            if (_materialLifecycleRevision == lifecycleRevision && !_worldCollectionTerminal &&
+                !IsDestroyed && !IsDestroyQueued && IsActiveInHierarchy)
+            {
+                _materialOwnerActive = true;
+                AttachSubscribedMaterial(_material);
+            }
         }
 
         protected override void OnComponentDeactivated()
         {
-            ReleaseCanvasWorldCollection();
-            ReleaseBatchPrimitiveRegistration();
-            _publicationPayloadBuilder?.Dispose();
-            _publicationFrozenCommand = null;
-            _publicationFrozenWorldCommand = null;
-            base.OnComponentDeactivated();
+            if (_materialDeactivating) return;
+            _materialDeactivating = true;
+            _materialOwnerActive = false;
+            _materialLifecycleRevision++;
+            _materialBindingRevision++;
+            bool completed = false;
+            try
+            {
+                DetachSubscribedMaterial();
+                ReleaseCanvasWorldCollection();
+                ReleaseBatchPrimitiveRegistration();
+                _publicationPayloadBuilder?.Dispose();
+                _publicationFrozenCommand = null;
+                _publicationFrozenWorldCommand = null;
+                base.OnComponentDeactivated();
+                completed = true;
+            }
+            finally
+            {
+                _materialDeactivating = false;
+                bool replay = _materialActivationPending;
+                _materialActivationPending = false;
+                if (completed && replay && !_worldCollectionTerminal && IsActiveInHierarchy)
+                    OnComponentActivated();
+            }
         }
 
         protected override void OnDestroying()
         {
             _worldCollectionTerminal = true;
-            ReleaseCanvasWorldCollection();
-            ReleaseBatchPrimitiveRegistration();
-            _publicationCommandObserver.Dispose();
-            try
-            {
-                base.OnDestroying();
-            }
-            finally
-            {
-                _publicationPayloadBuilder?.Dispose();
-                try { RenderInfo3D.Dispose(); }
-                finally { RenderInfo2D.Dispose(); }
-            }
+            _materialOwnerActive = false;
+            _materialActivationPending = false;
+            _materialLifecycleRevision++;
+            _materialBindingRevision++;
+            List<Exception>? failures = null;
+            TryRelease(() => DetachSubscribedMaterial(), ref failures);
+            TryRelease(ReleaseCanvasWorldCollection, ref failures);
+            TryRelease(ReleaseBatchPrimitiveRegistration, ref failures);
+            TryRelease(_publicationCommandObserver.Dispose, ref failures);
+            try { base.OnDestroying(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+            TryRelease(() => _publicationPayloadBuilder?.Dispose(), ref failures);
+            TryRelease(RenderInfo3D.Dispose, ref failures);
+            TryRelease(RenderInfo2D.Dispose, ref failures);
+            if (failures is { Count: 1 }) ExceptionDispatchInfo.Capture(failures[0]).Throw();
+            if (failures is { Count: > 1 })
+                throw new AggregateException("UI renderable cleanup failed.", failures);
+        }
+
+        private static void TryRelease(Action release, ref List<Exception>? failures)
+        {
+            try { release(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
         }
 
         //TODO: register callback on canvas to set RenderInfo3D/2D Visible property so no quadtree/octree culling is done if the canvas is not visible
@@ -615,10 +660,41 @@ namespace XREngine.Rendering.UI
         /// The material used to render this UI component.
         /// </summary>
         private XRMaterial? _material;
+        private XRMaterial? _subscribedMaterial;
+        private bool _materialOwnerActive;
+        private bool _materialDeactivating;
+        private bool _materialActivationPending;
+        private ulong _materialLifecycleRevision;
+        private ulong _materialBindingRevision;
+        private bool CanObserveMaterial => _materialOwnerActive && !_worldCollectionTerminal &&
+            !_materialDeactivating && !IsDestroyed && !IsDestroyQueued && IsActiveInHierarchy;
         public virtual XRMaterial? Material
         {
             get => _material;
-            set => SetField(ref _material, value);
+            set
+            {
+                if (_worldCollectionTerminal || IsDestroyed || IsDestroyQueued) return;
+                _materialBindingRevision++;
+                SetField(ref _material, value);
+            }
+        }
+
+        private void DetachSubscribedMaterial()
+        {
+            XRMaterial? subscribed = _subscribedMaterial;
+            _subscribedMaterial = null;
+            if (subscribed is not null)
+                subscribed.SettingUniforms -= OnMaterialSettingUniforms;
+        }
+
+        private void AttachSubscribedMaterial(XRMaterial? material)
+        {
+            if (!CanObserveMaterial || !ReferenceEquals(_material, material) ||
+                ReferenceEquals(_subscribedMaterial, material)) return;
+            DetachSubscribedMaterial();
+            if (material is null) return;
+            _subscribedMaterial = material;
+            material.SettingUniforms += OnMaterialSettingUniforms;
         }
 
         [YamlIgnore]
@@ -664,28 +740,30 @@ namespace XREngine.Rendering.UI
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
+            ulong revision = _materialBindingRevision;
             bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
+            if (propName == nameof(Material))
             {
-                switch (propName)
-                {
-                    case nameof(Material):
-                        _material?.SettingUniforms -= OnMaterialSettingUniforms;
-                        break;
-                }
+                if (!change || _worldCollectionTerminal || revision != _materialBindingRevision)
+                    return false;
+                DetachSubscribedMaterial();
             }
             return change;
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            ulong revision = _materialBindingRevision;
             base.OnPropertyChanged(propName, prev, field);
-            switch (propName)
+            if (propName == nameof(Material))
             {
-                case nameof(Material):
-                    var m = Mesh;
-                    m?.Material = _material;
-                    _material?.SettingUniforms += OnMaterialSettingUniforms;
-                    break;
+                if (_worldCollectionTerminal || revision != _materialBindingRevision ||
+                    !ReferenceEquals(_material, field)) return;
+                var m = Mesh;
+                m?.Material = _material;
+                if (_worldCollectionTerminal || revision != _materialBindingRevision ||
+                    !ReferenceEquals(_material, field)) return;
+                if (CanObserveMaterial)
+                    AttachSubscribedMaterial(_material);
             }
             if (propName is nameof(Material) or nameof(UIMaterialComponent.DisableBatching))
                 SyncBatchPrimitiveRegistration();
@@ -722,6 +800,7 @@ namespace XREngine.Rendering.UI
         private Vector4 _lastBounds = Vector4.Zero;
         protected virtual void OnMaterialSettingUniforms(XRMaterialBase material, XRRenderProgram program)
         {
+            if (!CanObserveMaterial || !ReferenceEquals(material, _subscribedMaterial)) return;
             UIRenderRecord record = default;
             bool hasPublication = UICanvasComponent.RenderingCanvasForCurrentThread?.BatchCollector
                 .TryGetRenderingRecord(RenderInfo2D.MembershipId, out record) == true;

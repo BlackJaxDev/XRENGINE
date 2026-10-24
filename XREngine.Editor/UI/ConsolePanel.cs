@@ -17,12 +17,16 @@ public partial class ConsolePanel : NativeVirtualTextPanel
     private ulong _nextEntryId;
     private string _filter = string.Empty;
     private UITextInputComponent? _filterInput;
+    private bool _terminal;
+    private bool _ownerActive;
+    private bool _listening;
+    private bool _tickRegistered;
     public event Action<string>? FilterChanged;
 
     public ELogCategory? Category
     {
         get => _category;
-        set { _category = value; RefreshRows(); }
+        set { _category = value; if (!_terminal) RefreshRows(); }
     }
 
     public string Filter
@@ -31,6 +35,7 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         set
         {
             _filter = value ?? string.Empty;
+            if (_terminal) return;
             if (_filterInput is not null)
                 _filterInput.Text = _filter;
             RefreshRows();
@@ -41,15 +46,60 @@ public partial class ConsolePanel : NativeVirtualTextPanel
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
-        Debug.ConsoleEntryAdded += EntryAdded;
-        RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
+        if (_terminal || !IsActiveInHierarchy) return;
+        _ownerActive = true;
+        if (!_listening)
+        {
+            Debug.ConsoleEntryAdded += EntryAdded;
+            _listening = true;
+        }
+        if (!_tickRegistered)
+        {
+            RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
+            _tickRegistered = true;
+        }
     }
 
     protected override void OnComponentDeactivated()
     {
-        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
-        Debug.ConsoleEntryAdded -= EntryAdded;
-        base.OnComponentDeactivated();
+        _ownerActive = false;
+        try { DetachExternalCallbacks(); }
+        finally { base.OnComponentDeactivated(); }
+    }
+
+    protected override void OnDestroying()
+    {
+        _terminal = true;
+        _ownerActive = false;
+        FilterChanged = null;
+        if (_filterInput is { } input)
+        {
+            input.Submitted -= FilterSubmitted;
+            input.Cancelled -= FilterCancelled;
+            _filterInput = null;
+        }
+        try { DetachExternalCallbacks(); }
+        finally { base.OnDestroying(); }
+    }
+
+    private void DetachExternalCallbacks()
+    {
+        if (_tickRegistered)
+        {
+            _tickRegistered = false;
+            try { UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick); }
+            finally { DetachConsoleEvent(); }
+        }
+        else DetachConsoleEvent();
+    }
+
+    private void DetachConsoleEvent()
+    {
+        if (_listening)
+        {
+            _listening = false;
+            Debug.ConsoleEntryAdded -= EntryAdded;
+        }
     }
 
     protected override void CreateCommands(SceneNode commands)
@@ -64,12 +114,25 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         _filterInput = input;
         input.SingleLineMode = true;
         input.Text = _filter;
-        input.Submitted += field => Filter = field.Text.Trim();
-        input.Cancelled += field => field.Text = _filter;
+        input.Submitted += FilterSubmitted;
+        input.Cancelled += FilterCancelled;
+    }
+
+    private void FilterSubmitted(UITextInputComponent field)
+    {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
+        Filter = field.Text.Trim();
+    }
+
+    private void FilterCancelled(UITextInputComponent field)
+    {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
+        field.Text = _filter;
     }
 
     private void RefreshTick()
     {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
         DateTime now = DateTime.UtcNow;
         if (now - _lastRefresh < TimeSpan.FromMilliseconds(250))
             return;
@@ -79,10 +142,15 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         RefreshRows();
     }
 
-    private void EntryAdded(LogEntry _) => Interlocked.Exchange(ref _pendingRefresh, 1);
+    private void EntryAdded(LogEntry _)
+    {
+        if (!_terminal && _ownerActive && IsActiveInHierarchy)
+            Interlocked.Exchange(ref _pendingRefresh, 1);
+    }
 
     protected override void RefreshRows()
     {
+        if (_terminal) return;
         _visible.Clear();
         List<LogEntry> entries = Debug.GetConsoleEntries();
         _seenEntries.Clear();

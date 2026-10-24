@@ -1,5 +1,6 @@
 using System.Reflection;
 using NUnit.Framework;
+using XREngine.Core.Files;
 using XREngine.Editor;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -48,6 +49,14 @@ public class NativePanelDirectDestroyTests
         SceneNode node = NewPanelNode();
         SceneNode child = new(node, "Retained child");
         AssetsPanel panel = node.AddComponent<AssetsPanel>()!;
+        int viewNotifications = 0;
+        int selectionNotifications = 0;
+        panel.ViewStateChanged += () => viewNotifications++;
+        panel.AssetSelected += _ => selectionNotifications++;
+        panel.UseEngineAssets = true;
+        panel.Folder = "stored-inactive-folder";
+        panel.Search = "stored-inactive-search";
+        Assert.That(viewNotifications, Is.Zero);
         MemoryStream drop = new();
         SetPrivateField(panel, "_folderDropTarget", drop);
         PrivateMethod(panel, "AttachTableCallbacks").Invoke(panel, null);
@@ -56,12 +65,59 @@ public class NativePanelDirectDestroyTests
         {
             Assert.That(HasHandler(table.GetType(), "Activated", panel, table), Is.True);
             panel.Destroy(true);
+            panel.UseEngineAssets = false;
+            panel.Folder = "late-folder";
+            panel.Search = "late-search";
+            PrivateMethod(panel, "FileChanged").Invoke(panel,
+                [new AssetFileChangeEventArgs(AssetFileChangeKind.Created, "late-path", "late")]);
+            PrivateMethod(panel, "ActivateAssetRow").Invoke(panel, [1UL]);
             Assert.Multiple(() =>
             {
                 Assert.That(drop.CanRead, Is.False);
                 Assert.That(HasHandler(table.GetType(), "Activated", panel, table), Is.False);
                 Assert.That(HasHandler(table.GetType(), "RowPointerMoved", panel, table), Is.False);
                 Assert.That(child.IsDestroyed, Is.False);
+                Assert.That(panel.UseEngineAssets, Is.True);
+                Assert.That(panel.Folder, Is.EqualTo("stored-inactive-folder"));
+                Assert.That(panel.Search, Is.EqualTo("stored-inactive-search"));
+                Assert.That(viewNotifications, Is.Zero);
+                Assert.That(selectionNotifications, Is.Zero);
+                Assert.That(GetPrivateField(panel, "AssetSelected"), Is.Null);
+                Assert.That(GetPrivateField(panel, "ViewStateChanged"), Is.Null);
+                Assert.That(GetPrivateField(panel, "_pendingRefresh"), Is.EqualTo(0));
+            });
+        }
+        finally { node.Destroy(true); }
+    }
+
+    [Test]
+    public void AssetsPanel_DestroyReentryAndThrowingDropReleaseStillRetireCallbacks()
+    {
+        SceneNode node = NewPanelNode();
+        AssetsPanel panel = node.AddComponent<AssetsPanel>()!;
+        PrivateMethod(panel, "AttachTableCallbacks").Invoke(panel, null);
+        object table = GetPrivateField(panel, "_table")!;
+        int notifications = 0;
+        panel.ViewStateChanged += () => notifications++;
+        NativePanelCallbackDropHandle drop = new(() =>
+        {
+            Assert.That(GetPrivateField(panel, "ViewStateChanged"), Is.Null);
+            PrivateMethod(panel, "OnComponentActivated").Invoke(panel, null);
+            panel.Search = "late";
+            throw new InvalidOperationException("drop release failed");
+        });
+        SetPrivateField(panel, "_folderDropTarget", drop);
+        try
+        {
+            Assert.That(() => panel.Destroy(true), Throws.TypeOf<InvalidOperationException>());
+            Assert.Multiple(() =>
+            {
+                Assert.That(drop.WasDisposed, Is.True);
+                Assert.That(HasHandler(table.GetType(), "Activated", panel, table), Is.False);
+                Assert.That(HasHandler(table.GetType(), "RowPointerMoved", panel, table), Is.False);
+                Assert.That(GetPrivateField(panel, "ViewStateChanged"), Is.Null);
+                Assert.That(panel.Search, Is.Empty);
+                Assert.That(notifications, Is.Zero);
             });
         }
         finally { node.Destroy(true); }

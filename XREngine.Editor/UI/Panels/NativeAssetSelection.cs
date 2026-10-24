@@ -70,6 +70,11 @@ public static class NativeAssetSelection
             Debug.LogException(exception, $"Failed to load selected asset '{path}'.");
         }
 
+        DispatchLoadedAsset(path, revision, asset, failure);
+    }
+
+    internal static void DispatchLoadedAsset(string path, int revision, XRAsset? asset, string? failure)
+    {
         _ = Engine.InvokeOnMainThread(() =>
         {
             if (revision != _revision || SelectedPath is null || !NativeAssetPathPolicy.PathsEqual(SelectedPath, path))
@@ -77,7 +82,7 @@ public static class NativeAssetSelection
             Publish(asset is not null
                 ? asset
                 : new NativeAssetSelectionStatus(path, failure ?? "Asset loading failed."));
-        }, "Native asset selection ready");
+        }, "Native asset selection ready", executeNowIfAlreadyMainThread: true);
     }
 
     private static void Publish(object? target)

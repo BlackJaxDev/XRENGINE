@@ -170,6 +170,33 @@ public sealed class UIDrawPayloadTests
     }
 
     [Test]
+    public void PublicationCaptureAcceptsAbsentOrExactHandlerButRejectsOtherCallbacks()
+    {
+        RenderCommandMesh2D source = CreateDraw();
+        XRMaterial material = source.Mesh!.Material!;
+        Action<XRMaterialBase, XRRenderProgram> allowed = static (_, _) => { };
+        Action<XRMaterialBase, XRRenderProgram> other = static (_, _) => { };
+        using UIDrawPayloadBuilder builder = new(allowed);
+
+        builder.TryCapture(source, false, out _, out string? reason).ShouldBeTrue(reason);
+        material.SettingUniforms += allowed;
+        builder.TryCapture(source, false, out _, out reason).ShouldBeTrue(reason);
+
+        material.SettingUniforms += other;
+        builder.TryCapture(source, false, out _, out reason).ShouldBeFalse();
+        (reason ?? string.Empty).ShouldContain("CallbackAdapterRequired");
+
+        material.SettingUniforms -= allowed;
+        builder.TryCapture(source, false, out _, out reason).ShouldBeFalse();
+        (reason ?? string.Empty).ShouldContain("CallbackAdapterRequired");
+
+        material.SettingUniforms -= other;
+        material.SettingVertexUniforms += static _ => { };
+        builder.TryCapture(source, false, out _, out reason).ShouldBeFalse();
+        (reason ?? string.Empty).ShouldContain("CallbackAdapterRequired");
+    }
+
+    [Test]
     public void GlyphBufferCopyIsIndependentAndUsesRequiredFixedResources()
     {
         RenderCommandMesh2D source = CreateDraw();
