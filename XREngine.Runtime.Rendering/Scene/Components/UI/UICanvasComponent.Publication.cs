@@ -198,7 +198,7 @@ public partial class UICanvasComponent
         _publicationFocusScopeScratch.Clear();
         _publicationRenderScratch.Clear();
         CaptureHitRecords(canvas, canvas, canvas.ElementIdentity, layoutPages,
-            default, default, default);
+            default, default, default, default);
         OrderPublicationRenders();
         OrderPublicationFocusScopes();
         for (int index = 0; index < _publicationRenderScratch.Count; index++)
@@ -348,7 +348,8 @@ public partial class UICanvasComponent
     private void CaptureHitRecords(UICanvasTransform canvas, UITransform transform,
         UIElementIdentity focusScopeIdentity, UILayoutOutputPageView layoutPages,
         UIElementIdentity virtualListIdentity, UIElementIdentity virtualRowIdentity,
-        UIVirtualRowLease virtualRowLease, UICompositionOwner compositionOwner = default)
+        UIVirtualRowLease virtualRowLease, ulong virtualProviderIncarnation,
+        UICompositionOwner compositionOwner = default)
     {
         if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int layoutIndex) ||
             !layoutPages[layoutIndex].Visible)
@@ -360,6 +361,7 @@ public partial class UICanvasComponent
             virtualListIdentity = list.ElementIdentity;
             virtualRowIdentity = row.ElementIdentity;
             virtualRowLease = rowLease;
+            virtualProviderIncarnation = list.VirtualProviderIncarnation;
         }
 
         if (transform.SceneNode?.Components is { } nodeComponents)
@@ -435,14 +437,15 @@ public partial class UICanvasComponent
                     component is UIInteractableComponent focusTarget && focusTarget.IsTabStop,
                     component is UIInteractableComponent indexedTarget ? indexedTarget.TabIndex : 0,
                     focusScopeIdentity, virtualListIdentity, virtualRowIdentity,
-                    virtualRowLease, pointerGeometry));
+                    virtualRowLease, pointerGeometry, virtualProviderIncarnation));
             }
         }
 
         for (int index = 0; index < transform.Children.Count; index++)
             if (transform.Children[index] is UITransform child)
                 CaptureHitRecords(canvas, child, focusScopeIdentity, layoutPages,
-                    virtualListIdentity, virtualRowIdentity, virtualRowLease, compositionOwner);
+                    virtualListIdentity, virtualRowIdentity, virtualRowLease,
+                    virtualProviderIncarnation, compositionOwner);
     }
 
     private UIPointerGeometry CapturePointerGeometry(UIComponent component, Vector2 acceptedSize,

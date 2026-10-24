@@ -34,6 +34,7 @@ namespace XREngine.Rendering.UI
         private int _virtualEndIndex;
         private int _virtualOverscan = 2;
         private ulong _nextRowIncarnation;
+        private ulong _virtualProviderIncarnation;
         private float _virtualViewportExtent;
         private float _virtualScrollOffset;
 
@@ -51,6 +52,7 @@ namespace XREngine.Rendering.UI
                     return;
                 GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
                 ReleaseVirtualRows();
+                _virtualProviderIncarnation++;
                 SetField(ref _virtualProvider, value);
                 _virtualItemCount = 0;
                 InvalidateMeasure();
@@ -104,6 +106,7 @@ namespace XREngine.Rendering.UI
             // Retire the old owner before invoking user callbacks. A callback may install a
             // replacement provider, which must not be cleared by this operation afterward.
             SetField(ref _virtualProvider, null, publishNotifications: false);
+            _virtualProviderIncarnation++;
             VirtualRowRecycling = null;
             _virtualSlots.Clear();
             _slotsByIndex.Clear();
@@ -185,6 +188,7 @@ namespace XREngine.Rendering.UI
         }
 
         public int VirtualFirstIndex => _virtualFirstIndex;
+        public ulong VirtualProviderIncarnation => _virtualProviderIncarnation;
         public int VirtualEndIndex => _virtualEndIndex;
         public int VirtualItemCount => _virtualItemCount;
         public float VirtualScrollOffset => _virtualScrollOffset;

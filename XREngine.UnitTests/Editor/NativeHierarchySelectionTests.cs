@@ -8,6 +8,40 @@ namespace XREngine.UnitTests.Editor;
 [TestFixture]
 public sealed class NativeHierarchySelectionTests
 {
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    public void AddedSelectionBecomesTheActiveNode(bool control, bool shift)
+    {
+        SceneNode first = new("First"), added = new("Added");
+        try
+        {
+            SceneNode[] selected = NativeHierarchySelection.ApplyInteraction([first], added, control, shift, false);
+            Assert.That(selected, Is.EqualTo(new[] { added, first }));
+            UIVirtualTreeProvider tree = CreateTree();
+            NativeHierarchySelection mirror = new();
+            mirror.Synchronize(tree, new Dictionary<Guid, ulong> { [first.ID] = 1, [added.ID] = 2 },
+                new Dictionary<ulong, SceneNode> { [1] = first, [2] = added }, selected);
+            Assert.That(tree.ActiveId, Is.EqualTo(2UL));
+        }
+        finally { first.Destroy(true); added.Destroy(true); }
+    }
+
+    [Test]
+    public void ModifierPriorityMatchesTheCanonicalHierarchySelection()
+    {
+        SceneNode first = new("First"), second = new("Second");
+        try
+        {
+            Assert.That(NativeHierarchySelection.ApplyInteraction([first], second, true, true, true),
+                Is.EqualTo(new[] { second, first }));
+            Assert.That(NativeHierarchySelection.ApplyInteraction([first, second], second, false, true, true),
+                Is.EqualTo(new[] { first }));
+            SceneNode[] current = [first];
+            Assert.That(NativeHierarchySelection.ApplyInteraction(current, first, false, true, false), Is.SameAs(current));
+        }
+        finally { first.Destroy(true); second.Destroy(true); }
+    }
+
     [Test]
     public void SelectionUpdatesOffscreenAccessibilityWithoutCreatingRows()
     {

@@ -40,8 +40,15 @@
     <Compile Include="../Rendering/UIListTerminalOwnerTests.cs" Link="Rendering/UIListTerminalOwnerTests.cs" />
     <Compile Include="../Rendering/UIToggleLifetimeTests.cs" Link="Rendering/UIToggleLifetimeTests.cs" />
     <Compile Include="../Rendering/ReentrantToggleValueBinding.cs" Link="Rendering/ReentrantToggleValueBinding.cs" />
+    <Compile Include="../Rendering/UIRadioLifetimeTests.cs" Link="Rendering/UIRadioLifetimeTests.cs" />
+    <Compile Include="../Rendering/UIRadioLifetimeBinding.cs" Link="Rendering/UIRadioLifetimeBinding.cs" />
+    <Compile Include="../Rendering/UISliderColorLifetimeTests.cs" Link="Rendering/UISliderColorLifetimeTests.cs" />
+    <Compile Include="../Rendering/UITextLifetimeTests.cs" Link="Rendering/UITextLifetimeTests.cs" />
+    <Compile Include="../Rendering/UITextLifetimeBinding.cs" Link="Rendering/UITextLifetimeBinding.cs" />
+    <Compile Include="../Rendering/UICanvasInputLifetimeTests.cs" Link="Rendering/UICanvasInputLifetimeTests.cs" />
     <Compile Include="../Rendering/UIBatchCollectionTests.cs" Link="Rendering/UIBatchCollectionTests.cs" />
     <Compile Include="../Rendering/UICompositionSegmentTests.cs" Link="Rendering/UICompositionSegmentTests.cs" />
+    <Compile Include="../Rendering/UIActualControlCompositionTests.cs" Link="Rendering/UIActualControlCompositionTests.cs" />
     <Compile Include="../Rendering/UIControlTeardownTests.cs" Link="Rendering/UIControlTeardownTests.cs" />
     <Compile Include="../Rendering/UITestCanvasInputProbe.cs" Link="Rendering/UITestCanvasInputProbe.cs" />
     <Compile Include="../Audio/AudioSourceLifecycleProbe.cs" Link="Audio/AudioSourceLifecycleProbe.cs" />
@@ -75,6 +82,8 @@
     <Compile Include="../Rendering/UIBatchCohortReuseTests.cs" Link="Rendering/UIBatchCohortReuseTests.cs" />
     <Compile Include="../Rendering/CountingVirtualListProvider.cs" Link="Rendering/CountingVirtualListProvider.cs" />
     <Compile Include="../Rendering/UIVirtualCollectionTests.cs" Link="Rendering/UIVirtualCollectionTests.cs" />
+    <Compile Include="../Rendering/UIVirtualTreeNavigationTests.cs" Link="Rendering/UIVirtualTreeNavigationTests.cs" />
+    <Compile Include="../Rendering/UITestTreeKeyRegistration.cs" Link="Rendering/UITestTreeKeyRegistration.cs" />
     <Compile Include="../Rendering/UIVirtualScaleTests.cs" Link="Rendering/UIVirtualScaleTests.cs" />
     <Compile Include="../Rendering/FocusVirtualListProvider.cs" Link="Rendering/FocusVirtualListProvider.cs" />
     <Compile Include="../Rendering/UITextLayoutKernelTests.cs" Link="Rendering/UITextLayoutKernelTests.cs" />

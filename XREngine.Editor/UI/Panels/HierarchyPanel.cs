@@ -190,10 +190,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         _renameFocusRestoreId = null;
         SceneNode? node = _hierarchyNodes.Values.FirstOrDefault(candidate => candidate.ID == focusId);
         if (node is not null)
-        {
-            _nodePendingRename = node;
-            ShowVirtualRename(node);
-        }
+            BeginRename(node);
     }
 
     private void SaveHierarchyState()

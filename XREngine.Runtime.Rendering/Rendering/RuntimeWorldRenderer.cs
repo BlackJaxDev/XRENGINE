@@ -5,6 +5,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
+using XREngine.Rendering.UI;
 using XREngine.Rendering.Physics.DebugVisualization;
 using XREngine.Scene.Physics;
 using XREngine.Scene.Physics.DebugVisualization;
@@ -22,7 +23,17 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     private readonly RuntimeWorldRenderState _state;
     private readonly ConcurrentQueue<(TransformBase Transform, Matrix4x4 Matrix)> _pendingMatrices = [];
     private readonly Lock _collectPublicationLock = new();
+    private readonly UIWorldCollectPacketSet[] _frozenWorldPacketSlots =
+        [new(), new(), new(), new()];
+    private UIWorldCollectPacketSet? _updatingFrozenWorldPacketSet;
+    private UIWorldCollectPacketSet? _renderingFrozenWorldPacketSet;
+    private long _nextFrozenWorldPacketGeneration;
+    private long _frozenWorldCaptureEpoch;
+    private int _frozenWorldCaptureActive;
     private bool _collectPublicationOpen;
+    private int _collectStageDepth;
+    private bool _releaseFrozenWorldAfterStage;
+    private bool _disposeAfterCollectStage;
     private PhysicsDebugFrameRenderer _physicsDebugRenderer = new();
     private long _nextEditPhysicsDebugCollectionTimestamp;
     private Func<object?>? _targetWorld;
@@ -116,7 +127,35 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     public void SetCollectPublicationOpen(bool open)
     {
         lock (_collectPublicationLock)
+        {
+            if ((_disposed || _disposeAfterCollectStage) && open)
+                throw new ObjectDisposedException(nameof(RuntimeWorldRenderer));
+            _frozenWorldCaptureEpoch++;
             _collectPublicationOpen = open;
+            if (!open)
+            {
+                if (_collectStageDepth == 0)
+                    ReleaseFrozenWorldPacketClaims();
+                else
+                    _releaseFrozenWorldAfterStage = true;
+            }
+        }
+    }
+
+    private void ReleaseFrozenWorldPacketClaims()
+    {
+        VisualScene.SetFrozenWorldPacketSetForCollection(null);
+        UIWorldCollectPacketSet? updating = _updatingFrozenWorldPacketSet;
+        _updatingFrozenWorldPacketSet = null;
+        UIWorldCollectPacketSet? rendering =
+            Interlocked.Exchange(ref _renderingFrozenWorldPacketSet, null);
+        List<Exception>? failures = null;
+        try { updating?.Release(); }
+        catch (Exception error) { (failures ??= []).Add(error); }
+        try { rendering?.Release(); }
+        catch (Exception error) { (failures ??= []).Add(error); }
+        if (failures is not null)
+            throw new AggregateException("World UI packet claims could not retire.", failures);
     }
 
     public void GlobalPreCollectVisible()
@@ -128,29 +167,143 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
             // scene whose session is closed.
             if (!_collectPublicationOpen)
                 return;
-
-            RuntimeEngine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
-            bool observe = RuntimeWorldTickTelemetry.Enabled;
-            // The always-on stage timers and the env-gated world telemetry share these timestamps.
-            long matrixStart = Stopwatch.GetTimestamp();
-            ApplyRenderMatrixChanges();
-            long meshStart = Stopwatch.GetTimestamp();
-            RenderableMesh.ProcessPendingRenderMatrixUpdates();
-            long sceneStart = Stopwatch.GetTimestamp();
-            VisualScene.GlobalCollectVisible();
-            long sceneEnd = Stopwatch.GetTimestamp();
-            CollectVisibleStageTimings.AddPreCollect(matrixStart, meshStart, sceneStart, sceneEnd);
-            if (observe)
+            _collectStageDepth++;
+            try
             {
-                Interlocked.Add(ref s_collectMatrixTicks, meshStart - matrixStart);
-                Interlocked.Add(ref s_collectMeshTicks, sceneStart - meshStart);
-                Interlocked.Add(ref s_collectSceneTicks, sceneEnd - sceneStart);
-                Interlocked.Increment(ref s_collectCalls);
+                RuntimeEngine.Rendering.Stats.FrameOutputs.RecordSceneSnapshot();
+                bool observe = RuntimeWorldTickTelemetry.Enabled;
+                // The always-on stage timers and the env-gated world telemetry share these timestamps.
+                long matrixStart = Stopwatch.GetTimestamp();
+                ApplyRenderMatrixChanges();
+                long meshStart = Stopwatch.GetTimestamp();
+                RenderableMesh.ProcessPendingRenderMatrixUpdates();
+                long sceneStart = Stopwatch.GetTimestamp();
+                VisualScene.GlobalCollectVisible();
+                CaptureFrozenWorldPacketSet();
+                long sceneEnd = Stopwatch.GetTimestamp();
+                CollectVisibleStageTimings.AddPreCollect(matrixStart, meshStart, sceneStart, sceneEnd);
+                if (observe)
+                {
+                    Interlocked.Add(ref s_collectMatrixTicks, meshStart - matrixStart);
+                    Interlocked.Add(ref s_collectMeshTicks, sceneStart - meshStart);
+                    Interlocked.Add(ref s_collectSceneTicks, sceneEnd - sceneStart);
+                    Interlocked.Increment(ref s_collectCalls);
+                }
+            }
+            finally
+            {
+                _collectStageDepth--;
+                FinishFrozenWorldCollectStage();
             }
         }
     }
 
-    public void GlobalCollectVisible() => Lights.CollectVisibleItems();
+    public void GlobalCollectVisible()
+    {
+        lock (_collectPublicationLock)
+        {
+            if (!_collectPublicationOpen)
+                return;
+            _collectStageDepth++;
+            try { Lights.CollectVisibleItems(); }
+            finally
+            {
+                _collectStageDepth--;
+                FinishFrozenWorldCollectStage();
+            }
+        }
+    }
+
+    private void FinishFrozenWorldCollectStage()
+    {
+        if (_collectStageDepth != 0)
+            return;
+        Exception? releaseFailure = null;
+        if (_releaseFrozenWorldAfterStage)
+        {
+            _releaseFrozenWorldAfterStage = false;
+            try { ReleaseFrozenWorldPacketClaims(); }
+            catch (Exception error) { releaseFailure = error; }
+        }
+        if (_disposeAfterCollectStage)
+        {
+            _disposeAfterCollectStage = false;
+            try { Dispose(); }
+            catch (Exception error)
+            {
+                if (releaseFailure is not null)
+                    throw new AggregateException(releaseFailure, error);
+                throw;
+            }
+        }
+        if (releaseFailure is not null)
+            throw releaseFailure;
+    }
+
+    private void CaptureFrozenWorldPacketSet()
+    {
+        if (Interlocked.CompareExchange(ref _frozenWorldCaptureActive, 1, 0) != 0)
+        {
+            _frozenWorldCaptureEpoch++;
+            return;
+        }
+        long epoch = ++_frozenWorldCaptureEpoch;
+        try
+        {
+        VisualScene.SetFrozenWorldPacketSetForCollection(null);
+        UIWorldCollectPacketSet? prior = _updatingFrozenWorldPacketSet;
+        _updatingFrozenWorldPacketSet = null;
+        prior?.Release();
+        if (!_collectPublicationOpen || _disposed || epoch != _frozenWorldCaptureEpoch ||
+            !VisualScene.HasFrozenWorldPacketSources)
+            return;
+        long generation = unchecked(++_nextFrozenWorldPacketGeneration);
+        if (generation <= 0)
+            throw new InvalidOperationException("The world UI collect generation overflowed.");
+        for (int index = 0; index < _frozenWorldPacketSlots.Length; index++)
+        {
+            UIWorldCollectPacketSet candidate = _frozenWorldPacketSlots[index];
+            if (!candidate.TryBegin(generation))
+                continue;
+            bool captured = false;
+            try
+            {
+                captured = VisualScene.TryCaptureFrozenWorldPackets(candidate, WorldContext);
+                if (captured && _collectPublicationOpen && !_disposed &&
+                    epoch == _frozenWorldCaptureEpoch)
+                {
+                    _updatingFrozenWorldPacketSet = candidate;
+                    VisualScene.SetFrozenWorldPacketSetForCollection(candidate);
+                }
+                else
+                    captured = false;
+            }
+            finally
+            {
+                if (!captured)
+                    candidate.Release();
+            }
+            return;
+        }
+        }
+        finally { Volatile.Write(ref _frozenWorldCaptureActive, 0); }
+    }
+
+    /// <summary>Retains the exact packet set selected by the latest world swap.</summary>
+    internal bool TryRetainRenderingFrozenWorldPacketSet(out UIWorldCollectPacketSet? packetSet)
+    {
+        packetSet = Volatile.Read(ref _renderingFrozenWorldPacketSet);
+        long generation = packetSet?.Generation ?? 0L;
+        if (packetSet is not null && packetSet.TryRetain(generation))
+        {
+            if (ReferenceEquals(packetSet, Volatile.Read(ref _renderingFrozenWorldPacketSet)) &&
+                packetSet.Generation == generation)
+                return true;
+            packetSet.Release();
+        }
+        packetSet = null;
+        return false;
+    }
 
     /// <summary>
     /// Prepares swap-time publication work on the collect thread after visibility
@@ -214,6 +367,9 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
 
     private void GlobalSwapBuffersCore(ulong frameId, bool requireCanonicalFrameId)
     {
+        long frozenWorldCaptureEpoch;
+        lock (_collectPublicationLock)
+            frozenWorldCaptureEpoch = _frozenWorldCaptureEpoch;
         bool observe = RuntimeWorldTickTelemetry.Enabled;
         // Shared swap code records stage times only in the world swap section of the serial swap.
         ECollectVisibleSection previousSection = CollectVisibleStageTimings.EnterWorldSwap();
@@ -238,6 +394,30 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         long visualSceneStart = Stopwatch.GetTimestamp();
         VisualScene.GPUCommands.SetMeshSubmissionFrameId(frameId);
         VisualScene.GlobalSwapBuffers();
+        UIWorldCollectPacketSet? discardedWorldPacketSet = null;
+        UIWorldCollectPacketSet? retiredWorldPacketSet;
+        lock (_collectPublicationLock)
+        {
+            UIWorldCollectPacketSet? selectedWorldPacketSet = _updatingFrozenWorldPacketSet;
+            _updatingFrozenWorldPacketSet = null;
+            if (!_collectPublicationOpen || _disposed ||
+                frozenWorldCaptureEpoch != _frozenWorldCaptureEpoch)
+            {
+                discardedWorldPacketSet = selectedWorldPacketSet;
+                selectedWorldPacketSet = null;
+            }
+            VisualScene.SetFrozenWorldPacketSetForCollection(selectedWorldPacketSet);
+            retiredWorldPacketSet = Interlocked.Exchange(
+                ref _renderingFrozenWorldPacketSet, selectedWorldPacketSet);
+        }
+        List<Exception>? frozenWorldRetirementFailures = null;
+        try { discardedWorldPacketSet?.Release(); }
+        catch (Exception error) { (frozenWorldRetirementFailures ??= []).Add(error); }
+        try { retiredWorldPacketSet?.Release(); }
+        catch (Exception error) { (frozenWorldRetirementFailures ??= []).Add(error); }
+        if (frozenWorldRetirementFailures is not null)
+            throw new AggregateException("World UI packet claims could not retire after swap.",
+                frozenWorldRetirementFailures);
         CollectVisibleStageTimings.AddWorldSwap(
             matrixStart,
             meshStart,
@@ -358,7 +538,25 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     {
         if (_disposed)
             return;
-        _disposed = true;
+        Exception? packetRetirementFailure = null;
+        lock (_collectPublicationLock)
+        {
+            if (_disposed)
+                return;
+            if (_collectStageDepth != 0)
+            {
+                _collectPublicationOpen = false;
+                _frozenWorldCaptureEpoch++;
+                _releaseFrozenWorldAfterStage = true;
+                _disposeAfterCollectStage = true;
+                return;
+            }
+            _disposed = true;
+            _collectPublicationOpen = false;
+            _frozenWorldCaptureEpoch++;
+            try { ReleaseFrozenWorldPacketClaims(); }
+            catch (Exception error) { packetRetirementFailure = error; }
+        }
         if (WorldContext is RuntimeWorld runtimeWorld)
         {
             runtimeWorld.RuntimeWorldMatrixChangeQueued -= OnRuntimeWorldMatrixChangeQueued;
@@ -374,6 +572,8 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         else
             RuntimeEngine.EnqueueRenderThreadTask(() => Lights.Clear(disposeProbeTree: true), "RuntimeWorldRenderer.ClearLights", RenderThreadJobKind.RenderPipelineResource);
         _physicsDebugRenderer.Dispose();
+        if (packetRetirementFailure is not null)
+            throw packetRetirementFailure;
     }
 }
 

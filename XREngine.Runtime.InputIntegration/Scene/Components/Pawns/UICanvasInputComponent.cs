@@ -81,6 +81,9 @@ namespace XREngine.Components
 
         private UIInteractableComponent? _focusedComponent;
         private bool _inputDeactivating;
+        private bool _inputTerminal;
+        private bool _inputCleanupActive;
+        private bool _inputActivationDeferred;
         /// <summary>
         /// The UI component focused on by the gamepad or last interacted with by the mouse.
         /// </summary>
@@ -208,7 +211,8 @@ namespace XREngine.Components
         /// </summary>
         private void LinkOwningPawn()
         {
-            if (!IsActiveInHierarchy || _owningPawn is null || ReferenceEquals(_observedPawn, _owningPawn))
+            if (_inputDeactivating || _inputTerminal || !IsActiveInHierarchy || _owningPawn is null ||
+                ReferenceEquals(_observedPawn, _owningPawn))
                 return;
 
             _observedPawn = _owningPawn;
@@ -274,20 +278,36 @@ namespace XREngine.Components
 
         public void RegisterInput(InputInterface input)
         {
-            if (_inputDeactivating && !input.Unregister)
+            if ((_inputDeactivating || _inputTerminal) && !input.Unregister)
                 return;
             // The pawn host and this canvas's owner subscription can both request the
             // same mappings. Retain both routes while installing each interface once.
             if (input.Unregister)
             {
-                if (ReferenceEquals(_pressedInput, input))
-                    ClearPointerPress();
                 if (!_registeredInputs.Remove(input))
                     return;
+                List<Exception>? failures = null;
+                if (ReferenceEquals(_pressedInput, input))
+                    TryInputCleanup(() => ClearPointerPress(), ref failures);
+                TryInputCleanup(() => RegisterInputMappings(input), ref failures);
+                TryInputCleanup(ReconcileFocusedComponent, ref failures);
+                ThrowInputCleanupFailures(failures);
+                return;
             }
             else if (!_registeredInputs.Add(input))
                 return;
 
+            RegisterInputMappings(input);
+            ReconcileFocusedComponent();
+        }
+
+        private void RegisterInputMappings(InputInterface input)
+        {
+            if (input.Unregister)
+            {
+                UnregisterInputMappings(input);
+                return;
+            }
             input.RegisterMouseMove(MouseMove, EMouseMoveType.Absolute);
             input.RegisterMouseScroll(OnMouseScroll);
             input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed, OnMouseInteractButtonDown);
@@ -316,12 +336,53 @@ namespace XREngine.Components
             input.RegisterButtonEvent(EGamePadButton.DPadDown, EButtonInputType.Pressed, OnDPadDown);
             input.RegisterButtonEvent(EGamePadButton.DPadLeft, EButtonInputType.Pressed, OnDPadLeft);
             input.RegisterButtonEvent(EGamePadButton.DPadRight, EButtonInputType.Pressed, OnDPadRight);
-            ReconcileFocusedComponent();
+        }
+
+        private void UnregisterInputMappings(InputInterface input)
+        {
+            List<Exception>? failures = null;
+            TryInputCleanup(() => input.RegisterMouseMove(MouseMove, EMouseMoveType.Absolute), ref failures);
+            TryInputCleanup(() => input.RegisterMouseScroll(OnMouseScroll), ref failures);
+            TryInputCleanup(() => input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Pressed,
+                OnMouseInteractButtonDown), ref failures);
+            TryInputCleanup(() => input.RegisterMouseButtonEvent(EMouseButton.LeftClick, EButtonInputType.Released,
+                OnMouseInteractButtonUp), ref failures);
+            TryInputCleanup(() => input.RegisterMouseButtonEvent(EMouseButton.RightClick, EButtonInputType.Pressed,
+                OnMouseRightButtonDown), ref failures);
+            TryInputCleanup(() => input.RegisterKeyStateChange(EKey.ControlLeft, OnCtrlLeftStateChanged), ref failures);
+            TryInputCleanup(() => input.RegisterKeyStateChange(EKey.ControlRight, OnCtrlRightStateChanged), ref failures);
+            TryInputCleanup(() => input.RegisterKeyStateChange(EKey.ShiftLeft, OnShiftLeftStateChanged), ref failures);
+            TryInputCleanup(() => input.RegisterKeyStateChange(EKey.ShiftRight, OnShiftRightStateChanged), ref failures);
+            TryInputCleanup(() => input.RegisterKeyStateChange(EKey.AltLeft, OnAltLeftStateChanged), ref failures);
+            TryInputCleanup(() => input.RegisterKeyStateChange(EKey.AltRight, OnAltRightStateChanged), ref failures);
+            TryInputCleanup(() => input.RegisterKeyStateChange(EKey.Escape, OnEscapeStateChanged), ref failures);
+            TryInputCleanup(() => input.RegisterKeyStateChange(EKey.Tab, OnTabStateChanged), ref failures);
+            TryInputCleanup(() => input.RegisterButtonEvent(EGamePadButton.FaceDown, EButtonInputType.Pressed,
+                OnGamepadInteractButtonDown), ref failures);
+            TryInputCleanup(() => input.RegisterButtonEvent(EGamePadButton.FaceDown, EButtonInputType.Released,
+                OnGamepadInteractButtonUp), ref failures);
+            TryInputCleanup(() => input.RegisterButtonEvent(EGamePadButton.FaceRight, EButtonInputType.Pressed,
+                OnGamepadBackButtonDown), ref failures);
+            TryInputCleanup(() => input.RegisterButtonEvent(EGamePadButton.FaceRight, EButtonInputType.Released,
+                OnGamepadBackButtonUp), ref failures);
+            TryInputCleanup(() => input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickX, OnLeftStickX, false),
+                ref failures);
+            TryInputCleanup(() => input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickY, OnLeftStickY, false),
+                ref failures);
+            TryInputCleanup(() => input.RegisterButtonEvent(EGamePadButton.DPadUp, EButtonInputType.Pressed,
+                OnDPadUp), ref failures);
+            TryInputCleanup(() => input.RegisterButtonEvent(EGamePadButton.DPadDown, EButtonInputType.Pressed,
+                OnDPadDown), ref failures);
+            TryInputCleanup(() => input.RegisterButtonEvent(EGamePadButton.DPadLeft, EButtonInputType.Pressed,
+                OnDPadLeft), ref failures);
+            TryInputCleanup(() => input.RegisterButtonEvent(EGamePadButton.DPadRight, EButtonInputType.Pressed,
+                OnDPadRight), ref failures);
+            ThrowInputCleanupFailures(failures);
         }
 
         private void OnMouseScroll(float diff)
         {
-            if (MathF.Abs(diff) <= float.Epsilon)
+            if (_inputDeactivating || _inputTerminal || MathF.Abs(diff) <= float.Epsilon)
                 return;
 
             if (RefreshPresentedInput() is not { } publication)
@@ -405,10 +466,15 @@ namespace XREngine.Components
         private readonly Dictionary<long, UIHitRecord> _inputRecords = [];
 
         private void MouseMove(float x, float y)
-            => _cursorOutputPosition = new Vector2(x, y);
+        {
+            if (!_inputDeactivating && !_inputTerminal)
+                _cursorOutputPosition = new Vector2(x, y);
+        }
 
         private void CollectVisible()
         {
+            if (_inputDeactivating || _inputTerminal)
+                return;
             UIElementIntersections.Clear();
             UIPublication? publication = RefreshPresentedInput();
             if (publication is null)
@@ -451,6 +517,8 @@ namespace XREngine.Components
 
         private UIPublication? RefreshPresentedInput()
         {
+            if (_inputDeactivating || _inputTerminal)
+                return null;
             UICanvasComponent? canvas = GetCameraCanvas();
             object? output = OwningPawn?.Viewport ?? (object?)canvas;
             UIPublication? publication = canvas is { IsActiveInHierarchy: true } && output is not null &&
@@ -556,6 +624,8 @@ namespace XREngine.Components
 
         private void SwapBuffers()
         {
+            if (_inputDeactivating || _inputTerminal)
+                return;
             using IDisposable? sample = RuntimeRenderingHostServices.Current.StartProfileScope("UICanvasInputComponent.SwapBuffers");
 
             // If any intersected element has BlocksInputBehind, remove items not in its subtree.
@@ -675,7 +745,7 @@ namespace XREngine.Components
 
         private void OnGamepadInteractButtonDown()
         {
-            if (IsVirtualGamepadDispatch)
+            if (_inputDeactivating || _inputTerminal || IsVirtualGamepadDispatch)
                 return;
             if (FocusedComponent is { } target && IsPointerTargetEligible(target))
                 target.OnInteract();
@@ -687,6 +757,8 @@ namespace XREngine.Components
 
         private void OnMouseInteractButtonDown()
         {
+            if (_inputDeactivating || _inputTerminal)
+                return;
             ulong startingEpoch = _nextPointerPressEpoch;
             ClearPointerPress();
             if (_nextPointerPressEpoch != startingEpoch || IsVirtualMouseConsumed)
@@ -753,6 +825,8 @@ namespace XREngine.Components
         }
         private void OnMouseInteractButtonUp()
         {
+            if (_inputDeactivating || _inputTerminal)
+                return;
             UIInteractableComponent? pressed = _pressedTarget;
             bool validOwner = HasCurrentPointerPressOwner();
             if (!validOwner || pressed is null || IsVirtualMouseConsumed || IsTouchMouseCancelled)
@@ -934,6 +1008,8 @@ namespace XREngine.Components
 
         private void OnMouseRightButtonDown()
         {
+            if (_inputDeactivating || _inputTerminal)
+                return;
             var target = FindMouseInteractTarget();
             if (target is not null && IsPointerTargetEligible(target))
                 RightClick?.Invoke(target);
@@ -944,20 +1020,20 @@ namespace XREngine.Components
         private bool _shiftLeft, _shiftRight;
         private bool _altLeft, _altRight;
 
-        private void OnCtrlLeftStateChanged(bool pressed)  { _ctrlLeft = pressed;  IsCtrlHeld = _ctrlLeft || _ctrlRight; }
-        private void OnCtrlRightStateChanged(bool pressed) { _ctrlRight = pressed; IsCtrlHeld = _ctrlLeft || _ctrlRight; }
-        private void OnShiftLeftStateChanged(bool pressed)  { _shiftLeft = pressed;  IsShiftHeld = _shiftLeft || _shiftRight; }
-        private void OnShiftRightStateChanged(bool pressed) { _shiftRight = pressed; IsShiftHeld = _shiftLeft || _shiftRight; }
-        private void OnAltLeftStateChanged(bool pressed)  { _altLeft = pressed;  IsAltHeld = _altLeft || _altRight; }
-        private void OnAltRightStateChanged(bool pressed) { _altRight = pressed; IsAltHeld = _altLeft || _altRight; }
+        private void OnCtrlLeftStateChanged(bool pressed)  { if (!_inputDeactivating && !_inputTerminal) { _ctrlLeft = pressed;  IsCtrlHeld = _ctrlLeft || _ctrlRight; } }
+        private void OnCtrlRightStateChanged(bool pressed) { if (!_inputDeactivating && !_inputTerminal) { _ctrlRight = pressed; IsCtrlHeld = _ctrlLeft || _ctrlRight; } }
+        private void OnShiftLeftStateChanged(bool pressed)  { if (!_inputDeactivating && !_inputTerminal) { _shiftLeft = pressed;  IsShiftHeld = _shiftLeft || _shiftRight; } }
+        private void OnShiftRightStateChanged(bool pressed) { if (!_inputDeactivating && !_inputTerminal) { _shiftRight = pressed; IsShiftHeld = _shiftLeft || _shiftRight; } }
+        private void OnAltLeftStateChanged(bool pressed)  { if (!_inputDeactivating && !_inputTerminal) { _altLeft = pressed;  IsAltHeld = _altLeft || _altRight; } }
+        private void OnAltRightStateChanged(bool pressed) { if (!_inputDeactivating && !_inputTerminal) { _altRight = pressed; IsAltHeld = _altLeft || _altRight; } }
         private void OnEscapeStateChanged(bool pressed)
         {
-            if (pressed)
+            if (pressed && !_inputDeactivating && !_inputTerminal)
                 EscapePressed?.Invoke();
         }
         protected virtual void OnGamepadBackButtonDown()
         {
-            if (IsVirtualGamepadDispatch)
+            if (_inputDeactivating || _inputTerminal || IsVirtualGamepadDispatch)
                 return;
             UIInteractableComponent? target = FocusedComponent;
             if (target is not null && IsPointerTargetEligible(target))
@@ -979,6 +1055,8 @@ namespace XREngine.Components
         /// </summary>
         protected virtual void OnInteract()
         {
+            if (_inputDeactivating || _inputTerminal)
+                return;
             if (FocusedComponent is { } target && IsPointerTargetEligible(target))
                 target.OnInteract();
         }
@@ -995,7 +1073,8 @@ namespace XREngine.Components
 
         private void MoveFocus(Vector2? direction, bool reverse = false)
         {
-            if (IsVirtualGamepadDispatch || RefreshPresentedInput() is not { } publication)
+            if (_inputDeactivating || _inputTerminal || IsVirtualGamepadDispatch ||
+                RefreshPresentedInput() is not { } publication)
                 return;
             try
             {
@@ -1022,57 +1101,66 @@ namespace XREngine.Components
             finally { publication.Release(); }
         }
 
-        private bool _subscribedToTimer;
+        private IRuntimeRenderSchedulingServices? _viewportSubscriptionHost;
+        private bool _subscribedToCollect;
+        private bool _subscribedToSwap;
         protected override void OnComponentActivated()
         {
-            _inputDeactivating = false;
-            base.OnComponentActivated();
-            LinkOwningPawn();
-            GetCameraCanvas()?.CanvasTransform.InvalidateLayout();
-            if (!_subscribedToTimer)
+            if (_inputCleanupActive)
             {
-                RuntimeRenderingHostServices.Current.SubscribeViewportCollectVisible(CollectVisible);
-                RuntimeRenderingHostServices.Current.SubscribeViewportSwapBuffers(SwapBuffers);
-                _subscribedToTimer = true;
+                _inputActivationDeferred = true;
+                return;
+            }
+            if (_inputTerminal || IsDestroyed || IsDestroyQueued)
+                return;
+            _inputDeactivating = false;
+            long lifecycle = _inputLifecycleRevision;
+            try
+            {
+                base.OnComponentActivated();
+                if (!OwnsInputActivation(lifecycle))
+                    return;
+                LinkOwningPawn();
+                if (!OwnsInputActivation(lifecycle))
+                    return;
+                GetCameraCanvas()?.CanvasTransform.InvalidateLayout();
+                if (!OwnsInputActivation(lifecycle))
+                    return;
+                if (_viewportSubscriptionHost is null)
+                {
+                    IRuntimeRenderSchedulingServices host = RuntimeRenderingHostServices.Current;
+                    _viewportSubscriptionHost = host;
+                    _subscribedToCollect = true;
+                    host.SubscribeViewportCollectVisible(CollectVisible);
+                    if (!OwnsInputActivation(lifecycle))
+                        return;
+                    _subscribedToSwap = true;
+                    host.SubscribeViewportSwapBuffers(SwapBuffers);
+                }
+            }
+            catch
+            {
+                try { TeardownInputOwners(); }
+                catch { /* Keep the activation failure as the primary error. */ }
+                throw;
             }
         }
+        private bool OwnsInputActivation(long lifecycle)
+            => !_inputDeactivating && !_inputTerminal && !_inputCleanupActive &&
+                !IsDestroyed && !IsDestroyQueued && IsActiveInHierarchy &&
+                _inputLifecycleRevision == lifecycle;
         protected override void OnComponentDeactivated()
         {
-            _inputDeactivating = true;
-            _inputLifecycleRevision++;
-            ClearPointerPress();
-            FocusedComponent = null;
-            RetireImeSession();
-            UnlinkOwningPawn();
-            UnregisterCanvasInputs();
-            UpdateImeFocusTarget();
-            for (int index = 0; index < LastUIElementIntersections.Count; index++)
-                if (LastUIElementIntersections[index].Owner is UIInteractableComponent interactable)
-                {
-                    interactable.IsMouseOver = false;
-                    interactable.IsMouseDirectlyOver = false;
-                }
-            LastUIElementIntersections.Clear();
-            UIElementIntersections.Clear();
-            _lastIntersectionIdentities.Clear();
-            _currentIntersectionIdentities.Clear();
-            _inputRecords.Clear();
-            ClearPendingVirtualFocus();
-            UIPublication? oldInputPublication = _inputPublication;
-            _inputPublication = null;
-            oldInputPublication?.Release();
-            SynchronizeFocusScope(null);
-            _queriedCanvasLifetime = 0;
-            _queriedHitGeneration = 0;
-            TopMostElement = null;
-            TopMostInteractable = null;
-            base.OnComponentDeactivated();
-            if (_subscribedToTimer)
+            List<Exception>? failures = null;
+            TryInputCleanup(TeardownInputOwners, ref failures);
+            TryInputCleanup(() => base.OnComponentDeactivated(), ref failures);
+            if (_inputActivationDeferred)
             {
-                RuntimeRenderingHostServices.Current.UnsubscribeViewportCollectVisible(CollectVisible);
-                RuntimeRenderingHostServices.Current.UnsubscribeViewportSwapBuffers(SwapBuffers);
-                _subscribedToTimer = false;
+                _inputActivationDeferred = false;
+                if (!_inputTerminal && IsActiveInHierarchy && !IsDestroyed && !IsDestroyQueued)
+                    TryInputCleanup(OnComponentActivated, ref failures);
             }
+            ThrowInputCleanupFailures(failures);
         }
 
         protected void OnChildAdded(UIComponent child)

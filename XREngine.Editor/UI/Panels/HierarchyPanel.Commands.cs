@@ -47,55 +47,6 @@ public partial class HierarchyPanel
         }, () => IsCurrentHierarchyWorld(world));
     }
 
-    // Inline rename.
-
-    private void BeginRename(SceneNode? node)
-    {
-        if (!CanUseHierarchy || node is null)
-            return;
-
-        _nodePendingRename = node;
-        ShowVirtualRename(node);
-        SaveHierarchyState();
-    }
-
-    private void ApplyRename(UITextInputComponent input)
-    {
-        if (!CanUseHierarchy || _nodePendingRename is null)
-            return;
-
-        string newName = input.Text?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(newName))
-            newName = SceneNode.DefaultName;
-
-        var node = _nodePendingRename;
-        _nodePendingRename = null;
-        SaveHierarchyState();
-
-        if (TryGetActiveWorld() is not { } world || !IsCurrentHierarchyWorld(world) ||
-            !IsLiveHierarchyNode(node, world))
-            return;
-
-        EnqueueSceneEdit(() =>
-        {
-            if (!IsCurrentHierarchyWorld(world) || !IsLiveHierarchyNode(node, world))
-                return;
-            using var _ = Undo.TrackChange("Rename Node", node);
-            node.Name = newName;
-            MarkSceneHierarchyDirty(node, world);
-            RenameVirtualNode(node, newName);
-        });
-    }
-
-    private void CancelRename()
-    {
-        if (!CanUseHierarchy)
-            return;
-        _nodePendingRename = null;
-        SaveHierarchyState();
-        RefreshVisibleRenameRows();
-    }
-
     // Dirty tracking helpers.
 
     private static void MarkSceneHierarchyDirty(SceneNode? node, RuntimeWorld world)

@@ -632,6 +632,49 @@ controls use `Overlay`; virtual text rows use `ScrollingContent`. These owners
 preserve contiguous painter boundaries. They do not prove native command reuse
 or complete isolation for every editor control.
 
+The control composition fixture uses real text fields, caret and selection
+overlays, hover buttons, and recycled list rows. It compares unchanged chrome
+span identities, revisions, records, passes, and painter order across control
+updates. This checks retained-record invalidation. Native command reuse and
+measured GPU work remain separate contracts.
+
+When topology changes the node count, the layout worker recomputes its output
+instead of using cached branch skips. The output builder cannot seed pages of
+a different length. Reusing an unchanged branch without those seeded values
+would publish zero size and false visibility for that branch. Same-size input
+updates retain the existing identity and revision checks for incremental reuse.
+
+`UIVirtualTreeRowButtonComponent` adds keyboard and DPad navigation to provider
+rows. A request carries the exact list, provider incarnation, stable item ID,
+row lease, canvas lifetime, and focus scope. Input waits for a matching presented
+hit record before moving focus. Provider replacement, recycling, modal changes,
+or destruction cancel stale requests. Navigation handlers are cached per row.
+The hierarchy accepts keyboard selection only during that exact focus dispatch;
+a cancelled request cannot change a later pointer selection.
+
+Hierarchy source bindings retain the exact node, transform child list, and scene
+callbacks. Name, active state, and scene metadata changes refresh realized rows.
+Transform replacement retires old listeners before topology is read again. Live
+world roots and the existing editor scene are distinct sources. Rename sessions
+retain their draft across row rebinds. `HierarchySceneOwnership` resolves the
+authored scene first, then the exact world's editor scene; detached Undo checks
+both. Mutations that must preserve dual scene membership remain open.
+
+Direct component destruction releases radio membership, slider and color
+bindings, text editing callbacks, and canvas input owners. Binding callbacks
+carry a source revision, so queued delivery from an old source cannot update a
+replacement. Teardown captures owners before callbacks and attempts the remaining
+releases when one callback throws. Text fields queue only their own edit-overlay
+nodes for destruction; ordinary deactivation keeps those nodes for reuse.
+
+`UIWorldCollectPacketSet` bounds a world collection selection to 64 canvases and
+four reusable slots. A generation-checked reader claim spans each collection
+traversal. The last release marks a slot as retiring before it releases packet
+claims; producers cannot reuse that slot during callback reentry. World close,
+disposal, and swap use one ownership gate. This is collection infrastructure:
+frozen direct-world rendering and input promotion remain disabled until native
+output completion is connected.
+
 `SceneViewPanel` resolves a camera from its exact window and runtime world. It
 rejects foreign cameras and callback replacement of an admitted binding.
 `XRViewport.DetachSceneBinding` clears camera, world, and window owners before

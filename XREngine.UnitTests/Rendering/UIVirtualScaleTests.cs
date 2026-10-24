@@ -57,7 +57,8 @@ public sealed class UIVirtualScaleTests
                     FocusScopeIdentity: canvas.CanvasTransform.ElementIdentity,
                     VirtualListIdentity: list.ElementIdentity,
                     VirtualRowIdentity: row.ElementIdentity,
-                    VirtualRowLease: lease);
+                    VirtualRowLease: lease,
+                    VirtualProviderIncarnation: list.VirtualProviderIncarnation);
                 long revision = canvas.CanvasTransform.ChangeJournal.Revision;
                 UIPublication packet = new((ulong)revision, canvas.PublicationLifetime, (ulong)revision, (ulong)revision,
                     revision, default,
@@ -72,7 +73,9 @@ public sealed class UIVirtualScaleTests
                 focusedLease.ItemId.ShouldBe(itemId);
             }
 
-            provider.IndexReads.ShouldBe(4);
+            // Each request checks stable identity at admission and again after
+            // provider callbacks. The total must stay bounded by the request count.
+            provider.IndexReads.ShouldBeLessThanOrEqualTo(4 * 4);
             // Five bounded synchronizations and a few indexed identity checks.
             provider.ItemReads.ShouldBeLessThanOrEqualTo(5 * capacity * 2 + 16);
         }

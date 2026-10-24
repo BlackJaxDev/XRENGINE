@@ -29,7 +29,8 @@ public readonly record struct UIHitRecord(
     UIElementIdentity VirtualListIdentity = default,
     UIElementIdentity VirtualRowIdentity = default,
     UIVirtualRowLease VirtualRowLease = default,
-    UIPointerGeometry PointerGeometry = default)
+    UIPointerGeometry PointerGeometry = default,
+    ulong VirtualProviderIncarnation = 0)
 {
     /// <summary>Tests the frozen shape and clip in canvas coordinates.</summary>
     public bool Contains(Vector2 canvasPoint)

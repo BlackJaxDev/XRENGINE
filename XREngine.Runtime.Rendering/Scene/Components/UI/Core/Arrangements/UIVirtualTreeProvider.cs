@@ -58,6 +58,25 @@ namespace XREngine.Rendering.UI
             => _visibleIndexById.TryGetValue(id, out int index) ? index : -1;
         public bool TryGetIndexOfItemId(ulong itemId, out int index)
             => _visibleIndexById.TryGetValue(itemId, out index);
+        /// <summary>Finds a neighboring visible item in constant time without visiting tree nodes.</summary>
+        public bool TryGetAdjacentVisible(ulong itemId, int delta, out ulong targetId)
+        {
+            targetId = 0;
+            if (delta is not (-1 or 1) || !_visibleIndexById.TryGetValue(itemId, out int index))
+                return false;
+            int targetIndex = index + delta;
+            if ((uint)targetIndex >= (uint)_visible.Count)
+                return false;
+            targetId = _visible[targetIndex];
+            return true;
+        }
+
+        /// <summary>Gets the first or last visible item without enumerating the tree.</summary>
+        public bool TryGetVisibleEdge(bool first, out ulong targetId)
+        {
+            targetId = _visible.Count == 0 ? 0 : _visible[first ? 0 : _visible.Count - 1];
+            return targetId != 0;
+        }
         public UIBoundableTransform CreateRow() => _createRow();
         public void BindRow(UIBoundableTransform row, int index, ulong itemId, ulong incarnation)
             => _bindRow(row, _nodes[itemId], index, incarnation);

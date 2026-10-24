@@ -910,3 +910,106 @@ execution and the native graphics checks remain unavailable here.
 Desktop test compilation 15 passed with zero warnings/errors in 57.51s. No
 desktop tests executed. All 37 local links in the changed documents resolve,
 the whitespace check passes, and the 10,394-file final snapshot is unchanged.
+
+## Tree Navigation And Collect-Generation Ownership
+
+The next integration adds shared stable-ID tree navigation and exact pending
+focus ownership. A request must survive scrolling, provider replacement, and
+modal changes without selecting a different incarnation of the same ID. Real
+text input, caret, selection, hover, and scrolling fixtures now check retained
+chrome composition. Their results are pending compilation and execution.
+
+Radio, slider, color, text, and canvas-input teardown require direct-destruction
+paths in addition to deactivation. The review checks exact stored owners,
+public property notifications, stale binding delivery, and callback reactivation.
+Stopping at the first callback exception would leave later subscriptions live.
+
+The inactive world route now has a bounded collect-generation packet-set change
+under review. Review found early reusable-slot publication, borrowed collection
+reads, close/swap races, and missing source-world identity. The repairs retain a
+generation-checked set for each traversal, defer reuse until retirement finishes,
+and share the lifecycle gate for transfer and teardown. A production traversal
+regression clears the source pointer during culling and checks that the retained
+selection remains valid. This is not world output activation: per-output native
+receipts, target recovery, frozen camera mapping, and shadow policy stay open.
+
+Headless build 84 failed in 2m34.94s with one CS0136 error and zero warnings.
+The radio group used `revision` in conflicting local scopes. The repair names
+the selection revision separately. No tests ran against that failed build.
+
+Further review found two tree navigation ownership gaps. A callback could
+replace the exact list/provider while retaining equal numeric lease values.
+Also, a cancelled keyboard-focus request could leave a panel item ID that later
+changed a pointer selection. The repairs compare captured owners after callbacks
+and expose the exact accepted virtual-focus dispatch to the hierarchy panel.
+
+Headless build 85 compiled the runtime projects, then failed test compilation
+in 1m25.49s. Ten errors came from missing `XREngine.Components` imports in
+two lifetime fixtures. One nullable warning came from a sibling text value.
+The fixtures now import that namespace and retain the nullable value correctly.
+
+Headless build 86 passed with zero warnings/errors in 15.61s. Full run 50
+passed 605 of 615 tests, with ten failures and zero warnings/skips, in 15.347s.
+Failures covered two composition fixtures, three input-host lifetime fixtures,
+one color-binding fixture, one text-binding replacement, two virtual-list
+lookup-count assertions, and one tree lease-collision fixture. The new world
+collection ownership tests passed. This result does not establish acceptance;
+the failing behaviors and fixture assumptions remain under correction.
+
+The text failure was a production defect: a global write guard suppressed a
+new binding's initial value during an old binding's write. The guard now records
+the exact writing source and restores nested write ownership in `finally`.
+Fixture repairs isolate input-owned callbacks, construct a true equal-lease
+collision, allow bounded constant-time identity lookups, and wait for a current
+layout/publication instead of requiring a new worker completion.
+
+Build 87 passed with zero warnings/errors in 1m10.25s. A composition fixture
+changed during that build after its initial freeze. Build 88 repeats compilation
+against the final frozen snapshot before the next test run; build 87 alone is
+not used as evidence for that snapshot.
+
+Build 88 passed with zero warnings/errors in 10.75s. Full run 51 passed
+613 of 615 tests in 17.171s, with no warnings/skips. Only the two new real-control
+composition fixtures failed. Diagnostic builds 89–92 passed; focused runs 52–55
+reproduced both failures. The chrome node remained registered, but its accepted
+layout output had zero size and false visibility after a caret child was added.
+
+The output builder drops prior pages when the node count changes. The kernel
+still used prior cache skips, leaving unchanged nodes unwritten. `RunPasses` now
+clears both prior snapshot/output inputs for that case. A direct insertion and
+removal regression covers the lost sibling. Same-size topology keeps identity
+and revision validation. A separate source review confirmed this bounded fix.
+
+Build 93 passed with zero warnings/errors in 1m17.63s. Focused run 56 passed
+37 of 39 tests; all kernel checks passed and chrome remained present. The two
+fixture actions still needed real visible changes: collapse the caret before
+selecting text, and paint recycled rows differently by stable item identity.
+Build 94 passed; run 57 passed 38 of 39. Final build 95 passed with zero warnings
+and errors; focused run 58 passed 39 of 39, with no skips. Temporary diagnostics
+are removed. The final full-suite snapshot contains 10,415 source/project/shader
+files. No further source changes are allowed during final validation.
+
+Full run 59 passed 616 of 616 tests with zero warnings/skips in 11.988s. Final
+headless build 95 passed in 18.25s with zero warnings/errors. The source snapshot
+contains 10,415 files. Editor build 37 follows. The hierarchy also gained exact
+editor-scene fallback ownership and detached Undo membership checks; its desktop
+workflow tests have not executed here. Hidden-scene and dual-membership action
+parity remain open, as do broader inspector collection mutations and teardown.
+
+Editor build 37 passed with zero warnings/errors in 3m03.39s. Desktop test
+compilation 16 follows. No Windows execution or visual acceptance is implied.
+
+Desktop compilation 16 failed in 59.45s with one CS9174 error and zero warnings.
+The hierarchy workflow fixture used a collection expression for a
+`ReadOnlyMemory<UIElementIdentity>` argument. An explicit array fixes the argument.
+Only `NativeHierarchyWorkflowTests.cs` changed after the headless/editor snapshot;
+it is outside both project inputs. The final source hash record keeps this exact
+difference. Desktop compilation 17 validates the corrected fixture.
+
+Desktop compilation 17 passed with zero warnings/errors in 44.86s. No desktop
+tests executed. Headless/runtime inputs are unchanged from run 59 and editor
+build 37. Source and document checks precede publication.
+
+Final verification confirms all 10,415 source hashes and 35 local documentation
+links. Whitespace checks pass. Author and committer identities match the existing
+configuration. The remote branch still points to the prior published checkpoint.

@@ -69,6 +69,13 @@ internal static class UILayoutValueKernel
     {
         if (nodes.Length == 0)
             return new UILayoutOutputPageBuilder(0).Freeze();
+        // A changed topology cannot seed output pages by the old node indices.
+        // Recompute every node before an unchanged branch can reuse its old value.
+        if (previousOutputs is not null && previousOutputs.Length != nodes.Length)
+        {
+            previous = null;
+            previousOutputs = null;
+        }
         if (current is not null)
         {
             foreach (int i in current.TextIndices)

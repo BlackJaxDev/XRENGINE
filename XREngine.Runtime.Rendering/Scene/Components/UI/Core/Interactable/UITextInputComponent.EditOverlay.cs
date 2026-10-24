@@ -9,6 +9,7 @@ namespace XREngine.Rendering.UI;
 public partial class UITextInputComponent
 {
     private UIBoundableTransform? _caretOverlay;
+    private readonly Dictionary<UIBoundableTransform, SceneNode> _ownedEditOverlays = [];
     private readonly List<UIBoundableTransform> _selectionOverlays = [];
     private UITextLayoutResult? _overlayLayout;
     private int _overlayCaret = -1;
@@ -19,6 +20,12 @@ public partial class UITextInputComponent
     /// <summary>Gets the caret overlay key for lookup in a presented UI packet.</summary>
     public bool TryGetCaretOverlayPublicationKey(out long membershipId, out UIElementIdentity identity)
     {
+        if (_terminal)
+        {
+            membershipId = 0;
+            identity = default;
+            return false;
+        }
         UIBoundableTransform? overlay = _caretOverlay;
         UIMaterialComponent? material = overlay?.SceneNode?.GetComponent<UIMaterialComponent>();
         if (overlay is null || overlay.IsDestroyed || material is null || material.IsDestroyed)
@@ -34,7 +41,7 @@ public partial class UITextInputComponent
 
     private void StartEditOverlay()
     {
-        if (SceneNode is null || _overlayTickRegistered)
+        if (_terminal || !IsActiveInHierarchy || SceneNode is null || _overlayTickRegistered)
             return;
         _overlayTickRegistered = true;
         RegisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateEditOverlay);
@@ -44,23 +51,61 @@ public partial class UITextInputComponent
 
     private void StopEditOverlay()
     {
+        KeyValuePair<UIBoundableTransform, SceneNode>[]? retiredOverlays = null;
+        if (_terminal)
+        {
+            retiredOverlays = [.. _ownedEditOverlays];
+            _ownedEditOverlays.Clear();
+            _caretOverlay = null;
+            _selectionOverlays.Clear();
+        }
+        Exception? failure = null;
         if (_overlayTickRegistered)
         {
             _overlayTickRegistered = false;
-            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateEditOverlay);
+            try { UnregisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateEditOverlay); }
+            catch (Exception error) { failure = error; }
         }
-        if (_caretOverlay is not null)
-            _caretOverlay.Visibility = EVisibility.Collapsed;
-        foreach (UIBoundableTransform overlay in _selectionOverlays)
-            overlay.Visibility = EVisibility.Collapsed;
+        if (_terminal)
+        {
+            if (retiredOverlays is not null)
+                foreach (KeyValuePair<UIBoundableTransform, SceneNode> entry in retiredOverlays)
+                    failure = RetireEditOverlay(entry.Key, entry.Value, failure);
+        }
+        else
+        {
+            if (_caretOverlay is not null)
+                try { _caretOverlay.Visibility = EVisibility.Collapsed; }
+                catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            foreach (UIBoundableTransform overlay in _selectionOverlays)
+                try { overlay.Visibility = EVisibility.Collapsed; }
+                catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+        }
         InvalidateEditOverlay();
+        if (failure is not null)
+            throw failure;
+    }
+
+    private static Exception? RetireEditOverlay(UIBoundableTransform? overlay, SceneNode? owner,
+        Exception? failure)
+    {
+        if (overlay is null)
+            return failure;
+        try { if (!overlay.IsDestroyed) overlay.Visibility = EVisibility.Collapsed; }
+        catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+        SceneNode? node = overlay.SceneNode;
+        if (node is not null && !node.IsDestroyed && !node.IsDestroyQueued &&
+            ReferenceEquals(node.Parent, owner) && ReferenceEquals(node.Transform, overlay))
+            try { node.Destroy(false); }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+        return failure;
     }
 
     private void InvalidateEditOverlay() => _overlayLayout = null;
 
     private void UpdateEditOverlay()
     {
-        if (!IsFocused || !IsActiveInHierarchy || SceneNode is null ||
+        if (_terminal || IsDestroyed || IsDestroyQueued || !IsFocused || !IsActiveInHierarchy || SceneNode is null ||
             !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult layout))
             return;
         if (ReferenceEquals(layout, _overlayLayout) && _overlayCaret == CursorPosition &&
@@ -134,8 +179,10 @@ public partial class UITextInputComponent
     {
         if (overlay is null)
         {
-            SceneNode visual = new(TextComponent.SceneNode!) { Name = name };
+            SceneNode owner = TextComponent.SceneNode!;
+            SceneNode visual = new(owner) { Name = name };
             overlay = visual.SetTransform<UIBoundableTransform>();
+            _ownedEditOverlays.Add(overlay, owner);
             overlay.MinAnchor = Vector2.Zero;
             overlay.MaxAnchor = Vector2.Zero;
             overlay.NormalizedPivot = Vector2.Zero;

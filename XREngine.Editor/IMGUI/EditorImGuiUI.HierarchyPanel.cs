@@ -1734,27 +1734,7 @@ public static partial class EditorImGuiUI
     }
 
     private static XRScene? FindSceneForNode(SceneNode? node, RuntimeWorld? world)
-    {
-        if (node is null)
-            return null;
-
-        var instance = world ?? TryGetActiveWorldInstance();
-        var targetWorld = instance?.TargetWorld;
-        if (targetWorld is null)
-            return null;
-
-        SceneNode? root = GetHierarchyRoot(node);
-        if (root is null)
-            return null;
-
-        foreach (var scene in targetWorld.Scenes)
-        {
-            if (scene.RootNodes.Contains(root))
-                return scene;
-        }
-
-        return null;
-    }
+        => HierarchySceneOwnership.FindOwningScene(node, world ?? TryGetActiveWorldInstance());
 
     private static SceneNode? GetHierarchyRoot(SceneNode node)
     {
