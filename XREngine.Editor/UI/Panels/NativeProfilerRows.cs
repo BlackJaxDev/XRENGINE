@@ -75,6 +75,8 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
             NativeProfilerRootAggregate root = _roots[index];
             if (root.Kind != kind || !string.Equals(root.Name, name, StringComparison.Ordinal))
                 continue;
+            if (root.IsInactive)
+                return false;
             milliseconds = root.TotalMilliseconds;
             return true;
         }
@@ -101,11 +103,14 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         return true;
     }
 
-    public void Request(Frame? frame, bool isWorst = false)
+    public void Request(Frame? frame, bool isWorst = false,
+        DateTime nowUtc = default, float persistenceSeconds = 5f,
+        float updateIntervalSeconds = 0.25f)
     {
         if (_view == ENativeProfilerView.CpuRoots)
         {
-            _roots.Request(frame);
+            _roots.Request(frame, nowUtc == default ? DateTime.UtcNow : nowUtc,
+                persistenceSeconds, updateIntervalSeconds);
             return;
         }
         if (_view != ENativeProfilerView.CpuTimings)
@@ -384,7 +389,8 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         if (rootIndex < _rootOrder.Count)
         {
             NativeProfilerRootAggregate root = _roots[_rootOrder[rootIndex]];
-            return new($"{root.Name} [{root.Kind}]", root.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture),
+            return new($"{root.Name} [{root.Kind}]" + (root.IsInactive ? " (inactive)" : string.Empty),
+                root.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture),
                 $"self {root.SelfMilliseconds:F3} ms | avg {root.TotalMilliseconds / root.Calls:F3} ms | peak {root.PeakMilliseconds:F3} ms | {root.Calls} calls | activate to inspect");
         }
         rootIndex -= _rootOrder.Count;
@@ -404,7 +410,8 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
             return new("Child paths beyond capacity", _roots.SkippedChildPaths.ToString(CultureInfo.InvariantCulture),
                 "The index retains at most 4096 distinct child paths.");
         NativeProfilerRootChildAggregate child = _roots.ChildAt(_rootChildOrder[rootIndex]);
-        return new(Indents[Math.Min(child.Depth, 8)] + child.Name,
+        return new(Indents[Math.Min(child.Depth, 8)] + child.Name +
+            (child.IsInactive ? " (inactive)" : string.Empty),
             child.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture),
             $"self {child.SelfMilliseconds:F3} ms | avg {child.TotalMilliseconds / child.Calls:F3} ms | peak {child.PeakMilliseconds:F3} ms | {child.Calls} calls");
     }

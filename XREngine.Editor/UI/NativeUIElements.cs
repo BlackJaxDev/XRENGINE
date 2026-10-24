@@ -209,6 +209,9 @@ public static class NativeUIElements
         {
             switch (root.Components[index])
             {
+                case InspectorEnumEditorComponent enumEditor:
+                    enumEditor.Bind(property, targets);
+                    break;
                 case UIToggleComponent toggle:
                     toggle.Binding = property is not null && targets is not null
                         ? new EditorTogglePropertyBinding(property, targets) : null;

@@ -230,6 +230,8 @@ public partial class UICanvasComponent
         publication.Retain();
         try
         {
+            using UIWorldRenderAttempt.DrawScope worldDrawScope =
+                UIWorldRenderAttempt.Active?.EnterDraw(command) ?? default;
             if (!publication.AuthoringOffscreen)
             {
                 AbstractRenderer? directRenderer = AbstractRenderer.Current;

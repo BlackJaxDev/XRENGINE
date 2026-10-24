@@ -6,7 +6,7 @@ namespace XREngine.Editor.UI;
 
 /// <summary>Supplies stable enum choices and retained property binding to a virtual combo.</summary>
 internal sealed class EditorEnumPropertyBinding : IUIValueBinding<ulong?>, IUIComboOptionSource,
-    IUIComboPrefixSearch, IUIComboEnabledNavigation
+    IUIComboPrefixSearch, IUIComboEnabledNavigation, IDisposable
 {
     private static readonly ConcurrentDictionary<Type, (Array Values, string[] Names)> Metadata = new();
     private readonly EditorPropertyAccess _access;
@@ -14,10 +14,14 @@ internal sealed class EditorEnumPropertyBinding : IUIValueBinding<ulong?>, IUICo
     private readonly string[] _names;
     private readonly EditorComboPrefixIndex _prefixIndex;
     private Action<ulong?>? _changed;
+    private bool _retired;
+    private readonly Action _validateWrite;
+    internal bool IsRetired => _retired;
 
     public EditorEnumPropertyBinding(PropertyInfo property, object?[] targets)
     {
         _access = new(property, targets);
+        _validateWrite = ValidateWrite;
         (_values, _names) = Metadata.GetOrAdd(property.PropertyType,
             static type => (Enum.GetValues(type), Enum.GetNames(type)));
         _prefixIndex = new EditorComboPrefixIndex(_names);
@@ -41,7 +45,10 @@ internal sealed class EditorEnumPropertyBinding : IUIValueBinding<ulong?>, IUICo
     {
         get
         {
-            if (!_access.TryGetCommonValue(out object? value)) return null;
+            ObjectDisposedException.ThrowIf(_retired, this);
+            bool common = _access.TryGetCommonValue(out object? value);
+            ObjectDisposedException.ThrowIf(_retired, this);
+            if (!common) return null;
             for (int index = 0; index < _values.Length; index++)
                 if (Equals(value, _values.GetValue(index))) return (ulong)index + 1;
             return null;
@@ -52,7 +59,13 @@ internal sealed class EditorEnumPropertyBinding : IUIValueBinding<ulong?>, IUICo
     {
         add
         {
+            ObjectDisposedException.ThrowIf(_retired, this);
             if (_changed is null) _access.Changed += Notify;
+            if (_retired)
+            {
+                _access.Changed -= Notify;
+                throw new ObjectDisposedException(nameof(EditorEnumPropertyBinding));
+            }
             _changed += value;
         }
         remove
@@ -64,9 +77,27 @@ internal sealed class EditorEnumPropertyBinding : IUIValueBinding<ulong?>, IUICo
 
     public void SetValue(ulong? value)
     {
+        ObjectDisposedException.ThrowIf(_retired, this);
         int index = value is { } id ? IndexOfId(id) : -1;
-        if (index >= 0) _access.SetValue(_values.GetValue(index));
+        if (index >= 0) _access.SetValue(_values.GetValue(index), _validateWrite);
     }
 
-    private void Notify() => _changed?.Invoke(Value);
+    private void Notify()
+    {
+        if (_retired) return;
+        ulong? value;
+        try { value = Value; }
+        catch (ObjectDisposedException) when (_retired) { return; }
+        if (!_retired) _changed?.Invoke(value);
+    }
+
+    private void ValidateWrite() => ObjectDisposedException.ThrowIf(_retired, this);
+
+    public void Dispose()
+    {
+        if (_retired) return;
+        _retired = true;
+        _changed = null;
+        _access.Changed -= Notify;
+    }
 }

@@ -34,11 +34,24 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerProjection.cs" Link="Editor/NativeProfilerProjection.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerWorstFrameSelector.cs" Link="Editor/NativeProfilerWorstFrameSelector.cs" />
     <Compile Include="../Editor/NativeProfilerWorstFrameSelectorTests.cs" Link="Editor/NativeProfilerWorstFrameSelectorTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRootAggregator.cs" Link="Editor/NativeProfilerRootAggregator.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRootAggregate.cs" Link="Editor/NativeProfilerRootAggregate.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRootChildAggregate.cs" Link="Editor/NativeProfilerRootChildAggregate.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRows.cs" Link="Editor/NativeProfilerRows.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerDisplayRow.cs" Link="Editor/NativeProfilerDisplayRow.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/ENativeProfilerView.cs" Link="Editor/ENativeProfilerView.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/ENativeProfilerSetting.cs" Link="Editor/ENativeProfilerSetting.cs" />
+    <Compile Include="../Editor/NativeProfilerRootAggregatorTests.cs" Link="Editor/NativeProfilerRootAggregatorTests.cs" />
+    <Compile Include="../Editor/NativeProfilerRowsTests.cs" Link="Editor/NativeProfilerRowsTests.cs" />
+    <Compile Include="../Rendering/UIRecordStoreTests.cs" Link="Rendering/UIRecordStoreTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRowRef.cs" Link="Editor/NativeProfilerRowRef.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerTraversalFrame.cs" Link="Editor/NativeProfilerTraversalFrame.cs" />
     <Compile Include="../Editor/NativeProfilerProjectionTests.cs" Link="Editor/NativeProfilerProjectionTests.cs" />
     <Compile Include="../Editor/ProfilerProjectionTestNode.cs" Link="Editor/ProfilerProjectionTestNode.cs" />
     <Compile Include="../Prefabs/OwnedHierarchyCloneTests.cs" Link="Prefabs/OwnedHierarchyCloneTests.cs" />
+    <Compile Include="../Prefabs/OwnedHierarchyRetirementTests.cs" Link="Prefabs/OwnedHierarchyRetirementTests.cs" />
+    <Compile Include="../Prefabs/OwnedRetirementComponentProbe.cs" Link="Prefabs/OwnedRetirementComponentProbe.cs" />
+    <Compile Include="../Prefabs/OwnedRetirementOverrideTransform.cs" Link="Prefabs/OwnedRetirementOverrideTransform.cs" />
     <Compile Include="../Prefabs/OwnedCloneTransformProbe.cs" Link="Prefabs/OwnedCloneTransformProbe.cs" />
     <Compile Include="../Prefabs/OwnedCloneComponentProbe.cs" Link="Prefabs/OwnedCloneComponentProbe.cs" />
     <Compile Include="../GlobalWorldTypeAliases.cs" Link="GlobalWorldTypeAliases.cs" />

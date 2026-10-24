@@ -52,6 +52,7 @@ internal readonly record struct PendingMeshDraw(
     internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;
     internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }
     internal UIStaticDrawCandidate StaticUiCandidate { get; init; }
+    internal UIPublishedWorldMeshCommand? WorldUiCommand { get; init; }
 
     internal AdvancedGpuSceneDrawIdentity CanonicalDrawIdentity
         => CanonicalDrawIdentitySnapshot.Primary;

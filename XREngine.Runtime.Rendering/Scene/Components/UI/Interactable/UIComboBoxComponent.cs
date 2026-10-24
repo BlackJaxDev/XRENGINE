@@ -169,7 +169,11 @@ namespace XREngine.Rendering.UI
                     }
                 }
                 if (value is not null && OwnsBindingChange(revision))
-                    Select(value.Value, EUIValueChangeOrigin.Binding);
+                {
+                    ulong? selected = value.Value;
+                    if (OwnsBindingChange(revision) && ReferenceEquals(_binding, value))
+                        Select(selected, EUIValueChangeOrigin.Binding);
+                }
             }
         }
 
@@ -398,12 +402,20 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            if (_binding is not null)
+            if (_binding is { } binding)
             {
-                _binding.ValueChanged += OnBindingChanged;
-                Select(_binding.Value, EUIValueChangeOrigin.Binding);
+                ulong revision = _bindingRevision;
+                binding.ValueChanged += OnBindingChanged;
+                if (!OwnsBindingChange(revision) || !ReferenceEquals(_binding, binding) || !IsActiveInHierarchy)
+                    binding.ValueChanged -= OnBindingChanged;
+                if (OwnsBindingChange(revision) && ReferenceEquals(_binding, binding) && IsActiveInHierarchy)
+                {
+                    ulong? selected = binding.Value;
+                    if (OwnsBindingChange(revision) && ReferenceEquals(_binding, binding) && IsActiveInHierarchy)
+                        Select(selected, EUIValueChangeOrigin.Binding);
+                }
             }
-            if (_popup is not null)
+            if (!_tearingDown && !IsDestroyed && IsActiveInHierarchy && _popup is not null)
                 _popup.Dismissed += OnPopupDismissed;
         }
 

@@ -19,9 +19,10 @@ public sealed class NativeProfilerRootAggregatorTests
             new Node("Update", 2, ProfilerScopeKind.Unspecified, []),
             new Node("Update", 3, ProfilerScopeKind.Unspecified, []),
             new Node("Render", 4, ProfilerScopeKind.Unspecified, []));
-        aggregate.Request(first);
+        DateTime start = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        aggregate.Request(first, start, 5f);
         aggregate.Pump(2).ShouldBeFalse();
-        aggregate.Request(first);
+        aggregate.Request(first, start.AddMilliseconds(50), 5f);
         aggregate.LastWorkCount.ShouldBeLessThanOrEqualTo(2);
         aggregate.Count.ShouldBe(0);
         while (!aggregate.Pump(2))
@@ -30,6 +31,9 @@ public sealed class NativeProfilerRootAggregatorTests
         aggregate[0].Calls.ShouldBe(2);
         aggregate[0].TotalMilliseconds.ShouldBe(5);
         aggregate[0].PeakMilliseconds.ShouldBe(3);
+        while (aggregate.IsRetiring)
+            aggregate.Pump(2);
+        aggregate.Request(first, start.AddMilliseconds(100), 5f);
         aggregate.Pump(2).ShouldBeFalse();
         aggregate.LastWorkCount.ShouldBe(0);
 
@@ -88,14 +92,17 @@ public sealed class NativeProfilerRootAggregatorTests
         NativeProfilerRootAggregate firstBuffer = aggregate[0];
         aggregate.Request(Snapshot(2, new Node("B", 3, ProfilerScopeKind.Unspecified, [])));
         Finish(aggregate);
-        aggregate.CreatedAggregateCount.ShouldBe(2);
-        aggregate.Request(Snapshot(3, new Node("C", 4, ProfilerScopeKind.Unspecified, [])));
+        aggregate.Request(Snapshot(3, new Node("A", 4, ProfilerScopeKind.Unspecified, [])));
         Finish(aggregate);
-        aggregate.CreatedAggregateCount.ShouldBe(2);
+        aggregate.CreatedAggregateCount.ShouldBe(4);
         aggregate[0].ShouldBeSameAs(firstBuffer);
-        aggregate[0].Name.ShouldBe("C");
+        aggregate[0].Name.ShouldBe("A");
         aggregate[0].Calls.ShouldBe(1);
         aggregate[0].TotalMilliseconds.ShouldBe(4);
+        aggregate.Request(Snapshot(4, new Node("B", 5, ProfilerScopeKind.Unspecified, [])));
+        Finish(aggregate);
+        aggregate.CreatedAggregateCount.ShouldBe(4);
+        aggregate.Count.ShouldBe(2);
     }
 
     [Test]
@@ -178,6 +185,143 @@ public sealed class NativeProfilerRootAggregatorTests
         rows.GetItem(6).Scope.ShouldContain("Left");
         rows.GetItem(7).Scope.ShouldContain("Work");
         rows.GetItem(9).Scope.ShouldContain("Work");
+    }
+
+    [Test]
+    public void MissingRootAndChildPersistThenExpireWithinThePumpBudget()
+    {
+        NativeProfilerRootAggregator aggregate = new();
+        DateTime start = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Node child = new("Work", 2, ProfilerScopeKind.ConditionalLoop, []);
+        Frame first = Snapshot(20, new Node("Update", 5, ProfilerScopeKind.Unspecified, [child]));
+        aggregate.Request(first, start, 1f);
+        Finish(aggregate);
+        aggregate.Count.ShouldBe(1);
+        aggregate.ChildCount.ShouldBe(1);
+
+        Frame absent = Snapshot(21);
+        aggregate.Request(absent, start.AddMilliseconds(500), 1f);
+        Finish(aggregate);
+        aggregate[0].Name.ShouldBe("Update");
+        aggregate[0].IsInactive.ShouldBeTrue();
+        aggregate[0].TotalMilliseconds.ShouldBe(5);
+        aggregate.ChildAt(0).IsInactive.ShouldBeTrue();
+        aggregate.ChildAt(0).TotalMilliseconds.ShouldBe(2);
+
+        aggregate.Request(absent, start.AddMilliseconds(1001), 1f);
+        Finish(aggregate);
+        aggregate.Count.ShouldBe(0);
+        aggregate.ChildCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void ReappearingRootKeepsKindAndChildParentIdentity()
+    {
+        NativeProfilerRootAggregator aggregate = new();
+        DateTime start = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Node oldChild = new("Work", 1, ProfilerScopeKind.Unspecified, []);
+        aggregate.Request(Snapshot(22,
+            new Node("Root", 4, ProfilerScopeKind.Unspecified, [oldChild]),
+            new Node("Root", 3, ProfilerScopeKind.ConditionalLoop, [])), start, 5f);
+        Finish(aggregate);
+        aggregate.Request(Snapshot(23,
+            new Node("Root", 8, ProfilerScopeKind.Unspecified,
+                [new Node("Other", 2, ProfilerScopeKind.Unspecified, [])])),
+            start.AddSeconds(1), 5f);
+        Finish(aggregate);
+        aggregate.Count.ShouldBe(2);
+        aggregate[0].TotalMilliseconds.ShouldBe(8);
+        aggregate[0].IsInactive.ShouldBeFalse();
+        aggregate[1].Kind.ShouldBe(ProfilerScopeKind.ConditionalLoop);
+        aggregate[1].IsInactive.ShouldBeTrue();
+        aggregate.ChildCount.ShouldBe(2);
+        aggregate.ChildAt(0).Name.ShouldBe("Other");
+        aggregate.ChildAt(1).Name.ShouldBe("Work");
+        aggregate.ChildAt(1).RootIndex.ShouldBe(0);
+        aggregate.ChildAt(1).IsInactive.ShouldBeTrue();
+    }
+
+    [Test]
+    public void PersistenceRefreshKeepsThePublishedIndexUntilComplete()
+    {
+        NativeProfilerRootAggregator aggregate = new();
+        DateTime start = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Node[] roots = Enumerable.Range(0, 300).Select(index =>
+            new Node("Root " + index, 1, ProfilerScopeKind.Unspecified, [])).ToArray();
+        aggregate.Request(Snapshot(24, roots), start, 5f);
+        Finish(aggregate);
+        Frame empty = Snapshot(25);
+        aggregate.Request(empty, start.AddSeconds(1), 5f);
+        aggregate.Pump(7).ShouldBeFalse();
+        aggregate.LastWorkCount.ShouldBeLessThanOrEqualTo(7);
+        aggregate.Count.ShouldBe(300);
+        int pumps = 0;
+        while (!aggregate.Pump(7))
+        {
+            aggregate.LastWorkCount.ShouldBeLessThanOrEqualTo(7);
+            (++pumps).ShouldBeLessThan(1000);
+        }
+        aggregate.Count.ShouldBe(300);
+        aggregate[0].IsInactive.ShouldBeTrue();
+    }
+
+    [Test]
+    public void NewSessionDoesNotCarryOldRoots()
+    {
+        NativeProfilerRootAggregator aggregate = new();
+        DateTime start = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        aggregate.Request(Snapshot(26,
+            new Node("Old", 5, ProfilerScopeKind.Unspecified, [])), start, 5f);
+        Finish(aggregate);
+        Frame newSession = new(16, 2, 1, 0, 1, 1, 0, 0, 0, 0, 0,
+            [new Thread(1, [new Node("New", 2, ProfilerScopeKind.Unspecified, [])])], null);
+        aggregate.Request(newSession, start.AddMilliseconds(100), 5f);
+        Finish(aggregate);
+        aggregate.Count.ShouldBe(1);
+        aggregate[0].Name.ShouldBe("New");
+    }
+
+    [Test]
+    public void RepeatedSnapshotBecomesInactiveOnlyAfterTheUpdateInterval()
+    {
+        NativeProfilerRootAggregator aggregate = new();
+        DateTime start = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Frame frame = Snapshot(27,
+            new Node("Update", 5, ProfilerScopeKind.Unspecified,
+                [new Node("Work", 2, ProfilerScopeKind.Unspecified, [])]));
+        aggregate.Request(frame, start, 5f, 0.25f);
+        Finish(aggregate);
+        while (aggregate.IsRetiring)
+            aggregate.Pump(7);
+        aggregate.Request(frame, start.AddMilliseconds(249), 5f, 0.25f);
+        aggregate.Pump(7).ShouldBeFalse();
+        aggregate.LastWorkCount.ShouldBe(0);
+        aggregate[0].IsInactive.ShouldBeFalse();
+        aggregate.ChildAt(0).IsInactive.ShouldBeFalse();
+        aggregate.Request(frame, start.AddMilliseconds(250), 5f, 0.25f);
+        aggregate.Pump(7).ShouldBeFalse();
+        aggregate.LastWorkCount.ShouldBe(0);
+        aggregate[0].IsInactive.ShouldBeFalse();
+        aggregate.Request(frame, start.AddMilliseconds(251), 5f, 0.25f);
+        Finish(aggregate);
+        aggregate[0].IsInactive.ShouldBeTrue();
+        aggregate.ChildAt(0).IsInactive.ShouldBeTrue();
+    }
+
+    [Test]
+    public void BackwardClockWithSameFrameRebuildsTheCurrentHierarchy()
+    {
+        NativeProfilerRootAggregator aggregate = new();
+        DateTime start = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        Frame frame = Snapshot(28,
+            new Node("Update", 5, ProfilerScopeKind.Unspecified, []));
+        aggregate.Request(frame, start, 5f);
+        Finish(aggregate);
+        aggregate.Request(frame, start.AddMilliseconds(-1), 5f);
+        Finish(aggregate);
+        aggregate.Count.ShouldBe(1);
+        aggregate[0].Name.ShouldBe("Update");
+        aggregate[0].IsInactive.ShouldBeFalse();
     }
 
     private static void Finish(NativeProfilerRootAggregator aggregate)

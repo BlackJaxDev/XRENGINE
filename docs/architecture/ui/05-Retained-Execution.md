@@ -947,8 +947,10 @@ UDP preference, and the configured update interval. Preference writes use the
 same captured owner policy. CPU hierarchy selection keeps the worst sampled
 thread-time snapshot in each completed 0.5-second window. The selector retains
 only its candidate and displayed frame, resets on session changes and backward
-clock observations, and follows the canonical boundary-frame rule. Stale-root
-persistence, all-root plots, and detailed diagnostics remain open. Desktop test execution
+clock observations, and follows the canonical boundary-frame rule. Stale roots and child paths retain their last values for the configured persistence
+period. Same-frame reads do no index work until the next inactivity or expiry
+deadline. Current roots have priority at capacity, and session or clock changes
+reset carry state. All-root plots and detailed diagnostics remain open. Desktop test execution
 and live Windows/GPU acceptance remain separate.
 
 `EditorDictionaryMutation` supports exact BCL dictionaries with string keys and
@@ -1118,3 +1120,41 @@ Changes update the existing label on the scene edit queue. Multiple selected
 values show an explicit mixed state. The preview stops at its first line and
 limits text by complete text elements. Recycling and owner cleanup unsubscribe
 the preview; a getter that retires the binding cannot publish stale text.
+
+
+## Paged record claims and guarded authoring
+
+`UIRecordStore<T>` groups records into 256-cell leaves under a 32-way immutable
+tree. Copy-on-write replacement copies one leaf and its path. A render leaf owns
+its payload, texture, and atlas claims. Mapped publications share the root claim.
+Constructor failure unwinds acquired claims; terminal release attempts all
+claims and reports failures. Final cleanup closes admission before callbacks.
+The current packet still exposes flat consumers and captures the full tree.
+This ownership step does not establish sparse capture or lower frame cost.
+
+`OwnedHierarchyLifetime` retains a constructor ledger and attempts cleanup once.
+It accepts an exact detached structural forest, rejects unsupported allocations
+and public destruction overrides before effects, and reserves lifecycle and
+structural ownership through callbacks. Private one-use permits perform exact
+removals and synchronous canonical cleanup. A failed attempt keeps its state and
+ledger; it does not retry uncertain destruction. The caller must retain the
+receipt. Editor history custody and Duplicate activation remain separate work.
+
+Native loop edits capture the full member tree, unique child animations, source
+owners, and prior values. The receipt checks prechange callbacks, commits all
+loop fields before notifications, and guards Undo/Redo against changed ownership.
+Length and stretch changes still need their own complete receipt.
+
+Inspector enum dispatch precedes numeric type dispatch. Ordinary enum rows use
+the shared combo; flags retain named text input. The row owner coalesces nested
+bind and label requests, restores its popup after recycle, and retires old value
+access before control detachment. A veto cannot leave the retired binding able
+to edit its old property. Optional scalar write admission is checked after
+getters and before each setter; completed writes retain their Undo and dirty
+settlement before a later target is rejected. Arbitrary setters already entered
+are not claimed cancellable.
+
+Vulkan authoring can carry an exact world draw token into a pending mesh request.
+The checked world capability remains disabled until native stage lineage,
+submission, no-present failure settlement, and accepted input promotion are
+complete. These preparatory fields do not enable Vulkan world publication.

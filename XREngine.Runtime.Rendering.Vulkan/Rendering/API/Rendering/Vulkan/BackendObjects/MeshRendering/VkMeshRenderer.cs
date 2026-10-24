@@ -604,6 +604,7 @@ internal unsafe partial class VkMeshRenderer(
                     context.UiPublicationReceiptId, instances,
                     out UIStaticDrawCandidate staticUiCandidate)
                     ? staticUiCandidate : default,
+            WorldUiCommand = UIWorldRenderAttempt.Active?.CurrentDraw,
         };
         VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
             _meshRequests?.TryEnqueue(in request)
@@ -1056,6 +1057,7 @@ internal unsafe partial class VkMeshRenderer(
             IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
             IndexedIndirectAuthoringLease = request.IndexedIndirect?.AuthoringLease,
             StaticUiCandidate = request.StaticUiCandidate,
+            WorldUiCommand = request.WorldUiCommand,
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,

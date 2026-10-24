@@ -603,7 +603,9 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
                 return false;
             case ENativeProfilerView.CpuRoots:
                 Engine.Profiler.TryGetSnapshot(out var cpu, out _);
-                _rows.Request(cpu);
+                _rows.Request(cpu, nowUtc: DateTime.UtcNow,
+                    persistenceSeconds: Engine.EditorPreferences.Debug.ProfilerPanelPersistenceSeconds,
+                    updateIntervalSeconds: Engine.EditorPreferences.Debug.ProfilerPanelUpdateIntervalSeconds);
                 return false;
             case ENativeProfilerView.ComponentTimings:
                 Engine.Profiler.TryGetSnapshot(out var component, out _);

@@ -1468,3 +1468,78 @@ Editor build54 passed with zero warnings/errors in 2m25.55s. Desktop test build2
 passed with zero warnings/errors in 50.36s. The same 10,655-file source manifest
 remained unchanged through both builds. Desktop fixtures compiled only. All 39
 local documentation links resolve and whitespace checks pass.
+
+
+## Paged record ownership and further editor checks
+
+Source review found that enum dispatch used Type.GetTypeCode before checking
+IsEnum. Enum values therefore reached numeric editors before the existing combo
+factory. The factory now selects enum editors first. A retained enum owner binds
+the combo and label together, detaches the prior property on recycle, and checks
+its revision after callback-bearing control updates. Flags keep named text input.
+Regression fixtures cover dispatch, target replacement, Undo, and row release.
+These changes await the next combined compilation.
+
+The initial record-store review found a finalizer admission defect: cleanup could
+run while the store still accepted claims. Cleanup now closes claim admission
+before resource callbacks. Explicit cleanup reports callback failures after it
+attempts all releases. The concrete render payload and texture callbacks use
+atomic retains and terminal or quarantined releases. Native GPU lifetime
+acceptance remains separate.
+
+Headless build128 stopped in Runtime.Core with zero warnings and one
+XREPORTABLE001 error in 1m05.93s. The portable guard rejected an unreviewed
+GetMethod lookup used to detect custom destruction. The replacement compares
+virtual and explicit base destruction delegates on the same object. This checks
+actual dispatch without invoking destruction or changing the portable policy.
+
+Further lifecycle review found that public scene activation callbacks did not
+hold structural admission. An activation callback could request retirement, then
+resume after its object was destroyed. The repair adds callback-spanning admission
+and exact private stop/end calls for owned cleanup. This source remains under
+integration until the repaired build and regression cases pass.
+
+The mapped-store fixture also retained a texture cache claim. It now replaces
+the cached generation before checking the final mapped packet release, so the
+assertion isolates the packet-owned claim instead of assuming cache ownership
+had ended.
+
+Headless build129 passed the repaired Core portable checks and compilation, then
+stopped on two CS9135 errors in XRWindow.UIPresentation in 1m25.76s. The backend
+IDs are value objects, not constants for switch patterns. Equality checks replace
+those patterns. The build reported zero warnings.
+
+Enum review also found stale binding-getter results and callback-bearing
+detachment. Combo selection now rechecks the exact binding after reading it.
+The enum row defers nested bind and label requests until its active setter
+sequence returns. Retirement closes value access before attempting control
+detachment, and delayed cleanup removes only the exact owned binding/options.
+A veto cannot keep the retired binding writable. These repairs have focused
+portable control cases and desktop inspector fixtures; validation is pending.
+
+Headless build130 compiled production, then reported two fixture errors and one
+nullable warning in 1m42.09s. The retirement veto fixture now casts the generic
+property-changing argument, the store fixture imports the texture namespace,
+and its cleanup callback proves the store reference exists before use.
+
+Headless build131 passed with zero warnings/errors in 17.96s. Full run81 passed
+914 of 917 cases, with three errors and no warnings or skips, in 15.115s. Store
+claims, graph retirement, lifecycle admission, and combo getter-reentry cases
+passed. The failures are in newly linked existing profiler fixtures: unchanged
+frame work, aggregate warm-up capacity, and the thread-header index when returning
+from component view. The profiler owner is checking both implementation and
+fixture expectations; no allocation or work assertion has been relaxed.
+
+The profiler now records its earliest inactive/expiry transition during the
+bounded index pump. A same-frame request before that deadline does no rescan.
+Tests use fixed times for that boundary and warm both complete persistent A/B
+buffers before checking further allocations. The row fixture now checks the
+thread header and its first child separately. Headless build132 passed with zero
+warnings/errors in 26.61s. Full run82 passed 917 of 917 tests, without warnings,
+failures, or skips, in 13.830s. All 10,679 source inputs stayed unchanged.
+
+Editor build55 passed with zero warnings/errors in 2m36.95s. Desktop test build29
+passed with zero warnings/errors in 57.71s. All 10,679 source inputs stayed
+unchanged from headless build132 and full run82. Desktop inspector and animation
+fixtures compiled; this environment did not execute them. Windows, native GPU,
+visual, IME, and equal-workload performance acceptance remain open.

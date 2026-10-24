@@ -6,13 +6,14 @@ using System.Runtime.Serialization;
 using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Scene.Prefabs;
 using XREngine.Data.Runtime.AotParity;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Components
 {
     [Serializable]
-    public abstract class XRComponent : RuntimeWorldObjectBase
+    public abstract partial class XRComponent : RuntimeWorldObjectBase
     {
         /// <summary>
         /// Global event for when a component is created.
@@ -34,6 +35,7 @@ namespace XREngine.Components
             {
                 if (_isActive == value)
                     return;
+                using HierarchyMutationLease structural = new(this);
                 using var mutation = this is PhysicsChainComponent chain
                     ? PhysicsChainWorld.BeginComponentMutation(chain) : null;
                 SetField(ref _isActive, value);
@@ -436,6 +438,8 @@ namespace XREngine.Components
         /// </summary>
         private void TryActivateComponent()
         {
+            using HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
             if (_componentActivated)
                 return;
             using var mutation = this is PhysicsChainComponent chain
@@ -448,6 +452,12 @@ namespace XREngine.Components
         /// Ensures deactivation runs at most once until the component is activated again.
         /// </summary>
         private void TryDeactivateComponent()
+        {
+            using HierarchyMutationLease structural = new(this);
+            DeactivateCore();
+        }
+
+        private void DeactivateCore()
         {
             if (!_componentActivated)
                 return;
@@ -477,7 +487,11 @@ namespace XREngine.Components
         }
 
         internal void NotifyBeginPlay()
-            => OnBeginPlay();
+        {
+            using HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
+            OnBeginPlay();
+        }
 
         /// <summary>
         /// If true, all registered ticks will be unregistered when the component is set to inactive.
@@ -513,7 +527,10 @@ namespace XREngine.Components
         }
 
         internal void NotifyEndPlay()
-            => OnEndPlay();
+        {
+            using HierarchyMutationLease structural = new(this);
+            OnEndPlay();
+        }
 
         /// <summary>
         /// This method is called when the component is set to active in the world.
@@ -547,6 +564,7 @@ namespace XREngine.Components
 
             if (!_constructionFailed)
                 ComponentDestroyed?.Invoke(this);
+            GetOwnedRetirement()?.CompleteCanonicalCleanup(this);
         }
 
         protected virtual void RemovedFromSceneNode(SceneNode sceneNode)

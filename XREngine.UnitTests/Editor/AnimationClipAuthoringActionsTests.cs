@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using System.Numerics;
 using XREngine.Animation;
+using XREngine.Data.Core;
 using XREngine.Editor;
 
 namespace XREngine.UnitTests.Editor;
@@ -9,6 +10,153 @@ namespace XREngine.UnitTests.Editor;
 [NonParallelizable]
 public class AnimationClipAuthoringActionsTests
 {
+    [Test]
+    public void LoopEditUpdatesUniqueChildAnimationsAndRestoresMixedPriorValues()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat firstAnimation = new(2, false, true);
+            PropAnimFloat secondAnimation = new(2, true, true);
+            AnimationMember first = new("First", EAnimationMemberType.Property,
+                firstAnimation);
+            AnimationMember alias = new("Alias", EAnimationMemberType.Property,
+                firstAnimation);
+            AnimationMember second = new("Second", EAnimationMemberType.Property,
+                secondAnimation);
+            AnimationClip clip = new(new AnimationMember("Root",
+                EAnimationMemberType.Group, first, alias, second))
+            { Looped = false };
+            int firstNotices = 0;
+            int secondNotices = 0;
+            firstAnimation.LoopChanged += _ => firstNotices++;
+            secondAnimation.LoopChanged += _ => secondNotices++;
+            Assert.That(AnimationClipAuthoringActions.SetClipLooped(clip,
+                true), Is.True);
+            Assert.That((clip.Looped, firstAnimation.Looped,
+                secondAnimation.Looped), Is.EqualTo((true, true, true)));
+            Assert.That((firstNotices, secondNotices), Is.EqualTo((1, 1)));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That((clip.Looped, firstAnimation.Looped,
+                secondAnimation.Looped), Is.EqualTo((false, false, true)));
+            Assert.That((firstNotices, secondNotices), Is.EqualTo((2, 2)));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That((clip.Looped, firstAnimation.Looped,
+                secondAnimation.Looped), Is.EqualTo((true, true, true)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void LoopPrechangeTreeReplacementRejectsBatchBeforeAnyLoopWrite()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                animation);
+            AnimationMember root = new("Root", EAnimationMemberType.Group,
+                member);
+            AnimationClip clip = new(root) { Looped = false };
+            AnimationMember replacement = new("Other");
+            clip.PropertyChanging += (_, change) =>
+            {
+                if (change.PropertyName == nameof(AnimationClip.Looped))
+                {
+                    root.Children.Remove(member);
+                    root.Children.Add(replacement);
+                }
+            };
+            Assert.That(AnimationClipAuthoringActions.SetClipLooped(clip,
+                true), Is.False);
+            Assert.That(clip.Looped, Is.False);
+            Assert.That(animation.Looped, Is.False);
+            Assert.That(root.Children[0], Is.SameAs(replacement));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void LoopPrechangeVetoLeavesClipChildrenAndHistoryUntouched()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationClip clip = new(new AnimationMember("Value",
+                EAnimationMemberType.Property, animation)) { Looped = false };
+            clip.PropertyChanging += (_, change) =>
+            {
+                if (change.PropertyName == nameof(AnimationClip.Looped) &&
+                    change is XRPropertyChangingEventArgs<bool> loopChange)
+                    loopChange.AllowChange = false;
+            };
+            Assert.That(AnimationClipAuthoringActions.SetClipLooped(clip,
+                true), Is.False);
+            Assert.That((clip.Looped, animation.Looped),
+                Is.EqualTo((false, false)));
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void LaterLoopCallbackCannotOverwriteEarlierChildConflict()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat firstAnimation = new(2, false, true);
+            PropAnimFloat secondAnimation = new(2, false, true);
+            AnimationMember root = new("Root", EAnimationMemberType.Group,
+                new AnimationMember("First", EAnimationMemberType.Property,
+                    firstAnimation),
+                new AnimationMember("Second", EAnimationMemberType.Property,
+                    secondAnimation));
+            AnimationClip clip = new(root) { Looped = false };
+            secondAnimation.LoopChanged += _ => firstAnimation.Looped = false;
+            Assert.That(AnimationClipAuthoringActions.SetClipLooped(clip,
+                true), Is.False);
+            Assert.That((clip.Looped, firstAnimation.Looped,
+                secondAnimation.Looped), Is.EqualTo((true, false, true)));
+            Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
+            Assert.That(firstAnimation.Looped, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void ThrowAfterCompleteLoopCommitRestoresEveryChild()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat firstAnimation = new(2, false, true);
+            PropAnimFloat secondAnimation = new(2, false, true);
+            AnimationClip clip = new(new AnimationMember("Root",
+                EAnimationMemberType.Group,
+                new AnimationMember("First", EAnimationMemberType.Property,
+                    firstAnimation),
+                new AnimationMember("Second", EAnimationMemberType.Property,
+                    secondAnimation))) { Looped = false };
+            bool throwOnce = true;
+            clip.PropertyChanged += (_, change) =>
+            {
+                if (!throwOnce || change.PropertyName != nameof(AnimationClip.Looped))
+                    return;
+                throwOnce = false;
+                throw new InvalidOperationException("loop observer failed");
+            };
+            Assert.That(AnimationClipAuthoringActions.SetClipLooped(clip,
+                true), Is.False);
+            Assert.That((clip.Looped, firstAnimation.Looped,
+                secondAnimation.Looped), Is.EqualTo((false, false, false)));
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
     [Test]
     public void TraversalAndKindEditsUseExactUndoHistory()
     {

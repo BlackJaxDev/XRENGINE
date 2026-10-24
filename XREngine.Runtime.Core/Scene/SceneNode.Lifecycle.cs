@@ -1,5 +1,6 @@
 using XREngine.Components;
 using XREngine.Core.Files;
+using XREngine.Scene.Prefabs;
 
 namespace XREngine.Scene
 {
@@ -12,6 +13,8 @@ namespace XREngine.Scene
         /// </summary>
         public void OnActivated()
         {
+            using HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
             using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
             ActivateTransform();
             ActivateComponents();
@@ -23,6 +26,8 @@ namespace XREngine.Scene
         /// </summary>
         public void OnBeginPlay()
         {
+            using HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
             if (_hasBegunPlay)
                 return;
 
@@ -36,9 +41,15 @@ namespace XREngine.Scene
         /// </summary>
         public void OnDeactivated()
         {
+            using HierarchyMutationLease structural = new(this);
+            DeactivateCore(null);
+        }
+
+        private void DeactivateCore(OwnedHierarchyRetirement? retirement)
+        {
             using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
-            DeactivateComponents();
-            DeactivateTransform();
+            DeactivateComponents(retirement);
+            DeactivateTransform(retirement);
             Deactivated?.Invoke(this);
         }
 
@@ -47,11 +58,17 @@ namespace XREngine.Scene
         /// </summary>
         public void OnEndPlay()
         {
+            using HierarchyMutationLease structural = new(this);
+            EndPlayCore(null);
+        }
+
+        private void EndPlayCore(OwnedHierarchyRetirement? retirement)
+        {
             if (!_hasBegunPlay)
                 return;
 
-            EndPlayComponents();
-            EndPlayTransform();
+            EndPlayComponents(retirement);
+            EndPlayTransform(retirement);
             _hasBegunPlay = false;
         }
 
@@ -77,20 +94,26 @@ namespace XREngine.Scene
         /// <summary>
         /// Deactivates all components attached to this node that are currently active.
         /// </summary>
-        private void DeactivateComponents()
+        private void DeactivateComponents(OwnedHierarchyRetirement? retirement = null)
         {
             foreach (XRComponent component in ComponentsInternal)
                 if (component.IsActive)
-                    component.NotifyComponentDeactivated();
+                {
+                    if (retirement is null) component.NotifyComponentDeactivated();
+                    else retirement.StopLifecycle(component, EOwnedHierarchyLifecycle.Deactivate);
+                }
         }
 
         /// <summary>
         /// Notifies all components that play has ended.
         /// </summary>
-        private void EndPlayComponents()
+        private void EndPlayComponents(OwnedHierarchyRetirement? retirement = null)
         {
             foreach (XRComponent component in ComponentsInternal)
-                component.NotifyEndPlay();
+            {
+                if (retirement is null) component.NotifyEndPlay();
+                else retirement.StopLifecycle(component, EOwnedHierarchyLifecycle.EndPlay);
+            }
         }
 
         /// <summary>
@@ -129,12 +152,13 @@ namespace XREngine.Scene
         /// <summary>
         /// Deactivates the transform, clears ticks, and propagates deactivation to active children.
         /// </summary>
-        private void DeactivateTransform()
+        private void DeactivateTransform(OwnedHierarchyRetirement? retirement = null)
         {
             if (_transform is null)
                 return;
 
-            _transform.NotifySceneNodeDeactivated();
+            if (retirement is null) _transform.NotifySceneNodeDeactivated();
+            else retirement.StopLifecycle(_transform, EOwnedHierarchyLifecycle.Deactivate);
             _transform.ClearTicks();
             foreach (var child in _transform.Children)
             {
@@ -143,21 +167,29 @@ namespace XREngine.Scene
                     continue;
 
                 if (node.IsActiveSelf)
-                    node.OnDeactivated();
+                {
+                    if (retirement is null) node.OnDeactivated();
+                    else retirement.StopLifecycle(node, EOwnedHierarchyLifecycle.Deactivate);
+                }
             }
         }
 
         /// <summary>
         /// Notifies the transform that play has ended and propagates to children.
         /// </summary>
-        private void EndPlayTransform()
+        private void EndPlayTransform(OwnedHierarchyRetirement? retirement = null)
         {
             if (_transform is null)
                 return;
 
-            _transform.NotifySceneNodeEndPlay();
+            if (retirement is null) _transform.NotifySceneNodeEndPlay();
+            else retirement.StopLifecycle(_transform, EOwnedHierarchyLifecycle.EndPlay);
             foreach (var child in _transform.Children)
-                child?.SceneNode?.OnEndPlay();
+                if (child?.SceneNode is { } node)
+                {
+                    if (retirement is null) node.OnEndPlay();
+                    else retirement.StopLifecycle(node, EOwnedHierarchyLifecycle.EndPlay);
+                }
         }
 
         /// <summary>
@@ -174,6 +206,11 @@ namespace XREngine.Scene
         /// </remarks>
         protected override void OnDestroying()
         {
+            if (GetOwnedRetirement() is { } retirement)
+            {
+                DestroyOwnedHierarchy(retirement);
+                return;
+            }
             OnDeactivated();
             OnEndPlay();
 

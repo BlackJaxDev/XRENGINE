@@ -80,6 +80,26 @@ namespace XREngine.Animation
             set => SetField(ref _looped, value);
         }
 
+        internal bool PrepareLoopedChange(bool expected, bool desired)
+            => _looped == expected &&
+                (expected == desired || ArePropertyNotificationsSuppressed ||
+                 OnPropertyChanging(nameof(Looped), expected, desired));
+
+        internal bool TrySetLoopedWithoutNotification(bool expected, bool desired)
+        {
+            if (_looped != expected)
+                return false;
+            SetField(ref _looped, desired, publishNotifications: false,
+                propertyName: nameof(Looped));
+            return true;
+        }
+
+        internal void PublishLoopedChange(bool previous, bool current)
+        {
+            if (previous != current && !ArePropertyNotificationsSuppressed)
+                OnPropertyChanged(nameof(Looped), previous, current);
+        }
+
         private EAnimationClipKind _clipKind = EAnimationClipKind.Unknown;
         /// <summary>
         /// Classification of the animation data format (e.g. humanoid muscle vs generic transform).

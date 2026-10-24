@@ -38,6 +38,7 @@ internal readonly record struct VulkanMeshRenderRequest(
 {
     internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
     internal UIStaticDrawCandidate StaticUiCandidate { get; init; }
+    internal UIPublishedWorldMeshCommand? WorldUiCommand { get; init; }
 
     internal static void ReleaseAuthoringLease(ref VulkanMeshRenderRequest request)
     {

@@ -18,5 +18,10 @@ public enum UIWorkCounter
     BatchCollectionResets,
     BufferBytesCommitted,
     BufferCommitRanges,
+    PublicationRecordCellsCopied,
+    PublicationRecordPathsCopied,
+    PublicationRecordClaimsRetained,
+    PublicationRecordClaimsReleased,
+    PublicationFlatCellsMaterialized,
     Count,
 }

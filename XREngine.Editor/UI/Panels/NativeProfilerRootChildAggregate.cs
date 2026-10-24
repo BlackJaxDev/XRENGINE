@@ -15,6 +15,8 @@ internal sealed class NativeProfilerRootChildAggregate(
     public float TotalMilliseconds { get; private set; }
     public float SelfMilliseconds { get; private set; }
     public float PeakMilliseconds { get; private set; }
+    public DateTime LastSeenUtc { get; private set; }
+    public bool IsInactive { get; private set; }
 
     public void Reset(string newName, ProfilerScopeKind newKind,
         int newRootIndex, int newParentIndex, int newDepth)
@@ -28,6 +30,22 @@ internal sealed class NativeProfilerRootChildAggregate(
         TotalMilliseconds = 0f;
         SelfMilliseconds = 0f;
         PeakMilliseconds = 0f;
+        LastSeenUtc = default;
+        IsInactive = false;
+    }
+
+    public void MarkSeen(DateTime now) => LastSeenUtc = now;
+
+    public void Retain(NativeProfilerRootChildAggregate source, int rootIndex, int parentIndex,
+        bool inactive)
+    {
+        Reset(source.Name, source.Kind, rootIndex, parentIndex, source.Depth);
+        Calls = source.Calls;
+        TotalMilliseconds = source.TotalMilliseconds;
+        SelfMilliseconds = source.SelfMilliseconds;
+        PeakMilliseconds = source.PeakMilliseconds;
+        LastSeenUtc = source.LastSeenUtc;
+        IsInactive = inactive;
     }
 
     public void Add(float elapsed, float self)
