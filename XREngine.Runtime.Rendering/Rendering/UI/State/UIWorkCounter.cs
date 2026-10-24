@@ -35,5 +35,9 @@ public enum UIWorkCounter
     PublicationSparseSplices,
     /// <summary>Sparse attempts that could not capture their changed subtrees and used a full capture.</summary>
     PublicationSparseFallbacks,
+    /// <summary>Text layouts that reused a cached result for equal glyph-placement inputs.</summary>
+    TextLayoutCacheHits,
+    /// <summary>Text layouts that found no cached result and placed glyphs again.</summary>
+    TextLayoutCacheMisses,
     Count,
 }

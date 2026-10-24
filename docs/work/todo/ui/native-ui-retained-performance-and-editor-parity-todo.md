@@ -7,7 +7,7 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The code reconciliation is **46 of 60 implementation items complete**; 14 items and four original owner decisions remain. Worker layout, retained screen publication, common controls, virtual collections, and native panels are implemented. Guarded scene-root and structural-list ownership, profiler views, Vulkan image/text cache contracts, and an explicit canvas-only OpenGL world route are implemented. Sparse publication capture is implemented for local edits; count-changing edits still copy clean records. Headless tests and managed editor/test compilation pass. Broader world output, complete text behavior, safe editor mutations, and editor parity remain open. Three additional proposals await approval. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md), [retained execution](../../../architecture/ui/05-Retained-Execution.md), and [validation plan](../../testing/ui/native-ui-validation.md) for evidence and limits. ImGui remains the default editor.
+The code reconciliation is **47 of 60 implementation items complete**; 13 items and four original owner decisions remain. Worker layout, retained screen publication, common controls, virtual collections, and native panels are implemented. Guarded scene-root and structural-list ownership, profiler views, Vulkan image/text cache contracts, and an explicit canvas-only OpenGL world route are implemented. Text layout results are cached by all glyph-placement inputs. Sparse publication capture is implemented for local edits; count-changing edits still copy clean records. Headless tests and managed editor/test compilation pass. Broader world output, complete text behavior, safe editor mutations, and editor parity remain open. Three additional proposals await approval. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md), [retained execution](../../../architecture/ui/05-Retained-Execution.md), and [validation plan](../../testing/ui/native-ui-validation.md) for evidence and limits. ImGui remains the default editor.
 
 ## Open Code Items
 
@@ -18,7 +18,6 @@ The code reconciliation is **46 of 60 implementation items complete**; 14 items 
 ### Phase 4: Persistent Render Data And Clipping
 
 - [ ] Complete hierarchical clipping for direct-world render commands. `UIClipRegion`, `UIBatchCollector`, `UIRenderableComponent`, and render backends. Screen and offscreen 2D records already carry nested crop independently of material identity. The bounded combined-program OpenGL route now uses frozen canvas-local fragment crop. Vulkan world publication and the other unsupported world output profiles remain open. Done when the remaining world route clips nested regions through a defined OpenGL and Vulkan contract, and publication tests preserve mixed batch/fallback painter order. Native acceptance remains in the validation plan.
-- [ ] Cache shaping/layout results by all glyph-placement inputs. Done when unchanged text with matching font/fallback, locale/direction, features, wrap, line policy, and DPI reuses layout.
 
 ### Phase 5: Retained Controls And Virtual Collections
 

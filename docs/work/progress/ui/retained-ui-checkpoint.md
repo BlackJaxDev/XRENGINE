@@ -1054,3 +1054,18 @@ The reconciliation remains **46 of 60**. Vulkan world publication stays disabled
 
 No Vulkan device ran here. The change compiles in the editor and desktop test
 builds only; GPU correctness and live Vulkan acceptance remain open.
+
+## Text layout cache
+
+The reconciliation is now **47 of 60**. The text layout cache item is complete.
+
+- `UITextLayoutKernel.Measure` reuses results through `UITextLayoutCache`. Equal
+  text, font metric page and revision, shaped run (face, language, direction,
+  features, glyphs), wrap, spacing, line spacing, alignment, margins, DPI, and
+  available size reuse one layout. A changed text revision shares glyph and caret
+  storage and carries the new revision.
+- `UITextLayoutKernelTests` checks reuse, and checks that each placement input and
+  the shaped locale, direction, and features select a separate layout.
+
+The full headless run passed **1012 of 1012 tests**. Editor and desktop test
+builds passed with 0 warnings and errors. No runtime text profiling ran here.

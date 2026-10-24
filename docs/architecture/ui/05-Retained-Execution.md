@@ -68,6 +68,17 @@ UTF-16 caret stops. Caret stops follow grapheme boundaries and include whitespac
 and line breaks. Measurement precedes alignment. `UITextLayoutResult` carries
 text and font revisions. Its public constructor copies caller-owned arrays.
 
+`UITextLayoutKernel.Measure` reuses layouts through `UITextLayoutCache`. The key
+holds every glyph-placement input: text, the font metric page (by reference) and
+its revision, em and atlas size, font size, wrap, spacing, line spacing, alignment,
+margins, DPI scale, first-bearing trim, the shaped run (face content identity,
+language, direction, features, and glyphs), and the available size. Text revisions
+are not part of the key. A hit with another revision returns a result that shares
+the cached glyph and caret storage and carries the requested revisions. The cache
+is direct-mapped with 512 slots and is thread-safe; a lookup does not allocate.
+`TextLayoutCacheHits` and `TextLayoutCacheMisses` count lookups. Shaped runs are
+reused per node when the captured shaping inputs do not change.
+
 Text rendering retains the accepted result instead of copying a mutable glyph
 list each frame. Color, transform, outline, and bounds are text-instance values.
 A glyph payload change is separate from an instance-only change. Fonts own copies

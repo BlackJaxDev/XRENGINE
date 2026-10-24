@@ -8,16 +8,29 @@ namespace XREngine.Rendering.UI;
 /// <summary>Measures and places text using only captured values.</summary>
 public static class UITextLayoutKernel
 {
+    /// <summary>
+    /// Measures and places text. Equal glyph-placement inputs and available size reuse a
+    /// cached result through <see cref="UITextLayoutCache"/>.
+    /// </summary>
     public static UITextLayoutResult Measure(UITextLayoutInput input, Vector2 availableSize)
     {
         if (input.ShapingRequest is not null && input.ShapedRun is null)
             throw new InvalidOperationException("UI.ShapingRequestUnresolved: shape text before measuring layout.");
         if (!float.IsFinite(input.DpiScale) || input.DpiScale <= 0.0f)
             throw new ArgumentOutOfRangeException(nameof(input), "DPI scale must be finite and positive.");
+        if (UITextLayoutCache.TryGet(input, availableSize, out int hash, out UITextLayoutResult cached))
+            return cached;
+        UITextLayoutResult result = MeasureUncached(input, availableSize);
+        UITextLayoutCache.Store(input, availableSize, hash, result);
+        return result;
+    }
+
+    private static UITextLayoutResult MeasureUncached(UITextLayoutInput input, Vector2 availableSize)
+    {
         if (input.DpiScale != 1.0f)
         {
             float dpiScale = input.DpiScale;
-            UITextLayoutResult unscaled = Measure(input with
+            UITextLayoutResult unscaled = MeasureUncached(input with
             {
                 DpiScale = 1.0f,
                 Margins = input.Margins / dpiScale

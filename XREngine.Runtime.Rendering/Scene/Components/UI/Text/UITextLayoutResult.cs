@@ -33,6 +33,10 @@ public sealed class UITextLayoutResult
         => new(intrinsicSize, glyphs.AsMemory(), carets.AsMemory(), textRevision, fontRevision,
             hasVisualCarets, usesShapedGlyphs);
 
+    /// <summary>Returns a result that shares this glyph and caret storage and carries other revisions.</summary>
+    internal UITextLayoutResult WithRevisions(long textRevision, long fontRevision)
+        => new(IntrinsicSize, Glyphs, Carets, textRevision, fontRevision, HasVisualCarets, UsesShapedGlyphs);
+
     public Vector2 IntrinsicSize { get; }
     public ReadOnlyMemory<UITextLayoutGlyph> Glyphs { get; }
     public ReadOnlyMemory<UITextCaretStop> Carets { get; }

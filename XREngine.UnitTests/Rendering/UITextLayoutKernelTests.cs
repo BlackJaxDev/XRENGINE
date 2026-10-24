@@ -222,6 +222,83 @@ public sealed class UITextLayoutKernelTests
     }
 
     [Test]
+    public void EqualPlacementInputsReuseLayoutStorageWithTheNewRevision()
+    {
+        UITextLayoutInput first = Input("cache ABBA reuse", FontGlyphSet.EWrapMode.Word);
+        UITextLayoutInput second = first with { TextRevision = first.TextRevision + 40 };
+
+        UITextLayoutResult a = UITextLayoutKernel.Measure(first, new(60, 200));
+        UITextLayoutResult b = UITextLayoutKernel.Measure(second, new(60, 200));
+
+        b.Glyphs.Equals(a.Glyphs).ShouldBeTrue();
+        b.Carets.Equals(a.Carets).ShouldBeTrue();
+        b.TextRevision.ShouldBe(second.TextRevision);
+        a.TextRevision.ShouldBe(first.TextRevision);
+        UITextLayoutKernel.Measure(first, new(60, 200)).ShouldBeSameAs(a);
+    }
+
+    [Test]
+    public void EachGlyphPlacementInputSelectsItsOwnLayout()
+    {
+        UITextLayoutInput baseline = Input("cache AB e variants", FontGlyphSet.EWrapMode.Word);
+        Vector2 size = new(60, 200);
+        UITextLayoutResult reference = UITextLayoutKernel.Measure(baseline, size);
+        FrozenDictionary<int, UIRuneMetrics> copiedMetrics =
+            new Dictionary<int, UIRuneMetrics>(Metrics).ToFrozenDictionary();
+        UITextLayoutInput[] variants =
+        [
+            baseline with { Text = "cache AB e variantz" },
+            baseline with { Runes = copiedMetrics },
+            baseline with { FontRevision = baseline.FontRevision + 1 },
+            baseline with { EmSize = 11 },
+            baseline with { AtlasSize = new(128, 64) },
+            baseline with { FontSize = 12 },
+            baseline with { Wrap = FontGlyphSet.EWrapMode.Character },
+            baseline with { Spacing = 1 },
+            baseline with { LineSpacing = 3 },
+            baseline with { HorizontalAlignment = EHorizontalAlignment.Right },
+            baseline with { VerticalAlignment = EVerticalAlignment.Top },
+            baseline with { Margins = new(1, 0, 0, 0) },
+            baseline with { DpiScale = 2 },
+            baseline with { TrimFirstBearing = false },
+        ];
+        foreach (UITextLayoutInput variant in variants)
+            UITextLayoutKernel.Measure(variant, size).Glyphs.Equals(reference.Glyphs).ShouldBeFalse();
+        UITextLayoutKernel.Measure(baseline, new(61, 200)).Glyphs.Equals(reference.Glyphs).ShouldBeFalse();
+        UITextLayoutKernel.Measure(baseline, size).Glyphs.Equals(reference.Glyphs).ShouldBeTrue();
+    }
+
+    [Test]
+    public void ShapedRunLocaleDirectionAndFeaturesSelectTheirOwnLayout()
+    {
+        UIRuneMetrics a = Metrics['A'];
+        UIRuneMetrics b = Metrics['B'];
+        UIFontFaceSnapshot face = new([7], 0, 10,
+            new Dictionary<uint, UIRuneMetrics> { [51] = a, [52] = b });
+        UITextLayoutInput Shaped(string language, UITextDirection direction, string[]? features)
+        {
+            UITextShapingRequest request = new("AB", face, language, direction, features);
+            UITextShapingResult shaped = new(request,
+            [
+                new(51, a, new Vector2(9, 0), Vector2.Zero, 0, 1),
+                new(52, b, new Vector2(9, 0), Vector2.Zero, 1, 1)
+            ]);
+            return Input("AB") with { ShapedRun = new UITextShapedRunInput(shaped) };
+        }
+
+        Vector2 size = new(100, 50);
+        UITextLayoutResult reference = UITextLayoutKernel.Measure(Shaped("en-US", UITextDirection.LeftToRight, null), size);
+        UITextLayoutKernel.Measure(Shaped("en-US", UITextDirection.LeftToRight, null), size)
+            .Glyphs.Equals(reference.Glyphs).ShouldBeTrue();
+        UITextLayoutKernel.Measure(Shaped("de-DE", UITextDirection.LeftToRight, null), size)
+            .Glyphs.Equals(reference.Glyphs).ShouldBeFalse();
+        UITextLayoutKernel.Measure(Shaped("en-US", UITextDirection.RightToLeft, null), size)
+            .Glyphs.Equals(reference.Glyphs).ShouldBeFalse();
+        UITextLayoutKernel.Measure(Shaped("en-US", UITextDirection.LeftToRight, ["liga"]), size)
+            .Glyphs.Equals(reference.Glyphs).ShouldBeFalse();
+    }
+
+    [Test]
     public void LigatureWithoutInteriorCaretReportsIncompleteVisualCarets()
     {
         UIRuneMetrics metric = Metrics['A'];
