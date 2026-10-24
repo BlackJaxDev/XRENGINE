@@ -37,6 +37,7 @@
     <Compile Include="../Rendering/UIControlTeardownTests.cs" Link="Rendering/UIControlTeardownTests.cs" />
     <Compile Include="../Rendering/UITestCanvasInputProbe.cs" Link="Rendering/UITestCanvasInputProbe.cs" />
     <Compile Include="../Audio/AudioSourceLifecycleProbe.cs" Link="Audio/AudioSourceLifecycleProbe.cs" />
+    <Compile Include="../Rendering/XRViewportSceneBindingTests.cs" Link="Rendering/XRViewportSceneBindingTests.cs" />
     <Compile Include="../Rendering/UIStaticDrawContractTests.cs" Link="Rendering/UIStaticDrawContractTests.cs" />
     <Compile Include="../Audio/AudioSourceTeardownTests.cs" Link="Audio/AudioSourceTeardownTests.cs" />
     <Compile Include="../Audio/FakeAudioTeardownTransport.cs" Link="Audio/FakeAudioTeardownTransport.cs" />

@@ -572,3 +572,28 @@ changed command graphs and reentrant attempt reset. Production activation still
 requires pass-invocation identities, grouped native receipts, output reset proof,
 and exact direct-world clipping. These bookkeeping contracts do not publish
 world UI or change authored shadow behavior.
+
+## Canvas Collection And Scene Camera Ownership
+
+`UIRenderableComponent` starts with 3D collection suppressed. It subscribes to
+its exact canvas and UI ancestors when active. Screen, hidden, inactive, and
+offscreen items stay outside 3D collection. Draw-space, parent, visibility,
+activation, transform replacement, and canvas component changes restore valid
+direct-world membership. This changes registration, not authored `IsVisible` or
+`CastsShadows`. Destruction makes the subscription owner terminal. The direct
+world draw path remains the existing path; frozen world output is not active.
+
+Gallery chrome, FPS overlays, dock controls, and virtual text rows declare
+composition owners. Gallery chrome uses `StaticChrome`; FPS and interactive dock
+controls use `Overlay`; virtual text rows use `ScrollingContent`. These owners
+preserve contiguous painter boundaries. They do not prove native command reuse
+or complete isolation for every editor control.
+
+`SceneViewPanel` resolves a camera from its exact window and runtime world. It
+rejects foreign cameras and callback replacement of an admitted binding.
+`XRViewport.DetachSceneBinding` clears camera, world, and window owners before
+notifications. It rejects callback assignments during detach and invalidates
+pending property assignments. The old camera list uses exact non-vetoable
+removal. Post-removal observers each run even if an earlier observer fails;
+the first failure is reported after cleanup. Observer snapshots allocate only
+on this ownership-retirement path. Normal collection removal remains vetoable.

@@ -765,3 +765,66 @@ Desktop test build 13 passed with zero warnings/errors in 45.41s. No desktop
 tests executed. Final source hashes remain unchanged, all 32 local document links
 resolve, and the whitespace check passes. Reconciliation remains 39 of 60 code
 items; partial cache admission and lifecycle work do not close the broader items.
+
+
+## Canvas Membership And Scene Camera Ownership
+
+Screen, inactive, hidden, and offscreen UI now suppress their 3D registration.
+Canvas mode, parent, visibility, activation, and component replacement events
+restore valid direct-world membership. Authored visibility and shadow flags stay
+intact. This does not activate frozen world publication. Composition owners now
+separate gallery chrome, FPS overlays, dock controls, and virtual text rows.
+
+Scene panels resolve cameras only from their exact window and runtime world.
+Binding checks reject callback replacement. Mandatory viewport detachment clears
+camera, world, and window owners before notifications. Review found that ordinary
+property setters and camera-list removal can be vetoed; the cleanup path must
+therefore retire ownership independently of those vetoes.
+
+Headless build 76 failed on a duplicate transform-change override. The merged
+override preserves the existing bounds and batch work. Build 77 passed with zero
+warnings/errors in 1m34.58s; no tests ran on that snapshot. Build 78 failed with
+zero warnings on the missing `partial` modifier for `XRViewport` in 24.80s. The
+modifier is corrected. These failed builds are not test evidence.
+
+The shared backdrop audit found no active retained blur panel. The existing GL
+texture grab copies during texture binding. Retained texture snapshots reject
+that mutable source. A shared capture needs an explicit producer lease, an exact
+ordered composition boundary, and output/viewport/backend identity. Same-stream
+sampling must not mark the surface GPU-complete before its fence signals. No
+blur implementation or renderer default changed in this increment.
+
+Headless build 79 passed with zero warnings/errors in 2m17.07s. Run 45 executed
+541 tests: 533 passed and eight errored, with no warnings or skips. Seven viewport
+fixture setup errors came from the unprovided `BvhRaycastCore` shader snippet.
+The fixture now expands the actual repository snippet without changing host file
+access policy or global snippet registration. The nested-canvas transform
+replacement regression also failed and remains under repair before publication.
+
+The nested failure came from transform handoff: children move while the new
+canvas transform still has no `SceneNode`. Listening only for draw-space changes
+missed its later owner attachment. The child now observes that attachment,
+restores both render-info canvas links, and rebinds its retained batch slot. The
+regression checks the exact current primitive handle after both screen and world
+transform replacements. Headless build 80 validates this repair and the shader
+fixture repair.
+
+Headless build 80 passed with zero warnings/errors in 1m20.53s. Run 46 passed
+534 of 541 tests in 9.129s, including all canvas membership tests. The remaining
+seven setup errors came from automatic render-pipeline creation in the new
+viewport fixture. These tests need real camera/viewport ownership, but no render
+pipeline or graphics device. They now disable automatic pipeline adoption on
+those test viewports. Headless build 81 checks this fixture correction.
+
+Headless build 81 passed with zero warnings/errors in 15.96s. Full run 47 passed
+all 541 tests with zero warnings or skips in 9.028s. The exact 3D membership item
+is complete, including nested transform replacement and retained batch identity.
+Reconciliation is now 40 of 60 code items. Editor build 34 checks the same source.
+
+Editor build 34 passed with zero warnings/errors in 2m44.39s. The 9,941-file
+source snapshot remains unchanged. Desktop test compilation 14 follows; no
+Windows test execution is available in this environment.
+
+Desktop test build 14 passed with zero warnings/errors in 50.22s. No desktop
+tests executed. All 32 local document links resolve, the whitespace check passes,
+and all 9,941 source/project hashes remain unchanged.

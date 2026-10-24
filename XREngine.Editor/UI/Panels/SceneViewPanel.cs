@@ -21,26 +21,111 @@ public class SceneViewPanel : EditorPanel
     private UIButtonComponent? _parentButton;
     private UIButtonComponent? _screenButton;
 
-    public XRCamera? Camera => CameraComponent?.Camera;
+    private CameraComponent? _cameraComponent;
+    private bool _bindingCamera;
+    private bool _cameraBindingStopped = true;
+    private bool _cameraTerminal;
+    private ulong _cameraRequestRevision;
+
+    public XRCamera? Camera => SceneViewport?.ActiveCamera;
     internal XRViewport? SceneViewport => _sceneViewport?.Viewport;
-    public CameraComponent? CameraComponent { get; set; }
+    public CameraComponent? CameraComponent
+    {
+        get => _cameraComponent;
+        set
+        {
+            if (_cameraTerminal || IsDestroyed || IsDestroyQueued || ReferenceEquals(_cameraComponent, value))
+                return;
+            _cameraRequestRevision++;
+            if (SetField(ref _cameraComponent, value))
+                BindCamera();
+        }
+    }
+
+    protected override bool OnPropertyChanging<T>(string? propName, T field, T value)
+    {
+        ulong revision = _cameraRequestRevision;
+        bool allowed = base.OnPropertyChanging(propName, field, value);
+        return allowed && (propName != nameof(CameraComponent) ||
+            !_cameraTerminal && !IsDestroyed && !IsDestroyQueued && revision == _cameraRequestRevision);
+    }
 
     protected override void OnComponentActivated()
     {
+        if (_cameraTerminal)
+            return;
+        _cameraBindingStopped = false;
         base.OnComponentActivated();
+        if (_cameraBindingStopped || IsDestroyed || IsDestroyQueued)
+            return;
         _sceneViewport ??= SceneNode.AddComponent<UIViewportComponent>();
         _sceneInput ??= SceneNode.AddComponent<NativeSceneViewportInput>();
         if (_sceneInput is not null)
             _sceneInput.Panel = this;
         CreateToolbar();
         BindCamera();
-        RegisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateSceneControls);
+        if (!_cameraBindingStopped && !IsDestroyed && !IsDestroyQueued)
+            RegisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateSceneControls);
     }
 
     protected override void OnComponentDeactivated()
     {
+        _cameraBindingStopped = true;
         UnregisterTick(ETickGroup.Late, ETickOrder.Scene, UpdateSceneControls);
-        base.OnComponentDeactivated();
+        try { base.OnComponentDeactivated(); }
+        finally { ClearSceneCamera(); }
+    }
+
+    protected override void OnDestroying()
+    {
+        _cameraTerminal = true;
+        _cameraBindingStopped = true;
+        SetField(ref _cameraComponent, null, publishNotifications: false);
+        if (_sceneInput is not null && ReferenceEquals(_sceneInput.Panel, this))
+            _sceneInput.Panel = null;
+        try { ClearSceneCamera(); }
+        finally { base.OnDestroying(); }
+    }
+
+    private void ClearSceneCamera()
+    {
+        if (_sceneViewport is not { IsDestroyed: false } surface)
+            return;
+        bool wasBinding = _bindingCamera;
+        _bindingCamera = true;
+        try { ClearViewportCamera(surface.Viewport); }
+        finally { _bindingCamera = wasBinding; }
+    }
+
+    /// <summary>Clears independent viewport owners even if one notification fails.</summary>
+    internal static void ClearViewportCamera(XRViewport viewport)
+        => viewport.DetachSceneBinding();
+
+    /// <summary>Rejects callback replacement of the exact viewport binding.</summary>
+    internal static bool TryBindOwnedCamera(XRViewport target, XRWindow? window,
+        IRuntimeRenderWorld? world, CameraComponent? camera)
+    {
+        ClearViewportCamera(target);
+        try
+        {
+            target.Window = window;
+            target.WorldInstanceOverride = world;
+            target.CameraComponent = camera;
+            if (ReferenceEquals(target.Window, window) &&
+                ReferenceEquals(target.WorldInstanceOverride, world) &&
+                ReferenceEquals(target.CameraComponent, camera) &&
+                ReferenceEquals(target.Camera, camera?.Camera) &&
+                (camera is null || CameraBelongsToWorld(camera, world)))
+                return true;
+        }
+        catch
+        {
+            try { ClearViewportCamera(target); }
+            catch { /* Preserve the binding failure after attempting all cleanup. */ }
+            throw;
+        }
+        ClearViewportCamera(target);
+        return false;
     }
 
     private void UpdateSceneControls()
@@ -57,18 +142,74 @@ public class SceneViewPanel : EditorPanel
 
     private void BindCamera()
     {
-        if (_sceneViewport is null)
+        if (_bindingCamera || _cameraBindingStopped || _cameraTerminal ||
+            _sceneViewport is not { IsDestroyed: false } || IsDestroyed || IsDestroyQueued)
             return;
-        if (Window is not null && !ReferenceEquals(_sceneViewport.Viewport.Window, Window))
-            _sceneViewport.Viewport.Window = Window;
-        XRViewport? source = Window?.Viewports.FirstOrDefault() ?? RuntimeEngine.Windows.FirstOrDefault()?.Viewports.FirstOrDefault();
-        CameraComponent? camera = CameraComponent is { SceneNode: not null } selected
-            ? selected : source?.CameraComponent;
-        if (!ReferenceEquals(_sceneViewport.Viewport.CameraComponent, camera))
-            _sceneViewport.Viewport.CameraComponent = camera;
-        if (source?.WorldInstanceOverride is { } world && !ReferenceEquals(_sceneViewport.Viewport.WorldInstanceOverride, world))
-            _sceneViewport.Viewport.WorldInstanceOverride = world;
+        _bindingCamera = true;
+        try
+        {
+            XRViewport target = _sceneViewport.Viewport;
+            XRWindow? window = Window;
+            IRuntimeRenderWorld? world = window?.TargetWorldInstance;
+            CameraComponent? requested = CameraComponent;
+            CameraComponent? camera = ResolveOwnedCamera(window, world,
+                window?.Viewports, requested);
+            if (requested is not null && !CameraBelongsToWorld(requested, world))
+            {
+                CameraComponent = null;
+                if (!ReferenceEquals(Window, window) || CameraComponent is not null)
+                {
+                    ClearSceneCamera();
+                    return;
+                }
+            }
+            CameraComponent? admittedRequest = CameraComponent;
+            if (ReferenceEquals(target.Window, window) &&
+                ReferenceEquals(target.WorldInstanceOverride, world) &&
+                ReferenceEquals(target.CameraComponent, camera) &&
+                ReferenceEquals(target.Camera, camera?.Camera))
+                return;
+
+            if (!TryBindOwnedCamera(target, window, world, camera))
+                return;
+            if (!ReferenceEquals(Window, window) ||
+                !ReferenceEquals(window?.TargetWorldInstance, world) ||
+                !ReferenceEquals(CameraComponent, admittedRequest) ||
+                _cameraBindingStopped || _cameraTerminal || IsDestroyed || IsDestroyQueued ||
+                camera is not null && !CameraBelongsToWorld(camera, world))
+                ClearSceneCamera();
+        }
+        finally
+        {
+            _bindingCamera = false;
+        }
     }
+
+    /// <summary>Selects a camera from the panel's exact window and runtime world.</summary>
+    internal static CameraComponent? ResolveOwnedCamera(XRWindow? window,
+        IRuntimeRenderWorld? world, IReadOnlyList<XRViewport>? sources,
+        CameraComponent? requested)
+    {
+        if (world is null || world.WorldContext is RuntimeWorld { IsDisposing: true })
+            return null;
+        if (CameraBelongsToWorld(requested, world))
+            return requested;
+        if (sources is null)
+            return null;
+        for (int index = 0; index < sources.Count; index++)
+        {
+            XRViewport source = sources[index];
+            if (ReferenceEquals(source.Window, window) && ReferenceEquals(source.World, world) &&
+                CameraBelongsToWorld(source.CameraComponent, world))
+                return source.CameraComponent;
+        }
+        return null;
+    }
+
+    private static bool CameraBelongsToWorld(CameraComponent? camera, IRuntimeRenderWorld? world)
+        => world is not null && camera is { IsDestroyed: false, IsDestroyQueued: false,
+            SceneNode: { IsDestroyed: false, IsDestroyQueued: false } node } &&
+            ReferenceEquals(node.World, world.WorldContext);
 
     private void CreateToolbar()
     {

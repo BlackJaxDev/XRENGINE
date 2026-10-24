@@ -6,6 +6,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -22,6 +23,8 @@ namespace XREngine.Rendering.UI
         public UIRenderableComponent()
         {
             RenderInfo3D = RenderInfo3D.New(this, RenderCommand3D);
+            RenderInfo3D.SetCollectionSuppressed(true);
+            _worldCollectionSuppressed = true;
             RenderInfo2D = RenderInfo2D.New(this, RenderCommand2D);
             RenderedObjects = [RenderInfo3D, RenderInfo2D];
             // The callback does not pass the camera or the pass collection to ShouldRender3D. When it rejects a main view,
@@ -47,8 +50,143 @@ namespace XREngine.Rendering.UI
 
         private readonly UIDrawCommandObserver _publicationCommandObserver;
         private bool _worldCollectionSuppressed;
+        private bool _worldCollectionTerminal;
+        private UICanvasTransform? _worldCollectionCanvasTransform;
+        private UICanvasComponent? _worldCollectionCanvasComponent;
+        private SceneNode? _worldCollectionCanvasNode;
+        private readonly List<UITransform> _worldCollectionAncestors = [];
 
-        /// <summary>Keeps authored world visibility while the canvas owns frozen world collection.</summary>
+        private void SyncCanvasWorldCollection()
+        {
+            if (_worldCollectionTerminal || !IsActiveInHierarchy)
+            {
+                ReleaseCanvasWorldCollection();
+                return;
+            }
+            UICanvasTransform? canvasTransform = SceneNode is not null && !SceneNode.IsTransformNull
+                ? (Transform as UITransform)?.ParentCanvas
+                : null;
+            SceneNode? canvasNode = canvasTransform?.SceneNode;
+            UICanvasComponent? canvasComponent = canvasNode?.GetComponent<UICanvasComponent>();
+
+            if (!ReferenceEquals(_worldCollectionCanvasTransform, canvasTransform))
+            {
+                if (_worldCollectionCanvasTransform is not null)
+                    _worldCollectionCanvasTransform.PropertyChanged -= CanvasWorldTransformPropertyChanged;
+                _worldCollectionCanvasTransform = canvasTransform;
+                if (canvasTransform is not null)
+                    canvasTransform.PropertyChanged += CanvasWorldTransformPropertyChanged;
+            }
+            if (!ReferenceEquals(_worldCollectionCanvasNode, canvasNode))
+            {
+                if (_worldCollectionCanvasNode is not null)
+                {
+                    _worldCollectionCanvasNode.ComponentAdded -= CanvasWorldComponentChanged;
+                    _worldCollectionCanvasNode.ComponentRemoved -= CanvasWorldComponentChanged;
+                    _worldCollectionCanvasNode.Activated -= CanvasWorldNodeActivationChanged;
+                    _worldCollectionCanvasNode.Deactivated -= CanvasWorldNodeActivationChanged;
+                }
+                _worldCollectionCanvasNode = canvasNode;
+                if (canvasNode is not null)
+                {
+                    canvasNode.ComponentAdded += CanvasWorldComponentChanged;
+                    canvasNode.ComponentRemoved += CanvasWorldComponentChanged;
+                    canvasNode.Activated += CanvasWorldNodeActivationChanged;
+                    canvasNode.Deactivated += CanvasWorldNodeActivationChanged;
+                }
+            }
+            if (!ReferenceEquals(_worldCollectionCanvasComponent, canvasComponent))
+            {
+                if (_worldCollectionCanvasComponent is not null)
+                    _worldCollectionCanvasComponent.WorldCollectionModeChanged -= SyncCanvasWorldCollection;
+                _worldCollectionCanvasComponent = canvasComponent;
+                if (canvasComponent is not null)
+                    canvasComponent.WorldCollectionModeChanged += SyncCanvasWorldCollection;
+            }
+
+            RenderInfo3D.UserInterfaceCanvas = canvasComponent;
+            RenderInfo2D.UserInterfaceCanvas = canvasComponent;
+
+            bool directWorld = canvasNode?.IsActiveInHierarchy == true &&
+                canvasComponent is { IsActiveInHierarchy: true, WorldCollectionUnavailable: false } &&
+                canvasTransform is { DrawSpace: not ECanvasDrawSpace.Screen } &&
+                !canvasComponent.UseOffscreenRenderingForNonScreenSpaces() &&
+                (Transform as UITransform)?.IsVisibleInHierarchy == true;
+            SetCanvasWorldCollectionSuppressed(!directWorld);
+        }
+
+        private void ReleaseCanvasWorldCollection()
+        {
+            if (_worldCollectionCanvasTransform is not null)
+                _worldCollectionCanvasTransform.PropertyChanged -= CanvasWorldTransformPropertyChanged;
+            _worldCollectionCanvasTransform = null;
+            if (_worldCollectionCanvasNode is not null)
+            {
+                _worldCollectionCanvasNode.ComponentAdded -= CanvasWorldComponentChanged;
+                _worldCollectionCanvasNode.ComponentRemoved -= CanvasWorldComponentChanged;
+                _worldCollectionCanvasNode.Activated -= CanvasWorldNodeActivationChanged;
+                _worldCollectionCanvasNode.Deactivated -= CanvasWorldNodeActivationChanged;
+            }
+            _worldCollectionCanvasNode = null;
+            if (_worldCollectionCanvasComponent is not null)
+                _worldCollectionCanvasComponent.WorldCollectionModeChanged -= SyncCanvasWorldCollection;
+            _worldCollectionCanvasComponent = null;
+            foreach (UITransform ancestor in _worldCollectionAncestors)
+                ancestor.PropertyChanged -= WorldCollectionAncestorPropertyChanged;
+            _worldCollectionAncestors.Clear();
+            RenderInfo3D.UserInterfaceCanvas = null;
+            RenderInfo2D.UserInterfaceCanvas = null;
+            SetCanvasWorldCollectionSuppressed(true);
+        }
+
+        private void RebindWorldCollectionAncestors()
+        {
+            foreach (UITransform ancestor in _worldCollectionAncestors)
+                ancestor.PropertyChanged -= WorldCollectionAncestorPropertyChanged;
+            _worldCollectionAncestors.Clear();
+            TransformBase? parent = (Transform as UITransform)?.Parent;
+            while (parent is UITransform ancestor)
+            {
+                ancestor.PropertyChanged += WorldCollectionAncestorPropertyChanged;
+                _worldCollectionAncestors.Add(ancestor);
+                parent = ancestor.Parent;
+            }
+        }
+
+        private void CanvasWorldTransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is nameof(UICanvasTransform.DrawSpace) or nameof(TransformBase.SceneNode))
+                SyncCanvasWorldCollection();
+            if (e.PropertyName == nameof(TransformBase.SceneNode))
+                SyncBatchPrimitiveRegistration();
+        }
+
+        private void CanvasWorldComponentChanged((SceneNode node, XRComponent comp) change)
+        {
+            if (change.comp is UICanvasComponent)
+            {
+                SyncCanvasWorldCollection();
+                SyncBatchPrimitiveRegistration();
+            }
+        }
+
+        private void CanvasWorldNodeActivationChanged(SceneNode _)
+            => SyncCanvasWorldCollection();
+
+        private void WorldCollectionAncestorPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
+        {
+            if (_worldCollectionTerminal || !IsActiveInHierarchy)
+            {
+                ReleaseCanvasWorldCollection();
+                return;
+            }
+            if (e.PropertyName == nameof(UITransform.Parent))
+                RebindWorldCollectionAncestors();
+            if (e.PropertyName is nameof(UITransform.Parent) or nameof(UITransform.Visibility))
+                SyncCanvasWorldCollection();
+        }
+
+        /// <summary>Keeps authored visibility while canvas mode controls 3D collection membership.</summary>
         internal void SetCanvasWorldCollectionSuppressed(bool suppressed)
         {
             if (_worldCollectionSuppressed == suppressed)
@@ -103,12 +241,15 @@ namespace XREngine.Rendering.UI
 
         protected override void OnComponentActivated()
         {
+            RebindWorldCollectionAncestors();
+            SyncCanvasWorldCollection();
             base.OnComponentActivated();
             SyncBatchPrimitiveRegistration();
         }
 
         protected override void OnComponentDeactivated()
         {
+            ReleaseCanvasWorldCollection();
             ReleaseBatchPrimitiveRegistration();
             _publicationPayloadBuilder?.Dispose();
             _publicationFrozenCommand = null;
@@ -118,6 +259,8 @@ namespace XREngine.Rendering.UI
 
         protected override void OnDestroying()
         {
+            _worldCollectionTerminal = true;
+            ReleaseCanvasWorldCollection();
             ReleaseBatchPrimitiveRegistration();
             _publicationCommandObserver.Dispose();
             try
@@ -550,6 +693,7 @@ namespace XREngine.Rendering.UI
 
         protected override void OnTransformChanging()
         {
+            ReleaseCanvasWorldCollection();
             ReleaseBatchPrimitiveRegistration();
             base.OnTransformChanging();
         }
@@ -557,13 +701,21 @@ namespace XREngine.Rendering.UI
         protected override void OnTransformChanged()
         {
             base.OnTransformChanged();
+            if (IsActiveInHierarchy && !_worldCollectionTerminal)
+            {
+                RebindWorldCollectionAncestors();
+                SyncCanvasWorldCollection();
+            }
             SyncBatchPrimitiveRegistration();
         }
 
         protected override void UITransformPropertyChanging(object? sender, IXRPropertyChangingEventArgs e)
         {
             if (e.PropertyName == nameof(UITransform.ParentCanvas))
+            {
+                ReleaseCanvasWorldCollection();
                 ReleaseBatchPrimitiveRegistration();
+            }
             base.UITransformPropertyChanging(sender, e);
         }
 
@@ -604,6 +756,15 @@ namespace XREngine.Rendering.UI
         protected override void UITransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             base.UITransformPropertyChanged(sender, e);
+            if (IsActiveInHierarchy && !_worldCollectionTerminal)
+            {
+                if (e.PropertyName == nameof(UITransform.Parent))
+                    RebindWorldCollectionAncestors();
+                if (e.PropertyName is nameof(UITransform.ParentCanvas) or nameof(UITransform.Parent) or nameof(UITransform.Visibility))
+                    SyncCanvasWorldCollection();
+            }
+            else
+                ReleaseCanvasWorldCollection();
             if (e.PropertyName == nameof(UITransform.ParentCanvas))
                 SyncBatchPrimitiveRegistration();
             switch (e.PropertyName)

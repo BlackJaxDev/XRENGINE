@@ -6,8 +6,8 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **39 of 60 implementation items are complete**.
-The active TODO has 21 code items and four owner decisions. Later sections
+Latest code reconciliation: **40 of 60 implementation items are complete**.
+The active TODO has 20 code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -437,3 +437,31 @@ passed with zero warnings/errors in 2m12.98s. The desktop test project compiled
 with zero warnings/errors in 45.41s. Desktop tests did not execute. The two Vulkan-only pass-admission edits after the headless build are
 outside its project inputs. Final source verification covers 9,936 files.
 No Windows execution, graphics, visual, IME, or performance acceptance is claimed.
+
+## Canvas Membership And Scene Camera Ownership
+
+Code reconciliation is **40 of 60 implementation items complete**. The active
+TODO retains 20 code items and four original owner decisions. Paragraph analysis
+remains pending. The completed item is 3D UI collection membership.
+
+- Screen, hidden, inactive, and offscreen UI stays outside 3D collection. Canvas
+  mode, component replacement, nested transform replacement, and reparenting
+  restore valid membership. Authored visibility and shadow flags stay intact.
+  Late transform attachment also restores the exact retained batch handle.
+- Scene panels select cameras only from their exact window and runtime world.
+  Callback replacement is rejected. Mandatory viewport detachment clears camera,
+  world, and window owners before notifications. List vetoes and failing observers
+  cannot prevent the tested owner and resize-subscription cleanup.
+- Gallery chrome, FPS, dock controls, and virtual text rows declare composition
+  owners. The actual gallery/FPS capture fixture compiles in the desktop suite;
+  it has not executed here. The broader layer and backend-reuse items stay open.
+
+The final headless build passed with zero warnings/errors in 15.96s. Full run 47
+passed **541 of 541 tests**, with zero warnings or skips, in 9.028s. The matching
+editor build passed with zero warnings/errors in 2m44.39s. All checks use the
+9,941-file source snapshot. Windows execution, graphics, visual checks, IME,
+performance, and equal-workload ImGui comparison remain unverified.
+
+Desktop test compilation 14 passed with zero warnings/errors in 50.22s. No
+desktop tests executed. All 32 local documentation links and whitespace checks
+pass. The source snapshot remains unchanged.

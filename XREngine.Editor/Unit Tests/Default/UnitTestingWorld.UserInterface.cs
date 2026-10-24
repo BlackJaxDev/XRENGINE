@@ -737,6 +737,7 @@ public static partial class EditorUnitTests
         public static UITextComponent AddFPSText(FontGlyphSet? font, SceneNode parentNode)
         {
             SceneNode textNode = new(parentNode) { Name = "TestTextNode" };
+            textNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
             UITextComponent text = textNode.AddComponent<UITextComponent>()!;
             text.DisableBatching = false;
             text.RenderPass = (int)EDefaultRenderPass.OnTopForward;

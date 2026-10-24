@@ -113,6 +113,7 @@ internal sealed class NativeDockTreeHost
 
         // Keep the handle beside the split so it does not become a third pane.
         SceneNode handleNode = container.NewChild<UISplitterHandleComponent>(out var handle, "SplitHandle");
+        handleNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
         handle.SplitTarget = split;
         handle.MinimumSize = 96;
         handle.MaximumSize = 2000;
@@ -162,11 +163,13 @@ internal sealed class NativeDockTreeHost
         outer.FixedSize = 60;
         outer.SplitterSize = 0;
         SceneNode header = stackNode.NewChildWithTransform(out UIDualSplitTransform headerSplit, "DockHeader");
+        header.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.StaticChrome;
         headerSplit.VerticalSplit = true;
         headerSplit.FirstFixedSize = true;
         headerSplit.FixedSize = 30;
         headerSplit.SplitterSize = 0;
         SceneNode tabsNode = header.NewChildWithTransform(out UIListTransform tabList, "DockTabs");
+        tabsNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
         tabList.DisplayHorizontal = true;
         tabList.ItemAlignment = EListAlignment.TopOrLeft;
         tabList.ItemSize = 82;
@@ -184,11 +187,14 @@ internal sealed class NativeDockTreeHost
             payload => EditorDragDropUtility.TryGetEditorPayload<NativeDockTabPayload>(payload, "dock-tab", out var tab) && tab is not null &&
                 tab.WindowKey == _windowKey && NativeDockPanel.All.Contains(tab.Panel)));
         SceneNode actionsNode = header.NewChildWithTransform(out UIListTransform actions, "DockActions");
+        actionsNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
         actions.DisplayHorizontal = true;
         actions.ItemAlignment = EListAlignment.TopOrLeft;
         actions.ItemSpacing = 2;
         SceneNode content = stackNode.NewChildWithTransform<UIBoundableTransform>(out _, "DockContent");
-        _root.NewChild<UIContextMenuComponent>(out var actionMenu, "DockActionsMenu");
+        content.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Dynamic;
+        SceneNode actionMenuNode = _root.NewChild<UIContextMenuComponent>(out var actionMenu, "DockActionsMenu");
+        actionMenuNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
         Dictionary<string, SceneNode> panels = [];
         foreach (string panel in stack.Tabs)
         {
