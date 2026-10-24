@@ -19,6 +19,12 @@ internal sealed class ObjectConstructionIdentityGuard
 
     internal void BeginPublication() => Volatile.Write(ref _phase, Publishing);
 
+    internal static void RequireLifetimeOwner(XRObjectBase value)
+    {
+        if (TryGetActive(value, out ObjectConstructionIdentityGuard? guard, out _))
+            guard!.RequireOwnerThread();
+    }
+
     internal static void RequireIdentityMutation(XRObjectBase value, bool allowPublicationCollision = false)
     {
         if (!TryGetActive(value, out ObjectConstructionIdentityGuard? guard, out int phase))

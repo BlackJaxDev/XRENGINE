@@ -19,6 +19,8 @@
     <Compile Include="../Rendering/UITextMultilineSubmitTests.cs" Link="Rendering/UITextMultilineSubmitTests.cs" />
     <Compile Include="../Rendering/UITabFocusRestoreTests.cs" Link="Rendering/UITabFocusRestoreTests.cs" />
     <Compile Include="../Core/OwnedObjectConstructionTests.cs" Link="Core/OwnedObjectConstructionTests.cs" />
+    <Compile Include="../Core/ObjectLifetimeRevisionTests.cs" Link="Core/ObjectLifetimeRevisionTests.cs" />
+    <Compile Include="../Scene/OwnedHierarchyLifetimeAdmissionTests.cs" Link="Scene/OwnedHierarchyLifetimeAdmissionTests.cs" />
     <Compile Include="../Core/EventListTests.cs" Link="Core/EventListTests.cs" />
     <Compile Include="../Core/OwnedConstructionProbe.cs" Link="Core/OwnedConstructionProbe.cs" />
     <Compile Include="../Core/NonCacheConstructionProbe.cs" Link="Core/NonCacheConstructionProbe.cs" />
@@ -35,6 +37,11 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerWorstFrameSelector.cs" Link="Editor/NativeProfilerWorstFrameSelector.cs" />
     <Compile Include="../Editor/NativeProfilerWorstFrameSelectorTests.cs" Link="Editor/NativeProfilerWorstFrameSelectorTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/AnimationLengthEdit.cs" Link="Editor/AnimationLengthEdit.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/AnimationPlotPointerSnapshot.cs" Link="Editor/AnimationPlotPointerSnapshot.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/AnimationPlotPointerSnapshot.Lane.cs" Link="Editor/AnimationPlotPointerSnapshot.Lane.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/AnimationPlotPointerSnapshot.KeyHit.cs" Link="Editor/AnimationPlotPointerSnapshot.KeyHit.cs" />
+    <Compile Include="../Editor/NativeAnimationPlotPointerTests.cs" Link="Editor/NativeAnimationPlotPointerTests.cs" />
+    <Compile Include="../Editor/NativeRetainedPlotCallbackTests.cs" Link="Editor/NativeRetainedPlotCallbackTests.cs" />
     <Compile Include="../Editor/AnimationLengthEditTests.cs" Link="Editor/AnimationLengthEditTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRootHistory.cs" Link="Editor/NativeProfilerRootHistory.cs" />
     <Compile Include="../Editor/NativeProfilerRootHistoryTests.cs" Link="Editor/NativeProfilerRootHistoryTests.cs" />
@@ -108,6 +115,7 @@
     <Compile Include="../Rendering/UICanvasInputLifetimeTests.cs" Link="Rendering/UICanvasInputLifetimeTests.cs" />
     <Compile Include="../Rendering/UIBatchCollectionTests.cs" Link="Rendering/UIBatchCollectionTests.cs" />
     <Compile Include="../Rendering/UICompositionSegmentTests.cs" Link="Rendering/UICompositionSegmentTests.cs" />
+    <Compile Include="../Rendering/ResourceChurnPublicationTests.cs" Link="Rendering/ResourceChurnPublicationTests.cs" />
     <Compile Include="../Rendering/UIActualControlCompositionTests.cs" Link="Rendering/UIActualControlCompositionTests.cs" />
     <Compile Include="../Rendering/UIControlTeardownTests.cs" Link="Rendering/UIControlTeardownTests.cs" />
     <Compile Include="../Rendering/UIGridSubscriptionTeardownTests.cs" Link="Rendering/UIGridSubscriptionTeardownTests.cs" />
@@ -162,6 +170,7 @@
     <Compile Include="../Rendering/UIPublicationReceiptStateTests.cs" Link="Rendering/UIPublicationReceiptStateTests.cs" />
     <Compile Include="../Rendering/UICanvasPublicationCaptureTests.cs" Link="Rendering/UICanvasPublicationCaptureTests.cs" />
     <Compile Include="../Rendering/UIPublicationMutationProbe.cs" Link="Rendering/UIPublicationMutationProbe.cs" />
+    <Compile Include="../Rendering/UIPointerMetadataProbe.cs" Link="Rendering/UIPointerMetadataProbe.cs" />
     <Compile Include="../Rendering/UIFocusNavigationTests.cs" Link="Rendering/UIFocusNavigationTests.cs" />
     <Compile Include="../Rendering/UIBatchCohortReuseTests.cs" Link="Rendering/UIBatchCohortReuseTests.cs" />
     <Compile Include="../Rendering/CountingVirtualListProvider.cs" Link="Rendering/CountingVirtualListProvider.cs" />

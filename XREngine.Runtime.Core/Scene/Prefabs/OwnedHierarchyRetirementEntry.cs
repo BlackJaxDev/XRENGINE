@@ -1,4 +1,5 @@
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Scene.Prefabs;
@@ -6,12 +7,15 @@ namespace XREngine.Scene.Prefabs;
 /// <summary>Stores exact raw graph state and the progress of its permitted removals.</summary>
 internal sealed class OwnedHierarchyRetirementEntry
 {
-    internal OwnedHierarchyRetirementEntry(XRWorldObjectBase value)
+    internal OwnedHierarchyRetirementEntry(XRWorldObjectBase value, ObjectConstructionIdentity identity)
     {
+        if (!ReferenceEquals(identity.Target, value) || !identity.IsCurrent)
+            throw new InvalidOperationException("The owned lifetime no longer matches its construction receipt.");
         if (value.IsDestroyed)
             throw new InvalidOperationException("A previously destroyed allocation has no canonical cleanup proof in this receipt.");
         Value = value;
-        Id = value.ID;
+        Id = identity.Id;
+        LifetimeRevision = identity.LifetimeRevision;
         switch (value)
         {
             case SceneNode node:
@@ -39,6 +43,7 @@ internal sealed class OwnedHierarchyRetirementEntry
 
     internal XRWorldObjectBase Value { get; }
     internal Guid Id { get; }
+    internal long LifetimeRevision { get; set; }
     internal bool Destroyed { get; set; }
     internal bool CleanupComplete { get; set; }
     internal TransformBase? Parent { get; set; }
@@ -57,7 +62,8 @@ internal sealed class OwnedHierarchyRetirementEntry
 
     internal void Validate()
     {
-        if (Value.ID != Id || Value.IsDestroyed != Destroyed || Value.IsDestroyQueued || Value.World is not null)
+        ObjectConstructionIdentity expected = new(Value, Id, LifetimeRevision);
+        if (!expected.IsCurrent || Value.IsDestroyed != Destroyed || Value.IsDestroyQueued || Value.World is not null)
             throw new InvalidOperationException("An owned structural object's identity or lifetime changed during cleanup.");
         HierarchyListMembership[] memberships = Value.CaptureHierarchyListMemberships();
         if (ListSlot is null ? memberships.Length != 0 : memberships.Length != 1 ||

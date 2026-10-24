@@ -42,7 +42,16 @@ public abstract partial class XRObjectBase
                 failure = new AggregateException("Owned construction failed and could not close normally.", error, closeError);
             }
         }
-        finally { ownership.ReleaseIdentityGuards(); }
+        finally
+        {
+            try { ownership.SealIdentities(); }
+            catch (Exception sealError)
+            {
+                failure = failure is null ? sealError :
+                    new AggregateException("Owned construction could not seal its retained identities.", failure, sealError);
+            }
+            finally { ownership.ReleaseIdentityGuards(); }
+        }
         return new(value, failure, ownership);
     }
 

@@ -11,7 +11,8 @@ internal sealed class HierarchyCloneCustody
     private readonly HierarchyCloneCustodyStore _store;
     private ObjectConstructionResult<SceneNode>? _construction;
     private OwnedHierarchyLifetime? _lifetime;
-    private HierarchyCloneIdentity[]? _identities;
+    private IReadOnlyList<ObjectConstructionIdentity>? _identities;
+    private HierarchyLifetimeAdmission? _initialAdmission;
     private bool _historyAttached;
 
     internal HierarchyCloneCustody(HierarchyCloneCustodyStore store, HierarchyCloneDocument document)
@@ -47,8 +48,9 @@ internal sealed class HierarchyCloneCustody
         // Store the result before allocating or calling another helper. Failed
         // construction keeps the exact ledger and its original exception.
         _construction = SceneNodePrefabUtility.CloneHierarchyOwned(source);
-        _identities = _construction.Ownership.Objects.OfType<XRWorldObjectBase>()
-            .Select(value => new HierarchyCloneIdentity(value, value.ID)).ToArray();
+        if (!_construction.Ownership.HasSealedIdentities)
+            throw new InvalidOperationException("The clone construction could not seal its lifetime identities.");
+        _identities = _construction.Ownership.Identities;
         _lifetime = new(_construction.Ownership, _construction.Failure);
         if (_construction.Failure is { } failure)
         {
@@ -77,13 +79,34 @@ internal sealed class HierarchyCloneCustody
         _store.RequireOwnerThread();
         if (_identities is null)
             throw new InvalidOperationException("The clone has no completed identity receipt.");
-        foreach (HierarchyCloneIdentity identity in _identities)
-            if (identity.Target.ID != identity.Id)
+        foreach (ObjectConstructionIdentity identity in _identities)
+            if (!identity.IsCurrent)
             {
-                InvalidOperationException failure = new("A clone allocation changed identity after construction.");
+                InvalidOperationException failure = new("A clone allocation changed identity or lifetime after construction.");
                 RetainFailure(failure);
                 throw failure;
             }
+    }
+
+    internal HierarchyLifetimeAdmission AcquireAdmission()
+    {
+        _store.RequireOwnerThread();
+        RequireUsable();
+        return HierarchyLifetimeAdmission.Acquire(_construction!.Ownership);
+    }
+
+    internal void BeginInitialAdmission()
+    {
+        if (_initialAdmission is not null)
+            throw new InvalidOperationException("The initial clone edit already holds lifetime admission.");
+        _initialAdmission = AcquireAdmission();
+    }
+
+    internal void EndInitialAdmission()
+    {
+        HierarchyLifetimeAdmission? admission = _initialAdmission;
+        _initialAdmission = null;
+        admission?.Dispose();
     }
 
     internal void MarkApplied()
@@ -133,6 +156,7 @@ internal sealed class HierarchyCloneCustody
     {
         try
         {
+            EndInitialAdmission();
             if (!_historyAttached)
                 ReleaseHistory();
         }

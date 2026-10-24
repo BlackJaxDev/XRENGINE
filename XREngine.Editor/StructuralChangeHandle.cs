@@ -29,10 +29,11 @@ internal sealed class StructuralChangeHandle(Undo.ChangeScope scope, Undo.Struct
     }
 
     /// <summary>Records the exact values of one owned property even if its observer failed.</summary>
-    public void ReconcileProperty(XRBase target, string propertyName, object? original, object? current)
+    public void ReconcileProperty(XRBase target, string propertyName, object? original, object? current,
+        IUndoPropertyReplayGuard? replayGuard = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        Undo.ReconcileStructuralProperty(scope, step, target, propertyName, original, current);
+        Undo.ReconcileStructuralProperty(scope, step, target, propertyName, original, current, replayGuard);
     }
 
     /// <summary>Removes one automatic property step whose replay belongs to this structural inverse.</summary>

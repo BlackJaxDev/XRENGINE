@@ -6,4 +6,5 @@ namespace XREngine.Rendering.UI;
 public readonly record struct UIPointerGeometry(
     Vector2 LocalSize,
     UIScrollbarPointerMetrics? Scrollbar = null,
-    UISplitterPointerMetrics? Splitter = null);
+    UISplitterPointerMetrics? Splitter = null,
+    object? Metadata = null);

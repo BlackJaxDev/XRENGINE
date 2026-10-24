@@ -181,7 +181,10 @@ public partial class UICanvasComponent
         if (layoutGeneration == 0 || canvas.IsLayoutInvalidated || canvas.IsUpdatingLayout)
             return;
 
-        long revision = canvas.ChangeJournal.Revision;
+        UIChangeJournal journal = canvas.ChangeJournal;
+        if (!journal.TryGetCommittedCursor(out UICommittedChangeCursor committedCursor))
+            return;
+        long revision = committedCursor.Revision;
         long worldCollectionRevision = DirectWorldChildrenRevision;
         Matrix4x4 canvasWorldMatrix = canvas.WorldMatrix;
         ECanvasDrawSpace authoringDrawSpace = canvas.DrawSpace;
@@ -305,7 +308,9 @@ public partial class UICanvasComponent
                 lifetime != _canvasLifetime ||
                 !ReferenceEquals(canvas, CanvasTransform) ||
                 canvas.CurrentLayoutGeneration != layoutGeneration ||
-                canvas.ChangeJournal.Revision != revision ||
+                !ReferenceEquals(canvas.ChangeJournal, journal) ||
+                !journal.TryGetCommittedCursor(out UICommittedChangeCursor beforeBuildCursor) ||
+                beforeBuildCursor != committedCursor ||
                 DirectWorldChildrenRevision != worldCollectionRevision ||
                 canvas.WorldMatrix != canvasWorldMatrix ||
                 canvas.DrawSpace != authoringDrawSpace ||
@@ -338,7 +343,9 @@ public partial class UICanvasComponent
                     lifetime != _canvasLifetime ||
                     !ReferenceEquals(canvas, CanvasTransform) ||
                     canvas.CurrentLayoutGeneration != layoutGeneration ||
-                    canvas.ChangeJournal.Revision != revision ||
+                    !ReferenceEquals(canvas.ChangeJournal, journal) ||
+                    !journal.TryGetCommittedCursor(out UICommittedChangeCursor afterBuildCursor) ||
+                    afterBuildCursor != committedCursor ||
                     DirectWorldChildrenRevision != worldCollectionRevision ||
                     canvas.WorldMatrix != canvasWorldMatrix ||
                     canvas.DrawSpace != authoringDrawSpace ||
@@ -523,6 +530,10 @@ public partial class UICanvasComponent
     private UIPointerGeometry CapturePointerGeometry(UIComponent component, Vector2 acceptedSize,
         UILayoutOutputPageView layoutPages)
     {
+        if (component is IUIPointerMetadataSource metadataSource)
+            return new UIPointerGeometry(acceptedSize,
+                Metadata: metadataSource.CapturePointerMetadata(acceptedSize));
+
         if (component is UISplitterHandleComponent splitter &&
             splitter.SplitTarget is { IsDestroyed: false } splitTarget &&
             _publicationLayoutIndices.TryGetValue(splitTarget.ElementIdentity, out int splitIndex) &&

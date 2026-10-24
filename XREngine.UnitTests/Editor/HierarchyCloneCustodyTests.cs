@@ -338,7 +338,6 @@ public sealed class HierarchyCloneCustodyTests
         finally { Cleanup(custody); source.Destroy(true); }
     }
 
-    [TestCase("Initial")]
     [TestCase("Undo")]
     [TestCase("Release")]
     public void ChangedStructuralIdentityRetainsNewerStateInsteadOfReplayingOrDestroyingIt(string boundary)
@@ -348,24 +347,13 @@ public sealed class HierarchyCloneCustodyTests
         using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", scene));
         HierarchyCloneCustodyStore store = new();
         Guid newId = Guid.NewGuid();
-        HierarchyPlacement sourcePlacement = HierarchyPlacement.Capture(source, world);
-        HierarchyCloneCustody custody;
-        if (boundary == "Initial")
-        {
-            Assert.Throws<InvalidOperationException>(() => HierarchyCloneMutation.Execute("Clone", source, world,
-                clone => HierarchyPlacement.RootLike(clone, sourcePlacement),
-                clone => clone.AdoptPersistentID(newId), store: store));
-            custody = store.CaptureEntries().Single();
-        }
-        else
-            custody = CloneRoot(source, world, store);
+        HierarchyCloneCustody custody = CloneRoot(source, world, store);
         SceneNode clone = custody.Node!;
         try
         {
             if (boundary == "Release")
                 Assert.That(Undo.TryUndo(), Is.True);
-            if (boundary != "Initial")
-                clone.AdoptPersistentID(newId);
+            clone.AdoptPersistentID(newId);
             if (boundary == "Undo")
                 Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
             Undo.ClearHistory();
@@ -377,6 +365,39 @@ public sealed class HierarchyCloneCustodyTests
             Assert.Throws<InvalidOperationException>(() => store.Reserve(world));
         }
         finally { Cleanup(custody); source.Destroy(true); }
+    }
+
+    [Test]
+    public void InitialCloneCallbacksCannotChangeOwnedLifetimesButCanEditUnrelatedObjects()
+    {
+        SceneNode source = new("Source"), unrelated = new("Unrelated");
+        XRScene scene = new("Hidden", source) { IsVisible = false };
+        using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", scene));
+        HierarchyCloneCustodyStore store = new();
+        Guid unrelatedId = unrelated.ID;
+        bool invoked = false;
+        HierarchyPlacement sourcePlacement = HierarchyPlacement.Capture(source, world);
+        HierarchyCloneCustody custody = HierarchyCloneMutation.Execute("Clone", source, world,
+            clone => HierarchyPlacement.RootLike(clone, sourcePlacement), clone =>
+            {
+                invoked = true;
+                Assert.Throws<InvalidOperationException>(clone.Generate);
+                Assert.Throws<InvalidOperationException>(() => clone.AdoptPersistentID(Guid.NewGuid()));
+                Assert.Throws<InvalidOperationException>(() => clone.Transform.Children.Destroy(false));
+                unrelated.Generate();
+                unrelated.Name = "Allowed edit";
+            }, store: store);
+        try
+        {
+            Assert.That(invoked, Is.True);
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Applied));
+            Assert.That(unrelated.ID, Is.Not.EqualTo(unrelatedId));
+            Assert.That(unrelated.Name, Is.EqualTo("Allowed edit"));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Undo.ClearHistory();
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Released));
+        }
+        finally { Cleanup(custody); source.Destroy(true); unrelated.Destroy(true); }
     }
 
     private static HierarchyCloneCustody CloneRoot(SceneNode source, RuntimeWorld world, HierarchyCloneCustodyStore store)

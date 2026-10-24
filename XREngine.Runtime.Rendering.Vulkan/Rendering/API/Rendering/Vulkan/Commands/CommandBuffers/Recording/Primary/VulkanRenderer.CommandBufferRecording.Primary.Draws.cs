@@ -66,7 +66,10 @@ namespace XREngine.Rendering.Vulkan
                 SetViewportScissorTracked(commandBuffer, viewports, scissors, draw.ViewportScissorCount);
             else
                 SetViewportScissorTracked(commandBuffer, draw.Viewport, draw.Scissor);
-            return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.FrameDataSlot, out failureReason, out pipelineUnavailable);
+            VulkanAcceptedFramePlan? acceptedPlan = recordingState.AcceptedFramePlan;
+            VulkanWorldUiNativeProof? proof = acceptedPlan?.WorldUiProof;
+            ulong nativeToken = proof?.NativeToken ?? 0UL;
+            return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.FrameDataSlot, out failureReason, out pipelineUnavailable, proof, acceptedPlan, nativeToken);
         }
 
         internal bool RecordIndirectDrawPayloadIntoCommandBuffer(

@@ -48,14 +48,14 @@ internal sealed class HierarchyTransformState
               local.Scale == _scale && local.Order == _order
             : _transform.LocalMatrix == _matrix;
 
-    public void ReconcileProperties(StructuralChangeHandle handle)
+    public void ReconcileProperties(StructuralChangeHandle handle, IUndoPropertyReplayGuard? replayGuard = null)
     {
         if (_transform is not Transform local)
             return;
-        handle.ReconcileProperty(local, nameof(Transform.Translation), _translation, local.Translation);
-        handle.ReconcileProperty(local, nameof(Transform.Rotation), _rotation, local.Rotation);
-        handle.ReconcileProperty(local, nameof(Transform.Scale), _scale, local.Scale);
-        handle.ReconcileProperty(local, nameof(Transform.Order), _order, local.Order);
+        handle.ReconcileProperty(local, nameof(Transform.Translation), _translation, local.Translation, replayGuard);
+        handle.ReconcileProperty(local, nameof(Transform.Rotation), _rotation, local.Rotation, replayGuard);
+        handle.ReconcileProperty(local, nameof(Transform.Scale), _scale, local.Scale, replayGuard);
+        handle.ReconcileProperty(local, nameof(Transform.Order), _order, local.Order, replayGuard);
     }
 
     public void Restore(Action requireOwner)

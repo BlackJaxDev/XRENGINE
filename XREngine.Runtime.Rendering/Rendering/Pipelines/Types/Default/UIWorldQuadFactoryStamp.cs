@@ -73,4 +73,8 @@ internal sealed class UIWorldQuadFactoryStamp
             _fragment.SourceRevision == _fragmentRevision &&
             string.Equals(_vertex.Source?.Text, _vertexSource, StringComparison.Ordinal) &&
             string.Equals(_fragment.Source?.Text, _fragmentSource, StringComparison.Ordinal);
+
+    internal bool IsCurrentPresentMesh(XRMeshRenderer mesh, XRMaterial material)
+        => ReferenceEquals(_quad.FullScreenMesh, mesh) &&
+            ReferenceEquals(_material, material) && IsCurrent(_quad);
 }

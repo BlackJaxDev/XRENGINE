@@ -3,6 +3,8 @@ using XREngine.Rendering;
 using FrameStats = XREngine.RuntimeEngine.Rendering.Stats.Frame;
 using GpuStats = XREngine.RuntimeEngine.Rendering.Stats.GpuPipelineProfiler;
 using MatrixStats = XREngine.RuntimeEngine.Rendering.Stats.RenderMatrix;
+using ResourceChurnStats = XREngine.RuntimeEngine.Rendering.Stats.ResourceChurn;
+using ShadowAtlasStats = XREngine.RuntimeEngine.Rendering.Stats.ShadowAtlas;
 using SpatialStats = XREngine.RuntimeEngine.Rendering.Stats.Octree;
 using VramStats = XREngine.RuntimeEngine.Rendering.Stats.Vram;
 
@@ -11,6 +13,7 @@ namespace XREngine.Editor;
 public partial class ProfilerPanel
 {
     private readonly NativeProfilerSpikeHistory _spikes = new();
+    private readonly ResourceChurnStats.SnapshotRow[] _resourceChurnRows = new ResourceChurnStats.SnapshotRow[32];
     private float _minimumSpikeDropFps;
     private bool _fpsFrameLogging;
     internal float MinimumSpikeDropFps
@@ -192,7 +195,7 @@ public partial class ProfilerPanel
         return true;
     }
 
-    private static void CaptureRenderStats(List<NativeProfilerDisplayRow> rows)
+    private void CaptureRenderStats(List<NativeProfilerDisplayRow> rows)
     {
         if (!Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking)
             rows.Add(new("Render tracking disabled", string.Empty,
@@ -209,6 +212,50 @@ public partial class ProfilerPanel
         CaptureRenderMemory(rows);
         CaptureRenderMatrix(rows);
         CaptureSpatialTree(rows);
+        CaptureResourceChurn(rows);
+        CaptureShadowAtlasSolve(rows);
+    }
+
+    private void CaptureResourceChurn(List<NativeProfilerDisplayRow> rows)
+    {
+        int available = ResourceChurnStats.CopyLastFrameRows(_resourceChurnRows,
+            out _, out ResourceChurnStats.SnapshotCounts counts, out int omitted);
+        if (counts.Created + counts.Recreated + counts.Resized + counts.Destroyed == 0 && available == 0)
+            return;
+        rows.Add(new("Render resource churn", counts.Created.ToString(CultureInfo.InvariantCulture),
+            $"created | recreated {counts.Recreated} | resized {counts.Resized} | destroyed {counts.Destroyed}"));
+        int displayed = Math.Min(available, _resourceChurnRows.Length);
+        for (int index = 0; index < displayed; index++)
+        {
+            ResourceChurnStats.SnapshotRow item = _resourceChurnRows[index];
+            rows.Add(new(item.ResourceName, item.Count.ToString(CultureInfo.InvariantCulture),
+                $"{item.ResourceKind} | {item.EventName} | {(item.Reason.Length == 0 ? "-" : item.Reason)}"));
+        }
+        int hidden = omitted + available - displayed;
+        if (hidden > 0)
+            rows.Add(new("Additional resource events", hidden.ToString(CultureInfo.InvariantCulture),
+                "Distinct event keys beyond the bounded last-frame list."));
+    }
+
+    private static void CaptureShadowAtlasSolve(List<NativeProfilerDisplayRow> rows)
+    {
+        var solve = ShadowAtlasStats.LastSolveDiagnostics;
+        if (solve.ClassifiedRequestCount == 0 && solve.ElapsedMilliseconds <= 0.0)
+            return;
+        rows.Add(new("Shadow atlas solve", solve.ElapsedMilliseconds.ToString("F3", CultureInfo.InvariantCulture),
+            $"ms | {solve.ClassifiedRequestCount} requests | directional {solve.DirectionalRequestCount} | spot {solve.SpotRequestCount} | point {solve.PointRequestCount}"));
+        rows.Add(new("Shadow formats", solve.DepthRequestCount.ToString(CultureInfo.InvariantCulture),
+            $"depth | variance2 {solve.Variance2RequestCount} | exponential2 {solve.ExponentialVariance2RequestCount} | exponential4 {solve.ExponentialVariance4RequestCount}"));
+        rows.Add(new("Shadow solve attempts", solve.BalancedSolveAttemptCount.ToString(CultureInfo.InvariantCulture),
+            $"failures {solve.FailedCandidateCount} | demotions {solve.DemotionCount} | sticky {solve.StickyDemotionCount} | grouped {solve.DirectionalGroupDemotionCount} | fallback {solve.DeterministicFallbackDemotionCount} | waterline {solve.WaterlineDemotionCount}"));
+        rows.Add(new("Shadow reuse", solve.PriorReserveHitCount.ToString(CultureInfo.InvariantCulture),
+            $"reserve hits/misses {solve.PriorReserveHitCount}/{solve.PriorReserveMissCount} | sub-block {solve.PriorSubBlockHitCount}/{solve.PriorSubBlockMissCount} | incremental {solve.IncrementalReuseCount}"));
+        rows.Add(new("Shadow pages", solve.PageAllocationSuccessCount.ToString(CultureInfo.InvariantCulture),
+            $"allocations {solve.PageAllocationSuccessCount}/{solve.PageAllocationAttemptCount} | creates {solve.PageCreateSuccessCount}/{solve.PageCreateAttemptCount} | clears {solve.PageClearCount}"));
+        rows.Add(new("Shadow groups", solve.DirectionalGroupSeedCount.ToString(CultureInfo.InvariantCulture),
+            $"directional seeds/members/misses {solve.DirectionalGroupSeedCount}/{solve.DirectionalGroupMemberCount}/{solve.DirectionalGroupCoLocationFailureCount} | point {solve.PointGroupSeedCount}/{solve.PointGroupMemberCount}/{solve.PointGroupCoLocationFailureCount}"));
+        if (solve.LastFailureReason != XREngine.Rendering.Shadows.SkipReason.None)
+            rows.Add(new("Shadow last failure", solve.LastFailureReason.ToString(), string.Empty));
     }
 
     private static void CaptureRenderMemory(List<NativeProfilerDisplayRow> rows)

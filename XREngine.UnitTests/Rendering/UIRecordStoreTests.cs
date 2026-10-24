@@ -191,4 +191,44 @@ public sealed class UIRecordStoreTests
         mapped.Release();
         store.ResourcesRetired.ShouldBeTrue();
     }
+
+    [Test]
+    public void RangeRetainsOnlyIntersectingLeavesAfterStoreRetires()
+    {
+        int[] claims = new int[3];
+        int[] records = Enumerable.Range(0, 768).ToArray();
+        UIRecordStore<int> store = UIRecordStore<int>.Create(records,
+            value => claims[value / 256]++, value => claims[value / 256]--);
+        UIRecordRange<int> range = UIRecordRange<int>.Create(store, 240, 32);
+        store.Release();
+
+        claims.ShouldBe(new[] { 256, 256, 0 });
+        range.PageCount.ShouldBe(2);
+        range.GetPage(0).ToArray().ShouldBe(Enumerable.Range(240, 16).ToArray());
+        range.GetPage(1).ToArray().ShouldBe(Enumerable.Range(256, 16).ToArray());
+        range.Release();
+        claims.ShouldBe(new[] { 0, 0, 0 });
+    }
+
+    [Test]
+    public void FailedSecondLeafRetainUnwindsFirstLeafClaim()
+    {
+        UIRecordStore<int> store = UIRecordStore<int>.Create(Enumerable.Range(0, 512).ToArray());
+        UIRecordStoreNode<int> first = store.GetLeaf(0);
+        UIRecordStoreNode<int> second = store.GetLeaf(1);
+        FieldInfo claimsField = typeof(UIRecordStoreNode<int>).GetField("_claims",
+            BindingFlags.Instance | BindingFlags.NonPublic)!;
+        int firstClaims = (int)claimsField.GetValue(first)!;
+        claimsField.SetValue(second, int.MaxValue);
+        try
+        {
+            Should.Throw<OverflowException>(() => UIRecordRange<int>.Create(store, 0, 512));
+            ((int)claimsField.GetValue(first)!).ShouldBe(firstClaims);
+        }
+        finally
+        {
+            claimsField.SetValue(second, 1);
+            store.Release();
+        }
+    }
 }

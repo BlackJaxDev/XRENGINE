@@ -877,3 +877,36 @@ source inputs stayed unchanged. Matching editor build58 passed with zero
 warnings/errors in 2m17.11s. Desktop test build30 passed with zero warnings/errors
 in 55.72s. All source inputs stayed unchanged. No Windows execution or GPU
 acceptance is claimed.
+
+## Composition ownership and callback-safe plot follow-up
+
+The current increment keeps the reconciliation at **46 of 60**. It advances
+several open items without claiming sparse capture, complete editor parity, or
+native runtime acceptance:
+
+- Composition segments own intersecting record leaves. Packet and collector
+  claims preserve reused segments without retaining unrelated old store pages.
+  Public flat compatibility views materialize lazily and count that work.
+- Full canvas capture rejects open change transactions and validates the exact
+  committed cursor before and after packet construction. Pointer metadata stays
+  with the accepted hit packet, including when newer authoring data exists.
+- Animation has bounded member lanes and method details, frozen plot selection,
+  double-click insertion, and pan. Hidden transactional builds and input/build
+  generations reject callback reentry. Baked/frame-cadence length and complete
+  channel editing remain open.
+- Resource rows and counters publish in one coherent epoch with fixed storage.
+  Shadow solve diagnostics include formats, demotions, reuse, allocation, and
+  group results. Detailed Vulkan profiler output remains open.
+- Clone construction seals lifetime revisions before transfer. Exact replay
+  admission spans owned transform setters and matrix callbacks. Duplicate is
+  still inactive pending integration; unknown allocations retain their ledger.
+- Vulkan records exact indexed issue order and emitted clear evidence for the
+  selected output path. Its capability remains disabled until compiled program,
+  descriptor, sampled-resource, writer, and final output proofs are complete.
+
+Headless build137 passed with zero warnings/errors in 18.38s. Full run86 passed
+**964 of 964 tests**, with no warnings, failures, or skips, in 11.408s. Editor
+build59 passed with zero warnings/errors in 2m26.63s. Desktop test build32 passed with zero warnings/errors in 50.45s. The final checked snapshot
+has 10,723 files. A desktop-only fixture import was corrected after the editor
+build; production and portable test inputs were unchanged. The three
+owner proposals and four original owner decisions remain pending.

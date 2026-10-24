@@ -73,7 +73,11 @@ internal static class HierarchyMutation
             // History observers can request replay. Keep the hold through commit
             // so they cannot run an action before its command returns.
             try { scope.Dispose(); }
-            finally { opening?.Dispose(); }
+            finally
+            {
+                try { cloneCustody?.EndInitialAdmission(); }
+                finally { opening?.Dispose(); }
+            }
         }
     }
 
@@ -87,7 +91,11 @@ internal static class HierarchyMutation
 
     private static void Replay(Action action, HierarchyCloneCustody? cloneCustody)
     {
-        try { action(); }
+        try
+        {
+            using var admission = cloneCustody?.AcquireAdmission();
+            action();
+        }
         catch (Exception failure)
         {
             cloneCustody?.RetainFailure(failure);

@@ -529,6 +529,23 @@ public sealed partial class UIBatchCollector : IDisposable
     private int _collectPublishedRecordIndex = -1;
     private long _publishedCollectionEpoch;
     private bool _reusePublishedRuns;
+
+    private static void ReleasePublicationStorage(
+        UIRecordStore<UIRenderRecord>? firstStore, UICompositionSegmentSet? firstSet,
+        UIRecordStore<UIRenderRecord>? secondStore = null, UICompositionSegmentSet? secondSet = null)
+    {
+        List<Exception>? failures = null;
+        try { firstSet?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { firstStore?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { secondSet?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { secondStore?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        if (failures is not null)
+            throw new AggregateException("UI published storage cleanup failed.", failures);
+    }
     /// <summary>Draws authored by the currently published frozen UI packet.</summary>
     public int ExpectedPublishedDrawIntentCount
     {
@@ -1164,9 +1181,17 @@ public sealed partial class UIBatchCollector : IDisposable
         }
 
         records.Retain();
+        UICompositionSegmentSet composition = publication.CompositionStorage;
+        try { composition.Retain(); }
+        catch
+        {
+            records.Release();
+            throw;
+        }
         UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
+        UICompositionSegmentSet? oldCollectComposition = _collectCompositionStorage;
         _collectPublishedStorage = records;
-        _collectCompositionStorage = publication.CompositionStorage;
+        _collectCompositionStorage = composition;
         _collectPublishedMarkers.Clear();
         try
         {
@@ -1227,7 +1252,7 @@ public sealed partial class UIBatchCollector : IDisposable
         ReconcileCollectedRunIds();
         RetireMissingPrimitives();
         }
-        finally { oldCollectStorage?.Release(); }
+        finally { ReleasePublicationStorage(oldCollectStorage, oldCollectComposition); }
     }
 
     /// <summary>
@@ -1503,6 +1528,7 @@ public sealed partial class UIBatchCollector : IDisposable
     {
         Interlocked.Increment(ref _publishedCollectionEpoch);
         UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
+        UICompositionSegmentSet? oldCollectComposition = _collectCompositionStorage;
         CollectedPublicationGeneration = 0;
         _reusePublishedRuns = false;
         _collectPublishedRecordIndex = -1;
@@ -1517,7 +1543,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
-        oldCollectStorage?.Release();
+        ReleasePublicationStorage(oldCollectStorage, oldCollectComposition);
     }
 
     /// <summary>
@@ -1542,6 +1568,7 @@ public sealed partial class UIBatchCollector : IDisposable
         (_collectTextGroups, _renderTextGroups) = (_renderTextGroups, _collectTextGroups);
         (_collectPublishedMarkers, _renderPublishedMarkers) = (_renderPublishedMarkers, _collectPublishedMarkers);
         UIRecordStore<UIRenderRecord>? oldRenderStorage = _renderPublishedStorage;
+        UICompositionSegmentSet? oldRenderComposition = _renderCompositionStorage;
         _renderPublishedStorage = _collectPublishedStorage;
         _renderCompositionStorage = _collectCompositionStorage;
         _collectPublishedStorage = null;
@@ -1556,7 +1583,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
-        oldRenderStorage?.Release();
+        ReleasePublicationStorage(oldRenderStorage, oldRenderComposition);
     }
 
     /// <summary>
@@ -1568,6 +1595,8 @@ public sealed partial class UIBatchCollector : IDisposable
         Interlocked.Increment(ref _publishedCollectionEpoch);
         UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
         UIRecordStore<UIRenderRecord>? oldRenderStorage = _renderPublishedStorage;
+        UICompositionSegmentSet? oldCollectComposition = _collectCompositionStorage;
+        UICompositionSegmentSet? oldRenderComposition = _renderCompositionStorage;
         CollectedPublicationGeneration = 0;
         _reusePublishedRuns = false;
         _collectPublishedRecordIndex = -1;
@@ -1598,8 +1627,8 @@ public sealed partial class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
-        try { oldCollectStorage?.Release(); }
-        finally { oldRenderStorage?.Release(); }
+        ReleasePublicationStorage(oldCollectStorage, oldCollectComposition,
+            oldRenderStorage, oldRenderComposition);
     }
 
     #endregion

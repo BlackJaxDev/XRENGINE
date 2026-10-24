@@ -17,8 +17,7 @@ public sealed class UIWorldOutputAttemptContractTests
     {
         XRWindow window = NewWindow();
         ulong first = Invoke<ulong>(window, "BeginOpenGlRenderDispatch");
-        XRViewport viewport = (XRViewport)RuntimeHelpers.GetUninitializedObject(
-            typeof(XRViewport));
+        XRViewport viewport = IdentityOnly<XRViewport>();
         RenderCommandCollection commands = new();
         SetField(window, "_expectedOpenGlWorldViewport", viewport);
         SetField(window, "_expectedOpenGlWorldCommands", commands);
@@ -45,8 +44,7 @@ public sealed class UIWorldOutputAttemptContractTests
     {
         XRWindow window = NewWindow();
         ulong token = Invoke<ulong>(window, "BeginOpenGlRenderDispatch");
-        XRViewport viewport = (XRViewport)RuntimeHelpers.GetUninitializedObject(
-            typeof(XRViewport));
+        XRViewport viewport = IdentityOnly<XRViewport>();
         RenderCommandCollection commands = new();
         SetField(window, "_expectedOpenGlWorldViewport", viewport);
         SetField(window, "_expectedOpenGlWorldCommands", commands);
@@ -69,16 +67,11 @@ public sealed class UIWorldOutputAttemptContractTests
     public void VulkanWorldInputRequiresTheExactStagedPublicationTuple()
     {
         XRWindow window = NewWindow();
-        XRViewport viewport = (XRViewport)RuntimeHelpers.GetUninitializedObject(
-            typeof(XRViewport));
-        UICanvasComponent canvas = (UICanvasComponent)
-            RuntimeHelpers.GetUninitializedObject(typeof(UICanvasComponent));
-        UIPublication publication = (UIPublication)
-            RuntimeHelpers.GetUninitializedObject(typeof(UIPublication));
-        UIPublication replacement = (UIPublication)
-            RuntimeHelpers.GetUninitializedObject(typeof(UIPublication));
-        UICanvasComponent otherCanvas = (UICanvasComponent)
-            RuntimeHelpers.GetUninitializedObject(typeof(UICanvasComponent));
+        XRViewport viewport = IdentityOnly<XRViewport>();
+        UICanvasComponent canvas = IdentityOnly<UICanvasComponent>();
+        UIPublication publication = IdentityOnly<UIPublication>();
+        UIPublication replacement = IdentityOnly<UIPublication>();
+        UICanvasComponent otherCanvas = IdentityOnly<UICanvasComponent>();
         List<(XRViewport Viewport, UICanvasComponent Canvas,
             UIPublication Publication, ulong ReceiptId)> staged =
             [(viewport, canvas, publication, 71UL)];
@@ -117,10 +110,18 @@ public sealed class UIWorldOutputAttemptContractTests
             replacement, replacement, first, 9UL, 1UL, 42UL, 1UL).ShouldBeTrue();
     }
 
+    // These doubles prove identity only. They have no constructor-owned resources
+    // and must not enter the real finalizer or destruction queues.
+    private static T IdentityOnly<T>() where T : class
+    {
+        T value = (T)RuntimeHelpers.GetUninitializedObject(typeof(T));
+        GC.SuppressFinalize(value);
+        return value;
+    }
+
     private static XRWindow NewWindow()
     {
-        XRWindow window = (XRWindow)RuntimeHelpers.GetUninitializedObject(
-            typeof(XRWindow));
+        XRWindow window = IdentityOnly<XRWindow>();
         SetField(window, "_requiredOpenGlBackdropReceipts", new HashSet<ulong>());
         SetField(window, "_requiredOpenGlWorldReceipts", new HashSet<ulong>());
         SetField(window, "_openGlWorldNativeTokens", new Dictionary<ulong, ulong>());

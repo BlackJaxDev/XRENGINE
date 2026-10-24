@@ -1112,8 +1112,10 @@ existing destructive layout drain. Publication readers copy whole committed
 transactions from a fixed-capacity log. Open transactions return Busy. Separate
 transaction staging coalesces identities without depending on unread layout
 changes. Eviction removes complete transactions; an expired cursor requires full
-resynchronization. Reading the current cursor does no log scan. This API prepares
-sparse publication; the current record capture still scans the full tree.
+resynchronization. Reading the current cursor does no log scan. Capture requires a committed cursor at entry and rechecks the exact journal
+and cursor before and after packet construction. An open transaction cannot
+publish a partial candidate. This API prepares sparse publication; the current
+record capture still scans the full tree.
 
 Virtual inspector string previews subscribe through `EditorPropertyAccess`.
 Changes update the existing label on the scene edit queue. Multiple selected
@@ -1132,8 +1134,14 @@ claims and reports failures. Final cleanup closes admission before callbacks.
 Render collection and input/focus readers use indexed store access. A collector
 retains the store identity while it uses persistent runs. Collection epochs reject
 callback reentry, and old claims retire after the outer collection stops writing.
-Hit records use the same paged storage. Composition and capture still process
-the full record set. These changes do not establish sparse capture or lower frame cost.
+Hit records use the same paged storage. Composition segments retain only the
+record leaves that intersect their ordered range. Reused segments do not keep an
+unrelated old store alive. Packets and collector sides hold separate segment-set
+claims; construction failure unwinds prior claims, and release attempts every
+owned claim. Internal collection reads the ranges directly. The public flat
+record view is a lazy compatibility copy with a materialization counter. Capture
+and composition discovery still process the full record set. These changes do
+not establish sparse capture or lower frame cost.
 
 `OwnedHierarchyLifetime` retains a constructor ledger and attempts cleanup once.
 It accepts an exact detached structural forest, rejects unsupported allocations
@@ -1192,4 +1200,35 @@ virtual table cell owns one reusable plot and fixed scratch arrays. It draws at
 most 31 line segments and clears the old series on recycle. GPU root cells use
 the producer's bounded timing history and show milliseconds. Render Stats also
 exposes GPU memory, FBO bandwidth, render-matrix swaps, and CPU spatial-tree
-counters. Native runtime acceptance and detailed resource diagnostics remain open.
+counters. Resource event counts and the top 32 detail rows publish under one
+lock with an epoch and an omitted-key count. Frame publication uses fixed row
+buffers; the native panel copies into fixed scratch storage. Shadow diagnostics
+include request formats, solve failures, demotions, reuse, page allocation, and
+group placement. Native runtime acceptance and detailed Vulkan output
+diagnostics remain open.
+
+## Frozen animation plot input
+
+An interactable can attach immutable managed metadata to its accepted pointer
+geometry through `IUIPointerMetadataSource`. Hit packets retain that value with
+their geometry. A source returns no metadata while its build, source, or size is
+inconsistent, and records a hit invalidation when it replaces the value. The
+metadata contract does not transfer native resource ownership. Changed plots
+allocate bounded immutable snapshots so held packets cannot observe later edits;
+idle capture reuses them. Allocation and latency measurements remain required.
+
+Animation plots capture bounded lane and key targets, time bounds, exact panel
+and input owners, and source, view, and build revisions. Clicks select the frozen
+lane or key; a blank double-click uses the canonical key authoring action. A pan
+keeps the pressed coordinates through its own new frames, while an unrelated
+view change or resize rejects it. Input dispatch generations reject owner changes
+that return to the same object during a callback.
+
+Plot builds hide the visual root inside a canvas change transaction before they
+write strokes. A completed exact build can restore visibility and publish its
+metadata. Aborted builds stay hidden. Stroke writes check owner validity after
+callback boundaries, and nested build requests coalesce into a bounded retry.
+Method details limit argument rows and text length; they do not call arbitrary
+argument `ToString` implementations. Source subscriptions change only when their
+topology changes. Baked/frame-cadence length adapters, full channel editing, and
+native runtime acceptance remain open.

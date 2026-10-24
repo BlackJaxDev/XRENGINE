@@ -22,6 +22,7 @@ internal static class HierarchyCloneMutation
                     if (!context.CanStart())
                         throw new InvalidOperationException("The clone source changed before construction.");
                     SceneNode clone = custody.Clone(source);
+                    custody.BeginInitialAdmission();
                     if (!context.CanStart())
                         throw new InvalidOperationException("The clone source changed during construction.");
                     custody.RequireIdentity();
@@ -34,8 +35,10 @@ internal static class HierarchyCloneMutation
                     custody.RequireIdentity();
                     HierarchyPlacement after = destination(clone);
                     custody.RequireIdentity();
-                    return new(before, after, preserveWorld: false, activeAfter: active,
+                    HierarchyMutationOperation operation = new(before, after, preserveWorld: false, activeAfter: active,
                         requireIdentity: custody.RequireIdentity);
+                    operation.SetPropertyReplayGuard(new HierarchyClonePropertyReplayGuard(custody, operation));
+                    return operation;
                 }
                 catch (Exception failure)
                 {

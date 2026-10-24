@@ -1618,3 +1618,83 @@ inputs stayed unchanged through headless build134, full run84, editor build58,
 and desktop test build30. The fourteen new clone-custody cases and animation batch
 Undo fixtures compiled; this environment did not execute them. Windows workflow,
 native GPU, visual, IME, and equal-workload performance acceptance remain open.
+
+## Composition claims and callback admission follow-up
+
+The next increment replaces internal composition copies with intersecting leaf
+claims, publishes resource event rows and counters in one fixed-buffer epoch,
+and adds construction lifetime stamps with guarded owned transform replay. The
+Vulkan support path now checks actual clear values and exact indexed issue
+order. Its capability remains disabled pending descriptor, compiled pipeline,
+sampled resource, and final output lineage proof.
+
+Animation plot review found reentrant owner changes, partial visible stroke
+writes, and arbitrary argument formatting callbacks. The repair adds frozen
+pointer metadata, dispatch/build revisions, guarded stroke writes, a hidden
+build inside a change transaction, and bounded callback-free argument details.
+Full canvas capture now rejects open transactions at entry and both final
+admission checks. This does not implement sparse capture.
+
+Headless build135 is checking the frozen 10,721-file source snapshot. No result
+for this increment is claimed yet. Further callback regression fixtures will be
+added only after this compiler process stops, then validated in the final chain.
+
+Headless build135 failed in Data after 34.59s with zero warnings and two
+`XREG009` errors. The public lifetime revision changed the fingerprints of
+`xre.settings.user` version 2 and `xre.settings.build` version 1 despite YAML and
+MemoryPack ignore attributes. All 10,721 source inputs stayed unchanged. The
+repair must exclude this in-memory metadata through the existing contract rules;
+it must not change saved schema versions or snapshots. This build did not reach
+the headless test assembly. Source owners were released for this repair and the
+remaining animation callback regression fixtures after the process stopped.
+
+The schema repair makes the lifetime revision internal. Cross-project admission
+uses the existing immutable identity receipt's `IsCurrent` comparison; no friend
+assembly, public method, generator rule, schema version, or snapshot changed.
+Additional review requires hidden plot builds to invalidate arrange explicitly,
+including after a prior visibility callback failed. The plot also rechecks its
+owner after a callback-bearing key search and before the canonical insert.
+Portable metadata/plot tests and desktop input ownership/build tests cover the
+new boundaries. The next compile will check these repaired sources.
+
+Headless build136 passed with zero warnings/errors in 2m32.15s. The frozen
+10,723-file source snapshot stayed unchanged. The internal lifetime metadata
+repair passed the schema checks. Full portable run85 is using those binaries;
+editor and desktop test compilation have not run for this increment yet.
+
+Run85 completed in 14.884s: 960/964 passed, with four errors and no warnings or
+skips. The metadata fixture assumed fixed dimensions but retained stretch anchors;
+it now declares fixed anchors. The composition counter fixture did not enable
+measurement; it now preserves/enables/restores the counter flag and releases
+claims in `finally`. Two later teardown errors came from identity-only
+uninitialized canvas doubles in `UIWorldOutputAttemptContractTests` reaching
+`XRObjectBase` finalization and real destruction. Those test doubles now suppress
+finalization because their constructors never acquired lifecycle resources. No
+production null guard or cleanup bypass was added. All 10,723 source files
+remained unchanged through build136 and run85. The next chain includes these
+fixture corrections.
+
+Headless build137 passed with zero warnings/errors in 18.38s. Full run86 passed
+964/964 tests with no failures, warnings, or skips in 11.408s. All 10,723 checked
+source files stayed unchanged. The fixed-anchor metadata, enabled composition
+counter, and finalizer-isolated identity fixtures now pass. Editor build59 is
+checking the same snapshot; desktop test compilation remains next.
+
+Editor build59 passed with zero warnings/errors in 2m26.63s. All 10,723 checked
+source files stayed unchanged. Desktop test build31 is compiling the exact editor
+callback and replay fixtures; it does not execute Windows tests here.
+
+Desktop test build31 failed with zero warnings and two `CS0246` errors in
+`NativeAnimationPlotInputOwnershipTests`: the new fixture omitted the
+`XREngine.Components` import for `UICanvasComponent`. All 10,723 checked files
+were unchanged through this build. The repair adds that import only. It does
+not change production or headless inputs. Desktop build32 will validate the
+repaired fixture; the passed headless and editor checks remain applicable.
+
+Desktop test build32 passed with zero warnings/errors in 50.45s. The final source
+manifest has 10,723 files. Comparison with the passed portable/editor snapshot
+finds only the corrected import in the desktop-only input fixture; no production
+or portable source changed. Desktop callbacks and clone replay remain compile-only.
+Windows, native GPU, visual, IME, and equal-workload performance acceptance are
+still open. The schema and fixture repairs did not change dependency declarations,
+saved formats, renderer defaults, or platform acceptance gates.

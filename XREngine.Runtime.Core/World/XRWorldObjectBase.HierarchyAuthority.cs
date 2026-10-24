@@ -8,6 +8,7 @@ public abstract partial class XRWorldObjectBase
 {
     private int _hierarchyMutationCount;
     private HierarchyStructuralReservation? _hierarchyReservation;
+    private HierarchyLifetimeAdmission? _hierarchyLifetimeAdmission;
     private OwnedHierarchyDestructionPermit? _ownedDestructionPermit;
     private Dictionary<IHierarchyListAuthority, int>? _hierarchyListOwners;
 
@@ -27,7 +28,8 @@ public abstract partial class XRWorldObjectBase
     }
 
     internal bool HasActiveStructuralMutation => Volatile.Read(ref _hierarchyMutationCount) != 0;
-    internal bool HasStructuralMutation => HasActiveStructuralMutation || Volatile.Read(ref _hierarchyReservation) is not null;
+    internal bool HasStructuralMutation => HasActiveStructuralMutation ||
+        Volatile.Read(ref _hierarchyReservation) is not null || Volatile.Read(ref _hierarchyLifetimeAdmission) is not null;
 
     internal void RequireStructuralMutation()
     {
@@ -85,6 +87,23 @@ public abstract partial class XRWorldObjectBase
         Interlocked.CompareExchange(ref _hierarchyReservation, null, reservation);
     }
 
+    internal bool TrySetLifetimeAdmission(HierarchyLifetimeAdmission admission)
+        => Interlocked.CompareExchange(ref _hierarchyLifetimeAdmission, admission, null) is null;
+
+    internal void ReleaseLifetimeAdmission(HierarchyLifetimeAdmission admission)
+        => Interlocked.CompareExchange(ref _hierarchyLifetimeAdmission, null, admission);
+
+    internal void EnterLinkedListLifetimeMutation()
+    {
+        Interlocked.Increment(ref _hierarchyMutationCount);
+        if (Volatile.Read(ref _hierarchyReservation) is null && Volatile.Read(ref _hierarchyLifetimeAdmission) is null)
+            return;
+        Interlocked.Decrement(ref _hierarchyMutationCount);
+        throw new InvalidOperationException("A reserved structural list cannot change lifetime.");
+    }
+
+    internal void ExitLinkedListLifetimeMutation() => Interlocked.Decrement(ref _hierarchyMutationCount);
+
     protected sealed override void OnLifetimeMutationBeginning(EObjectLifetimeMutation kind)
     {
         // Publication can hold the cache lock. Admission uses atomics and never waits
@@ -92,6 +111,8 @@ public abstract partial class XRWorldObjectBase
         Interlocked.Increment(ref _hierarchyMutationCount);
         try
         {
+            if (Volatile.Read(ref _hierarchyLifetimeAdmission) is not null)
+                throw new InvalidOperationException("The clone edit holds this exact object's lifetime admission.");
             if (Volatile.Read(ref _hierarchyReservation) is { } reservation)
             {
                 OwnedHierarchyDestructionPermit? permit = Volatile.Read(ref _ownedDestructionPermit);
@@ -105,6 +126,12 @@ public abstract partial class XRWorldObjectBase
             Interlocked.Decrement(ref _hierarchyMutationCount);
             throw;
         }
+    }
+
+    protected sealed override void OnLifetimeMutationAdmitted(EObjectLifetimeMutation kind, long previous, long current)
+    {
+        if (kind == EObjectLifetimeMutation.DestroyNow && Volatile.Read(ref _ownedDestructionPermit) is { } permit)
+            permit.AdvanceLifetime(previous, current);
     }
 
     protected sealed override void OnLifetimeMutationEnded(EObjectLifetimeMutation kind)

@@ -84,6 +84,21 @@ internal sealed class HierarchyListAuthority<T>(XRWorldObjectBase owner) : Event
     protected override void Added(T item) => item?.AddHierarchyListOwner(this);
     protected override void Removed(T item) => item?.RemoveHierarchyListOwner(this);
 
+    protected override void EnterLifetimeMutation(EventList<T> list)
+    {
+        if (!ReferenceEquals(_list, list))
+            return; // A constructor that failed before authority installation owns no links.
+        // The authority is immutable, even after replacement. Keep the exact owner's
+        // counter through callbacks without granting the list its destruction permit.
+        Owner.EnterLinkedListLifetimeMutation();
+    }
+
+    protected override void ExitLifetimeMutation(EventList<T> list)
+    {
+        if (ReferenceEquals(_list, list))
+            Owner.ExitLinkedListLifetimeMutation();
+    }
+
     internal void RemoveForRetirement(OwnedHierarchyRemovalPermit permit)
     {
         EOwnedHierarchyRemoval kind = Owner is SceneNode

@@ -66,7 +66,7 @@ public static partial class Undo
     }
 
     internal static void ReconcileStructuralProperty(ChangeScope scope, StructuralUndoStep owner,
-        XRBase target, string propertyName, object? original, object? current)
+        XRBase target, string propertyName, object? original, object? current, IUndoPropertyReplayGuard? replayGuard = null)
     {
         lock (_sync)
         {
@@ -85,7 +85,7 @@ public static partial class Undo
             }
             if (Equals(original, current))
                 return;
-            PropertyChangeStep captured = new(target, propertyName, original, current, requireSetterCompletion: true);
+            PropertyChangeStep captured = new(target, propertyName, original, current, requireSetterCompletion: true, replayGuard);
             scope.Changes.Add(captured);
             if (index >= 0)
                 scope.Steps.Insert(index, captured);
@@ -2107,7 +2107,7 @@ public static partial class Undo
     /// </para>
     /// </remarks>
     internal sealed class PropertyChangeStep(XRBase target, string propertyName, object? previousValue, object? newValue,
-        bool requireSetterCompletion = false) : IUndoStep
+        bool requireSetterCompletion = false, IUndoPropertyReplayGuard? replayGuard = null) : IUndoStep
     {
         private bool _incompleteReplay;
         /// <summary>
@@ -2160,7 +2160,7 @@ public static partial class Undo
         /// Creates a copy of this step for storage in the undo stack.
         /// </summary>
         /// <returns>A new <see cref="PropertyChangeStep"/> with the same values.</returns>
-        public PropertyChangeStep Clone() => new(Target, PropertyName, OriginalValue, CurrentValue, requireSetterCompletion)
+        public PropertyChangeStep Clone() => new(Target, PropertyName, OriginalValue, CurrentValue, requireSetterCompletion, replayGuard)
         {
             _incompleteReplay = this._incompleteReplay
         };
@@ -2183,32 +2183,35 @@ public static partial class Undo
         {
             if (requireSetterCompletion && _incompleteReplay)
                 throw new InvalidOperationException($"The previous replay of '{PropertyName}' did not complete its callbacks.");
-            if (!TrySetValue(value))
+            try
             {
-                if (requireSetterCompletion)
+                using IDisposable? admission = replayGuard?.Enter(Target, PropertyName);
+                if (!TrySetValue(value))
                 {
-                    _incompleteReplay = true;
-                    throw new InvalidOperationException($"The replay of '{PropertyName}' did not complete its callbacks.");
+                    if (requireSetterCompletion)
+                        throw new InvalidOperationException($"The replay of '{PropertyName}' did not complete its callbacks.");
+                    Debug.LogWarning($"Undo failed to set '{PropertyName}' on {Target.GetType().Name}.");
+                    return;
                 }
-                Debug.LogWarning($"Undo failed to set '{PropertyName}' on {Target.GetType().Name}.");
-                return;
-            }
+                replayGuard?.RequireCurrent();
 
 #if DEBUG || EDITOR
-            // Debug warning for transforms without a world (may indicate detached transform)
-            if (Target is TransformBase transform && transform.World is null)
-            {
-                string name = transform.SceneNode?.Name ?? transform.Name ?? transform.GetType().Name;
-                Debug.LogWarning($"Undo applied '{PropertyName}' on transform '{name}', but World is null.");
-            }
+                // Debug warning for transforms without a world (may indicate detached transform)
+                if (Target is TransformBase transform && transform.World is null)
+                {
+                    string name = transform.SceneNode?.Name ?? transform.Name ?? transform.GetType().Name;
+                    Debug.LogWarning($"Undo applied '{PropertyName}' on transform '{name}', but World is null.");
+                }
 #endif
 
-            // Trigger any post-change processing (e.g., transform matrix recalculation)
-            try { PostApplyChange(Target, PropertyName); }
-            catch
+                PostApplyChange(Target, PropertyName);
+                replayGuard?.RequireCurrent();
+            }
+            catch (Exception failure)
             {
                 if (requireSetterCompletion)
                     _incompleteReplay = true;
+                replayGuard?.Failed(failure);
                 throw;
             }
         }
