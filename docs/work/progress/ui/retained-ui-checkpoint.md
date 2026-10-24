@@ -969,3 +969,22 @@ desktop test build2 passed with 0 warnings and errors. See the
 [validation plan](../../testing/ui/native-ui-validation.md) for the environment.
 Desktop execution, native graphics, IME, visual, and performance acceptance remain
 open. The three owner proposals and four original owner decisions remain pending.
+
+## Context menu keyboard navigation and stale-show guards
+
+The reconciliation remains **46 of 60**. This increment advances the open control item.
+
+- Context menu rows are `UIContextMenuItemComponent` instances bound to their show.
+  Up and Down move presented focus between enabled rows and wrap. Home and End move
+  to the first and last enabled rows.
+- A row from an earlier show is released. It cannot click or move focus in the
+  replacement menu.
+- Show copies the item array and the row heights before callbacks run. A callback
+  that moves the menu to another canvas restarts placement there; a callback that
+  leaves the menu without a canvas closes it.
+
+Headless build17 passed with 0 warnings and errors. The full headless run passed
+**993 of 993 tests** in 19.8s. Editor build4 and desktop test build3 passed with
+0 warnings and errors. The changed source files were unchanged through the checks.
+Submenus, native keyboard checks, and visual checks remain open.
+

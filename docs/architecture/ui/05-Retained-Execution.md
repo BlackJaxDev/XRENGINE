@@ -585,6 +585,16 @@ bounded scroll content. During owner deactivation, a menu removes its input and
 placement callbacks without destroying children inside a parent world transfer.
 Its normal Hide or next Show clears those owned nodes.
 
+Each context menu row is a `UIContextMenuItemComponent` bound to the show that
+created it. Up and Down move presented focus to the adjacent enabled row and wrap.
+Home and End move focus to the first and last enabled rows. Separators and
+disabled rows do not take focus. A row from an earlier show is released and
+cannot click or move focus in a replacement menu. Show copies the item array and
+the row and separator heights, so callbacks during Show cannot change the rows
+after the menu height is computed. When a callback moves the menu to another
+canvas, placement waits for that canvas. When it leaves the menu without a canvas,
+the menu closes.
+
 ## Composition boundaries and split handles
 
 `UICompositionLayerComponent` assigns an explicit owner and kind to its subtree.

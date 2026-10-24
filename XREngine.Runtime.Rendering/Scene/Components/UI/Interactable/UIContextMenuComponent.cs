@@ -80,6 +80,10 @@ namespace XREngine.Rendering.UI
         private const int LabelZIndex = -10;
 
         private ContextMenuItem[] _items = [];
+        private readonly List<UIContextMenuItemComponent> _itemButtons = [];
+        private UICanvasTransform? _placementCanvas;
+        private float _itemHeight = ItemHeight;
+        private float _separatorHeight = SeparatorHeight;
         private IVirtualListProvider? _virtualProvider;
         private Action<SceneNode>? _contentBuilder;
         private float _contentHeight;
@@ -158,9 +162,17 @@ namespace XREngine.Rendering.UI
         {
             if (_tearingDown || IsDestroyed || _clearingMenuItems || _hiding)
                 return;
+            ArgumentNullException.ThrowIfNull(items);
+            for (int index = 0; index < items.Length; index++)
+                ArgumentNullException.ThrowIfNull(items[index], nameof(items));
             ulong showRevision = ++_showRevision;
-            UICanvasTransform canvas = BoundableTransform.GetCanvasTransform() ??
+            _ = BoundableTransform.GetCanvasTransform() ??
                 throw new InvalidOperationException("A context menu needs an attached UI canvas.");
+            // The caller keeps its array. Copy it and the row sizes so that callbacks cannot
+            // change the rows after the height is computed.
+            items = items.Length == 0 ? [] : (ContextMenuItem[])items.Clone();
+            float itemHeight = ItemHeight;
+            float separatorHeight = SeparatorHeight;
             Hide(); // Dismiss any existing menu first
             if (_tearingDown || IsDestroyed || showRevision != _showRevision)
                 return;
@@ -174,6 +186,8 @@ namespace XREngine.Rendering.UI
                 return;
 
             _items = items;
+            _itemHeight = itemHeight;
+            _separatorHeight = separatorHeight;
             _virtualProvider = provider;
             _contentBuilder = contentBuilder;
             _contentHeight = contentHeight;
@@ -199,13 +213,22 @@ namespace XREngine.Rendering.UI
             if (contentBuilder is not null)
                 totalHeight = contentHeight;
             else if (provider is not null)
-                totalHeight = Math.Min(provider.Count, 8) * ItemHeight;
+                totalHeight = Math.Min(provider.Count, 8) * itemHeight;
             else
                 foreach (var item in items)
-                    totalHeight += item.IsSeparator ? SeparatorHeight : ItemHeight;
+                    totalHeight += item.IsSeparator ? separatorHeight : itemHeight;
             tfm.Height = totalHeight;
+            if (_tearingDown || IsDestroyed || showRevision != _showRevision || !_isOpen)
+                return;
+            // Property callbacks can move the menu. Use the canvas it is attached to now.
+            if (tfm.GetCanvasTransform() is not { } canvas)
+            {
+                Hide();
+                return;
+            }
             _requestedHeight = totalHeight;
             _pendingPosition = parentLocalPosition;
+            _placementCanvas = canvas;
             _layoutGenerationAtRequest = canvas.CurrentLayoutGeneration;
             _awaitingPlacement = true;
 
@@ -224,9 +247,14 @@ namespace XREngine.Rendering.UI
             bgMat.ClipToBounds = true;
 
             BuildMenuItems();
-            if (_tearingDown || IsDestroyed || showRevision != _showRevision)
+            if (_tearingDown || IsDestroyed || showRevision != _showRevision || !_isOpen)
                 return;
             tfm.InvalidateLayout();
+            if (!ReferenceEquals(tfm.GetCanvasTransform(), _placementCanvas))
+            {
+                Hide();
+                return;
+            }
             canvas.UpdateLayoutAsync();
             RegisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
             if (!passive)
@@ -239,6 +267,14 @@ namespace XREngine.Rendering.UI
                 return;
             UIBoundableTransform transform = BoundableTransform;
             UICanvasTransform? canvas = transform.GetCanvasTransform();
+            if (canvas is not null && !ReferenceEquals(canvas, _placementCanvas))
+            {
+                // A generation from another canvas does not describe this placement.
+                _placementCanvas = canvas;
+                _layoutGenerationAtRequest = canvas.CurrentLayoutGeneration;
+                canvas.UpdateLayoutAsync();
+                return;
+            }
             if (canvas is null || canvas.CurrentLayoutGeneration <= _layoutGenerationAtRequest ||
                 transform.Parent is not UIBoundableTransform parent ||
                 parent.ActualWidth <= 0 || parent.ActualHeight <= 0)
@@ -303,6 +339,8 @@ namespace XREngine.Rendering.UI
                 _contentHeight = 0;
                 _requestedHeight = 0;
                 _virtualList = null;
+                _placementCanvas = null;
+                ReleaseItemButtons();
 
                 // Collapse the node so the background material stops rendering.
                 BoundableTransform.Visibility = EVisibility.Collapsed;
@@ -363,7 +401,7 @@ namespace XREngine.Rendering.UI
 
             if (_virtualProvider is not null)
             {
-                listTfm.ItemSize = ItemHeight;
+                listTfm.ItemSize = _itemHeight;
                 listTfm.VirtualOverscan = 2;
                 listTfm.VirtualProvider = _virtualProvider;
                 _virtualList = listTfm;
@@ -387,7 +425,7 @@ namespace XREngine.Rendering.UI
 
         private void BuildMenuItem(SceneNode parent, ContextMenuItem item)
         {
-            var buttonNode = parent.NewChild<UIButtonComponent, UIMaterialComponent>(out var button, out var background);
+            var buttonNode = parent.NewChild<UIContextMenuItemComponent, UIMaterialComponent>(out var button, out var background);
 
             background.SetBatchSolidColor(ColorF4.Transparent);
             background.RenderCommand2D.ZIndex = ItemBackgroundZIndex;
@@ -395,12 +433,14 @@ namespace XREngine.Rendering.UI
             var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
             buttonTfm.MinAnchor = new Vector2(0.0f, 0.0f);
             buttonTfm.MaxAnchor = new Vector2(1.0f, 0.0f);
-            buttonTfm.Height = ItemHeight;
+            buttonTfm.Height = _itemHeight;
             buttonTfm.Margins = new Vector4(0.0f);
 
+            ulong showRevision = _showRevision;
+            button.Bind(this, showRevision);
             if (item.Enabled)
             {
-                ulong showRevision = _showRevision;
+                _itemButtons.Add(button);
                 button.DefaultBackgroundColor = ColorF4.Transparent;
                 button.HighlightBackgroundColor = ItemHighlightBackground;
                 button.DefaultTextColor = ItemDefaultTextColor;
@@ -408,7 +448,8 @@ namespace XREngine.Rendering.UI
                 button.RegisterClickActions(_ =>
                 {
                     if (_tearingDown || IsDestroyed || !_isOpen ||
-                        showRevision != _showRevision || !button.CanInteract)
+                        showRevision != _showRevision || !button.CanInteract ||
+                        !ReferenceEquals(button.Menu, this))
                         return;
                     item.Action?.Invoke();
                     if (!_tearingDown && !IsDestroyed && _isOpen && showRevision == _showRevision)
@@ -435,13 +476,13 @@ namespace XREngine.Rendering.UI
             label.RenderCommand2D.ZIndex = LabelZIndex;
         }
 
-        private static void BuildSeparator(SceneNode parent)
+        private void BuildSeparator(SceneNode parent)
         {
             var sepNode = parent.NewChild<UIMaterialComponent>(out var background);
             var sepTfm = sepNode.GetTransformAs<UIBoundableTransform>(true)!;
             sepTfm.MinAnchor = new Vector2(0.0f, 0.0f);
             sepTfm.MaxAnchor = new Vector2(1.0f, 0.0f);
-            sepTfm.Height = SeparatorHeight;
+            sepTfm.Height = _separatorHeight;
             sepTfm.Margins = new Vector4(0.0f);
 
             // Draw a thin horizontal line in the middle
@@ -460,6 +501,7 @@ namespace XREngine.Rendering.UI
             if (_clearingMenuItems || _tearingDown || IsDestroyed)
                 return;
             _clearingMenuItems = true;
+            ReleaseItemButtons();
             try
             {
                 // Menu content owns its nodes. Destroy them through the scene hierarchy so
@@ -477,6 +519,50 @@ namespace XREngine.Rendering.UI
             {
                 _clearingMenuItems = false;
             }
+        }
+
+        /// <summary>
+        /// Moves focus from a row of the current show to another enabled row. Returns false
+        /// when the row belongs to an earlier show or no other row accepts presented focus.
+        /// </summary>
+        internal bool MoveItemFocus(UIContextMenuItemComponent from, ulong showRevision,
+            int direction, bool toEdge)
+        {
+            // Rows of a menu that is not placed yet are not presented, so presented focus rejects them.
+            if (_tearingDown || IsDestroyed || !_isOpen || direction == 0 ||
+                showRevision != _showRevision || !ReferenceEquals(from.Menu, this))
+                return false;
+            int count = _itemButtons.Count;
+            int index = _itemButtons.IndexOf(from);
+            if (index < 0 || UITransform.GetCanvasComponent()?.GetInputComponent() is not { } input)
+                return false;
+            int step = direction > 0 ? 1 : -1;
+            // Home and End search inward from an edge. Arrows search outward and wrap.
+            int attempts = toEdge ? count : count - 1;
+            for (int attempt = 0; attempt < attempts; attempt++)
+            {
+                int candidate = toEdge
+                    ? (step > 0 ? count - 1 - attempt : attempt)
+                    : ((index + step * (attempt + 1)) % count + count) % count;
+                UIContextMenuItemComponent target = _itemButtons[candidate];
+                if (ReferenceEquals(target, from))
+                    return false;
+                if (!target.CanInteract)
+                    continue;
+                if (input.TryFocusPresented(target))
+                    return showRevision == _showRevision && _isOpen;
+                // A focus callback can hide or replace this menu.
+                if (showRevision != _showRevision || !_isOpen || _itemButtons.Count != count)
+                    return false;
+            }
+            return false;
+        }
+
+        private void ReleaseItemButtons()
+        {
+            for (int index = 0; index < _itemButtons.Count; index++)
+                _itemButtons[index].Release();
+            _itemButtons.Clear();
         }
 
         // --- Auto-dismiss logic ---
@@ -617,6 +703,8 @@ namespace XREngine.Rendering.UI
             _virtualProvider = null;
             _contentBuilder = null;
             _virtualList = null;
+            _placementCanvas = null;
+            ReleaseItemButtons();
             Dismissed = null;
             base.OnDestroying();
         }

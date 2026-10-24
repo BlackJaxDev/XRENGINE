@@ -118,6 +118,7 @@
     <Compile Include="../Rendering/ResourceChurnPublicationTests.cs" Link="Rendering/ResourceChurnPublicationTests.cs" />
     <Compile Include="../Rendering/UIActualControlCompositionTests.cs" Link="Rendering/UIActualControlCompositionTests.cs" />
     <Compile Include="../Rendering/UIControlTeardownTests.cs" Link="Rendering/UIControlTeardownTests.cs" />
+    <Compile Include="../Rendering/UIContextMenuNavigationTests.cs" Link="Rendering/UIContextMenuNavigationTests.cs" />
     <Compile Include="../Rendering/UIGridSubscriptionTeardownTests.cs" Link="Rendering/UIGridSubscriptionTeardownTests.cs" />
     <Compile Include="../Rendering/UIVirtualTableRefreshTests.cs" Link="Rendering/UIVirtualTableRefreshTests.cs" />
     <Compile Include="../Rendering/UIVirtualTableRefreshSource.cs" Link="Rendering/UIVirtualTableRefreshSource.cs" />
