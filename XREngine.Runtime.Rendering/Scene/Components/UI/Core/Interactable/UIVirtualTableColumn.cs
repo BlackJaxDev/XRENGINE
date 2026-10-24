@@ -10,7 +10,8 @@ public sealed class UIVirtualTableColumn<T>
     public UIVirtualTableColumn(string key, string header, float width,
         Func<SceneNode, UIBoundableTransform> createCell,
         Action<UIBoundableTransform, T, ulong> bindCell,
-        Action<UIBoundableTransform> unbindCell)
+        Action<UIBoundableTransform> unbindCell,
+        Action<UIBoundableTransform, T, ulong>? refreshCell = null)
     {
         if (string.IsNullOrWhiteSpace(key))
             throw new ArgumentException("A table column needs a stable key.", nameof(key));
@@ -22,6 +23,7 @@ public sealed class UIVirtualTableColumn<T>
         CreateCell = createCell ?? throw new ArgumentNullException(nameof(createCell));
         BindCell = bindCell ?? throw new ArgumentNullException(nameof(bindCell));
         UnbindCell = unbindCell ?? throw new ArgumentNullException(nameof(unbindCell));
+        RefreshCell = refreshCell;
     }
 
     public string Key { get; }
@@ -30,6 +32,8 @@ public sealed class UIVirtualTableColumn<T>
     public Func<SceneNode, UIBoundableTransform> CreateCell { get; }
     public Action<UIBoundableTransform, T, ulong> BindCell { get; }
     public Action<UIBoundableTransform> UnbindCell { get; }
+    /// <summary>Updates a cell only while its item and row lease remain unchanged.</summary>
+    public Action<UIBoundableTransform, T, ulong>? RefreshCell { get; }
 
     public static UIVirtualTableColumn<T> Text(string key, string header, float width,
         Func<T, string> getText)
@@ -49,6 +53,7 @@ public sealed class UIVirtualTableColumn<T>
                 return bounds;
             },
             (cell, item, _) => cell.SceneNode!.GetComponent<UITextComponent>()!.Text = getText(item),
-            cell => cell.SceneNode!.GetComponent<UITextComponent>()!.Text = string.Empty);
+            cell => cell.SceneNode!.GetComponent<UITextComponent>()!.Text = string.Empty,
+            (cell, item, _) => cell.SceneNode!.GetComponent<UITextComponent>()!.Text = getText(item));
     }
 }

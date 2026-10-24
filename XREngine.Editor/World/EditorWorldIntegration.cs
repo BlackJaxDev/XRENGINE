@@ -10,7 +10,7 @@ namespace XREngine.Editor;
 /// <see cref="RuntimeWorld"/>.  The service deliberately owns only editor
 /// policy; Core retains world identity, root lifetime, and play lifecycle.
 /// </summary>
-public sealed class EditorWorldIntegration : IRuntimeWorldScenePolicy, IRuntimeEditorSceneQuery, IDisposable
+public sealed partial class EditorWorldIntegration : IRuntimeWorldScenePolicy, IRuntimeEditorSceneQuery, IDisposable
 {
     private readonly RuntimeWorld _world;
     private readonly IRuntimeWorldScenePolicy? _previousScenePolicy;

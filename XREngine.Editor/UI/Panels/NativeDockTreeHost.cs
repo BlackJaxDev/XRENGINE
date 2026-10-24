@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.ExceptionServices;
 using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Rendering;
@@ -17,9 +18,13 @@ internal sealed class NativeDockTreeHost
     private readonly string _windowKey;
     private readonly NativeDockLayout _layout;
     private readonly NativeDockTree _tree;
+    private readonly NativeDockWindowRegistration _registration;
     private readonly List<IDisposable> _dropRegistrations = [];
     private readonly Dictionary<string, SceneNode> _panelSlots = [];
     private int _closedCursor;
+    private ulong _dockMutationRevision;
+    private bool _receivingPanel;
+    private bool _disposed;
 
     private NativeDockTreeHost(SceneNode root, RuntimeWorld? world, XRWindow? window = null,
         string? windowKey = null, string? initialPanel = null, bool restoreWindows = true)
@@ -39,7 +44,8 @@ internal sealed class NativeDockTreeHost
         }
         _tree = _layout.DockTree!;
         _root.Destroyed += _ => Dispose();
-        _root.AddComponent<NativeDockWindowRegistration>()!.Configure(_windowKey, ReceivePanel);
+        _registration = _root.AddComponent<NativeDockWindowRegistration>()!;
+        _registration.Configure(_windowKey, ReceivePanel, _world);
         Render();
         if (restoreWindows && _window is not null)
             NativeDetachedDockWindows.Restore(_window);
@@ -77,19 +83,37 @@ internal sealed class NativeDockTreeHost
     }
 
     private void DisposeDropTargets()
+        => DisposeDropRegistrations(_dropRegistrations);
+
+    internal static void DisposeDropRegistrations(List<IDisposable> registrations)
     {
-        foreach (IDisposable registration in _dropRegistrations)
-            registration.Dispose();
-        _dropRegistrations.Clear();
+        IDisposable[] oldRegistrations = [.. registrations];
+        registrations.Clear();
+        List<Exception>? failures = null;
+        foreach (IDisposable registration in oldRegistrations)
+        {
+            try { registration.Dispose(); }
+            catch (Exception exception) { (failures ??= []).Add(exception); }
+        }
+        if (failures is { Count: 1 }) ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is { Count: > 1 })
+            throw new AggregateException("Native dock drop-target cleanup failed.", failures);
     }
 
     private void Dispose()
     {
-        DisposeDropTargets();
+        _disposed = true;
+        List<Exception>? failures = null;
+        try { DisposeDropTargets(); }
+        catch (Exception exception) { (failures ??= []).Add(exception); }
         foreach (SceneNode slot in _panelSlots.Values)
             if (!slot.IsDestroyed && slot.Transform.Parent is null)
-                slot.Destroy(true);
+                try { slot.Destroy(true); }
+                catch (Exception exception) { (failures ??= []).Add(exception); }
         _panelSlots.Clear();
+        if (failures is { Count: 1 }) ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is { Count: > 1 })
+            throw new AggregateException("Native dock owner cleanup failed.", failures);
     }
 
     private void RenderNode(SceneNode parent, NativeDockNode node)
@@ -138,7 +162,8 @@ internal sealed class NativeDockTreeHost
         UpdateHandlePosition();
         split.PropertyChanged += (_, change) =>
         {
-            if (change.PropertyName == nameof(UIDualSplitTransform.FixedSize) && split.FixedSize is { } size)
+            if (!_receivingPanel && change.PropertyName == nameof(UIDualSplitTransform.FixedSize) &&
+                split.FixedSize is { } size)
             {
                 node.FixedSize = size;
                 UpdateHandlePosition();
@@ -178,7 +203,7 @@ internal sealed class NativeDockTreeHost
         _dropRegistrations.Add(EditorDragDropUtility.RegisterDropTarget(tabList,
             payload =>
             {
-                if (!EditorDragDropUtility.TryGetEditorPayload<NativeDockTabPayload>(payload, "dock-tab", out var tab) || tab is null ||
+                if (_receivingPanel || !EditorDragDropUtility.TryGetEditorPayload<NativeDockTabPayload>(payload, "dock-tab", out var tab) || tab is null ||
                     tab.WindowKey != _windowKey || !_tree.Move(tab.Panel, stack.Id, int.MaxValue))
                     return false;
                 CommitStructure();
@@ -211,6 +236,7 @@ internal sealed class NativeDockTreeHost
 
         strip.TabActivated += id =>
         {
+            if (_receivingPanel) return;
             string panel = NativeDockPanel.All[(int)id - 1];
             if (!stack.Tabs.Contains(panel))
                 return;
@@ -220,12 +246,14 @@ internal sealed class NativeDockTreeHost
         };
         strip.CloseRequested += id =>
         {
+            if (_receivingPanel) return;
             string panel = NativeDockPanel.All[(int)id - 1];
             if (_tree.Close(panel))
                 CommitStructure();
         };
         strip.MoveRequested += (id, direction) =>
         {
+            if (_receivingPanel) return;
             string panel = NativeDockPanel.All[(int)id - 1];
             int index = stack.Tabs.IndexOf(panel);
             if (index < 0 || index + direction < 0 || index + direction >= stack.Tabs.Count)
@@ -371,6 +399,7 @@ internal sealed class NativeDockTreeHost
 
     private void MoveToNextStack(NativeDockNode source)
     {
+        if (_receivingPanel) return;
         if (source.Selected is not { } panel)
             return;
         NativeDockNode? target = _tree.Stacks().FirstOrDefault(candidate => candidate.Id != source.Id);
@@ -380,6 +409,7 @@ internal sealed class NativeDockTreeHost
 
     private void SplitSelected(NativeDockNode source, bool vertical, bool before)
     {
+        if (_receivingPanel) return;
         if (source.Selected is not { } panel)
             return;
         NativeDockNode? target = source.Tabs.Count > 1 ? source :
@@ -390,6 +420,7 @@ internal sealed class NativeDockTreeHost
 
     private void ReopenNext(NativeDockNode target)
     {
+        if (_receivingPanel) return;
         if (_tree.ClosedPanels.Count == 0)
             return;
         string panel = _tree.ClosedPanels[Math.Abs(_closedCursor % _tree.ClosedPanels.Count)];
@@ -399,6 +430,7 @@ internal sealed class NativeDockTreeHost
 
     private void DetachSelected(NativeDockNode source)
     {
+        if (_receivingPanel) return;
         if (source.Selected is not { } panel || _window is null)
             return;
         if (NativeDetachedDockWindows.Open(_window, panel) && _tree.Close(panel))
@@ -407,31 +439,122 @@ internal sealed class NativeDockTreeHost
 
     private void MoveToWindow(NativeDockNode source)
     {
-        if (source.Selected is not { } panel)
+        if (_receivingPanel || _disposed || _root.IsDestroyed || _root.IsDestroyQueued ||
+            source.Selected is not { } panel)
             return;
-        if (NativeDockWindowRegistry.TryMoveToAnotherWindow(_windowKey, panel) &&
+        ulong sourceRevision = _dockMutationRevision;
+        ulong registrationRevision = _registration.RegistrationRevision;
+        NativeDockTransferResult result = NativeDockWindowRegistry.TransferToAnotherWindow(_registration, panel);
+        if (result == NativeDockTransferResult.Rejected)
+            Debug.UI("[NativeDock] The destination did not accept the panel.");
+        if (result == NativeDockTransferResult.Committed && !_disposed && !_root.IsDestroyed &&
+            !_root.IsDestroyQueued && _root.IsActiveInHierarchy && ReferenceEquals(_root.World, _world) &&
+            _registration.RegistrationRevision == registrationRevision &&
+            _dockMutationRevision == sourceRevision && source.Selected == panel &&
+            _tree.Stacks().Any(stack => ReferenceEquals(stack, source) && stack.Tabs.Contains(panel)) &&
             _tree.Close(panel))
+        {
             CommitStructure();
+            if (_panelSlots.Remove(panel, out SceneNode? oldSlot) && !oldSlot.IsDestroyed)
+                try { oldSlot.Destroy(true); }
+                catch (Exception exception)
+                {
+                    if (!oldSlot.IsDestroyed)
+                        _panelSlots[panel] = oldSlot;
+                    Debug.LogException(exception, "[NativeDock] Could not release the transferred panel slot.");
+                }
+        }
     }
 
-    private void ReceivePanel(string panel)
+    private bool ReceivePanel(string panel)
     {
-        if (!NativeDockPanel.All.Contains(panel))
-            return;
-        NativeDockNode target = _tree.Stacks().FirstOrDefault(stack =>
-            stack.Tabs.Any(item => NativeDockPanel.LegacyTools.Contains(item))) ?? _tree.Stacks().First();
-        if (_tree.Move(panel, target.Id, int.MaxValue))
+        if (_receivingPanel || _disposed || _world is null || !_root.IsActiveInHierarchy ||
+            _root.IsDestroyed || _root.IsDestroyQueued || !ReferenceEquals(_root.World, _world) ||
+            !_registration.TryGetRegistration(out string registeredKey, out object? registeredWorld) ||
+            registeredKey != _windowKey || !ReferenceEquals(registeredWorld, _world) ||
+            !NativeDockPanel.All.Contains(panel))
+            return false;
+        NativeDockNode priorRoot = CopyDockNode(_tree.Root);
+        List<string> priorClosed = [.. _tree.ClosedPanels];
+        ulong priorRevision = _dockMutationRevision;
+        ulong registrationRevision = _registration.RegistrationRevision;
+        _receivingPanel = true;
+        try
+        {
+            NativeDockNode target = _tree.Stacks().FirstOrDefault(stack =>
+                stack.Tabs.Any(item => NativeDockPanel.LegacyTools.Contains(item))) ?? _tree.Stacks().First();
+            if (!_tree.Move(panel, target.Id, int.MaxValue))
+                return false;
             CommitStructure();
+            if (!_disposed && _root.IsActiveInHierarchy && !_root.IsDestroyed &&
+                !_root.IsDestroyQueued && ReferenceEquals(_root.World, _world) &&
+                _registration.TryGetRegistration(out registeredKey, out registeredWorld) &&
+                registeredKey == _windowKey && ReferenceEquals(registeredWorld, _world) &&
+                _registration.RegistrationRevision == registrationRevision &&
+                _dockMutationRevision == priorRevision + 1 &&
+                _tree.Stacks().Any(stack => stack.Tabs.Contains(panel)))
+                return true;
+            RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1, registrationRevision);
+            return false;
+        }
+        catch (Exception exception)
+        {
+            ulong admittedRevision = _dockMutationRevision == priorRevision
+                ? priorRevision : priorRevision + 1;
+            RestoreReceiveSnapshot(priorRoot, priorClosed, admittedRevision, registrationRevision);
+            Debug.LogException(exception, "[NativeDock] Destination panel commit failed.");
+            return false;
+        }
+        finally { _receivingPanel = false; }
+    }
+
+    private void RestoreReceiveSnapshot(NativeDockNode root, List<string> closedPanels,
+        ulong admittedRevision, ulong registrationRevision)
+    {
+        if (_disposed || _root.IsDestroyed || _root.IsDestroyQueued || !_root.IsActiveInHierarchy ||
+            _world is null || !ReferenceEquals(_root.World, _world) ||
+            _registration.RegistrationRevision != registrationRevision ||
+            !_registration.TryGetRegistration(out string registeredKey, out object? registeredWorld) ||
+            registeredKey != _windowKey || !ReferenceEquals(registeredWorld, _world) ||
+            _dockMutationRevision != admittedRevision)
+            return;
+        _tree.Root = root;
+        _tree.ClosedPanels = closedPanels;
+        _dockMutationRevision++;
+        try
+        {
+            Save();
+            if (_root.IsActiveInHierarchy)
+                Render();
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, "[NativeDock] Could not restore the destination dock tree.");
+        }
     }
 
     private void CommitStructure()
     {
+        _dockMutationRevision++;
         _tree.Sanitize();
         Save();
         Render();
     }
 
     private void Save() => NativeDockLayoutStore.Save(_windowKey, _layout);
+
+    private static NativeDockNode CopyDockNode(NativeDockNode source)
+        => new()
+        {
+            Id = source.Id,
+            Vertical = source.Vertical,
+            FirstFixedSize = source.FirstFixedSize,
+            FixedSize = source.FixedSize,
+            Tabs = [.. source.Tabs],
+            Selected = source.Selected,
+            First = source.First is null ? null : CopyDockNode(source.First),
+            Second = source.Second is null ? null : CopyDockNode(source.Second),
+        };
 
     private static string Title(string panel)
         => panel.Length == 0 ? panel : char.ToUpperInvariant(panel[0]) + panel[1..];

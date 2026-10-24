@@ -131,6 +131,8 @@ public partial class InspectorPanel
     private UIBoundableTransform? _detailTransform;
     private SceneNode? _detailEditor;
     private PropertyInfo? _detailProperty;
+    private object?[]? _detailTargets;
+    private object?[]? _detailCollectionValues;
     private object?[]? _savedViewTargets;
     private SceneNode[]? _savedSceneSelection;
     private object? _savedAssetSelection;
@@ -580,8 +582,22 @@ public partial class InspectorPanel
 
     private void ShowDetailEditor(PropertyInfo property)
     {
+        if (_detailEditor is { IsDestroyed: false } detailEditor && Equals(_detailProperty, property) &&
+            _detailTargets is { } previous && InspectedObjects is { } current &&
+            previous.Length == current.Length &&
+            !previous.Where((target, index) => !ReferenceEquals(target, current[index])).Any() &&
+            _detailCollectionValues?.Any(value => value is not null &&
+                value is not System.Collections.IList) != true &&
+            DetailCollectionsMatch(property, current) &&
+            ReferenceEquals(_detailEditor, detailEditor) && !detailEditor.IsDestroyed)
+        {
+            detailEditor.GetComponent<InspectorListDetailRefreshComponent>()?.Refresh?.Invoke();
+            return;
+        }
         HideDetailEditor();
         _detailProperty = property;
+        _detailTargets = InspectedObjects?.ToArray();
+        _detailCollectionValues = CaptureDetailCollections(property, InspectedObjects);
         SceneNode host = _detailTransform!.SceneNode!.NewChild();
         if (property.PropertyType == typeof(string))
         {
@@ -668,6 +684,7 @@ public partial class InspectorPanel
     {
         if (_detailEditor is not null)
         {
+            _detailEditor.GetComponent<InspectorListDetailRefreshComponent>()?.Retire();
             if (_detailTransform?.GetCanvasComponent()?.GetInputComponent() is { FocusedComponent: { } focused } input &&
                 focused.SceneNode is { } focusedNode && IsDetailDescendant(focusedNode, _detailEditor))
                 input.FocusedComponent = null;
@@ -676,6 +693,8 @@ public partial class InspectorPanel
             _detailEditor = null;
         }
         _detailProperty = null;
+        _detailTargets = null;
+        _detailCollectionValues = null;
         if (_detailTransform is not null)
             _detailTransform.Visibility = EVisibility.Collapsed;
         if (_propertyScroll is not null)
@@ -689,6 +708,31 @@ public partial class InspectorPanel
             if (ReferenceEquals(current, root))
                 return true;
         return false;
+    }
+
+    private bool DetailCollectionsMatch(PropertyInfo property, object?[] targets)
+    {
+        object?[]? previous = _detailCollectionValues;
+        if (previous is null) return true;
+        if (previous.Length != targets.Length) return false;
+        try
+        {
+            for (int index = 0; index < targets.Length; index++)
+                if (!ReferenceEquals(previous[index], targets[index] is null
+                    ? null : property.GetValue(targets[index])))
+                    return false;
+        }
+        catch { return false; }
+        return true;
+    }
+
+    private static object?[]? CaptureDetailCollections(PropertyInfo property, object?[]? targets)
+    {
+        if (targets is null || !typeof(System.Collections.IEnumerable).IsAssignableFrom(property.PropertyType) ||
+            property.PropertyType == typeof(string))
+            return null;
+        try { return targets.Select(target => target is null ? null : property.GetValue(target)).ToArray(); }
+        catch { return null; }
     }
 
     private void ReleaseVirtualPropertyList()

@@ -28,6 +28,9 @@ public class AssetsPanel : NativeVirtualTextPanel
     private bool _ownerSubscriptionsActive;
     private bool _destroying;
     private bool _tableCallbacksAttached;
+    private bool _deactivating;
+    private bool _reactivationRequested;
+    private bool AcceptsActiveInput => !_destroying && _ownerSubscriptionsActive && IsActiveInHierarchy;
 
     public string? SelectedPath { get; private set; }
     public event Action<string>? AssetSelected;
@@ -35,23 +38,43 @@ public class AssetsPanel : NativeVirtualTextPanel
     public string Folder
     {
         get => _folder ?? string.Empty;
-        set { _folder = string.IsNullOrWhiteSpace(value) ? null : value; SelectedPath = null; RefreshRows(); ViewStateChanged?.Invoke(); }
+        set
+        {
+            if (_destroying) return;
+            _folder = string.IsNullOrWhiteSpace(value) ? null : value;
+            SelectedPath = null;
+            if (!AcceptsActiveInput) return;
+            RefreshRows();
+            if (AcceptsActiveInput) ViewStateChanged?.Invoke();
+        }
     }
     public bool UseEngineAssets
     {
         get => _engineFiles;
-        set { _engineFiles = value; _folder = null; SelectedPath = null; RefreshRows(); ViewStateChanged?.Invoke(); }
+        set
+        {
+            if (_destroying) return;
+            _engineFiles = value;
+            _folder = null;
+            SelectedPath = null;
+            if (!AcceptsActiveInput) return;
+            RefreshRows();
+            if (AcceptsActiveInput) ViewStateChanged?.Invoke();
+        }
     }
     public string Search
     {
         get => _search;
         set
         {
+            if (_destroying) return;
             _search = value ?? string.Empty;
+            if (!AcceptsActiveInput) return;
             if (_searchInput is not null)
                 _searchInput.Text = _search;
+            if (!AcceptsActiveInput) return;
             RefreshRows();
-            ViewStateChanged?.Invoke();
+            if (AcceptsActiveInput) ViewStateChanged?.Invoke();
         }
     }
 
@@ -67,52 +90,104 @@ public class AssetsPanel : NativeVirtualTextPanel
     {
         if (_destroying)
             return;
+        if (_deactivating)
+        {
+            _reactivationRequested = true;
+            return;
+        }
         base.OnComponentActivated();
-        if (_destroying || IsDestroyed || IsDestroyQueued)
+        if (_destroying || IsDestroyed || IsDestroyQueued || !IsActiveInHierarchy || _ownerSubscriptionsActive)
+            return;
+        if (_searchInput is { } search && search.Text != _search)
+            search.Text = _search;
+        if (_destroying || IsDestroyed || IsDestroyQueued || !IsActiveInHierarchy)
             return;
         AttachTableCallbacks();
-        IDisposable registration = EditorDragDropUtility.RegisterDropTarget(BoundableTransform,
-            DropFileIntoCurrentFolder,
-            payload => EditorDragDropUtility.TryGetAssetOrFilePath(payload, out string? path) &&
-                path is not null && File.Exists(path) && Directory.Exists(CurrentFolder));
-        if (_destroying || IsDestroyed || IsDestroyQueued)
+        IDisposable registration;
+        try
+        {
+            registration = EditorDragDropUtility.RegisterDropTarget(BoundableTransform,
+                DropFileIntoCurrentFolder,
+                payload => AcceptsActiveInput &&
+                    EditorDragDropUtility.TryGetAssetOrFilePath(payload, out string? path) &&
+                    path is not null && File.Exists(path) && Directory.Exists(CurrentFolder));
+        }
+        catch { DetachTableCallbacks(); throw; }
+        if (_destroying || IsDestroyed || IsDestroyQueued || !IsActiveInHierarchy)
         {
             registration.Dispose();
+            DetachTableCallbacks();
             return;
         }
         _folderDropTarget = registration;
         _ownerSubscriptionsActive = true;
-        SelectedPath = NativeAssetSelection.SelectedPath;
-        Engine.Assets.GameFileCreated += FileChanged;
-        Engine.Assets.GameFileDeleted += FileChanged;
-        Engine.Assets.GameFileRenamed += FileRenamed;
-        Engine.Assets.EngineFileCreated += FileChanged;
-        Engine.Assets.EngineFileDeleted += FileChanged;
-        Engine.Assets.EngineFileRenamed += FileRenamed;
-        RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
+        try
+        {
+            SelectedPath = NativeAssetSelection.SelectedPath;
+            Engine.Assets.GameFileCreated += FileChanged;
+            Engine.Assets.GameFileDeleted += FileChanged;
+            Engine.Assets.GameFileRenamed += FileRenamed;
+            Engine.Assets.EngineFileCreated += FileChanged;
+            Engine.Assets.EngineFileDeleted += FileChanged;
+            Engine.Assets.EngineFileRenamed += FileRenamed;
+            RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
+        }
+        catch
+        {
+            try { ReleaseOwnerSubscriptions(); }
+            finally { DetachTableCallbacks(); }
+            throw;
+        }
     }
 
     protected override void OnComponentDeactivated()
     {
-        ReleaseOwnerSubscriptions();
-        DetachTableCallbacks();
-        base.OnComponentDeactivated();
+        if (_deactivating) return;
+        _deactivating = true;
+        try
+        {
+            try { DetachTableCallbacks(); }
+            finally
+            {
+                try { ReleaseOwnerSubscriptions(); }
+                finally { base.OnComponentDeactivated(); }
+            }
+        }
+        finally
+        {
+            _deactivating = false;
+            bool replay = _reactivationRequested;
+            _reactivationRequested = false;
+            if (replay && !_destroying && IsActiveInHierarchy)
+                OnComponentActivated();
+        }
     }
 
     protected override void OnDestroying()
     {
         _destroying = true;
-        ReleaseOwnerSubscriptions();
-        DetachTableCallbacks();
-        ReleaseVirtualTextOwnerCallbacks();
-        if (_searchInput is { } search)
+        _reactivationRequested = false;
+        AssetSelected = null;
+        ViewStateChanged = null;
+        try { ReleaseOwnerSubscriptions(); }
+        finally
         {
-            search.Submitted -= SubmitSearch;
-            search.Cancelled -= CancelSearch;
+            try { DetachTableCallbacks(); }
+            finally
+            {
+                try
+                {
+                    if (_searchInput is { } search)
+                    {
+                        search.Submitted -= SubmitSearch;
+                        search.Cancelled -= CancelSearch;
+                    }
+                    _searchInput = null;
+                    _nameInput = null;
+                }
+                finally { base.OnDestroying(); }
+            }
         }
-        _searchInput = null;
-        _nameInput = null;
-        base.OnDestroying();
     }
 
     private void AttachTableCallbacks()
@@ -144,16 +219,26 @@ public class AssetsPanel : NativeVirtualTextPanel
         _folderDropTarget = null;
         bool subscribed = _ownerSubscriptionsActive;
         _ownerSubscriptionsActive = false;
-        dropTarget?.Dispose();
-        if (!subscribed)
-            return;
-        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
-        Engine.Assets.GameFileCreated -= FileChanged;
-        Engine.Assets.GameFileDeleted -= FileChanged;
-        Engine.Assets.GameFileRenamed -= FileRenamed;
-        Engine.Assets.EngineFileCreated -= FileChanged;
-        Engine.Assets.EngineFileDeleted -= FileChanged;
-        Engine.Assets.EngineFileRenamed -= FileRenamed;
+        try
+        {
+            if (subscribed)
+            {
+                try { UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick); }
+                finally
+                {
+                    Engine.Assets.GameFileCreated -= FileChanged;
+                    Engine.Assets.GameFileDeleted -= FileChanged;
+                    Engine.Assets.GameFileRenamed -= FileRenamed;
+                    Engine.Assets.EngineFileCreated -= FileChanged;
+                    Engine.Assets.EngineFileDeleted -= FileChanged;
+                    Engine.Assets.EngineFileRenamed -= FileRenamed;
+                }
+            }
+        }
+        finally
+        {
+            dropTarget?.Dispose();
+        }
     }
 
     protected override void CreateCommands(SceneNode commands)
@@ -182,13 +267,13 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private void SubmitSearch(UITextInputComponent field)
     {
-        if (!_destroying)
+        if (AcceptsActiveInput)
             Search = field.Text.Trim();
     }
 
     private void CancelSearch(UITextInputComponent field)
     {
-        if (!_destroying)
+        if (AcceptsActiveInput)
             field.Text = _search;
     }
 
@@ -211,7 +296,7 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private void RefreshTick()
     {
-        if (_destroying)
+        if (!AcceptsActiveInput)
             return;
         DateTime now = DateTime.UtcNow;
         if (Interlocked.Exchange(ref _pendingRefresh, 0) == 0 && now - _lastRefresh < TimeSpan.FromSeconds(10))
@@ -220,8 +305,16 @@ public class AssetsPanel : NativeVirtualTextPanel
         RefreshRows();
     }
 
-    private void FileChanged(AssetFileChangeEventArgs _) => Interlocked.Exchange(ref _pendingRefresh, 1);
-    private void FileRenamed(AssetFileRenameEventArgs _) => Interlocked.Exchange(ref _pendingRefresh, 1);
+    private void FileChanged(AssetFileChangeEventArgs _)
+    {
+        if (!Volatile.Read(ref _destroying) && Volatile.Read(ref _ownerSubscriptionsActive))
+            Interlocked.Exchange(ref _pendingRefresh, 1);
+    }
+    private void FileRenamed(AssetFileRenameEventArgs _)
+    {
+        if (!Volatile.Read(ref _destroying) && Volatile.Read(ref _ownerSubscriptionsActive))
+            Interlocked.Exchange(ref _pendingRefresh, 1);
+    }
 
     protected override void RefreshRows()
     {
@@ -288,7 +381,7 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private void ActivateAssetRow(ulong id)
     {
-        if (_destroying)
+        if (!AcceptsActiveInput)
             return;
         if (!_paths.TryGetValue(id, out string? path))
             return;
@@ -299,12 +392,12 @@ public class AssetsPanel : NativeVirtualTextPanel
         }
         SelectedPath = path;
         NativeAssetSelection.Select(path);
-        AssetSelected?.Invoke(path);
+        if (AcceptsActiveInput) AssetSelected?.Invoke(path);
     }
 
     private void DragPointerMoved(ulong id, UIVirtualTableRowComponent source, Vector2 localPoint)
     {
-        if (_destroying)
+        if (!AcceptsActiveInput)
             return;
         if (!EditorDragDropUtility.IsLeftMouseButtonHeldFor(source))
         {
@@ -323,7 +416,7 @@ public class AssetsPanel : NativeVirtualTextPanel
     }
 
     private bool BeginAssetDrag(ulong id, UIInteractableComponent source, Vector2 point)
-        => _paths.TryGetValue(id, out string? path) && File.Exists(path) &&
+        => AcceptsActiveInput && _paths.TryGetValue(id, out string? path) && File.Exists(path) &&
            EditorDragDropUtility.BeginDrag(source,
                string.Equals(Path.GetExtension(path), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase)
                    ? EditorDragDropUtility.CreateAssetPayload(path)
@@ -331,23 +424,30 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private bool DropFileIntoCurrentFolder(EditorDragDropUtility.DragPayload payload)
     {
+        if (!AcceptsActiveInput) return false;
         if (!EditorDragDropUtility.TryGetAssetOrFilePath(payload, out string? source) || source is null)
             return false;
         string? sourceRoot = FindAssetRoot(source);
         if (sourceRoot is null)
             return false;
+        bool committed = false;
         try
         {
             string moved = NativeAssetFileMutations.MoveFileToDirectory(sourceRoot, RootFolder, source, CurrentFolder);
+            committed = true;
+            if (!AcceptsActiveInput) return true;
             SelectedPath = moved;
             NativeAssetSelection.Select(moved);
+            if (!AcceptsActiveInput) return true;
             RefreshRows();
             return true;
         }
         catch (Exception exception)
         {
-            Debug.UI($"[NativeAssets] Could not move file: {exception.Message}");
-            return false;
+            Debug.UI(committed
+                ? $"[NativeAssets] File moved, but the asset view could not refresh: {exception.Message}"
+                : $"[NativeAssets] Could not move file: {exception.Message}");
+            return committed;
         }
     }
 
@@ -371,11 +471,13 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private void CreateFolder()
     {
+        if (!AcceptsActiveInput) return;
         try
         {
             string created = NativeAssetFileMutations.CreateFolder(RootFolder, CurrentFolder, _nameInput?.Text ?? string.Empty);
+            if (!AcceptsActiveInput) return;
             Folder = created;
-            if (_nameInput is not null)
+            if (AcceptsActiveInput && _nameInput is not null)
                 _nameInput.Text = string.Empty;
         }
         catch (Exception exception)
@@ -386,19 +488,22 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private void RenameSelection()
     {
+        if (!AcceptsActiveInput) return;
         try
         {
             string path = SelectedPath ?? CurrentFolder;
             string renamed = NativeAssetFileMutations.Rename(RootFolder, path, _nameInput?.Text ?? string.Empty);
+            if (!AcceptsActiveInput) return;
             if (Directory.Exists(renamed))
                 Folder = renamed;
             else
             {
                 SelectedPath = renamed;
                 NativeAssetSelection.Select(renamed);
+                if (!AcceptsActiveInput) return;
                 RefreshRows();
             }
-            if (_nameInput is not null)
+            if (AcceptsActiveInput && _nameInput is not null)
                 _nameInput.Text = string.Empty;
         }
         catch (Exception exception)
@@ -409,6 +514,7 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     private async Task ImportSelectionAsync()
     {
+        if (!AcceptsActiveInput) return;
         string? selected = SelectedPath;
         if (selected is null || !File.Exists(selected) ||
             string.Equals(Path.GetExtension(selected), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
@@ -418,7 +524,8 @@ public class AssetsPanel : NativeVirtualTextPanel
             NativeAssetFileMutations.RequireUnderRoot(RootFolder, selected, allowRoot: false);
             if (!await Engine.Assets.ReimportThirdPartyFileAsync(selected).ConfigureAwait(false))
                 Debug.UI($"[NativeAssets] Import failed for {Path.GetFileName(selected)}.");
-            Interlocked.Exchange(ref _pendingRefresh, 1);
+            if (!Volatile.Read(ref _destroying) && Volatile.Read(ref _ownerSubscriptionsActive))
+                Interlocked.Exchange(ref _pendingRefresh, 1);
         }
         catch (Exception exception)
         {

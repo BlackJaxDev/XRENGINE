@@ -30,7 +30,7 @@ public partial class HierarchyPanel
         {
             if (ReferenceEquals(sender, node) && IsCurrentSourceBinding(binding))
                 OnSourceNodeChanged(node, args.PropertyName);
-        }, nameof(SceneNode.Name), nameof(SceneNode.IsActiveSelf), nameof(SceneNode.Transform));
+        }, nameof(SceneNode.Name), nameof(SceneNode.IsActiveSelf), nameof(SceneNode.CanDeactivate), nameof(SceneNode.Transform));
         _sourceListeners.Add(node, binding);
         binding.Children.PostAnythingAdded += binding.Added;
         binding.Children.PostAnythingRemoved += binding.Removed;
@@ -122,6 +122,7 @@ public partial class HierarchyPanel
                 RenameVirtualNode(node, node.Name ?? SceneNode.DefaultName);
                 break;
             case nameof(SceneNode.IsActiveSelf):
+            case nameof(SceneNode.CanDeactivate):
                 RefreshSourceNodeRows(node);
                 break;
             case nameof(SceneNode.Transform):

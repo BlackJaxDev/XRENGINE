@@ -31,7 +31,8 @@ public partial class HierarchyPanel
         if (node == _nodePendingRename)
             CancelRename();
 
-        QueueNativeHierarchyDelete(node, world, () => IsCurrentHierarchyWorld(world));
+        uint revision = _hierarchyRevision;
+        QueueNativeHierarchyDelete(node, world, () => revision == _hierarchyRevision && IsCurrentHierarchyWorld(world));
     }
 
     private void CreateChildSceneNode(SceneNode? parent)
@@ -40,24 +41,26 @@ public partial class HierarchyPanel
             !IsLiveHierarchyNode(parent, world))
             return;
 
+        uint revision = _hierarchyRevision;
         QueueNativeHierarchyCreateChild(parent, world, child =>
         {
             _collapsedNodes.Remove(parent.ID);
             BeginRename(child);
-        }, () => IsCurrentHierarchyWorld(world));
+        }, () => revision == _hierarchyRevision && IsCurrentHierarchyWorld(world));
     }
 
     // Dirty tracking helpers.
 
     private static void MarkSceneHierarchyDirty(SceneNode? node, RuntimeWorld world)
     {
-        if (node is null || !ReferenceEquals(node.World, world))
+        if (node is null || !HierarchySceneOwnership.CanAuthor(node, world))
             return;
 
-        var scene = FindSceneForNode(node, world);
-        if (scene is not null)
+        SceneNode root = HierarchySceneOwnership.GetRoot(node) ?? node;
+        XRScene[] scenes = HierarchySceneOwnership.CaptureRootScenes(root, world);
+        foreach (XRScene scene in scenes)
             scene.MarkDirty();
-        else
-            world?.TargetWorld?.MarkDirty();
+        if (scenes.Length == 0)
+            world.TargetWorld?.MarkDirty();
     }
 }

@@ -260,7 +260,7 @@ namespace XREngine
 
             var windows = RuntimeEngine.Windows.ToArray();
             foreach (var window in windows)
-                window.RequestClose();
+                window.RequestCloseForApplicationShutdown();
         }
 
         /// <summary>

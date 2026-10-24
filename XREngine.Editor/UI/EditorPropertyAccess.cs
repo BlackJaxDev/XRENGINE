@@ -67,6 +67,15 @@ internal sealed class EditorPropertyAccess
     {
         if (_access.Set is not { } setter)
             return;
+        if (_targets.Any(target => target is IEditorListElementBinding))
+        {
+            if (!_targets.All(target => target is IEditorListElementBinding))
+                throw new InvalidOperationException("The list editor targets do not share one mutation route.");
+            EditorListMutation.Set(_targets.Cast<IEditorListElementBinding>().ToArray(),
+                oldValue => update is null ? value : update(oldValue));
+            _changed?.Invoke();
+            return;
+        }
         using var interaction = Undo.BeginUserInteraction();
         using var change = Undo.BeginChange($"Set {_property.Name}");
         _writing = true;

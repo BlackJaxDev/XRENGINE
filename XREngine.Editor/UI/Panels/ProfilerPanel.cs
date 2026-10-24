@@ -13,6 +13,9 @@ public class ProfilerPanel : NativeVirtualTextPanel
     private readonly NativeTableRows<ScopeRow> _tableRows = new();
     private DateTime _lastRefresh;
     private bool _paused;
+    private bool _terminal;
+    private bool _ownerActive;
+    private bool _tickRegistered;
 
     public ProfilerPanel()
     {
@@ -25,13 +28,35 @@ public class ProfilerPanel : NativeVirtualTextPanel
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
-        RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
+        if (_terminal || !IsActiveInHierarchy) return;
+        _ownerActive = true;
+        if (!_tickRegistered)
+        {
+            RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
+            _tickRegistered = true;
+        }
     }
 
     protected override void OnComponentDeactivated()
     {
+        _ownerActive = false;
+        try { DetachTick(); }
+        finally { base.OnComponentDeactivated(); }
+    }
+
+    protected override void OnDestroying()
+    {
+        _terminal = true;
+        _ownerActive = false;
+        try { DetachTick(); }
+        finally { base.OnDestroying(); }
+    }
+
+    private void DetachTick()
+    {
+        if (!_tickRegistered) return;
+        _tickRegistered = false;
         UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
-        base.OnComponentDeactivated();
     }
 
     protected override void CreateCommands(SceneNode commands)
@@ -39,6 +64,7 @@ public class ProfilerPanel : NativeVirtualTextPanel
 
     private void RefreshTick()
     {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
         if (_paused || DateTime.UtcNow - _lastRefresh < TimeSpan.FromMilliseconds(250))
             return;
         _lastRefresh = DateTime.UtcNow;

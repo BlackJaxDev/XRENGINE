@@ -18,6 +18,12 @@ namespace XREngine.Editor.UI.Components;
 public partial class UIEditorComponent : UIComponent
 {
     private UIToolbarComponent? _toolbar;
+    private SceneNode? _editorRoot;
+    private bool _editorTerminal;
+    private bool _remakingEditor;
+    private bool _retiringOwnedRoot;
+    private bool _deactivatingEditor;
+    private bool _activationPending;
     public UIToolbarComponent? Toolbar => _toolbar;
 
     private List<ToolbarItemBase> _rootMenuOptions = [];
@@ -52,147 +58,228 @@ public partial class UIEditorComponent : UIComponent
 
     protected override void OnComponentActivated()
     {
+        if (_editorTerminal) return;
+        if (_deactivatingEditor)
+        {
+            _activationPending = true;
+            return;
+        }
         base.OnComponentActivated();
-        RemakeChildren();
+        if (!_editorTerminal && !IsDestroyed && !IsDestroyQueued && IsActiveInHierarchy)
+            RemakeChildren();
     }
 
     protected override void OnComponentDeactivated()
     {
-        base.OnComponentDeactivated();
+        if (_deactivatingEditor) return;
+        _deactivatingEditor = true;
+        try { RetireOwnedRoot(); }
+        finally
+        {
+            try { base.OnComponentDeactivated(); }
+            finally
+            {
+                _deactivatingEditor = false;
+                bool replay = _activationPending;
+                _activationPending = false;
+                if (replay && !_editorTerminal && IsActiveInHierarchy)
+                    OnComponentActivated();
+            }
+        }
+    }
+
+    protected override void OnDestroying()
+    {
+        _editorTerminal = true;
+        _activationPending = false;
+        try { RetireOwnedRoot(); }
+        finally { base.OnDestroying(); }
     }
 
     /// <summary>
-    /// Deactivates all child scene nodes before they are removed from the tree.
+    /// Deactivates the exact editor-owned subtree before removing it from the tree.
     /// <see cref="TransformBase.Clear"/> only detaches child transforms — it does NOT
     /// call <see cref="XRComponent.OnComponentDeactivated"/> on their components.
     /// Without this, streaming pipelines, audio sources, and other lifecycle-tied
     /// resources survive as orphans and continue playing into the mixer.
     /// </summary>
-    private void DeactivateChildSubtrees()
+    private void RetireOwnedRoot()
     {
-        foreach (var child in SceneNode.Transform.Children.ToArray())
-            if (child.SceneNode is { IsActiveSelf: true } sn)
-                sn.IsActiveSelf = false;
+        if (_retiringOwnedRoot) return;
+        SceneNode? owned = _editorRoot;
+        if (owned is null) return;
+        _retiringOwnedRoot = true;
+        try
+        {
+            if (owned.IsDestroyed || !ReferenceEquals(owned.Parent, SceneNode))
+            {
+                _editorRoot = null;
+                _toolbar = null;
+                return;
+            }
+            if (owned.IsActiveSelf)
+                owned.IsActiveSelf = false;
+            if (owned.IsDestroyed || !ReferenceEquals(owned.Parent, SceneNode))
+            {
+                _editorRoot = null;
+                _toolbar = null;
+                return;
+            }
+            owned.Destroy(true);
+            if (!owned.IsDestroyed)
+                throw new InvalidOperationException("The editor-owned UI root refused teardown.");
+            _editorRoot = null;
+            _toolbar = null;
+        }
+        finally { _retiringOwnedRoot = false; }
+    }
+
+    private bool StopTerminatedBuild(SceneNode candidate)
+    {
+        if (!_editorTerminal && !_deactivatingEditor && IsActive && !IsDestroyed && !IsDestroyQueued &&
+            ReferenceEquals(_editorRoot, candidate) && ReferenceEquals(candidate.Parent, SceneNode))
+            return false;
+        if (ReferenceEquals(_editorRoot, candidate))
+            RetireOwnedRoot();
+        return true;
     }
 
     public void RemakeChildren()
     {
-        using var sample = Engine.Profiler.Start("UIEditorComponent.RemakeChildren");
-        DeactivateChildSubtrees();
-        foreach (var child in SceneNode.Transform.Children.ToArray())
-            if (child.SceneNode is { } owned)
+        if (_editorTerminal || _deactivatingEditor || !IsActive || _remakingEditor) return;
+        _remakingEditor = true;
+        try
+        {
+            using var sample = Engine.Profiler.Start("UIEditorComponent.RemakeChildren");
+            RetireOwnedRoot();
+            if (_editorTerminal) return;
+
+            var splitChild = SceneNode.NewChildWithTransform(out UIDualSplitTransform splitTfm, "EditorRoot");
+            _editorRoot = splitChild;
+            if (StopTerminatedBuild(splitChild)) return;
+            splitTfm.VerticalSplit = true;
+            splitTfm.FirstFixedSize = true;
+            splitTfm.FixedSize = MenuHeight;
+            splitTfm.SplitterSize = 0.0f;
+
+            splitChild.NewChild(out UIToolbarComponent toolbarComp, "Menu");
+            if (StopTerminatedBuild(splitChild)) return;
+            toolbarComp.RootMenuOptions = RootMenuOptions;
+            if (StopTerminatedBuild(splitChild)) return;
+            toolbarComp.SubmenuItemHeight = MenuHeight;
+            if (StopTerminatedBuild(splitChild)) return;
+            _toolbar = toolbarComp;
+
+            if (EditorUnitTests.Toggles.UltralightWebView)
             {
-                owned.Destroy(true);
-                if (!owned.IsDestroyed)
-                    throw new InvalidOperationException("An editor UI child refused teardown; the UI was not rebuilt.");
+                SceneNode webRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "WebViewRoot");
+                if (StopTerminatedBuild(splitChild)) return;
+                var webComp = webRoot.AddComponent<UIWebViewComponent>()!;
+                if (StopTerminatedBuild(splitChild)) return;
+                webRoot.AddComponent<UIWebViewInputComponent>();
+                if (StopTerminatedBuild(splitChild)) return;
+                RendererBackendId backendId = AbstractRenderer.Current?.BackendId
+                    ?? throw new InvalidOperationException(
+                        "An active renderer is required before creating the accelerated web view.");
+                webComp.Backend = WebRendererBackendRegistry.CreateRequiredAccelerated(backendId);
+                webComp.TransparentBackground = false;
+                webComp.Url = string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.UltralightWebViewUrl)
+                    ? "https://blackjaxvr.com"
+                    : EditorUnitTests.Toggles.UltralightWebViewUrl;
+                if (StopTerminatedBuild(splitChild)) return;
+                Debug.UI($"[UIEditor] Ultralight web view enabled. Url='{webComp.Url}'");
+
+                return;
             }
 
-        var splitChild = SceneNode.NewChildWithTransform(out UIDualSplitTransform splitTfm, "EditorRoot");
-        splitTfm.VerticalSplit = true;
-        splitTfm.FirstFixedSize = true;
-        splitTfm.FixedSize = MenuHeight;
-        splitTfm.SplitterSize = 0.0f;
-
-        splitChild.NewChild(out UIToolbarComponent toolbarComp, "Menu");
-        toolbarComp.RootMenuOptions = RootMenuOptions;
-        toolbarComp.SubmenuItemHeight = MenuHeight;
-        _toolbar = toolbarComp;
-
-        if (EditorUnitTests.Toggles.UltralightWebView)
-        {
-            SceneNode webRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "WebViewRoot");
-            var webComp = webRoot.AddComponent<UIWebViewComponent>()!;
-            webRoot.AddComponent<UIWebViewInputComponent>();
-            RendererBackendId backendId = AbstractRenderer.Current?.BackendId
-                ?? throw new InvalidOperationException(
-                    "An active renderer is required before creating the accelerated web view.");
-            webComp.Backend = WebRendererBackendRegistry.CreateRequiredAccelerated(backendId);
-            webComp.TransparentBackground = false;
-            webComp.Url = string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.UltralightWebViewUrl)
-                ? "https://blackjaxvr.com"
-                : EditorUnitTests.Toggles.UltralightWebViewUrl;
-            Debug.UI($"[UIEditor] Ultralight web view enabled. Url='{webComp.Url}'");
-
-            return;
-        }
-
-        if (EditorUnitTests.Toggles.VideoStreaming)
-        {
-            SceneNode videoRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "VideoRoot");
-
-            // Configure video components before first activation so we don't start the
-            // streaming pipeline with the default URL and then immediately restart with
-            // an override (which can leave transient black output if the override fails).
-            bool wasActive = videoRoot.IsActiveSelf;
-            videoRoot.IsActiveSelf = false;
-
-            var videoComp = videoRoot.AddComponent<UIVideoComponent>()!;
-            if (!string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.VideoStreamingUrl))
-                videoComp.StreamUrl = EditorUnitTests.Toggles.VideoStreamingUrl;
-            if (EditorUnitTests.Toggles.VideoStreamingAudio)
+            if (EditorUnitTests.Toggles.VideoStreaming)
             {
-                var audioSource = videoRoot.AddComponent<AudioSourceComponent>()!;
-                audioSource.RelativeToListener = true;
-                audioSource.SteamAudioNonSpatialStereo = true;
-            }
+                SceneNode videoRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "VideoRoot");
+                if (StopTerminatedBuild(splitChild)) return;
 
-            videoRoot.IsActiveSelf = wasActive;
+                // Configure video components before first activation so we don't start the
+                // streaming pipeline with the default URL and then immediately restart with
+                // an override (which can leave transient black output if the override fails).
+                bool wasActive = videoRoot.IsActiveSelf;
+                videoRoot.IsActiveSelf = false;
 
-            return;
-        }
-
-        SceneNode dockNode = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "DockableRoot");
-        if (EditorUnitTests.Toggles.BackgroundShader)
-        {
-            XRShader bgShader = ShaderHelper.LoadEngineShader("UI/Backgrounds/Surf2.fs", EShaderType.Fragment);
-            var mat = new XRMaterial(bgShader)
-            {
-                RenderPass = (int)EDefaultRenderPass.OnTopForward,
-                RenderOptions = new RenderingParameters
+                var videoComp = videoRoot.AddComponent<UIVideoComponent>()!;
+                if (StopTerminatedBuild(splitChild)) return;
+                if (!string.IsNullOrWhiteSpace(EditorUnitTests.Toggles.VideoStreamingUrl))
+                    videoComp.StreamUrl = EditorUnitTests.Toggles.VideoStreamingUrl;
+                if (StopTerminatedBuild(splitChild)) return;
+                if (EditorUnitTests.Toggles.VideoStreamingAudio)
                 {
-                    CullMode = ECullMode.None,
-                    DepthTest = new DepthTest()
-                    {
-                        Enabled = ERenderParamUsage.Enabled,
-                        Function = EComparison.Always,
-                        UpdateDepth = false
-                    },
-                    RequiredEngineUniforms = EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions,
+                    var audioSource = videoRoot.AddComponent<AudioSourceComponent>()!;
+                    if (StopTerminatedBuild(splitChild)) return;
+                    audioSource.RelativeToListener = true;
+                    audioSource.SteamAudioNonSpatialStereo = true;
+                    if (StopTerminatedBuild(splitChild)) return;
                 }
-            };
-            var comp = dockNode.AddComponent<UIMaterialComponent>()!;
-            comp.Material = mat;
+
+                videoRoot.IsActiveSelf = wasActive;
+                if (StopTerminatedBuild(splitChild)) return;
+
+                return;
+            }
+
+            SceneNode dockNode = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "DockableRoot");
+            if (StopTerminatedBuild(splitChild)) return;
+            if (EditorUnitTests.Toggles.BackgroundShader)
+            {
+                XRShader bgShader = ShaderHelper.LoadEngineShader("UI/Backgrounds/Surf2.fs", EShaderType.Fragment);
+                var mat = new XRMaterial(bgShader)
+                {
+                    RenderPass = (int)EDefaultRenderPass.OnTopForward,
+                    RenderOptions = new RenderingParameters
+                    {
+                        CullMode = ECullMode.None,
+                        DepthTest = new DepthTest()
+                        {
+                            Enabled = ERenderParamUsage.Enabled,
+                            Function = EComparison.Always,
+                            UpdateDepth = false
+                        },
+                        RequiredEngineUniforms = EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions,
+                    }
+                };
+                var comp = dockNode.AddComponent<UIMaterialComponent>()!;
+                if (StopTerminatedBuild(splitChild)) return;
+                comp.Material = mat;
+            }
+            if (StopTerminatedBuild(splitChild)) return;
+            NativeDockTreeHost.Build(dockNode, WorldAs<RuntimeWorld>());
+
+            ////Create the dockable windows transform for panels
+            //var dockableNode = splitChild.NewChild<UIDockingRootComponent>(out var root);
+            //var dock = root.DockingTransform;
+
+            //var leftNode = dock.Left?.SceneNode;
+            //if (leftNode is not null)
+            //{
+            //    leftNode.Transform.Clear();
+            //    leftNode.NewChild<HierarchyPanel>(out var hierarchy);
+
+            //    hierarchy.RootNodes.Clear();
+            //    if (World is not null)
+            //        hierarchy.RootNodes.AddRange(World.RootNodes);
+            //}
+
+            //var rightNode = dock.Right?.SceneNode;
+            //if (rightNode is not null)
+            //{
+            //    rightNode.Transform.Clear();
+            //    rightNode.NewChild<InspectorPanel>(out var inspector);
+            //}
+
+            //var bottomNode = dock.Bottom?.SceneNode;
+            //if (bottomNode is not null)
+            //{
+            //    bottomNode.Transform.Clear();
+            //    bottomNode.NewChild<ConsolePanel>(out var console);
+            //}
         }
-        NativeDockTreeHost.Build(dockNode, WorldAs<RuntimeWorld>());
-
-        ////Create the dockable windows transform for panels
-        //var dockableNode = splitChild.NewChild<UIDockingRootComponent>(out var root);
-        //var dock = root.DockingTransform;
-
-        //var leftNode = dock.Left?.SceneNode;
-        //if (leftNode is not null)
-        //{
-        //    leftNode.Transform.Clear();
-        //    leftNode.NewChild<HierarchyPanel>(out var hierarchy);
-
-        //    hierarchy.RootNodes.Clear();
-        //    if (World is not null)
-        //        hierarchy.RootNodes.AddRange(World.RootNodes);
-        //}
-
-        //var rightNode = dock.Right?.SceneNode;
-        //if (rightNode is not null)
-        //{
-        //    rightNode.Transform.Clear();
-        //    rightNode.NewChild<InspectorPanel>(out var inspector);
-        //}
-
-        //var bottomNode = dock.Bottom?.SceneNode;
-        //if (bottomNode is not null)
-        //{
-        //    bottomNode.Transform.Clear();
-        //    bottomNode.NewChild<ConsolePanel>(out var console);
-        //}
+        finally { _remakingEditor = false; }
     }
 
     /// <summary>
@@ -202,11 +289,13 @@ public partial class UIEditorComponent : UIComponent
     {
         get
         {
-            var first = SceneNode.FirstChild;
-            if (first is null)
+            var first = _editorRoot;
+            if (first is null || first.IsDestroyed)
                 RemakeChildren();
-            if (first!.Transform.Children.Count < 2)
+            first = _editorRoot;
+            if (first is null || first.Transform.Children.Count < 2)
                 RemakeChildren();
+            first = _editorRoot ?? throw new InvalidOperationException("The editor UI root is unavailable.");
             return first!.FirstChild!;
         }
     }
@@ -217,11 +306,13 @@ public partial class UIEditorComponent : UIComponent
     {
         get
         {
-            var first = SceneNode.FirstChild;
-            if (first is null)
+            var first = _editorRoot;
+            if (first is null || first.IsDestroyed)
                 RemakeChildren();
-            if (first!.Transform.Children.Count < 2)
+            first = _editorRoot;
+            if (first is null || first.Transform.Children.Count < 2)
                 RemakeChildren();
+            first = _editorRoot ?? throw new InvalidOperationException("The editor UI root is unavailable.");
             return first.LastChild!;
         }
     }

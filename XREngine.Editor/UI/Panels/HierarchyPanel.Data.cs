@@ -105,8 +105,7 @@ public partial class HierarchyPanel
             ReferenceEquals(TryGetActiveWorld(), world);
 
     private static bool IsLiveHierarchyNode(SceneNode? node, RuntimeWorld world)
-        => node is { IsDestroyed: false, IsDestroyQueued: false } &&
-            ReferenceEquals(node.World, world);
+        => HierarchySceneOwnership.CanAuthor(node, world);
 
     private static bool IsInEditorScene(RuntimeWorld world, SceneNode node)
         => EditorWorldIntegrationRegistry.TryGet(world, out EditorWorldIntegration? integration)

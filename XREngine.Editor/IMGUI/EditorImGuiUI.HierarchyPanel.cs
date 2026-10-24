@@ -1764,64 +1764,14 @@ public static partial class EditorImGuiUI
     /// Reparent a dragged node under a new parent with structural undo.
     /// </summary>
     private static void ReparentHierarchyNode(SceneNode droppedNode, TransformBase newParent, RuntimeWorld world,
-        XRScene? owningScene, bool validateCapturedWorld = false)
+        XRScene? owningScene)
     {
-        var draggedTfm = droppedNode.Transform;
-        var oldParent = draggedTfm.Parent;
-        bool wasRoot = oldParent is null;
-        string nodeName = droppedNode.Name ?? SceneNode.DefaultName;
-
-        using var interaction = Undo.BeginUserInteraction();
-        using var scope = Undo.BeginChange($"Reparent {nodeName}");
-
-        // Remove from root lists if it was a root node
-        if (wasRoot)
-        {
-            world.RootNodes.Remove(droppedNode);
-            owningScene?.RootNodes.Remove(droppedNode);
-        }
-
-        draggedTfm.SetParent(newParent, true, EParentAssignmentMode.Immediate);
-
-        var worldCapture = world;
-        var sceneCapture = owningScene;
-        Undo.RecordStructuralChange($"Reparent {nodeName}",
-            undoAction: () =>
-            {
-                if (validateCapturedWorld)
-                {
-                    RequireNativeHierarchyState(droppedNode, worldCapture, newParent);
-                    if (oldParent?.SceneNode is { } oldOwner)
-                        RequireNativeHierarchyState(oldOwner, worldCapture, oldParent.Parent);
-                }
-                if (wasRoot)
-                {
-                    draggedTfm.SetParent(null, true, EParentAssignmentMode.Immediate);
-                    sceneCapture?.RootNodes.Add(droppedNode);
-                    worldCapture.RootNodes.Add(droppedNode);
-                }
-                else
-                {
-                    draggedTfm.SetParent(oldParent, true, EParentAssignmentMode.Immediate);
-                }
-            },
-            redoAction: () =>
-            {
-                if (validateCapturedWorld)
-                {
-                    RequireNativeHierarchyState(droppedNode, worldCapture, oldParent);
-                    if (newParent.SceneNode is { } newOwner)
-                        RequireNativeHierarchyState(newOwner, worldCapture, newParent.Parent);
-                }
-                if (wasRoot)
-                {
-                    worldCapture.RootNodes.Remove(droppedNode);
-                    sceneCapture?.RootNodes.Remove(droppedNode);
-                }
-                draggedTfm.SetParent(newParent, true, EParentAssignmentMode.Immediate);
-            });
-
-        MarkSceneHierarchyDirty(droppedNode, owningScene, world);
+        if (!HierarchySceneOwnership.CanAuthor(droppedNode, world) ||
+            !HierarchySceneOwnership.CanAuthor(newParent.SceneNode, world))
+            return;
+        HierarchyMutation.Execute($"Reparent {droppedNode.Name ?? SceneNode.DefaultName}",
+            () => new(HierarchyPlacement.Capture(droppedNode, world),
+                HierarchyPlacement.Attached(droppedNode, world, newParent), preserveWorld: true));
     }
 
     /// <summary>

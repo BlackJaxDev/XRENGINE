@@ -658,7 +658,7 @@ Transform replacement retires old listeners before topology is read again. Live
 world roots and the existing editor scene are distinct sources. Rename sessions
 retain their draft across row rebinds. `HierarchySceneOwnership` resolves the
 authored scene first, then the exact world's editor scene; detached Undo checks
-both. Mutations that must preserve dual scene membership remain open.
+both. Guarded create, delete, reparent, and promotion commands preserve dual scene membership; broader hierarchy workflows remain open.
 
 Direct component destruction releases radio membership, slider and color
 bindings, text editing callbacks, and canvas input owners. Binding callbacks
@@ -683,3 +683,91 @@ pending property assignments. The old camera list uses exact non-vetoable
 removal. Post-removal observers each run even if an earlier observer fails;
 the first failure is reported after cleanup. Observer snapshots allocate only
 on this ownership-retirement path. Normal collection removal remains vetoable.
+
+## Retained Cell Refresh And Editor Ownership
+
+Virtual table columns can provide `RefreshCell`. The provider uses it only for
+the same source, item ID, list, provider incarnation, and row lease. A column
+without this callback releases and binds its value again. Cell callbacks cannot
+replace the row owner before the old callback returns. Pending transitions are
+coalesced and bounded. Retirement attempts every bound cell; failed preparation
+releases only cells whose binding began. A changed source or lease stops a
+partial update. Property-grid columns use the same refresh path.
+
+Inspector list details retain controls for unchanged rows. Occurrence IDs are
+assigned only to visited rows, so opening a large collection does not create one
+identity per item. Canonical insert/remove operations move these IDs and preserve
+duplicate occurrences. Observed external changes retire stale identities. The
+source cannot infer unobserved duplicate or remove/reinsert history from an
+ordinary BCL list.
+
+`EditorListMutation` supports exact `List<T>` and `ArrayList` Set/Insert/Remove,
+and array Set. A non-overridable compiler-generated property getter and backing field
+provide a callback-free final source check. Custom getters and other collection
+types remain read-only. All targets, source fields, owner documents, before
+sequences, and replay tokens are admitted before writes. Shared lists are edited
+once. Value preparation cannot redirect a later target to new data. A structural
+inverse is recorded before callbacks, and a replay hold lasts through history
+commit. This does not suppress unrelated property recording. Dirty state uses
+the captured source document. Post-commit UI notification failure does not turn a
+completed mutation into a rejected command. Broader collection accessor support, terminal admission in the dictionary,
+linked-list, and generic detail builders, and full inspector parity remain open.
+
+Dock moves require a destination commit confirmation and unchanged source and
+destination registration owners. Source closure affects only the admitted panel.
+A changed callback owner rejects closure. Destination compensation restores only
+its own unchanged tree revision. A panel can still be reopened in its source
+window; panel types are not global singletons.
+
+Detached saved-window records have optional client bounds. Old records keep their
+default placement. Restore validates dimensions and current monitor work areas,
+then keeps a usable title strip visible. An immutable approved-close receipt
+binds one window, request sequence, and shutdown intent. A veto, failed native
+request, nested request, stale queued callback, or replacement window cannot
+reuse that approval. Shutdown preserves the saved entry; manual close removes
+it. Native geometry is read on the native window owner. Restore, resize, and
+close work executes immediately when already on the render owner.
+
+The primary layout key is still based on the current window index and title.
+Its [compatibility proposal](../../work/design/ui/native-window-layout-key-compatibility-design.md)
+awaits approval. The explicit SDL/Vulkan split-pump prototype has a separate
+terminal render-job handoff defect; see the
+[investigation](../../work/investigations/ui/retained-ui-integration.md).
+Default collapsed-window cleanup does not need that cross-thread handoff.
+
+Grid destruction releases the exact row/column lists, sizing definitions and
+values, and child-placement listeners. Renderable material listeners attach only
+to the admitted active owner and detach on deactivation or direct destruction.
+Reactivation binds the current material. Frozen draw payload claims keep their
+separate reader lifetime; detaching the shared material event does not release
+those readers.
+
+The native editor root records the one subtree that it creates. Component
+disable, rebuild, and destruction retire that subtree without removing foreign
+siblings or a subtree transferred to a different parent during callbacks. A
+construction callback that destroys or disables the owner stops later setup.
+Console, profiler, browser, asset, and scene-view owners retire their external
+subscriptions before callback-prone teardown. Dock cleanup attempts every old
+drop registration even when one release fails. These code contracts do not
+establish Windows, native media, or GPU retirement acceptance.
+
+Hierarchy create, delete, reparent, and promotion use guarded placement receipts.
+A receipt records exact parent, root-list identities and indices, loaded scene
+memberships, runtime visibility routes, editor integration routes, local transform,
+and active state. Hidden roots do not require a non-null live `World` merely to
+be authorable. Moving a root updates the runtime's old scene route as well as the
+authored lists; hiding the old scene cannot remove the moved root later.
+
+A structural inverse exists before callback-bearing preparation. Ownership is
+checked before inverse property writes and after the final state. Undo restores
+placement before activation so a component binds to the restored world. Only the
+operation-owned active step is structural; local transform and unrelated callback
+properties remain canonical records. Exact property reconciliation occurs only
+in the owning open scope. A setter or matrix callback that leaves completion
+uncertain prevents history from transferring as success. The failure remains
+visible and requires explicit recovery or reissue.
+
+The current promotion path rejects first-time editor-scene allocation before
+mutation. Hidden-parent asset spawning uses a separate shared spawn path and is
+still unsupported. Duplicate/Deep Duplicate, context/scene menus, and broader
+hierarchy parity remain open; the guarded commands do not close those items.

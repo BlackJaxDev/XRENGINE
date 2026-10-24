@@ -42,6 +42,64 @@ namespace XREngine.Editor;
 /// </remarks>
 public static class Undo
 {
+    private static int _openStructuralMutations;
+
+    /// <summary>Records one inverse before callbacks and holds replay until the command finishes.</summary>
+    internal static StructuralChangeHandle BeginStructuralMutation(string description, Action undoAction, Action redoAction)
+    {
+        lock (_sync)
+        {
+            if (!RecordingAllowed || _replayInProgress || _scopeStack.Count == 0)
+                throw new InvalidOperationException("A structural mutation requires an open user change scope outside Undo/Redo.");
+            ChangeScope scope = _scopeStack.Peek();
+            StructuralUndoStep step = new(description, undoAction, redoAction);
+            scope.AddStructuralStep(step);
+            _openStructuralMutations++;
+            return new StructuralChangeHandle(scope, step);
+        }
+    }
+
+    internal static bool RemoveRestoredStructuralStep(ChangeScope scope, StructuralUndoStep step)
+    {
+        lock (_sync)
+            return !scope.Completed && _scopeStack.Contains(scope) && scope.Steps.Remove(step);
+    }
+
+    internal static void ReconcileStructuralProperty(ChangeScope scope, StructuralUndoStep owner,
+        XRBase target, string propertyName, object? original, object? current)
+    {
+        lock (_sync)
+        {
+            int ownerIndex = scope.Steps.IndexOf(owner);
+            if (scope.Completed || !_scopeStack.Contains(scope) || ownerIndex < 0)
+                throw new InvalidOperationException("The structural property's owning change scope is no longer open.");
+            PropertyChangeStep? existing = scope.Changes.FirstOrDefault(change =>
+                ReferenceEquals(change.Target, target) && string.Equals(change.PropertyName, propertyName, StringComparison.Ordinal));
+            int index = existing is null ? -1 : scope.Steps.IndexOf(existing);
+            if (index >= 0 && index < ownerIndex)
+                throw new InvalidOperationException("A structural command cannot replace an earlier property edit.");
+            if (existing is not null)
+            {
+                scope.Changes.Remove(existing);
+                scope.Steps.Remove(existing);
+            }
+            if (Equals(original, current))
+                return;
+            PropertyChangeStep captured = new(target, propertyName, original, current, requireSetterCompletion: true);
+            scope.Changes.Add(captured);
+            if (index >= 0)
+                scope.Steps.Insert(index, captured);
+            else
+                scope.AddStructuralStep(captured);
+        }
+    }
+
+    internal static void ReleaseStructuralMutation()
+    {
+        lock (_sync)
+            _openStructuralMutations--;
+    }
+
     /// <summary>
     /// Synchronization object for thread-safe access to shared state.
     /// </summary>
@@ -462,7 +520,7 @@ public static class Undo
     {
         lock (_sync)
         {
-            if (_replayInProgress)
+            if (_replayInProgress || _openStructuralMutations != 0)
                 return false;
             _replayInProgress = true;
         }
@@ -2011,6 +2069,7 @@ public static class Undo
     /// <param name="propertyName">The name of the changed property.</param>
     /// <param name="previousValue">The original value before the change.</param>
     /// <param name="newValue">The new value after the change.</param>
+    /// <param name="requireSetterCompletion">Whether a failed setter must stop later replay attempts.</param>
     /// <remarks>
     /// <para>
     /// Caches reflection metadata (<see cref="PropertyInfo"/> and <see cref="FieldInfo"/>)
@@ -2020,8 +2079,10 @@ public static class Undo
     /// Can restore either the original value (<see cref="ApplyOld"/>) or the new value (<see cref="ApplyNew"/>).
     /// </para>
     /// </remarks>
-    internal sealed class PropertyChangeStep(XRBase target, string propertyName, object? previousValue, object? newValue) : IUndoStep
+    internal sealed class PropertyChangeStep(XRBase target, string propertyName, object? previousValue, object? newValue,
+        bool requireSetterCompletion = false) : IUndoStep
     {
+        private bool _incompleteReplay;
         /// <summary>
         /// Cached PropertyInfo for the property, resolved lazily.
         /// </summary>
@@ -2072,7 +2133,10 @@ public static class Undo
         /// Creates a copy of this step for storage in the undo stack.
         /// </summary>
         /// <returns>A new <see cref="PropertyChangeStep"/> with the same values.</returns>
-        public PropertyChangeStep Clone() => new(Target, PropertyName, OriginalValue, CurrentValue);
+        public PropertyChangeStep Clone() => new(Target, PropertyName, OriginalValue, CurrentValue, requireSetterCompletion)
+        {
+            _incompleteReplay = this._incompleteReplay
+        };
 
         /// <inheritdoc />
         IUndoStep IUndoStep.Clone() => Clone();
@@ -2090,8 +2154,15 @@ public static class Undo
         /// <param name="value">The value to set.</param>
         private void Apply(object? value)
         {
+            if (requireSetterCompletion && _incompleteReplay)
+                throw new InvalidOperationException($"The previous replay of '{PropertyName}' did not complete its callbacks.");
             if (!TrySetValue(value))
             {
+                if (requireSetterCompletion)
+                {
+                    _incompleteReplay = true;
+                    throw new InvalidOperationException($"The replay of '{PropertyName}' did not complete its callbacks.");
+                }
                 Debug.LogWarning($"Undo failed to set '{PropertyName}' on {Target.GetType().Name}.");
                 return;
             }
@@ -2106,7 +2177,13 @@ public static class Undo
 #endif
 
             // Trigger any post-change processing (e.g., transform matrix recalculation)
-            PostApplyChange(Target, PropertyName);
+            try { PostApplyChange(Target, PropertyName); }
+            catch
+            {
+                if (requireSetterCompletion)
+                    _incompleteReplay = true;
+                throw;
+            }
         }
 
         /// <summary>

@@ -34,10 +34,25 @@ public static partial class InspectorPropertyEditors
 
             editor = (node, prop, objects) =>
             {
+                if (objects?.Any(target => target is IEditorListElementBinding) == true)
+                {
+                    AddInfoLabel(node, "Nested collection editing needs an owner path.");
+                    return;
+                }
                 EnsureVerticalLayout(node);
                 var container = node.NewChild();
                 EnsureVerticalLayout(container);
                 var context = new CollectionEditorContext(prop, objects, propType, container);
+                InspectorListDetailRefreshComponent lifetime =
+                    node.AddComponent<InspectorListDetailRefreshComponent>()!;
+                if (lifetime is null || lifetime.IsDestroyed || lifetime.IsDestroyQueued ||
+                    node.IsDestroyed || node.IsDestroyQueued)
+                {
+                    context.Retire();
+                    return;
+                }
+                lifetime.Refresh = context.RefreshList;
+                lifetime.Release = context.Retire;
                 context.Rebuild();
             };
             return true;
@@ -58,10 +73,79 @@ public static partial class InspectorPropertyEditors
             private readonly List<object> _owners = CollectOwners(objects);
             private readonly Type _declaredType = declaredType;
             private readonly SceneNode _container = container;
+            private readonly EditorListMutationContext _listContext = new();
+            private EditorListRowSource _listRows => _listContext.Rows;
+            private readonly Dictionary<UIBoundableTransform, EditorListRowCellState> _listCells = [];
+            private UIListTransform? _virtualList;
+            private UITextComponent? _listCountLabel;
+            private Type? _listElementType;
+            private IList? _boundList;
+            private EditorListSourceLease[] _headerLeases = [];
+            private ulong _headerGeneration;
+
+            public void Retire()
+            {
+                if (!_listContext.IsActive) return;
+                _headerGeneration++;
+                _headerLeases = [];
+                _listContext.Retire();
+                UIListTransform? list = _virtualList;
+                bool detached = list is null;
+                try
+                {
+                    if (list is not null)
+                    {
+                        IVirtualListProvider? provider = list.VirtualProvider;
+                        list.DetachVirtualProviderForOwnerTeardown();
+                        detached = provider is null || !ReferenceEquals(list.VirtualProvider, provider);
+                    }
+                }
+                catch (Exception error)
+                {
+                    detached = list is not null && list.VirtualProvider is null;
+                    Debug.LogException(error, "Could not detach retired list rows.");
+                }
+                finally
+                {
+                    foreach (EditorListRowCellState cell in _listCells.Values)
+                    {
+                        if (cell.Bindings is { } bindings)
+                            foreach (IEditorListElementBinding binding in bindings)
+                                try { binding.ReleaseLease(); }
+                                catch (Exception error) { Debug.LogException(error, "Could not release a retired list row."); }
+                        if (cell.LastBindings is { } cached)
+                            foreach (IEditorListElementBinding binding in cached)
+                                try { binding.ReleaseLease(); }
+                                catch (Exception error) { Debug.LogException(error, "Could not release a cached list row."); }
+                    }
+                    if (detached)
+                    {
+                        _listCells.Clear();
+                        _virtualList = null;
+                    }
+                }
+            }
 
             public void Rebuild()
             {
-                _container.Transform.Clear();
+                if (!_listContext.IsActive) return;
+                _headerGeneration++;
+                ulong buildGeneration = _headerGeneration;
+                _headerLeases = [];
+                if (_virtualList is not null)
+                    _virtualList.VirtualProvider = null;
+                if (!IsCurrentBuild(buildGeneration)) return;
+                _virtualList = null;
+                _listCountLabel = null;
+                _listCells.Clear();
+                foreach (var child in _container.Transform.Children.ToArray())
+                {
+                    if (child.SceneNode is not { } old) continue;
+                    old.IsActiveSelf = false;
+                    if (!IsCurrentBuild(buildGeneration)) return;
+                    old.Destroy(false);
+                    if (!IsCurrentBuild(buildGeneration)) return;
+                }
 
                 if (_owners.Count == 0)
                 {
@@ -70,6 +154,7 @@ public static partial class InspectorPropertyEditors
                 }
 
                 object? sample = GetSampleCollection();
+                if (!IsCurrentBuild(buildGeneration)) return;
                 if (sample is null)
                 {
                     AddInfoLabel(_container, "Collection is null.");
@@ -106,6 +191,9 @@ public static partial class InspectorPropertyEditors
                 AddInfoLabel(_container, $"Unsupported collection type '{sample.GetType().Name}'.");
             }
 
+            private bool IsCurrentBuild(ulong generation)
+                => _listContext.IsActive && _headerGeneration == generation;
+
             private object? GetSampleCollection()
             {
                 foreach (var owner in _owners)
@@ -138,6 +226,7 @@ public static partial class InspectorPropertyEditors
                 {
                     CreateInlineButton(header, "Add Entry", () =>
                     {
+                        if (!_listContext.IsActive) return;
                         AddDictionaryEntry(keyType, valueType);
                     });
                 }
@@ -183,7 +272,10 @@ public static partial class InspectorPropertyEditors
 
                 if (canMutate)
                 {
-                    CreateInlineButton(labelNode, "Remove", () => RemoveDictionaryEntry(key));
+                    CreateInlineButton(labelNode, "Remove", () =>
+                    {
+                        if (_listContext.IsActive) RemoveDictionaryEntry(key);
+                    });
                 }
 
                 var valueNode = row.NewChild();
@@ -350,11 +442,29 @@ public static partial class InspectorPropertyEditors
 
             private void RenderList(Type elementType)
             {
-                int? sampleCount = GetListSample()?.Count;
+                ulong buildGeneration = _headerGeneration;
+                IList? sampleList = GetListSample();
+                if (!IsCurrentBuild(buildGeneration)) return;
+                int? sampleCount = sampleList?.Count;
+                if (_listRows.Count != sampleCount)
+                    _listRows.Reset(sampleCount ?? 0);
+                _listElementType = elementType;
+                _boundList = sampleList;
                 if (sampleCount is int count)
-                    AddInfoLabel(_container, $"Count: {count}");
+                {
+                    _container.NewChild<UITextComponent>(out UITextComponent countLabel);
+                    countLabel.Text = $"Count: {count}";
+                    _listCountLabel = countLabel;
+                    if (!IsCurrentBuild(buildGeneration)) return;
+                }
 
                 bool canMutate = HasMutableList();
+                if (!IsCurrentBuild(buildGeneration)) return;
+                EditorListSourceLease[] leases = canMutate
+                    ? _owners.Select(owner => EditorListSourceLease.Capture(owner, _property)).ToArray()
+                    : [];
+                if (!IsCurrentBuild(buildGeneration)) return;
+                _headerLeases = leases;
                 var header = _container.NewChild();
                 var headerLayout = header.SetTransform<UIListTransform>();
                 headerLayout.DisplayHorizontal = true;
@@ -362,28 +472,390 @@ public static partial class InspectorPropertyEditors
 
                 if (canMutate)
                 {
+                    ulong headerGeneration = _headerGeneration;
                     CreateInlineButton(header, "Add", () =>
                     {
-                        AddListElement(elementType);
+                        if (_listContext.IsActive && headerGeneration == _headerGeneration)
+                            AddListElement(elementType);
                     });
                 }
                 else
                 {
                     AddInfoLabel(header, "List is read-only.");
                 }
+                if (!IsCurrentBuild(buildGeneration)) return;
 
-                var listNode = _container.NewChild();
-                EnsureVerticalLayout(listNode);
-
-                var sampleList = GetListSample();
                 if (sampleList is null || sampleList.Count == 0)
                 {
-                    AddInfoLabel(listNode, "<empty>");
+                    AddInfoLabel(_container, "<empty>");
                     return;
                 }
+                SceneNode scrollNode = _container.NewChild();
+                UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+                scroll.MinAnchor = Vector2.Zero;
+                scroll.MaxAnchor = Vector2.One;
+                scroll.Height = 300;
+                scrollNode.AddComponent<UIScrollRegionComponent>();
+                if (!IsCurrentBuild(buildGeneration)) return;
+                SceneNode listNode = scrollNode.NewChild();
+                UIListTransform list = listNode.SetTransform<UIListTransform>();
+                list.MinAnchor = Vector2.Zero;
+                list.MaxAnchor = Vector2.One;
+                list.ItemSize = 28;
+                list.VirtualOverscan = 2;
+                list.ItemAlignment = EListAlignment.TopOrLeft;
+                _virtualList = list;
+                UIVirtualTableProvider<int> provider = new(_listRows,
+                    new UIVirtualTableColumn<int>("value", "Element", 300,
+                        CreateVirtualListCell, BindVirtualListCell, UnbindVirtualListCell,
+                        BindVirtualListCell));
+                list.VirtualProvider = provider;
+                if (!IsCurrentBuild(buildGeneration))
+                {
+                    if (ReferenceEquals(list.VirtualProvider, provider))
+                        list.DetachVirtualProviderForOwnerTeardown();
+                    return;
+                }
+                _listContext.RefreshRequested = () =>
+                {
+                    if (!_listContext.IsActive) return;
+                    if (_headerLeases.Length != 0)
+                    {
+                        EditorListSourceLease[] refreshed = _owners.Select(owner =>
+                            EditorListSourceLease.Capture(owner, _property)).ToArray();
+                        if (!_listContext.IsActive) return;
+                        _headerLeases = refreshed;
+                    }
+                    if (_listCountLabel is not null)
+                        _listCountLabel.Text = $"Count: {_listRows.Count}";
+                    if (!_listContext.IsActive) return;
+                    _virtualList?.InvalidateMeasure();
+                };
+            }
 
-                for (int i = 0; i < sampleList.Count; i++)
-                    BuildListRow(listNode, elementType, i, canMutate);
+            public void RefreshList()
+            {
+                if (!_listContext.IsActive) return;
+                IList? current = GetListSample();
+                if (!ReferenceEquals(current, _boundList))
+                {
+                    _listContext.RevisionChanged();
+                    _listRows.Reset(current?.Count ?? 0);
+                    Rebuild();
+                    return;
+                }
+                if (current is null) return;
+                bool changed = current.Count != _listRows.Count;
+                if (!changed)
+                    foreach (EditorListRowCellState cell in _listCells.Values)
+                    {
+                        if (cell.Index < 0 || cell.Bindings is not { } bindings) continue;
+                        foreach (IEditorListElementBinding binding in bindings)
+                        {
+                            if (binding.ContextRevision != _listContext.Revision) continue;
+                            IList list = binding.Collection;
+                            if (!ReferenceEquals(binding.OwnerProperty.GetValue(binding.Owner), list) ||
+                                !ReferenceEquals(binding.CollectionState, EditorListMutation.GetStateToken(list)) ||
+                                cell.Index >= list.Count ||
+                                !EditorListMutation.SameValue(list[cell.Index], binding.DisplayedValue))
+                            {
+                                changed = true;
+                                break;
+                            }
+                        }
+                        if (changed) break;
+                    }
+                if (changed)
+                {
+                    _listContext.RevisionChanged();
+                    _listRows.Reset(current.Count);
+                }
+                else
+                    _listRows.Refresh();
+                _virtualList?.InvalidateMeasure();
+            }
+
+            private UIBoundableTransform CreateVirtualListCell(SceneNode tableRow)
+            {
+                if (!_listContext.IsActive)
+                    throw new InvalidOperationException("The list detail view was retired.");
+                SceneNode cell = new(tableRow);
+                UIListTransform layout = cell.SetTransform<UIListTransform>();
+                layout.DisplayHorizontal = true;
+                layout.ItemAlignment = EListAlignment.TopOrLeft;
+                layout.ItemSpacing = 4;
+                SceneNode labelNode = cell.NewChild<UITextComponent>(out UITextComponent label);
+                labelNode.GetTransformAs<UIBoundableTransform>(true)!.Width = 60;
+                SceneNode removeNode = cell.NewChild();
+                removeNode.GetTransformAs<UIBoundableTransform>(true)!.Width = 55;
+                SceneNode valueNode = cell.NewChild();
+                valueNode.SetTransform<UIBoundableTransform>().Width = 180;
+                EditorListRowCellState state = new()
+                {
+                    Label = label, RemoveHost = removeNode, ValueNode = valueNode
+                };
+                _listCells.Add(layout, state);
+                return layout;
+            }
+
+            private void BindVirtualListCell(UIBoundableTransform cell, int index, ulong rowId)
+            {
+                if (!_listContext.IsActive) return;
+                if (!_listCells.TryGetValue(cell, out EditorListRowCellState? state)) return;
+                ulong generation = _headerGeneration;
+                try { BindVirtualListCellCore(cell, state, index, rowId, generation); }
+                finally
+                {
+                    if (!IsCurrentCellBinding(cell, state, generation))
+                    {
+                        if (state.Bindings is { } bindings)
+                            foreach (IEditorListElementBinding binding in bindings)
+                                try { binding.ReleaseLease(); }
+                                catch (Exception error) { Debug.LogException(error, "Could not retire a new list binding."); }
+                        if (state.LastBindings is { } cached)
+                            foreach (IEditorListElementBinding binding in cached)
+                                try { binding.ReleaseLease(); }
+                                catch (Exception error) { Debug.LogException(error, "Could not retire a cached list binding."); }
+                        state.Bindings = null;
+                        state.LastBindings = null;
+                        try { state.RemoveButton?.SceneNode.Destroy(false); }
+                        catch (Exception error) { Debug.LogException(error, "Could not retire a list action."); }
+                        try { state.EditorNode?.Destroy(false); }
+                        catch (Exception error) { Debug.LogException(error, "Could not retire a list editor."); }
+                    }
+                }
+            }
+
+            private bool IsCurrentCellBinding(UIBoundableTransform cell,
+                EditorListRowCellState state, ulong generation)
+                => IsCurrentBuild(generation) && _listCells.TryGetValue(cell, out EditorListRowCellState? current) &&
+                    ReferenceEquals(current, state);
+
+            private void BindVirtualListCellCore(UIBoundableTransform cell,
+                EditorListRowCellState state, int index, ulong rowId, ulong generation)
+            {
+                IEditorListElementBinding[]? previousBindings = state.Bindings ?? state.LastBindings;
+                bool sameSource = state.RowId == rowId &&
+                    (state.Index == index || state.LastIndex == index) &&
+                    AreListBindingsCurrent(previousBindings, index, rowId);
+                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                if (sameSource)
+                {
+                    state.Index = index;
+                    state.Bindings = previousBindings;
+                    state.LastBindings = null;
+                    foreach (IEditorListElementBinding binding in previousBindings!) binding.AcceptLease();
+                    if (state.RemoveButton is not null) state.RemoveButton.SceneNode.IsActiveSelf = true;
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    if (state.EditorNode is not null) state.EditorNode.IsActiveSelf = true;
+                    return;
+                }
+                if (previousBindings is not null)
+                    foreach (IEditorListElementBinding binding in previousBindings) binding.ReleaseLease();
+                state.LastBindings = null;
+                bool sameButtonLease = state.RemoveButton is not null && state.RowId == rowId &&
+                    state.BoundRevision == _listContext.Revision;
+                state.Index = index;
+                state.RowId = rowId;
+                state.BoundRevision = _listContext.Revision;
+                state.Label.Text = $"[{index}]";
+                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                Type elementType = _listElementType!;
+                if (!sameButtonLease && state.RemoveButton is { } oldButton)
+                {
+                    oldButton.SceneNode.IsActiveSelf = false;
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    oldButton.SceneNode.Destroy(false);
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    state.RemoveButton = null;
+                }
+                if (state.RemoveButton is null)
+                {
+                    SceneNode removeNode = state.RemoveHost.NewChild<UIButtonComponent>(out UIButtonComponent remove);
+                    state.RemoveButton = remove;
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    removeNode.GetTransformAs<UIBoundableTransform>(true)!.MaxAnchor = Vector2.One;
+                    removeNode.NewChild<UITextComponent>(out UITextComponent removeText);
+                    removeText.Text = "Remove";
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    ulong capturedRevision = _listContext.Revision;
+                    remove.InteractAction += _ =>
+                    {
+                        if (state.Index >= 0 && state.RowId == rowId &&
+                            _listContext.Revision == capturedRevision &&
+                            state.Index < _listRows.Count &&
+                            _listRows.GetItemId(state.Index) == rowId &&
+                            state.Bindings is { } bound)
+                            RemoveListElement(bound);
+                    };
+                }
+                state.RemoveButton.SceneNode.IsActiveSelf = true;
+                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                state.RemoveButton.IsReadOnly = !HasMutableList();
+                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                bool rowEditable = EditorListMutation.SupportsSource(_property) &&
+                    !_owners.Any(owner => _property.GetValue(owner) is not IList list ||
+                        !EditorListMutation.Supports(list, EEditorListMutation.Set) || index >= list.Count);
+                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                if (!rowEditable)
+                {
+                    if (state.EditorNode is not null)
+                    {
+                        state.EditorNode.IsActiveSelf = false;
+                        if (!IsCurrentCellBinding(cell, state, generation)) return;
+                        state.EditorNode.Destroy(false);
+                        if (!IsCurrentCellBinding(cell, state, generation)) return;
+                        state.EditorNode = null;
+                    }
+                    state.Label.Text = $"[{index}] Read-only or missing list item";
+                    return;
+                }
+                Type bindingType = typeof(ListElementBinding<>).MakeGenericType(elementType);
+                PropertyInfo bindingProperty = bindingType.GetProperty(nameof(ListElementBinding<object>.Value))!;
+                object[] targets = CreateListBindings(bindingType, index);
+                if (!IsCurrentCellBinding(cell, state, generation))
+                {
+                    foreach (IEditorListElementBinding binding in targets.OfType<IEditorListElementBinding>())
+                        binding.ReleaseLease();
+                    return;
+                }
+                state.Bindings = targets.Cast<IEditorListElementBinding>().ToArray();
+                bool reusable = CanRebindListEditor(elementType);
+                if (state.EditorNode is not null && !state.ReusableEditor)
+                {
+                    state.EditorNode.IsActiveSelf = false;
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    state.EditorNode.Destroy(false);
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    state.EditorNode = null;
+                }
+                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                if (state.EditorNode is null)
+                {
+                    SceneNode editor = state.ValueNode.NewChild();
+                    state.EditorNode = editor;
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    editor.SetTransform<UIBoundableTransform>().MaxAnchor = Vector2.One;
+                    BuildValueEditor(editor, elementType, bindingProperty, targets);
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    state.ReusableEditor = reusable;
+                }
+                else if (TryRebindListEditor(state.EditorNode, elementType, bindingProperty,
+                    targets.Cast<object?>().ToArray()))
+                {
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    state.EditorNode.IsActiveSelf = true;
+                }
+                else
+                {
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    state.EditorNode.IsActiveSelf = false;
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    state.EditorNode.Destroy(false);
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    SceneNode editor = state.ValueNode.NewChild();
+                    state.EditorNode = editor;
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    editor.SetTransform<UIBoundableTransform>().MaxAnchor = Vector2.One;
+                    BuildValueEditor(editor, elementType, bindingProperty, targets);
+                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    state.ReusableEditor = reusable;
+                }
+            }
+
+            private bool AreListBindingsCurrent(IEditorListElementBinding[]? bindings, int index, ulong rowId)
+            {
+                if (bindings is null || bindings.Length != _owners.Count ||
+                    index >= _listRows.Count || _listRows.GetItemId(index) != rowId)
+                    return false;
+                foreach (IEditorListElementBinding binding in bindings)
+                    try
+                    {
+                        IList list = binding.Collection;
+                        if (binding.ContextRevision != _listContext.Revision ||
+                            binding.Index != index || binding.RowId != rowId ||
+                            !ReferenceEquals(binding.OwnerProperty.GetValue(binding.Owner), list) ||
+                            !ReferenceEquals(binding.CollectionState, EditorListMutation.GetStateToken(list)) ||
+                            !ReferenceEquals(binding.OwnerDocument, EditorListMutation.DocumentOf(binding.Owner)) ||
+                            !ReferenceEquals(binding.OwnerWorld, EditorListMutation.WorldOf(binding.Owner)) ||
+                            !ReferenceEquals(binding.OwnerNode, EditorListMutation.NodeOf(binding.Owner)) ||
+                            index >= list.Count ||
+                            !EditorListMutation.SameValue(list[index], binding.DisplayedValue))
+                            return false;
+                    }
+                    catch { return false; }
+                return true;
+            }
+
+            private static bool CanRebindListEditor(Type valueType)
+                => Type.GetTypeCode(valueType) != TypeCode.Object || valueType.IsEnum ||
+                    valueType == typeof(Vector2) || valueType == typeof(Vector3) ||
+                    valueType == typeof(Vector4) || valueType == typeof(Quaternion) ||
+                    valueType == typeof(LayerMask) || valueType == typeof(ColorF3) ||
+                    valueType == typeof(ColorF4) || valueType == typeof(System.Drawing.Color);
+
+            private static bool TryRebindListEditor(SceneNode editor, Type valueType,
+                PropertyInfo property, object?[] targets)
+            {
+                if (valueType == typeof(Vector2) || valueType == typeof(Vector3) ||
+                    valueType == typeof(Vector4) || valueType == typeof(Quaternion) ||
+                    valueType == typeof(LayerMask))
+                {
+                    DataTransformerBase? transformer = editor.Components.OfType<DataTransformerBase>().FirstOrDefault();
+                    if (transformer is null) return false;
+                    transformer.Property = property;
+                    transformer.Targets = targets;
+                    return true;
+                }
+                if (valueType == typeof(ColorF3) || valueType == typeof(ColorF4) ||
+                    valueType == typeof(System.Drawing.Color))
+                {
+                    UIColorSelectorComponent? color = editor.Components.OfType<UIColorSelectorComponent>().FirstOrDefault();
+                    if (color is null) return false;
+                    color.Binding = new EditorColorPropertyBinding(property, targets);
+                    color.IsReadOnly = !property.CanWrite;
+                    return true;
+                }
+                if (valueType.IsEnum && !valueType.IsDefined(typeof(FlagsAttribute), inherit: false))
+                {
+                    UIComboBoxComponent? combo = editor.Components.OfType<UIComboBoxComponent>().FirstOrDefault();
+                    if (combo is null) return false;
+                    EditorEnumPropertyBinding binding = new(property, targets);
+                    combo.VirtualOptions = binding;
+                    combo.Binding = binding;
+                    combo.IsReadOnly = !property.CanWrite;
+                    return true;
+                }
+                if (CanRebindListEditor(valueType))
+                {
+                    NativeUIElements.RebindPropertyEditor(editor, property, targets);
+                    return true;
+                }
+                return false;
+            }
+
+            private void UnbindVirtualListCell(UIBoundableTransform cell)
+            {
+                if (!_listCells.TryGetValue(cell, out EditorListRowCellState? state)) return;
+                state.LastIndex = state.Index;
+                state.Index = -1;
+                state.LastBindings = state.Bindings;
+                state.Bindings = null;
+                if (state.LastBindings is not null)
+                    foreach (IEditorListElementBinding binding in state.LastBindings) binding.ReleaseLease();
+                if (state.RemoveButton is { } button)
+                    button.SceneNode.IsActiveSelf = false;
+                if (state.EditorNode is not null)
+                {
+                    if (state.ReusableEditor)
+                        state.EditorNode.IsActiveSelf = false;
+                    else
+                    {
+                        state.EditorNode.IsActiveSelf = false;
+                        state.EditorNode.Destroy(false);
+                        state.EditorNode = null;
+                    }
+                }
             }
 
             private IList? GetListSample()
@@ -396,108 +868,70 @@ public static partial class InspectorPropertyEditors
                 return null;
             }
 
-            private void BuildListRow(SceneNode parent, Type elementType, int index, bool canMutate)
-            {
-                var row = parent.NewChild();
-                var splitter = row.SetTransform<UIDualSplitTransform>();
-                splitter.VerticalSplit = false;
-                splitter.FirstFixedSize = true;
-                splitter.FixedSize = RowHeaderWidth;
-
-                var labelNode = row.NewChild();
-                var labelLayout = labelNode.SetTransform<UIListTransform>();
-                labelLayout.DisplayHorizontal = true;
-                labelLayout.ItemSpacing = 4.0f;
-
-                labelNode.NewChild<UITextComponent>(out var label);
-                label.Text = $"[{index}]";
-                label.FontSize = EditorUI.Styles.PropertyNameFontSize;
-                label.HorizontalAlignment = EHorizontalAlignment.Left;
-                label.VerticalAlignment = EVerticalAlignment.Center;
-                label.Color = EditorUI.Styles.PropertyNameTextColor;
-                label.BoundableTransform.Margins = new Vector4(4.0f, 2.0f, 4.0f, 2.0f);
-
-                if (canMutate)
-                {
-                    CreateInlineButton(labelNode, "Remove", () => RemoveListElement(index));
-                }
-
-                var valueNode = row.NewChild();
-                var bindingType = typeof(ListElementBinding<>).MakeGenericType(elementType);
-                var bindingProperty = bindingType.GetProperty(nameof(ListElementBinding<object>.Value))!;
-                var targets = CreateListBindings(bindingType, index);
-                BuildValueEditor(valueNode, elementType, bindingProperty, targets);
-            }
-
             private object[] CreateListBindings(Type bindingType, int index)
             {
                 List<object> bindings = new();
-                foreach (var owner in _owners)
+                try
                 {
-                    if (_property.GetValue(owner) is not IList list)
-                        continue;
-                    if (index < 0 || index >= list.Count)
-                        continue;
-
-                    var instance = Activator.CreateInstance(bindingType, _property, owner, index);
-                    if (instance is not null)
-                        bindings.Add(instance);
+                    foreach (var owner in _owners)
+                    {
+                        if (!_listContext.IsActive) break;
+                        var instance = Activator.CreateInstance(bindingType, _property, owner, index,
+                            _listRows.GetItemId(index), _listContext);
+                        if (instance is not null)
+                            bindings.Add(instance);
+                    }
+                }
+                catch
+                {
+                    foreach (IEditorListElementBinding binding in bindings.OfType<IEditorListElementBinding>())
+                        binding.ReleaseLease();
+                    throw;
+                }
+                if (!_listContext.IsActive)
+                {
+                    foreach (IEditorListElementBinding binding in bindings.OfType<IEditorListElementBinding>())
+                        binding.ReleaseLease();
+                    return [];
                 }
                 return bindings.ToArray();
             }
 
             private bool HasMutableList()
             {
+                if (_owners.Count == 0 || !EditorListMutation.SupportsSource(_property)) return false;
                 foreach (var owner in _owners)
                 {
-                    if (_property.GetValue(owner) is IList list && !list.IsReadOnly && !list.IsFixedSize)
-                        return true;
+                    if (_property.GetValue(owner) is not IList list ||
+                        !EditorListMutation.Supports(list, EEditorListMutation.Insert))
+                        return false;
                 }
-                return false;
+                return true;
             }
 
             private void AddListElement(Type elementType)
             {
-                object? newValue = ImGuiEditorUtilities.CreateDefaultElement(elementType);
-                foreach (var owner in _owners)
+                if (!_listContext.IsActive) return;
+                try
                 {
-                    if (_property.GetValue(owner) is not IList list || list.IsReadOnly || list.IsFixedSize)
-                        continue;
-
-                    try
-                    {
-                        list.Add(ConvertValue(newValue, elementType));
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex, $"Failed to add list element to '{_property.Name}'.");
-                    }
+                    EditorListMutation.Apply(_owners.Select(owner => (owner, _property)).ToArray(),
+                        EEditorListMutation.Insert, -1,
+                        _ => EditorListMutation.CreateDefaultElement(elementType), _listContext,
+                        expectedSources: _headerLeases);
+                    if (_virtualList is null) Rebuild();
                 }
-
-                Rebuild();
+                catch (Exception error) { Debug.LogException(error, "Could not add a list item."); }
             }
 
-            private void RemoveListElement(int index)
+            private void RemoveListElement(IReadOnlyList<IEditorListElementBinding> bindings)
             {
-                foreach (var owner in _owners)
+                if (!_listContext.IsActive) return;
+                try
                 {
-                    if (_property.GetValue(owner) is not IList list || list.IsReadOnly || list.IsFixedSize)
-                        continue;
-
-                    if (index < 0 || index >= list.Count)
-                        continue;
-
-                    try
-                    {
-                        list.RemoveAt(index);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex, $"Failed to remove list element from '{_property.Name}'.");
-                    }
+                    EditorListMutation.Remove(bindings);
+                    if (_listRows.Count == 0) Rebuild();
                 }
-
-                Rebuild();
+                catch (Exception error) { Debug.LogException(error, "Could not remove a list item."); }
             }
 
             private void RenderLinkedList(object sample, Type elementType)
@@ -513,7 +947,10 @@ public static partial class InspectorPropertyEditors
 
                 if (canMutate)
                 {
-                    CreateInlineButton(header, "Add", () => AddLinkedListElement(elementType));
+                    CreateInlineButton(header, "Add", () =>
+                    {
+                        if (_listContext.IsActive) AddLinkedListElement(elementType);
+                    });
                 }
                 else
                 {
@@ -579,7 +1016,10 @@ public static partial class InspectorPropertyEditors
 
                 if (canMutate)
                 {
-                    CreateInlineButton(labelNode, "Remove", () => RemoveLinkedListElement(elementType, index));
+                    CreateInlineButton(labelNode, "Remove", () =>
+                    {
+                        if (_listContext.IsActive) RemoveLinkedListElement(elementType, index);
+                    });
                 }
 
                 var valueNode = row.NewChild();
@@ -698,6 +1138,7 @@ public static partial class InspectorPropertyEditors
                 {
                     CreateInlineButton(header, "Add", () =>
                     {
+                        if (!_listContext.IsActive) return;
                         buffer.Add(ImGuiEditorUtilities.CreateDefaultElement(elementType));
                         ApplyCollectionBuffer(buffer, elementType);
                         Rebuild();
@@ -746,6 +1187,7 @@ public static partial class InspectorPropertyEditors
                 {
                     CreateInlineButton(labelNode, "Remove", () =>
                     {
+                        if (!_listContext.IsActive) return;
                         buffer.RemoveAt(index);
                         ApplyCollectionBuffer(buffer, elementType);
                         Rebuild();
@@ -1075,36 +1517,80 @@ public static partial class InspectorPropertyEditors
                 || type == typeof(decimal);
         }
 
-        private sealed class ListElementBinding<T>
+        private sealed class ListElementBinding<T> : IEditorListElementBinding
         {
             private readonly PropertyInfo _property;
             private readonly object _owner;
+            private readonly object? _ownerDocument;
+            private readonly object? _ownerWorld;
+            private readonly SceneNode? _ownerNode;
             private readonly int _index;
+            private readonly IList _collection;
+            private object _collectionState;
+            private object? _displayedValue;
+            private readonly ulong _rowId;
+            private readonly EditorListMutationContext _context;
+            private ulong _revision;
+            private bool _leased = true;
 
-            public ListElementBinding(PropertyInfo property, object owner, int index)
+            public ListElementBinding(PropertyInfo property, object owner, int index,
+                ulong rowId, EditorListMutationContext context)
             {
                 _property = property;
                 _owner = owner;
+                _ownerDocument = EditorMutationDirtyState.ResolveDocument(owner);
+                _ownerWorld = owner is global::XREngine.XRWorldObjectBase worldOwner
+                    ? worldOwner.World : null;
+                _ownerNode = owner is XREngine.Components.XRComponent component
+                    ? component.SceneNode : null;
                 _index = index;
+                _collection = property.GetValue(owner) as IList
+                    ?? throw new InvalidOperationException("The list changed before row binding.");
+                _collectionState = EditorListMutation.GetStateToken(_collection);
+                _displayedValue = index >= 0 && index < _collection.Count ? _collection[index] : null;
+                _rowId = rowId;
+                _context = context;
+                _revision = context.Revision;
+            }
+
+            public object Owner => _owner;
+            public object? OwnerDocument => _ownerDocument;
+            public object? OwnerWorld => _ownerWorld;
+            public SceneNode? OwnerNode => _ownerNode;
+            public PropertyInfo OwnerProperty => _property;
+            public IList Collection => _collection;
+            public object CollectionState => _collectionState;
+            public object? DisplayedValue => _displayedValue;
+            public int Index => _index;
+            public ulong RowId => _rowId;
+            public ulong ContextRevision => _revision;
+            public EditorListMutationContext Context => _context;
+            public bool IsLeased => _leased;
+            public void AcceptLease() => _leased = true;
+            public void ReleaseLease() => _leased = false;
+
+            public void AcceptCommitted(object? value, object state, ulong revision)
+            {
+                _displayedValue = value;
+                _collectionState = state;
+                _revision = revision;
             }
 
             public T? Value
             {
                 get
                 {
-                    if (_property.GetValue(_owner) is not IList list)
+                    if (_context.Revision != _revision ||
+                        !ReferenceEquals(_property.GetValue(_owner), _collection))
                         return default;
+                    IList list = _collection;
                     if (_index < 0 || _index >= list.Count)
                         return default;
                     return list[_index] is T value ? value : (T?)ConvertValue(list[_index], typeof(T));
                 }
                 set
                 {
-                    if (_property.GetValue(_owner) is not IList list || list.IsReadOnly || list.IsFixedSize)
-                        return;
-                    if (_index < 0 || _index >= list.Count)
-                        return;
-                    list[_index] = ConvertValue(value, typeof(T));
+                    EditorListMutation.Set([this], _ => value);
                 }
             }
         }

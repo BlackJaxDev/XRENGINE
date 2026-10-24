@@ -14,6 +14,9 @@ public partial class UIProjectBrowserComponent : UIComponent
     private bool _showHiddenFiles = false;
     private EFileDetails _displayedFileDetails = EFileDetails.Name | EFileDetails.Size | EFileDetails.Date | EFileDetails.Type;
     private bool _showEngineFiles = false;
+    private EProjectBrowserFileEventFamily _subscribedFamily;
+    private bool _ownerActive;
+    private bool _terminal;
 
     public Dictionary<string, FileInfo> FileCache
     {
@@ -53,43 +56,69 @@ public partial class UIProjectBrowserComponent : UIComponent
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
+        if (_terminal || !IsActiveInHierarchy)
+            return;
+        _ownerActive = true;
         _fileCache = GetCurrentFiles();
         LinkCallbacks();
     }
 
     protected override void OnComponentDeactivated()
     {
-        base.OnComponentDeactivated();
-        UnlinkCallbacks();
+        _ownerActive = false;
+        try { UnlinkCallbacks(); }
+        finally { base.OnComponentDeactivated(); }
+    }
+
+    protected override void OnDestroying()
+    {
+        _terminal = true;
+        _ownerActive = false;
+        try { UnlinkCallbacks(); }
+        finally { base.OnDestroying(); }
     }
 
     private void LinkCallbacks()
     {
-        if (ShowEngineFiles)
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy)
+            return;
+        EProjectBrowserFileEventFamily family = ShowEngineFiles
+            ? EProjectBrowserFileEventFamily.Engine : EProjectBrowserFileEventFamily.Game;
+        if (_subscribedFamily == family)
+            return;
+        UnlinkCallbacks();
+        _subscribedFamily = family;
+        try
         {
-            Engine.Assets.EngineFileChanged += FileChanged;
-            Engine.Assets.EngineFileDeleted += FileDeleted;
-            Engine.Assets.EngineFileRenamed += FileRenamed;
-            Engine.Assets.EngineFileCreated += FileCreated;
+            if (family == EProjectBrowserFileEventFamily.Engine)
+            {
+                Engine.Assets.EngineFileChanged += FileChanged;
+                Engine.Assets.EngineFileDeleted += FileDeleted;
+                Engine.Assets.EngineFileRenamed += FileRenamed;
+                Engine.Assets.EngineFileCreated += FileCreated;
+            }
+            else
+            {
+                Engine.Assets.GameFileChanged += FileChanged;
+                Engine.Assets.GameFileDeleted += FileDeleted;
+                Engine.Assets.GameFileRenamed += FileRenamed;
+                Engine.Assets.GameFileCreated += FileCreated;
+            }
         }
-        else
-        {
-            Engine.Assets.GameFileChanged += FileChanged;
-            Engine.Assets.GameFileDeleted += FileDeleted;
-            Engine.Assets.GameFileRenamed += FileRenamed;
-            Engine.Assets.GameFileCreated += FileCreated;
-        }
+        catch { UnlinkCallbacks(); throw; }
     }
     private void UnlinkCallbacks()
     {
-        if (ShowEngineFiles)
+        EProjectBrowserFileEventFamily family = _subscribedFamily;
+        _subscribedFamily = EProjectBrowserFileEventFamily.None;
+        if (family == EProjectBrowserFileEventFamily.Engine)
         {
             Engine.Assets.EngineFileChanged -= FileChanged;
             Engine.Assets.EngineFileDeleted -= FileDeleted;
             Engine.Assets.EngineFileRenamed -= FileRenamed;
             Engine.Assets.EngineFileCreated -= FileCreated;
         }
-        else
+        else if (family == EProjectBrowserFileEventFamily.Game)
         {
             Engine.Assets.GameFileChanged -= FileChanged;
             Engine.Assets.GameFileDeleted -= FileDeleted;
@@ -100,6 +129,7 @@ public partial class UIProjectBrowserComponent : UIComponent
 
     private void FileCreated(AssetFileChangeEventArgs args)
     {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
         string path = args.FullPath;
         if (_fileCache.ContainsKey(path))
             return;
@@ -109,6 +139,7 @@ public partial class UIProjectBrowserComponent : UIComponent
 
     private void FileRenamed(AssetFileRenameEventArgs args)
     {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
         string prevPath = args.OldFullPath;
         if (!_fileCache.ContainsKey(prevPath))
             return;
@@ -119,6 +150,7 @@ public partial class UIProjectBrowserComponent : UIComponent
 
     private void FileDeleted(AssetFileChangeEventArgs args)
     {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
         string path = args.FullPath;
         if (!_fileCache.ContainsKey(path))
             return;
@@ -149,7 +181,6 @@ public partial class UIProjectBrowserComponent : UIComponent
         {
             switch (propName)
             {
-                case nameof(ShowHiddenFiles):
                 case nameof(ShowEngineFiles):
                     UnlinkCallbacks();
                     break;
@@ -164,8 +195,11 @@ public partial class UIProjectBrowserComponent : UIComponent
         {
             case nameof(ShowHiddenFiles):
             case nameof(ShowEngineFiles):
-                LinkCallbacks();
-                _fileCache = GetCurrentFiles();
+                if (!_terminal && _ownerActive && IsActiveInHierarchy)
+                {
+                    LinkCallbacks();
+                    _fileCache = GetCurrentFiles();
+                }
                 break;
             case nameof(Arrangement):
                 switch (Arrangement)
