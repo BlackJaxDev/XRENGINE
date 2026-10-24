@@ -455,11 +455,29 @@ namespace XREngine.Components
                     transform.ElementIdentity != receiver.Identity ||
                     !ReferenceEquals(transform.GetCanvasComponent(), GetCameraCanvas()))
                     continue;
-                if (receiver.Receiver.HandleMouseScroll(diff) || !ReferenceEquals(_inputPublication, publication))
+                if (DispatchScroll(receiver, publication, diff) || !ReferenceEquals(_inputPublication, publication))
                     return;
             }
             }
             finally { publication.Release(); }
+        }
+
+        /// <summary>
+        /// Gives a pointer scroll receiver the cursor position in its displayed coordinates.
+        /// A receiver without a current hit record in the packet gets the plain delta.
+        /// </summary>
+        private bool DispatchScroll(in UIScrollRecord route, UIPublication publication, float diff)
+        {
+            if (route.Receiver is not IUIPointerScrollReceiver pointerReceiver ||
+                route.Owner is not UIInteractableComponent target ||
+                !_inputRecords.TryGetValue(target.RenderInfo2D.MembershipId, out UIHitRecord record) ||
+                !IsCurrentHitRecord(record) ||
+                !publication.TryMapPointer(_cursorOutputPosition, out Vector2 canvasPosition,
+                    requireInsideOutput: true))
+                return route.Receiver.HandleMouseScroll(diff);
+            UIPointerGeometry geometry = record.PointerGeometry;
+            return pointerReceiver.HandlePointerScroll(diff,
+                Vector2.Transform(canvasPosition, record.CanvasToLocal), in geometry);
         }
 
         /// <summary>

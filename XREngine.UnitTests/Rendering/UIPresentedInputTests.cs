@@ -655,6 +655,97 @@ public sealed class UIPresentedInputTests
     }
 
     [Test]
+    public void PointerScrollReceiversGetThePresentedLocalPoint()
+    {
+        var root = new SceneNode("Pointer scroll", new UICanvasTransform()) { IsActiveSelf = false };
+        root.SetWorldContext(new TestWorldContext());
+        var viewport = new XRViewport(null)
+        {
+            AutomaticallyCollectVisible = false,
+            AutomaticallySwapBuffers = false,
+            SetRenderPipelineFromCamera = false,
+        };
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UICanvasInputComponent input = root.AddComponent<UICanvasInputComponent>()!;
+            PawnComponent pawn = root.NewChild("Pawn").AddComponent<PawnComponent>()!;
+            LocalPlayerController controller = new() { Viewport = viewport };
+            pawn.Controller = controller;
+            input.OwningPawn = pawn;
+            PointerScrollProbe presented = root.NewChild("Presented").AddComponent<PointerScrollProbe>()!;
+            PointerScrollProbe absent = root.NewChild("Absent").AddComponent<PointerScrollProbe>()!;
+            root.IsActiveSelf = true;
+            UIElementIdentity scope = canvas.CanvasTransform.ElementIdentity;
+            BoundingRectangleF bounds = new(new Vector2(-100), new Vector2(300));
+            UIPublication packet = new(1, canvas.PublicationLifetime, 1, 1,
+                canvas.CanvasTransform.ChangeJournal.Revision, default,
+                new UIElementIdentity[] { scope }, [Hit(presented, 0, new Vector2(40, 10), scope)], [],
+                bounds, Matrix4x4.Identity, Matrix4x4.Identity);
+            canvas.MarkPresented(viewport, packet);
+            packet.Release();
+            RefreshPresentedInput(input);
+            UIPublication current = GetInputPublication(input);
+            Vector2 output = new(55, 22);
+            typeof(UICanvasInputComponent).GetField("_cursorOutputPosition",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(input, output);
+            current.TryMapPointer(output, out Vector2 canvasPoint).ShouldBeTrue();
+
+            DispatchScroll(input, presented, current, 2).ShouldBeTrue();
+            presented.PointerCalls.ShouldBe(1);
+            presented.PlainCalls.ShouldBe(0);
+            presented.LastDiff.ShouldBe(2);
+            presented.LastPoint.ShouldBe(canvasPoint - new Vector2(40, 10));
+
+            DispatchScroll(input, absent, current, -1).ShouldBeFalse();
+            absent.PointerCalls.ShouldBe(0);
+            absent.PlainCalls.ShouldBe(1);
+        }
+        finally
+        {
+            root.Destroy(true);
+            viewport.Destroy();
+        }
+    }
+
+    private static UIPublication GetInputPublication(UICanvasInputComponent input)
+        => (UIPublication)typeof(UICanvasInputComponent).GetField("_inputPublication",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(input)!;
+
+    private static bool DispatchScroll(UICanvasInputComponent input, PointerScrollProbe receiver,
+        UIPublication publication, float diff)
+    {
+        UIScrollRecord route = new(receiver, receiver, receiver.UITransform.ElementIdentity, 0, 1, 0, 0);
+        return (bool)typeof(UICanvasInputComponent).GetMethod("DispatchScroll",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(input, [route, publication, diff])!;
+    }
+
+    private sealed class PointerScrollProbe : UIInteractableComponent, IUIPointerScrollReceiver
+    {
+        public int PlainCalls { get; private set; }
+        public int PointerCalls { get; private set; }
+        public float LastDiff { get; private set; }
+        public Vector2 LastPoint { get; private set; }
+
+        public bool HandleMouseScroll(float diff)
+        {
+            PlainCalls++;
+            return false;
+        }
+
+        public bool HandlePointerScroll(float diff, Vector2 localPoint, in UIPointerGeometry geometry)
+        {
+            PointerCalls++;
+            LastDiff = diff;
+            LastPoint = localPoint;
+            return true;
+        }
+    }
+
+    [Test]
     public void RegisteredRadioArrows_MoveSelectionAndFocusOnlyToPresentedOptions()
     {
         var root = new SceneNode("Radio navigation", new UICanvasTransform()) { IsActiveSelf = false };

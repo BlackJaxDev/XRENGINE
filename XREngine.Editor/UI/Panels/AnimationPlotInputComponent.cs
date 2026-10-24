@@ -6,7 +6,7 @@ namespace XREngine.Editor;
 
 /// <summary>Routes plot input using the geometry that produced the accepted hit.</summary>
 internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
-    IUIPointerMetadataSource
+    IUIPointerMetadataSource, IUIPointerScrollReceiver
 {
     private AnimationPlotPointerSnapshot? _pressedSnapshot;
     private Vector2 _pressPoint;
@@ -61,6 +61,25 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
 
     public object? CapturePointerMetadata(Vector2 acceptedSize)
         => Panel?.CapturePlotPointerMetadata(acceptedSize);
+
+    /// <summary>Without a presented pointer position, the plot does not zoom.</summary>
+    public bool HandleMouseScroll(float diff) => false;
+
+    /// <summary>Zooms the time axis about the time under the presented pointer.</summary>
+    public bool HandlePointerScroll(float diff, Vector2 localPoint, in UIPointerGeometry geometry)
+    {
+        ulong generation = ++_dispatchGeneration;
+        AnimationPanel? panel = Panel;
+        long revision = InteractionRevision;
+        // A press owns the view until release; a wheel zoom would move the drag anchor.
+        if (!CanInteract || _pressedSnapshot is not null ||
+            !HasSameOwner(panel, revision, generation) ||
+            geometry.Metadata is not AnimationPlotPointerSnapshot snapshot ||
+            !ReferenceEquals(snapshot.PanelOwner, panel) ||
+            !ReferenceEquals(snapshot.InputOwner, this))
+            return false;
+        return panel!.ZoomPlotAtPointer(snapshot, localPoint, diff);
+    }
 
     public override void PointerPressed(Vector2 localPoint, in UIPointerGeometry geometry)
     {

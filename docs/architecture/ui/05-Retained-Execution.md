@@ -181,7 +181,9 @@ and changed interaction revisions. An output without an accepted packet is not
 interactive. Pointer capture retains its target lifetime; it does not transfer
 to another recycled row. Tab navigation uses authored tab order. Directional
 navigation uses the presented bounds and active popup scope. Scroll routing uses
-the captured ancestor ranges. Focus changes remove the previous target's input
+the captured ancestor ranges. An `IUIPointerScrollReceiver` with a current hit
+record receives the cursor in its presented local coordinates and that record's
+pointer geometry; without a record it receives only the delta. Focus changes remove the previous target's input
 registrations before attaching the next target. Re-entrant focus callbacks settle
 on the latest request, and canvas deactivation removes its input mappings.
 
@@ -1273,8 +1275,11 @@ Animation plots capture bounded lane and key targets, time bounds, exact panel
 and input owners, and source, view, and build revisions. Clicks select the frozen
 lane or key; a blank double-click uses the canonical key authoring action. A pan
 keeps the pressed coordinates through its own new frames, while an unrelated
-view change or resize rejects it. Input dispatch generations reject owner changes
-that return to the same object during a callback.
+view change or resize rejects it. The mouse wheel zooms the time axis about the
+time under the presented pointer (`AnimationPlotWheelZoom`): each step scales zoom
+by 1.25 within 1 to 32, and the window clamps to the clip. The wheel needs current
+plot metadata and does nothing during a press. Input dispatch generations reject
+owner changes that return to the same object during a callback.
 
 Plot builds hide the visual root inside a canvas change transaction before they
 write strokes. A completed exact build can restore visibility and publish its
@@ -1283,8 +1288,8 @@ callback boundaries, and nested build requests coalesce into a bounded retry.
 Method details limit argument rows and text length; they do not call arbitrary
 argument `ToString` implementations. Source subscriptions change only when their
 topology changes. Channel editing and built-in baked/frame-cadence length
-adapters use the guarded routes below. Wheel/frame-axis pointer behavior and
-native runtime acceptance remain open.
+adapters use the guarded routes below. Frame-axis pointer behavior and native
+runtime acceptance remain open.
 
 
 ### Composition page claims and drop admission

@@ -988,3 +988,19 @@ Headless build17 passed with 0 warnings and errors. The full headless run passed
 0 warnings and errors. The changed source files were unchanged through the checks.
 Submenus, native keyboard checks, and visual checks remain open.
 
+## Pointer-anchored animation plot zoom
+
+The reconciliation remains **46 of 60**. This increment advances the open panel item.
+
+- `IUIPointerScrollReceiver` gives a scroll receiver the cursor in its presented
+  local coordinates and the pointer geometry of its current hit record. A receiver
+  without a current record gets only the wheel delta.
+- The animation plot zooms its time axis about the time under the presented
+  pointer. `AnimationPlotWheelZoom` holds the zoom limits and window clamp. The
+  wheel needs current plot metadata and does nothing during a press.
+
+Headless build20 passed with 0 warnings and errors. The full headless run passed
+**1003 of 1003 tests** in 17.6s. Editor build5 and desktop test build4 passed with
+0 warnings and errors. The changed source files were unchanged through the checks.
+Frame-axis pointer behavior and native wheel checks remain open.
+

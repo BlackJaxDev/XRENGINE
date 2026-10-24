@@ -231,6 +231,32 @@ public partial class AnimationPanel
         RefreshPlot(snapshot.Clip);
     }
 
+    /// <summary>
+    /// Zooms the time axis by one wheel step per unit of <paramref name="wheelDelta"/>.
+    /// The time under <paramref name="point"/> in the displayed plot keeps its horizontal
+    /// position unless the window reaches a clip edge. Returns true when the snapshot is
+    /// current, also at a zoom limit, so the wheel does not scroll an ancestor.
+    /// </summary>
+    internal bool ZoomPlotAtPointer(AnimationPlotPointerSnapshot snapshot, Vector2 point,
+        float wheelDelta)
+    {
+        if (_activePlotDrag is not null || !IsPlotSourceCurrent(snapshot) ||
+            !ReferenceEquals(_plotSnapshot, snapshot) ||
+            snapshot.BuildRevision != _plotBuildRevision ||
+            snapshot.ViewRevision != _plotViewRevision ||
+            !AnimationPlotWheelZoom.TryZoom(_plotZoom, snapshot.Start, snapshot.Duration,
+                snapshot.ClipLength, snapshot.Width, point.X, wheelDelta,
+                out float zoom, out float start))
+            return false;
+        if (zoom == _plotZoom && start == _plotWindowStart)
+            return true;
+        _plotZoom = zoom;
+        _plotWindowStart = start;
+        _plotViewRevision++;
+        RefreshRows();
+        return true;
+    }
+
     internal void CompletePlotDrag(AnimationPlotPointerSnapshot snapshot)
     {
         if (!ReferenceEquals(_activePlotDrag, snapshot))
