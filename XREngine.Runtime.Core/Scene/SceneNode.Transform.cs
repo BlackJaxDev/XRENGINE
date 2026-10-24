@@ -192,6 +192,7 @@ namespace XREngine.Scene
         /// </summary>
         public void SetTransform(TransformBase transform, ETransformSetFlags flags = ETransformSetFlags.Default)
         {
+            using HierarchyMutationLease structural = new(this, _transform, transform);
             TransformBase? expectedTransform = _transform;
             HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
             if (!RuntimeSceneNodeServices.Current.TryValidateTransformAssignment(this, transform, out string? warningMessage))

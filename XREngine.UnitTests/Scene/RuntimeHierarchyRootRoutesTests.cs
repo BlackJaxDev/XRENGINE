@@ -15,8 +15,8 @@ public sealed class RuntimeHierarchyRootRoutesTests
         using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", first, second));
         RuntimeHierarchyRootRoutes before = world.CaptureHierarchyRootRoutes(root);
         RuntimeHierarchyRootRoutes after = world.PlanHierarchyRootRoutes(root, [second]);
-        first.RootNodes.Remove(root);
-        second.RootNodes.Add(root);
+        first.SceneRoots.Remove(root);
+        second.SceneRoots.Add(root);
 
         world.RestoreHierarchyRootRoutes(before, after);
         first.IsVisible = false;
@@ -37,11 +37,11 @@ public sealed class RuntimeHierarchyRootRoutesTests
         using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", first, second));
         RuntimeHierarchyRootRoutes before = world.CaptureHierarchyRootRoutes(root);
         RuntimeHierarchyRootRoutes after = world.PlanHierarchyRootRoutes(root, [second]);
-        first.RootNodes.Remove(root);
-        second.RootNodes.Add(root);
+        first.SceneRoots.Remove(root);
+        second.SceneRoots.Add(root);
         world.RestoreHierarchyRootRoutes(before, after);
-        second.RootNodes.Remove(root);
-        first.RootNodes.Add(root);
+        second.SceneRoots.Remove(root);
+        first.SceneRoots.Add(root);
 
         world.RestoreHierarchyRootRoutes(after, before);
         second.IsVisible = false;
@@ -68,7 +68,7 @@ public sealed class RuntimeHierarchyRootRoutesTests
         Assert.That(unchanged.Scenes, Is.Empty);
         Assert.That(world.CaptureHierarchySceneMemberships(root), Is.EquivalentTo(new[] { first, second }));
         Assert.Throws<InvalidOperationException>(() => world.PlanHierarchyRootRoutes(root, [first]));
-        first.RootNodes.Remove(root);
+        first.SceneRoots.Remove(root);
         second.IsVisible = true;
         Assert.That(world.CaptureHierarchyRootRoutes(root).Scenes, Is.EqualTo(new[] { second }));
         root.Destroy(true);
@@ -83,8 +83,8 @@ public sealed class RuntimeHierarchyRootRoutesTests
         RuntimeHierarchyRootRoutes before = world.CaptureHierarchyRootRoutes(root);
         RuntimeHierarchyRootRoutes moved = world.PlanHierarchyRootRoutes(root, [second]);
         RuntimeHierarchyRootRoutes detached = world.PlanHierarchyRootRoutes(root, []);
-        first.RootNodes.Remove(root);
-        second.RootNodes.Add(root);
+        first.SceneRoots.Remove(root);
+        second.SceneRoots.Add(root);
         world.RestoreHierarchyRootRoutes(before, moved);
 
         Assert.Throws<InvalidOperationException>(() => world.RestoreHierarchyRootRoutes(before, detached));

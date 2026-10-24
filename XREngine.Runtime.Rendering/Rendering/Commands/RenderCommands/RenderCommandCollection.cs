@@ -916,8 +916,8 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Abandons an unsubmitted private capture after its collection callback has
-        /// exited. No render-side consumer may own this collection when called.
+        /// Clears an unsubmitted image after collection or renderer retirement.
+        /// No render-side consumer may own this collection when called.
         /// </summary>
         internal void ResetUnsubmittedCapture()
         {

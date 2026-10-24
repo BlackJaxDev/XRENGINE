@@ -50,17 +50,22 @@ namespace XREngine
             if (node is null)
                 return;
 
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(node);
             XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(node, _world);
             IRuntimeWorldContext? previousWorld = node.World;
             bool cacheStarted = false;
+            lock (SceneRootCollection.MutationGate)
             lock (_rootNodesLock)
             {
                 if (_rootNodes.Contains(node))
                     return;
+                _rootNodes.EnsureCapacity(checked(_rootNodes.Count + 1));
+                node.PrepareRuntimeRootOwner(this);
                 node.Destroying -= RootNodeDestroying;
                 node.Destroying += RootNodeDestroying;
                 // Keep the root reachable if world binding and its rollback both fail.
                 _rootNodes.Add(node);
+                node.AddRuntimeRootOwner(this);
             }
             try
             {
@@ -120,6 +125,7 @@ namespace XREngine
             if (node is null)
                 return false;
 
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(node);
             RemovalProgress progress;
             lock (_rootNodesLock)
             {
@@ -199,10 +205,12 @@ namespace XREngine
 
         private void RemoveTrackedRoot(SceneNode node)
         {
+            lock (SceneRootCollection.MutationGate)
             lock (_rootNodesLock)
             {
                 RemovePublishedRoot(node);
-                _rootNodes.Remove(node);
+                if (_rootNodes.Remove(node))
+                    node.RemoveRuntimeRootOwner(this);
             }
         }
 

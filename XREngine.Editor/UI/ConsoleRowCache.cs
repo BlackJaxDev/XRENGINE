@@ -25,29 +25,43 @@ public sealed class ConsoleRowCache
         return false;
     }
 
+    /// <summary>Gets the text from the same snapshot used by the visible row.</summary>
+    public bool TryGetVisibleText(ulong id, out string? text)
+    {
+        if (TryGetVisibleEntry(id, out LogEntry? entry) && entry is not null &&
+            _entries.TryGetValue(entry, out ConsoleCachedEntry? cached))
+        {
+            text = cached.Text;
+            return true;
+        }
+        text = null;
+        return false;
+    }
+
     /// <summary>Returns true only when a visible row ID or displayed text changes.</summary>
-    public bool Update(IReadOnlyList<LogEntry> source, ELogCategory? category, string filter)
+    public bool Update(IReadOnlyList<ConsoleEntrySnapshot> source, ELogCategory? category, string filter)
     {
         TotalCount = source.Count;
         _nextVisible.Clear();
         _seen.Clear();
         for (int index = 0; index < source.Count; index++)
         {
-            LogEntry entry = source[index];
+            ConsoleEntrySnapshot snapshot = source[index];
+            LogEntry entry = snapshot.Entry;
             _seen.Add(entry);
             if (!_entries.TryGetValue(entry, out ConsoleCachedEntry? cached))
             {
                 if (_nextId == ulong.MaxValue)
                     throw new InvalidOperationException("Console row ID space is exhausted.");
                 ulong id = ++_nextId;
-                cached = new ConsoleCachedEntry(id, entry.RepeatCount, Format(entry));
+                cached = new ConsoleCachedEntry(id, snapshot.RepeatCount, Format(snapshot));
                 _entries.Add(entry, cached);
                 _entriesById.Add(id, entry);
             }
-            else if (cached.RepeatCount != entry.RepeatCount)
+            else if (cached.RepeatCount != snapshot.RepeatCount)
             {
-                cached.RepeatCount = entry.RepeatCount;
-                cached.Text = Format(entry);
+                cached.RepeatCount = snapshot.RepeatCount;
+                cached.Text = Format(snapshot);
             }
             if (category is not null && entry.Category != category ||
                 filter.Length != 0 && !entry.Message.Contains(filter, StringComparison.OrdinalIgnoreCase))
@@ -88,9 +102,10 @@ public sealed class ConsoleRowCache
         return false;
     }
 
-    private string Format(LogEntry entry)
+    private static string Format(ConsoleEntrySnapshot snapshot)
     {
+        LogEntry entry = snapshot.Entry;
         string text = $"[{entry.Timestamp:HH:mm:ss.fff}] [{entry.Category}] {entry.Message}";
-        return entry.RepeatCount > 1 ? text + $" (x{entry.RepeatCount})" : text;
+        return snapshot.RepeatCount > 1 ? text + $" (x{snapshot.RepeatCount})" : text;
     }
 }

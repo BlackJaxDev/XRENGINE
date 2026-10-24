@@ -68,15 +68,15 @@ public sealed class NativeHierarchySceneOwnershipTests
         {
             RunQueuedEdit(() => EditorImGuiUI.QueueNativeHierarchyDelete(root, world));
 
-            Assert.That(scene.RootNodes, Does.Not.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Not.Contain(root));
             Assert.That(world.RootNodes, Does.Not.Contain(root));
             Assert.That(root.IsActiveSelf, Is.False);
             Assert.That(Undo.TryUndo(), Is.True);
-            Assert.That(scene.RootNodes, Does.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Contain(root));
             Assert.That(world.RootNodes, Does.Contain(root));
             Assert.That(root.IsActiveSelf, Is.True);
             Assert.That(Undo.TryRedo(), Is.True);
-            Assert.That(scene.RootNodes, Does.Not.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Not.Contain(root));
             Assert.That(world.RootNodes, Does.Not.Contain(root));
         }
         finally { root.Destroy(true); }
@@ -97,15 +97,15 @@ public sealed class NativeHierarchySceneOwnershipTests
             RunQueuedEdit(() => EditorImGuiUI.QueueNativeHierarchyReparent(root, target, world));
 
             Assert.That(root.Parent, Is.SameAs(target));
-            Assert.That(scene.RootNodes, Does.Not.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Not.Contain(root));
             Assert.That(world.RootNodes, Does.Not.Contain(root));
             Assert.That(Undo.TryUndo(), Is.True);
             Assert.That(root.Parent, Is.Null);
-            Assert.That(scene.RootNodes, Does.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Contain(root));
             Assert.That(world.RootNodes, Does.Contain(root));
             Assert.That(Undo.TryRedo(), Is.True);
             Assert.That(root.Parent, Is.SameAs(target));
-            Assert.That(scene.RootNodes, Does.Not.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Not.Contain(root));
         }
         finally { root.Destroy(true); target.Destroy(true); }
     }
@@ -123,13 +123,13 @@ public sealed class NativeHierarchySceneOwnershipTests
             RunQueuedEdit(() => EditorImGuiUI.QueueNativeHierarchyMoveToRoot(child, world));
 
             Assert.That(child.Parent, Is.Null);
-            Assert.That(integration.EditorScene.RootNodes, Does.Contain(child));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Contain(child));
             Assert.That(world.RootNodes, Does.Contain(child));
             Assert.That(Undo.TryUndo(), Is.True);
             Assert.That(child.Parent, Is.SameAs(parent));
-            Assert.That(integration.EditorScene.RootNodes, Does.Not.Contain(child));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Not.Contain(child));
             Assert.That(Undo.TryRedo(), Is.True);
-            Assert.That(integration.EditorScene.RootNodes, Does.Contain(child));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Contain(child));
         }
         finally { child.Destroy(true); parent.Destroy(true); }
     }
@@ -147,19 +147,19 @@ public sealed class NativeHierarchySceneOwnershipTests
         try
         {
             Assert.That(Undo.TryUndo(), Is.True);
-            integration.EditorScene.RootNodes.Add(child!);
+            integration.EditorScene.SceneRoots.Add(child!);
 
             Assert.Throws<InvalidOperationException>(() => Undo.TryRedo());
 
             Assert.That(child!.Parent, Is.Null);
-            Assert.That(integration.EditorScene.RootNodes, Does.Contain(child));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Contain(child));
             Assert.That(world.RootNodes, Does.Not.Contain(child));
         }
         finally
         {
             if (child is not null)
             {
-                integration.EditorScene.RootNodes.Remove(child);
+                integration.EditorScene.SceneRoots.Remove(child);
                 child.Destroy(true);
             }
             parent.Destroy(true);

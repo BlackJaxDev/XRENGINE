@@ -319,6 +319,31 @@ internal sealed class UIWorldPassManifest : IDisposable
         return true;
     }
 
+    /// <summary>Fixes UI counts for every mesh node before branch execution.</summary>
+    internal bool SetExpectedWorldColorDraws(int renderPass, int selectedDraws)
+    {
+        if (selectedDraws <= 0)
+            return Fail("UI world color draw count is empty.");
+        int matching = 0;
+        for (int index = 0; index < _count; index++)
+        {
+            VPRC_RenderMeshesPassShared? pass = _nodes[index].Pass;
+            if (pass is null)
+                continue;
+            int expected = _nodes[index].RenderPass == renderPass
+                ? selectedDraws : 0;
+            if (expected != 0 &&
+                (pass.MeshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect ||
+                 pass.PathIntent != EMeshRenderingPathIntent.Traditional))
+                return Fail("UI world color pass is not CPU direct.");
+            if (!SetExpectedUiDraws(pass, expected))
+                return false;
+            if (expected != 0)
+                matching++;
+        }
+        return matching != 0 || Fail("UI world color pass is absent from the command graph.");
+    }
+
     /// <summary>Records one branch result before branch resource callbacks run.</summary>
     internal void RecordBranch(VPRC_IfElse branch, bool selectedTrue)
     {

@@ -698,8 +698,8 @@ public static partial class EditorImGuiUI
             : ResolveDefaultSpawnScene(world);
         if (parentTfm is null && owningScene is not null)
         {
-            if (!owningScene.RootNodes.Contains(instance))
-                owningScene.RootNodes.Add(instance);
+            if (!owningScene.SceneRoots.Contains(instance))
+                owningScene.SceneRoots.Add(instance);
 
             if (owningScene.IsVisible)
             {
@@ -724,7 +724,7 @@ public static partial class EditorImGuiUI
                     parentTfm.RemoveChild(instance.Transform, Scene.Transforms.EParentAssignmentMode.Immediate);
                 else
                 {
-                    sceneCapture?.RootNodes.Remove(instance);
+                    sceneCapture?.SceneRoots.Remove(instance);
                     world.RootNodes.Remove(instance);
                 }
                 instance.IsActiveSelf = false;
@@ -735,8 +735,8 @@ public static partial class EditorImGuiUI
                     instance.Transform.SetParent(parentTfm, false, Scene.Transforms.EParentAssignmentMode.Immediate);
                 else
                 {
-                    if (sceneCapture is not null && !sceneCapture.RootNodes.Contains(instance))
-                        sceneCapture.RootNodes.Add(instance);
+                    if (sceneCapture is not null && !sceneCapture.SceneRoots.Contains(instance))
+                        sceneCapture.SceneRoots.Add(instance);
                     if ((sceneCapture is null || sceneCapture.IsVisible) && !world.RootNodes.Contains(instance))
                         world.RootNodes.Add(instance);
                 }

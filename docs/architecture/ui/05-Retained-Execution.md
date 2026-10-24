@@ -371,15 +371,16 @@ ownership. Cross-window pointer drag, presented focus restoration, and full
 play-mode state persistence remain open.
 
 Offscreen world canvases use render-command publication claims and separate
-producer and consumer receipts. Direct world UI still uses the existing component
-route; its frozen shadow and draw census remains open. An inactive canvas proxy
+producer and consumer receipts. Direct world UI uses the existing component
+route unless the bounded OpenGL profile below admits an exact replacement.
+Broader scene and shadow coverage remains open. An inactive canvas proxy
 can filter frozen child layer and culling values. Exact indexed draw scopes match
 native topology, index range/type, instances, renderer identity, and geometry
 revision. Missing, repeated, failed, or mismatched native draws reject the scope.
 The desktop OpenGL dispatch can withhold a swap and reports presentation only
-after the actual swap succeeds. These seams do not activate the direct route:
-selected-pass manifests, packet pinning, terminal-output proof, and persistent
-resource recovery must be complete first.
+after the actual swap succeeds. The bounded route connects selected-pass
+manifests, packet pinning, and terminal-output proof. This does not establish
+live platform acceptance or admission for other output profiles.
 
 ## Media and callback teardown
 
@@ -558,14 +559,19 @@ output variants receive distinct revisions. Readers retain the parent publicatio
 while using its segments and resources.
 
 Text and material batching respect both owner and contiguous segment boundaries.
-Vulkan can admit a single solid screen-space chrome run to its existing secondary
-command cache. The draw-local contract binds the canvas lifetime, segment identity
+Vulkan can admit supported solid, border, bindful image, and text screen-space
+chrome runs to its existing secondary command cache. The draw-local contract binds the canvas lifetime, segment identity
 and revision, run identity, exact mesh and geometry revision, indexed draw shape,
 and backend generation. The current receipt remains separate from reusable
 identity. Native pipeline, descriptor, buffer, target, and cohort keys remain
 required. Only the dynamic UI/text cache-policy bits can use this exception;
-resource, debug, and output-sensitive restrictions still apply. Text, images,
-borders, custom draws, offscreen output, and world UI remain dynamic. GPU cache
+resource, debug, and output-sensitive restrictions still apply. Images retain a
+private texture snapshot and exact UV storage. Text retains its private atlas,
+five committed glyph buffers, and exact shader parameters. Cache hits check
+current native resource authority again. Bindless images, custom draws, offscreen
+output, and world UI remain dynamic. Each admitted run owns its retained
+buffers, so unrelated overlays do not change those revisions. An in-flight
+resource cohort can still require a new capture until its fence retires. GPU cache
 acceptance is unverified. Changed publication comparison still visits the record
 set; independent sparse capture remains open.
 
@@ -609,12 +615,11 @@ listener/source pairs before native release. Admission revisions reject sources
 created during a lifecycle change. Failed native releases remain retained for
 diagnosis; teardown does not guess whether an uncertain native call can repeat.
 
-The inactive world-pass manifest supports closed conditional and Switch graphs,
+The world-pass manifest supports closed conditional and Switch graphs,
 bounded canvas packet claims, and a reserved owner-thread attempt. It rejects
-changed command graphs and reentrant attempt reset. Production activation still
-requires pass-invocation identities, grouped native receipts, output reset proof,
-and exact direct-world clipping. These bookkeeping contracts do not publish
-world UI or change authored shadow behavior.
+changed command graphs and reentrant attempt reset. The bounded route below
+connects native receipts and presentation. Exact direct-world clipping remains
+open; clipped candidates are not admitted. Authored shadow behavior is unchanged.
 
 ## Canvas Collection And Scene Camera Ownership
 
@@ -624,7 +629,7 @@ offscreen items stay outside 3D collection. Draw-space, parent, visibility,
 activation, transform replacement, and canvas component changes restore valid
 direct-world membership. This changes registration, not authored `IsVisible` or
 `CastsShadows`. Destruction makes the subscription owner terminal. The direct
-world draw path remains the existing path; frozen world output is not active.
+world draw path remains the existing path outside the explicit bounded profile.
 
 Gallery chrome, FPS overlays, dock controls, and virtual text rows declare
 composition owners. Gallery chrome uses `StaticChrome`; FPS and interactive dock
@@ -671,9 +676,9 @@ nodes for destruction; ordinary deactivation keeps those nodes for reuse.
 four reusable slots. A generation-checked reader claim spans each collection
 traversal. The last release marks a slot as retiring before it releases packet
 claims; producers cannot reuse that slot during callback reentry. World close,
-disposal, and swap use one ownership gate. This is collection infrastructure:
-frozen direct-world rendering and input promotion remain disabled until native
-output completion is connected.
+disposal, and swap use one ownership gate. The bounded OpenGL route connects
+these claims to native output completion and accepted input promotion. Other
+output profiles retain the existing route.
 
 `SceneViewPanel` resolves a camera from its exact window and runtime world. It
 rejects foreign cameras and callback replacement of an admitted binding.
@@ -886,16 +891,20 @@ not authorize recursive scene-graph destruction after callbacks transfer owners;
 clone adoption and graph retirement require their own checks.
 
 The world source registry can register a fixed packet source outside the drawable
-scene tree. Removal uses the recorded source registration. The current source-only
-preparation leaves legacy child draws in place; it is not a completed retained
-world-output path. A future replacement must prove the exact collected image,
-native target lineage, and accepted presentation before it can replace input.
+scene tree. Removal uses the recorded source registration. Unsupported output
+profiles retain legacy child draws before replacement. The bounded OpenGL route
+below requires the exact collected image, native target lineage, and accepted
+presentation before it promotes input.
 
 
 ## Console, Profiler, And Dictionary Owners
 
 `ConsoleRowCache` assigns row IDs to exact `LogEntry` references. A refresh keeps
-unchanged strings and row sources. Categories, count text, clear commands, copy,
+unchanged strings and row sources. `Debug.CopyConsoleEntriesTo` copies a changed
+image into caller-owned storage under the console lock. It captures repeat counts
+with entry references. Unchanged revision, category, and filter skip both copying
+and projection. Full-entry copy uses the same cached displayed text. Categories,
+count text, clear commands, copy,
 and auto-scroll share the existing virtual text panel. Delayed menu commands
 retain their panel, category, and selected-entry owners. Clipboard failures are
 explicit. New log entries are formatted once; this is not viewport-only log
@@ -910,8 +919,25 @@ retire cancelled references within the same budget. Owner destruction clears the
 remaining managed references. `NativeProfilerRows` formats requested rows in a
 bounded 2,048-entry cache. Stable IDs belong to one exact published snapshot;
 a new sample cannot retarget an old row ID. These limits bound index operations,
-not elapsed time or engine snapshot acquisition. Other profiler diagnostic views
-remain separate work.
+not elapsed time or engine snapshot acquisition.
+
+Selected diagnostic views show component timings, BVH work, jobs, allocations,
+main-thread invokes, FPS spikes, render counters, GPU timing, renderer state,
+assets, frame lifecycle, outputs, and settings. CPU-root aggregation reuses two
+buffers and caps distinct names at 4,096 with an explicit overflow row. Nested
+child aggregation uses a separate 4,096-path cap and the same bounded pump. Spike
+capture inspects at most 64 threads and 2,048 path nodes per frame and retains
+256 groups. GPU history contains 1,200 summaries and 24 worst frames; the visible
+tree shows 256 stages and offers a canonical dump. Output rows show 64 outputs
+and an explicit remainder. Plots retain up to 720 samples, reduce them to 64 peak
+bins, and use at most 128 segments.
+
+Setting drafts capture exact effective, override, global, and override-leaf
+owners. A replaced owner rejects commit. Worst-frame activation copies at most
+256 immutable tree rows for the exact pipeline, history generation, and frame.
+Formatting occurs on selection and the panel retains those strings. Historical
+GPU node ranking remains open; canonical dumps preserve those details. Desktop
+test execution and live Windows/GPU acceptance remain separate.
 
 `EditorDictionaryMutation` supports exact BCL dictionaries with string keys and
 the default or ordinal comparer, or integer keys and the default comparer. The
@@ -929,20 +955,89 @@ pre-adoption guards and final structural validation. It verifies ownership again
 after cache publication. A failed clone retains its allocation ledger and removes
 only its exact cache entries. The original `CloneHierarchy` path is unchanged.
 The new API does not authorize recursive graph destruction or editor Duplicate.
-Hidden scene-root ownership, bounded failure retention, and safe graph retirement
-remain integration gates.
+`XRScene.SceneRoots` now tracks exact root occurrences and owner back-links.
+The legacy serialized `RootNodes` list remains a copied serialization facade;
+runtime mutations use the guarded collection. YAML, cooked, and envelope fixtures
+preserve the existing format. Safe clone graph retirement and active editor
+Duplicate remain open.
+
+Child and component lists install `HierarchyListAuthority` in their constructor.
+The authority cannot be replaced or removed. Silent, interface, indexed, range,
+and mandatory-removal operations maintain exact occurrence back-links at storage
+commit. Endpoint reservations span callbacks; storage locks do not span those
+callbacks. Ordinary `EventList` instances keep their existing path.
+
+Replacing `TransformBase.Children` copies the supplied list into new owned
+storage. Old aliases lose write authority. Source-bound handlers and conditional
+Parent/World updates reject an older continuation after a callback installs a
+new owner. Runtime-root storage also records links before world binding, so a
+failed bind cannot hide a retained root. Queued ownership remains visible in
+snapshots until storage actually retires. Normal writes reject queued owners;
+mandatory removal can release an exact terminal component when its owner is
+queued and that destruction is later vetoed. These ownership facts do not
+authorize destruction. `HierarchyStructuralReservation` only blocks new structural
+mutations after admitted operations finish; active Duplicate and graph retirement
+remain open.
+
+`UndoHistoryResource` attaches a resource to its exact open structural step and
+then to the committed history action. History pruning, cancellation, and clear
+queue releases. Release callbacks run outside the history lock while replay is
+held. Each dequeue checks for a new structural hold caused by an earlier
+callback. A failed release keeps its recovery owner and requires an explicit
+retry after repair. This mechanism does not itself authorize graph destruction.
 
 World image preparation now records child command/source registrations and their
 incarnations. Every normal or masked collection traversal stamps the exact world
 and command-set generation. An unstamped traversal rejects replacement. Packet
 claims move with the command image through swap; mutation invalidates prior mesh
 order proof. A staged canvas replacement can validate one complete canonical
-transparent-forward image. The viewport does not invoke this replacement yet.
-Native output lineage, source-seal admission, and accepted presentation remain
-required before activation or input promotion.
+transparent-forward image. `XRViewport.EnableRetainedWorldUiColor` and
+`UICanvasComponent.EnableRetainedWorldRendering` explicitly enable the bounded
+OpenGL route. Both default to false. Admission requires one full-window mono
+viewport, CPU-direct submission, one canonical canvas with authored
+non-shadow-casting TransparentForward commands, and no other 3D commands,
+screen UI, late window output, or nested crop. The pipeline profile rejects VR,
+AA, temporal/history features, bloom, motion blur, depth of field, occlusion,
+atmosphere, fog, auto-exposure, lens distortion, and output debug overrides.
+
+An ordinary frame first establishes native resource readiness. Retained attempts
+then pin exact resource incarnations and verify the Deferred clear, Forward HDR
+clear, light combine, UI draws, post-process outputs, and final BACK write.
+Unscoped native clears, draws, or blits to pinned output attachments invalidate
+the proof. A selected replacement cannot silently become a legacy frame after
+collection. Failure prevents presentation and discards the receipt and pending
+frame-view history. Renderer retirement also resets unsubmitted capture ownership. Input uses the accepted frozen camera descriptor
+and region. This is an implemented bounded route, not live OpenGL acceptance.
+Mixed scenes, direct-world crop, Vulkan world output, and shadows remain open.
 
 The bounded Vulkan static-chrome cache also admits its supported border variant.
 The contract includes exact UV/color and width buffer references, committed
 revisions, native allocation generations, and descriptor resources. Existing
 receipt and fence ownership protects pending commands. This does not establish
-live Vulkan acceptance or reusable OpenGL command buffers.
+live Vulkan acceptance. The current OpenGL backend reuses retained geometry and
+buffers, but still issues draw calls for each frame; it has no retained command
+cache path.
+
+## Animation Row And Edit Ownership
+
+The native animation panel assigns monotonically increasing dynamic row IDs
+outside its fixed command range. It presents member and key pages of 128 rows
+and formats projected rows on demand. Playback updates do not rebuild an
+unchanged member tree. Dirty clip changes still rebuild subscriptions and the
+member index; incremental source capture remains open.
+
+`AnimationClipAuthoringActions` captures the exact clip, source asset, member
+route, child container, track order, and key payload needed by each edit.
+Structural Undo retains a guarded inverse before callbacks run and installs a
+terminal conflict guard before property steps can replay. Failed actions remove
+only their restored steps. Unrelated callback edits remain in history. Unknown
+conflicts preserve the newer state and retain guarded recovery history. Dirty
+notification targets the captured source after settlement.
+
+Built-in vector edits stage a complete authored handle and commit all fields
+before one track notification. A throwing notification cannot leave the public
+synchronization latch set. Earlier equal-time key positions that the current
+track API cannot restore exactly reject a move or removal before mutation.
+Presented plot-pointer interaction, exact tied-key restoration, and the remaining
+authoring controls are open code items. These contracts do not establish Windows
+editor execution or complete panel parity.

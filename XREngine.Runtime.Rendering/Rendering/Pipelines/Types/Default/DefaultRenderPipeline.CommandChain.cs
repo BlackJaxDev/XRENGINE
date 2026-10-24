@@ -10,6 +10,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.UI;
 using XREngine.Scene.Physics.DebugVisualization;
 using static XREngine.RuntimeEngine.Rendering.State;
 
@@ -152,6 +153,13 @@ public partial class DefaultRenderPipeline
         var fullSceneCommands = new ViewportRenderCommandContainer(this);
         using (fullSceneCommands.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
+            var worldUiStencilReset = fullSceneCommands.Add<VPRC_IfElse>();
+            worldUiStencilReset.Label = "RetainedWorldUiStencilClearMask";
+            worldUiStencilReset.ConditionEvaluator =
+                () => UIWorldRenderAttempt.Active is not null;
+            var worldUiStencilResetCommands = new ViewportRenderCommandContainer(this);
+            worldUiStencilResetCommands.Add<VPRC_StencilMask>().Set(~0u);
+            worldUiStencilReset.TrueCommands = worldUiStencilResetCommands;
             AppendDeferredGBufferPass(fullSceneCommands);
             AppendForwardDepthPrePass(fullSceneCommands);
             fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;

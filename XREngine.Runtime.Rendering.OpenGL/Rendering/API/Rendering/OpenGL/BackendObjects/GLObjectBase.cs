@@ -36,6 +36,11 @@ namespace XREngine.Rendering.OpenGL
             public override bool IsGenerated => _bindingId.HasValue && _bindingId != InvalidBindingId;
 
             internal uint? _bindingId;
+            private long _nativeObjectIncarnation;
+
+            /// <summary>Changes whenever this wrapper acquires or retires a native name.</summary>
+            internal long NativeObjectIncarnation
+                => System.Threading.Volatile.Read(ref _nativeObjectIncarnation);
 
             public virtual bool TryGetBindingId(out uint bindingId)
             {
@@ -52,7 +57,12 @@ namespace XREngine.Rendering.OpenGL
             }
 
             public GLObjectBase(OpenGLRenderer renderer) : base(renderer) { }
-            public GLObjectBase(OpenGLRenderer renderer, uint id) : base(renderer) => _bindingId = id;
+            public GLObjectBase(OpenGLRenderer renderer, uint id) : base(renderer)
+            {
+                _bindingId = id;
+                if (id != InvalidBindingId)
+                    System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
+            }
 
             public override void Destroy()
             {
@@ -146,6 +156,7 @@ namespace XREngine.Rendering.OpenGL
                 _bindingId = CreateObject();
                 if (_bindingId is not null && _bindingId != InvalidBindingId)
                 {
+                    System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
                     PostGenerated();
                     _invalidated = false;
                     _hasSentInvalidationWarning = false;
@@ -166,6 +177,7 @@ namespace XREngine.Rendering.OpenGL
 
                 RemoveCacheEntry(bindingId);
                 _bindingId = null;
+                System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
                 _invalidated = true;
                 _hasSentInvalidationWarning = false;
             }
@@ -793,6 +805,10 @@ namespace XREngine.Rendering.OpenGL
                 if (!IsGenerated)
                     return;
 
+                // Retire the prior name before any deletion callback or driver call.
+                // A failed delete must not leave an accepted output proof alive.
+                System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
+
                 if (Renderer.ShouldOrphanGLHandlesForShutdown)
                 {
                     OrphanForDeferredDelete();
@@ -839,6 +855,7 @@ namespace XREngine.Rendering.OpenGL
                         break;
                 }
                 _bindingId = null;
+                System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
                 PostDeleted();
             }
 

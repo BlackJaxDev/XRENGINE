@@ -7,8 +7,8 @@ public static partial class SceneNodePrefabUtility
     /// <summary>
     /// Clones a detached hierarchy through the canonical serializer or registered AOT handlers.
     /// The result retains all constructor allocations, including failures and nested assets.
-    /// Borrowed assets keep their identities. This receipt does not authorize graph destruction
-    /// or prove that a callback did not add a node to an unrelated scene's root list.
+    /// Borrowed assets keep their identities. Scene root admission remains blocked until transfer.
+    /// This receipt does not authorize graph destruction after transfer.
     /// </summary>
     public static ObjectConstructionResult<SceneNode> CloneHierarchyOwned(SceneNode template)
     {

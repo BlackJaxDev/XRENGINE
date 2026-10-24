@@ -349,4 +349,9 @@ public partial class UICanvasComponent
         }
         finally { publication.Release(); }
     }
+
+    internal void RecordAcceptedWorldUiOutput(XRViewport viewport,
+        UIPublication publication, ulong receiptId,
+        in RenderFrameViewDescriptor view, in XREngine.Data.Geometry.BoundingRectangle region)
+        => RecordRenderedPublication(viewport, publication, receiptId, view, region);
 }

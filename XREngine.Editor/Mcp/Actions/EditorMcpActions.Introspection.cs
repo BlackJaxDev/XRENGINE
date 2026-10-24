@@ -1082,7 +1082,7 @@ namespace XREngine.Editor.Mcp
 
         private static object BuildSceneStats(XRScene scene, bool includeComponentTypes)
         {
-            var rootNodes = scene.RootNodes ?? [];
+            var rootNodes = scene.SceneRoots;
             var allNodes = rootNodes.SelectMany(EnumerateHierarchy).ToArray();
             int totalComponents = allNodes.Sum(node => node.Components.Count);
             int activeNodes = allNodes.Count(node => node.IsActiveSelf);

@@ -175,6 +175,21 @@ public sealed class UIFrozenWorldCollectionTests
     }
 
     [Test]
+    public void DefaultMonoGraphHasAReservableWorldUiExecutionManifest()
+    {
+        using var shaders = new UITestShaderScope();
+        var pipeline = new DefaultRenderPipeline(stereo: false);
+        var manifest = new UIWorldPassManifest();
+        manifest.TryReserveAttempt(out ulong token).ShouldBeTrue();
+        try
+        {
+            manifest.TryCaptureReserved(pipeline.CommandChain, token,
+                out string? failure).ShouldBeTrue(failure);
+        }
+        finally { manifest.ReleaseAttempt(token).ShouldBeTrue(); }
+    }
+
+    [Test]
     public void CollectPacketSetRejectsMoreThanSixtyFourCanvasPackets()
     {
         var set = new UIWorldCollectPacketSet();

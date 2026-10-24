@@ -38,7 +38,7 @@ internal static partial class ProjectBuilder
             RuntimeEngine.Rendering.Settings.DefaultFontFileName));
         string canonicalDefault = Path.GetFullPath(Engine.Assets.ResolveEngineAssetPath("Fonts", "Roboto", "Roboto-Regular.ttf"));
         foreach (XRScene scene in scenes)
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
                 Visit(root, 0);
         authoredFonts = selected.Values.OrderBy(static font => font.CatalogPath, StringComparer.Ordinal).ToArray();
         return requiresDefault;
@@ -191,7 +191,7 @@ internal static partial class ProjectBuilder
             List<string?> references = [];
             HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
             foreach (XRScene scene in scenes)
-                foreach (SceneNode root in scene.RootNodes)
+                foreach (SceneNode root in scene.SceneRoots)
                     Visit(root);
             return references;
 

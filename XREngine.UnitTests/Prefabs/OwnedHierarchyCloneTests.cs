@@ -276,6 +276,43 @@ public sealed class OwnedHierarchyCloneTests
         finally { RetireTestAllocations(result.Ownership); template.Destroy(true); }
     }
 
+    [TestCase(false, false)]
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    [TestCase(true, true)]
+    public void CloneCannotEnterAnExistingOrNewHiddenScene(bool createSceneInsideClone, bool duringPublication)
+    {
+        XRScene? hidden = createSceneInsideClone ? null : new() { IsVisible = false };
+        SceneNode template = new("Template", new OwnedCloneTransformProbe());
+        SceneNode? escaped = null;
+        using IDisposable handler = SceneNodePrefabUtility.RegisterTransformCloneHandler<OwnedCloneTransformProbe>(_ =>
+        {
+            hidden ??= new() { IsVisible = false };
+            OwnedCloneTransformProbe transform = new();
+            if (duringPublication)
+                transform.Publishing = () => hidden.SceneRoots.Add(escaped = transform.SceneNode!);
+            else
+                hidden.SceneRoots.Add(escaped = new("Unpublished root"));
+            return transform;
+        });
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        ObjectConstructionResult<SceneNode> result = SceneNodePrefabUtility.CloneHierarchyOwned(template);
+        try
+        {
+            Assert.That(result.Failure, Is.TypeOf<InvalidOperationException>());
+            Assert.That(hidden!.SceneRoots.Count, Is.Zero);
+            Assert.That(escaped!.HasSceneRootOwner, Is.False);
+            Assert.That(escaped.IsDestroyed, Is.False);
+            Assert.That(result.Ownership.Contains(escaped), Is.True);
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            hidden?.Destroy(true);
+            template.Destroy(true);
+        }
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void IdentityRegenerationLeavesNestedAndBorrowedAssetIdentitiesUnchanged(bool allocateAsset)

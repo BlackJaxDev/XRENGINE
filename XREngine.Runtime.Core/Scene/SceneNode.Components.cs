@@ -113,6 +113,7 @@ namespace XREngine.Scene
 
         private void AddComponent(XRComponent comp)
         {
+            using HierarchyMutationLease structural = new(this, comp);
             using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentInternal");
 
             HierarchyConstructionScope.RequireLink(this, comp);
@@ -182,6 +183,7 @@ namespace XREngine.Scene
             if (comp is null)
                 return;
 
+            using HierarchyMutationLease structural = new(this, comp);
             ComponentsInternal.Remove(comp);
             comp.Destroying -= ComponentDestroying;
             comp.Destroyed -= ComponentDestroyed;
@@ -198,6 +200,7 @@ namespace XREngine.Scene
             if (comp is null)
                 return;
 
+            using HierarchyMutationLease structural = new(this, comp);
             ComponentsInternal.Remove(comp);
             comp.Destroying -= ComponentDestroying;
             comp.Destroyed -= ComponentDestroyed;
@@ -214,6 +217,7 @@ namespace XREngine.Scene
         /// <returns><c>true</c> if the component was successfully detached; otherwise, <c>false</c>.</returns>
         public bool DetachComponent(XRComponent component)
         {
+            using HierarchyMutationLease structural = new(this, component);
             if (!ComponentsInternal.Contains(component))
                 return false;
 
@@ -233,6 +237,7 @@ namespace XREngine.Scene
         /// <param name="component">The component to reattach.</param>
         public void ReattachComponent(XRComponent component)
         {
+            using HierarchyMutationLease structural = new(this, component);
             HierarchyConstructionScope.RequireLink(this, component);
             ComponentsInternal.Add(component);
             component.Destroying += ComponentDestroying;
@@ -638,9 +643,10 @@ namespace XREngine.Scene
             if (comp is not XRComponent xrComp)
                 return;
 
-            ComponentsInternal.Remove(xrComp);
             xrComp.Destroying -= ComponentDestroying;
             xrComp.Destroyed -= ComponentDestroyed;
+            if (!IsDestroyed && !ComponentsInternal.IsDestroyed && ComponentsInternal.Contains(xrComp))
+                ComponentsInternal.RemoveExactNonVetoable(xrComp);
         }
 
         #endregion

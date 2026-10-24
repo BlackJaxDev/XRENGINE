@@ -14,6 +14,20 @@ internal sealed class StructuralChangeHandle(Undo.ChangeScope scope, Undo.Struct
         return Undo.RemoveRestoredStructuralStep(scope, step);
     }
 
+    /// <summary>Transfers one reserved resource to this scope and its eventual history action.</summary>
+    public void RetainResource(UndoHistoryResource resource)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        Undo.RetainHistoryResource(scope, step, resource);
+    }
+
+    /// <summary>Releases this resource after its inverse was removed following complete restoration.</summary>
+    public void ReleaseRestoredResource(UndoHistoryResource resource)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        Undo.ReleaseRestoredHistoryResource(scope, step, resource);
+    }
+
     /// <summary>Records the exact values of one owned property even if its observer failed.</summary>
     public void ReconcileProperty(XRBase target, string propertyName, object? original, object? current)
     {

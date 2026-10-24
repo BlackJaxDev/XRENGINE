@@ -281,14 +281,14 @@ public class SceneNodeLifecycleTests
             Assert.Multiple(() =>
             {
                 Assert.That(root.IsDestroyed, Is.True);
-                Assert.That(scene.RootNodes, Is.Empty);
+                Assert.That(scene.SceneRoots, Is.Empty);
                 Assert.That(world.RootNodes.Count, Is.Zero);
                 Assert.That(Undo.CanUndo, Is.True);
             });
 
             Assert.That(Undo.TryUndo(), Is.True);
 
-            SceneNode restoredRoot = scene.RootNodes.Single();
+            SceneNode restoredRoot = scene.SceneRoots.Single();
             SceneNode restoredChild = restoredRoot.Transform.Children.Single().SceneNode!;
             Assert.Multiple(() =>
             {
@@ -306,7 +306,7 @@ public class SceneNodeLifecycleTests
             {
                 Assert.That(restoredRoot.IsDestroyed, Is.True);
                 Assert.That(restoredChild.IsDestroyed, Is.True);
-                Assert.That(scene.RootNodes, Is.Empty);
+                Assert.That(scene.SceneRoots, Is.Empty);
                 Assert.That(world.RootNodes.Count, Is.Zero);
             });
         }
@@ -718,7 +718,7 @@ public class SceneNodeLifecycleTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(GetEditorWorld(world).EditorScene.RootNodes, Does.Contain(root));
+            Assert.That(GetEditorWorld(world).EditorScene.SceneRoots, Does.Contain(root));
             Assert.That(world.RootNodes, Does.Contain(root));
             Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights.Count, Is.EqualTo(1));
         });
@@ -729,7 +729,7 @@ public class SceneNodeLifecycleTests
         Assert.Multiple(() =>
         {
             Assert.That(root.IsDestroyed, Is.True);
-            Assert.That(GetEditorWorld(world).EditorScene.RootNodes, Does.Not.Contain(root));
+            Assert.That(GetEditorWorld(world).EditorScene.SceneRoots, Does.Not.Contain(root));
             Assert.That(world.RootNodes, Does.Not.Contain(root));
             Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights, Is.Empty);
         });
@@ -856,7 +856,7 @@ public class SceneNodeLifecycleTests
 
         Assert.Multiple(() =>
         {
-            Assert.That(scene.RootNodes, Does.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Contain(root));
             Assert.That(world.RootNodes, Does.Contain(root));
             Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights.Count, Is.EqualTo(1));
         });
@@ -867,7 +867,7 @@ public class SceneNodeLifecycleTests
         Assert.Multiple(() =>
         {
             Assert.That(root.IsDestroyed, Is.True);
-            Assert.That(scene.RootNodes, Does.Not.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Not.Contain(root));
             Assert.That(world.RootNodes, Does.Not.Contain(root));
             Assert.That(GetRenderWorld(world).Lights.DynamicDirectionalLights, Is.Empty);
         });

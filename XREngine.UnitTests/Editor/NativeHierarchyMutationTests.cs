@@ -40,16 +40,16 @@ public sealed class NativeHierarchyMutationTests
         {
             Assert.That(EditorImGuiUI.CanApplyNativeHierarchyEdit(root, world), Is.True);
             Run(() => EditorImGuiUI.QueueNativeHierarchyDelete(root, world));
-            Assert.That(scene.RootNodes, Does.Not.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Not.Contain(root));
             Assert.That(root.World, Is.Null);
             Assert.That(Undo.TryUndo(), Is.True);
-            Assert.That(scene.RootNodes, Does.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Contain(root));
             Assert.That(root.World, Is.Null);
             Assert.That(world.RootNodes, Does.Not.Contain(root));
             Assert.That(root.IsActiveSelf, Is.True);
             Assert.That(scene.IsDirty, Is.True);
             Assert.That(Undo.TryRedo(), Is.True);
-            Assert.That(scene.RootNodes, Does.Not.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Not.Contain(root));
             Assert.That(root.World, Is.Null);
         }
         finally { root.Destroy(true); }
@@ -69,7 +69,7 @@ public sealed class NativeHierarchyMutationTests
             Assert.That(child!.Parent, Is.SameAs(root));
             Assert.That(child.World, Is.Null);
             Run(() => EditorImGuiUI.QueueNativeHierarchyMoveToRoot(child, world));
-            Assert.That(scene.RootNodes, Does.Contain(child));
+            Assert.That(scene.SceneRoots, Does.Contain(child));
             Assert.That(child.Parent, Is.Null);
             Assert.That(child.World, Is.Null);
             Assert.That(Undo.TryUndo(), Is.True);
@@ -95,18 +95,18 @@ public sealed class NativeHierarchyMutationTests
         try
         {
             Run(() => EditorImGuiUI.QueueNativeHierarchyDelete(root, world));
-            Assert.That(source.RootNodes, Does.Not.Contain(root));
-            Assert.That(editor.RootNodes, Does.Not.Contain(root));
+            Assert.That(source.SceneRoots, Does.Not.Contain(root));
+            Assert.That(editor.SceneRoots, Does.Not.Contain(root));
             Assert.That(integration.CaptureHierarchySourceRoutes(root), Is.Empty);
             Assert.That(world.CaptureHierarchyRootRoutes(root).Scenes, Is.Empty);
             Assert.That(Undo.TryUndo(), Is.True);
-            Assert.That(source.RootNodes, Does.Contain(root));
-            Assert.That(editor.RootNodes, Does.Contain(root));
+            Assert.That(source.SceneRoots, Does.Contain(root));
+            Assert.That(editor.SceneRoots, Does.Contain(root));
             Assert.That(integration.CaptureHierarchySourceRoutes(root), Is.EqualTo(new[] { source }));
             Assert.That(world.CaptureHierarchyRootRoutes(root).Scenes, Is.EqualTo(new[] { source }));
             source.IsVisible = false;
             Assert.That(world.RootNodes, Does.Not.Contain(root));
-            Assert.That(editor.RootNodes, Does.Not.Contain(root));
+            Assert.That(editor.SceneRoots, Does.Not.Contain(root));
         }
         finally { root.Destroy(true); }
     }
@@ -122,15 +122,15 @@ public sealed class NativeHierarchyMutationTests
         try
         {
             Run(() => EditorImGuiUI.QueueNativeHierarchyReparent(root, target, world));
-            Assert.That(first.RootNodes, Does.Not.Contain(root));
-            Assert.That(integration.EditorScene.RootNodes, Does.Not.Contain(root));
+            Assert.That(first.SceneRoots, Does.Not.Contain(root));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Not.Contain(root));
             Assert.That(Undo.TryUndo(), Is.True);
-            Assert.That(first.RootNodes, Does.Contain(root));
-            Assert.That(integration.EditorScene.RootNodes, Does.Contain(root));
+            Assert.That(first.SceneRoots, Does.Contain(root));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Contain(root));
             Assert.That(Undo.TryRedo(), Is.True);
             Run(() => EditorImGuiUI.QueueNativeHierarchyMoveToRoot(root, world));
-            Assert.That(second.RootNodes, Does.Contain(root));
-            Assert.That(integration.EditorScene.RootNodes, Does.Contain(root));
+            Assert.That(second.SceneRoots, Does.Contain(root));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Contain(root));
             Assert.That(integration.CaptureHierarchySourceRoutes(root), Is.EqualTo(new[] { second }));
             first.IsVisible = false;
             world.UnloadScene(first);
@@ -139,7 +139,7 @@ public sealed class NativeHierarchyMutationTests
             second.IsVisible = false;
             Assert.That(world.RootNodes, Does.Not.Contain(root));
             second.IsVisible = true;
-            Assert.That(integration.EditorScene.RootNodes, Does.Contain(root));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Contain(root));
             Assert.That(world.RootNodes, Does.Contain(root));
         }
         finally { root.Destroy(true); target.Destroy(true); }
@@ -156,14 +156,14 @@ public sealed class NativeHierarchyMutationTests
         try
         {
             Run(() => EditorImGuiUI.QueueNativeHierarchyMoveToRoot(child, world));
-            Assert.That(scene.RootNodes, Does.Contain(child));
-            Assert.That(integration.EditorScene.RootNodes, Does.Not.Contain(child));
+            Assert.That(scene.SceneRoots, Does.Contain(child));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Not.Contain(child));
             Assert.That(integration.CaptureHierarchySourceRoutes(child), Is.Empty);
             scene.IsVisible = false;
             Assert.That(world.RootNodes, Does.Not.Contain(child));
             scene.IsVisible = true;
             Assert.That(world.RootNodes, Does.Contain(child));
-            Assert.That(integration.EditorScene.RootNodes, Does.Not.Contain(child));
+            Assert.That(integration.EditorScene.SceneRoots, Does.Not.Contain(child));
         }
         finally { child.Destroy(true); root.Destroy(true); }
     }
@@ -181,7 +181,7 @@ public sealed class NativeHierarchyMutationTests
         {
             Assert.That(world.CaptureHierarchyRootRoutes(root).ExternallyOwned, Is.True);
             Run(() => EditorImGuiUI.QueueNativeHierarchyMoveToRoot(child, world));
-            Assert.That(scene.RootNodes, Does.Contain(child));
+            Assert.That(scene.SceneRoots, Does.Contain(child));
             Assert.That(world.CaptureHierarchyRootRoutes(child).ExternallyOwned, Is.False);
             world.UnloadScene(scene);
             Assert.That(world.RootNodes, Does.Contain(root));
@@ -210,7 +210,7 @@ public sealed class NativeHierarchyMutationTests
         {
             Assert.Throws<InvalidOperationException>(() => Run(() => EditorImGuiUI.QueueNativeHierarchyReparent(root, target, world)));
             Assert.That(root.Parent, Is.Null);
-            Assert.That(scene.RootNodes, Does.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Contain(root));
             Assert.That(world.RootNodes, Does.Contain(root));
             Assert.That(other.Name, Is.EqualTo("Callback edit"));
             Assert.That(Undo.TryUndo(), Is.True);
@@ -240,7 +240,7 @@ public sealed class NativeHierarchyMutationTests
         {
             Assert.Throws<InvalidOperationException>(() => Run(() => EditorImGuiUI.QueueNativeHierarchyDelete(root, world)));
             Assert.That(root.IsActiveSelf, Is.True);
-            Assert.That(scene.RootNodes, Does.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Contain(root));
             Assert.That(Undo.PendingUndo, Has.Count.EqualTo(1));
             Assert.That(Undo.TryUndo(), Is.True);
             Assert.That(other.Name, Is.EqualTo("Before callback"));
@@ -270,7 +270,7 @@ public sealed class NativeHierarchyMutationTests
         try
         {
             Assert.Throws<InvalidOperationException>(() => Run(() => EditorImGuiUI.QueueNativeHierarchyDelete(root, world)));
-            Assert.That(scene.RootNodes, Does.Contain(root));
+            Assert.That(scene.SceneRoots, Does.Contain(root));
             Assert.That(root.IsActiveSelf, Is.False);
             fail = false;
             Assert.That(Undo.TryUndo(), Is.True);

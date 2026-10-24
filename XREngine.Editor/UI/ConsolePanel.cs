@@ -15,6 +15,10 @@ public partial class ConsolePanel : NativeVirtualTextPanel
     private DateTime _lastRefresh;
     private int _pendingRefresh;
     private readonly ConsoleRowCache _cache = new();
+    private readonly List<ConsoleEntrySnapshot> _entries = [];
+    private ulong _entriesRevision;
+    private ELogCategory? _projectedCategory;
+    private string _projectedFilter = string.Empty;
     private string _filter = string.Empty;
     private UITextInputComponent? _filterInput;
     private UIButtonComponent? _actionsButton;
@@ -381,8 +385,13 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         if (_terminal) return;
         int previousCount = _cache.FilteredCount;
         bool stayAtEnd = _autoScroll && ScrollOffset >= MaximumScrollOffset(previousCount) - 24;
-        List<LogEntry> entries = Debug.GetConsoleEntries();
-        bool rowsChanged = _cache.Update(entries, _category, _filter);
+        ulong revision = Debug.CopyConsoleEntriesTo(_entries, _entriesRevision);
+        bool needsProjection = revision != _entriesRevision ||
+            _projectedCategory != _category || _projectedFilter != _filter;
+        SetField(ref _entriesRevision, revision, publishNotifications: false);
+        bool rowsChanged = needsProjection && _cache.Update(_entries, _category, _filter);
+        SetField(ref _projectedCategory, _category, publishNotifications: false);
+        SetField(ref _projectedFilter, _filter, publishNotifications: false);
         if (_selectedEntryId is { } selected && !_cache.TryGetVisibleEntry(selected, out _))
         {
             _selectedEntryId = null;
@@ -427,6 +436,13 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         if (_terminal || !_ownerActive || !IsActiveInHierarchy ||
             !_cache.TryGetVisibleEntry(id, out LogEntry? current) || !ReferenceEquals(current, admitted))
             return;
+        string text = admitted.Message;
+        if (full)
+        {
+            if (!_cache.TryGetVisibleText(id, out string? displayed) || displayed is null)
+                return;
+            text = displayed;
+        }
         IRuntimeClipboardServices? clipboard = RuntimeClipboardServices.Current;
         if (clipboard is null)
         {
@@ -435,10 +451,7 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         }
         try
         {
-            clipboard.SetText(full
-                ? $"[{admitted.Timestamp:HH:mm:ss.fff}] [{admitted.Category}] {admitted.Message}" +
-                  (admitted.RepeatCount > 1 ? $" (x{admitted.RepeatCount})" : string.Empty)
-                : admitted.Message);
+            clipboard.SetText(text);
         }
         catch (Exception error)
         {

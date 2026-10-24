@@ -4,6 +4,7 @@ using XREngine.Rendering.RenderGraph;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
 using XREngine.Components.Lights;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -266,6 +267,10 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     protected override void Execute()
     {
+        UIWorldRenderAttempt? worldAttempt = UIWorldRenderAttempt.Active;
+        bool worldPass = worldAttempt?.BeginMeshPass(this) == true;
+        try
+        {
         XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         long sceneCommandCount = activeInstance?.ActiveMeshRenderCommands.GetRenderingMeshCommandCount() ?? 0;
         RuntimeEngine.Rendering.Stats.GpuDriven.RecordSceneCommandCount(sceneCommandCount);
@@ -319,6 +324,12 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             default:
                 VPRC_RenderMeshesPassTraditional.Execute(this, meshSubmissionStrategy);
                 break;
+        }
+        }
+        finally
+        {
+            if (worldPass)
+                worldAttempt!.EndMeshPass();
         }
     }
 

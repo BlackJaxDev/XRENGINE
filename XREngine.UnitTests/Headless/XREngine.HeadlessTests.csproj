@@ -18,6 +18,7 @@
     <Compile Include="../Rendering/UITextMultilineSubmitTests.cs" Link="Rendering/UITextMultilineSubmitTests.cs" />
     <Compile Include="../Rendering/UITabFocusRestoreTests.cs" Link="Rendering/UITabFocusRestoreTests.cs" />
     <Compile Include="../Core/OwnedObjectConstructionTests.cs" Link="Core/OwnedObjectConstructionTests.cs" />
+    <Compile Include="../Core/EventListTests.cs" Link="Core/EventListTests.cs" />
     <Compile Include="../Core/OwnedConstructionProbe.cs" Link="Core/OwnedConstructionProbe.cs" />
     <Compile Include="../Core/NonCacheConstructionProbe.cs" Link="Core/NonCacheConstructionProbe.cs" />
     <Compile Include="../Rendering/UITextDraftOwnerTests.cs" Link="Rendering/UITextDraftOwnerTests.cs" />
@@ -27,6 +28,7 @@
     <Compile Include="../../XREngine.Editor/UI/ConsoleRowCache.cs" Link="Editor/ConsoleRowCache.cs" />
     <Compile Include="../../XREngine.Editor/UI/ConsoleCachedEntry.cs" Link="Editor/ConsoleCachedEntry.cs" />
     <Compile Include="../Editor/ConsoleRowCacheTests.cs" Link="Editor/ConsoleRowCacheTests.cs" />
+    <Compile Include="../Editor/ConsoleSnapshotTests.cs" Link="Editor/ConsoleSnapshotTests.cs" />
     <Compile Include="../Editor/EqualConsoleLogEntry.cs" Link="Editor/EqualConsoleLogEntry.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerProjection.cs" Link="Editor/NativeProfilerProjection.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRowRef.cs" Link="Editor/NativeProfilerRowRef.cs" />
@@ -96,12 +98,21 @@
     <Compile Include="../Audio/AudioSourceLifecycleProbe.cs" Link="Audio/AudioSourceLifecycleProbe.cs" />
     <Compile Include="../Rendering/XRViewportSceneBindingTests.cs" Link="Rendering/XRViewportSceneBindingTests.cs" />
     <Compile Include="../Rendering/UIStaticDrawContractTests.cs" Link="Rendering/UIStaticDrawContractTests.cs" />
+    <Compile Include="../Rendering/UIStaticPrimitiveContractTests.cs" Link="Rendering/UIStaticPrimitiveContractTests.cs" />
+    <Compile Include="../Rendering/VectorKeyframeAuthoredStateTests.cs" Link="Rendering/VectorKeyframeAuthoredStateTests.cs" />
     <Compile Include="../Audio/AudioSourceTeardownTests.cs" Link="Audio/AudioSourceTeardownTests.cs" />
     <Compile Include="../Audio/FakeAudioTeardownTransport.cs" Link="Audio/FakeAudioTeardownTransport.cs" />
     <Compile Include="../Rendering/UISplitterHandleTests.cs" Link="Rendering/UISplitterHandleTests.cs" />
     <Compile Include="../Rendering/UIWorldPassManifestTests.cs" Link="Rendering/UIWorldPassManifestTests.cs" />
     <Compile Include="../Scene/SceneStreamingVolumeComponentTests.cs" Link="Scene/SceneStreamingVolumeComponentTests.cs" />
     <Compile Include="../Scene/RuntimeHierarchyRootRoutesTests.cs" Link="Scene/RuntimeHierarchyRootRoutesTests.cs" />
+    <Compile Include="../Scene/HierarchyStructuralAuthorityTests.cs" Link="Scene/HierarchyStructuralAuthorityTests.cs" />
+    <Compile Include="../Scene/HierarchyAuthorityComponentProbe.cs" Link="Scene/HierarchyAuthorityComponentProbe.cs" />
+    <Compile Include="../Scene/HierarchyAuthorityWorldContext.cs" Link="Scene/HierarchyAuthorityWorldContext.cs" />
+    <Compile Include="../Scene/SceneRootCollectionTests.cs" Link="Scene/SceneRootCollectionTests.cs" />
+    <Compile Include="../Scene/SceneRootSerializationTests.cs" Link="Scene/SceneRootSerializationTests.cs" />
+    <Compile Include="../Scene/LegacySceneRootFixtures.cs" Link="Scene/LegacySceneRootFixtures.cs" />
+    <Compile Include="../Scene/SceneRootEnvelopeReader.cs" Link="Scene/SceneRootEnvelopeReader.cs" />
     <Compile Include="../Rendering/UIImageAtlasTests.cs" Link="Rendering/UIImageAtlasTests.cs" />
     <Compile Include="../Rendering/UIDrawPayloadTests.cs" Link="Rendering/UIDrawPayloadTests.cs" />
     <Compile Include="../Rendering/UITextMaterialRefreshProbe.cs" Link="Rendering/UITextMaterialRefreshProbe.cs" />
@@ -140,6 +151,10 @@
     <Compile Include="../Rendering/UIRetainedControlsTests.cs" Link="Rendering/UIRetainedControlsTests.cs" />
     <Compile Include="../Rendering/UIIndexedDrawScopeTests.cs" Link="Rendering/UIIndexedDrawScopeTests.cs" />
     <Compile Include="../Rendering/UIFrozenWorldCollectionTests.cs" Link="Rendering/UIFrozenWorldCollectionTests.cs" />
+    <Compile Include="../Rendering/UIWorldOutputAttemptContractTests.cs" Link="Rendering/UIWorldOutputAttemptContractTests.cs" />
+    <Compile Include="../Rendering/UIWorldOutputReadinessTests.cs" Link="Rendering/UIWorldOutputReadinessTests.cs" />
+    <Compile Include="../Rendering/UIWorldStencilMaskTests.cs" Link="Rendering/UIWorldStencilMaskTests.cs" />
+    <Compile Include="../Rendering/SharedFullscreenTriangleProofTests.cs" Link="Rendering/SharedFullscreenTriangleProofTests.cs" />
     <Compile Include="../Rendering/EditorComboPrefixIndexTests.cs" Link="Rendering/EditorComboPrefixIndexTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorComboPrefixIndex.cs" Link="Editor/EditorComboPrefixIndex.cs" />
     <Compile Include="../Platform/AssetWatcherContextTests.cs" Link="Platform/AssetWatcherContextTests.cs" />

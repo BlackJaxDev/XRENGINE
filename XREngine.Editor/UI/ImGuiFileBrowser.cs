@@ -256,7 +256,7 @@ public static class ImGuiFileBrowser
     private static XRWorld CreateDialogWorld(DialogState state)
     {
         var scene = new XRScene($"FileBrowserScene_{state.Id}");
-        scene.RootNodes.Add(new SceneNode("FileBrowserRoot"));
+        scene.SceneRoots.Add(new SceneNode("FileBrowserRoot"));
         return new XRWorld($"FileBrowserWorld_{state.Id}", scene);
     }
 

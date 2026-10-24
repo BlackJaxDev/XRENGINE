@@ -12,6 +12,8 @@ public partial class EventList<T>
     /// </summary>
     public bool RemoveExactNonVetoable(T item)
     {
+        if (_mutationAuthority is not null)
+            return GuardedRemove(item, null, reportRemoved: true, reportModified: true, nonVetoable: true);
         bool removed = false;
         ReaderWriterLockSlim? listLock = _lock;
         listLock?.EnterWriteLock();
@@ -33,6 +35,12 @@ public partial class EventList<T>
         if (!removed)
             return false;
 
+        NotifyExactRemoval(item);
+        return true;
+    }
+
+    private void NotifyExactRemoval(T item)
+    {
         SingleHandler? removedHandlers = PostRemoved;
         SingleHandler? anythingRemovedHandlers = PostAnythingRemoved;
         Action? modifiedHandlers = PostModified;
@@ -48,7 +56,6 @@ public partial class EventList<T>
         }
         if (failure is not null)
             ExceptionDispatchInfo.Capture(failure).Throw();
-        return true;
     }
 
     private static void NotifyRemovalObservers<THandler>(THandler? handlers,

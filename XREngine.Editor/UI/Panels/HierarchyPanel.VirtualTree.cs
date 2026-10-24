@@ -196,7 +196,7 @@ public partial class HierarchyPanel
         SubscribeSourceScene(scene);
         _virtualTree.Insert(sceneId, 0, int.MaxValue, GetSceneRowName(scene), true);
         _virtualTree.SetExpanded(sceneId, !_collapsedSections.Contains(scene.ID));
-        foreach (SceneNode root in scene.RootNodes)
+        foreach (SceneNode root in scene.SceneRoots)
             if (root is not null)
                 AppendSourceNode(root, sceneId);
     }
@@ -260,10 +260,10 @@ public partial class HierarchyPanel
     {
         const ulong multiplier = 1099511628211UL;
         hash = unchecked((hash ^ (uint)scene.ID.GetHashCode()) * multiplier);
-        hash = unchecked((hash ^ (uint)scene.RootNodes.Count) * multiplier);
+        hash = unchecked((hash ^ (uint)scene.SceneRoots.Count) * multiplier);
         hash = unchecked((hash ^ (scene.IsEditorOnly ? 4UL : 0UL)) * multiplier);
-        for (int index = 0; index < scene.RootNodes.Count; index++)
-            if (scene.RootNodes[index] is { } root)
+        for (int index = 0; index < scene.SceneRoots.Count; index++)
+            if (scene.SceneRoots[index] is { } root)
                 hash = unchecked((hash ^ (uint)root.ID.GetHashCode()) * multiplier);
         return hash;
     }

@@ -10,6 +10,7 @@ namespace XREngine.Editor;
 internal sealed class NativeTextList : IVirtualListProvider
 {
     private readonly List<(ulong Id, string Text)> _items = [];
+    private Func<int, string>? _projectText;
     private readonly Dictionary<UIBoundableTransform, UITextComponent> _labels = [];
     private readonly Dictionary<UIBoundableTransform, ulong> _boundIds = [];
     private readonly Dictionary<UIInteractableComponent, Vector2> _dragStarts = [];
@@ -28,9 +29,30 @@ internal sealed class NativeTextList : IVirtualListProvider
 
     public void Replace(IEnumerable<(ulong Id, string Text)> items)
     {
+        _projectText = null;
         _items.Clear();
         _items.AddRange(items);
         _revision++;
+    }
+
+    public void ReplaceProjected(IEnumerable<(ulong Id, string Text)> items,
+        Func<int, string> projectText)
+    {
+        _items.Clear();
+        _items.AddRange(items);
+        _projectText = projectText;
+        _revision++;
+    }
+
+    public bool UpdateTextAt(int index, ulong id, string text)
+    {
+        if ((uint)index >= (uint)_items.Count || _items[index].Id != id)
+            return false;
+        if (_items[index].Text == text)
+            return false;
+        _items[index] = (id, text);
+        _revision++;
+        return true;
     }
 
     public UIBoundableTransform CreateRow()
@@ -76,8 +98,12 @@ internal sealed class NativeTextList : IVirtualListProvider
 
     public void BindRow(UIBoundableTransform row, int index, ulong itemId, ulong incarnation)
     {
+        if ((uint)index >= (uint)_items.Count || _items[index].Id != itemId)
+            return;
         _boundIds[row] = itemId;
-        _labels[row].Text = _items[index].Text;
+        string text = _items[index].Text;
+        _labels[row].Text = text.Length == 0 && _projectText is not null
+            ? _projectText(index) : text;
     }
 
     public void UnbindRow(UIBoundableTransform row, ulong itemId, ulong incarnation)

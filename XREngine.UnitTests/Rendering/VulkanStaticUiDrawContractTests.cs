@@ -4,6 +4,7 @@ using Silk.NET.Vulkan;
 using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.UI.State;
@@ -68,58 +69,6 @@ public sealed class VulkanStaticUiDrawContractTests
     }
 
     [Test]
-    public void BorderContract_RequiresExactCommittedBuffersAndVariant()
-    {
-        _renderer.Mesh = _mesh;
-        XRDataBuffer<Vector4> color = BorderBuffer("QuadUvBuffer", 3);
-        XRDataBuffer<Vector4> width = BorderBuffer("QuadBorderWidthBuffer", 4);
-        _renderer.Buffers["QuadUvBuffer"] = color;
-        _renderer.Buffers["QuadBorderWidthBuffer"] = width;
-        UIIndexedDrawIntent intent = new(_renderer, _mesh.GeometryRevision,
-            EPrimitiveType.Triangles, IndexSize.TwoBytes, 6, 1, 0);
-        UIStaticDrawContract border = new(1,
-            new UICompositionOwner(new UIElementIdentity(2, 1),
-                EUICompositionLayerKind.StaticChrome),
-            3, 4, 5, 6, intent)
-        {
-            CapturedMesh = _mesh,
-            IsBorder = true,
-            BorderColorBuffer = color,
-            BorderColorRevision = color.Revision,
-            BorderWidthBuffer = width,
-            BorderWidthRevision = width.Revision,
-        };
-        Assert.That(border.IsDefined && border.MatchesIntent(_renderer, 1), Is.True);
-        Assert.That((border with { IsBorder = false }).IsDefined, Is.False);
-        UIStaticDrawContract solid = border with
-        {
-            IsBorder = false,
-            BorderColorBuffer = null,
-            BorderColorRevision = 0,
-            BorderWidthBuffer = null,
-            BorderWidthRevision = 0,
-        };
-        Assert.That(solid.IsDefined, Is.True);
-        Assert.That(solid == border, Is.False);
-        Commit(width, new Vector4(2));
-        Assert.That(border.MatchesIntent(_renderer, 1), Is.False);
-        border = border with { BorderWidthRevision = width.Revision };
-        Assert.That(border.MatchesIntent(_renderer, 1), Is.True);
-        Commit(color, new Vector4(3));
-        Assert.That(border.MatchesIntent(_renderer, 1), Is.False);
-        border = border with { BorderColorRevision = color.Revision };
-        Assert.That(border.MatchesIntent(_renderer, 1), Is.True);
-        width.BindingIndexOverride = 3;
-        Assert.That(border.MatchesIntent(_renderer, 1), Is.False);
-        width.BindingIndexOverride = 4;
-        Assert.That(border.MatchesIntent(_renderer, 1), Is.True);
-        XRDataBuffer<Vector4> replacement = BorderBuffer("QuadUvBuffer", 3);
-        _renderer.Buffers["QuadUvBuffer"] = replacement;
-        Assert.That(border.MatchesIntent(_renderer, 1), Is.False);
-        color.Destroy(true);
-    }
-
-    [Test]
     public void PreparedBorderAuthority_TracksBothNativeAllocations()
     {
         VulkanRecordedBufferIdentity color = new(
@@ -139,21 +88,176 @@ public sealed class VulkanStaticUiDrawContractTests
             { StaticUiBorderWidthBuffer = width with { BufferHandle = 23 } }), Is.False);
     }
 
-    private static XRDataBuffer<Vector4> BorderBuffer(string name, uint binding)
+    [Test]
+    public void PreparedImageAuthority_TracksUvAndNativeImagePayload()
     {
-        XRDataBuffer<Vector4> buffer = new(name, EBufferTarget.ShaderStorageBuffer, 1)
+        VulkanPreparedCommandChainKey first = new(1, 2, 0, false,
+            default, default, default, true)
         {
-            BindingIndexOverride = binding,
+            StaticUiImageUvBuffer = new(EVulkanRecordedBufferBindingKind.Descriptor,
+                3, 11, 12, 0, 16),
+            StaticUiImageResource = new(ObjectType.Image, 21, 22,
+                ImageLayout.ShaderReadOnlyOptimal),
+            StaticUiImagePayload = new(DescriptorType.CombinedImageSampler,
+                31, 32, 41, 42, 0, 0, ImageLayout.ShaderReadOnlyOptimal),
         };
-        Commit(buffer, Vector4.One);
-        return buffer;
+        Assert.That(first.Matches(first), Is.True);
+        Assert.That(first.Matches(first with
+            { StaticUiImageUvBuffer = first.StaticUiImageUvBuffer with
+                { AllocationGeneration = 13 } }), Is.False);
+        Assert.That(first.Matches(first with
+            { StaticUiImageResource = first.StaticUiImageResource with
+                { Generation = 23 } }), Is.False);
+        Assert.That(first.Matches(first with
+            { StaticUiImagePayload = first.StaticUiImagePayload with
+                { SecondaryGeneration = 43 } }), Is.False);
     }
 
-    private static void Commit(XRDataBuffer<Vector4> buffer, Vector4 value)
+    [Test]
+    public void ReusedImageSecondary_RejectsChangedCurrentNativeAuthority()
     {
-        XRBufferWriter<Vector4> writer = buffer.Alloc<Vector4>(1);
-        writer.Span[0] = value;
-        writer.Commit();
+        VulkanPreparedCommandChainKey recorded = new(1, 2, 0, false,
+            default, default, default, true)
+        {
+            StaticUiContract = default(UIStaticDrawContract) with { IsImage = true },
+            StaticUiImageUvBuffer = new(EVulkanRecordedBufferBindingKind.Descriptor,
+                3, 11, 12, 0, 16),
+            StaticUiImageResource = new(ObjectType.Image, 21, 22,
+                ImageLayout.ShaderReadOnlyOptimal),
+            StaticUiImagePayload = new(DescriptorType.CombinedImageSampler,
+                31, 32, 41, 42, 0, 0, ImageLayout.ShaderReadOnlyOptimal),
+            StaticUiImageSet = 1,
+            StaticUiImageBinding = 2,
+        };
+        bool Current(VulkanRecordedBufferIdentity uv,
+            VulkanRecordedDescriptorResourceIdentity image,
+            VulkanDescriptorPayload payload, uint set = 1, uint binding = 2)
+        {
+            VkImageDescriptorSnapshot snapshot = recorded.StaticUiImageSnapshot;
+            return VulkanCommandRuntime.MatchesStaticUiImageReuseAuthority(
+                in recorded, in uv, in snapshot, in image, in payload, set, binding);
+        }
+
+        Assert.That(Current(recorded.StaticUiImageUvBuffer,
+            recorded.StaticUiImageResource, recorded.StaticUiImagePayload), Is.True);
+        Assert.That(Current(recorded.StaticUiImageUvBuffer with
+                { AllocationGeneration = 13 },
+            recorded.StaticUiImageResource, recorded.StaticUiImagePayload), Is.False);
+        Assert.That(Current(recorded.StaticUiImageUvBuffer,
+            recorded.StaticUiImageResource with { Generation = 23 },
+            recorded.StaticUiImagePayload), Is.False);
+        Assert.That(Current(recorded.StaticUiImageUvBuffer,
+            recorded.StaticUiImageResource with
+                { Layout = ImageLayout.TransferDstOptimal },
+            recorded.StaticUiImagePayload), Is.False);
+        Assert.That(Current(recorded.StaticUiImageUvBuffer,
+            recorded.StaticUiImageResource,
+            recorded.StaticUiImagePayload with { PrimaryHandle = 33 }), Is.False);
+        Assert.That(Current(recorded.StaticUiImageUvBuffer,
+            recorded.StaticUiImageResource,
+            recorded.StaticUiImagePayload with { SecondaryGeneration = 43 }), Is.False);
+        VkImageDescriptorSnapshot replacedSnapshot =
+            recorded.StaticUiImageSnapshot with { Generation = 44 };
+        VulkanRecordedBufferIdentity currentUv = recorded.StaticUiImageUvBuffer;
+        VulkanRecordedDescriptorResourceIdentity currentImage =
+            recorded.StaticUiImageResource;
+        VulkanDescriptorPayload currentPayload = recorded.StaticUiImagePayload;
+        Assert.That(VulkanCommandRuntime.MatchesStaticUiImageReuseAuthority(
+            in recorded, in currentUv, in replacedSnapshot,
+            in currentImage, in currentPayload, 1, 2), Is.False);
+        Assert.That(Current(recorded.StaticUiImageUvBuffer,
+            recorded.StaticUiImageResource, recorded.StaticUiImagePayload,
+            set: 3), Is.False);
+        Assert.That(Current(recorded.StaticUiImageUvBuffer,
+            recorded.StaticUiImageResource, recorded.StaticUiImagePayload,
+            binding: 4), Is.False);
+    }
+
+    [Test]
+    public void BindfulImageProgram_RejectsExtraImagesAndBindlessBinding()
+    {
+        DescriptorBindingInfo image = new(1, 2,
+            DescriptorType.CombinedImageSampler, ShaderStageFlags.FragmentBit,
+            1, "Texture0");
+        static bool Admits(DescriptorBindingInfo[] bindings)
+            => VulkanCommandRuntime.TryFindBindfulStaticUiImageBinding(
+                bindings, out _, out _);
+
+        Assert.That(Admits([image]), Is.True);
+        Assert.That(Admits([image, new(1, 3,
+            DescriptorType.StorageBuffer, ShaderStageFlags.FragmentBit,
+            1, "QuadUvBuffer")]), Is.True);
+        Assert.That(Admits([image, new(1, 4,
+            DescriptorType.CombinedImageSampler, ShaderStageFlags.FragmentBit,
+            1, "OtherImage")]), Is.False);
+        Assert.That(Admits([image, new(1, 4,
+            DescriptorType.Sampler, ShaderStageFlags.FragmentBit,
+            1, "OtherSampler")]), Is.False);
+        Assert.That(Admits([image with { Count = 2 }]), Is.False);
+        Assert.That(Admits([image, new(
+            VulkanBindlessMaterialDescriptors.TextureArraySet,
+            VulkanBindlessMaterialDescriptors.TextureArrayBinding,
+            DescriptorType.CombinedImageSampler,
+            ShaderStageFlags.FragmentBit, 1,
+            VulkanBindlessMaterialDescriptors.TextureArrayBindingName)]), Is.False);
+    }
+
+    [Test]
+    public void PreparedTextAuthority_TracksDrawOrderBufferAndAtlasPayload()
+    {
+        VulkanStaticUiTextBufferAuthority draw = new(
+            new(EVulkanRecordedBufferBindingKind.Descriptor, 4, 11, 12, 0, 16),
+            new(DescriptorType.StorageBuffer, 11, 12, 0, 0, 0, 16,
+                ImageLayout.Undefined), 1, 4);
+        VulkanStaticUiTextNativeAuthority text = new(draw, draw, draw,
+            draw, draw, default(VkImageDescriptorSnapshot) with { IsReady = true },
+            new(ObjectType.Image, 21, 22,
+                ImageLayout.ShaderReadOnlyOptimal),
+            new(DescriptorType.CombinedImageSampler, 31, 32,
+                41, 42, 0, 0, ImageLayout.ShaderReadOnlyOptimal), 1, 5);
+        VulkanPreparedCommandChainKey first = new(1, 2, 0, false,
+            default, default, default, true)
+        {
+            StaticUiContract = default(UIStaticDrawContract) with { IsText = true },
+            StaticUiText = text,
+        };
+        Assert.That(first.Matches(first), Is.True);
+        Assert.That(VulkanCommandRuntime.MatchesStaticUiTextReuseAuthority(
+            in first, in text), Is.True);
+        VulkanStaticUiTextBufferAuthority moved = draw with
+        {
+            Buffer = draw.Buffer with { AllocationGeneration = 13 },
+        };
+        Assert.That(first.Matches(first with { StaticUiText = text with
+            { GlyphTransforms = moved } }), Is.False);
+        Assert.That(first.Matches(first with { StaticUiText = text with
+            { GlyphTexCoords = moved } }), Is.False);
+        Assert.That(first.Matches(first with { StaticUiText = text with
+            { TextInstances = moved } }), Is.False);
+        Assert.That(first.Matches(first with { StaticUiText = text with
+            { GlyphIndices = moved } }), Is.False);
+        Assert.That(first.Matches(first with { StaticUiText = text with
+            { DrawIndices = moved } }), Is.False);
+        Assert.That(first.Matches(first with { StaticUiText = text with
+            { DrawIndices = draw with { Payload = draw.Payload with
+                { Range = 8 } } } }), Is.False);
+        Assert.That(first.Matches(first with { StaticUiText = text with
+            { AtlasPayload = text.AtlasPayload with
+                { SecondaryGeneration = 43 } } }), Is.False);
+        Assert.That(first.Matches(first with { StaticUiText = text with
+            { AtlasSet = 2 } }), Is.False);
+        VulkanStaticUiTextNativeAuthority replacedAtlas = text with
+        {
+            AtlasSnapshot = text.AtlasSnapshot with { Generation = 2 },
+        };
+        Assert.That(VulkanCommandRuntime.MatchesStaticUiTextReuseAuthority(
+            in first, in replacedAtlas), Is.False);
+        VulkanStaticUiTextNativeAuthority replacedDraw = text with
+        {
+            DrawIndices = moved,
+        };
+        Assert.That(VulkanCommandRuntime.MatchesStaticUiTextReuseAuthority(
+            in first, in replacedDraw), Is.False);
     }
 
     [Test]

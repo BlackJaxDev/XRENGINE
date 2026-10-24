@@ -128,6 +128,7 @@ public partial class OpenGLRenderer
                     failure = $"Backbuffer capture scissor setup failed with {scissorError}.";
                 else
                 {
+                    InvalidateWorldUiOnBlitDestination(destinationId);
                     Api.BlitFramebuffer(
                         region.X, region.Y, region.X + region.Width, region.Y + region.Height,
                         0, 0, (int)destination.Width, (int)destination.Height,
@@ -257,6 +258,7 @@ public partial class OpenGLRenderer
         if (stencilBit)
             mask |= ClearBufferMask.StencilBufferBit;
         while (Api.GetError() != GLEnum.NoError) { }
+        InvalidateWorldUiOnBlitDestination(destinationId);
         Api.BlitNamedFramebuffer(
             sourceId,
             destinationId,
@@ -330,6 +332,7 @@ public partial class OpenGLRenderer
         // post-blit check.
         while (Api.GetError() != GLEnum.NoError) { }
 
+        InvalidateWorldUiOnBlitDestination(outID);
         Api.BlitNamedFramebuffer(
             inID,
             outID,
@@ -419,6 +422,7 @@ public partial class OpenGLRenderer
 
         while (Api.GetError() != GLEnum.NoError) { }
 
+        InvalidateWorldUiOnBlitDestination(outID);
         Api.BlitNamedFramebuffer(
             inID,
             outID,

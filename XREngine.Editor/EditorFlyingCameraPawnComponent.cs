@@ -3391,7 +3391,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private static SceneNode? FindEditorUiRoot(EditorWorldIntegration world)
     {
-        foreach (var node in world.EditorScene.RootNodes)
+        foreach (var node in world.EditorScene.SceneRoots)
         {
             if (node?.GetComponent<UICanvasComponent>() is not null)
                 return node;

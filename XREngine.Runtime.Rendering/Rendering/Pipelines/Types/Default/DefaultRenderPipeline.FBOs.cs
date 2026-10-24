@@ -81,7 +81,7 @@ public partial class DefaultRenderPipeline
             new PostProcessBindingPublisher(
                 this,
                 EPostProcessBindingPublication.Composite));
-        return PostProcessFBO;
+        return StampWorldUiQuad(PostProcessFBO);
     }
 
     private XRFrameBuffer CreatePostProcessOutputFBO()
@@ -121,7 +121,7 @@ public partial class DefaultRenderPipeline
             new PostProcessBindingPublisher(
                 this,
                 EPostProcessBindingPublication.Final));
-        return fbo;
+        return StampWorldUiQuad(fbo);
     }
 
     private XRFrameBuffer CreateFinalPostProcessOutputFBO()
@@ -1500,7 +1500,7 @@ public partial class DefaultRenderPipeline
             throw new InvalidOperationException($"Declared texture '{DiffuseTextureName}' is not FBO-attachable.");
         lightCombineFBO.SetRenderTargets((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
 
-        return lightCombineFBO;
+        return StampWorldUiQuad(lightCombineFBO);
     }
 
     private XRFrameBuffer CreateLightingAccumFBO()

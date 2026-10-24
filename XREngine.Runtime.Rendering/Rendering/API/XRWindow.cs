@@ -424,12 +424,13 @@ namespace XREngine.Rendering
             }
         }
 
-        private void DisableRenderingPermanently(string reason, Exception? exception = null)
+        private void DisableRenderingPermanently(string reason,
+            Exception? exception = null, bool allowDuringRecreation = false)
         {
             if (_renderPermanentlyDisabled)
                 return;
 
-            if (_rendererRecreationInProgress)
+            if (_rendererRecreationInProgress && !allowDuringRecreation)
                 return;
 
             _renderPermanentlyDisabled = true;
@@ -2026,11 +2027,16 @@ namespace XREngine.Rendering
             {
                 try
                 {
+                    viewport.InvalidateRetainedWorldUiImageAfterRendererRetirement();
                     viewport.RenderPipelineInstance.InvalidatePhysicalResources();
                     viewport.RefreshRenderPipelineOutputBinding();
                 }
                 catch (Exception ex)
                 {
+                    if (viewport.HasAnyRetainedWorldUiImage)
+                        DisableRenderingPermanently(
+                            "A retained world UI image could not be cleared after renderer replacement.",
+                            ex, allowDuringRecreation: true);
                     Debug.RenderingWarning(
                         "[XRWindow] Failed to invalidate viewport pipeline resources after renderer recovery. Window={0} Viewport={1} Error={2}",
                         GetHashCode(),

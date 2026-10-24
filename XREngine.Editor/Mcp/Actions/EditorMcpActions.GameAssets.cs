@@ -781,7 +781,7 @@ namespace XREngine.Editor.Mcp
                 // Traverse all scenes and their node trees
                 foreach (var scene in world.TargetWorld?.Scenes ?? [])
                 {
-                    foreach (var rootNode in scene.RootNodes)
+                    foreach (var rootNode in scene.SceneRoots)
                     {
                         if (rootNode is null) continue;
                         CollectAssetReferences(rootNode, targetAsset, referencingNodes);

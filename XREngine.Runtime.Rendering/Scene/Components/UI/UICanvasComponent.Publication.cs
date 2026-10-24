@@ -563,13 +563,18 @@ public partial class UICanvasComponent
     }
 
     private void RecordRenderedPublication(object output, UIPublication publication, ulong receiptId)
+        => RecordRenderedPublication(output, publication, receiptId, null, null);
+
+    private void RecordRenderedPublication(object output, UIPublication publication,
+        ulong receiptId, RenderFrameViewDescriptor? frozenView,
+        BoundingRectangle? frozenRegion)
     {
         if (publication.CanvasLifetime != (ulong)Volatile.Read(ref _canvasLifetime))
             return;
         if (output is XRViewport viewport &&
             publication.CanvasBounds.Width > 0 && publication.CanvasBounds.Height > 0)
         {
-            var region = viewport.Region;
+            BoundingRectangle region = frozenRegion ?? viewport.Region;
             Matrix4x4 canvasToOutput =
                 Matrix4x4.CreateTranslation(-publication.CanvasBounds.MinX,
                     -publication.CanvasBounds.MinY, 0) *
@@ -597,14 +602,30 @@ public partial class UICanvasComponent
                     else if (!Matrix4x4.Invert(publication.AuthoringCanvasWorldMatrix,
                                  out worldToCanvas))
                         return;
-                    XRCamera? camera = viewport.ActiveCamera;
-                    if (camera?.Transform is null)
-                        return;
-                    clipToWorld = camera.InverseProjectionMatrix * camera.Transform.RenderMatrix;
-                    nearClipZ = RenderClipSpacePolicy.DepthBufferToClipZ(
-                        camera.GetNearDepthValue(), RuntimeEngine.Rendering.EffectiveClipDepthRange);
-                    farClipZ = RenderClipSpacePolicy.DepthBufferToClipZ(
-                        camera.GetFarDepthValue(), RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                    if (frozenView is { } view)
+                    {
+                        if (!Matrix4x4.Invert(view.ProjectionMatrix,
+                                out Matrix4x4 inverseProjection) ||
+                            !Matrix4x4.Invert(view.ViewMatrix,
+                                out Matrix4x4 cameraToWorld))
+                            return;
+                        clipToWorld = inverseProjection * cameraToWorld;
+                        nearClipZ = view.ReversedDepth
+                            ? 1.0f : view.DepthZeroToOne ? 0.0f : -1.0f;
+                        farClipZ = view.ReversedDepth
+                            ? view.DepthZeroToOne ? 0.0f : -1.0f : 1.0f;
+                    }
+                    else
+                    {
+                        XRCamera? camera = viewport.ActiveCamera;
+                        if (camera?.Transform is null)
+                            return;
+                        clipToWorld = camera.InverseProjectionMatrix * camera.Transform.RenderMatrix;
+                        nearClipZ = RenderClipSpacePolicy.DepthBufferToClipZ(
+                            camera.GetNearDepthValue(), RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                        farClipZ = RenderClipSpacePolicy.DepthBufferToClipZ(
+                            camera.GetFarDepthValue(), RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                    }
                 }
                 lock (_publicationGate)
                 {

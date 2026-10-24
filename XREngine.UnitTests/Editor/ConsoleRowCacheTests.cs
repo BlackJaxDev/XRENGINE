@@ -13,7 +13,7 @@ public sealed class ConsoleRowCacheTests
         ConsoleRowCache cache = new();
         LogEntry first = new("first", ELogCategory.General, new DateTime(2026, 1, 2, 3, 4, 5));
         LogEntry second = new("second", ELogCategory.UI, new DateTime(2026, 1, 2, 3, 4, 6));
-        LogEntry[] source = [first, second];
+        ConsoleEntrySnapshot[] source = [new(first, 1), new(second, 1)];
 
         cache.Update(source, null, string.Empty).ShouldBeTrue();
         ulong firstId = cache.VisibleRows[0].Id;
@@ -25,9 +25,13 @@ public sealed class ConsoleRowCacheTests
         cache.VisibleRows[1].Id.ShouldBe(secondId);
         cache.VisibleRows[0].Text.ShouldBeSameAs(firstText);
 
-        typeof(LogEntry).GetProperty(nameof(LogEntry.RepeatCount))!.SetValue(first, 3);
+        typeof(LogEntry).GetProperty(nameof(LogEntry.RepeatCount))!.SetValue(first, 9);
+        source[0] = new(first, 3);
         cache.Update(source, null, string.Empty).ShouldBeTrue();
         cache.VisibleRows[0].Text.ShouldContain("(x3)");
+        cache.VisibleRows[0].Text.ShouldNotContain("(x9)");
+        cache.TryGetVisibleText(firstId, out string? copied).ShouldBeTrue();
+        copied.ShouldBeSameAs(cache.VisibleRows[0].Text);
         cache.VisibleRows[0].Text.ShouldNotBeSameAs(firstText);
         cache.VisibleRows[1].Id.ShouldBe(secondId);
     }
@@ -38,11 +42,11 @@ public sealed class ConsoleRowCacheTests
         ConsoleRowCache cache = new();
         LogEntry first = new("alpha", ELogCategory.General, DateTime.UnixEpoch);
         LogEntry second = new("beta", ELogCategory.UI, DateTime.UnixEpoch);
-        cache.Update([first, second], null, string.Empty).ShouldBeTrue();
+        cache.Update([new(first, 1), new(second, 1)], null, string.Empty).ShouldBeTrue();
         ulong firstId = cache.VisibleRows[0].Id;
         ulong secondId = cache.VisibleRows[1].Id;
 
-        cache.Update([first, second], ELogCategory.UI, "BET").ShouldBeTrue();
+        cache.Update([new(first, 1), new(second, 1)], ELogCategory.UI, "BET").ShouldBeTrue();
         cache.TotalCount.ShouldBe(2);
         cache.FilteredCount.ShouldBe(1);
         cache.VisibleRows[0].Id.ShouldBe(secondId);
@@ -50,11 +54,11 @@ public sealed class ConsoleRowCacheTests
         cache.TryGetVisibleEntry(secondId, out LogEntry? selected).ShouldBeTrue();
         selected.ShouldBeSameAs(second);
 
-        cache.Update([first], null, string.Empty).ShouldBeTrue();
+        cache.Update([new(first, 1)], null, string.Empty).ShouldBeTrue();
         cache.TryGetVisibleEntry(secondId, out _).ShouldBeFalse();
         cache.VisibleRows[0].Id.ShouldBe(firstId);
         LogEntry replacement = new("beta", ELogCategory.UI, DateTime.UnixEpoch);
-        cache.Update([first, replacement], null, string.Empty).ShouldBeTrue();
+        cache.Update([new(first, 1), new(replacement, 1)], null, string.Empty).ShouldBeTrue();
         cache.VisibleRows[1].Id.ShouldNotBe(secondId);
         cache.TryGetVisibleEntry(secondId, out _).ShouldBeFalse();
     }
@@ -67,7 +71,7 @@ public sealed class ConsoleRowCacheTests
         EqualConsoleLogEntry second = new("same");
         first.Equals(second).ShouldBeTrue();
 
-        cache.Update([first, second], null, string.Empty).ShouldBeTrue();
+        cache.Update([new(first, 1), new(second, 1)], null, string.Empty).ShouldBeTrue();
 
         cache.VisibleRows.Count.ShouldBe(2);
         cache.VisibleRows[0].Id.ShouldNotBe(cache.VisibleRows[1].Id);

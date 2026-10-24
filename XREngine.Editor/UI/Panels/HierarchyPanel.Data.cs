@@ -27,7 +27,7 @@ public partial class HierarchyPanel
         var assigned = new HashSet<SceneNode>();
         foreach (var scene in scenes)
         {
-            foreach (var root in scene.RootNodes)
+            foreach (var root in scene.SceneRoots)
             {
                 if (root is not null)
                     assigned.Add(root);
@@ -40,7 +40,7 @@ public partial class HierarchyPanel
         {
             foreach (var scene in targetWorld.Scenes.Where(s => s.IsEditorOnly))
             {
-                foreach (var root in scene.RootNodes)
+                foreach (var root in scene.SceneRoots)
                 {
                     if (root is not null)
                         assigned.Add(root);

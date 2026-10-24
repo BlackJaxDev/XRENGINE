@@ -1,4 +1,5 @@
 using XREngine.Components;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI;
 using UiPublicationFrameEntry = (XREngine.Rendering.XRViewport Viewport,
     XREngine.Components.UICanvasComponent Canvas,
@@ -22,8 +23,15 @@ public sealed partial class XRWindow
     private ulong _nextOpenGlDispatchToken;
     private ulong _activeOpenGlDispatchToken;
     internal ulong ActiveOpenGlDispatchToken => _activeOpenGlDispatchToken;
+    internal bool HasUntrackedLateWorldUiOutput => PostRenderViewportsCallback is not null;
     private readonly HashSet<ulong> _requiredOpenGlBackdropReceipts = [];
     private bool _openGlBackdropFailed;
+    private readonly HashSet<ulong> _requiredOpenGlWorldReceipts = [];
+    private readonly Dictionary<ulong, ulong> _openGlWorldNativeTokens = [];
+    private bool _openGlWorldFailed;
+    private XRViewport? _expectedOpenGlWorldViewport;
+    private RenderCommandCollection? _expectedOpenGlWorldCommands;
+    private long _expectedOpenGlWorldPackageGeneration;
 
     private ulong BeginOpenGlRenderDispatch()
     {
@@ -35,6 +43,29 @@ public sealed partial class XRWindow
         _activeOpenGlDispatchToken = token;
         _requiredOpenGlBackdropReceipts.Clear();
         _openGlBackdropFailed = false;
+        _requiredOpenGlWorldReceipts.Clear();
+        _openGlWorldNativeTokens.Clear();
+        _openGlWorldFailed = false;
+        _expectedOpenGlWorldViewport = null;
+        _expectedOpenGlWorldCommands = null;
+        _expectedOpenGlWorldPackageGeneration = 0;
+        if (Viewports is { } viewports)
+            for (int index = 0; index < viewports.Count; index++)
+            {
+                XRViewport viewport = viewports[index];
+                if (!viewport.TryGetRenderingRetainedWorldUiImageKey(
+                        out RenderCommandCollection commands,
+                        out long packageGeneration))
+                    continue;
+                if (_expectedOpenGlWorldViewport is not null)
+                {
+                    _openGlWorldFailed = true;
+                    break;
+                }
+                _expectedOpenGlWorldViewport = viewport;
+                _expectedOpenGlWorldCommands = commands;
+                _expectedOpenGlWorldPackageGeneration = packageGeneration;
+            }
         return token;
     }
 
@@ -55,21 +86,106 @@ public sealed partial class XRWindow
 
     internal void FailOpenGlBackdropAttempt() => _openGlBackdropFailed = true;
 
+    internal void RequireOpenGlWorldUi(XRViewport viewport,
+        RenderCommandCollection commands, long packageGeneration,
+        ulong receiptId, ulong nativeToken)
+    {
+        if (_activeOpenGlDispatchToken == 0UL || receiptId == 0UL || nativeToken == 0UL ||
+            !ReferenceEquals(viewport, _expectedOpenGlWorldViewport) ||
+            !ReferenceEquals(commands, _expectedOpenGlWorldCommands) ||
+            packageGeneration != _expectedOpenGlWorldPackageGeneration ||
+            !_requiredOpenGlWorldReceipts.Add(receiptId))
+            throw new InvalidOperationException("A world UI receipt has no unique window dispatch.");
+        try { _openGlWorldNativeTokens.Add(receiptId, nativeToken); }
+        catch
+        {
+            _requiredOpenGlWorldReceipts.Remove(receiptId);
+            throw;
+        }
+    }
+
+    internal void CompleteOpenGlWorldUi(ulong receiptId, bool succeeded)
+    {
+        if (_activeOpenGlDispatchToken == 0UL ||
+            !_requiredOpenGlWorldReceipts.Remove(receiptId))
+            throw new InvalidOperationException("A world UI receipt ended outside its window dispatch.");
+        if (!succeeded)
+            _openGlWorldFailed = true;
+    }
+
+    internal void FailOpenGlWorldUiAttempt() => _openGlWorldFailed = true;
+
     private bool CanPresentOpenGlRenderDispatch(ulong dispatchToken)
-        => dispatchToken != 0UL && dispatchToken == _activeOpenGlDispatchToken &&
-            !_openGlBackdropFailed && _requiredOpenGlBackdropReceipts.Count == 0;
+    {
+        if (dispatchToken == 0UL || dispatchToken != _activeOpenGlDispatchToken ||
+            _openGlBackdropFailed || _requiredOpenGlBackdropReceipts.Count != 0 ||
+            _openGlWorldFailed || _requiredOpenGlWorldReceipts.Count != 0 ||
+            !MatchesExpectedOpenGlWorldImage() ||
+            (_openGlWorldNativeTokens.Count != 0 && HasUntrackedLateWorldUiOutput))
+            return false;
+        foreach (ulong nativeToken in _openGlWorldNativeTokens.Values)
+            if (!Renderer.IsUiWorldOutputAttemptStillValid(nativeToken))
+                return false;
+        return true;
+    }
+
+    private bool MatchesExpectedOpenGlWorldImage()
+    {
+        if (_expectedOpenGlWorldViewport is not { } expected)
+        {
+            if (_openGlWorldNativeTokens.Count != 0)
+                return false;
+            if (Viewports is { } currentViewports)
+                for (int index = 0; index < currentViewports.Count; index++)
+                    if (currentViewports[index].HasRenderingRetainedWorldUiImage)
+                        return false;
+            return true;
+        }
+        if (Viewports is not { Count: 1 } viewports ||
+            !ReferenceEquals(viewports[0], expected) ||
+            !expected.EnableRetainedWorldUiColor ||
+            _openGlWorldNativeTokens.Count != 1 ||
+            !expected.TryGetRenderingRetainedWorldUiImageKey(
+                out RenderCommandCollection commands,
+                out long packageGeneration))
+            return false;
+        return ReferenceEquals(commands, _expectedOpenGlWorldCommands) &&
+            packageGeneration == _expectedOpenGlWorldPackageGeneration;
+    }
 
     private void CompleteOpenGlRenderDispatch(ulong dispatchToken, bool presented)
     {
         if (dispatchToken == 0UL || dispatchToken != _activeOpenGlDispatchToken)
             throw new InvalidOperationException("The OpenGL window dispatch token is not active.");
         _activeOpenGlDispatchToken = 0UL;
+        Exception? failure = null;
+        if (!presented && _expectedOpenGlWorldViewport is { } failedViewport)
+            try { failedViewport.DiscardRetainedWorldUiHistory(); }
+            catch (Exception error) { failure ??= error; }
+        foreach (ulong nativeToken in _openGlWorldNativeTokens.Values)
+            try { Renderer.AbortUiWorldOutputAttempt(nativeToken); }
+            catch (Exception error) { failure ??= error; }
+        _openGlWorldNativeTokens.Clear();
         _requiredOpenGlBackdropReceipts.Clear();
         _openGlBackdropFailed = false;
-        if (presented)
-            OnOpenGlRenderDispatched();
-        else
-            ReleaseUiFrame(_windowUiFrame);
+        _requiredOpenGlWorldReceipts.Clear();
+        _openGlWorldFailed = false;
+        _expectedOpenGlWorldViewport = null;
+        _expectedOpenGlWorldCommands = null;
+        _expectedOpenGlWorldPackageGeneration = 0;
+        try
+        {
+            if (presented)
+                OnOpenGlRenderDispatched();
+            else
+            {
+                try { ReleaseUiFrame(_windowUiFrame); }
+                finally { _worldUiConsumers.Clear(); }
+            }
+        }
+        catch (Exception error) { failure ??= error; }
+        if (failure is not null)
+            throw failure;
     }
 
     internal void RegisterUiWorldConsumer(XRViewport viewport, UICanvasComponent canvas)

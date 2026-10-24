@@ -1156,7 +1156,7 @@ internal sealed partial class VulkanCommandRuntime
                 (EFrameOutputKind.DesktopScene or EFrameOutputKind.EditorScenePanel or EFrameOutputKind.UiPreview) &&
             output.ConsumerDependencySetId == 0UL &&
             draw.IndexedIndirectAuthoringLease is null &&
-            !IsUiBatchTextDraw(draw) &&
+            (candidate.Contract.IsText == IsUiBatchTextDraw(draw)) &&
             draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings != true;
     }
 
@@ -1673,10 +1673,32 @@ internal sealed partial class VulkanCommandRuntime
             hash.Add(contract.Intent.Instances);
             hash.Add((int)contract.Intent.ElementType);
             hash.Add(contract.IsBorder);
+            hash.Add(contract.IsImage);
+            hash.Add(contract.IsText);
             if (contract.IsBorder)
             {
                 hash.Add(contract.BorderColorRevision);
                 hash.Add(contract.BorderWidthRevision);
+            }
+            if (contract.IsImage)
+            {
+                hash.Add(contract.ImageSrgb);
+                hash.Add(contract.ImageUvRevision);
+                hash.Add(contract.ImageSnapshot?.GetHashCode() ?? 0);
+            }
+            if (contract.IsText)
+            {
+                hash.Add(contract.TextAtlasSnapshot?.GetHashCode() ?? 0);
+                hash.Add(contract.TextAtlasType);
+                hash.Add(contract.TextDistanceRange);
+                hash.Add(contract.TextDistanceRangeMiddle);
+                hash.Add(contract.TextMsdfFillBias);
+                hash.Add(contract.TextDebugMode);
+                hash.Add(contract.TextGlyphTransformsRevision);
+                hash.Add(contract.TextGlyphTexCoordsRevision);
+                hash.Add(contract.TextInstancesRevision);
+                hash.Add(contract.TextGlyphIndicesRevision);
+                hash.Add(contract.TextDrawIndicesRevision);
             }
         }
         return hash.ToHash();

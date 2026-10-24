@@ -84,6 +84,17 @@ internal sealed class HierarchyConstructionScope : IDisposable
         return false;
     }
 
+    internal static void RequireSceneRootAdmission(SceneNode node)
+    {
+        foreach (HierarchyConstructionScope scope in Volatile.Read(ref _active))
+        {
+            if (!scope._context.OwnsAllocation(node))
+                continue;
+            scope.RequireOwnerThread();
+            throw new InvalidOperationException("An owned hierarchy cannot enter any scene root collection before construction completes.");
+        }
+    }
+
     private void RequireOwnerThread()
     {
         if (Environment.CurrentManagedThreadId != _ownerThread)

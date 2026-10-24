@@ -462,7 +462,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         _lifecycle.RootNodes.RemoveDuringNodeDestroy(node);
         foreach (XRScene scene in _loadedScenes)
         {
-            scene.RootNodes.Remove(node);
+            scene.SceneRoots.Remove(node);
             if (_visibleRootsByScene.TryGetValue(scene, out HashSet<SceneNode>? roots))
                 roots.Remove(node);
         }
@@ -489,7 +489,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         if (!_visibleRootsByScene.TryGetValue(scene, out HashSet<SceneNode>? roots))
             _visibleRootsByScene[scene] = roots = new HashSet<SceneNode>(ReferenceEqualityComparer.Instance);
 
-        foreach (SceneNode node in scene.RootNodes)
+        foreach (SceneNode node in scene.SceneRoots)
         {
             if (node is null || !roots.Add(node))
                 continue;

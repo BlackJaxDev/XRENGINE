@@ -193,6 +193,7 @@ public sealed partial class UIBatchCollector : IDisposable
         public ulong CompositionSegmentRevision;
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Atlas;
+        public UITextureSnapshot? AtlasSnapshot;
         public int AtlasType;
         public float DistanceRange;
         public float DistanceRangeMiddle;
@@ -209,6 +210,7 @@ public sealed partial class UIBatchCollector : IDisposable
             CompositionSegmentRevision = 0;
             CropRegion = null;
             Atlas = null;
+            AtlasSnapshot = null;
             AtlasType = TextAtlasBitmap;
             DistanceRange = 0.0f;
             DistanceRangeMiddle = 0.5f;
@@ -231,6 +233,7 @@ public sealed partial class UIBatchCollector : IDisposable
         public ulong CompositionSegmentRevision;
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Texture;
+        public UITextureSnapshot? ImageSnapshot;
         public bool ImageSrgb;
         public bool Border;
         public UIBackdropRequest Backdrop;
@@ -243,6 +246,7 @@ public sealed partial class UIBatchCollector : IDisposable
             CompositionSegmentRevision = 0;
             CropRegion = null;
             Texture = null;
+            ImageSnapshot = null;
             ImageSrgb = false;
             Border = false;
             Backdrop = default;
@@ -296,9 +300,11 @@ public sealed partial class UIBatchCollector : IDisposable
         public int ActiveZIndex;
         public BoundingRectangle? ActiveCropRegion;
         public XRTexture2D? ActiveMaterialTexture;
+        public UITextureSnapshot? ActiveMaterialImageSnapshot;
         public bool ActiveMaterialImageSrgb;
         public bool ActiveMaterialBorder;
         public XRTexture2D? ActiveTextAtlas;
+        public UITextureSnapshot? ActiveTextAtlasSnapshot;
         public int ActiveTextAtlasType;
         public float ActiveTextDistanceRange;
         public float ActiveTextDistanceRangeMiddle;
@@ -314,9 +320,11 @@ public sealed partial class UIBatchCollector : IDisposable
             ActiveZIndex = 0;
             ActiveCropRegion = null;
             ActiveMaterialTexture = null;
+            ActiveMaterialImageSnapshot = null;
             ActiveMaterialImageSrgb = false;
             ActiveMaterialBorder = false;
             ActiveTextAtlas = null;
+            ActiveTextAtlasSnapshot = null;
             ActiveTextAtlasType = TextAtlasBitmap;
             ActiveTextDistanceRange = 0.0f;
             ActiveTextDistanceRangeMiddle = 0.5f;
@@ -470,6 +478,7 @@ public sealed partial class UIBatchCollector : IDisposable
                         current.CompositionOwner != old.CompositionOwner ||
                         current.CompositionSegmentIdentity != old.CompositionSegmentIdentity ||
                         !ReferenceEquals(current.Texture, old.Texture) ||
+                        !ReferenceEquals(current.ImageSnapshot, old.ImageSnapshot) ||
                         current.ImageSrgb != old.ImageSrgb || current.Border != old.Border) continue;
                     current.RunId = old.RunId;
                     _claimedPreviousRunIds.Add(old.RunId);
@@ -493,6 +502,7 @@ public sealed partial class UIBatchCollector : IDisposable
                         current.CompositionOwner != old.CompositionOwner ||
                         current.CompositionSegmentIdentity != old.CompositionSegmentIdentity ||
                         !ReferenceEquals(current.Atlas, old.Atlas) || current.AtlasType != old.AtlasType ||
+                        !ReferenceEquals(current.AtlasSnapshot, old.AtlasSnapshot) ||
                         current.DistanceRange != old.DistanceRange ||
                         current.DistanceRangeMiddle != old.DistanceRangeMiddle ||
                         current.MsdfFillBias != old.MsdfFillBias || current.DebugMode != old.DebugMode) continue;
@@ -1168,21 +1178,22 @@ public sealed partial class UIBatchCollector : IDisposable
                 Vector4 color = record.TextColor;
                 Vector4 outline = record.OutlineColor;
                 Vector4 bounds = record.Bounds;
-                AddTextQuad(record.RenderPass, record.ZIndex, passes, record.Atlas,
+                AddTextQuadCore(record.RenderPass, record.ZIndex, passes, record.Atlas,
                     in world, in color, in outline, record.OutlineThickness, in bounds,
                     record.AtlasType, record.DistanceRange, record.DistanceRangeMiddle,
-                    record.MsdfFillBias, record.DebugMode, layout, record.Crop, primitiveHandle, record.CompositionOwner, segmentIdentity, segmentRevision);
+                    record.MsdfFillBias, record.DebugMode, layout, record.Crop, primitiveHandle, record.CompositionOwner, segmentIdentity, segmentRevision,
+                    record.AtlasSnapshot);
             }
             else
             {
                 Matrix4x4 world = record.WorldMatrix;
                 Vector4 color = record.QuadColor;
                 Vector4 bounds = record.Bounds;
-                AddMaterialQuad(record.RenderPass, record.ZIndex, passes,
+                AddMaterialQuadCore(record.RenderPass, record.ZIndex, passes,
                     in world, in color, in bounds, record.Crop, record.Texture,
                     record.UV, record.ImageSrgb, record.IsBorder,
                     record.BorderColor, record.BorderWidth, primitiveHandle, record.CompositionOwner, segmentIdentity, segmentRevision,
-                    record.Backdrop);
+                    record.Backdrop, record.TextureSnapshot);
             }
         }
         _collectPublishedRecordIndex = -1;
@@ -1213,6 +1224,19 @@ public sealed partial class UIBatchCollector : IDisposable
         ulong compositionSegmentIdentity = 0,
         ulong compositionSegmentRevision = 0,
         UIBackdropRequest backdrop = default)
+        => AddMaterialQuadCore(renderPass, zIndex, passes, in worldMatrix, in color,
+            in uixywh, cropRegion, texture, uv, imageSrgb, border,
+            borderColor, borderWidth, primitiveHandle, compositionOwner,
+            compositionSegmentIdentity, compositionSegmentRevision, backdrop, null);
+
+    private void AddMaterialQuadCore(
+        int renderPass, int zIndex, RenderCommandCollection passes,
+        in Matrix4x4 worldMatrix, in Vector4 color, in Vector4 uixywh,
+        BoundingRectangle? cropRegion, XRTexture2D? texture, Vector4 uv,
+        bool imageSrgb, bool border, Vector4 borderColor, float borderWidth,
+        ulong primitiveHandle, UICompositionOwner compositionOwner,
+        ulong compositionSegmentIdentity, ulong compositionSegmentRevision,
+        UIBackdropRequest backdrop, UITextureSnapshot? imageSnapshot)
     {
         UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
@@ -1224,6 +1248,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.ActiveKind == EBatchMarkerKind.Material && state.ActiveZIndex == zIndex &&
             state.ActiveCropRegion == cropRegion &&
             ReferenceEquals(state.ActiveMaterialTexture, texture) &&
+            ReferenceEquals(state.ActiveMaterialImageSnapshot, imageSnapshot) &&
             state.ActiveMaterialImageSrgb == imageSrgb &&
             state.ActiveMaterialBorder == border &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch) &&
@@ -1243,6 +1268,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.ActiveCompositionSegmentIdentity = compositionSegmentIdentity;
             batch.CropRegion = cropRegion;
             batch.Texture = texture;
+            batch.ImageSnapshot = imageSnapshot;
             batch.ImageSrgb = imageSrgb;
             batch.Border = border;
             batch.Backdrop = backdrop;
@@ -1250,6 +1276,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.ActiveZIndex = zIndex;
             state.ActiveCropRegion = cropRegion;
             state.ActiveMaterialTexture = texture;
+            state.ActiveMaterialImageSnapshot = imageSnapshot;
             state.ActiveMaterialImageSrgb = imageSrgb;
             state.ActiveMaterialBorder = border;
             state.ActiveTextAtlas = null;
@@ -1305,6 +1332,23 @@ public sealed partial class UIBatchCollector : IDisposable
         UICompositionOwner compositionOwner = default,
         ulong compositionSegmentIdentity = 0,
         ulong compositionSegmentRevision = 0)
+        => AddTextQuadCore(renderPass, zIndex, passes, fontAtlas,
+            in worldMatrix, in textColor, in outlineColor, outlineThickness,
+            in uixywh, atlasType, distanceRange, distanceRangeMiddle,
+            msdfFillBias, debugMode, layout, cropRegion, primitiveHandle,
+            compositionOwner, compositionSegmentIdentity,
+            compositionSegmentRevision, null);
+
+    private void AddTextQuadCore(
+        int renderPass, int zIndex, RenderCommandCollection passes,
+        XRTexture2D fontAtlas, in Matrix4x4 worldMatrix,
+        in Vector4 textColor, in Vector4 outlineColor,
+        float outlineThickness, in Vector4 uixywh, int atlasType,
+        float distanceRange, float distanceRangeMiddle, float msdfFillBias,
+        int debugMode, UITextLayoutResult layout, BoundingRectangle? cropRegion,
+        ulong primitiveHandle, UICompositionOwner compositionOwner,
+        ulong compositionSegmentIdentity, ulong compositionSegmentRevision,
+        UITextureSnapshot? atlasSnapshot)
     {
         UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
@@ -1313,6 +1357,7 @@ public sealed partial class UIBatchCollector : IDisposable
         TextBatchData batch;
         if (state.ActiveCompositionOwner == compositionOwner &&
             state.ActiveCompositionSegmentIdentity == compositionSegmentIdentity && TextBatchMatches(state, zIndex, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
+            ReferenceEquals(state.ActiveTextAtlasSnapshot, atlasSnapshot) &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
@@ -1329,6 +1374,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.ActiveCompositionSegmentIdentity = compositionSegmentIdentity;
             batch.CropRegion = cropRegion;
             batch.Atlas = fontAtlas;
+            batch.AtlasSnapshot = atlasSnapshot;
             batch.AtlasType = atlasType;
             batch.DistanceRange = distanceRange;
             batch.DistanceRangeMiddle = distanceRangeMiddle;
@@ -1338,6 +1384,7 @@ public sealed partial class UIBatchCollector : IDisposable
             state.ActiveZIndex = zIndex;
             state.ActiveCropRegion = cropRegion;
             state.ActiveTextAtlas = fontAtlas;
+            state.ActiveTextAtlasSnapshot = atlasSnapshot;
             state.ActiveTextAtlasType = atlasType;
             state.ActiveTextDistanceRange = distanceRange;
             state.ActiveTextDistanceRangeMiddle = distanceRangeMiddle;
@@ -2796,7 +2843,7 @@ public sealed partial class UIBatchCollector : IDisposable
     private UIStaticDrawCandidate CaptureStaticDrawCandidate(AbstractRenderer renderer,
         XRMeshRenderer mesh, MaterialQuadBatchData batch, MaterialGPUResources? cohort)
     {
-        if (renderer.BackendId != RendererBackendId.Vulkan || cohort is null || batch.Texture is not null ||
+        if (renderer.BackendId != RendererBackendId.Vulkan || cohort is null ||
             batch.Backdrop.IsDefined ||
             !batch.CompositionOwner.IsExplicit || batch.CompositionOwner.Kind != EUICompositionLayerKind.StaticChrome ||
             batch.CompositionSegmentIdentity == 0 || batch.CompositionSegmentRevision == 0 ||
@@ -2809,8 +2856,11 @@ public sealed partial class UIBatchCollector : IDisposable
 
         XRDataBuffer? borderColor = null;
         XRDataBuffer? borderWidth = null;
+        XRDataBuffer? imageUv = null;
+        UITextureSnapshot? imageSnapshot = null;
         ulong borderColorRevision = 0;
         ulong borderWidthRevision = 0;
+        ulong imageUvRevision = 0;
         if (batch.Border)
         {
             if (!ReferenceEquals(mesh, cohort.BorderMesh) ||
@@ -2823,6 +2873,19 @@ public sealed partial class UIBatchCollector : IDisposable
             borderWidth = width;
             borderColorRevision = uv.Revision;
             borderWidthRevision = width.Revision;
+        }
+        else if (batch.Texture is { } texture)
+        {
+            if (batch.ImageSnapshot is not { } snapshot ||
+                !ReferenceEquals(snapshot.Texture, texture) ||
+                !cohort.TextureMeshes.TryGetValue((texture, batch.ImageSrgb), out XRMeshRenderer? imageMesh) ||
+                !ReferenceEquals(mesh, imageMesh) || cohort.Uv is not { } uv ||
+                !mesh.Buffers.TryGetValue("QuadUvBuffer", out XRDataBuffer? meshUv) ||
+                !ReferenceEquals(meshUv, uv))
+                return default;
+            imageSnapshot = snapshot;
+            imageUv = uv;
+            imageUvRevision = uv.Revision;
         }
 
         UIIndexedDrawIntent intent = UIIndexedDrawIntent.Capture(mesh,
@@ -2837,6 +2900,12 @@ public sealed partial class UIBatchCollector : IDisposable
             BorderColorRevision = borderColorRevision,
             BorderWidthBuffer = borderWidth,
             BorderWidthRevision = borderWidthRevision,
+            IsImage = imageSnapshot is not null,
+            ImageSnapshot = imageSnapshot,
+            ImageTexture = imageSnapshot?.Texture,
+            ImageSrgb = imageSnapshot is not null && batch.ImageSrgb,
+            ImageUvBuffer = imageUv,
+            ImageUvRevision = imageUvRevision,
         };
         return contract.IsDefined ? new(contract, renderer, receipt.Id) : default;
     }
@@ -3013,9 +3082,12 @@ public sealed partial class UIBatchCollector : IDisposable
             MaybeLogTextPrepareSummary();
 
         bool textDrawSubmitted = false;
+        UIStaticDrawCandidate cacheCandidate = CaptureStaticTextDrawCandidate(
+            renderer, textMesh, batchData, gpu);
         ApplyBatchCropping(batchData.CropRegion);
         try
         {
+            using UIStaticDrawScope cacheScope = new(in cacheCandidate);
             if (profileGpu)
             {
                 using (profiler.StartScope($"UIBatchTextDraw[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
@@ -3049,6 +3121,61 @@ public sealed partial class UIBatchCollector : IDisposable
             else if (textDrawSubmitted)
                 gpu.Submitted = true;
         }
+    }
+
+    private UIStaticDrawCandidate CaptureStaticTextDrawCandidate(
+        AbstractRenderer renderer, XRMeshRenderer mesh,
+        TextBatchData batch, TextGPUResources gpu)
+    {
+        if (renderer.BackendId != RendererBackendId.Vulkan ||
+            !ReferenceEquals(mesh, gpu.Mesh) ||
+            batch.AtlasSnapshot is not { } snapshot ||
+            !ReferenceEquals(snapshot.Texture, batch.Atlas) ||
+            !batch.CompositionOwner.IsExplicit ||
+            batch.CompositionOwner.Kind != EUICompositionLayerKind.StaticChrome ||
+            batch.CompositionSegmentIdentity == 0 ||
+            batch.CompositionSegmentRevision == 0 ||
+            _activeReceipt is not { } receipt ||
+            !ReferenceEquals(receipt.Renderer, renderer) ||
+            _renderingPublication is not
+            { AuthoringDrawSpace: ECanvasDrawSpace.Screen,
+              DrawSpace: ECanvasDrawSpace.Screen,
+              AuthoringOffscreen: false } publication ||
+            !ReferenceEquals(publication.RenderStorage, _renderPublishedStorage) ||
+            !ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage) ||
+            gpu.GlyphTransformsBuf is null || gpu.GlyphTexCoordsBuf is null ||
+            gpu.TextInstanceBuf is null || gpu.GlyphTextIndexBuf is null ||
+            gpu.GlyphDrawIndexBuf is null)
+            return default;
+
+        UIIndexedDrawIntent intent = UIIndexedDrawIntent.Capture(mesh,
+            EPrimitiveType.Triangles, checked((uint)batch.TotalGlyphs));
+        UIStaticDrawContract contract = new(publication.CanvasLifetime,
+            batch.CompositionOwner, batch.CompositionSegmentIdentity,
+            batch.CompositionSegmentRevision, batch.RunId,
+            renderer.BackendGeneration, intent)
+        {
+            CapturedMesh = mesh.Mesh,
+            IsText = true,
+            TextAtlasSnapshot = snapshot,
+            TextAtlas = snapshot.Texture,
+            TextAtlasType = batch.AtlasType,
+            TextDistanceRange = batch.DistanceRange,
+            TextDistanceRangeMiddle = batch.DistanceRangeMiddle,
+            TextMsdfFillBias = batch.MsdfFillBias,
+            TextDebugMode = batch.DebugMode,
+            TextGlyphTransforms = gpu.GlyphTransformsBuf,
+            TextGlyphTransformsRevision = gpu.GlyphTransformsBuf.Revision,
+            TextGlyphTexCoords = gpu.GlyphTexCoordsBuf,
+            TextGlyphTexCoordsRevision = gpu.GlyphTexCoordsBuf.Revision,
+            TextInstances = gpu.TextInstanceBuf,
+            TextInstancesRevision = gpu.TextInstanceBuf.Revision,
+            TextGlyphIndices = gpu.GlyphTextIndexBuf,
+            TextGlyphIndicesRevision = gpu.GlyphTextIndexBuf.Revision,
+            TextDrawIndices = gpu.GlyphDrawIndexBuf,
+            TextDrawIndicesRevision = gpu.GlyphDrawIndexBuf.Revision,
+        };
+        return contract.IsDefined ? new(contract, renderer, receipt.Id) : default;
     }
 
     private static void MaybeLogTextPrepareSummary()

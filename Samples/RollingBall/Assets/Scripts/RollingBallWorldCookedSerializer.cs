@@ -249,9 +249,9 @@ internal static class RollingBallWorldCookedSerializer
     {
         WriteString(writer, scene.Name);
         writer.Write(scene.IsVisible);
-        writer.Write(scene.RootNodes.Count);
-        for (int i = 0; i < scene.RootNodes.Count; i++)
-            WriteNode(writer, scene.RootNodes[i]);
+        writer.Write(scene.SceneRoots.Count);
+        for (int i = 0; i < scene.SceneRoots.Count; i++)
+            WriteNode(writer, scene.SceneRoots[i]);
     }
 
     private static XRScene ReadScene(BinaryReader reader)
@@ -262,7 +262,7 @@ internal static class RollingBallWorldCookedSerializer
         };
         int rootCount = ReadCount(reader, "root node");
         for (int i = 0; i < rootCount; i++)
-            scene.RootNodes.Add(ReadNode(reader, parent: null));
+            scene.SceneRoots.Add(ReadNode(reader, parent: null));
         return scene;
     }
 

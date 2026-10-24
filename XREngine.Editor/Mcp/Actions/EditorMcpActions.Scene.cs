@@ -49,7 +49,7 @@ namespace XREngine.Editor.Mcp
                 return Task.FromResult(new McpToolResponse("No active scene found.", isError: true));
 
             var nodes = new List<object>();
-            foreach (var root in scene.RootNodes)
+            foreach (var root in scene.SceneRoots)
             {
                 if (root is null) continue;
                 CollectNodes(root, nodes, 0, maxDepth);
@@ -234,7 +234,7 @@ namespace XREngine.Editor.Mcp
             else
             {
                 node = new SceneNode(name);
-                scene.RootNodes.Add(node);
+                scene.SceneRoots.Add(node);
                 if (scene.IsVisible)
                     world.RootNodes.Add(node);
             }
@@ -253,7 +253,7 @@ namespace XREngine.Editor.Mcp
                         parentTfm.RemoveChild(node.Transform, EParentAssignmentMode.Immediate);
                     else
                     {
-                        sceneCapture.RootNodes.Remove(node);
+                        sceneCapture.SceneRoots.Remove(node);
                         worldCapture.RootNodes.Remove(node);
                     }
                     node.IsActiveSelf = false;
@@ -264,7 +264,7 @@ namespace XREngine.Editor.Mcp
                         node.Transform.SetParent(parentTfm, false, EParentAssignmentMode.Immediate);
                     else
                     {
-                        sceneCapture.RootNodes.Add(node);
+                        sceneCapture.SceneRoots.Add(node);
                         if (sceneCapture.IsVisible)
                             worldCapture.RootNodes.Add(node);
                     }
@@ -348,7 +348,7 @@ namespace XREngine.Editor.Mcp
                 if (targetScene is null)
                     return Task.FromResult(new McpToolResponse("No active scene found to place the duplicated node.", isError: true));
 
-                targetScene.RootNodes.Add(clone);
+                targetScene.SceneRoots.Add(clone);
                 if (targetScene.IsVisible)
                     world.RootNodes.Add(clone);
             }
@@ -449,7 +449,7 @@ namespace XREngine.Editor.Mcp
             if (scene is null)
                 return Task.FromResult(new McpToolResponse("Unable to resolve the owning scene for the root node.", isError: true));
 
-            int rootIndex = scene.RootNodes.IndexOf(node);
+            int rootIndex = scene.SceneRoots.IndexOf(node);
             if (rootIndex < 0)
                 return Task.FromResult(new McpToolResponse("Node is not registered as a root in its scene.", isError: true));
 
@@ -459,20 +459,20 @@ namespace XREngine.Editor.Mcp
                 if (!TryGetNodeById(world, afterNodeId!, out var afterRoot, out var afterError) || afterRoot is null)
                     return Task.FromResult(new McpToolResponse(afterError ?? "After-node not found.", isError: true));
 
-                if (afterRoot.Parent is not null || !scene.RootNodes.Contains(afterRoot))
+                if (afterRoot.Parent is not null || !scene.SceneRoots.Contains(afterRoot))
                     return Task.FromResult(new McpToolResponse("After-node must be a root node in the same scene.", isError: true));
 
-                targetRootIndex = scene.RootNodes.IndexOf(afterRoot) + 1;
+                targetRootIndex = scene.SceneRoots.IndexOf(afterRoot) + 1;
             }
             else
             {
-                targetRootIndex = Math.Clamp(newIndex!.Value, 0, scene.RootNodes.Count - 1);
+                targetRootIndex = Math.Clamp(newIndex!.Value, 0, scene.SceneRoots.Count - 1);
             }
 
-            scene.RootNodes.Remove(node);
-            if (targetRootIndex > scene.RootNodes.Count)
-                targetRootIndex = scene.RootNodes.Count;
-            scene.RootNodes.Insert(targetRootIndex, node);
+            scene.SceneRoots.Remove(node);
+            if (targetRootIndex > scene.SceneRoots.Count)
+                targetRootIndex = scene.SceneRoots.Count;
+            scene.SceneRoots.Insert(targetRootIndex, node);
 
             void SyncWorldRoots()
             {
@@ -480,9 +480,9 @@ namespace XREngine.Editor.Mcp
                     return;
 
                 var worldRoots = world.RootNodes;
-                foreach (var root in scene.RootNodes)
+                foreach (var root in scene.SceneRoots)
                     worldRoots.Remove(root);
-                foreach (var root in scene.RootNodes)
+                foreach (var root in scene.SceneRoots)
                     worldRoots.Add(root);
             }
 
@@ -493,14 +493,14 @@ namespace XREngine.Editor.Mcp
             Undo.RecordStructuralChange("Move Root Node",
                 undoAction: () =>
                 {
-                    scene.RootNodes.Remove(node);
-                    scene.RootNodes.Insert(Math.Min(capturedOldRootIndex, scene.RootNodes.Count), node);
+                    scene.SceneRoots.Remove(node);
+                    scene.SceneRoots.Insert(Math.Min(capturedOldRootIndex, scene.SceneRoots.Count), node);
                     SyncWorldRoots();
                 },
                 redoAction: () =>
                 {
-                    scene.RootNodes.Remove(node);
-                    scene.RootNodes.Insert(Math.Min(capturedNewRootIndex, scene.RootNodes.Count), node);
+                    scene.SceneRoots.Remove(node);
+                    scene.SceneRoots.Insert(Math.Min(capturedNewRootIndex, scene.SceneRoots.Count), node);
                     SyncWorldRoots();
                 });
 
@@ -562,7 +562,7 @@ namespace XREngine.Editor.Mcp
 
             foreach (var scene in scenes)
             {
-                foreach (var root in scene.RootNodes)
+                foreach (var root in scene.SceneRoots)
                 {
                     if (root is null) continue;
                     foreach (var node in EnumerateHierarchy(root))
@@ -620,7 +620,7 @@ namespace XREngine.Editor.Mcp
 
             foreach (var scene in scenes)
             {
-                foreach (var root in scene.RootNodes)
+                foreach (var root in scene.SceneRoots)
                 {
                     if (root is null) continue;
                     foreach (var node in EnumerateHierarchy(root))
@@ -1008,7 +1008,7 @@ namespace XREngine.Editor.Mcp
             {
                 foreach (var scene in world.TargetWorld.Scenes)
                 {
-                    foreach (var root in scene.RootNodes)
+                    foreach (var root in scene.SceneRoots)
                     {                        if (root is null) continue;                        foreach (var node in EnumerateHierarchy(root))
                             used.Add(node.Layer);
                     }
@@ -1076,7 +1076,7 @@ namespace XREngine.Editor.Mcp
             {
                 foreach (var scene in world.TargetWorld.Scenes)
                 {
-                    foreach (var root in scene.RootNodes)
+                    foreach (var root in scene.SceneRoots)
                     {
                         if (root is null) continue;
                         foreach (var node in EnumerateHierarchy(root))

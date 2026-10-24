@@ -6,8 +6,8 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **43 of 60 implementation items are complete**.
-The active TODO has 17 code items and four owner decisions. Later sections
+Latest code reconciliation: **44 of 60 implementation items are complete**.
+The active TODO has 16 code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -699,3 +699,53 @@ The frozen source snapshot contains 10,556 files. Editor build 44 passed with
 zero warnings/errors in 2m35.43s on the same inputs. Desktop compilation 23 passed
 with zero warnings/errors in 50.98s; its Windows fixtures did not execute. These checks do not establish Windows
 execution, native IME, GPU/visual acceptance, or performance against ImGui.
+
+
+## Retained Command Reuse And Structural Ownership
+
+Code completion is **44 of the original 60 items**. The bounded Vulkan static
+command-cache contract is complete in source. Native cache execution remains
+unverified. The active TODO retains 16 implementation items, four original owner
+decisions, and three pending proposals.
+
+| Area | Completed / original code items |
+|---|---:|
+| Worker layout | 9 / 9 |
+| Publication and input | 5 / 8 |
+| Persistent rendering and clipping | 15 / 17 |
+| Controls and virtual collections | 10 / 11 |
+| Fixtures and integration | 3 / 3 |
+| Editor adoption | 2 / 12 |
+
+- Supported Vulkan solid, border, bindful image, and text chrome runs retain
+  private buffers and stable run identity across unrelated overlays. Native
+  resource, clip, output, and fence ownership still control admission and reuse.
+  OpenGL retains geometry/buffers and issues its draws each frame.
+- An explicit canvas-only OpenGL world route connects command-image ownership,
+  native output lineage, accepted presentation, and frozen input. Defaults stay
+  unchanged. Mixed scenes, world clipping, Vulkan world output, and shadows
+  remain open.
+- Scene roots and child/component lists retain exact occurrence ownership,
+  including silent mutations, failed world binding, callback replacement, and
+  queued destruction vetoes. Legacy scene serialization fixtures preserve the
+  existing formats. Safe graph retirement and active Duplicate remain open.
+- Console snapshots reuse storage and capture repeat counts with displayed text.
+  Profiler views add bounded CPU aggregates, engine diagnostics, GPU summaries
+  and selected worst-frame trees. Full profiler parity remains open.
+- Animation rows have stable IDs and lazy formatting. Canonical edit receipts
+  preserve unrelated callback history and reject stale owners. Built-in vector
+  edits commit a complete handle before notification and recover synchronization
+  after exceptions. Plot interaction, incremental dirty capture, complete authoring
+  controls, and exact equal-time order restoration remain open.
+
+Headless build117 passed with zero warnings/errors in 19.16s. Full run75 passed
+**837 of 837 tests**, with no warnings, failures, or skips, in 12.465s. Editor
+build50 passed with zero warnings/errors in 46.64s. Desktop test compilation26
+passed with zero warnings/errors in 49.54s; those Windows tests did not execute.
+The source snapshot contains 10,631 files. After the headless run, only an
+unlinked editor helper's nullable flow and two desktop-only test fixtures changed;
+headless production and test inputs match the final source. See the investigation
+for all intermediate failures and repairs.
+
+No Windows execution, native IME, OpenGL/Vulkan output, visual acceptance,
+benchmark, or faster-than-ImGui result is claimed. ImGui remains the default.
