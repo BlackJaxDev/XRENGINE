@@ -61,6 +61,15 @@ public static class NativeUIElements
         label.VerticalAlignment = EVerticalAlignment.Center;
         label.BoundableTransform.Margins = new Vector4(6.0f, 0.0f, 6.0f, 0.0f);
 
+        SceneNode ringNode = new(buttonNode) { Name = "Button focus ring" };
+        UIBoundableTransform ringBounds = ringNode.SetTransform<UIBoundableTransform>();
+        ringBounds.MinAnchor = Vector2.Zero;
+        ringBounds.MaxAnchor = Vector2.One;
+        ringBounds.BlocksInputBehind = false;
+        UIMaterialComponent ring = ringNode.AddComponent<UIMaterialComponent>()!;
+        ring.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Transparent, 2);
+        button.FocusRingMaterial = ring;
+
         if (onClick is not null)
             button.RegisterClickActions(onClick);
 
@@ -167,14 +176,27 @@ public static class NativeUIElements
 
         void LostFocus(UIInteractableComponent _)
         {
+            if (toggle.CanInteract && toggle.IsMouseDirectlyOver)
+                return;
+            materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
+            materialComponent.BatchBorderColor = ColorF4.Gray;
+            glyph.Color = ColorF4.Gray;
+        }
+
+        void MouseLeave(UIInteractableComponent _)
+        {
+            if (toggle.CanInteract && toggle.IsFocused)
+                return;
             materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
             materialComponent.BatchBorderColor = ColorF4.Gray;
             glyph.Color = ColorF4.Gray;
         }
 
         toggle.OnStateChanged += SetCheckState;
+        toggle.GotFocus += GotFocus;
+        toggle.LostFocus += LostFocus;
         toggle.MouseDirectOverlapEnter += GotFocus;
-        toggle.MouseDirectOverlapLeave += LostFocus;
+        toggle.MouseDirectOverlapLeave += MouseLeave;
         SetCheckState(toggle.CurrentState);
 
         return (toggle, materialComponent, glyph);

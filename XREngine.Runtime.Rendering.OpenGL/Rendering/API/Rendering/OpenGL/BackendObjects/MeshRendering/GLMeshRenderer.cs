@@ -703,12 +703,8 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, patchEbo);
                     ApplyPatchParameters(ActiveMeshRenderer);
-                    Api.DrawElementsInstanced(
-                        GLEnum.Patches,
-                        patchControlPoints,
-                        ToGLEnum(ActiveMeshRenderer.TrianglesElementType),
-                        null,
-                        instances);
+                    DrawUiCheckedElements(ActiveMeshRenderer, EPrimitiveType.Patches,
+                        GLEnum.Patches, patchControlPoints, ActiveMeshRenderer.TrianglesElementType, instances);
                     RecordActiveDrawCoverage(indirect: false, instances);
                     if (instances != 0) MarkImmediateHistoryBoundWrite();
                     RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
@@ -730,7 +726,8 @@ namespace XREngine.Rendering.OpenGL
                 if (ActiveMeshRenderer.ShouldLogModelDrawDiagnostic())
                     ActiveMeshRenderer.LogModelDrawDiagnostic("DrawElementsInstanced triangles", instances, $"ebo={triEbo}");
                 GLRenderQuery? samplesProbe = ActiveMeshRenderer.BeginBatchedTextSamplesProbe();
-                Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
+                DrawUiCheckedElements(ActiveMeshRenderer, EPrimitiveType.Triangles,
+                    GLEnum.Triangles, triangles, ActiveMeshRenderer.TrianglesElementType, instances);
                 RecordActiveDrawCoverage(indirect: false, instances);
                 ActiveMeshRenderer.EndBatchedTextSamplesProbe(samplesProbe, instances, triangles);
                 if (instances != 0) MarkImmediateHistoryBoundWrite();
@@ -753,7 +750,8 @@ namespace XREngine.Rendering.OpenGL
                 && lineBuffer.TryGetBindingId(out uint lineEbo) && lineEbo != 0)
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, lineEbo);
-                Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
+                DrawUiCheckedElements(ActiveMeshRenderer, EPrimitiveType.Lines,
+                    GLEnum.Lines, lines, ActiveMeshRenderer.LineIndicesElementType, instances);
                 RecordActiveDrawCoverage(indirect: false, instances);
                 if (instances != 0) MarkImmediateHistoryBoundWrite();
                 RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
@@ -766,7 +764,8 @@ namespace XREngine.Rendering.OpenGL
                 && pointBuffer.TryGetBindingId(out uint pointEbo) && pointEbo != 0)
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, pointEbo);
-                Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
+                DrawUiCheckedElements(ActiveMeshRenderer, EPrimitiveType.Points,
+                    GLEnum.Points, points, ActiveMeshRenderer.PointIndicesElementType, instances);
                 RecordActiveDrawCoverage(indirect: false, instances);
                 if (instances != 0) MarkImmediateHistoryBoundWrite();
                 RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();

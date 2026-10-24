@@ -1,13 +1,13 @@
 # Native UI Retained Performance And Editor Parity TODO
 
-Last Updated: 2026-10-23
+Last Updated: 2026-10-24
 Status: Active
 Architecture: [UI architecture](../../../architecture/ui/README.md)  Design: [Native UI retained rendering design](../../design/ui/native-ui-retained-rendering-design.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The branch contains bounded worker layout and opt-in single-run shaping, shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained quad slots and glyph storage, common controls, virtual collections, and native editor panels. All primary panels can use the detached-window host; full cross-window workflows remain open. Completed code accounts for 38 of the original 60 implementation items; 22 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Offscreen world canvases now use separate producer and consumer receipts. Shared immutable material prototypes cover common primitives. Direct world-space publication, composition layers, large-provider combo navigation, complete text behavior, web teardown, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
+The branch contains bounded worker layout and opt-in single-run shaping, shared immutable pages, explicit publication claims, frozen screen-canvas input records, retained quad slots and glyph storage, common controls, virtual collections, and native editor panels. All primary panels can use the detached-window host; full cross-window workflows remain open. Completed code accounts for 39 of the original 60 implementation items; 21 implementation items and four owner decisions remain. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Offscreen world canvases now use separate producer and consumer receipts. Shared immutable material prototypes cover common primitives. Bounded large-provider combo navigation and first-milestone common controls are implemented. Detached input and web producer retirement use exact owners. Direct world-space publication, composition layers, complete text behavior, remaining subtree teardown, and complete editor parity remain open. Platform acceptance remains separate. ImGui remains the default editor.
 
 ## Open Code Items
 
@@ -28,7 +28,6 @@ The branch contains bounded worker layout and opt-in single-run shaping, shared 
 
 ### Phase 5: Retained Controls And Virtual Collections
 
-- [ ] Complete first-milestone buttons, checkboxes, radio groups, dropdowns, range sliders, color selectors, numeric inputs, and scroll regions. Done when keyboard, focus, state, commit/cancel, clipping, and binding contracts work.
 - [ ] Complete text selection, grapheme-aware navigation, caret hit testing, undo/redo, and platform IME composition. `UITextInputComponent`, text layout, and input integration. Done when edits preserve text identity during layout changes and IME candidate bounds use the presented generation.
 - [ ] Deactivate child subtrees and unregister callbacks during teardown. Done when render, input, watcher, audio, and streaming listeners do not outlive their owners.
 

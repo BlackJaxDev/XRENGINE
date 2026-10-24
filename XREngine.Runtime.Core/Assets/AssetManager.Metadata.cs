@@ -12,57 +12,37 @@ namespace XREngine
         /// </summary>
         public void SyncMetadataWithAssets()
         {
-            if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(GameMetadataPath))
-                return;
-
-            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
-
-            string assetsRoot = Path.GetFullPath(GameAssetsPath);
-            string metadataRoot = Path.GetFullPath(GameMetadataPath);
-            if (!files.DirectoryExists(assetsRoot))
-                return;
-
-            files.CreateDirectory(metadataRoot);
-
-            PruneStaleMetadataEntries(assetsRoot, metadataRoot, fileSystem, files);
-
-            foreach (string directory in fileSystem.EnumerateDirectories(assetsRoot, "*", SearchOption.AllDirectories))
-                EnsureMetadataForAssetPath(directory, true, fileSystem, files);
-
-            foreach (string file in fileSystem.EnumerateFiles(assetsRoot, "*", SearchOption.AllDirectories))
-                EnsureMetadataForAssetPath(file, false, fileSystem, files);
-        }
-
-        private (IAssetFileSystem FileSystem, IAssetMetadataFileBackend Files) CaptureMetadataFileBackend()
-        {
             EnsureHostFileAssetAccess();
-            IAssetFileSystem fileSystem = AssetFileSystemServices.Required;
-            if (fileSystem is not IAssetMetadataFileBackend files)
-                throw new NotSupportedException("AssetSource.MetadataFileUnavailable: the installed asset file system does not provide metadata file operations.");
+            lock (_metadataLock)
+            {
+                AuthoringContext? context = TryCaptureAuthoringContext();
+                if (context is null || !context.Files.DirectoryExists(context.AssetsRoot))
+                    return;
 
-            return (fileSystem, files);
+                context.Files.CreateDirectory(context.MetadataRoot);
+                PruneStaleMetadataEntries(context);
+                foreach (string directory in context.FileSystem.EnumerateDirectories(context.AssetsRoot, "*", SearchOption.AllDirectories))
+                    EnsureMetadataForAssetPath(directory, true, context);
+                foreach (string file in context.FileSystem.EnumerateFiles(context.AssetsRoot, "*", SearchOption.AllDirectories))
+                    EnsureMetadataForAssetPath(file, false, context);
+            }
         }
 
         /// <summary>
         /// Deletes metadata files that no longer have a corresponding asset file or directory.
         /// Also deletes transient metadata files (e.g. from temp files during import).
         /// </summary>
-        /// <param name="assetsRoot">The root directory of the assets.</param>
-        /// <param name="metadataRoot">The root directory of the metadata.</param>
-        private void PruneStaleMetadataEntries(string assetsRoot, string metadataRoot, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+        private void PruneStaleMetadataEntries(AuthoringContext context)
         {
-            lock (_metadataLock)
+            foreach (string metaFile in context.FileSystem.EnumerateFiles(context.MetadataRoot, "*.meta", SearchOption.AllDirectories).ToArray())
             {
-                foreach (string metaFile in fileSystem.EnumerateFiles(metadataRoot, "*.meta", SearchOption.AllDirectories).ToArray())
-                {
-                    if (!ShouldDeleteMetadataFile(metaFile, assetsRoot, files))
-                        continue;
+                if (!ShouldDeleteMetadataFile(metaFile, context.AssetsRoot, context.Files))
+                    continue;
 
-                    if (!TryDeleteMetadataFile(metaFile, files))
-                        continue;
+                if (!TryDeleteMetadataFile(metaFile, context.Files))
+                    continue;
 
-                    TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaFile), fileSystem, files);
-                }
+                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaFile), context);
             }
         }
 
@@ -70,106 +50,46 @@ namespace XREngine
         /// Ensures that there is a metadata file for the given asset path, creating or updating it as necessary.
         /// </summary>
         /// <param name="path">The path of the asset.</param>
-        private void HandleMetadataCreated(string path)
+        private void HandleMetadataCreated(string path, AuthoringContext context)
         {
-            if (!IsPathUnderGameAssets(path))
+            if (!TryMapMetadataPath(context, path, out _, out _) || !IsLivePath(context, path))
                 return;
-
-            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
-            EnsureMetadataForAssetPath(path, SafeIsDirectory(path, files), fileSystem, files);
+            EnsureMetadataForAssetPath(path, context.Files.DirectoryExists(path), context);
         }
 
         /// <summary>
         /// Ensures that there is a metadata file for the given asset path, creating or updating it as necessary.
         /// </summary>
         /// <param name="path">The path of the asset.</param>
-        private void HandleMetadataChanged(string path)
+        private void HandleMetadataChanged(string path, AuthoringContext context)
         {
-            if (!IsPathUnderGameAssets(path))
+            if (!TryMapMetadataPath(context, path, out _, out _) || !IsLivePath(context, path))
                 return;
-
-            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
-            EnsureMetadataForAssetPath(path, SafeIsDirectory(path, files), fileSystem, files);
+            EnsureMetadataForAssetPath(path, context.Files.DirectoryExists(path), context);
         }
 
         /// <summary>
         /// Deletes the metadata file for the given asset path if it exists.
-        /// If the asset is a directory, also deletes metadata for all nested assets.
-        /// Also prunes empty metadata directories up the hierarchy.
+        /// Deletes only the selected path's metadata and prunes empty metadata directories.
         /// </summary>
         /// <param name="path">The path of the asset.</param>
-        private void HandleMetadataDeleted(string path)
+        private void HandleMetadataDeleted(string path, AuthoringContext context)
         {
-            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
-            RemoveMetadataForPath(path, fileSystem, files);
+            if (!IsLivePath(context, path))
+                RemoveMetadataForPath(path, context);
         }
 
         /// <summary>
         /// Moves the metadata file for the given asset path if it exists, otherwise creates a new metadata file for the new path.
-        /// If the asset is a directory, also moves metadata for all nested assets.
+        /// For a directory, moves only that directory's metadata.
         /// </summary>
         /// <param name="oldPath">The old path of the asset.</param>
         /// <param name="newPath">The new path of the asset.</param>
-        private void HandleMetadataRenamed(string oldPath, string newPath)
+        private bool HandleMetadataRenamed(string oldPath, string newPath, AuthoringContext context)
         {
-            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
-            bool isDirectory = SafeIsDirectory(newPath, files) || SafeIsDirectory(oldPath, files);
-            MoveMetadataForPath(oldPath, newPath, isDirectory, fileSystem, files);
-        }
-
-        /// <summary>
-        /// Determines whether the given path is under the GameAssetsPath, accounting for relative paths, symbolic links, and case sensitivity.
-        /// </summary>
-        /// <param name="path">The path to check.</param>
-        /// <returns>True if the path is under the GameAssetsPath; otherwise, false.</returns>
-        private bool IsPathUnderGameAssets(string path)
-        {
-            if (string.IsNullOrWhiteSpace(GameAssetsPath) || string.IsNullOrWhiteSpace(path))
-                return false;
-
-            try
-            {
-                string normalizedAssets = Path.GetFullPath(GameAssetsPath);
-                string normalizedPath = Path.GetFullPath(path);
-
-                string relative = Path.GetRelativePath(normalizedAssets, normalizedPath);
-                if (relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative))
-                    return false;
-
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Determines whether the given path is a directory, accounting for the possibility that the path may not exist (e.g. deleted or renamed assets during watcher events).
-        /// </summary>
-        /// <param name="path">The path to check.</param>
-        /// <returns>True if the path is a directory; otherwise, false.</returns>
-        private static bool SafeIsDirectory(string path, IAssetMetadataFileBackend files)
-        {
-            try
-            {
-                if (files.DirectoryExists(path))
-                    return true;
-                if (files.FileExists(path))
-                    return false;
-
-                // For deleted/renamed watcher events, the path may no longer exist. Avoid File.GetAttributes,
-                // which throws for missing paths and can spam first-chance exceptions under a debugger.
-                return !Path.HasExtension(path);
-            }
-            catch (NotSupportedException)
-            {
-                throw;
-            }
-            catch
-            {
-                return !Path.HasExtension(path);
-            }
+            if (!IsLivePath(context, oldPath) && IsLivePath(context, newPath))
+                return MoveMetadataForPath(oldPath, newPath, context.Files.DirectoryExists(newPath), context);
+            return false;
         }
 
         /// <summary>
@@ -181,21 +101,15 @@ namespace XREngine
         /// <returns>True if the metadata path was successfully determined; otherwise, false.</returns>
         public bool TryGetMetadataPath(string assetPath, out string metadataPath, out string relativePath)
         {
-            metadataPath = string.Empty;
-            relativePath = string.Empty;
-
-            if (string.IsNullOrWhiteSpace(GameMetadataPath) || !IsPathUnderGameAssets(assetPath))
+            lock (_metadataLock)
+            {
+                AuthoringContext? context = TryCaptureAuthoringContext();
+                if (context is not null)
+                    return TryMapMetadataPath(context, assetPath, out metadataPath, out relativePath);
+                metadataPath = string.Empty;
+                relativePath = string.Empty;
                 return false;
-
-            string assetsRoot = Path.GetFullPath(GameAssetsPath);
-            string assetFullPath = Path.GetFullPath(assetPath);
-            relativePath = Path.GetRelativePath(assetsRoot, assetFullPath);
-            if (relativePath.StartsWith("..", StringComparison.Ordinal) || relativePath == ".")
-                return false;
-
-            string target = Path.Combine(GameMetadataPath!, relativePath);
-            metadataPath = $"{target}.meta";
-            return true;
+            }
         }
 
         /// <summary>
@@ -207,24 +121,26 @@ namespace XREngine
         /// <param name="isDirectory">Indicates whether the asset is a directory.</param>
         public void EnsureMetadataForAssetPath(string assetPath, bool isDirectory)
         {
-            if (!TryGetMetadataPath(assetPath, out string metaPath, out string relativePath))
-                return;
-
-            (IAssetFileSystem fileSystem, IAssetMetadataFileBackend files) = CaptureMetadataFileBackend();
-            EnsureMetadataForAssetPath(assetPath, isDirectory, metaPath, relativePath, fileSystem, files);
+            EnsureHostFileAssetAccess();
+            lock (_metadataLock)
+            {
+                AuthoringContext? context = TryCaptureAuthoringContext();
+                if (context is not null)
+                    EnsureMetadataForAssetPath(assetPath, isDirectory, context);
+            }
         }
 
-        private void EnsureMetadataForAssetPath(string assetPath, bool isDirectory, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+        private void EnsureMetadataForAssetPath(string assetPath, bool isDirectory, AuthoringContext context)
         {
-            if (!TryGetMetadataPath(assetPath, out string metaPath, out string relativePath))
+            if (!TryMapMetadataPath(context, assetPath, out string metaPath, out string relativePath))
                 return;
 
-            EnsureMetadataForAssetPath(assetPath, isDirectory, metaPath, relativePath, fileSystem, files);
+            EnsureMetadataForAssetPath(assetPath, isDirectory, metaPath, relativePath, context.Files);
         }
 
         private void EnsureMetadataForAssetPath(
             string assetPath, bool isDirectory, string metaPath, string relativePath,
-            IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+            IAssetMetadataFileBackend files)
         {
             EnsureHostFileAssetAccess();
             lock (_metadataLock)
@@ -296,25 +212,25 @@ namespace XREngine
 
         /// <summary>
         /// Deletes the metadata file for the given asset path if it exists.
-        /// If the asset is a directory, also deletes metadata for all nested assets.
+        /// For a directory, deletes only that directory's metadata.
         /// </summary>
         /// <param name="assetPath">The path of the asset.</param>
-        private void RemoveMetadataForPath(string assetPath, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+        private void RemoveMetadataForPath(string assetPath, AuthoringContext context)
         {
-            if (!TryGetMetadataPath(assetPath, out string metaPath, out _))
+            if (!TryMapMetadataPath(context, assetPath, out string metaPath, out _))
                 return;
 
-            RemoveMetadataFileAtPath(metaPath, fileSystem, files);
+            RemoveMetadataFileAtPath(metaPath, context);
         }
 
-        private void RemoveMetadataFileAtPath(string metaPath, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+        private void RemoveMetadataFileAtPath(string metaPath, AuthoringContext context)
         {
             lock (_metadataLock)
             {
-                if (!TryDeleteMetadataFile(metaPath, files))
+                if (!TryDeleteMetadataFile(metaPath, context.Files))
                     return;
 
-                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaPath), fileSystem, files);
+                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(metaPath), context);
             }
         }
 
@@ -341,50 +257,44 @@ namespace XREngine
 
         /// <summary>
         /// Moves the metadata file for the given asset path if it exists, otherwise creates a new metadata file for the new path.
-        /// If the asset is a directory, also moves metadata for all nested assets.
+        /// For a directory, moves only that directory's metadata.
         /// </summary>
         /// <param name="oldPath">The current path of the asset.</param>
         /// <param name="newPath">The new path of the asset.</param>
         /// <param name="isDirectory">Indicates whether the asset is a directory.</param>
-        private void MoveMetadataForPath(
+        private bool MoveMetadataForPath(
             string oldPath, string newPath, bool isDirectory,
-            IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+            AuthoringContext context)
         {
-            if (!TryGetMetadataPath(oldPath, out string oldMeta, out _))
+            if (!TryMapMetadataPath(context, oldPath, out string oldMeta, out _))
             {
-                EnsureMetadataForAssetPath(newPath, isDirectory, fileSystem, files);
-                return;
+                EnsureMetadataForAssetPath(newPath, isDirectory, context);
+                return true;
             }
 
-            if (!TryGetMetadataPath(newPath, out string newMeta, out _))
+            if (!TryMapMetadataPath(context, newPath, out string newMeta, out _))
             {
-                RemoveMetadataForPath(oldPath, fileSystem, files);
-                return;
+                RemoveMetadataForPath(oldPath, context);
+                return true;
             }
 
             lock (_metadataLock)
             {
+                IAssetMetadataFileBackend files = context.Files;
+                if (files.FileExists(newMeta))
+                    return false;
                 string? newDir = Path.GetDirectoryName(newMeta);
                 if (!string.IsNullOrWhiteSpace(newDir))
                     files.CreateDirectory(newDir);
 
                 if (files.FileExists(oldMeta))
-                {
-                    try
-                    {
-                        files.MoveFile(oldMeta, newMeta, true);
-                    }
-                    catch (System.IO.IOException)
-                    {
-                        files.CopyFile(oldMeta, newMeta, true);
-                        TryDeleteMetadataFile(oldMeta, files);
-                    }
-                }
+                    files.MoveFile(oldMeta, newMeta, false);
 
-                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(oldMeta), fileSystem, files);
+                TryPruneEmptyMetadataDirectories(Path.GetDirectoryName(oldMeta), context);
             }
 
-            EnsureMetadataForAssetPath(newPath, isDirectory, fileSystem, files);
+            EnsureMetadataForAssetPath(newPath, isDirectory, context);
+            return true;
         }
 
         /// <summary>
@@ -511,15 +421,18 @@ namespace XREngine
         /// </summary>
         /// <param name="directory">The starting directory to attempt pruning.</param>
         private void TryPruneEmptyMetadataDirectories(
-            string? directory, IAssetFileSystem fileSystem, IAssetMetadataFileBackend files)
+            string? directory, AuthoringContext context)
         {
-            if (string.IsNullOrWhiteSpace(directory) || string.IsNullOrWhiteSpace(GameMetadataPath))
+            if (string.IsNullOrWhiteSpace(directory))
                 return;
 
-            string root = Path.GetFullPath(GameMetadataPath);
+            IAssetFileSystem fileSystem = context.FileSystem;
+            IAssetMetadataFileBackend files = context.Files;
+            string root = context.MetadataRoot;
             string current = Path.GetFullPath(directory);
 
-            while (current.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            while (!string.Equals(current, root, StringComparison.OrdinalIgnoreCase) &&
+                current.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             {
                 if (!files.DirectoryExists(current))
                     break;

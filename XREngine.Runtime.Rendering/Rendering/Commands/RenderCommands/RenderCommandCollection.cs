@@ -1336,7 +1336,8 @@ namespace XREngine.Rendering.Commands
                     continue;
                 }
 
-                if (skipGpuCommands && cmd is IRenderCommandMesh meshCmd)
+                if (skipGpuCommands && cmd is IRenderCommandMesh meshCmd &&
+                    cmd is not XREngine.Rendering.UI.IUiPublicationRenderCommand)
                 {
                     // Skip mesh commands that should go through GPU dispatch.
                     // Optionally allow opt-out meshes to keep rendering on CPU for diagnostics.

@@ -17,6 +17,12 @@ public interface IRuntimeWindowEventSink
     void RepaintRequested();
     void RenderRequested(double deltaSeconds);
 
-    /// <summary>Reports that the native OpenGL render dispatch returned after its swap.</summary>
-    void OpenGlRenderDispatched() { }
+    /// <summary>Starts one native OpenGL dispatch and returns its presentation token.</summary>
+    ulong BeginOpenGlRenderDispatch() => 0UL;
+
+    /// <summary>Checks whether all required output work for this dispatch completed.</summary>
+    bool CanPresentOpenGlRenderDispatch(ulong dispatchToken) => true;
+
+    /// <summary>Reports whether this exact dispatch completed a native buffer swap.</summary>
+    void CompleteOpenGlRenderDispatch(ulong dispatchToken, bool presented) { }
 }

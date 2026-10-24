@@ -23,7 +23,8 @@ namespace XREngine.Rendering.UI
         private bool _restoreFocusOnDismiss;
         private string _typeAhead = string.Empty;
         private long _lastTypeAheadTick;
-        private const int MaximumTypeAheadLength = 64;
+        /// <summary>Limits the number of characters in a combo search prefix.</summary>
+        public const int MaximumTypeAheadLength = 64;
         private const double TypeAheadTimeoutSeconds = 1;
 
         public UIComboBoxComponent()
@@ -82,6 +83,12 @@ namespace XREngine.Rendering.UI
 
         public Vector2 PopupPosition { get; set; }
         public ulong? SelectedId => _selectedId;
+        public bool SupportsTypeAhead => _virtualOptions is null ||
+            _virtualOptions.Count <= MaximumPopupOptions || _virtualOptions is IUIComboPrefixSearch;
+        public bool SupportsAdjacentSelection => _virtualOptions is null ||
+            _virtualOptions.Count <= MaximumPopupOptions || _virtualOptions is IUIComboEnabledNavigation;
+        public EUIComboLookupStatus LastTypeAheadStatus { get; private set; }
+        public EUIComboLookupStatus LastNavigationStatus { get; private set; }
         /// <summary>Allows the host to place the popup before opening it.</summary>
         public event Action<UIComboBoxComponent>? Opening;
         public event Action<UIValueChange<ulong?>>? SelectionChanged;
@@ -96,6 +103,8 @@ namespace XREngine.Rendering.UI
                     return;
                 Close();
                 SetField(ref _virtualOptions, value);
+                LastTypeAheadStatus = EUIComboLookupStatus.None;
+                LastNavigationStatus = EUIComboLookupStatus.None;
                 _virtualAdapter = value is null ? null : new VirtualOptionAdapter(this, value);
                 if (_selectedId is { } id && !HasOption(id))
                     Select(null, EUIValueChangeOrigin.Programmatic);
@@ -133,6 +142,8 @@ namespace XREngine.Rendering.UI
             }
             _options = options.ToArray();
             VirtualOptions = null;
+            LastTypeAheadStatus = EUIComboLookupStatus.None;
+            LastNavigationStatus = EUIComboLookupStatus.None;
             if (_selectedId is { } id && !HasOption(id))
                 Select(null, EUIValueChangeOrigin.Programmatic);
             if (_popup?.IsOpen == true)
@@ -276,38 +287,54 @@ namespace XREngine.Rendering.UI
         public bool TypeAhead(char character)
         {
             if (!CanInteract || IsReadOnly || char.IsControl(character) || char.IsSurrogate(character))
+            {
+                LastTypeAheadStatus = EUIComboLookupStatus.NotInteractive;
                 return false;
+            }
             long now = Stopwatch.GetTimestamp();
             bool expired = _lastTypeAheadTick == 0 ||
                 Stopwatch.GetElapsedTime(_lastTypeAheadTick, now).TotalSeconds > TypeAheadTimeoutSeconds;
             _lastTypeAheadTick = now;
             string prefix = expired || _typeAhead.Length >= MaximumTypeAheadLength
                 ? character.ToString() : _typeAhead + character;
-            if (TrySelectPrefix(prefix))
+            EUIComboLookupStatus result = TrySelectPrefix(prefix);
+            if (result == EUIComboLookupStatus.Selected)
             {
                 _typeAhead = prefix;
+                LastTypeAheadStatus = result;
                 return true;
             }
+            if (result != EUIComboLookupStatus.NoMatch)
+            {
+                _typeAhead = string.Empty;
+                LastTypeAheadStatus = result;
+                return false;
+            }
             prefix = character.ToString();
-            if (TrySelectPrefix(prefix))
+            result = TrySelectPrefix(prefix);
+            if (result == EUIComboLookupStatus.Selected)
             {
                 _typeAhead = prefix;
+                LastTypeAheadStatus = result;
                 return true;
             }
             _typeAhead = string.Empty;
+            LastTypeAheadStatus = result;
             return false;
         }
 
-        private bool TrySelectPrefix(string prefix)
+        private EUIComboLookupStatus TrySelectPrefix(string prefix)
         {
-            int count = _virtualOptions?.Count ?? _options.Length;
+            IUIComboOptionSource? source = _virtualOptions;
+            int count = source?.Count ?? _options.Length;
             if (count <= 0)
-                return false;
+                return EUIComboLookupStatus.NoMatch;
+            ulong revision = source?.Revision ?? 0;
             int selectedIndex = -1;
             if (_selectedId is { } selected)
             {
-                if (_virtualOptions is not null)
-                    selectedIndex = _virtualOptions.IndexOfId(selected);
+                if (source is not null)
+                    selectedIndex = source.IndexOfId(selected);
                 else
                     for (int i = 0; i < _options.Length; i++)
                         if (_options[i].Id == selected)
@@ -316,26 +343,54 @@ namespace XREngine.Rendering.UI
                             break;
                         }
             }
+            if (source is not null && !SourceUnchanged(source, count, revision))
+                return EUIComboLookupStatus.ProviderChanged;
+            if (selectedIndex < -1 || selectedIndex >= count)
+                return EUIComboLookupStatus.InvalidProviderResult;
             int start = (selectedIndex + 1) % count;
-            if (_virtualOptions is IUIComboPrefixSearch search)
+            if (source is IUIComboPrefixSearch search)
             {
                 int match = search.FindPrefix(prefix, start);
-                if (match < 0 || match >= count)
-                    return false;
-                UIComboOption option = _virtualOptions.GetOption(match);
-                return option.IsEnabled && option.Label.StartsWith(prefix, StringComparison.CurrentCultureIgnoreCase) &&
-                    Select(option.Id, EUIValueChangeOrigin.User);
+                return SelectIndexedOption(source, count, revision, match, prefix);
             }
             if (count > MaximumPopupOptions)
-                return false;
+                return EUIComboLookupStatus.IndexRequired;
             for (int offset = 0; offset < count; offset++)
             {
                 int index = (start + offset) % count;
-                UIComboOption option = _virtualOptions?.GetOption(index) ?? _options[index];
-                if (option.IsEnabled && option.Label.StartsWith(prefix, StringComparison.CurrentCultureIgnoreCase))
-                    return Select(option.Id, EUIValueChangeOrigin.User);
+                UIComboOption option = source?.GetOption(index) ?? _options[index];
+                if (source is not null && !SourceUnchanged(source, count, revision))
+                    return EUIComboLookupStatus.ProviderChanged;
+                if (option.IsEnabled && option.Label.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return Select(option.Id, EUIValueChangeOrigin.User)
+                        ? EUIComboLookupStatus.Selected : EUIComboLookupStatus.SelectionRejected;
             }
-            return false;
+            return EUIComboLookupStatus.NoMatch;
+        }
+
+        private bool SourceUnchanged(IUIComboOptionSource source, int count, ulong revision)
+            => ReferenceEquals(_virtualOptions, source) && source.Count == count && source.Revision == revision;
+
+        private EUIComboLookupStatus SelectIndexedOption(IUIComboOptionSource source,
+            int count, ulong revision, int index, string? prefix = null)
+        {
+            if (!SourceUnchanged(source, count, revision))
+                return EUIComboLookupStatus.ProviderChanged;
+            if (index == -1)
+                return EUIComboLookupStatus.NoMatch;
+            if (index < 0 || index >= count)
+                return EUIComboLookupStatus.InvalidProviderResult;
+            UIComboOption option = source.GetOption(index);
+            if (!SourceUnchanged(source, count, revision))
+                return EUIComboLookupStatus.ProviderChanged;
+            if (option.Id == 0 || !option.IsEnabled ||
+                (prefix is not null && !option.Label.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ||
+                source.IndexOfId(option.Id) != index)
+                return EUIComboLookupStatus.InvalidProviderResult;
+            if (!SourceUnchanged(source, count, revision))
+                return EUIComboLookupStatus.ProviderChanged;
+            return Select(option.Id, EUIValueChangeOrigin.User)
+                ? EUIComboLookupStatus.Selected : EUIComboLookupStatus.SelectionRejected;
         }
 
         private void Escape(bool pressed)
@@ -365,27 +420,66 @@ namespace XREngine.Rendering.UI
         private bool SelectAdjacent(int direction)
         {
             if (!CanInteract || IsReadOnly || _virtualOptions is null && _options.Length == 0)
+            {
+                LastNavigationStatus = EUIComboLookupStatus.NotInteractive;
                 return false;
+            }
             ulong? previous = SelectedId;
             int index = -1;
             if (_virtualOptions is not null)
             {
-                int count = _virtualOptions.Count;
-                if (count == 0)
+                IUIComboOptionSource source = _virtualOptions;
+                int count = source.Count;
+                ulong revision = source.Revision;
+                if (count <= 0)
+                {
+                    LastNavigationStatus = EUIComboLookupStatus.NoMatch;
                     return false;
-                index = _selectedId is { } id ? _virtualOptions.IndexOfId(id) : -1;
+                }
+                index = _selectedId is { } id ? source.IndexOfId(id) : -1;
+                if (!SourceUnchanged(source, count, revision))
+                {
+                    LastNavigationStatus = EUIComboLookupStatus.ProviderChanged;
+                    return false;
+                }
+                if (index < -1 || index >= count)
+                {
+                    LastNavigationStatus = EUIComboLookupStatus.InvalidProviderResult;
+                    return false;
+                }
                 if (index < 0 && direction < 0)
                     index = 0;
+                if (source is IUIComboEnabledNavigation navigation)
+                {
+                    int match = navigation.FindNextEnabled(index, direction);
+                    LastNavigationStatus = SelectIndexedOption(source, count, revision, match);
+                    return LastNavigationStatus == EUIComboLookupStatus.Selected && previous != SelectedId;
+                }
+                if (count > MaximumPopupOptions)
+                {
+                    LastNavigationStatus = EUIComboLookupStatus.IndexRequired;
+                    return false;
+                }
+                int candidate = index;
                 for (int offset = 1; offset <= count; offset++)
                 {
-                    int candidate = (index + direction * offset + count * 2) % count;
-                    UIComboOption option = _virtualOptions.GetOption(candidate);
+                    candidate = direction > 0
+                        ? candidate + 1 == count ? 0 : candidate + 1
+                        : candidate <= 0 ? count - 1 : candidate - 1;
+                    UIComboOption option = source.GetOption(candidate);
+                    if (!SourceUnchanged(source, count, revision))
+                    {
+                        LastNavigationStatus = EUIComboLookupStatus.ProviderChanged;
+                        return false;
+                    }
                     if (option.IsEnabled)
                     {
-                        Select(option.Id, EUIValueChangeOrigin.User);
-                        return previous != SelectedId;
+                        LastNavigationStatus = Select(option.Id, EUIValueChangeOrigin.User)
+                            ? EUIComboLookupStatus.Selected : EUIComboLookupStatus.SelectionRejected;
+                        return LastNavigationStatus == EUIComboLookupStatus.Selected && previous != SelectedId;
                     }
                 }
+                LastNavigationStatus = EUIComboLookupStatus.NoMatch;
                 return false;
             }
             for (int i = 0; i < _options.Length; i++)
@@ -393,15 +487,20 @@ namespace XREngine.Rendering.UI
                     index = i;
             if (index < 0 && direction < 0)
                 index = 0;
+            int localCandidate = index;
             for (int offset = 1; offset <= _options.Length; offset++)
             {
-                int candidate = (index + direction * offset + _options.Length * 2) % _options.Length;
-                if (_options[candidate].IsEnabled)
+                localCandidate = direction > 0
+                    ? localCandidate + 1 == _options.Length ? 0 : localCandidate + 1
+                    : localCandidate <= 0 ? _options.Length - 1 : localCandidate - 1;
+                if (_options[localCandidate].IsEnabled)
                 {
-                    Select(_options[candidate].Id, EUIValueChangeOrigin.User);
-                    return previous != SelectedId;
+                    LastNavigationStatus = Select(_options[localCandidate].Id, EUIValueChangeOrigin.User)
+                        ? EUIComboLookupStatus.Selected : EUIComboLookupStatus.SelectionRejected;
+                    return LastNavigationStatus == EUIComboLookupStatus.Selected && previous != SelectedId;
                 }
             }
+            LastNavigationStatus = EUIComboLookupStatus.NoMatch;
             return false;
         }
 

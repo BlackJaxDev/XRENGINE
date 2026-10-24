@@ -14,9 +14,26 @@ public partial class EditorFlyingCameraPawnComponent
     private ScenePickOwner? _pendingClickOwner;
     private ScenePickOwner? _selectionDragOwner;
     private NativeScenePointerOwner? _rightDragOwner;
+    private bool _selectionSubscriptionActive;
+    private bool _nativeSceneDestroying;
+
+    /// <summary>Only the primary editor pawn owns the global selection gizmo lifecycle.</summary>
+    public bool OwnsGlobalSelectionGizmo { get; set; } = true;
+
+    protected override void OnComponentActivated()
+    {
+        base.OnComponentActivated();
+        if (OwnsGlobalSelectionGizmo && !_selectionSubscriptionActive && !_nativeSceneDestroying)
+        {
+            Selection.SelectionChanged += Selection_SelectionChanged;
+            _selectionSubscriptionActive = true;
+            Selection_SelectionChanged(Selection.SceneNodes);
+        }
+    }
 
     private bool IsCurrentWorldPickOwner(int revision, in ScenePickOwner owner)
-        => Volatile.Read(ref _worldPickOwnerRevision) == revision && owner.IsCurrent(this, true);
+        => !_nativeSceneDestroying && !IsDestroyed && !IsDestroyQueued &&
+            Volatile.Read(ref _worldPickOwnerRevision) == revision && owner.IsCurrent(this, true);
 
     private bool TryGetNativeScenePointer(out XRViewport viewport, out Vector2 normalizedPoint)
     {
@@ -51,7 +68,8 @@ public partial class EditorFlyingCameraPawnComponent
     private bool TryCaptureScenePickOwner(XRViewport viewport, out ScenePickOwner owner)
     {
         owner = default;
-        if (viewport.Window is not { } window || viewport.CameraComponent is not { } camera ||
+        if (_nativeSceneDestroying || IsDestroyed || IsDestroyQueued ||
+            viewport.Window is not { } window || viewport.CameraComponent is not { } camera ||
             viewport.World is not { } world)
             return false;
         NativeScenePointerOwner? native = TryGetNativeScenePointer(out NativeScenePointerOwner scene, out _) &&
@@ -73,15 +91,45 @@ public partial class EditorFlyingCameraPawnComponent
 
     protected override void OnComponentDeactivated()
     {
+        try
+        {
+            RetireSceneInteraction();
+        }
+        finally
+        {
+            base.OnComponentDeactivated();
+        }
+    }
+
+    protected override void OnDestroying()
+    {
+        _nativeSceneDestroying = true;
+        try
+        {
+            RetireSceneInteraction();
+        }
+        finally
+        {
+            base.OnDestroying();
+        }
+    }
+
+    private void RetireSceneInteraction()
+    {
+        if (_selectionSubscriptionActive)
+        {
+            Selection.SelectionChanged -= Selection_SelectionChanged;
+            _selectionSubscriptionActive = false;
+        }
         _rightDragOwner = null;
         CancelRightClickDrag();
         if (_selectionDragActive)
             ResetSelectionDrag();
         _pendingClickOwner = null;
         _selectAfterForcedPick = false;
-        if (TransformTool3D.GetActiveInstance(out TransformTool3D? tool) && tool is not null)
-            tool.CancelPointerInteraction();
         Interlocked.Increment(ref _worldPickOwnerRevision);
-        base.OnComponentDeactivated();
+        UpdateWorldPickInputState(new(float.NaN, float.NaN), false);
+        if (TransformTool3D.GetActiveInstance(out TransformTool3D? tool) && tool is not null)
+            tool.CancelPointerInteraction(this);
     }
 }

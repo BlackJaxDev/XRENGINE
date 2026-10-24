@@ -65,11 +65,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             RenderInfo3D.New(this, _postRenderRC),
             RenderInfo3D.New(this, _renderHighlightRC)
         ];
-        Selection.SelectionChanged += Selection_SelectionChanged;
     }
 
     private void Selection_SelectionChanged(SceneNode[] selection)
     {
+        if (_nativeSceneDestroying || IsDestroyed || IsDestroyQueued)
+            return;
         SceneNode? transformToolTarget = GetTransformToolTarget(selection);
         if (transformToolTarget is null)
         {
@@ -1269,6 +1270,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (vp is null)
         {
+            if (TransformTool3D.GetActiveInstance(out TransformTool3D? currentTool))
+                currentTool?.CancelPointerInteraction(this);
             UpdateWorldPickInputState(new(float.NaN, float.NaN), false);
             ClearLastViewportMouseSegment();
             return;
@@ -1279,6 +1282,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var cam = pickViewport.CameraComponent;
         if (cam is null)
         {
+            if (TransformTool3D.GetActiveInstance(out TransformTool3D? currentTool))
+                currentTool?.CancelPointerInteraction(this);
             UpdateWorldPickInputState(new(float.NaN, float.NaN), false);
             ClearLastViewportMouseSegment();
             return;
@@ -1291,6 +1296,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 IsWorldPickInputAllowed(vp, cursorInViewport) && !IsHoveringUI());
         if (!ReferenceEquals(_lastWorldPickViewport, pickViewport))
         {
+            if (TransformTool3D.GetActiveInstance(out TransformTool3D? previousTool))
+                previousTool?.CancelPointerInteraction(this);
             _lastWorldPickViewport = pickViewport;
             Interlocked.Increment(ref _worldPickOwnerRevision);
             UpdateWorldPickInputState(new(float.NaN, float.NaN), false);
@@ -1312,10 +1319,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         SceneNode? tfmTool = TransformTool3D.InstanceNode;
         if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp) && comp is not null)
         {
-            if (worldPickInputAllowed)
-                comp.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
+            if (worldPickInputAllowed && ReferenceEquals(comp.World.GetRenderWorld(), pickViewport.World))
+                comp.MouseMove(_lastRaycastSegment, cam.Camera, pickViewport, LeftClickPressed, this);
             else
-                comp.CancelPointerInteraction();
+                comp.CancelPointerInteraction(this);
         }
 
         UpdateSelectionDrag(pickViewport);
@@ -2802,7 +2809,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         if (pressed)
         {
-            if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
+            if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null &&
+                tfmComp.IsHighlightedFor(this, currentViewport, currentViewport.CameraComponent?.Camera))
                 return;
 
             if (!ShiftPressed)
@@ -3333,6 +3341,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         SetYawPitch(XRMath.RadToDeg(euler.Y), XRMath.RadToDeg(euler.X));
     }
 
+    internal void InitializeDetachedCameraPose(Quaternion worldRotation)
+        => SyncYawPitchWithRotation(worldRotation);
+
     private bool HasContinuousMovementInput()
     {
         const float threshold = 0.0001f;
@@ -3594,7 +3605,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void Select()
     {
-        if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
+        if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null &&
+            _activeWorldPickOwner.Viewport is { } pickViewport &&
+            tfmComp.IsHighlightedFor(this, pickViewport, _activeWorldPickOwner.Camera.Camera))
             return;
         List<SceneNode> currentHits = [];
         if (!TryCollectModelComponentHits(currentHits, out bool pendingGpuSelection))

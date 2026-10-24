@@ -140,12 +140,32 @@ public static partial class EditorUnitTests
             return label;
         }
 
-        private sealed class GalleryOptions : IUIComboOptionSource
+        private sealed class GalleryOptions : IUIComboOptionSource,
+            IUIComboPrefixSearch, IUIComboEnabledNavigation
         {
-            public int Count => 1000;
+            private static readonly string[] Labels = CreateLabels();
+            private readonly EditorComboPrefixIndex _prefixIndex = new(Labels);
+            public int Count => Labels.Length;
             public ulong Revision => 1;
-            public UIComboOption GetOption(int index) => new((ulong)index + 1, $"Option {index + 1}");
+            public UIComboOption GetOption(int index) => new((ulong)index + 1, Labels[index]);
             public int IndexOfId(ulong id) => id >= 1 && id <= (ulong)Count ? (int)id - 1 : -1;
+            public int FindPrefix(string prefix, int startIndex) => _prefixIndex.Find(prefix, startIndex);
+            public int FindNextEnabled(int startIndex, int direction)
+            {
+                if (direction is not (1 or -1) || startIndex < -1 || startIndex >= Count)
+                    return -1;
+                return direction > 0
+                    ? startIndex + 1 == Count ? 0 : startIndex + 1
+                    : startIndex <= 0 ? Count - 1 : startIndex - 1;
+            }
+
+            private static string[] CreateLabels()
+            {
+                string[] labels = new string[1000];
+                for (int i = 0; i < labels.Length; i++)
+                    labels[i] = $"Option {i + 1}";
+                return labels;
+            }
         }
     }
 }

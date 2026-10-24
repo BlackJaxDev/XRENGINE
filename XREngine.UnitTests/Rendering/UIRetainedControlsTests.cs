@@ -199,6 +199,96 @@ public sealed class UIRetainedControlsTests
     }
 
     [Test]
+    public void ToggleBinding_ReentrantReplacementDoesNotCommitOldSource()
+    {
+        SceneNode root = new("Toggle replacement", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        UIToggleComponent toggle = root.NewChild("Toggle").AddComponent<UIToggleComponent>()!;
+        UIValueState<UIToggleComponent.ECurrentState> original = new(UIToggleComponent.ECurrentState.False);
+        UIValueState<UIToggleComponent.ECurrentState> replacement = new(UIToggleComponent.ECurrentState.Intermediate);
+        toggle.Binding = original;
+        int commits = 0;
+        toggle.ValueCommitted += _ => commits++;
+        root.IsActiveSelf = true;
+        original.ValueChanged += _ => toggle.Binding = replacement;
+
+        toggle.Toggle().ShouldBeTrue();
+
+        original.Value.ShouldBe(UIToggleComponent.ECurrentState.True);
+        toggle.Binding.ShouldBeSameAs(replacement);
+        toggle.CurrentState.ShouldBe(UIToggleComponent.ECurrentState.Intermediate);
+        commits.ShouldBe(0);
+
+        toggle.Toggle().ShouldBeTrue();
+        replacement.Value.ShouldBe(UIToggleComponent.ECurrentState.True);
+        commits.ShouldBe(1);
+    }
+
+    [Test]
+    public void ToggleBinding_ReentrantDestructionDoesNotCommit()
+    {
+        SceneNode root = new("Toggle destroy", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        UIToggleComponent toggle = root.NewChild("Toggle").AddComponent<UIToggleComponent>()!;
+        UIValueState<UIToggleComponent.ECurrentState> binding = new(UIToggleComponent.ECurrentState.Intermediate);
+        toggle.Binding = binding;
+        int commits = 0;
+        toggle.ValueCommitted += _ => commits++;
+        root.IsActiveSelf = true;
+        binding.ValueChanged += _ => root.Destroy(true);
+
+        toggle.Toggle().ShouldBeTrue();
+
+        binding.Value.ShouldBe(UIToggleComponent.ECurrentState.True);
+        commits.ShouldBe(0);
+    }
+
+    [Test]
+    public void ButtonFocusRing_UsesBorderPrimitiveAndClearsOnDeactivation()
+    {
+        SceneNode root = new("Button focus ring", new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode buttonNode = new(root) { Name = "Button" };
+        buttonNode.SetTransform<UIBoundableTransform>();
+        UIButtonComponent button = buttonNode.AddComponent<UIButtonComponent>()!;
+        buttonNode.AddComponent<UIMaterialComponent>()!.SetBatchSolidColor(ColorF4.DarkGray);
+        SceneNode ringNode = new(buttonNode) { Name = "Focus ring" };
+        ringNode.SetTransform<UIBoundableTransform>();
+        UIMaterialComponent ring = ringNode.AddComponent<UIMaterialComponent>()!;
+        ring.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Transparent, 2);
+        button.FocusRingMaterial = ring;
+        root.IsActiveSelf = true;
+
+        ring.BatchBorderColor.ShouldBe((Vector4)ColorF4.Transparent);
+        button.IsFocused = true;
+        ring.BatchBorderColor.ShouldBe((Vector4)ColorF4.White);
+        SceneNode nextRingNode = new(buttonNode) { Name = "Replacement focus ring" };
+        nextRingNode.SetTransform<UIBoundableTransform>();
+        UIMaterialComponent nextRing = nextRingNode.AddComponent<UIMaterialComponent>()!;
+        nextRing.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Transparent, 2);
+        button.FocusRingMaterial = nextRing;
+        ring.BatchBorderColor.ShouldBe((Vector4)ColorF4.Transparent);
+        nextRing.BatchBorderColor.ShouldBe((Vector4)ColorF4.White);
+        button.IsFocused = false;
+        nextRing.BatchBorderColor.ShouldBe((Vector4)ColorF4.Transparent);
+        button.IsFocused = true;
+        button.CancelForRecycle();
+        nextRing.BatchBorderColor.ShouldBe((Vector4)ColorF4.Transparent);
+        button.FocusRingMaterial.ShouldBeNull();
+        button.FocusRingMaterial = nextRing;
+        button.IsFocused = true;
+        nextRing.BatchBorderColor.ShouldBe((Vector4)ColorF4.White);
+        root.IsActiveSelf = false;
+        nextRing.BatchBorderColor.ShouldBe((Vector4)ColorF4.Transparent);
+    }
+
+    [Test]
     public void TextCaret_NeverStopsInsideCombiningOrEmojiCluster()
     {
         var input = new UITextInputComponent { Text = "A\U0001F1FA\U0001F1F8e\u0301\U0001F469\u200d\U0001F680B" };
@@ -984,6 +1074,133 @@ public sealed class UIRetainedControlsTests
             if (index != 12345)
                 throw new InvalidOperationException("The combo scanned the virtual source.");
             return new UIComboOption(12345, "Ruby");
+        }
+    }
+
+    [Test]
+    public void ComboLargeProvider_ReportsMissingIndicesWithoutScanning()
+    {
+        UIComboBoxComponent combo = CreateActiveCombo("Combo missing indices");
+        UnindexedComboOptions source = new();
+        combo.VirtualOptions = source;
+
+        combo.SupportsTypeAhead.ShouldBeFalse();
+        combo.SupportsAdjacentSelection.ShouldBeFalse();
+        combo.TypeAhead('x').ShouldBeFalse();
+        combo.LastTypeAheadStatus.ShouldBe(EUIComboLookupStatus.IndexRequired);
+        combo.AccessibilityAdjust(1).ShouldBeFalse();
+        combo.LastNavigationStatus.ShouldBe(EUIComboLookupStatus.IndexRequired);
+        source.GetCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void ComboLargeProvider_UsesBoundedEnabledIndicesAndRejectsStaleResults()
+    {
+        UIComboBoxComponent combo = CreateActiveCombo("Combo indexed options");
+        IndexedComboOptions source = new();
+        combo.VirtualOptions = source;
+
+        combo.SupportsTypeAhead.ShouldBeTrue();
+        combo.SupportsAdjacentSelection.ShouldBeTrue();
+        combo.TypeAhead('x').ShouldBeTrue();
+        combo.SelectedId.ShouldBe(111UL);
+        combo.LastTypeAheadStatus.ShouldBe(EUIComboLookupStatus.Selected);
+        source.DisabledNavigationResult = true;
+        combo.AccessibilityAdjust(1).ShouldBeFalse();
+        combo.LastNavigationStatus.ShouldBe(EUIComboLookupStatus.InvalidProviderResult);
+        combo.SelectedId.ShouldBe(111UL);
+        source.DisabledNavigationResult = false;
+        combo.AccessibilityAdjust(1).ShouldBeTrue();
+        combo.SelectedId.ShouldBe(222UL);
+        combo.LastNavigationStatus.ShouldBe(EUIComboLookupStatus.Selected);
+        source.GetCount.ShouldBe(3);
+        source.NavigationCount.ShouldBe(2);
+
+        source.InvalidSelectedIndex = true;
+        combo.TypeAhead('x').ShouldBeFalse();
+        combo.LastTypeAheadStatus.ShouldBe(EUIComboLookupStatus.InvalidProviderResult);
+        combo.AccessibilityAdjust(1).ShouldBeFalse();
+        combo.LastNavigationStatus.ShouldBe(EUIComboLookupStatus.InvalidProviderResult);
+        source.InvalidSelectedIndex = false;
+
+        combo.TypeAhead('q').ShouldBeFalse();
+        combo.LastTypeAheadStatus.ShouldBe(EUIComboLookupStatus.NoMatch);
+        source.DisabledResult = true;
+        combo.TypeAhead('x').ShouldBeFalse();
+        combo.LastTypeAheadStatus.ShouldBe(EUIComboLookupStatus.InvalidProviderResult);
+        combo.SelectedId.ShouldBe(222UL);
+
+        source.DisabledResult = false;
+        source.ChangeRevisionDuringSearch = true;
+        combo.TypeAhead('x').ShouldBeFalse();
+        combo.LastTypeAheadStatus.ShouldBe(EUIComboLookupStatus.ProviderChanged);
+        combo.SelectedId.ShouldBe(222UL);
+    }
+
+    private UIComboBoxComponent CreateActiveCombo(string name)
+    {
+        SceneNode root = new(name, new UICanvasTransform()) { IsActiveSelf = false };
+        _ownedRoots.Add(root);
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        SceneNode node = new(root) { Name = "Combo" };
+        node.SetTransform<UIBoundableTransform>();
+        UIComboBoxComponent combo = node.AddComponent<UIComboBoxComponent>()!;
+        root.IsActiveSelf = true;
+        return combo;
+    }
+
+    private sealed class UnindexedComboOptions : IUIComboOptionSource
+    {
+        public int Count => int.MaxValue;
+        public ulong Revision => 1;
+        public int GetCount { get; private set; }
+        public int IndexOfId(ulong id) => -1;
+        public UIComboOption GetOption(int index)
+        {
+            GetCount++;
+            throw new InvalidOperationException("The combo scanned an unindexed provider.");
+        }
+    }
+
+    private sealed class IndexedComboOptions : IUIComboOptionSource,
+        IUIComboPrefixSearch, IUIComboEnabledNavigation
+    {
+        private ulong _revision = 1;
+        public int Count => int.MaxValue;
+        public ulong Revision => _revision;
+        public int GetCount { get; private set; }
+        public int NavigationCount { get; private set; }
+        public bool DisabledResult { get; set; }
+        public bool DisabledNavigationResult { get; set; }
+        public bool ChangeRevisionDuringSearch { get; set; }
+        public bool InvalidSelectedIndex { get; set; }
+        public int IndexOfId(ulong id) => InvalidSelectedIndex ? -2 : id switch
+        {
+            111 => 1_234_567,
+            222 => 1_234_568,
+            _ => -1
+        };
+        public int FindPrefix(string prefix, int startIndex)
+        {
+            if (ChangeRevisionDuringSearch)
+                _revision++;
+            return prefix.Equals("x", StringComparison.OrdinalIgnoreCase) ? 1_234_567 : -1;
+        }
+        public int FindNextEnabled(int startIndex, int direction)
+        {
+            NavigationCount++;
+            return startIndex == 1_234_567 && direction == 1 ? 1_234_568 : -1;
+        }
+        public UIComboOption GetOption(int index)
+        {
+            GetCount++;
+            return index switch
+            {
+                1_234_567 => new(111, "Xylophone", !DisabledResult),
+                1_234_568 => new(222, "Yarrow", !DisabledNavigationResult),
+                _ => throw new InvalidOperationException("The combo scanned outside the index.")
+            };
         }
     }
 

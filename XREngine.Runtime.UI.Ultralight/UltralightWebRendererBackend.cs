@@ -29,7 +29,8 @@ namespace XREngine.Rendering.UI
         private int _consoleMessageCount;
 
         // Thread-safe input queue (same pattern as GPU backend)
-        private readonly ConcurrentQueue<Action<View>> _pendingInputEvents = new();
+        private readonly ConcurrentQueue<(object Token, Action<View> Action)> _pendingInputEvents = new();
+        private object? _inputLifetime;
 
         public bool IsInitialized => _renderer is not null && _view is not null;
         public bool SupportsFramebuffer => false;
@@ -74,6 +75,7 @@ namespace XREngine.Rendering.UI
 
             _renderer = ULPlatform.CreateRenderer(_config.Value);
             _view = _renderer.CreateView(width, height, _viewConfig, null);
+            Volatile.Write(ref _inputLifetime, new object());
             AttachDiagnostics();
         }
 
@@ -98,8 +100,9 @@ namespace XREngine.Rendering.UI
         {
             if (_view is not null)
             {
-                while (_pendingInputEvents.TryDequeue(out var action))
-                    action(_view);
+                while (_pendingInputEvents.TryDequeue(out var input))
+                    if (ReferenceEquals(input.Token, Volatile.Read(ref _inputLifetime)))
+                        input.Action(_view);
             }
             _renderer?.Update();
         }
@@ -166,10 +169,11 @@ namespace XREngine.Rendering.UI
 
         public void SendMouseMove(int x, int y)
         {
-            if (_view is null)
+            object? token = Volatile.Read(ref _inputLifetime);
+            if (token is null)
                 return;
 
-            _pendingInputEvents.Enqueue(v => v.FireMouseEvent(new ULMouseEvent
+            EnqueueInput(token, v => v.FireMouseEvent(new ULMouseEvent
             {
                 Type = ULMouseEventType.MouseMoved,
                 Button = ULMouseEventButton.None,
@@ -180,11 +184,12 @@ namespace XREngine.Rendering.UI
 
         public void SendMouseButton(bool pressed, WebMouseButton button, int x, int y)
         {
-            if (_view is null)
+            object? token = Volatile.Read(ref _inputLifetime);
+            if (token is null)
                 return;
 
             var mapped = MapMouseButton(button);
-            _pendingInputEvents.Enqueue(v =>
+            EnqueueInput(token, v =>
             {
                 if (pressed)
                     v.Focus();
@@ -201,10 +206,11 @@ namespace XREngine.Rendering.UI
 
         public void SendScroll(int deltaX, int deltaY)
         {
-            if (_view is null)
+            object? token = Volatile.Read(ref _inputLifetime);
+            if (token is null)
                 return;
 
-            _pendingInputEvents.Enqueue(v => v.FireScrollEvent(new ULScrollEvent
+            EnqueueInput(token, v => v.FireScrollEvent(new ULScrollEvent
             {
                 Type = ULScrollEventType.ByPixel,
                 DeltaX = deltaX,
@@ -219,6 +225,8 @@ namespace XREngine.Rendering.UI
 
         public void Dispose()
         {
+            Volatile.Write(ref _inputLifetime, null);
+            while (_pendingInputEvents.TryDequeue(out _)) { }
             UnlockPixelsIfNeeded();
 
             if (_view is not null)
@@ -237,6 +245,9 @@ namespace XREngine.Rendering.UI
             _config = null;
             _viewConfig = null;
         }
+
+        private void EnqueueInput(object token, Action<View> action)
+            => _pendingInputEvents.Enqueue((token, action));
 
         private void AttachDiagnostics()
         {

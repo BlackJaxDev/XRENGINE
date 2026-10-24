@@ -553,11 +553,67 @@ namespace XREngine.Scene.Components.Editing
 
         protected override void OnComponentDeactivated()
         {
-            UnlinkDragJoint();
-            _linkRB?.Destroy();
-            _linkRB = null;
-            base.OnComponentDeactivated();
-            _displayTransformTickRegistered = false;
+            try
+            {
+                RetirePointerInteraction();
+            }
+            finally
+            {
+                try
+                {
+                    UnlinkDragJoint();
+                    _linkRB?.Destroy();
+                    _linkRB = null;
+                }
+                finally
+                {
+                    base.OnComponentDeactivated();
+                    _displayTransformTickRegistered = false;
+                }
+            }
+        }
+
+        protected override void OnDestroying()
+        {
+            _destroyingPointerInteraction = true;
+            try
+            {
+                RetirePointerInteraction();
+            }
+            finally
+            {
+                try
+                {
+                    UnlinkDragJoint();
+                    _linkRB?.Destroy();
+                    _linkRB = null;
+                }
+                finally
+                {
+                    base.OnDestroying();
+                }
+            }
+        }
+
+        private void RetirePointerInteraction()
+        {
+            _retiringPointerInteraction = true;
+            try
+            {
+                if (_pointerOwner is { } owner)
+                    CancelPointerInteraction(owner);
+                else if (_pressed)
+                    OnReleased();
+            }
+            finally
+            {
+                _pressed = false;
+                _pointerOwner = null;
+                _pointerViewport = null;
+                _pointerCamera = null;
+                ++_pointerGeneration;
+                _retiringPointerInteraction = false;
+            }
         }
 
         private void UpdateDisplayTransformTick()
@@ -1477,6 +1533,12 @@ namespace XREngine.Scene.Components.Editing
         #endregion
 
         private bool _pressed = false;
+        private object? _pointerOwner;
+        private XRViewport? _pointerViewport;
+        private XRCamera? _pointerCamera;
+        private uint _pointerGeneration;
+        private bool _retiringPointerInteraction;
+        private bool _destroyingPointerInteraction;
         private Vector3 _worldDragOffsetToSocket;
         private Vector3 _worldDragOffsetToSocketParent;
         private Matrix4x4 _inverseSocketParentDragMatrix = Matrix4x4.Identity;
@@ -1485,10 +1547,32 @@ namespace XREngine.Scene.Components.Editing
         /// <summary>
         /// Returns true if intersecting one of the transform tool's various parts.
         /// </summary>
-        public bool MouseMove(Segment cursor, XRCamera camera, bool pressed)
+        public bool MouseMove(Segment cursor, XRCamera camera, XRViewport viewport, bool pressed, object pointerOwner)
         {
+            ArgumentNullException.ThrowIfNull(pointerOwner);
+            if (_retiringPointerInteraction || _destroyingPointerInteraction ||
+                IsDestroyed || IsDestroyQueued || !IsActiveInHierarchy)
+                return false;
+            if (_pointerOwner is not null && !ReferenceEquals(_pointerOwner, pointerOwner))
+                return false;
+            if (_pointerOwner is not null &&
+                (!ReferenceEquals(_pointerViewport, viewport) || !ReferenceEquals(_pointerCamera, camera)))
+            {
+                CancelPointerInteraction(pointerOwner);
+                return false;
+            }
+            if (_pointerOwner is null)
+            {
+                _pointerOwner = pointerOwner;
+                _pointerViewport = viewport;
+                _pointerCamera = camera;
+                ++_pointerGeneration;
+            }
+            uint generation = _pointerGeneration;
             SetReferenceCamera(camera);
             UpdateDisplayTransform(camera);
+            if (!IsCurrentPointerInteraction(pointerOwner, viewport, camera, generation))
+                return false;
 
             bool snapFound = true;
             if (pressed)
@@ -1496,6 +1580,7 @@ namespace XREngine.Scene.Components.Editing
                 if ((_hiAxis.None && !_hiCam && !_hiSphere) || _targetSocket is null)
                     return false;
 
+                TransformBase targetSocket = _targetSocket;
                 Vector3 worldDragPoint = GetWorldDragPoint(cursor, camera);
 
                 if (!_pressed)
@@ -1508,21 +1593,41 @@ namespace XREngine.Scene.Components.Editing
                     _worldDragOffsetToSocket = worldDragPoint - _targetSocket.WorldTranslation;
 
                     OnPressed();
+                    if (!IsCurrentPointerInteraction(pointerOwner, viewport, camera, generation))
+                        return false;
+                    if (!ReferenceEquals(_targetSocket, targetSocket))
+                    {
+                        CancelPointerInteraction(pointerOwner);
+                        return false;
+                    }
                 }
 
                 _drag?.Invoke(worldDragPoint);
+                if (!IsCurrentPointerInteraction(pointerOwner, viewport, camera, generation))
+                    return false;
+                if (!ReferenceEquals(_targetSocket, targetSocket))
+                {
+                    CancelPointerInteraction(pointerOwner);
+                    return false;
+                }
                 _lastPointWorld = worldDragPoint;
             }
             else
             {
                 if (_pressed)
+                {
                     OnReleased();
+                    if (!IsCurrentPointerInteraction(pointerOwner, viewport, camera, generation))
+                        return false;
+                }
 
                 Segment localRay = cursor.TransformedBy(Transform.FirstChild()!.InverseWorldMatrix);
 
                 _hiAxis.X = _hiAxis.Y = _hiAxis.Z = _hiCam = _hiSphere = false;
 
                 snapFound = _highlight?.Invoke(camera, localRay) ?? false;
+                if (!IsCurrentPointerInteraction(pointerOwner, viewport, camera, generation))
+                    return false;
 
                 ColorF4 xColor = _hiAxis.X ? ColorF4.Yellow : ColorF4.Red;
                 ColorF4 yColor = _hiAxis.Y ? ColorF4.Yellow : ColorF4.Green;
@@ -1547,12 +1652,28 @@ namespace XREngine.Scene.Components.Editing
         }
 
         /// <summary>Finish a drag when its viewport loses presented pointer ownership.</summary>
-        public void CancelPointerInteraction()
+        public void CancelPointerInteraction(object pointerOwner)
         {
+            ArgumentNullException.ThrowIfNull(pointerOwner);
+            if (!ReferenceEquals(_pointerOwner, pointerOwner))
+                return;
+            // Release the lease before invoking user callbacks. A callback can create a
+            // new owner; the old cancellation must never clear that new interaction.
+            _pointerOwner = null;
+            _pointerViewport = null;
+            _pointerCamera = null;
+            ++_pointerGeneration;
+            _hiAxis.X = _hiAxis.Y = _hiAxis.Z = _hiCam = _hiSphere = false;
             if (_pressed)
                 OnReleased();
-            _hiAxis.X = _hiAxis.Y = _hiAxis.Z = _hiCam = _hiSphere = false;
         }
+
+        private bool IsCurrentPointerInteraction(object owner, XRViewport viewport, XRCamera camera, uint generation)
+            => !_retiringPointerInteraction && !_destroyingPointerInteraction &&
+                !IsDestroyed && !IsDestroyQueued && _pointerGeneration == generation &&
+                ReferenceEquals(_pointerOwner, owner) &&
+                ReferenceEquals(_pointerViewport, viewport) && ReferenceEquals(_pointerCamera, camera) &&
+                SceneNode is { IsDestroyed: false, IsDestroyQueued: false } && IsActiveInHierarchy;
 
         private Vector3 GetWorldDragPoint(Segment cursor, XRCamera camera)
         {
@@ -1603,6 +1724,8 @@ namespace XREngine.Scene.Components.Editing
 
             _pressed = true;
             _mouseDown?.Invoke();
+            if (SceneNode is null || SceneNode.IsDestroyed || !IsActiveInHierarchy)
+                return;
             MouseDown?.Invoke();
         }
 
@@ -1652,11 +1775,16 @@ namespace XREngine.Scene.Components.Editing
         {
             _pressed = false;
             _mouseUp?.Invoke();
+            if (SceneNode is null || SceneNode.IsDestroyed || !IsActiveInHierarchy)
+                return;
             MouseUp?.Invoke();
         }
 
         public static bool RenderDebugInfo { get; set; } = false;
         public bool Highlighted => _hiAxis.Any || _hiCam || _hiSphere;
+        public bool IsHighlightedFor(object pointerOwner, XRViewport viewport, XRCamera? camera)
+            => Highlighted && ReferenceEquals(_pointerOwner, pointerOwner) &&
+                ReferenceEquals(_pointerViewport, viewport) && ReferenceEquals(_pointerCamera, camera);
 
         private void Render()
         {

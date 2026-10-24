@@ -19,6 +19,33 @@ public sealed partial class XRWindow
     private ulong _vulkanUiOutputGeneration;
     private readonly List<(XRViewport Viewport, UICanvasComponent Canvas, ulong FrameId)>
         _worldUiConsumers = [];
+    private ulong _nextOpenGlDispatchToken;
+    private ulong _activeOpenGlDispatchToken;
+
+    private ulong BeginOpenGlRenderDispatch()
+    {
+        if (_activeOpenGlDispatchToken != 0UL)
+            throw new InvalidOperationException("An OpenGL window dispatch is already active.");
+        ulong token = unchecked(++_nextOpenGlDispatchToken);
+        if (token == 0UL)
+            token = unchecked(++_nextOpenGlDispatchToken);
+        _activeOpenGlDispatchToken = token;
+        return token;
+    }
+
+    private bool CanPresentOpenGlRenderDispatch(ulong dispatchToken)
+        => dispatchToken != 0UL && dispatchToken == _activeOpenGlDispatchToken;
+
+    private void CompleteOpenGlRenderDispatch(ulong dispatchToken, bool presented)
+    {
+        if (dispatchToken == 0UL || dispatchToken != _activeOpenGlDispatchToken)
+            throw new InvalidOperationException("The OpenGL window dispatch token is not active.");
+        _activeOpenGlDispatchToken = 0UL;
+        if (presented)
+            OnOpenGlRenderDispatched();
+        else
+            ReleaseUiFrame(_windowUiFrame);
+    }
 
     internal void RegisterUiWorldConsumer(XRViewport viewport, UICanvasComponent canvas)
     {

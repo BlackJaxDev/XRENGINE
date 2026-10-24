@@ -141,7 +141,8 @@ public sealed class UIPublication
                     WorldMatrix = OffscreenQuadWorldMatrix,
                     Instances = 1,
                 };
-                commands.Add(new UIPublishedWorldMeshCommand(canvas, this, quad, castsShadows: false));
+                commands.Add(new UIPublishedWorldMeshCommand(canvas, this, quad,
+                    castsShadows: false, layer: 0, cullingVolume: null));
                 _worldCommands = commands.ToArray();
                 return;
             }
@@ -153,7 +154,7 @@ public sealed class UIPublication
                 RenderCommandMesh3D template = record.FrozenWorldCommand ??
                     throw new InvalidOperationException("A visible direct-world UI draw has no frozen command.");
                 commands.Add(new UIPublishedWorldMeshCommand(canvas, this, template,
-                    record.WorldCastsShadows));
+                    record.WorldCastsShadows, record.WorldLayer, record.WorldCullingVolume));
             }
             _worldCommands = commands.ToArray();
         }

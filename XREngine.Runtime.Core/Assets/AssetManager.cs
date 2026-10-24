@@ -243,6 +243,11 @@ namespace XREngine
             EngineWatcher.Deleted += OnEngineFileDeleted;
             EngineWatcher.Error += OnEngineFileError;
             EngineWatcher.Renamed += OnEngineFileRenamed;
+            lock (_metadataLock)
+            {
+                _gameWatcherContext = TryCaptureAuthoringContext(GameWatcher.CurrentInstallation);
+                _authoringContextRebinding = false;
+            }
         }
 
         public bool MonitorGameAssetsForChanges
@@ -380,11 +385,17 @@ namespace XREngine
         {
             string normalized = NormalizeConfiguredDirectoryPath(path, nameof(GameAssetsPath))
                 ?? throw new ArgumentException("GameAssetsPath cannot be null or empty.", nameof(GameAssetsPath));
-            if (string.Equals(_gameAssetsPath, normalized, StringComparison.OrdinalIgnoreCase))
-                return;
-
-            _gameAssetsPath = normalized;
-            GameWatcher.Path = _gameAssetsPath;
+            lock (_metadataLock)
+            {
+                _authoringContextRebinding = true;
+                try
+                {
+                    _gameAssetsPath = normalized;
+                    GameWatcher.Path = _gameAssetsPath;
+                    InvalidateAuthoringContext();
+                }
+                finally { _authoringContextRebinding = false; }
+            }
         }
 
         #region Properties and Fields
@@ -407,14 +418,28 @@ namespace XREngine
         public string? GameMetadataPath
         {
             get => _gameMetadataPath;
-            set => _gameMetadataPath = NormalizeConfiguredDirectoryPath(value, nameof(GameMetadataPath));
+            set
+            {
+                lock (_metadataLock)
+                {
+                    _gameMetadataPath = NormalizeConfiguredDirectoryPath(value, nameof(GameMetadataPath));
+                    InvalidateAuthoringContext();
+                }
+            }
         }
 
         private string? _gameCachePath;
         public string? GameCachePath
         {
             get => _gameCachePath;
-            set => _gameCachePath = NormalizeConfiguredDirectoryPath(value, nameof(GameCachePath));
+            set
+            {
+                lock (_metadataLock)
+                {
+                    _gameCachePath = NormalizeConfiguredDirectoryPath(value, nameof(GameCachePath));
+                    InvalidateAuthoringContext();
+                }
+            }
         }
 
         private string _packagesPath = Path.Combine(AppContext.BaseDirectory, "Packages");
@@ -946,6 +971,8 @@ namespace XREngine
 
         public void Dispose()
         {
+            GameWatcher.Dispose();
+            EngineWatcher.Dispose();
             bool ownsDisposalReservation;
             lock (_runtimePublicationGate)
             {

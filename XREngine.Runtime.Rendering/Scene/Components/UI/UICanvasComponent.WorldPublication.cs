@@ -232,7 +232,55 @@ public partial class UICanvasComponent
         {
             if (!publication.AuthoringOffscreen)
             {
-                draw();
+                AbstractRenderer? directRenderer = AbstractRenderer.Current;
+                if (directRenderer is null || directRenderer.CurrentUiPublicationReceiptId == 0UL ||
+                    directRenderer.RequiresAtomicFrameAuthoring)
+                {
+                    // The legacy route stays active until an output attempt has
+                    // selected and reserved every required world pass.
+                    draw();
+                    return;
+                }
+
+                ReadOnlySpan<UIIndexedDrawIntent> expected = command.IndexedDrawIntents;
+                if (MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass())
+                    expected = expected.IsEmpty ? expected : expected[..1];
+                if (expected.IsEmpty)
+                {
+                    directRenderer.FailCurrentUiPublicationAuthoring(
+                        "UI.Canvas.WorldDrawPending: the frozen command has no indexed draw intent.");
+                    throw new RenderResourcePreparationPendingException(
+                        "UI.Canvas.WorldDrawPending: no indexed draw intent was captured.");
+                }
+                if (!directRenderer.TryBeginUiIndexedDrawScope(command, expected,
+                        out ulong drawScopeId))
+                {
+                    directRenderer.FailCurrentUiPublicationAuthoring(
+                        "UI.Canvas.WorldDrawPending: the renderer did not reserve exact indexed draw proof.");
+                    throw new RenderResourcePreparationPendingException(
+                        "UI.Canvas.WorldDrawPending: exact indexed draw proof is unavailable.");
+                }
+
+                bool directAuthored = false;
+                bool acknowledged = false;
+                try
+                {
+                    draw();
+                    directAuthored = true;
+                }
+                finally
+                {
+                    try { acknowledged = directRenderer.CompleteUiIndexedDrawScope(drawScopeId); }
+                    finally
+                    {
+                        if (!directAuthored || !acknowledged)
+                            directRenderer.FailCurrentUiPublicationAuthoring(
+                                "UI.Canvas.WorldDrawIncomplete: required native indexed draws were not acknowledged.");
+                    }
+                }
+                if (!acknowledged)
+                    throw new RenderResourcePreparationPendingException(
+                        "UI.Canvas.WorldDrawIncomplete: required native indexed draws did not complete.");
                 return;
             }
             AbstractRenderer? renderer = AbstractRenderer.Current;
