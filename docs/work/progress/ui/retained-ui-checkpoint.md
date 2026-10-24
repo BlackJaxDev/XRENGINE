@@ -1086,3 +1086,15 @@ controls item.
 Native pointer, hover-open, and visual placement checks remain open.
 The full headless run passed **1016 of 1016 tests**. Editor and desktop test builds
 passed with 0 warnings and errors.
+
+## Animation time axis scrubbing
+
+The reconciliation remains **47 of 60**. This increment advances the open panel item.
+
+- A press in the plot time axis strip seeks the selected matching component to the
+  frame under the pointer. Moves continue the scrub. Times snap to the sample rate
+  frozen in the plot snapshot and stay inside the clip.
+- `AnimationPlotFrameAxisTests` covers frame snapping, the clip-end clamp, and the
+  axis strip bounds. Native pointer checks remain open.
+The full headless run passed **1030 of 1030 tests**. Editor and desktop test builds
+passed with 0 warnings and errors.

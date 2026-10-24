@@ -11,6 +11,7 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
     private AnimationPlotPointerSnapshot? _pressedSnapshot;
     private Vector2 _pressPoint;
     private bool _dragged;
+    private bool _scrubbing;
     private AnimationClip? _lastClickClip;
     private AnimationMember? _lastClickMember;
     private ulong _lastClickSourceRevision;
@@ -95,6 +96,15 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
         _pressedSnapshot = snapshot;
         _pressPoint = localPoint;
         _dragged = false;
+        _scrubbing = false;
+        // A press on the time axis scrubs the playback time instead of panning. A key
+        // drawn over the axis keeps its click selection.
+        if (snapshot.IsOnFrameAxis(localPoint) && !snapshot.TryHitKey(localPoint, out _))
+        {
+            _scrubbing = panel!.ScrubPlotFromPointer(snapshot, localPoint);
+            if (!HasSameOwner(panel, revision, generation))
+                return;
+        }
     }
 
     public override void MouseMoved(Vector2 lastPosLocal, Vector2 posLocal,
@@ -108,6 +118,11 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
             return;
         if (_pressedSnapshot is not { } snapshot || !IsPressed)
             return;
+        if (_scrubbing)
+        {
+            _scrubbing = panel!.ScrubPlotFromPointer(snapshot, posLocal);
+            return;
+        }
         if (!_dragged && Vector2.DistanceSquared(_pressPoint, posLocal) < 16)
             return;
         _dragged = true;
@@ -121,10 +136,18 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
         AnimationPlotPointerSnapshot? snapshot = _pressedSnapshot;
         AnimationPanel? panel = Panel;
         long revision = InteractionRevision;
+        bool scrubbing = _scrubbing;
         _pressedSnapshot = null;
+        _scrubbing = false;
         base.PointerReleased(localPoint, inside, in geometry);
         if (!HasSameOwner(panel, revision, generation))
             return;
+        if (scrubbing)
+        {
+            if (snapshot is not null)
+                panel?.CompletePlotScrub(snapshot);
+            return;
+        }
         if (_dragged)
         {
             if (snapshot is not null)
@@ -177,6 +200,7 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
         _dispatchGeneration++;
         AnimationPlotPointerSnapshot? snapshot = _pressedSnapshot;
         _pressedSnapshot = null;
+        _scrubbing = false;
         _lastClickClip = null;
         if (snapshot is not null)
             _panel?.CancelPlotDrag(snapshot);

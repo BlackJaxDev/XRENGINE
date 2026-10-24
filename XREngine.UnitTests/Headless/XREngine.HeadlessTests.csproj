@@ -40,6 +40,8 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/AnimationPlotPointerSnapshot.cs" Link="Editor/AnimationPlotPointerSnapshot.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/AnimationPlotWheelZoom.cs" Link="Editor/AnimationPlotWheelZoom.cs" />
     <Compile Include="../Editor/AnimationPlotWheelZoomTests.cs" Link="Editor/AnimationPlotWheelZoomTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/AnimationPlotFrameAxis.cs" Link="Editor/AnimationPlotFrameAxis.cs" />
+    <Compile Include="../Editor/AnimationPlotFrameAxisTests.cs" Link="Editor/AnimationPlotFrameAxisTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/AnimationPlotPointerSnapshot.Lane.cs" Link="Editor/AnimationPlotPointerSnapshot.Lane.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/AnimationPlotPointerSnapshot.KeyHit.cs" Link="Editor/AnimationPlotPointerSnapshot.KeyHit.cs" />
     <Compile Include="../Editor/NativeAnimationPlotPointerTests.cs" Link="Editor/NativeAnimationPlotPointerTests.cs" />

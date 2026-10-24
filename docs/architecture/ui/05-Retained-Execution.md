@@ -1320,6 +1320,14 @@ by 1.25 within 1 to 32, and the window clamps to the clip. The wheel needs curre
 plot metadata and does nothing during a press. Input dispatch generations reject
 owner changes that return to the same object during a callback.
 
+The bottom 30 pixels of the plot are the time axis strip (`AnimationPlotFrameAxis`).
+A press in the strip that does not hit a key scrubs instead of panning. The press
+and each move seek the selected matching animation component to the time under
+the pointer, snapped to the nearest whole frame of the sample rate frozen in the
+snapshot and clamped to the clip end. A scrub starts only on the current
+published plot and continues while the view and size stay the same. Wheel zoom
+does nothing during a scrub. A snapshot with another sample rate is not current.
+
 Plot builds hide the visual root inside a canvas change transaction before they
 write strokes. A completed exact build can restore visibility and publish its
 metadata. Aborted builds stay hidden. Stroke writes check owner validity after
@@ -1327,8 +1335,7 @@ callback boundaries, and nested build requests coalesce into a bounded retry.
 Method details limit argument rows and text length; they do not call arbitrary
 argument `ToString` implementations. Source subscriptions change only when their
 topology changes. Channel editing and built-in baked/frame-cadence length
-adapters use the guarded routes below. Frame-axis pointer behavior and native
-runtime acceptance remain open.
+adapters use the guarded routes below. Native runtime acceptance remains open.
 
 
 ### Composition page claims and drop admission

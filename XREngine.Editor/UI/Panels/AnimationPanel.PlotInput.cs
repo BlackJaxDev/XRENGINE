@@ -9,6 +9,7 @@ public partial class AnimationPanel
 {
     private AnimationPlotPointerSnapshot? _activePlotDrag;
     private ulong _dragViewRevision;
+    private AnimationPlotPointerSnapshot? _activePlotScrub;
 
     private void PublishPlotSnapshot(AnimationClip clip)
     {
@@ -76,7 +77,8 @@ public partial class AnimationPanel
             ReferenceEquals(CurrentClip(), snapshot.Clip) &&
             ReferenceEquals(_displayedClip, snapshot.Clip) &&
             snapshot.SourceRevision == _sourceRevision &&
-            snapshot.ClipLength == snapshot.Clip.LengthInSeconds;
+            snapshot.ClipLength == snapshot.Clip.LengthInSeconds &&
+            snapshot.SampleRate == snapshot.Clip.SampleRate;
 
     internal void ActivatePlotPointer(AnimationPlotPointerSnapshot snapshot,
         AnimationMember member, Vector2 point, bool doubleClick)
@@ -240,7 +242,8 @@ public partial class AnimationPanel
     internal bool ZoomPlotAtPointer(AnimationPlotPointerSnapshot snapshot, Vector2 point,
         float wheelDelta)
     {
-        if (_activePlotDrag is not null || !IsPlotSourceCurrent(snapshot) ||
+        if (_activePlotDrag is not null || _activePlotScrub is not null ||
+            !IsPlotSourceCurrent(snapshot) ||
             !ReferenceEquals(_plotSnapshot, snapshot) ||
             snapshot.BuildRevision != _plotBuildRevision ||
             snapshot.ViewRevision != _plotViewRevision ||
@@ -257,6 +260,43 @@ public partial class AnimationPanel
         return true;
     }
 
+    /// <summary>
+    /// Seeks the selected matching component to the frame under a point on the time axis.
+    /// A scrub starts only on the current published plot. It continues while the plot view
+    /// and size stay the same, also after the seek rebuilds the plot. Returns false when
+    /// the snapshot cannot start or continue a scrub.
+    /// </summary>
+    internal bool ScrubPlotFromPointer(AnimationPlotPointerSnapshot snapshot, Vector2 point)
+    {
+        if (_activePlotDrag is not null || !IsPlotSourceCurrent(snapshot))
+            return false;
+        if (!ReferenceEquals(_activePlotScrub, snapshot))
+        {
+            if (!ReferenceEquals(_plotSnapshot, snapshot) ||
+                snapshot.BuildRevision != _plotBuildRevision ||
+                snapshot.ViewRevision != _plotViewRevision ||
+                !snapshot.IsOnFrameAxis(point))
+                return false;
+            _activePlotScrub = snapshot;
+        }
+        if (_plotSnapshot is not { } current ||
+            !snapshot.CanContinueDrag(snapshot.ViewRevision, _plotViewRevision,
+                new Vector2(current.Width, current.Height)) ||
+            SelectedMatchingComponent() is null)
+        {
+            _activePlotScrub = null;
+            return false;
+        }
+        Seek(snapshot.FrameTimeForX(point.X));
+        return true;
+    }
+
+    internal void CompletePlotScrub(AnimationPlotPointerSnapshot snapshot)
+    {
+        if (ReferenceEquals(_activePlotScrub, snapshot))
+            _activePlotScrub = null;
+    }
+
     internal void CompletePlotDrag(AnimationPlotPointerSnapshot snapshot)
     {
         if (!ReferenceEquals(_activePlotDrag, snapshot))
@@ -270,5 +310,7 @@ public partial class AnimationPanel
     {
         if (ReferenceEquals(_activePlotDrag, snapshot))
             _activePlotDrag = null;
+        if (ReferenceEquals(_activePlotScrub, snapshot))
+            _activePlotScrub = null;
     }
 }

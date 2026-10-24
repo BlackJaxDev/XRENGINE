@@ -23,6 +23,7 @@ internal sealed partial class AnimationPlotPointerSnapshot
         Width = width;
         Height = height;
         ClipLength = clip.LengthInSeconds;
+        SampleRate = clip.SampleRate;
         Start = start;
         Duration = duration;
         Graph = graph;
@@ -39,6 +40,8 @@ internal sealed partial class AnimationPlotPointerSnapshot
     public float Width { get; }
     public float Height { get; }
     public float ClipLength { get; }
+    /// <summary>Clip sample rate when the plot was built; frame snapping uses this value.</summary>
+    public int SampleRate { get; }
     public float Start { get; }
     public float Duration { get; }
     public bool Graph { get; }
@@ -88,6 +91,14 @@ internal sealed partial class AnimationPlotPointerSnapshot
         }
         return found;
     }
+
+    /// <summary>Returns true when the point is in the time axis strip under the lanes.</summary>
+    public bool IsOnFrameAxis(Vector2 point)
+        => AnimationPlotFrameAxis.IsOnAxis(Width, Height, point.X, point.Y);
+
+    /// <summary>Returns the frame-snapped clip time under a plot-local X position.</summary>
+    public float FrameTimeForX(float x)
+        => AnimationPlotFrameAxis.SnapToFrame(TimeForX(x), SampleRate, ClipLength);
 
     public float TimeForX(float x)
         => Math.Clamp(Start + (float.IsFinite(x) ? x - 8 : 0) /
