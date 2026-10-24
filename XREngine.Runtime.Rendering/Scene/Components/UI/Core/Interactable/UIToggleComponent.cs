@@ -60,7 +60,7 @@ namespace XREngine.Rendering.UI
             SetField(ref _retainedState, value, nameof(CurrentState));
             LastState = value;
             OnStateChanged?.Invoke(value);
-            if (origin == EUIValueChangeOrigin.User)
+            if (origin == EUIValueChangeOrigin.User && _retainedState == value)
                 ValueCommitted?.Invoke(new(old, value, origin));
         }
 
@@ -278,21 +278,26 @@ namespace XREngine.Rendering.UI
         /// <summary>Sets retained state and writes it to the typed source when present.</summary>
         public void SetRetainedState(ECurrentState value, EUIValueChangeOrigin origin)
         {
-            if (_binding is null || origin == EUIValueChangeOrigin.Binding)
+            IUIValueBinding<ECurrentState>? binding = _binding;
+            if (binding is null || origin == EUIValueChangeOrigin.Binding)
             {
                 ChangeState(value, origin);
                 return;
             }
+            bool wasActive = IsActiveInHierarchy;
             _writingBinding = true;
             try
             {
-                _binding.SetValue(value);
+                binding.SetValue(value);
             }
             finally
             {
                 _writingBinding = false;
             }
-            ChangeState(_binding.Value, origin);
+            if (!ReferenceEquals(_binding, binding) || SceneNode is { IsDestroyed: true } ||
+                wasActive && !IsActiveInHierarchy)
+                return;
+            ChangeState(binding.Value, origin);
         }
 
         private void OnToggleChecked(UIInteractableComponent component)

@@ -623,7 +623,8 @@ namespace XREngine.Rendering.Occlusion
             RenderingParameters? optionsOverride,
             int maxDeformationSubmeshInspections)
         {
-            return UsesDeformedMesh(command, maxDeformationSubmeshInspections) ||
+            return command is XREngine.Rendering.UI.IUiPublicationRenderCommand ||
+                   UsesDeformedMesh(command, maxDeformationSubmeshInspections) ||
                    command.RenderOptionsOverride?.ExcludeFromCpuOcclusion == true ||
                    optionsOverride?.ExcludeFromCpuOcclusion == true ||
                    material?.RenderOptions?.ExcludeFromCpuOcclusion == true;

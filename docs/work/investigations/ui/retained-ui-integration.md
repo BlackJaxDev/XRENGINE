@@ -532,3 +532,71 @@ build 7 passed with zero warnings/errors in 47.16s. Source hashes matched the
 graphics validation is claimed. The final document link and whitespace checks
 passed. The completed prototype contract advances reconciliation to 38 of 60;
 22 code items and four original owner decisions remain.
+
+## Indexed Navigation, Detached Input, And Output Admission
+
+The next review found four additional lifecycle gaps. Toggle binding callbacks
+could replace the source before the control read its result. Focus-ring replacement
+could leave the old visual highlighted. Direct pawn/tool destruction did not run
+the deactivation-only input cleanup. Watcher creation could install a monitor
+from one backend and then capture a context from a newer backend. These require
+explicit owner identities and checks at callback boundaries.
+
+Headless build 63 stopped with zero warnings and one error in 1m11.60s.
+`AssetChangeMonitor` used a diagnostic type in the wrong namespace (CS0234).
+No tests ran for that snapshot. The next build includes the namespace repair
+and the reviewed lifecycle fixes.
+
+The desktop swap seam now separates native render dispatch from presentation.
+A required output can veto the swap. Native indexed intent checks compare mesh,
+geometry revision, topology, index type/count/offset, and instances. The direct
+world proxy stays inactive until selected-pass manifests, packet retention,
+terminal output proof, and persistent-target recovery are complete. The new
+seams alone do not close world publication or establish GPU acceptance.
+
+The focused Runtime.Core watcher build passed with zero warnings/errors in
+21.92s after the namespace and installation/disposal repairs. This check did
+not execute tests or compile the in-progress web and editor changes.
+
+Headless build 64 stopped with zero warnings and three errors in 1m14.95s.
+Two errors came from a missing web partial-file namespace import; the third was
+a local-name collision in the indexed draw scope. The integration repair adds
+the import and gives the direct-draw local a distinct name. No tests ran.
+
+Headless build 65 passed with zero warnings/errors in 1m28.26s. Full run 38
+passed 474 of 475 tests, with zero warnings or skips, in 9.732s. The remaining
+focus-ring test found that button deactivation kept the ring highlighted. The
+web owner-failure review also found that a valid old frame could hide the public
+failure diagnostic. Both fixes precede the next full build and test run. The
+9,904 source/project file hashes matched the build and test snapshot.
+
+Headless build 66 compiled with one nullable warning and zero errors in
+1m36.32s. The new web diagnostic assertion did not first assert a non-null
+failure. The assertion now checks both contracts. No tests ran on build 66.
+
+Headless build 67 passed with zero warnings/errors in 18.81s. Full run 39
+passed all 476 tests, with zero warnings or skips, in 9.807s. Review then found
+that backend initialization, resize, or navigation could replace the backend
+and throw before the failure handler checked its generation. That could place
+a retired backend's diagnostic on its replacement. The next repair checks the
+source identity around failure publication and callback reentry.
+
+Headless build 68 passed with zero warnings/errors in 2m58.96s. The final
+web repair rejects retired failures before state publication, clears current
+diagnostics when the backend changes, and retires an unused software fallback
+created by a reentrant factory. It does not enable fallback by default.
+
+Full run 40 passed all 478 tests with zero warnings or skips in 10.154s
+on 2026-10-24. The matching editor and desktop test compilations follow.
+
+Editor build 26 passed with zero warnings/errors in 2m32.24s. This is managed
+Windows-target compilation on Linux. It does not establish editor execution,
+Windows input, native WGL context behavior, or GPU acceptance.
+
+Desktop test build 8 passed with zero warnings/errors in 56.13s. All three
+builds and full run 40 match the same 9,905 source/project file hashes. The
+32 local documentation links and whitespace check passed. The common-controls
+code contract advances reconciliation to 39 of 60 original implementation items;
+21 code items and four original owner decisions remain. Desktop test execution,
+Windows/IME, native graphics, visual checks, and performance acceptance remain
+open. The paragraph analyzer decision remains pending.

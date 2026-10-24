@@ -6,8 +6,8 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **38 of 60 implementation items are complete**.
-The active TODO has 22 code items and four owner decisions. Later sections
+Latest code reconciliation: **39 of 60 implementation items are complete**.
+The active TODO has 21 code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -341,3 +341,39 @@ passed with zero warnings/errors in 47.16s. Hashes confirmed the same 9,882-file
 source snapshot. All 31 local document links resolve; the whitespace check
 passes. Windows execution, GPU and visual checks, IME runtime acceptance,
 multi-window workflows, and equivalent ImGui measurements remain pending.
+
+## Indexed Controls And Exact Callback Owners
+
+This checkpoint closes the first-milestone common-controls code item. The total
+is **39 of 60 implementation items**; 21 code items and four original owner
+decisions remain. Full paragraph analysis has a separate pending dependency or
+platform-adapter decision. No pending decision is treated as approval.
+
+- Large dropdown sources use indexed prefix and enabled-option navigation, with
+  explicit capability and result status. Toggle commits reject replaced bindings.
+  Button and checkbox focus visuals respect callback order and recycling.
+- Detached scene windows use their own camera and input owner in the source
+  runtime world. Transform-tool drags reject foreign owners and retire on direct
+  destruction. Windows interaction tests compile; live workflow acceptance stays
+  open.
+- Asset watchers carry exact installation and project-root identities. Rebinding,
+  synchronous monitor callbacks, and disposal cannot reinstall an obsolete owner.
+  An import already in progress still needs context-aware commit guards.
+- Web production binds the exact output owner and native view lifetime. Retired
+  backends and upload buffers stay owned through delayed disposal. A retired
+  backend cannot publish diagnostics on its replacement. Native context behavior
+  still requires Windows and Ultralight validation.
+- Frozen world collection, indexed native draw checks, and an explicit desktop
+  swap verdict prepare coherent direct-world output. The new route stays inactive
+  until selected-pass manifests, packet pinning, terminal output proof, and
+  persistent-target recovery are complete. These seams do not close publication.
+
+The matching headless build passed with zero warnings/errors in 2m58.96s.
+All **478 tests passed**, with no warnings or skips, in 10.154s. The editor
+build passed with zero warnings/errors in 2m32.24s; the desktop test project
+compiled with zero warnings/errors in 56.13s. All checks match the same 9,905
+source/project files. The 32 local document links and whitespace check passed.
+Desktop tests did not execute. No Windows, graphics, visual, or performance
+acceptance is claimed. See the
+[investigation](../../investigations/ui/retained-ui-integration.md) for repairs
+and intermediate results.

@@ -41,6 +41,8 @@
     <Compile Include="../Rendering/PointerReentryProbe.cs" Link="Rendering/PointerReentryProbe.cs" />
     <Compile Include="../Rendering/UIImePresentedCaretTests.cs" Link="Rendering/UIImePresentedCaretTests.cs" />
     <Compile Include="../Rendering/UIMediaTeardownTests.cs" Link="Rendering/UIMediaTeardownTests.cs" />
+    <Compile Include="../Rendering/UIWebFakeBackend.cs" Link="Rendering/UIWebFakeBackend.cs" />
+    <Compile Include="../Rendering/UIWebFakeScopedBackend.cs" Link="Rendering/UIWebFakeScopedBackend.cs" />
     <Compile Include="../Rendering/UIVideoFakeMediaSession.cs" Link="Rendering/UIVideoFakeMediaSession.cs" />
     <Compile Include="../Rendering/UIVideoFakeGpuActions.cs" Link="Rendering/UIVideoFakeGpuActions.cs" />
     <Compile Include="../Rendering/UIVideoDeferredRenderHost.cs" Link="Rendering/UIVideoDeferredRenderHost.cs" />
@@ -60,6 +62,11 @@
     <Compile Include="../Rendering/UITextLazyStandaloneTests.cs" Link="Rendering/UITextLazyStandaloneTests.cs" />
     <Compile Include="../Rendering/UITextMutatingShapingBackend.cs" Link="Rendering/UITextMutatingShapingBackend.cs" />
     <Compile Include="../Rendering/UIRetainedControlsTests.cs" Link="Rendering/UIRetainedControlsTests.cs" />
+    <Compile Include="../Rendering/UIIndexedDrawScopeTests.cs" Link="Rendering/UIIndexedDrawScopeTests.cs" />
+    <Compile Include="../Rendering/UIFrozenWorldCollectionTests.cs" Link="Rendering/UIFrozenWorldCollectionTests.cs" />
+    <Compile Include="../Rendering/EditorComboPrefixIndexTests.cs" Link="Rendering/EditorComboPrefixIndexTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorComboPrefixIndex.cs" Link="Editor/EditorComboPrefixIndex.cs" />
+    <Compile Include="../Platform/AssetWatcherContextTests.cs" Link="Platform/AssetWatcherContextTests.cs" />
     <Compile Include="../Rendering/UIChangeJournalTests.cs" Link="Rendering/UIChangeJournalTests.cs" />
     <Compile Include="../Rendering/UIChangeTrackingTests.cs" Link="Rendering/UIChangeTrackingTests.cs" />
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />

@@ -1,8 +1,8 @@
 namespace XREngine.Rendering.UI;
 
-/// <summary>Finds a matching virtual option without scanning the full provider.</summary>
+/// <summary>Finds an enabled ordinal ignore-case prefix without scanning the full provider.</summary>
 public interface IUIComboPrefixSearch
 {
-    /// <summary>Returns a matching index, or -1 when there is no match.</summary>
+    /// <summary>Returns an enabled matching index at or after startIndex, with wrap, or -1 when none exists.</summary>
     int FindPrefix(string prefix, int startIndex);
 }

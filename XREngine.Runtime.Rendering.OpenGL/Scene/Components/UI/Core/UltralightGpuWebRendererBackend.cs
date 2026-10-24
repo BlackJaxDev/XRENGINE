@@ -15,10 +15,14 @@ namespace XREngine.Rendering.UI
     /// Ultralight GPU backend that renders directly into a GL framebuffer (no CPU readback).
     /// Uses <see cref="OpenGLGPUDriver"/> for GPU-accelerated rendering.
     /// </summary>
-    public sealed class UltralightGpuWebRendererBackend : IWebRendererBackend
+    public sealed partial class UltralightGpuWebRendererBackend : IWebRendererBackend, IWebRendererBackendOwnerScope
     {
         private static bool _fontLoaderInitialized;
         private static OpenGLGPUDriver? _gpuDriver;
+        private static nint _gpuDriverContextHandle;
+        private static IRuntimeWindowGlContext? _gpuDriverOwner;
+        private static OpenGLRenderer? _gpuDriverRenderer;
+        private static long _gpuDriverRendererGeneration;
 
         private UltralightNet.Renderer? _renderer;
         private View? _view;
@@ -40,7 +44,8 @@ namespace XREngine.Rendering.UI
 
         // Thread-safe input queue: events are enqueued from the game/input thread
         // and dispatched on the render thread inside Update().
-        private readonly ConcurrentQueue<Action<View>> _pendingInputEvents = new();
+        private readonly ConcurrentQueue<(object Token, Action<View> Action)> _pendingInputEvents = new();
+        private object? _inputLifetime;
         private bool _loggedFirstDispatch;
 
         public bool IsInitialized => _renderer is not null && _view is not null;
@@ -96,6 +101,7 @@ namespace XREngine.Rendering.UI
 
             _renderer = ULPlatform.CreateRenderer(_config.Value);
             _view = _renderer.CreateView(width, height, _viewConfig, null);
+            Volatile.Write(ref _inputLifetime, new object());
             AttachDiagnostics();
 
             EnsureReadFramebuffer();
@@ -122,10 +128,13 @@ namespace XREngine.Rendering.UI
             if (_view is not null)
             {
                 int dispatched = 0;
-                while (_pendingInputEvents.TryDequeue(out var action))
+                while (_pendingInputEvents.TryDequeue(out var input))
                 {
-                    action(_view);
-                    dispatched++;
+                    if (ReferenceEquals(input.Token, Volatile.Read(ref _inputLifetime)))
+                    {
+                        input.Action(_view);
+                        dispatched++;
+                    }
                 }
 
                 if (dispatched > 0 && !_loggedFirstDispatch)
@@ -248,10 +257,11 @@ namespace XREngine.Rendering.UI
 
         public void SendMouseMove(int x, int y)
         {
-            if (_view is null)
+            object? token = Volatile.Read(ref _inputLifetime);
+            if (token is null)
                 return;
 
-            _pendingInputEvents.Enqueue(v => v.FireMouseEvent(new ULMouseEvent
+            EnqueueInput(token, v => v.FireMouseEvent(new ULMouseEvent
             {
                 Type = ULMouseEventType.MouseMoved,
                 Button = ULMouseEventButton.None,
@@ -260,13 +270,17 @@ namespace XREngine.Rendering.UI
             }));
         }
 
+        private void EnqueueInput(object token, Action<View> action)
+            => _pendingInputEvents.Enqueue((token, action));
+
         public void SendMouseButton(bool pressed, WebMouseButton button, int x, int y)
         {
-            if (_view is null)
+            object? token = Volatile.Read(ref _inputLifetime);
+            if (token is null)
                 return;
 
             var mapped = MapMouseButton(button);
-            _pendingInputEvents.Enqueue(v =>
+            EnqueueInput(token, v =>
             {
                 if (pressed)
                     v.Focus();
@@ -283,10 +297,11 @@ namespace XREngine.Rendering.UI
 
         public void SendScroll(int deltaX, int deltaY)
         {
-            if (_view is null)
+            object? token = Volatile.Read(ref _inputLifetime);
+            if (token is null)
                 return;
 
-            _pendingInputEvents.Enqueue(v => v.FireScrollEvent(new ULScrollEvent
+            EnqueueInput(token, v => v.FireScrollEvent(new ULScrollEvent
             {
                 Type = ULScrollEventType.ByPixel,
                 DeltaX = deltaX,
@@ -300,7 +315,12 @@ namespace XREngine.Rendering.UI
         }
 
         public void Dispose()
+            => WithOwnerContext(DisposeOnOwnerContext);
+
+        private void DisposeOnOwnerContext()
         {
+            Volatile.Write(ref _inputLifetime, null);
+            while (_pendingInputEvents.TryDequeue(out _)) { }
             if (_view is not null)
             {
                 _view.OnFinishLoading -= HandleFinishLoading;
@@ -319,6 +339,7 @@ namespace XREngine.Rendering.UI
 
             if (_readFramebufferId != 0)
             {
+                AssertCurrentOwner();
                 _cachedGL?.DeleteFramebuffer(_readFramebufferId);
                 _readFramebufferId = 0;
             }
@@ -380,12 +401,23 @@ namespace XREngine.Rendering.UI
         private void EnsureGpuDriver()
         {
             if (_gpuDriver is not null)
+            {
+                if (_gpuDriverContextHandle != _ownerContext?.ContextHandle ||
+                    !ReferenceEquals(_gpuDriverOwner, _ownerContext) ||
+                    !ReferenceEquals(_gpuDriverRenderer, _ownerRenderer) ||
+                    _gpuDriverRendererGeneration != _ownerRendererGeneration)
+                    throw new InvalidOperationException("UI.Web.GpuDriverContextMismatch: the shared Ultralight GPU driver belongs to another GL context.");
                 return;
+            }
 
             if (_cachedGL is null)
                 throw new InvalidOperationException("Cannot initialize GPU driver without an OpenGL context.");
 
             _gpuDriver = new OpenGLGPUDriver(_cachedGL);
+            _gpuDriverContextHandle = _ownerContext?.ContextHandle ?? 0;
+            _gpuDriverOwner = _ownerContext;
+            _gpuDriverRenderer = _ownerRenderer;
+            _gpuDriverRendererGeneration = _ownerRendererGeneration;
             ULPlatform.GPUDriver = _gpuDriver;
         }
 
@@ -431,19 +463,11 @@ namespace XREngine.Rendering.UI
             _cachedGL = null;
             if (AbstractRenderer.Current is OpenGLRenderer current)
             {
+                CaptureOwnerContext(current);
                 _cachedGL = current.RawGL;
                 return;
             }
-
-            var windows = RuntimeEngine.Windows;
-            foreach (XRWindow window in windows)
-            {
-                if (window.Renderer is OpenGLRenderer renderer)
-                {
-                    _cachedGL = renderer.RawGL;
-                    return;
-                }
-            }
+            throw new InvalidOperationException("UI.Web.GpuContextUnavailable: no active OpenGL renderer owns this render call.");
         }
 
         private void EnsureReadFramebuffer()

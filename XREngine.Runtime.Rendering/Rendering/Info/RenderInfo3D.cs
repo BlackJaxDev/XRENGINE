@@ -19,6 +19,10 @@ namespace XREngine.Rendering.Info
         private bool _reconcilingWorldRegistration;
         private bool _collectionSuppressed;
 
+        /// <summary>Gets the immutable command source of a scene proxy, if present.</summary>
+        [YamlIgnore]
+        internal IFrozenWorldCommandSource? FrozenWorldCommandSource { get; set; }
+
         public override ITreeNode? TreeNode => OctreeNode;
 
         /// <summary>Gets whether frozen draw flags can replace custom CPU collection policy.</summary>
@@ -224,7 +228,7 @@ namespace XREngine.Rendering.Info
             bool collectMirrors) => 
             (!passes.IsShadowPass || CastsShadows) && 
             (collectMirrors || Owner is not MirrorCaptureComponent) &&
-            (camera is null || camera.RendersLayer(_layer)) &&
+            ((camera is null || camera.RendersLayer(_layer)) || FrozenWorldCommandSource is not null) &&
             Intersects(cullingVolume, containsOnly);
 
         public bool Intersects(IVolume? cullingVolume, bool containsOnly)
@@ -242,6 +246,25 @@ namespace XREngine.Rendering.Info
 
         /// <summary>Captures the resolved world bound for an owner-built render packet.</summary>
         internal Box? CaptureWorldCullingVolume() => ((IOctreeItem)this).WorldCullingVolume;
+
+        /// <summary>Collects a frozen proxy only while its render info is active.</summary>
+        internal ERenderInfoCollectResult TryCollectFrozenWorldCommands(
+            RenderCommandCollection passes, IRuntimeCullingCamera? camera,
+            IVolume? volume, bool containsOnly)
+        {
+            if (IsDisposalRequested)
+                return ERenderInfoCollectResult.Disposed;
+            return FrozenWorldCommandSource?.CollectFrozenCommands(
+                passes, camera, volume, containsOnly) ??
+                ERenderInfoCollectResult.RejectedForEveryCamera;
+        }
+
+        /// <summary>Tests one owner-captured child bound against the active collection volume.</summary>
+        internal static bool FrozenWorldVolumeIntersects(IVolume? volume, in Box bounds, bool containsOnly)
+        {
+            EContainment containment = ClassifyWorldCullingVolume(volume, bounds);
+            return containsOnly ? containment == EContainment.Contains : containment != EContainment.Disjoint;
+        }
 
         /// <summary>Stops scene collection without changing authored visibility.</summary>
         internal void SetCollectionSuppressed(bool suppressed)

@@ -7,6 +7,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Runtime.InputIntegration;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
 
@@ -14,7 +15,7 @@ namespace XREngine.Editor;
 internal static class NativeDetachedDockWindows
 {
     private sealed record SavedWindow(string Key, string? PanelId = null, int? Panel = null);
-    private sealed record OpenWindow(XRWindow Window, RuntimeWorld World, SceneNode Root,
+    private sealed record OpenWindow(XRWindow Window, RuntimeWorld World, SceneNode Root, SceneNode CameraRoot,
         LocalPlayerController Controller, string Key, string Panel);
 
     private static readonly Dictionary<string, OpenWindow> OpenWindows = new(StringComparer.Ordinal);
@@ -60,6 +61,7 @@ internal static class NativeDetachedDockWindows
         XRWindow? window = null;
         LocalPlayerController? controller = null;
         SceneNode? root = null;
+        SceneNode? cameraRoot = null;
         RuntimeWorld? world = null;
         try
         {
@@ -77,6 +79,8 @@ internal static class NativeDetachedDockWindows
             });
             world = window.TargetWorldInstance?.WorldContext as RuntimeWorld
                 ?? throw new InvalidOperationException("The detached window has no runtime world.");
+            if (!ReferenceEquals(world, sourceWorld))
+                throw new InvalidOperationException("The detached window did not reuse the source runtime world.");
 
             // This controller is not registered in Engine.State.LocalPlayers, so it cannot
             // steal the main editor pawn's viewport or device snapshot.
@@ -92,24 +96,42 @@ internal static class NativeDetachedDockWindows
             UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
             canvas.CanvasTransform.DrawSpace = ECanvasDrawSpace.Screen;
             canvas.CanvasTransform.SetSize(new Vector2(960, 680));
-            PawnComponent pawn = root.AddComponent<PawnComponent>()!;
+            CameraComponent? sourceCamera = source.Viewports.FirstOrDefault()?.CameraComponent;
+            Transform cameraTransform = sourceCamera is null
+                ? new Transform()
+                : new Transform(sourceCamera.Transform.WorldTranslation, sourceCamera.Transform.WorldRotation);
+            cameraRoot = new SceneNode(world, $"NativeDockCamera_{key}", cameraTransform) { IsEditorOnly = true };
+            CameraComponent detachedCamera = cameraRoot.AddComponent<CameraComponent>()!;
+            if (sourceCamera is not null)
+            {
+                detachedCamera.CameraParameters = sourceCamera.CameraParameters.CreateFromPrevious(sourceCamera.CameraParameters);
+                if (sourceCamera.Camera.TryGetAssignedRenderPipeline(out RenderPipeline? pipeline) && pipeline is not null)
+                    detachedCamera.Camera.RenderPipeline = pipeline;
+            }
+            EditorFlyingCameraPawnComponent pawn = cameraRoot.AddComponent(
+                static () => new EditorFlyingCameraPawnComponent { OwnsGlobalSelectionGizmo = false })!;
+            pawn.CameraComponent = detachedCamera;
+            if (sourceCamera is not null)
+                pawn.InitializeDetachedCameraPose(sourceCamera.Transform.WorldRotation);
             UICanvasInputComponent input = root.AddComponent<UICanvasInputComponent>()!;
             input.OwningPawn = pawn;
             controller.ControlledPawn = pawn;
+            viewport.CameraComponent = detachedCamera;
             viewport.ScreenSpaceUserInterfaceOverride = canvas;
-            CameraComponent? camera = source.Viewports.FirstOrDefault()?.CameraComponent;
-            if (camera is not null)
-                pawn.CameraComponent = camera;
 
             SceneNode content = root.NewChildWithTransform<UIBoundableTransform>(out var bounds, "DockContent");
             bounds.MinAnchor = Vector2.Zero;
             bounds.MaxAnchor = Vector2.One;
             NativeDockTreeHost.BuildDetached(content, world, window, key, panel, restoring);
-            EditorWorldIntegrationRegistry.GetOrAttach(world).AddToEditorScene(root);
+            EditorWorldIntegration integration = EditorWorldIntegrationRegistry.GetOrAttach(world);
+            integration.AddToEditorScene(cameraRoot);
+            integration.AddToEditorScene(root);
+            if (cameraRoot.IsActiveSelf)
+                cameraRoot.OnActivated();
             if (root.IsActiveSelf)
                 root.OnActivated();
 
-            OpenWindows.Add(key, new OpenWindow(window, world, root, controller, key, panel));
+            OpenWindows.Add(key, new OpenWindow(window, world, root, cameraRoot, controller, key, panel));
             window.FramebufferResized += (resizedWindow, size) =>
                 _ = Engine.InvokeOnMainThread(() =>
                     canvas.CanvasTransform.SetSize(new Vector2(Math.Max(1, size.X), Math.Max(1, size.Y))),
@@ -123,8 +145,16 @@ internal static class NativeDetachedDockWindows
         catch (Exception exception)
         {
             Debug.LogException(exception, $"[NativeDock] Failed to detach {PanelName(panel)}.");
-            if (root is not null && world is not null)
-                EditorWorldIntegrationRegistry.GetOrAttach(world).RemoveFromEditorScene(root);
+            if (world is not null)
+            {
+                EditorWorldIntegration integration = EditorWorldIntegrationRegistry.GetOrAttach(world);
+                if (root is not null)
+                    integration.RemoveFromEditorScene(root);
+                if (cameraRoot is not null)
+                    integration.RemoveFromEditorScene(cameraRoot);
+            }
+            root?.Destroy(true);
+            cameraRoot?.Destroy(true);
             controller?.Destroy();
             window?.RequestClose();
             return false;
@@ -136,10 +166,15 @@ internal static class NativeDetachedDockWindows
         if (!OpenWindows.Remove(key, out OpenWindow? entry))
             return;
         entry.Root.IsActiveSelf = false;
+        entry.CameraRoot.IsActiveSelf = false;
         if (EditorWorldIntegrationRegistry.TryGet(entry.World, out EditorWorldIntegration? integration))
+        {
             integration?.RemoveFromEditorScene(entry.Root);
+            integration?.RemoveFromEditorScene(entry.CameraRoot);
+        }
         entry.Controller.Destroy();
         entry.Root.Destroy(true);
+        entry.CameraRoot.Destroy(true);
         if (!Engine.ShuttingDown)
             ForgetWindow(key);
     }

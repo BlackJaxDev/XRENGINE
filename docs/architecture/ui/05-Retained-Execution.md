@@ -282,9 +282,20 @@ steps use a wider intermediate value before range checks.
 `UIScrollbarComponent` uses the press packet's thumb and scroll extents. Slider
 and scrollbar input must not combine displayed coordinates with pending live
 geometry. A changed target identity or configuration rejects the old capture.
-Combo typeahead searches bounded local options. A virtual source above 256
-options must provide `IUIComboPrefixSearch`; otherwise typeahead is unavailable.
-Explicit capability reporting and bounded disabled-option navigation remain open.
+Combo typeahead searches at most 256 local options. Larger virtual sources must
+provide `IUIComboPrefixSearch` for prefix lookup and `IUIComboEnabledNavigation`
+for adjacent enabled-option lookup. Capability and result properties distinguish
+an unavailable index, no match, changed source, invalid result, and selection.
+Lookup checks source identity, count, revision, stable ID, and enabled state before
+commit. Prefix matching uses ordinal case-insensitive comparison. The gallery and
+enum providers build bounded-prefix indices when they are created. They do not
+scan all options on a key press. Toggle commits also recheck the binding after
+callbacks. Keyboard focus updates checkbox borders and a separate button border;
+replacement and recycling clear the old button border. Focus-loss visuals update
+after the focus field changes. The gallery uses buttons, checkboxes, radio groups,
+numeric inputs, virtual dropdowns, range sliders, color selectors, and scroll
+regions. These controls provide keyboard, focus, state, commit/cancel, clip, and
+binding contracts; live platform acceptance remains separate.
 Shaped text distinguishes glyph provenance from complete
 grapheme caret geometry. Complete runs use visual left/right navigation while
 keeping logical UTF-16 edit positions. Incomplete runs reject geometric caret,
@@ -338,18 +349,37 @@ Popup teardown destroys owned child nodes through their normal lifecycle.
 Native asset file moves and rename/folder Undo operations check root boundaries
 and linked paths at execution time, including Undo and Redo. Moves stay within
 one watched asset root. Inspector component drops use the canonical property
-mutation path. Windows watcher ordering and complete workflow parity remain
-unverified. `NativeDockTree` provides a bounded, versioned split/tab model with
+mutation path. Watcher events carry the exact monitor installation, file backend,
+and backend generation. Project root changes invalidate that context, including
+same-path project reloads. Metadata work checks live paths under the metadata
+lock. External hooks run outside that lock and recheck their context between
+calls. Monitor creation and disposal cannot reinstall a retired owner through
+callback reentry. This admission contract does not cancel an import or reload
+that already started. Context-aware path reservations and complete companion-file
+transactions remain open. Windows watcher ordering and complete workflow parity
+remain unverified. `NativeDockTree` provides a bounded, versioned split/tab model with
 move, resize, close, reopen, and malformed-state checks. `NativeDockTreeHost` connects that model to the primary editor canvas. Structural
 changes retain panel instances, deactivate/detach closed slots, and destroy only
 obsolete structural nodes. Existing tool search and scroll state survive. All seven primary panel types use the detached-window path. Legacy numeric
 window records migrate an existing saved layout; absent records seed the requested
-panel. Cross-window pointer drag, presented focus restoration, and full play-mode
-state persistence remain open.
+panel. Detached windows use their own camera, pawn, controller, and input dispatch
+in the source runtime world. They clone camera projection and pose. The main pawn
+alone owns the global selection subscription. Shared transform-tool drags belong
+to an exact pawn, viewport, camera, and world; foreign input cannot end that drag.
+Deactivation and direct destruction both retire subscriptions, picks, and drag
+ownership. Cross-window pointer drag, presented focus restoration, and full
+play-mode state persistence remain open.
 
 Offscreen world canvases use render-command publication claims and separate
 producer and consumer receipts. Direct world UI still uses the existing component
-route; its frozen shadow and draw census remains open.
+route; its frozen shadow and draw census remains open. An inactive canvas proxy
+can filter frozen child layer and culling values. Exact indexed draw scopes match
+native topology, index range/type, instances, renderer identity, and geometry
+revision. Missing, repeated, failed, or mismatched native draws reject the scope.
+The desktop OpenGL dispatch can withhold a swap and reports presentation only
+after the actual swap succeeds. These seams do not activate the direct route:
+selected-pass manifests, packet pinning, terminal-output proof, and persistent
+resource recovery must be complete first.
 
 ## Media and callback teardown
 
@@ -361,9 +391,21 @@ source. Each cleanup step runs even if another step throws. GPU helper disposal
 runs on the render owner and retains the exact retired helper.
 
 Viewport teardown removes collection, swap, and mesh callbacks. Property-text
-drivers stop polling on deactivation and direct destruction. These contracts do
-not complete all media teardown: web backend replacement and render-owner
-retirement remain open.
+drivers stop polling on deactivation and direct destruction.
+
+Web replacement detaches the exact backend and upload buffers. Retirement waits
+for producer callbacks to unwind, blocks reuse while native disposal is active,
+and releases old upload buffers independently. Failed native retirement keeps a
+strong quarantine claim and exposes a diagnostic. GPU web production requires
+an unambiguous output owner. Screen canvases use their bound viewport output;
+world canvases require a unique output. The Windows OpenGL backend saves and
+restores both the native context and renderer scope. Its shared Ultralight driver
+cannot move to a different context. Input queue entries carry the native view
+lifetime and cannot enter a replacement view. These contracts require native
+Windows/Ultralight validation; headless lifecycle tests do not establish native
+resource correctness. Owner and producer failures remain visible through
+`LastBackendFailure`, even when a prior valid web frame remains displayed. A
+changed failure queues one owner-thread visual invalidation.
 
 ## Opt-in fixtures
 

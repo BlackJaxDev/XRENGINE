@@ -77,7 +77,11 @@ public partial class VisualScene3D
                 context.CollectMirrors);
         }
 
-        renderable.CollectCommands(context.Commands!, context.Camera);
+        if (renderable.FrozenWorldCommandSource is not null)
+            renderable.TryCollectFrozenWorldCommands(context.Commands!, context.Camera,
+                context.CollectionVolume, context.ContainsOnly);
+        else
+            renderable.CollectCommands(context.Commands!, context.Camera);
     }
 
     private static CollectionContext GetActiveCollectionContext()
@@ -100,6 +104,8 @@ public partial class VisualScene3D
         public VisualScene3D? Scene;
         public RenderCommandCollection? Commands;
         public IRuntimeCullingCamera? Camera;
+        public IVolume? CollectionVolume;
+        public bool ContainsOnly;
         public bool CollectMirrors;
         public bool ModelDiagnosticsActive;
         public int VisibleRenderables;
@@ -125,6 +131,8 @@ public partial class VisualScene3D
             VisualScene3D scene,
             RenderCommandCollection commands,
             IRuntimeCullingCamera? camera,
+            IVolume? collectionVolume,
+            bool containsOnly,
             bool collectMirrors,
             bool modelDiagnosticsActive)
         {
@@ -136,6 +144,8 @@ public partial class VisualScene3D
                 Scene = scene,
                 Commands = commands,
                 Camera = camera,
+                CollectionVolume = collectionVolume,
+                ContainsOnly = containsOnly,
                 CollectMirrors = collectMirrors,
                 ModelDiagnosticsActive = modelDiagnosticsActive,
             };

@@ -23,6 +23,39 @@ namespace XREngine.Rendering.UI
         private ColorF4 _highlightBackgroundColor = ColorF4.DarkGray;
         private ColorF4 _defaultTextColor = ColorF4.Gray;
         private ColorF4 _highlightTextColor = ColorF4.White;
+        private UIMaterialComponent? _focusRingMaterial;
+        private ColorF4 _focusRingColor = ColorF4.White;
+
+        /// <summary>Border material that displays the keyboard focus ring.</summary>
+        public UIMaterialComponent? FocusRingMaterial
+        {
+            get => _focusRingMaterial;
+            set
+            {
+                if (ReferenceEquals(_focusRingMaterial, value))
+                    return;
+                if (_focusRingMaterial is { IsDestroyed: false } previous)
+                    previous.BatchBorderColor = ColorF4.Transparent;
+                SetField(ref _focusRingMaterial, value);
+                UpdateFocusRing();
+            }
+        }
+
+        public ColorF4 FocusRingColor
+        {
+            get => _focusRingColor;
+            set
+            {
+                if (SetField(ref _focusRingColor, value))
+                    UpdateFocusRing();
+            }
+        }
+
+        private void UpdateFocusRing()
+        {
+            if (_focusRingMaterial is { IsDestroyed: false } ring)
+                ring.BatchBorderColor = IsFocused && CanInteract ? FocusRingColor : ColorF4.Transparent;
+        }
 
         protected override void OnMouseDirectOverlapEnter()
             => Highlight();
@@ -43,6 +76,7 @@ namespace XREngine.Rendering.UI
         {
             base.OnGotFocus();
             Highlight();
+            UpdateFocusRing();
         }
 
         protected override void OnLostFocus()
@@ -86,6 +120,19 @@ namespace XREngine.Rendering.UI
             var text = TextComponent;
             if (text is not null)
                 text.Color = DefaultTextColor;
+            UpdateFocusRing();
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            UpdateFocusRing();
+        }
+
+        public override void CancelForRecycle()
+        {
+            FocusRingMaterial = null;
+            base.CancelForRecycle();
         }
 
         public UIMaterialComponent? BackgroundMaterialComponent => GetSiblingComponent<UIMaterialComponent>();
@@ -122,6 +169,9 @@ namespace XREngine.Rendering.UI
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(IsFocused):
+                    UpdateFocusRing();
+                    break;
                 case nameof(BackgroundColorUniformName):
                     {
                         if (!IsHighlighted)

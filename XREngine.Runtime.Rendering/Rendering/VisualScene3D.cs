@@ -189,7 +189,8 @@ namespace XREngine.Scene
                         : "VisualScene3D.CollectRenderedItems.Octree",
                     ProfilerScopeKind.AlwaysOnHotPathLoop);
                 CollectionContextStack contextStack = t_collectionContextStack ??= new CollectionContextStack();
-                contextStack.Push(this, commands, camera, collectMirrors, modelDiagActive);
+                contextStack.Push(this, commands, camera, collectionVolume,
+                    false, collectMirrors, modelDiagActive);
                 try
                 {
                     cpuTree.CollectVisible(
@@ -762,10 +763,19 @@ namespace XREngine.Scene
                     visibleRenderables++;
                     if (modelDiagActive)
                         ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
-                    ERenderInfoCollectResult collectResult = renderable.TryCollectCommands(
-                        commands,
-                        camera,
-                        out RenderInfo.DelAddRenderCommandsCallback? invokedCallback);
+                    RenderInfo.DelAddRenderCommandsCallback? invokedCallback = null;
+                    ERenderInfoCollectResult collectResult = renderable.FrozenWorldCommandSource is not null
+                        ? renderable.TryCollectFrozenWorldCommands(commands, camera, collectionVolume, containsOnly: false)
+                        : renderable.TryCollectCommands(commands, camera, out invokedCallback);
+                    if (shadowOnlyCasterCensus &&
+                        renderable.FrozenWorldCommandSource?.HasFrozenShadowCasters == true)
+                    {
+                        // A main view cannot prove that every frozen child layer and bound was collected.
+                        // Keep shadow collection enabled for the entire frozen source.
+                        shadowOnlyCasterCandidates++;
+                        casterCapture?.Record(renderable,
+                            EShadowOnlyCasterCandidateReason.ShadowPassOnly, null);
+                    }
                     // A camera-dependent pre-collection callback can reject this camera and accept a shadow camera, for
                     // example an HLOD source that a far main camera hides. Such a caster gets no collection from this view.
                     if (shadowOnlyCasterCensus &&

@@ -30,7 +30,9 @@ namespace XREngine
 
         void OnEngineFileCreated(object sender, AssetFileChangeEventArgs args)
         {
-            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!ReferenceEquals(sender, EngineWatcher.CurrentInstallation) ||
+                !IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath) ||
+                (!File.Exists(args.FullPath) && !Directory.Exists(args.FullPath)))
                 return;
 
             OnFileCreated(args);
@@ -38,12 +40,21 @@ namespace XREngine
         }
         void OnGameFileCreated(object sender, AssetFileChangeEventArgs args)
         {
-            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath))
-                return;
-
+            AuthoringContext context;
+            lock (_metadataLock)
+            {
+                if (!TryAdmitGameWatcherEvent(sender, out context) || ShouldIgnoreWatcherEvent(args.FullPath) ||
+                    !IsLivePath(context, args.FullPath) ||
+                    !TryMapMetadataPath(context, args.FullPath, out _, out _))
+                    return;
+                HandleMetadataCreated(args.FullPath, context);
+            }
             OnFileCreated(args);
-            HandleMetadataCreated(args.FullPath);
-            RuntimeAssetAuthoringServices.Current.QueueAutoImport(args.FullPath, "created");
+            if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: true))
+                return;
+            context.AuthoringServices.QueueAutoImport(args.FullPath, "created");
+            if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: true))
+                return;
             GameFileCreated?.Invoke(args);
         }
         private static void OnFileCreated(AssetFileChangeEventArgs args)
@@ -55,31 +66,48 @@ namespace XREngine
         {
             IRuntimeAssetSource? source = _runtimeAssetSource;
             int epoch = RuntimeSourceEpoch;
-            if (!IsCurrentHostWatcherSource(source, epoch) || ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!ReferenceEquals(sender, EngineWatcher.CurrentInstallation) ||
+                !IsCurrentHostWatcherSource(source, epoch) || ShouldIgnoreWatcherEvent(args.FullPath) ||
+                (!File.Exists(args.FullPath) && !Directory.Exists(args.FullPath)))
                 return;
 
             await OnFileChanged(args, source, epoch);
-            if (!IsCurrentHostWatcherSource(source, epoch))
+            if (!ReferenceEquals(sender, EngineWatcher.CurrentInstallation) ||
+                !IsCurrentHostWatcherSource(source, epoch))
                 return;
             EngineFileChanged?.Invoke(args);
         }
         async void OnGameFileChanged(object sender, AssetFileChangeEventArgs args)
         {
-            IRuntimeAssetSource? source = _runtimeAssetSource;
-            int epoch = RuntimeSourceEpoch;
-            if (!IsCurrentHostWatcherSource(source, epoch) || ShouldIgnoreWatcherEvent(args.FullPath))
-                return;
+            AuthoringContext context;
+            lock (_metadataLock)
+            {
+                if (!TryAdmitGameWatcherEvent(sender, out context) || ShouldIgnoreWatcherEvent(args.FullPath) ||
+                    !IsLivePath(context, args.FullPath) ||
+                    !TryMapMetadataPath(context, args.FullPath, out _, out _))
+                    return;
+            }
 
-            await OnFileChanged(args, source, epoch);
-            if (!IsCurrentHostWatcherSource(source, epoch))
+            await OnFileChanged(args, context.Source, context.SourceEpoch, context);
+            lock (_metadataLock)
+            {
+                if (!TryAdmitGameWatcherEvent(sender, out AuthoringContext current) ||
+                    !ReferenceEquals(current, context) || !IsLivePath(context, args.FullPath))
+                    return;
+                HandleMetadataChanged(args.FullPath, context);
+            }
+            if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: true))
                 return;
-            HandleMetadataChanged(args.FullPath);
-            RuntimeAssetAuthoringServices.Current.QueueAutoImport(args.FullPath, "changed");
+            context.AuthoringServices.QueueAutoImport(args.FullPath, "changed");
+            if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: true))
+                return;
             GameFileChanged?.Invoke(args);
         }
-        private async Task OnFileChanged(AssetFileChangeEventArgs args, IRuntimeAssetSource? source, int epoch)
+        private async Task OnFileChanged(AssetFileChangeEventArgs args, IRuntimeAssetSource? source, int epoch,
+            AuthoringContext? context = null)
         {
-            if (!IsCurrentHostWatcherSource(source, epoch) || ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!IsCurrentHostWatcherSource(source, epoch) || ShouldIgnoreWatcherEvent(args.FullPath) ||
+                (context is not null && !IsCurrentAuthoringContext(context)))
                 return;
             
             LogFileWatcherEvent(args.FullPath, $"File '{args.FullPath}' was changed.");
@@ -90,7 +118,9 @@ namespace XREngine
 
         void OnEngineFileDeleted(object sender, AssetFileChangeEventArgs args)
         {
-            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath))
+            if (!ReferenceEquals(sender, EngineWatcher.CurrentInstallation) ||
+                !IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath) ||
+                File.Exists(args.FullPath) || Directory.Exists(args.FullPath))
                 return;
 
             OnFileDeleted(args);
@@ -98,12 +128,21 @@ namespace XREngine
         }
         void OnGameFileDeleted(object sender, AssetFileChangeEventArgs args)
         {
-            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherEvent(args.FullPath))
-                return;
-
+            AuthoringContext context;
+            lock (_metadataLock)
+            {
+                if (!TryAdmitGameWatcherEvent(sender, out context) || ShouldIgnoreWatcherEvent(args.FullPath) ||
+                    IsLivePath(context, args.FullPath) ||
+                    !TryMapMetadataPath(context, args.FullPath, out _, out _))
+                    return;
+                HandleMetadataDeleted(args.FullPath, context);
+            }
             OnFileDeleted(args);
-            HandleMetadataDeleted(args.FullPath);
-            RuntimeAssetAuthoringServices.Current.HandleSourceDeleted(args.FullPath);
+            if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: false))
+                return;
+            context.AuthoringServices.HandleSourceDeleted(args.FullPath);
+            if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: false))
+                return;
             GameFileDeleted?.Invoke(args);
         }
         private static void OnFileDeleted(AssetFileChangeEventArgs args)
@@ -120,10 +159,14 @@ namespace XREngine
 
         void OnGameFileError(object sender, AssetMonitorErrorEventArgs args)
         {
+            if (!ReferenceEquals(sender, GameWatcher.CurrentInstallation))
+                return;
             OnFileError(args);
         }
         void OnEngineFileError(object sender, AssetMonitorErrorEventArgs args)
         {
+            if (!ReferenceEquals(sender, EngineWatcher.CurrentInstallation))
+                return;
             OnFileError(args);
         }
         private static void OnFileError(AssetMonitorErrorEventArgs args)
@@ -133,18 +176,46 @@ namespace XREngine
 
         void OnGameFileRenamed(object sender, AssetFileRenameEventArgs args)
         {
-            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
+            AuthoringContext context;
+            bool metadataConflict;
+            XRAsset? fileAsset = null;
+            XRAsset? originalAsset = null;
+            lock (_metadataLock)
+            {
+                if (!TryAdmitGameWatcherEvent(sender, out context) ||
+                    ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath) ||
+                    IsLivePath(context, args.OldFullPath) || !IsLivePath(context, args.FullPath) ||
+                    !TryMapMetadataPath(context, args.OldFullPath, out _, out _) ||
+                    !TryMapMetadataPath(context, args.FullPath, out _, out _) ||
+                    LoadedAssetsByPathInternal.ContainsKey(args.FullPath) ||
+                    LoadedAssetsByOriginalPathInternal.ContainsKey(args.FullPath))
+                    return;
+                metadataConflict = !HandleMetadataRenamed(args.OldFullPath, args.FullPath, context);
+                if (!metadataConflict)
+                    (fileAsset, originalAsset) = RelocateLoadedBindings(args);
+            }
+            if (metadataConflict)
+            {
+                Debug.LogWarning($"Asset metadata rename was skipped because destination metadata exists: '{args.FullPath}'.");
                 return;
-
-            OnFileRenamed(args);
-            HandleMetadataRenamed(args.OldFullPath, args.FullPath);
-            RuntimeAssetAuthoringServices.Current.HandleSourceRenamed(args.OldFullPath, args.FullPath);
-            RuntimeAssetAuthoringServices.Current.QueueAutoImport(args.FullPath, "renamed");
+            }
+            ApplyLoadedBindingRelocation(args, fileAsset, originalAsset, context);
+            if (!IsAdmittedGameWatcherRename(sender, context, args.OldFullPath, args.FullPath))
+                return;
+            context.AuthoringServices.HandleSourceRenamed(args.OldFullPath, args.FullPath);
+            if (!IsAdmittedGameWatcherRename(sender, context, args.OldFullPath, args.FullPath))
+                return;
+            context.AuthoringServices.QueueAutoImport(args.FullPath, "renamed");
+            if (!IsAdmittedGameWatcherRename(sender, context, args.OldFullPath, args.FullPath))
+                return;
             GameFileRenamed?.Invoke(args);
         }
         void OnEngineFileRenamed(object sender, AssetFileRenameEventArgs args)
         {
-            if (!IsCurrentHostWatcherSource() || ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath))
+            if (!ReferenceEquals(sender, EngineWatcher.CurrentInstallation) ||
+                !IsCurrentHostWatcherSource() || ShouldIgnoreWatcherRenameEvent(args.OldFullPath, args.FullPath) ||
+                File.Exists(args.OldFullPath) || Directory.Exists(args.OldFullPath) ||
+                (!File.Exists(args.FullPath) && !Directory.Exists(args.FullPath)))
                 return;
 
             OnFileRenamed(args);
@@ -155,22 +226,53 @@ namespace XREngine
         {
             if (!IsCurrentHostWatcherSource())
                 return;
-            LogFileWatcherEvent(args.FullPath, $"File '{args.OldFullPath}' was renamed to '{args.FullPath}'.");
+            XRAsset? fileAsset;
+            XRAsset? originalAsset;
+            lock (_metadataLock)
+                (fileAsset, originalAsset) = RelocateLoadedBindings(args);
+            ApplyLoadedBindingRelocation(args, fileAsset, originalAsset, null);
+        }
 
+        private (XRAsset? FileAsset, XRAsset? OriginalAsset) RelocateLoadedBindings(AssetFileRenameEventArgs args)
+        {
+            XRAsset? fileAsset = null;
+            XRAsset? originalAsset = null;
             if (LoadedAssetsByPathInternal.TryGetValue(args.OldFullPath, out var asset))
             {
-                LoadedAssetsByPathInternal.Remove(args.OldFullPath, out _);
-                LoadedAssetsByPathInternal.TryAdd(args.FullPath, asset);
-
-                asset.FilePath = args.FullPath;
+                if (LoadedAssetsByPathInternal.TryAdd(args.FullPath, asset))
+                {
+                    if (LoadedAssetsByPathInternal.TryRemove(args.OldFullPath, out _))
+                        fileAsset = asset;
+                    else
+                        LoadedAssetsByPathInternal.TryRemove(args.FullPath, out _);
+                }
             }
             if (LoadedAssetsByOriginalPathInternal.TryGetValue(args.OldFullPath, out asset))
             {
-                LoadedAssetsByOriginalPathInternal.Remove(args.OldFullPath, out _);
-                LoadedAssetsByOriginalPathInternal.TryAdd(args.FullPath, asset);
+                if (LoadedAssetsByOriginalPathInternal.TryAdd(args.FullPath, asset))
+                {
+                    if (LoadedAssetsByOriginalPathInternal.TryRemove(args.OldFullPath, out _))
+                        originalAsset = asset;
+                    else
+                        LoadedAssetsByOriginalPathInternal.TryRemove(args.FullPath, out _);
+                }
+            }
+            return (fileAsset, originalAsset);
+        }
 
-                asset.OriginalPath = args.FullPath;
-                asset.Reload();
+        private void ApplyLoadedBindingRelocation(AssetFileRenameEventArgs args,
+            XRAsset? fileAsset, XRAsset? originalAsset, AuthoringContext? context)
+        {
+            if (context is not null && !IsCurrentAuthoringContext(context))
+                return;
+            LogFileWatcherEvent(args.FullPath, $"File '{args.OldFullPath}' was renamed to '{args.FullPath}'.");
+            if (fileAsset is not null)
+                fileAsset.FilePath = args.FullPath;
+            if (originalAsset is not null && (context is null || IsCurrentAuthoringContext(context)))
+            {
+                originalAsset.OriginalPath = args.FullPath;
+                if (context is null || IsCurrentAuthoringContext(context))
+                    originalAsset.Reload();
             }
         }
 

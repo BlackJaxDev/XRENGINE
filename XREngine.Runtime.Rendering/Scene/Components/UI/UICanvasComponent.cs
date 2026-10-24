@@ -59,6 +59,7 @@ namespace XREngine.Components
         private RenderCommandMesh3D? _worldSpaceQuadCommand;
         private RenderCommandMethod3D? _worldSpacePreRenderCommand;
         private RenderInfo3D? _worldSpaceQuadRenderInfo;
+        private RenderInfo3D? _frozenWorldRenderInfo;
         private XRMaterial? _offscreenMaterial;
         private XRMaterialFrameBuffer? _offscreenFbo;
         private XRTexture2D? _ownedOffscreenTexture;
@@ -169,7 +170,18 @@ namespace XREngine.Components
             _worldSpaceQuadRenderInfo.ReceivesShadows = false;
             _worldSpaceQuadRenderInfo.VisibleInLightingProbes = false;
 
-            SetField(ref _renderedObjects, [_worldSpaceQuadRenderInfo]);
+            // Keep the packet source out of the scene until every selected pass has
+            // an output-attempt receipt. Its bound is intentionally unbounded: each
+            // frozen child supplies its own layer and culling volume at collection.
+            _frozenWorldRenderInfo = RenderInfo3D.New(this);
+            _frozenWorldRenderInfo.FrozenWorldCommandSource = new UICanvasFrozenWorldCommandSource(this);
+            _frozenWorldRenderInfo.CullingIntersectionOverride = static (_, _, _) => true;
+            _frozenWorldRenderInfo.CastsShadows = true;
+            _frozenWorldRenderInfo.ReceivesShadows = false;
+            _frozenWorldRenderInfo.VisibleInLightingProbes = false;
+            _frozenWorldRenderInfo.SetCollectionSuppressed(true);
+
+            SetField(ref _renderedObjects, [_worldSpaceQuadRenderInfo, _frozenWorldRenderInfo]);
         }
 
         /// <summary>Checks the canvas route implemented by the cooked WebGPU UI family.</summary>
@@ -602,6 +614,7 @@ namespace XREngine.Components
             Release(() => _offscreenSurfacePool?.Dispose());
             Release(() => _visualScene2D?.Destroy());
             Release(() => _worldSpaceQuadRenderInfo?.Dispose());
+            Release(() => _frozenWorldRenderInfo?.Dispose());
             Release(() => _offscreenFbo?.Destroy(true));
             Release(() => _ownedOffscreenRenderer?.Destroy(true));
             Release(() => _ownedOffscreenMesh?.Destroy(true));

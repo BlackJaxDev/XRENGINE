@@ -144,7 +144,10 @@ public partial class VisualScene3D
             }
             if (modelDiagActive)
                 ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
-            renderable.CollectCommands(commands, camera);
+            if (renderable.FrozenWorldCommandSource is not null)
+                renderable.TryCollectFrozenWorldCommands(commands, camera, collectionVolume, containsOnly: false);
+            else
+                renderable.CollectCommands(commands, camera);
         }
 
         return true;

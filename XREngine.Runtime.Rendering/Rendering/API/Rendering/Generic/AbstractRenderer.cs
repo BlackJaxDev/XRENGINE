@@ -92,6 +92,27 @@ namespace XREngine.Rendering
         /// <summary>The independently owned UI draw cohort on this render thread.</summary>
         public ulong CurrentUiPublicationReceiptId => _currentUiPublicationReceiptId;
 
+        /// <summary>Starts exact native draw proof for one frozen UI mesh command.</summary>
+        internal virtual bool TryBeginUiIndexedDrawScope(
+            UI.UIPublishedWorldMeshCommand command,
+            ReadOnlySpan<UI.UIIndexedDrawIntent> expected,
+            out ulong scopeId)
+        {
+            scopeId = 0UL;
+            return false;
+        }
+
+        /// <summary>Reports one actual native indexed draw in the active UI scope.</summary>
+        internal virtual void AcknowledgeUiIndexedDraw(
+            ulong scopeId, in UI.UIIndexedDrawIntent actual, bool nativeSucceeded)
+            => throw new NotSupportedException("This renderer has no exact UI indexed draw acknowledgement.");
+
+        /// <summary>Ends exact native draw proof for one frozen UI mesh command.</summary>
+        internal virtual bool CompleteUiIndexedDrawScope(ulong scopeId) => false;
+
+        /// <summary>Fails an unfinished native UI draw scope before frame submission.</summary>
+        internal virtual void AbortUiIndexedDrawScope() { }
+
         internal bool TryBeginUiPublicationReceipt(
             UI.UIPublication publication, int expectedDrawIntents,
             bool requiresSwapchainPresentation, out ulong receiptId)
@@ -205,6 +226,7 @@ namespace XREngine.Rendering
         /// <summary>Fails unfinished canvas draws before the frame's output is submitted.</summary>
         internal int AbortUnfinishedUiPublicationReceipts(ulong frameId)
         {
+            AbortUiIndexedDrawScope();
             List<ulong>? unfinished = null;
             lock (_uiPublicationAuthoringGate)
                 foreach (var entry in _uiPublicationAuthoring)

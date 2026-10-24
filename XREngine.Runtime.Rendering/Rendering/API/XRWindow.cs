@@ -78,7 +78,11 @@ namespace XREngine.Rendering
                 if (owner._renderer is not null)
                     owner.RenderCallback(deltaSeconds);
             }
-            public void OpenGlRenderDispatched() => owner.OnOpenGlRenderDispatched();
+            public ulong BeginOpenGlRenderDispatch() => owner.BeginOpenGlRenderDispatch();
+            public bool CanPresentOpenGlRenderDispatch(ulong dispatchToken)
+                => owner.CanPresentOpenGlRenderDispatch(dispatchToken);
+            public void CompleteOpenGlRenderDispatch(ulong dispatchToken, bool presented)
+                => owner.CompleteOpenGlRenderDispatch(dispatchToken, presented);
         }
 
         #endregion

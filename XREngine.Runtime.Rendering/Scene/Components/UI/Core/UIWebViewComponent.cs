@@ -78,7 +78,7 @@ namespace XREngine.Rendering.UI
     /// <summary>
     /// Displays a web renderer surface in UI by rendering into a framebuffer-backed texture.
     /// </summary>
-    public sealed class UIWebViewComponent : UIMaterialComponent
+    public sealed partial class UIWebViewComponent : UIMaterialComponent
     {
         private XRMaterialFrameBuffer _fbo;
         private const int MaximumWebSurfaces = 4;
@@ -87,14 +87,20 @@ namespace XREngine.Rendering.UI
         private ulong _nextWebSurfaceGeneration;
         private string? _webProducerFailure;
         private readonly Action _invalidateWebVisual;
+        private readonly Action _renderWebFrameOnOwner;
+        private IWebRendererBackend? _webExpectedBackend;
+        private long _webExpectedGeneration;
+        private int _webFrameDispatching;
+        private bool _webOwnerFailureTerminal;
         private int _webVisualInvalidationQueued;
         private int _webProducerDestroyed;
         private readonly object _webProducerGate = new();
-        private bool _webTransientDisposed;
         private int _webProducerActive;
         private bool _webReleasePending;
         private bool _webSurfacesReleased;
-        private bool _webTransientDisposePending;
+        private long _webBackendGeneration;
+        private readonly List<UIWebRetiredResources> _webRetiredResources = [];
+        private IWebRendererBackend? _webBackendDisposing;
 
         private sealed class WebSurface(XRMaterialFrameBuffer fbo, XRTexture2D texture) : IUIDrawProducerLease
         {
@@ -158,7 +164,6 @@ namespace XREngine.Rendering.UI
         private bool _loggedTargetFramebuffer;
         private bool _loggedSoftwareFrame;
         private bool _allowSoftwareFallback;
-        private string? _lastBackendFailure;
 
         /// <summary>Allows an accelerated backend failure to switch to the explicitly installed software backend.</summary>
         public bool AllowSoftwareFallback
@@ -168,7 +173,7 @@ namespace XREngine.Rendering.UI
         }
 
         /// <summary>Describes the most recent web backend initialization failure.</summary>
-        public string? LastBackendFailure => _lastBackendFailure;
+        public string? LastBackendFailure => Volatile.Read(ref _webProducerFailure);
 
         private string? _url;
         public string? Url
@@ -187,7 +192,12 @@ namespace XREngine.Rendering.UI
         public IWebRendererBackend Backend
         {
             get => _backend;
-            set => SetField(ref _backend, value ?? new NullWebRendererBackend());
+            set
+            {
+                lock (_webProducerGate)
+                    SetField(ref _backend, value ?? new NullWebRendererBackend());
+                QueueWebRetirements();
+            }
         }
 
         private bool _usePboUpload = true;
@@ -200,6 +210,7 @@ namespace XREngine.Rendering.UI
         public UIWebViewComponent() : base(CreateWebMaterial(), true)
         {
             _invalidateWebVisual = InvalidateWebVisual;
+            _renderWebFrameOnOwner = RenderFrameOnOwner;
             DisableBatching = true;
             XRTexture2D texture = (XRTexture2D)Material!.Textures[0]!;
             _fbo = CreateWebFramebuffer(texture);
@@ -242,8 +253,13 @@ namespace XREngine.Rendering.UI
             surface.Publish(++_nextWebSurfaceGeneration);
             Volatile.Write(ref _publishedWebSurface, surface);
             _webProducerFailure = null;
+            QueueWebVisualInvalidation();
+        }
+
+        private void QueueWebVisualInvalidation()
+        {
             if (Interlocked.Exchange(ref _webVisualInvalidationQueued, 1) == 0)
-                RuntimeEngine.EnqueueAppThreadTask(_invalidateWebVisual, "UI.Web.FramePublished");
+                RuntimeEngine.EnqueueAppThreadTask(_invalidateWebVisual, "UI.Web.VisualChanged");
         }
 
         private void InvalidateWebVisual()
@@ -281,8 +297,12 @@ namespace XREngine.Rendering.UI
                     _pendingReinitialize = true;
                     break;
                 case nameof(Backend):
-                    (prev as IWebRendererBackend)?.Dispose();
+                    if (prev is IWebRendererBackend oldBackend && !ReferenceEquals(oldBackend, field))
+                        RetireWebResources(oldBackend);
                     _pendingReinitialize = true;
+                    _webOwnerFailureTerminal = false;
+                    if (ReferenceEquals(_backend, field))
+                        Volatile.Write(ref _webProducerFailure, null);
                     break;
             }
         }
@@ -303,7 +323,7 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            _webTransientDisposed = false;
+            _webOwnerFailureTerminal = false;
             RuntimeEngine.Time.Timer.RenderFrame += RenderFrame;
             UpdateBackingSize();
             _pendingReinitialize = true;
@@ -313,22 +333,8 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentDeactivated();
             RuntimeEngine.Time.Timer.RenderFrame -= RenderFrame;
-            lock (_webProducerGate)
-            {
-                if (_webProducerActive != 0)
-                    _webTransientDisposePending = true;
-                else
-                    DisposeWebTransientResources();
-            }
-        }
-
-        private void DisposeWebTransientResources()
-        {
-            if (_webTransientDisposed)
-                return;
-            _backend.Dispose();
-            DestroyPbos();
-            _webTransientDisposed = true;
+            RetireWebResources(_backend);
+            QueueWebRetirements();
         }
 
         private void ReinitializeBackend()
@@ -336,22 +342,30 @@ namespace XREngine.Rendering.UI
             if (!IsActive)
                 return;
 
-            _backend.Initialize(_backingWidth, _backingHeight, _transparentBackground);
+            IWebRendererBackend backend = _backend;
+            long generation = _webBackendGeneration;
+            backend.Initialize(_backingWidth, _backingHeight, _transparentBackground);
+            if (!IsCurrentWebBackend(backend, generation))
+                return;
             if (!string.IsNullOrWhiteSpace(_url))
-                _backend.LoadUrl(_url!);
+                backend.LoadUrl(_url!);
+            if (!IsCurrentWebBackend(backend, generation))
+                return;
 
             if (!_loggedBackendInit)
             {
-                Debug.UI($"[UIWebView] Backend initialized: type={_backend.GetType().Name}, size={_backingWidth}x{_backingHeight}, transparent={_transparentBackground}, supportsFramebuffer={_backend.SupportsFramebuffer}, url='{_url}'");
+                Debug.UI($"[UIWebView] Backend initialized: type={backend.GetType().Name}, size={_backingWidth}x{_backingHeight}, transparent={_transparentBackground}, supportsFramebuffer={backend.SupportsFramebuffer}, url='{_url}'");
                 _loggedBackendInit = true;
             }
 
-            if (_backend.SupportsFramebuffer)
-                UpdateFramebufferTarget();
+            if (backend.SupportsFramebuffer)
+                UpdateFramebufferTarget(backend, generation);
         }
 
-        private bool UpdateFramebufferTarget()
+        private bool UpdateFramebufferTarget(IWebRendererBackend backend, long generation)
         {
+            if (!IsCurrentWebBackend(backend, generation))
+                return false;
             _fbo.Material = Material;
             _fbo.Generate();
 
@@ -366,7 +380,11 @@ namespace XREngine.Rendering.UI
                 return false;
             }
 
-            _backend.SetTargetFramebuffer(interopInfo.BindingId);
+            if (!IsCurrentWebBackend(backend, generation))
+                return false;
+            backend.SetTargetFramebuffer(interopInfo.BindingId);
+            if (!IsCurrentWebBackend(backend, generation))
+                return false;
             if (!_loggedTargetFramebuffer)
             {
                 Debug.UI($"[UIWebView] Target framebuffer bound: id={interopInfo.BindingId}");
@@ -391,42 +409,116 @@ namespace XREngine.Rendering.UI
 
         private void RenderFrame()
         {
-            lock (_webProducerGate)
+            if (Interlocked.Exchange(ref _webFrameDispatching, 1) != 0)
+                return;
+            try
             {
-                if (Volatile.Read(ref _webProducerDestroyed) != 0)
-                    return;
-                _webProducerActive++;
-                try { RenderFrameCore(); }
-                finally
+                IWebRendererBackend backendAtScope;
+                long generationAtScope;
+                lock (_webProducerGate)
                 {
-                    _webProducerActive--;
-                    if (_webProducerActive == 0 && _webTransientDisposePending)
+                    if (Volatile.Read(ref _webProducerDestroyed) != 0 || !IsActive ||
+                        _webOwnerFailureTerminal || IsWebBackendBlocked(_backend))
+                        return;
+                    backendAtScope = _backend;
+                    generationAtScope = _webBackendGeneration;
+                }
+                _webExpectedBackend = backendAtScope;
+                _webExpectedGeneration = generationAtScope;
+                if (backendAtScope is IWebRendererBackendOwnerScope ownerScoped)
+                {
+                    XRWindow? owner = ResolveWebOwnerWindow();
+                    if (owner is null)
                     {
-                        _webTransientDisposePending = false;
-                        DisposeWebTransientResources();
+                        bool changed = false;
+                        lock (_webProducerGate)
+                            if (ReferenceEquals(_backend, backendAtScope) &&
+                                _webBackendGeneration == generationAtScope)
+                                changed = SetWebProducerFailure("UI.Web.OutputOwnerUnavailable: the web canvas needs one unambiguous window output.");
+                        if (changed)
+                            QueueWebVisualInvalidation();
+                        return;
                     }
-                    if (_webProducerActive == 0 && _webReleasePending)
-                        ReleaseWebSurfacesUnderGate();
+                    try
+                    {
+                        ownerScoped.ExecuteOnOwner(owner, _renderWebFrameOnOwner);
+                    }
+                    catch (Exception exception)
+                    {
+                        string? failure = null;
+                        bool changed = false;
+                        lock (_webProducerGate)
+                        {
+                            if (ReferenceEquals(_backend, backendAtScope) &&
+                                _webBackendGeneration == generationAtScope)
+                            {
+                                failure = $"UI.Web.OutputOwnerFailure: {exception.Message}";
+                                changed = SetWebProducerFailure(failure);
+                                _webOwnerFailureTerminal = true;
+                            }
+                        }
+                        if (failure is not null)
+                            Debug.UIWarning(failure);
+                        if (changed)
+                            QueueWebVisualInvalidation();
+                    }
+                    return;
+                }
+                RenderFrameOnOwner();
+            }
+            finally
+            {
+                _webExpectedBackend = null;
+                Volatile.Write(ref _webFrameDispatching, 0);
+            }
+        }
+
+        private void RenderFrameOnOwner()
+        {
+            try
+            {
+                lock (_webProducerGate)
+                {
+                    if (Volatile.Read(ref _webProducerDestroyed) != 0 ||
+                        !ReferenceEquals(_backend, _webExpectedBackend) ||
+                        _webBackendGeneration != _webExpectedGeneration)
+                        return;
+                    _webProducerActive++;
+                    try { RenderFrameCore(); }
+                    finally
+                    {
+                        _webProducerActive--;
+                        if (_webProducerActive == 0 && _webReleasePending)
+                            ReleaseWebSurfacesUnderGate();
+                    }
                 }
             }
+            finally { QueueWebRetirements(); }
         }
 
         private void RenderFrameCore()
         {
-            if (!IsActive || _rendering)
+            if (!IsActive || _rendering || IsWebBackendBlocked(_backend))
                 return;
 
             _rendering = true;
             try
             {
-                ProcessPendingBackendChanges();
+                if (!ProcessPendingBackendChanges())
+                    return;
+                if (_pendingReinitialize)
+                    return;
+                IWebRendererBackend backend = _backend;
+                long generation = _webBackendGeneration;
+                if (!IsCurrentWebBackend(backend, generation) || !backend.IsInitialized)
+                    return;
 
                 double delta = RuntimeEngine.Time.Timer.Update.Delta;
-                _backend.Update(delta);
-                if (Volatile.Read(ref _webProducerDestroyed) != 0 || !IsActive)
+                backend.Update(delta);
+                if (!IsCurrentWebBackend(backend, generation))
                     return;
                 WebSurface? acceleratedSurface = null;
-                if (_backend.SupportsFramebuffer)
+                if (backend.SupportsFramebuffer)
                 {
                     acceleratedSurface = AcquireWebSurface(_backingWidth, _backingHeight);
                     if (acceleratedSurface is null)
@@ -435,20 +527,20 @@ namespace XREngine.Rendering.UI
                         return;
                     }
                     _fbo = acceleratedSurface.Fbo;
-                    if (!UpdateFramebufferTarget())
+                    if (!UpdateFramebufferTarget(backend, generation))
                         return;
                 }
-                if (Volatile.Read(ref _webProducerDestroyed) != 0 || !IsActive)
+                if (!IsCurrentWebBackend(backend, generation))
                     return;
-                _backend.Render();
-                if (Volatile.Read(ref _webProducerDestroyed) != 0)
+                backend.Render();
+                if (!IsCurrentWebBackend(backend, generation))
                     return;
 
                 if (acceleratedSurface is not null)
                     PublishWebSurface(acceleratedSurface);
-                else if (_backend.TryGetFrame(out WebFrame frame))
+                else if (backend.TryGetFrame(out WebFrame frame))
                 {
-                    if (Volatile.Read(ref _webProducerDestroyed) != 0 || !IsActive)
+                    if (!IsCurrentWebBackend(backend, generation))
                         return;
                     if (frame.Width <= 0 || frame.Height <= 0 || frame.ByteLength == 0 || frame.PixelDataPtr == IntPtr.Zero)
                         return;
@@ -459,6 +551,8 @@ namespace XREngine.Rendering.UI
                         return;
                     }
                     ApplyFrame(frame, softwareSurface);
+                    if (!IsCurrentWebBackend(backend, generation))
+                        return;
                     PublishWebSurface(softwareSurface);
                     if (!_loggedSoftwareFrame)
                     {
@@ -473,14 +567,16 @@ namespace XREngine.Rendering.UI
             }
         }
 
-        private void ProcessPendingBackendChanges()
+        private bool ProcessPendingBackendChanges()
         {
+            IWebRendererBackend backend = _backend;
+            long generation = _webBackendGeneration;
             bool hasResize = _pendingResize;
             bool hasReinitialize = _pendingReinitialize;
             bool hasLoadUrl = _pendingLoadUrl;
 
             if (!hasResize && !hasReinitialize && !hasLoadUrl)
-                return;
+                return true;
 
             try
             {
@@ -495,8 +591,10 @@ namespace XREngine.Rendering.UI
                         _backingWidth = w;
                         _backingHeight = h;
 
-                        if (_backend.IsInitialized)
-                            _backend.Resize(w, h);
+                        if (backend.IsInitialized)
+                            backend.Resize(w, h);
+                        if (!IsCurrentWebBackend(backend, generation))
+                            return false;
                     }
                 }
 
@@ -505,29 +603,51 @@ namespace XREngine.Rendering.UI
                     _pendingReinitialize = false;
                     _pendingLoadUrl = false;
                     ReinitializeBackend();
-                    return;
+                    return IsCurrentWebBackend(backend, generation) && backend.IsInitialized;
                 }
 
                 if (hasLoadUrl)
                 {
                     _pendingLoadUrl = false;
                     if (!string.IsNullOrWhiteSpace(_url))
-                        _backend.LoadUrl(_url!);
+                        backend.LoadUrl(_url!);
+                    if (!IsCurrentWebBackend(backend, generation))
+                        return false;
                 }
+                return true;
             }
             catch (Exception ex)
             {
-                SetField(ref _lastBackendFailure, ex.Message, nameof(LastBackendFailure));
-                Debug.LogWarning($"UIWebViewComponent backend '{_backend.GetType().Name}' failed: {ex.Message}");
+                if (!ReferenceEquals(_backend, backend) || _webBackendGeneration != generation ||
+                    Volatile.Read(ref _webProducerDestroyed) != 0 || !IsActive)
+                    return false;
+
+                string failure = $"UI.Web.BackendFailure: {ex.Message}";
+                bool changed = SetWebProducerFailure(failure);
                 _pendingReinitialize = false;
                 _pendingLoadUrl = false;
                 _pendingResize = false;
+                if (changed)
+                    QueueWebVisualInvalidation();
+                Debug.LogWarning($"UIWebViewComponent backend '{backend.GetType().Name}' failed: {ex.Message}");
+                if (!ReferenceEquals(_backend, backend) || _webBackendGeneration != generation)
+                    return false;
 
-                if (AllowSoftwareFallback && _backend.SupportsFramebuffer)
+                if (AllowSoftwareFallback && backend.SupportsFramebuffer)
                 {
-                    Backend = WebRendererBackendRegistry.CreateSoftware();
-                    Debug.UIWarning("UIWebViewComponent is switching to its explicitly permitted software web backend.");
+                    if (!ReferenceEquals(_backend, backend) || _webBackendGeneration != generation)
+                        return false;
+                    IWebRendererBackend replacement = WebRendererBackendRegistry.CreateSoftware();
+                    if (ReferenceEquals(_backend, backend) && _webBackendGeneration == generation)
+                    {
+                        Backend = replacement;
+                        if (ReferenceEquals(_backend, replacement))
+                            Debug.UIWarning("UIWebViewComponent is switching to its explicitly permitted software web backend.");
+                    }
+                    else
+                        RetireUnusedWebBackend(replacement);
                 }
+                return false;
             }
         }
 
@@ -630,15 +750,6 @@ namespace XREngine.Rendering.UI
             pbo.UnmapBufferData();
         }
 
-        private void DestroyPbos()
-        {
-            for (int i = 0; i < _pboBuffers.Length; i++)
-            {
-                _pboBuffers[i]?.Destroy();
-                _pboBuffers[i] = null;
-            }
-        }
-
         protected override bool TryCapturePublicationPayload(in UILayoutNodeOutput output,
             UIDrawPayloadBuilder builder, out UIDrawPayload? payload, out string? failure)
         {
@@ -690,6 +801,7 @@ namespace XREngine.Rendering.UI
                         RuntimeEngine.EnqueueRenderThreadTask(ReleaseWebSurfaces, "UI.Web.ReleaseSurfaces",
                             RenderThreadJobKind.RenderPipelineResource);
                 }
+                QueueWebRetirements();
             }
         }
 
@@ -697,6 +809,7 @@ namespace XREngine.Rendering.UI
         {
             lock (_webProducerGate)
                 ReleaseWebSurfacesUnderGate();
+            QueueWebRetirements();
         }
 
         private void ReleaseWebSurfacesUnderGate()
@@ -711,7 +824,7 @@ namespace XREngine.Rendering.UI
             _webSurfacesReleased = true;
             _webReleasePending = false;
             Volatile.Write(ref _publishedWebSurface, null);
-            DisposeWebTransientResources();
+            RetireWebResources(_backend);
             foreach (WebSurface surface in _webSurfaces)
                 surface.Release();
             _webSurfaces.Clear();

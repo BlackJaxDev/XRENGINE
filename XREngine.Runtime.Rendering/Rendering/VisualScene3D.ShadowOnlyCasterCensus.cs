@@ -221,6 +221,9 @@ public partial class VisualScene3D
         if (!renderable.CastsShadows)
             return false;
 
+        if (renderable.FrozenWorldCommandSource?.HasFrozenShadowCasters == true)
+            return true;
+
         var commands = renderable.RenderCommands;
         for (int i = 0; i < commands.Count; i++)
             if (commands[i] is IRenderCommandMesh)
