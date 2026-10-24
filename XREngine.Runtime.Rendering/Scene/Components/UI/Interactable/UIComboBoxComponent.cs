@@ -21,6 +21,11 @@ namespace XREngine.Rendering.UI
         private IUIValueBinding<ulong?>? _binding;
         private bool _writingBinding;
         private bool _restoreFocusOnDismiss;
+        private bool _tearingDown;
+        private bool _opening;
+        private ulong _popupRevision;
+        private ulong _optionsRevision;
+        private ulong _bindingRevision;
         private string _typeAhead = string.Empty;
         private long _lastTypeAheadTick;
         /// <summary>Limits the number of characters in a combo search prefix.</summary>
@@ -70,12 +75,25 @@ namespace XREngine.Rendering.UI
             get => _popup;
             set
             {
+                if (_tearingDown || IsDestroyed)
+                    return;
                 if (ReferenceEquals(_popup, value))
                     return;
+                ulong revision = ++_popupRevision;
                 Close();
-                if (IsActiveInHierarchy && _popup is not null)
-                    _popup.Dismissed -= OnPopupDismissed;
-                SetField(ref _popup, value);
+                if (!OwnsPopupChange(revision))
+                    return;
+                UIContextMenuComponent? previous = _popup;
+                if (IsActiveInHierarchy && previous is not null)
+                    previous.Dismissed -= OnPopupDismissed;
+                if (!OwnsPopupChange(revision))
+                    return;
+                bool changed = SetField(ref _popup, value);
+                if (!changed && OwnsPopupChange(revision) &&
+                    ReferenceEquals(_popup, previous) && IsActiveInHierarchy && previous is not null)
+                    previous.Dismissed += OnPopupDismissed;
+                if (!OwnsPopupChange(revision) || !ReferenceEquals(_popup, value))
+                    return;
                 if (IsActiveInHierarchy && _popup is not null)
                     _popup.Dismissed += OnPopupDismissed;
             }
@@ -99,14 +117,21 @@ namespace XREngine.Rendering.UI
             get => _virtualOptions;
             set
             {
+                if (_tearingDown || IsDestroyed)
+                    return;
                 if (ReferenceEquals(_virtualOptions, value))
                     return;
+                ulong revision = ++_optionsRevision;
                 Close();
+                if (!OwnsOptionsChange(revision))
+                    return;
                 SetField(ref _virtualOptions, value);
+                if (!OwnsOptionsChange(revision) || !ReferenceEquals(_virtualOptions, value))
+                    return;
                 LastTypeAheadStatus = EUIComboLookupStatus.None;
                 LastNavigationStatus = EUIComboLookupStatus.None;
                 _virtualAdapter = value is null ? null : new VirtualOptionAdapter(this, value);
-                if (_selectedId is { } id && !HasOption(id))
+                if (_selectedId is { } id && !HasOption(id) && OwnsOptionsChange(revision))
                     Select(null, EUIValueChangeOrigin.Programmatic);
             }
         }
@@ -116,20 +141,41 @@ namespace XREngine.Rendering.UI
             get => _binding;
             set
             {
+                if (_tearingDown || IsDestroyed)
+                    return;
                 if (ReferenceEquals(_binding, value))
                     return;
+                ulong revision = ++_bindingRevision;
+                IUIValueBinding<ulong?>? previous = _binding;
+                if (IsActiveInHierarchy && previous is not null)
+                    previous.ValueChanged -= OnBindingChanged;
+                if (!OwnsBindingChange(revision))
+                    return;
+                bool changed = SetField(ref _binding, value);
+                if (!changed && OwnsBindingChange(revision) &&
+                    ReferenceEquals(_binding, previous) && IsActiveInHierarchy && previous is not null)
+                    previous.ValueChanged += OnBindingChanged;
+                if (!OwnsBindingChange(revision) || !ReferenceEquals(_binding, value))
+                    return;
                 if (IsActiveInHierarchy && _binding is not null)
-                    _binding.ValueChanged -= OnBindingChanged;
-                SetField(ref _binding, value);
-                if (IsActiveInHierarchy && _binding is not null)
+                {
                     _binding.ValueChanged += OnBindingChanged;
-                if (_binding is not null)
-                    Select(_binding.Value, EUIValueChangeOrigin.Binding);
+                    if (!OwnsBindingChange(revision) || !ReferenceEquals(_binding, value))
+                    {
+                        if (value is not null)
+                            value.ValueChanged -= OnBindingChanged;
+                        return;
+                    }
+                }
+                if (value is not null && OwnsBindingChange(revision))
+                    Select(value.Value, EUIValueChangeOrigin.Binding);
             }
         }
 
         public void SetOptions(ReadOnlySpan<UIComboOption> options)
         {
+            if (_tearingDown || IsDestroyed)
+                return;
             if (options.Length > MaximumPopupOptions)
                 throw new NotSupportedException("Large combo sources require a virtual popup provider.");
             for (int i = 0; i < options.Length; i++)
@@ -142,6 +188,8 @@ namespace XREngine.Rendering.UI
             }
             _options = options.ToArray();
             VirtualOptions = null;
+            if (_tearingDown || IsDestroyed)
+                return;
             LastTypeAheadStatus = EUIComboLookupStatus.None;
             LastNavigationStatus = EUIComboLookupStatus.None;
             if (_selectedId is { } id && !HasOption(id))
@@ -162,6 +210,8 @@ namespace XREngine.Rendering.UI
 
         public bool Select(ulong? id, EUIValueChangeOrigin origin = EUIValueChangeOrigin.Programmatic)
         {
+            if (_tearingDown || IsDestroyed)
+                return false;
             if (id is { } selected && !HasOption(selected))
                 return false;
             IUIValueBinding<ulong?>? binding = _binding;
@@ -170,7 +220,7 @@ namespace XREngine.Rendering.UI
                 _writingBinding = true;
                 try { binding.SetValue(id); }
                 finally { _writingBinding = false; }
-                if (!ReferenceEquals(_binding, binding))
+                if (_tearingDown || IsDestroyed || !ReferenceEquals(_binding, binding))
                     return false;
                 id = binding.Value;
                 if (id is { } boundId && !HasOption(boundId))
@@ -186,9 +236,35 @@ namespace XREngine.Rendering.UI
 
         private void OnBindingChanged(ulong? id)
         {
-            if (!_writingBinding)
+            if (!_tearingDown && !IsDestroyed && !_writingBinding)
                 Select(id, EUIValueChangeOrigin.Binding);
         }
+
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T value)
+        {
+            if (_tearingDown || IsDestroyed)
+                return false;
+            ulong popupRevision = _popupRevision;
+            ulong optionsRevision = _optionsRevision;
+            ulong bindingRevision = _bindingRevision;
+            bool allowed = base.OnPropertyChanging(propName, field, value);
+            return allowed && !_tearingDown && !IsDestroyed && (propName switch
+            {
+                nameof(Popup) => popupRevision == _popupRevision,
+                nameof(VirtualOptions) => optionsRevision == _optionsRevision,
+                nameof(Binding) => bindingRevision == _bindingRevision,
+                _ => true
+            });
+        }
+
+        private bool OwnsPopupChange(ulong revision)
+            => !_tearingDown && !IsDestroyed && revision == _popupRevision;
+
+        private bool OwnsOptionsChange(ulong revision)
+            => !_tearingDown && !IsDestroyed && revision == _optionsRevision;
+
+        private bool OwnsBindingChange(ulong revision)
+            => !_tearingDown && !IsDestroyed && revision == _bindingRevision;
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
@@ -199,42 +275,70 @@ namespace XREngine.Rendering.UI
 
         public bool Open()
         {
-            if (!CanInteract || IsReadOnly || _popup is null)
+            if (_tearingDown || IsDestroyed || _opening || !CanInteract || IsReadOnly ||
+                _popup is not { IsDestroyed: false } popup)
                 return false;
-            if (_virtualAdapter is not null)
+            VirtualOptionAdapter? adapter = _virtualAdapter;
+            UIComboOption[] options = _options;
+            if (adapter is not null)
             {
-                if (_virtualAdapter.Count == 0)
+                if (adapter.Count == 0)
                     return false;
-                Opening?.Invoke(this);
-                _popup.ShowVirtual(PopupPosition, _virtualAdapter);
-                _virtualAdapter.List = _popup.VirtualList;
+                if (_tearingDown || IsDestroyed || !ReferenceEquals(_virtualAdapter, adapter))
+                    return false;
+                if (!InvokeOpening(popup, adapter, options))
+                    return false;
+                popup.ShowVirtual(PopupPosition, adapter);
+                if (_tearingDown || IsDestroyed || !popup.IsOpen ||
+                    !ReferenceEquals(_popup, popup) ||
+                    !ReferenceEquals(_virtualAdapter, adapter))
+                    return false;
+                adapter.List = popup.VirtualList;
                 _restoreFocusOnDismiss = true;
                 return true;
             }
-            if (_options.Length == 0)
+            if (options.Length == 0)
                 return false;
-            Opening?.Invoke(this);
-            ContextMenuItem[] items = new ContextMenuItem[_options.Length];
-            for (int i = 0; i < _options.Length; i++)
+            if (!InvokeOpening(popup, adapter, options))
+                return false;
+            ContextMenuItem[] items = new ContextMenuItem[options.Length];
+            for (int i = 0; i < options.Length; i++)
             {
-                UIComboOption option = _options[i];
+                UIComboOption option = options[i];
                 items[i] = new ContextMenuItem(option.Label,
                     () => Select(option.Id, EUIValueChangeOrigin.User), option.IsEnabled);
             }
-            _popup.Show(PopupPosition, items);
+            popup.Show(PopupPosition, items);
+            if (_tearingDown || IsDestroyed || !popup.IsOpen ||
+                !ReferenceEquals(_popup, popup))
+                return false;
             _restoreFocusOnDismiss = true;
             return true;
+        }
+
+        private bool InvokeOpening(UIContextMenuComponent popup, VirtualOptionAdapter? adapter,
+            UIComboOption[] options)
+        {
+            _opening = true;
+            try { Opening?.Invoke(this); }
+            finally { _opening = false; }
+            return !_tearingDown && !IsDestroyed && CanInteract && !IsReadOnly &&
+                !popup.IsDestroyed && ReferenceEquals(_popup, popup) &&
+                ReferenceEquals(_virtualAdapter, adapter) && ReferenceEquals(_options, options);
         }
 
         public void Close()
         {
             _restoreFocusOnDismiss = false;
             _typeAhead = string.Empty;
-            _popup?.Hide();
+            if (_popup is { IsDestroyed: false } popup)
+                popup.Hide();
         }
 
         private void OnPopupDismissed()
         {
+            if (_tearingDown || IsDestroyed)
+                return;
             if (_restoreFocusOnDismiss && CanInteract)
                 IsFocused = true;
             _restoreFocusOnDismiss = false;
@@ -260,6 +364,36 @@ namespace XREngine.Rendering.UI
             if (_binding is not null)
                 _binding.ValueChanged -= OnBindingChanged;
             base.OnComponentDeactivated();
+        }
+
+        protected override void OnDestroying()
+        {
+            _tearingDown = true;
+            _restoreFocusOnDismiss = false;
+            _typeAhead = string.Empty;
+            if (_binding is not null)
+                _binding.ValueChanged -= OnBindingChanged;
+            UIContextMenuComponent? popup = _popup;
+            if (popup is not null)
+                popup.Dismissed -= OnPopupDismissed;
+            if (_virtualAdapter is not null)
+                _virtualAdapter.List = null;
+            _virtualAdapter = null;
+            _virtualOptions = null;
+            _options = [];
+            _binding = null;
+            _popup = null;
+            Opening = null;
+            SelectionChanged = null;
+            try
+            {
+                if (popup is { IsDestroyed: false })
+                    popup.Hide();
+            }
+            finally
+            {
+                base.OnDestroying();
+            }
         }
 
         public override void CancelForRecycle()

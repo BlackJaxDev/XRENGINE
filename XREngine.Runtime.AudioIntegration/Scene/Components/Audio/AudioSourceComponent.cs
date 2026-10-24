@@ -44,6 +44,17 @@ namespace XREngine.Components
         [YamlIgnore]
         public ConcurrentDictionary<ListenerContext, AudioSource> ActiveListeners { get; set; } = [];
 
+        private readonly object _sourceOwnershipGate = new();
+        private bool _sourcesRetiring;
+        private bool _sourcesTerminal;
+        private bool _reactivationRequested;
+        private int _sourceRetirementDepth;
+        private long _sourceOwnershipRevision;
+        private static readonly ConcurrentQueue<(ListenerContext Listener, AudioSource Source, Exception Failure)> UncertainSourceRetirements = new();
+
+        /// <summary>Number of failed native source releases retained for owner diagnosis.</summary>
+        public static int UncertainSourceRetirementCount => UncertainSourceRetirements.Count;
+
         public int ActiveListenerCount => ActiveListeners.Count;
 
         public IAudioPlaybackSource? PrimaryPlaybackSource
@@ -496,6 +507,16 @@ namespace XREngine.Components
 
         protected override void OnComponentActivated()
         {
+            lock (_sourceOwnershipGate)
+            {
+                if (_sourcesTerminal || IsDestroyed || IsDestroyQueued)
+                    return;
+                _sourceOwnershipRevision++;
+                if (_sourceRetirementDepth == 0)
+                    _sourcesRetiring = false;
+                else
+                    _reactivationRequested = true;
+            }
             base.OnComponentActivated();
 
             RegisterTick(ETickGroup.Late, ETickOrder.Scene, UpdatePosition);
@@ -516,14 +537,60 @@ namespace XREngine.Components
 
         protected override void OnComponentDeactivated()
         {
-            base.OnComponentDeactivated();
+            try { base.OnComponentDeactivated(); }
+            finally { RetireActiveSources(terminal: false); }
+        }
 
-            //lock (ActiveListeners)
-            //{
-            foreach (var source in ActiveListeners.Values)
-                source.Dispose();
-            ActiveListeners.Clear();
-            //}
+        protected override void OnDestroying()
+        {
+            try { RetireActiveSources(terminal: true); }
+            finally { base.OnDestroying(); }
+        }
+
+        private void RetireActiveSources(bool terminal)
+        {
+            lock (_sourceOwnershipGate)
+            {
+                _sourceOwnershipRevision++;
+                _sourceRetirementDepth++;
+                _sourcesRetiring = true;
+                _sourcesTerminal |= terminal;
+                _reactivationRequested = false;
+            }
+            try
+            {
+                ConcurrentDictionary<ListenerContext, AudioSource> listeners = ActiveListeners;
+                ICollection<KeyValuePair<ListenerContext, AudioSource>> exactPairs = listeners;
+                foreach (KeyValuePair<ListenerContext, AudioSource> pair in listeners)
+                    if (exactPairs.Remove(pair))
+                        RetireSource(pair.Key, pair.Value);
+            }
+            finally
+            {
+                lock (_sourceOwnershipGate)
+                {
+                    _sourceRetirementDepth--;
+                    if (_sourceRetirementDepth == 0 && _reactivationRequested && !_sourcesTerminal)
+                    {
+                        _sourcesRetiring = false;
+                        _sourceOwnershipRevision++;
+                    }
+                    if (_sourceRetirementDepth == 0)
+                        _reactivationRequested = false;
+                }
+            }
+        }
+
+        private static void RetireSource(ListenerContext listener, AudioSource source)
+        {
+            bool returnedToPool = false;
+            try { listener.ReleaseSource(source, out returnedToPool); }
+            catch (Exception exception)
+            {
+                if (!returnedToPool)
+                    UncertainSourceRetirements.Enqueue((listener, source, exception));
+                Debug.AudioWarning($"Audio source retirement failed: {exception.Message}");
+            }
         }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -832,35 +899,81 @@ namespace XREngine.Components
         }
 
         public void AddSourceToListener(ListenerContext listener)
-            => ActiveListeners.GetOrAdd(listener, AddSource);
+        {
+            long admissionRevision;
+            lock (_sourceOwnershipGate)
+            {
+                if (_sourcesRetiring || _sourcesTerminal || IsDestroyed || IsDestroyQueued || ActiveListeners.ContainsKey(listener))
+                    return;
+                admissionRevision = _sourceOwnershipRevision;
+            }
 
-        private AudioSource AddSource(ListenerContext x)
+            AudioSource? candidate = AddSource(listener, admissionRevision);
+            if (candidate is null)
+                return;
+            bool accepted;
+            lock (_sourceOwnershipGate)
+            {
+                accepted = admissionRevision == _sourceOwnershipRevision &&
+                    !_sourcesRetiring && !_sourcesTerminal && !IsDestroyed && !IsDestroyQueued &&
+                    ActiveListeners.TryAdd(listener, candidate);
+            }
+            if (!accepted)
+                RetireSource(listener, candidate);
+        }
+
+        private AudioSource? AddSource(ListenerContext x, long admissionRevision)
         {
             var s = x.TakeSource();
-            //s.SourceType = Type;
-            s.RolloffFactor = RolloffFactor;
-            s.ReferenceDistance = ReferenceDistance;
-            s.MaxDistance = MaxDistance;
-            s.RelativeToListener = RelativeToListener;
-            s.BypassSteamAudioSpatialization = BypassSteamAudioSpatialization;
-            s.SteamAudioNonSpatialStereo = SteamAudioNonSpatialStereo;
-            s.Looping = Loop;
-            s.Pitch = Pitch;
-            s.MinGain = MinGain;
-            s.MaxGain = MaxGain;
-            s.Gain = Gain;
-            s.ConeInnerAngle = ConeInnerAngle;
-            s.ConeOuterAngle = ConeOuterAngle;
-            s.ConeOuterGain = ConeOuterGain;
-            StaticBufferChanged(x, s);
-            StateChanged(s);
-            return s;
+            bool retire;
+            lock (_sourceOwnershipGate)
+                retire = admissionRevision != _sourceOwnershipRevision ||
+                    _sourcesRetiring || _sourcesTerminal || IsDestroyed || IsDestroyQueued;
+            if (retire)
+            {
+                RetireSource(x, s);
+                return null;
+            }
+            try
+            {
+                //s.SourceType = Type;
+                s.RolloffFactor = RolloffFactor;
+                s.ReferenceDistance = ReferenceDistance;
+                s.MaxDistance = MaxDistance;
+                s.RelativeToListener = RelativeToListener;
+                s.BypassSteamAudioSpatialization = BypassSteamAudioSpatialization;
+                s.SteamAudioNonSpatialStereo = SteamAudioNonSpatialStereo;
+                s.Looping = Loop;
+                s.Pitch = Pitch;
+                s.MinGain = MinGain;
+                s.MaxGain = MaxGain;
+                s.Gain = Gain;
+                s.ConeInnerAngle = ConeInnerAngle;
+                s.ConeOuterAngle = ConeOuterAngle;
+                s.ConeOuterGain = ConeOuterGain;
+                StaticBufferChanged(x, s);
+                StateChanged(s);
+                lock (_sourceOwnershipGate)
+                    retire = admissionRevision != _sourceOwnershipRevision ||
+                        _sourcesRetiring || _sourcesTerminal || IsDestroyed || IsDestroyQueued;
+                if (retire)
+                {
+                    RetireSource(x, s);
+                    return null;
+                }
+                return s;
+            }
+            catch
+            {
+                RetireSource(x, s);
+                throw;
+            }
         }
 
         private void RemoveSourceFromListener(ListenerContext listener)
         {
             if (ActiveListeners.TryRemove(listener, out var source))
-                listener.ReleaseSource(source);
+                RetireSource(listener, source);
         }
 
         /// <summary>

@@ -11,6 +11,7 @@
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <ProjectReference Include="../../XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
+    <ProjectReference Include="../../XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
@@ -33,6 +34,12 @@
     <Compile Include="../Rendering/UILayoutGridKernelTests.cs" Link="Rendering/UILayoutGridKernelTests.cs" />
     <Compile Include="../Rendering/UIBatchCollectionTests.cs" Link="Rendering/UIBatchCollectionTests.cs" />
     <Compile Include="../Rendering/UICompositionSegmentTests.cs" Link="Rendering/UICompositionSegmentTests.cs" />
+    <Compile Include="../Rendering/UIControlTeardownTests.cs" Link="Rendering/UIControlTeardownTests.cs" />
+    <Compile Include="../Rendering/UITestCanvasInputProbe.cs" Link="Rendering/UITestCanvasInputProbe.cs" />
+    <Compile Include="../Audio/AudioSourceLifecycleProbe.cs" Link="Audio/AudioSourceLifecycleProbe.cs" />
+    <Compile Include="../Rendering/UIStaticDrawContractTests.cs" Link="Rendering/UIStaticDrawContractTests.cs" />
+    <Compile Include="../Audio/AudioSourceTeardownTests.cs" Link="Audio/AudioSourceTeardownTests.cs" />
+    <Compile Include="../Audio/FakeAudioTeardownTransport.cs" Link="Audio/FakeAudioTeardownTransport.cs" />
     <Compile Include="../Rendering/UISplitterHandleTests.cs" Link="Rendering/UISplitterHandleTests.cs" />
     <Compile Include="../Rendering/UIWorldPassManifestTests.cs" Link="Rendering/UIWorldPassManifestTests.cs" />
     <Compile Include="../Scene/SceneStreamingVolumeComponentTests.cs" Link="Scene/SceneStreamingVolumeComponentTests.cs" />

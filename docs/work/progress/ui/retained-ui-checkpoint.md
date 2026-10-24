@@ -407,3 +407,33 @@ build passed with zero warnings/errors in 2m17.23s, and the desktop test project
 compiled with zero warnings/errors in 45.06s. All final checks match 9,924
 source/project file hashes. All 32 local document links and the whitespace check
 pass. Desktop tests did not execute. No platform acceptance is claimed.
+
+
+## Static Chrome And Terminal Callback Ownership
+
+Reconciliation remains **39 of 60 implementation items**. The 21 broader code
+items and four original owner decisions remain open. Paragraph analysis remains
+pending.
+
+- Vulkan can reuse a compatible singleton solid screen-space chrome draw. Exact
+  segment, run, mesh, backend, native resource, and pass identities remain part
+  of admission. Current output receipts still prove actual execution. Text,
+  images, borders, custom draws, offscreen output, and direct world UI remain
+  outside this cache path. No GPU cache result is claimed.
+- Menus, tooltips, and combo boxes remove their exact callbacks on direct
+  destruction. Replacement setters reject callback reentry that destroys or
+  replaces the owner. Audio teardown releases exact listener/source pairs,
+  rejects stale creation, preserves reactivation ticks, and retains uncertain
+  native releases without unsafe retries.
+- Hidden inspectors keep play snapshots until activation and validate their
+  assigned window world. Mixed target lists do not enter component-only casts.
+- The inactive world-pass manifest supports bounded Switch cases, exact canvas
+  packet sets, and reserved owner-thread attempts. Production output grouping,
+  repeated shadow/color invocation proof, and partial-target recovery stay open.
+
+Headless build 75 passed with zero warnings/errors in 1m28.85s. Full run 44 passed
+**531 of 531 tests**, with zero warnings or skips, in 9.286s. Editor build 33
+passed with zero warnings/errors in 2m12.98s. The desktop test project compiled
+with zero warnings/errors in 45.41s. Desktop tests did not execute. The two Vulkan-only pass-admission edits after the headless build are
+outside its project inputs. Final source verification covers 9,936 files.
+No Windows execution, graphics, visual, IME, or performance acceptance is claimed.

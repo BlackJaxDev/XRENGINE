@@ -155,7 +155,12 @@ namespace XREngine.Audio
         }
 
         public void ReleaseSource(AudioSource source)
+            => ReleaseSource(source, out _);
+
+        /// <summary>Reports whether the pool accepted the source before a later verification error.</summary>
+        public void ReleaseSource(AudioSource source, out bool returnedToPool)
         {
+            returnedToPool = false;
             if (source is null)
                 return;
             if (!ReferenceEquals(source.ParentListener, this))
@@ -163,6 +168,7 @@ namespace XREngine.Audio
             if (source.Handle != 0)
                 Sources.Remove(source.Handle);
             SourcePool.Release(source);
+            returnedToPool = true;
             VerifyError();
         }
         public void ReleaseBuffer(AudioBuffer buffer)

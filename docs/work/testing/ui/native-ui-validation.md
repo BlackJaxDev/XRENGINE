@@ -13,16 +13,17 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. All **510 of 510** tests pass, with no
-warnings, failures, or skips, in 9.129 seconds. The build took 1m29.43s. Coverage
-adds composition span identity, splitter geometry, closed conditional graphs,
-provider callback reentry, and streaming ownership after destruction. These
-results are from 2026-10-24.
+through `Tools/Invoke-AgentBuild.ps1`. All **531 of 531** tests pass, with no
+warnings, failures, or skips, in 9.286 seconds. The build took 1m28.85s. Coverage
+adds terminal callback ownership, audio reactivation, bounded Switch graphs,
+canvas-lifetime batch reuse, and exact retained mesh identity. These results are
+from 2026-10-24.
 
-The matching editor build passed with zero warnings/errors in 2m17.23s. The
-desktop test project compiled with zero warnings/errors in 45.06s. Hashes confirm
-the same 9,924 source/project files for all final checks. Desktop execution
-remains subject to the Windows requirement.
+The matching editor build passed with zero warnings/errors in 2m12.98s. The
+desktop test project compiled with zero warnings/errors in 45.41s. Final source
+verification covers 9,936 files. The two Vulkan-only pass-admission edits after
+the headless build are outside its project inputs; the editor and desktop builds
+include them. Desktop execution remains subject to the Windows requirement.
 
 The editor build compiles Windows targets on Linux. The desktop test-project
 build compiles shaping and Vulkan regression tests. Desktop tests did not execute:
@@ -183,6 +184,7 @@ Architecture: [UI rendering pipeline](../../../architecture/ui/03-Rendering-Pipe
 | Check shared primitives. | Render common editor controls with native UI batching. | Controls use shared primitive pipelines and persistent instance data. | Planned | none |
 | Check panel backgrounds. | Open panels, menus, and fields with default styling. | Default chrome uses no per-panel grab pass. Blur is opt-in and shared by compatible layers. | Planned | none |
 | Check static and dynamic layers. | Update an FPS counter, caret, hover, and selection over static editor chrome. | Dynamic records update without invalidating static command topology. | Planned | none |
+| Check bounded Vulkan chrome reuse. | Mark a solid screen-space subtree as `StaticChrome`; edit a separate overlay, then change the chrome, clip, backend, and mesh. Repeat with resource/debug/output-sensitive cache policies. | Compatible chrome reuses secondary commands while each current receipt proves actual execution. Changed owners and restricted policies reject reuse. No stale buffers or skipped required output occur. | Planned | none |
 
 ### Editor Feature Parity
 Architecture: [UI architecture](../../../architecture/ui/README.md); [Native UI retained rendering design](../../design/ui/native-ui-retained-rendering-design.md)

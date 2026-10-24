@@ -514,9 +514,17 @@ when another span changes or an earlier overlay is inserted. Changed sibling
 output variants receive distinct revisions. Readers retain the parent publication
 while using its segments and resources.
 
-Text and material batching respect these owner boundaries. This does not yet admit
-static UI into native command caches. Changed publication comparison still visits
-the record set; independent sparse capture remains open.
+Text and material batching respect both owner and contiguous segment boundaries.
+Vulkan can admit a single solid screen-space chrome run to its existing secondary
+command cache. The draw-local contract binds the canvas lifetime, segment identity
+and revision, run identity, exact mesh and geometry revision, indexed draw shape,
+and backend generation. The current receipt remains separate from reusable
+identity. Native pipeline, descriptor, buffer, target, and cohort keys remain
+required. Only the dynamic UI/text cache-policy bits can use this exception;
+resource, debug, and output-sensitive restrictions still apply. Text, images,
+borders, custom draws, offscreen output, and world UI remain dynamic. GPU cache
+acceptance is unverified. Changed publication comparison still visits the record
+set; independent sparse capture remains open.
 
 `UISplitterHandleComponent` uses accepted divider metrics from the layout kernel.
 The metrics describe the split before child size constraints alter pane geometry.
@@ -542,3 +550,25 @@ A stale import preserves its recovery backup instead of applying rollback to a
 replacement project. The diagnostic reports the retained backup location.
 Generated closure writes and already-running import callbacks do not yet share
 full transaction reservations. These guards do not establish crash recovery.
+
+
+## Hidden panels and terminal callbacks
+
+Inspector panels retain play-mode transition subscriptions while hidden. They
+capture stable target identities and restore them when the view activates again.
+The dock host assigns the exact window owner. A changed owner world or missing
+target clears stale inspection state. Destruction removes the subscriptions.
+
+Menus, tooltips, and combo boxes detach their input, timer, target, popup, and
+binding owners during direct destruction. Callback reentry cannot reopen a
+terminal control or restore its focus. Audio source teardown removes exact
+listener/source pairs before native release. Admission revisions reject sources
+created during a lifecycle change. Failed native releases remain retained for
+diagnosis; teardown does not guess whether an uncertain native call can repeat.
+
+The inactive world-pass manifest supports closed conditional and Switch graphs,
+bounded canvas packet claims, and a reserved owner-thread attempt. It rejects
+changed command graphs and reentrant attempt reset. Production activation still
+requires pass-invocation identities, grouped native receipts, output reset proof,
+and exact direct-world clipping. These bookkeeping contracts do not publish
+world UI or change authored shadow behavior.

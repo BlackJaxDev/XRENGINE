@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Data.Rendering;
 
@@ -9,14 +10,23 @@ internal struct UIWorldPassManifestNode
     internal ViewportRenderCommandContainer Container;
     internal int ContainerIndex;
     internal int ContainerCommandCount;
-    internal int ParentBranchIndex;
-    internal bool ParentBranchValue;
+    internal int ParentDecisionIndex;
+    internal int ParentChoice;
     internal VPRC_IfElse? Branch;
     internal Func<bool>? Condition;
     internal ViewportRenderCommandContainer? TrueCommands;
     internal ViewportRenderCommandContainer? FalseCommands;
     internal int TrueCommandCount;
     internal int FalseCommandCount;
+    internal VPRC_Switch? Switch;
+    internal Func<int>? SwitchEvaluator;
+    internal Dictionary<int, ViewportRenderCommandContainer>? SwitchCases;
+    internal ViewportRenderCommandContainer? DefaultCase;
+    internal int SwitchCaseStart;
+    internal int SwitchCaseCount;
+    internal int DefaultCommandCount;
+    internal int SelectedChoice;
+    internal bool DecisionRecorded;
     internal VPRC_RenderMeshesPassShared? Pass;
     internal int RenderPass;
     internal EMeshRenderingPathIntent PathIntent;

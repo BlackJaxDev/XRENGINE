@@ -349,12 +349,18 @@ namespace XREngine.Rendering.Vulkan
                     startIndex,
                     out _,
                     out _);
+            bool firstIsStaticUi = IsEligibleStaticUiDraw(
+                recordingState.Ops.Stream, startIndex, dynamicOverlay: false);
             int count = 0;
             for (int i = startIndex; i < recordingState.Ops.Length; i++)
             {
                 if (recordingState.PipelineDeferredOperationIndices.Contains(i))
                     break;
                 if (recordingState.Ops.GetHeader(i).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
+                    break;
+                if (i > startIndex && (firstIsStaticUi ||
+                    IsEligibleStaticUiDraw(recordingState.Ops.Stream, i,
+                        dynamicOverlay: false)))
                     break;
                 ref readonly MeshDrawPayload candidate = ref recordingState.Ops.GetMeshDraw(i);
                 ref readonly FrameOpContext candidateContext = ref recordingState.Ops.GetContext(i);
@@ -363,7 +369,9 @@ namespace XREngine.Rendering.Vulkan
                     break;
                 if (recordingState.SkipUiBatchTextOps && IsUiBatchTextDrawPayload(in candidate))
                     break;
-                if (candidateContext.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+                if (candidateContext.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline &&
+                    !IsEligibleStaticUiDraw(recordingState.Ops.Stream, i,
+                        dynamicOverlay: false))
                     break;
                 if (candidateTarget != recordingState.Ops.GetTarget(startIndex))
                     break;

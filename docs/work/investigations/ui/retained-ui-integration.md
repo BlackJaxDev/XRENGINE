@@ -689,3 +689,79 @@ Desktop test build 10 passed with zero warnings/errors in 45.06s. Headless build
 source/project file hashes. All 32 local document links and the whitespace check
 pass. Reconciliation stays at 39 of 60 implementation items, with 21 code items
 and four original owner decisions open. Paragraph analysis remains pending.
+
+
+## Static Chrome Admission And Terminal Callbacks
+
+The next increment adds draw-local Vulkan static chrome contracts, Switch graph
+bookkeeping, hidden-inspector snapshots, and control/audio teardown. Static UI
+uses singleton packets and current output receipts. Independent review found a
+cache-policy exception that also bypassed resource/debug/output restrictions.
+The fix permits only the dynamic UI/text bits and adds mixed-flag regressions.
+Audio review found that a release callback could reactivate a tick before the
+outer deactivation cleared it. The repair must preserve that new activation.
+The dock host now assigns the inspector's exact window owner.
+
+Headless build 73 compiled the runtime projects, then failed on one new test
+assertion: the expected reuse counter literal had the wrong integer type. The
+literal now matches the unsigned 64-bit counter. The build had zero warnings;
+no tests ran. Declared headless restore 4 passed before this build after linking
+the existing audio integration project. No package version changed.
+
+
+Headless build 74 passed with zero warnings/errors in 18.91s. Full run 43 passed
+all 527 tests with zero warnings or skips in 9.143s. The audio regression now
+checks the update tick after callback reactivation and its removal on a later
+normal stop. Editor build 30 checks the frozen source, including the cache-policy
+repair and exact inspector window assignment.
+
+
+Editor build 30 compiled Vulkan and Bootstrap, then failed on a LINQ type
+inference error in inspector restoration. The distinct node sequence now names
+its `SceneNode` element type. This editor-only repair does not change the
+headless runtime/test inputs. Editor build 31 checks the repaired source.
+
+
+Editor build 31 passed with zero warnings/errors in 44.99s. The sole source
+change after headless build 74/run 43 is the editor-only `Distinct<SceneNode>`
+repair, outside the headless project inputs. Desktop test build 11 checks the
+final source. Native GPU cache execution and Windows editor workflows remain
+unverified.
+
+
+Desktop test build 11 failed on two extra closing parentheses in the new Vulkan
+primitive assertions (eight syntax diagnostics, zero warnings). The assertions
+are repaired. Desktop test build 12 checks that test-only correction.
+
+
+Desktop test build 12 passed with zero warnings/errors in 42.47s. Final inspector
+review found that a mixed node/component target list could enter a component-only
+cast. Restoration now rebuilds the component drill-down owner list only when all
+restored targets are components, and clears old owners otherwise. Editor build
+32 and desktop test build 13 check this final editor-only guard.
+
+
+Editor build 32 passed with zero warnings/errors in 43.22s. Before desktop build
+13, control review found that popup replacement could destroy its control during
+dismissal and then let the outer setter install a new owner. The final source
+will include post-callback ownership guards and regressions. Headless build 75
+and a new full run will validate that runtime repair before final editor checks.
+
+
+Headless build 75 passed with zero warnings/errors in 1m28.85s. Full run 44 passed
+all 531 tests with zero warnings or skips in 9.286s. Final path review found that
+normal solid UI uses `TransparentForward`, outside the initial cache pass gate.
+The Vulkan gate now admits only the four supported raster passes and keeps exact
+pass identity in existing cache keys. Background and pre/post passes remain
+dynamic. The changed Vulkan source and desktop fixture are outside the headless
+inputs. Editor build 33 and desktop test build 13 check the final source.
+
+
+Editor build 33 passed with zero warnings/errors in 2m12.98s. Final source hashes
+remain unchanged across the 9,936-file snapshot. Desktop test build 13 follows.
+
+
+Desktop test build 13 passed with zero warnings/errors in 45.41s. No desktop
+tests executed. Final source hashes remain unchanged, all 32 local document links
+resolve, and the whitespace check passes. Reconciliation remains 39 of 60 code
+items; partial cache admission and lifecycle work do not close the broader items.

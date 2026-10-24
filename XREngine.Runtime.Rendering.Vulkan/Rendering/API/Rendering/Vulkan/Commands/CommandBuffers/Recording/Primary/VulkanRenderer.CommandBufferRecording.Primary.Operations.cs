@@ -1665,7 +1665,9 @@ internal sealed partial class VulkanCommandRuntime
         XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
         bool requiredProducerMember =
             IsRequiredProducerSourceOperation(ref state, info.OperationIndex);
-        if (!requiredProducerMember &&
+        bool staticUi = IsEligibleStaticUiDraw(state.Ops.Stream,
+            info.OperationIndex, dynamicOverlay: false);
+        if ((!requiredProducerMember || staticUi) &&
             state.CommandChainSchedule is not null &&
             state.ScheduledCommandChainKeysByOpIndex is not null &&
             state.ScheduledCommandChainCache is not null &&
@@ -1871,9 +1873,10 @@ internal sealed partial class VulkanCommandRuntime
     {
         for (int offset = 0; offset < operationCount; offset++)
         {
-            if (IsRequiredProducerSourceOperation(
-                    ref state,
-                    firstOperationIndex + offset))
+            int operationIndex = firstOperationIndex + offset;
+            if (IsRequiredProducerSourceOperation(ref state, operationIndex) &&
+                !IsEligibleStaticUiDraw(state.Ops.Stream,
+                    operationIndex, dynamicOverlay: false))
             {
                 return offset;
             }

@@ -319,6 +319,7 @@ internal sealed class NativeDockTreeHost
                 break;
             case NativeDockPanel.Inspector:
                 slot.NewChild<InspectorPanel>(out var inspector);
+                inspector.Window = _window;
                 inspector.InspectedObjects = Selection.SceneNodes;
                 break;
             case NativeDockPanel.Assets:

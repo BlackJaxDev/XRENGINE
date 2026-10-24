@@ -16,6 +16,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -596,6 +597,13 @@ internal unsafe partial class VkMeshRenderer(
             windowPresentationSourceMarker)
         {
             IndexedIndirect = indexedIndirect,
+            StaticUiCandidate = indexedIndirect is null &&
+                AbstractRenderer.Current is { } activeBackend &&
+                ReferenceEquals(activeBackend.ApiWrapperIdentityOwner, BackendContext) &&
+                UIStaticDrawScope.TryCapture(activeBackend, MeshRenderer,
+                    context.UiPublicationReceiptId, instances,
+                    out UIStaticDrawCandidate staticUiCandidate)
+                    ? staticUiCandidate : default,
         };
         VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
             _meshRequests?.TryEnqueue(in request)
@@ -1047,6 +1055,7 @@ internal unsafe partial class VkMeshRenderer(
                 request.PreparationCompatibilitySignature,
             IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
             IndexedIndirectAuthoringLease = request.IndexedIndirect?.AuthoringLease,
+            StaticUiCandidate = request.StaticUiCandidate,
             AutoUniformPublication =
                 VulkanAutoUniformPublicationSnapshot.Capture(
                     draw,

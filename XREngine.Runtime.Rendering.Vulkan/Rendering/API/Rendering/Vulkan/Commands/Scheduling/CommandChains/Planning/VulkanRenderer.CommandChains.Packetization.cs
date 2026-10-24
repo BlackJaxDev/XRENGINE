@@ -11,6 +11,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -151,6 +152,7 @@ internal sealed partial class VulkanCommandRuntime
         ref readonly MeshDrawPayload first = ref ops.GetMeshDraw(startIndex);
         ref readonly FrameOperationHeader firstHeader = ref ops.GetHeader(startIndex);
         ref readonly FrameOpContext firstContext = ref ops.GetContext(startIndex);
+        bool staticUi = IsEligibleStaticUiDraw(ops, startIndex, dynamicOverlay);
 
         DrawPacket firstDraw;
         RenderViewKey viewKey;
@@ -169,7 +171,7 @@ internal sealed partial class VulkanCommandRuntime
             DescriptorBindingSnapshot firstDescriptorSnapshot =
                 CreateMeshDrawDescriptorSnapshot(first.Draw);
             runCount = 1;
-            int packetDrawLimit = viewKey.Kind == RenderViewKind.Shadow
+            int packetDrawLimit = staticUi ? 1 : viewKey.Kind == RenderViewKind.Shadow
                 ? MaxShadowMeshDrawsPerRenderPacket
                 : MaxMeshDrawsPerRenderPacket;
             int available = Math.Min(ops.Count - startIndex, packetDrawLimit);
@@ -205,7 +207,7 @@ internal sealed partial class VulkanCommandRuntime
                 startIndex,
                 compatibleRunCount);
         }
-        if (runCount < MinMeshDrawsPerRenderPacket)
+        if (runCount < (staticUi ? 1 : MinMeshDrawsPerRenderPacket))
             return 0;
 
         Span<DrawPacket> draws = _commandChainDrawPacketScratch.AsSpan(0, runCount);
@@ -283,7 +285,7 @@ internal sealed partial class VulkanCommandRuntime
             frameDataHash.ToHash(),
             startIndex,
             runCount,
-            dynamicOverlay: false);
+            dynamicOverlay);
         using (VulkanCpuStageScope recordedKeyStage = new(
                    _frameTelemetry,
                    EVulkanCpuStage.CommandChainRecordedKeyCapture,
@@ -414,10 +416,11 @@ internal sealed partial class VulkanCommandRuntime
     private bool CanMeshPacketReachMinimumWithinIdentityCapacity(
         FrameOperationStream ops,
         int startIndex)
-        => CountMeshDrawsWithinIdentityCapacity(
-               ops,
-               startIndex,
-               MinMeshDrawsPerRenderPacket) >= MinMeshDrawsPerRenderPacket;
+    {
+        int minimum = IsEligibleStaticUiDraw(ops, startIndex, dynamicOverlay: false)
+            ? 1 : MinMeshDrawsPerRenderPacket;
+        return CountMeshDrawsWithinIdentityCapacity(ops, startIndex, minimum) >= minimum;
+    }
 
     private static bool IsMeshDrawPacketCompatible(
         in PendingMeshDraw first,
@@ -1115,6 +1118,9 @@ internal sealed partial class VulkanCommandRuntime
                 dynamicOverlay,
                 isUiBatchText: false);
 
+        if (IsEligibleStaticUiDraw(operations, operationIndex, dynamicOverlay))
+            return true;
+
         return !IsExplicitDynamicCommandRange(
                 in operations.GetContext(operationIndex),
                 header.PassIndex,
@@ -1122,6 +1128,49 @@ internal sealed partial class VulkanCommandRuntime
                 IsUiBatchTextDraw(operations.GetMeshDraw(operationIndex).Draw)) &&
             operations.GetMeshDraw(operationIndex).Draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings != true;
     }
+
+    private static bool IsEligibleStaticUiDraw(
+        FrameOperationStream operations, int operationIndex, bool dynamicOverlay)
+    {
+        if (dynamicOverlay ||
+            operations.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
+            return false;
+
+        ref readonly MeshDrawPayload payload = ref operations.GetMeshDraw(operationIndex);
+        PendingMeshDraw draw = payload.Draw;
+        UIStaticDrawCandidate candidate = draw.StaticUiCandidate;
+        ref readonly FrameOpContext context = ref operations.GetContext(operationIndex);
+        RenderOutputRequest output = context.OutputSchedulingRequest;
+        return candidate.BackendOwner is VulkanRenderer backend &&
+            ReferenceEquals(backend.ApiWrapperIdentityOwner, draw.Renderer.BackendContext) &&
+            candidate.Matches(backend, draw.Renderer.MeshRenderer,
+                context.UiPublicationReceiptId, draw.Instances) &&
+            operations.GetTarget(operationIndex) is null &&
+            context.OutputFrameBuffer is null &&
+            context.ContextKind == EVulkanFrameOpContextKind.UiPreview &&
+            context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline &&
+            IsSupportedStaticUiRasterPass(operations.GetHeader(operationIndex).PassIndex) &&
+            AllowsStaticUiSecondaryCachePolicy(ResolveSecondaryCachePolicy(
+                in context, operations.GetHeader(operationIndex).PassIndex)) &&
+            output.IsDefined && output.OutputKind is
+                (EFrameOutputKind.DesktopScene or EFrameOutputKind.EditorScenePanel or EFrameOutputKind.UiPreview) &&
+            output.ConsumerDependencySetId == 0UL &&
+            draw.IndexedIndirectAuthoringLease is null &&
+            !IsUiBatchTextDraw(draw) &&
+            draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings != true;
+    }
+
+    internal static bool AllowsStaticUiSecondaryCachePolicy(
+        ERenderPassSecondaryCachePolicy policy)
+        => (policy & ~(ERenderPassSecondaryCachePolicy.DynamicUi |
+            ERenderPassSecondaryCachePolicy.DynamicText)) ==
+            ERenderPassSecondaryCachePolicy.Stable;
+
+    internal static bool IsSupportedStaticUiRasterPass(int passIndex)
+        => passIndex is (int)EDefaultRenderPass.OpaqueForward or
+            (int)EDefaultRenderPass.MaskedForward or
+            (int)EDefaultRenderPass.TransparentForward or
+            (int)EDefaultRenderPass.OnTopForward;
 
     private static bool IsExactBackgroundIndirectContext(in FrameOpContext context, int passIndex)
     {
@@ -1610,6 +1659,20 @@ internal sealed partial class VulkanCommandRuntime
         hash.Add(ComputeShadowCommandChainStructuralSignature(draw.ShadowUniformState));
         hash.Add(draw.ShadowCasterRelevance.DirectionalCascadeTargetMask);
         hash.Add(draw.ShadowCasterRelevance.PointLightShadowFaceMask);
+        if (draw.StaticUiCandidate.IsDefined)
+        {
+            UIStaticDrawContract contract = draw.StaticUiCandidate.Contract;
+            hash.Add(contract.CanvasLifetime);
+            hash.Add(contract.Owner.GetHashCode());
+            hash.Add(contract.SegmentIdentity);
+            hash.Add(contract.SegmentRevision);
+            hash.Add(contract.RunIdentity);
+            hash.Add(unchecked((ulong)contract.BackendGeneration));
+            hash.Add(unchecked((ulong)contract.Intent.GeometryRevision));
+            hash.Add(contract.Intent.IndexCount);
+            hash.Add(contract.Intent.Instances);
+            hash.Add((int)contract.Intent.ElementType);
+        }
         return hash.ToHash();
     }
 
@@ -1620,7 +1683,10 @@ internal sealed partial class VulkanCommandRuntime
         int opIndex)
     {
         FrameOpSignatureHasher hash = new();
-        hash.Add((int)header.OpCode); hash.Add(opIndex); hash.Add(header.PassIndex);
+        hash.Add((int)header.OpCode);
+        if (!draw.StaticUiCandidate.IsDefined)
+            hash.Add(opIndex);
+        hash.Add(header.PassIndex);
         hash.Add(header.TargetIdentity); hash.Add(context.RecordingFingerprint);
         hash.Add(draw.Renderer.GetHashCode()); hash.Add(draw.Instances);
         hash.Add(draw.PreparedProgramIdentity); hash.Add(draw.ProgramBindingSnapshot?.GetHashCode() ?? 0);

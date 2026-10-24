@@ -43,17 +43,20 @@ public partial class InspectorPanel : EditorPanel
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
-        Engine.PlayMode.PreEnterPlay += CapturePlayModeState;
-        Engine.PlayMode.PostExitPlay += RestorePlayModeState;
-        RemakeChildren();
+        SubscribePlayModeTransitions();
+        bool hadPlaySnapshot = _playInspectedTargets is not null;
+        if (hadPlaySnapshot && Engine.PlayMode.State == EPlayModeState.Edit)
+            RestorePlayModeState();
+        if (!IsActiveInHierarchy || IsDestroyed || IsDestroyQueued)
+            return;
+        if (_virtualPropertyList is null)
+            RemakeChildren();
+        if (!IsActiveInHierarchy || IsDestroyed || IsDestroyQueued)
+            return;
         Selection.SelectionChanged += OnSelectionChanged;
         NativeAssetSelection.SelectionChanged += OnNativeAssetSelectionChanged;
-        if (_playInspectedTargets is not null)
-        {
-            if (Engine.PlayMode.State == EPlayModeState.Edit)
-                RestorePlayModeState();
+        if (hadPlaySnapshot)
             return;
-        }
         if (!IsLocked && DidGlobalSelectionChangeWhileHidden())
         {
             if (NativeAssetSelection.SelectedTarget is { } assetTarget)
@@ -78,12 +81,18 @@ public partial class InspectorPanel : EditorPanel
         if (_playInspectedTargets is null)
             CaptureViewState();
         StopDetailFocusRestore(clearSavedBinding: false);
-        Engine.PlayMode.PreEnterPlay -= CapturePlayModeState;
-        Engine.PlayMode.PostExitPlay -= RestorePlayModeState;
         base.OnComponentDeactivated();
         Selection.SelectionChanged -= OnSelectionChanged;
         NativeAssetSelection.SelectionChanged -= OnNativeAssetSelectionChanged;
         ReleaseVirtualPropertyList();
+    }
+
+    protected override void OnDestroying()
+    {
+        UnsubscribePlayModeTransitions();
+        Selection.SelectionChanged -= OnSelectionChanged;
+        NativeAssetSelection.SelectionChanged -= OnNativeAssetSelectionChanged;
+        base.OnDestroying();
     }
 
     private void OnSelectionChanged(SceneNode[] obj)

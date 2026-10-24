@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -36,6 +37,7 @@ internal readonly record struct VulkanMeshRenderRequest(
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
     internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
+    internal UIStaticDrawCandidate StaticUiCandidate { get; init; }
 
     internal static void ReleaseAuthoringLease(ref VulkanMeshRenderRequest request)
     {

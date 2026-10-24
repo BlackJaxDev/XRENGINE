@@ -7,11 +7,32 @@ public partial class InspectorPanel
 {
     private RuntimeWorld? _playWorld;
     private Guid? _playWorldId;
+    private Guid? _playOwnerWorldId;
     private InspectorPlayTarget[]? _playInspectedTargets;
+    private bool _playTransitionsSubscribed;
+
+    private void SubscribePlayModeTransitions()
+    {
+        if (_playTransitionsSubscribed)
+            return;
+        Engine.PlayMode.PreEnterPlay += CapturePlayModeState;
+        Engine.PlayMode.PostExitPlay += RestorePlayModeState;
+        _playTransitionsSubscribed = true;
+    }
+
+    private void UnsubscribePlayModeTransitions()
+    {
+        if (!_playTransitionsSubscribed)
+            return;
+        Engine.PlayMode.PreEnterPlay -= CapturePlayModeState;
+        Engine.PlayMode.PostExitPlay -= RestorePlayModeState;
+        _playTransitionsSubscribed = false;
+    }
 
     private void CapturePlayModeState()
     {
-        if (_playInspectedTargets is not null || InspectedObjects is not { Length: > 0 } targets)
+        if (IsDestroyed || IsDestroyQueued || _playInspectedTargets is not null ||
+            InspectedObjects is not { Length: > 0 } targets)
             return;
         // A locked panel may inspect another world than the global selection. Only
         // rebind this panel's own targets; global selection has one canonical owner.
@@ -42,28 +63,49 @@ public partial class InspectorPanel
         }
         if (world?.TargetWorld is not { } sourceWorld)
             return;
-        CaptureViewState();
+        if (_virtualPropertyList is not null)
+            CaptureViewState();
         _playWorld = world;
         _playWorldId = sourceWorld.ID;
+        _playOwnerWorldId = (Window?.TargetWorldInstance?.WorldContext as RuntimeWorld)?.TargetWorld?.ID;
         _playInspectedTargets = identities.ToArray();
     }
 
     private void RestorePlayModeState()
     {
         InspectorPlayTarget[]? targetIds = _playInspectedTargets;
+        if (targetIds is null || IsDestroyed || IsDestroyQueued)
+            return;
+        // A hidden panel keeps its snapshot until it can rebuild its view.
+        if (!IsActiveInHierarchy &&
+            Engine.PlayMode.Configuration.StateRestorationMode != EStateRestorationMode.PersistChanges)
+            return;
         RuntimeWorld? world = _playWorld;
         Guid? worldId = _playWorldId;
+        Guid? ownerWorldId = _playOwnerWorldId;
         _playInspectedTargets = null;
         _playWorld = null;
         _playWorldId = null;
-        if (targetIds is null || worldId is null ||
+        _playOwnerWorldId = null;
+        if (worldId is null ||
             Engine.PlayMode.Configuration.StateRestorationMode == EStateRestorationMode.PersistChanges)
             return;
+        if (ownerWorldId is { } expectedOwnerWorld &&
+            (Window?.TargetWorldInstance?.WorldContext as RuntimeWorld)?.TargetWorld?.ID != expectedOwnerWorld)
+        {
+            _componentTargets = [];
+            InspectedObjects = null;
+            return;
+        }
         if (world is null || world.IsDisposing || world.TargetWorld?.ID != worldId)
             world = RuntimeWorldRegistryServices.Current?.Snapshot().Values
                 .FirstOrDefault(candidate => !candidate.IsDisposing && candidate.TargetWorld?.ID == worldId);
         if (world is null)
+        {
+            _componentTargets = [];
+            InspectedObjects = null;
             return;
+        }
 
         Dictionary<Guid, SceneNode> nodes = [];
         Stack<SceneNode> pending = new(world.RootNodes);
@@ -85,10 +127,19 @@ public partial class InspectorPanel
                 : node;
         }).ToArray();
         if (targets.Any(target => target is null))
+        {
+            _componentTargets = [];
+            InspectedObjects = null;
             return;
+        }
 
+        _componentTargets = targets.All(target => target is XRComponent)
+            ? targets.Cast<XRComponent>().Select(component => component.SceneNode)
+                .Distinct<SceneNode>(ReferenceEqualityComparer.Instance).ToArray()
+            : [];
         _savedViewTargets = targets.ToArray();
         InspectedObjects = targets;
-        RestoreViewState();
+        if (IsActiveInHierarchy && _propertyScroll is not null)
+            RestoreViewState();
     }
 }
