@@ -6,14 +6,14 @@ internal ref struct UIHitRecordView
     private readonly ReadOnlySpan<UIHitRecord> _records;
     private readonly UIPublication? _publication;
     private ReadOnlySpan<UIHitRecord> _page;
-    private int _pageIndex;
+    private int _pageStart;
 
     internal UIHitRecordView(ReadOnlySpan<UIHitRecord> records)
     {
         _records = records;
         _publication = null;
         _page = default;
-        _pageIndex = -1;
+        _pageStart = -1;
     }
 
     internal UIHitRecordView(UIPublication publication)
@@ -21,7 +21,7 @@ internal ref struct UIHitRecordView
         _records = default;
         _publication = publication;
         _page = default;
-        _pageIndex = -1;
+        _pageStart = -1;
     }
 
     internal int Length => _publication?.HitRecordCount ?? _records.Length;
@@ -33,13 +33,14 @@ internal ref struct UIHitRecordView
                 return _records[index];
             if ((uint)index >= (uint)publication.HitRecordCount)
                 throw new IndexOutOfRangeException();
-            int pageIndex = index / UIRecordStore<UIHitRecord>.PageSize;
-            if (pageIndex != _pageIndex)
+            if (_pageStart < 0 || index < _pageStart || index >= _pageStart + _page.Length)
             {
-                _page = publication.GetHitRecordPage(pageIndex);
-                _pageIndex = pageIndex;
+                UIRecordStore<UIHitRecord> store = publication.HitRecordStore;
+                int pageIndex = store.LocatePage(index, out int offset);
+                _page = store.GetPage(pageIndex);
+                _pageStart = index - offset;
             }
-            return _page[index % UIRecordStore<UIHitRecord>.PageSize];
+            return _page[index - _pageStart];
         }
     }
 }

@@ -1113,3 +1113,23 @@ The reconciliation is now **48 of 60**. The explicit failure item is complete.
   reasons. Forcing each failure on a live backend remains in the validation plan.
 
 The full headless run passed **1033 of 1033 tests**.
+
+## Sparse publication splice
+
+The reconciliation remains **48 of 60**. This increment advances the open publication item.
+
+- `UIRecordStore.Splice` applies ordered edits. It shares untouched pages and copies
+  only touched pages. Spliced pages can be short; the store keeps page starts and
+  packs all records again when short pages accumulate.
+- A count-changing sparse capture now describes its changes as splice edits. Render
+  records are placed by painter position through `UIRenderPainterIndex`, which also
+  replaces the per-publication membership map for canvas publications.
+- `UICompositionSegmentSet.WithSplicedRenders` keeps untouched segments and moves
+  shifted segments with a new revision. Composition ranges no longer depend on
+  their store position.
+- `CountChangingEditsCopyOnlyTouchedRecordPages` and the store and segment tests
+  cover the bounds. The collector still traverses every record of a changed store,
+  so the item stays open.
+
+The full headless run passed **1041 of 1041 tests**. Editor and desktop test builds
+passed with 0 warnings and errors.

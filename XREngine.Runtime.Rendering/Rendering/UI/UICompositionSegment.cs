@@ -17,26 +17,38 @@ public sealed class UICompositionSegment
         Identity = identity;
         Revision = revision;
         Owner = owner;
+        Start = offset;
     }
 
     private UICompositionSegment(ulong identity, ulong revision, UICompositionOwner owner,
-        UIRecordRange<UIRenderRecord> range)
+        UIRecordRange<UIRenderRecord> range, int start)
     {
         _range = range;
         Identity = identity;
         Revision = revision;
         Owner = owner;
+        Start = start;
     }
 
+    /// <summary>Replaces one range page with a store page of the same record count.</summary>
     internal UICompositionSegment WithReplacedPage(ulong revision,
-        int rangePageIndex, UIRecordStore<UIRenderRecord> records)
-        => new(Identity, revision, Owner, _range.WithReplacedPage(rangePageIndex, records));
+        int rangePageIndex, UIRecordStoreNode<UIRenderRecord> leaf)
+        => new(Identity, revision, Owner, _range.WithReplacedPage(rangePageIndex, leaf), Start);
+
+    /// <summary>Checks that the segment pages align with the store pages at its start.</summary>
+    internal bool MatchesPageLayout(UIRecordStore<UIRenderRecord> records)
+        => _range.MatchesPageLayout(records, Start);
+
+    /// <summary>Shares the same records at a new store position.</summary>
+    internal UICompositionSegment WithStart(ulong revision, int start)
+        => new(Identity, revision, Owner, _range.Share(), start);
 
     public ulong Identity { get; }
     public ulong Revision { get; }
     public UICompositionOwner Owner { get; }
     internal int Count => _range.Length;
-    internal int Start => _range.Offset;
+    /// <summary>Gets the store index of the first record.</summary>
+    internal int Start { get; }
     internal int PageCount => _range.PageCount;
     internal bool ResourcesRetired => Volatile.Read(ref _retired) != 0;
 

@@ -231,4 +231,172 @@ public sealed class UIRecordStoreTests
             store.Release();
         }
     }
+
+    [Test]
+    public void SpliceSharesUntouchedPagesAndCopiesOnlyTouchedPages()
+    {
+        bool countersWereEnabled = UIRuntimeCounters.Enabled;
+        UIRuntimeCounters.Enabled = true;
+        int claims = 0;
+        UIRecordStore<int> store = UIRecordStore<int>.Create(Enumerable.Range(0, 2560).ToArray(),
+            _ => claims++, _ => claims--);
+        UIRecordStore<int>? spliced = null;
+        try
+        {
+            long copied = UIRuntimeCounters.Read(UIWorkCounter.PublicationRecordCellsCopied);
+            // Remove one record from page 3 and insert two records into page 7.
+            spliced = store.Splice([new UIRecordSplice(800, 1, 0, 0), new UIRecordSplice(1800, 0, 0, 2)],
+                [-1, -2]);
+
+            (UIRuntimeCounters.Read(UIWorkCounter.PublicationRecordCellsCopied) - copied)
+                .ShouldBeLessThanOrEqualTo(2 * UIRecordStore<int>.PageSize + 2);
+            spliced.Length.ShouldBe(2561);
+            spliced.HasUniformPages.ShouldBeFalse();
+            // Page 7 grew past one page and split, so later pages move by one.
+            for (int page = 0; page < 7; page++)
+                ReferenceEquals(spliced.GetLeaf(page), store.GetLeaf(page)).ShouldBe(page != 3);
+            spliced.PageCount.ShouldBe(11);
+            spliced.GetLeaf(9).ShouldBeSameAs(store.GetLeaf(8));
+            spliced.GetLeaf(10).ShouldBeSameAs(store.GetLeaf(9));
+            List<int> expected = Enumerable.Range(0, 2560).ToList();
+            expected.RemoveAt(800);
+            expected.InsertRange(1799, [-1, -2]);
+            AssertSame(spliced, expected);
+            store[800].ShouldBe(800);
+            claims.ShouldBe(2560 + 255 + 258);
+        }
+        finally
+        {
+            spliced?.Release();
+            store.Release();
+            UIRuntimeCounters.Enabled = countersWereEnabled;
+        }
+        claims.ShouldBe(0);
+    }
+
+    [Test]
+    public void RepeatedSplicesMatchAReferenceList()
+    {
+        Random random = new(1234);
+        List<int> expected = Enumerable.Range(0, 1500).ToList();
+        int claims = 0;
+        UIRecordStore<int> store = UIRecordStore<int>.Create(expected.ToArray(),
+            _ => claims++, _ => claims--);
+        int nextValue = 10_000;
+        try
+        {
+            for (int step = 0; step < 200; step++)
+            {
+                int editCount = random.Next(1, 4);
+                List<UIRecordSplice> edits = [];
+                List<int> inserted = [];
+                int cursor = 0;
+                for (int edit = 0; edit < editCount && cursor <= expected.Count; edit++)
+                {
+                    int start = random.Next(cursor, Math.Min(expected.Count, cursor + 600) + 1);
+                    int remove = random.Next(0, Math.Min(expected.Count - start, 40) + 1);
+                    int add = random.Next(0, 40);
+                    edits.Add(new UIRecordSplice(start, remove, inserted.Count, add));
+                    for (int index = 0; index < add; index++)
+                        inserted.Add(nextValue++);
+                    cursor = start + remove;
+                }
+                for (int edit = edits.Count - 1; edit >= 0; edit--)
+                {
+                    UIRecordSplice splice = edits[edit];
+                    expected.RemoveRange(splice.OldStart, splice.OldCount);
+                    expected.InsertRange(splice.OldStart, inserted.GetRange(splice.NewStart, splice.NewCount));
+                }
+                UIRecordStore<int> next = store.Splice([.. edits], [.. inserted]);
+                store.Release();
+                store = next;
+                claims.ShouldBe(expected.Count);
+                if (step % 20 == 0)
+                    AssertSame(store, expected);
+            }
+            AssertSame(store, expected);
+            // Short pages are packed again before they double the page count.
+            store.PageCount.ShouldBeLessThanOrEqualTo((store.Length + 255) / 256 * 2 + 4);
+
+            int page = store.PageCount / 2;
+            int[] replaced = store.GetPage(page).ToArray();
+            replaced[0] = -7;
+            UIRecordStore<int> patched = store.WithReplacedPages([page], [replaced]);
+            patched[store.GetPageStart(page)].ShouldBe(-7);
+            patched.Release();
+        }
+        finally { store.Release(); }
+        claims.ShouldBe(0);
+    }
+
+    [Test]
+    public void SpliceCanEmptyAndRefillAStore()
+    {
+        UIRecordStore<int> store = UIRecordStore<int>.Create([1, 2, 3]);
+        UIRecordStore<int> empty = store.Splice([new UIRecordSplice(0, 3, 0, 0)], []);
+        UIRecordStore<int> refilled = empty.Splice([new UIRecordSplice(0, 0, 0, 2)], [7, 8]);
+        UIRecordStore<int> same = refilled.Splice([], []);
+        try
+        {
+            empty.Length.ShouldBe(0);
+            empty.PageCount.ShouldBe(0);
+            AssertSame(refilled, [7, 8]);
+            same.ShouldBeSameAs(refilled);
+            Should.Throw<ArgumentOutOfRangeException>(() =>
+                store.Splice([new UIRecordSplice(2, 0, 0, 0), new UIRecordSplice(1, 0, 0, 0)], []));
+            Should.Throw<ArgumentOutOfRangeException>(() =>
+                store.Splice([new UIRecordSplice(0, 4, 0, 0)], []));
+        }
+        finally
+        {
+            same.Release();
+            refilled.Release();
+            empty.Release();
+            store.Release();
+        }
+    }
+
+    [Test]
+    public void RangeOverSplicedPagesReadsExactRecords()
+    {
+        UIRecordStore<int> store = UIRecordStore<int>.Create(Enumerable.Range(0, 1024).ToArray());
+        UIRecordStore<int> spliced = store.Splice([new UIRecordSplice(300, 100, 0, 0)], []);
+        UIRecordRange<int> range = UIRecordRange<int>.Create(spliced, 200, 500);
+        UIRecordRange<int> shared = range.Share();
+        try
+        {
+            List<int> expected = Enumerable.Range(0, 1024).ToList();
+            expected.RemoveRange(300, 100);
+            for (int index = 0; index < 500; index++)
+                shared[index].ShouldBe(expected[200 + index]);
+            int[] copy = new int[500];
+            range.CopyTo(copy);
+            copy.ShouldBe(expected.GetRange(200, 500).ToArray());
+        }
+        finally
+        {
+            shared.Release();
+            range.Release();
+            spliced.Release();
+            store.Release();
+        }
+    }
+
+    private static void AssertSame(UIRecordStore<int> store, IReadOnlyList<int> expected)
+    {
+        store.Length.ShouldBe(expected.Count);
+        int[] copy = new int[store.Length];
+        store.CopyTo(copy);
+        copy.ShouldBe(expected.ToArray());
+        for (int index = 0; index < expected.Count; index += 37)
+            store[index].ShouldBe(expected[index]);
+        int total = 0;
+        for (int page = 0; page < store.PageCount; page++)
+        {
+            store.GetPageStart(page).ShouldBe(total);
+            store.GetPage(page).Length.ShouldBeGreaterThan(0);
+            total += store.GetPageLength(page);
+        }
+        total.ShouldBe(expected.Count);
+    }
 }

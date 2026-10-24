@@ -384,6 +384,130 @@ public sealed class UICompositionSegmentTests
         set.ResourcesRetired.ShouldBeTrue();
     }
 
+    [Test]
+    public void SplicedSegmentsMatchAFullBuildAndKeepUntouchedSpans()
+    {
+        // 600 chrome records, one overlay, then 600 more chrome records.
+        List<UIRenderRecord> records = [];
+        for (int index = 0; index < 1201; index++)
+            records.Add(Quad(index + 1, index == 600 ? Overlay : Chrome));
+        UIRecordStore<UIRenderRecord> store = UIRecordStore<UIRenderRecord>.Create([.. records]);
+        UICompositionSegmentSet first = UICompositionSegmentSet.Build(store, null);
+        // The edit rebuilds the page that also holds the tail of the first two spans.
+        UIRecordSplice[] edits = [new(700, 2, 0, 1)];
+        UIRenderRecord[] inserted = [Quad(5000, Chrome)];
+        UIRecordStore<UIRenderRecord> spliced = store.Splice(edits, inserted);
+        UICompositionSegmentSet updated = first.WithSplicedRenders(spliced, edits, inserted);
+        UICompositionSegmentSet rebuilt = UICompositionSegmentSet.Build(spliced, null);
+        try
+        {
+            AssertSameSpans(updated, rebuilt);
+            // The edit is after the first two spans, so they keep their objects.
+            updated.GetSegment(0).ShouldBeSameAs(first.GetSegment(0));
+            updated.GetSegment(1).ShouldBeSameAs(first.GetSegment(1));
+            updated.GetSegment(2).Identity.ShouldBe(first.GetSegment(2).Identity);
+            updated.GetSegment(2).Revision.ShouldBeGreaterThan(first.GetSegment(2).Revision);
+            updated.TryGetAt(700, out UICompositionSegment edited).ShouldBeTrue();
+            edited.GetRecord(700 - edited.Start).MembershipId.ShouldBe(5000);
+
+            // A kept span still holds the old page, so a later page patch gives it current pages.
+            int page = spliced.LocatePage(550, out int offset);
+            UIRenderRecord[] changed = spliced.GetPage(page).ToArray();
+            changed[offset] = changed[offset] with { QuadColor = Vector4.Zero };
+            UIRecordStore<UIRenderRecord> patchedStore = spliced.WithReplacedPages([page], [changed]);
+            UICompositionSegmentSet? patched = null;
+            UICompositionSegmentSet patchedRebuilt = UICompositionSegmentSet.Build(patchedStore, null);
+            try
+            {
+                updated.TryWithReplacedRenderPages(patchedStore, [page], out patched).ShouldBeTrue();
+                AssertSameSpans(patched, patchedRebuilt);
+                patched.GetSegment(0).GetRecord(550).QuadColor.ShouldBe(Vector4.Zero);
+            }
+            finally
+            {
+                patchedRebuilt.Release();
+                patched?.Release();
+                patchedStore.Release();
+            }
+        }
+        finally
+        {
+            rebuilt.Release();
+            updated.Release();
+            spliced.Release();
+            first.Release();
+            store.Release();
+        }
+    }
+
+    [Test]
+    public void SplicedOverlayInsertMovesLaterSpansAndRemovalMergesThem()
+    {
+        UIRenderRecord[] records = [Quad(1, Chrome), Quad(2, Chrome), Quad(3, Chrome)];
+        UIRecordStore<UIRenderRecord> store = UIRecordStore<UIRenderRecord>.Create(records);
+        UICompositionSegmentSet first = UICompositionSegmentSet.Build(store, null);
+        UIRecordSplice[] insert = [new(1, 0, 0, 1)];
+        UIRenderRecord[] overlay = [Quad(9, Overlay)];
+        UIRecordStore<UIRenderRecord> opened = store.Splice(insert, overlay);
+        UICompositionSegmentSet split = first.WithSplicedRenders(opened, insert, overlay);
+        UIRecordSplice[] remove = [new(1, 1, 0, 0)];
+        UIRecordStore<UIRenderRecord> closed = opened.Splice(remove, []);
+        UICompositionSegmentSet merged = split.WithSplicedRenders(closed, remove, []);
+        UICompositionSegmentSet rebuiltSplit = UICompositionSegmentSet.Build(opened, null);
+        UICompositionSegmentSet rebuiltMerged = UICompositionSegmentSet.Build(closed, null);
+        try
+        {
+            AssertSameSpans(split, rebuiltSplit);
+            AssertSameSpans(merged, rebuiltMerged);
+            split.Count.ShouldBe(3);
+            merged.Count.ShouldBe(1);
+            merged.GetSegment(0).Identity.ShouldBe(first.GetSegment(0).Identity);
+
+            // Unowned records keep the immortal empty set until an owner appears.
+            UIRenderRecord[] plain = [Quad(1, default), Quad(2, default)];
+            UICompositionSegmentSet none = UICompositionSegmentSet.Build(plain, null);
+            UIRecordStore<UIRenderRecord> plainStore = UIRecordStore<UIRenderRecord>.Create(plain);
+            UIRecordStore<UIRenderRecord> plainSpliced = plainStore.Splice(insert, [Quad(3, default)]);
+            none.WithSplicedRenders(plainSpliced, insert, [Quad(3, default)])
+                .ShouldBeSameAs(UICompositionSegmentSet.Empty);
+            UIRecordStore<UIRenderRecord> ownedStore = plainStore.Splice(insert, overlay);
+            UICompositionSegmentSet owned = none.WithSplicedRenders(ownedStore, insert, overlay);
+            UICompositionSegmentSet ownedRebuilt = UICompositionSegmentSet.Build(ownedStore, null);
+            AssertSameSpans(owned, ownedRebuilt);
+            ownedRebuilt.Release();
+            owned.Release();
+            ownedStore.Release();
+            plainSpliced.Release();
+            plainStore.Release();
+        }
+        finally
+        {
+            rebuiltMerged.Release();
+            rebuiltSplit.Release();
+            merged.Release();
+            closed.Release();
+            split.Release();
+            opened.Release();
+            first.Release();
+            store.Release();
+        }
+    }
+
+    private static void AssertSameSpans(UICompositionSegmentSet actual, UICompositionSegmentSet expected)
+    {
+        actual.Count.ShouldBe(expected.Count);
+        for (int index = 0; index < expected.Count; index++)
+        {
+            UICompositionSegment left = actual.GetSegment(index);
+            UICompositionSegment right = expected.GetSegment(index);
+            left.Start.ShouldBe(right.Start);
+            left.Count.ShouldBe(right.Count);
+            left.Owner.ShouldBe(right.Owner);
+            for (int record = 0; record < right.Count; record++)
+                left.GetRecord(record).ShouldBe(right.GetRecord(record));
+        }
+    }
+
     private static UIRenderRecord Quad(long identity, UICompositionOwner owner) => new()
     {
         RenderInfo = null!, MembershipId = identity, Identity = new(identity, 1),

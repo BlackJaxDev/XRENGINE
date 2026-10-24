@@ -24,6 +24,8 @@ public partial class UICanvasComponent
     private readonly List<long> _publicationPainterOrderValidation = [];
     private readonly Dictionary<long, UIRenderRecord> _publicationRenderByMembership = [];
     private ulong _publicationPainterOrderRevision = ulong.MaxValue;
+    // Positions of the painter order that the last capture read. Publications share it.
+    private UIRenderPainterIndex? _publicationPainterIndex;
     private bool _capturingPublication;
     private bool _publicationCaptureReentered;
     private readonly Dictionary<UIElementIdentity, int> _publicationLayoutIndices = [];
@@ -195,6 +197,10 @@ public partial class UICanvasComponent
             ref painterRevision, _publicationPainterOrderCapture);
         List<long> painterOrder = painterOrderChanged
             ? _publicationPainterOrderCapture : _publicationPainterOrder;
+        // The index is immutable and keyed by revision, so a rejected capture can reuse it.
+        if (_publicationPainterIndex?.Revision != painterRevision)
+            _publicationPainterIndex = UIRenderPainterIndex.Create(painterOrder, painterRevision);
+        UIRenderPainterIndex painterIndex = _publicationPainterIndex;
         UIPublication? previous;
         lock (_publicationGate)
         {
@@ -231,11 +237,11 @@ public partial class UICanvasComponent
         bool sparse = previous is not null && TryCaptureSparse(previous, canvas, identities,
             layoutPages, committedCursor, painterOrderChanged, worldCollectionRevision,
             canvasWorldMatrix, authoringDrawSpace, authoringOffscreen, canvasBounds,
-            painterOrder, directWorld);
+            painterIndex, directWorld);
         if (!sparse)
             CaptureFull(canvas, layoutPages, painterOrder, identities.Length);
-        // A spliced capture fills complete record lists, which the full-capture compare uses.
-        bool patched = sparse && !_sparseSpliced;
+        // A sparse capture describes only its edits; the publication applies them to the previous stores.
+        bool patched = sparse;
         // A sparse capture checks its recaptured draws before it succeeds.
         for (int index = 0; !sparse && index < _publicationRenderScratch.Count; index++)
         {
@@ -260,7 +266,7 @@ public partial class UICanvasComponent
         UIFocusScopeRecord[] scopes;
         if (patched)
         {
-            hitsChanged = _sparseHitPatches.Count > 0;
+            hitsChanged = _sparseSpliced ? _sparseHitSplices.Count > 0 : _sparseHitPatches.Count > 0;
             scroll = _sparseScrollReplacement ?? previous!.ScrollStorage;
             scopes = _sparseScopeReplacement ?? previous!.FocusScopeStorage;
         }
@@ -334,13 +340,13 @@ public partial class UICanvasComponent
             UIPublication replacement = patched
                 ? CreateSparsePublication(previous!, ++_nextPublicationGeneration,
                     layoutGeneration, hitGeneration, revision, layoutPages, scroll, scopes,
-                    surfaceWriter, quadPayload, quadWorldMatrix)
+                    surfaceWriter, quadPayload, quadWorldMatrix, painterIndex)
                 : new UIPublication(
                     ++_nextPublicationGeneration, (ulong)lifetime, layoutGeneration, hitGeneration,
                     revision, default, identities, hits, renders, canvasBounds,
                     Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
                     layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen,
-                    surfaceWriter, quadPayload, quadWorldMatrix);
+                    surfaceWriter, quadPayload, quadWorldMatrix, painterIndex);
             bool staleAfterBuild;
             try
             {

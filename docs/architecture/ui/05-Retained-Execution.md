@@ -242,15 +242,40 @@ A sparse capture visits only the capture-root subtrees. When each subtree keeps
 its record counts, render memberships, and focus-scope identities, the canvas
 replaces only changed pages. `UIRecordStore.WithReplacedPages` shares unchanged
 leaves and branches, and composition segments outside changed pages keep their
-identity and revision. When record counts change, the canvas splices the new
-subtree records between the previous records. This visits no clean node, but it
-copies the clean records into new stores in linear time. A rejected sparse
-capture clears the basis before the complete capture.
+identity and revision. A rejected sparse capture clears the basis before the
+complete capture.
+
+When record counts change (visibility, caret, activation), the canvas describes
+the capture as `UIRecordSplice` edits of the previous stores:
+
+- Hit, scroll, and focus-scope records follow tree order, so each recaptured
+  subtree is one edit at its old record start.
+- Render records follow painter order. The painter order did not change, so a
+  `UIRenderPainterIndex` maps each membership to its painter position. The canvas
+  finds each removed record and places each new record by binary search over the
+  previous store. If a record does not follow the painter order, the canvas uses a
+  complete capture.
+- `UIRecordStore.Splice` shares every page that no edit touches and copies only
+  touched pages, so it copies at most the inserted records plus two pages for each
+  edit. Spliced pages can be shorter than 256 records; the store keeps the page
+  starts for exact index lookup. When the page count exceeds two times the full-page
+  count plus four, the store packs all records again.
+- `UICompositionSegmentSet.WithSplicedRenders` keeps each untouched segment, moves a
+  shifted segment with a new revision, and makes new ranges only for runs that hold
+  inserted or lost records.
+- Focus scopes find their last painted record again through the walk-order
+  memberships of their subtree.
+
+Scroll receivers and open focus scopes stay flat arrays, because they are few. The
+canvas walk state still moves record starts with one pass of integer additions over
+the node arrays. The new publication is complete before acceptance, so no reader
+sees a partial splice.
 
 `UIWorkCounter.PublicationCaptureNodesVisited`, `PublicationFullCaptures`,
 `PublicationSparseCaptures`, `PublicationSparseSplices`, and
-`PublicationSparseFallbacks` report this work. `PublicationRecordPathsCopied`
-and `PublicationFlatCellsMaterialized` report store copies and flat-array use.
+`PublicationSparseFallbacks` report this work. `PublicationRecordCellsCopied`,
+`PublicationRecordPathsCopied`, and `PublicationFlatCellsMaterialized` report store
+copies and flat-array use.
 
 The output receipt integration still requires graphics validation. CPU command
 completion alone does not prove that deferred GPU draws reached an output.
@@ -682,7 +707,8 @@ output, and world UI remain dynamic. Each admitted run owns its retained
 buffers, so unrelated overlays do not change those revisions. An in-flight
 resource cohort can still require a new capture until its fence retires. GPU cache
 acceptance is unverified. A count-preserving sparse capture replaces only changed
-render pages. A complete capture or a spliced capture still compares the record set.
+render pages, and a count-changing capture splices only touched pages. A complete
+capture still compares the record set.
 
 `UISplitterHandleComponent` uses accepted divider metrics from the layout kernel.
 The metrics describe the split before child size constraints alter pane geometry.
@@ -1238,8 +1264,12 @@ the preview; a getter that retires the binding cannot publish stale text.
 
 ## Paged record claims and guarded authoring
 
-`UIRecordStore<T>` groups records into 256-cell leaves under a 32-way immutable
-tree. Copy-on-write replacement copies one leaf and its path. A render leaf owns
+`UIRecordStore<T>` groups records into leaves of at most 256 cells under a 32-way
+immutable tree indexed by leaf order. Copy-on-write replacement copies one leaf and
+its path. A splice reuses untouched leaves and builds new branches over the leaf
+sequence. Composition ranges keep their own slice layout, so a range stays valid
+when a splice moves its records; a page patch gives a range current pages when its
+leaf layout differs from the store. A render leaf owns
 its payload, texture, and atlas claims. Mapped publications share the root claim.
 Constructor failure unwinds acquired claims; terminal release attempts all
 claims and reports failures. Final cleanup closes admission before callbacks.
@@ -1251,9 +1281,12 @@ record leaves that intersect their ordered range. Reused segments do not keep an
 unrelated old store alive. Packets and collector sides hold separate segment-set
 claims; construction failure unwinds prior claims, and release attempts every
 owned claim. Internal collection reads the ranges directly. The public flat
-record view is a lazy compatibility copy with a materialization counter. Capture
-and composition discovery still process the full record set. These changes do
-not establish sparse capture or lower frame cost.
+record view is a lazy compatibility copy with a materialization counter. A canvas
+publication finds a render membership by binary search in painter order; other
+publications, such as output variants, keep a membership map. The collector walks
+segments with a cursor in record order. A complete capture and composition
+discovery still process the full record set. These changes do not establish lower
+frame cost.
 
 `OwnedHierarchyLifetime` retains a constructor ledger and attempts cleanup once.
 It accepts an exact detached structural forest, rejects unsupported allocations

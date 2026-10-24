@@ -10,12 +10,16 @@ namespace XREngine.Components;
 /// Sparse publication capture. A full capture records, for each layout node, the live
 /// transform, the inherited capture context, and where its records start. A later capture
 /// with the same layout topology reads committed journal changes and changed layout pages,
-/// walks only the changed subtrees, and replaces only the record pages that differ.
+/// and walks only the changed subtrees. When record counts stay the same, it replaces only
+/// the record pages that differ. When they change, it splices the recaptured ranges into the
+/// previous stores, which share every page that no edit touches.
 /// </summary>
 public partial class UICanvasComponent
 {
     private static readonly Comparison<(int Index, UIRenderRecord Old, UIRenderRecord New)> RenderPatchOrder =
         static (left, right) => left.Index.CompareTo(right.Index);
+    private static readonly Comparison<(int Position, UIRenderRecord Record)> PainterPositionOrder =
+        static (left, right) => left.Position.CompareTo(right.Position);
 
     // Walk state that describes _sparseBasis. It is valid only while _sparseBasis is set.
     private UIPublication? _sparseBasis;
@@ -53,7 +57,15 @@ public partial class UICanvasComponent
     private readonly List<UIScrollRecord> _sparseNewScroll = [];
     private readonly List<UIFocusScopeRecord> _sparseNewScopes = [];
     private readonly List<UIRenderRecord> _sparseNewRenders = [];
-    private readonly HashSet<long> _sparseReplacedMemberships = [];
+
+    // Splice data for a capture that changed record counts.
+    private readonly List<UIRecordSplice> _sparseHitSplices = [];
+    private readonly List<UIRecordSplice> _sparseRenderSplices = [];
+    private readonly List<UIRenderRecord> _sparseSplicedRenders = [];
+    private readonly List<int> _sparseRemovedRenders = [];
+    private readonly List<(int Position, UIRenderRecord Record)> _sparseInsertedRenders = [];
+    private int _sparseBackdropDelta;
+    private int _sparsePreRenderDelta;
 
     /// <summary>Rebuilds the identity lookup only when layout publishes a new identity array.</summary>
     private void EnsurePublicationLayoutIndices(ReadOnlyMemory<UIElementIdentity> identities)
@@ -114,7 +126,7 @@ public partial class UICanvasComponent
         ReadOnlyMemory<UIElementIdentity> identities, UILayoutOutputPageView layoutPages,
         UICommittedChangeCursor cursor, bool painterOrderChanged, long worldCollectionRevision,
         Matrix4x4 canvasWorldMatrix, ECanvasDrawSpace drawSpace, bool offscreen,
-        BoundingRectangleF canvasBounds, IReadOnlyList<long> painterOrder, bool directWorld)
+        BoundingRectangleF canvasBounds, UIRenderPainterIndex painterIndex, bool directWorld)
     {
         int nodeCount = identities.Length;
         if (!ReferenceEquals(previous, _sparseBasis) || !_sparseOrderValid || painterOrderChanged ||
@@ -157,8 +169,13 @@ public partial class UICanvasComponent
             BuildSparsePatches(previous);
         else
         {
-            SpliceSparseRecords(previous, painterOrder, nodeCount,
-                hitDelta, scrollDelta, scopeDelta, renderDelta);
+            // The previous records follow this painter order, because it did not change.
+            if (!TryBuildRenderSplices(previous, painterIndex))
+            {
+                UIRuntimeCounters.Add(UIWorkCounter.PublicationSparseFallbacks);
+                return false;
+            }
+            SpliceSparseRecords(previous, nodeCount, hitDelta, scrollDelta, scopeDelta, renderDelta);
             _sparseSpliced = true;
             UIRuntimeCounters.Add(UIWorkCounter.PublicationSparseSplices);
         }
@@ -360,73 +377,179 @@ public partial class UICanvasComponent
     }
 
     /// <summary>
-    /// Builds complete record lists when a subtree changed its record counts. Clean records
-    /// are copied from the previous publication; no clean node is visited.
+    /// Describes a count-changing capture as edits of the previous stores. Hit, scroll, and
+    /// focus-scope records follow tree order, so each recaptured range is one edit. The
+    /// recaptured walk state then moves to the new record coordinates. No clean node or
+    /// clean record is visited.
     /// </summary>
-    private void SpliceSparseRecords(UIPublication previous, IReadOnlyList<long> painterOrder,
-        int nodeCount, int hitDelta, int scrollDelta, int scopeDelta, int renderDelta)
+    private void SpliceSparseRecords(UIPublication previous, int nodeCount,
+        int hitDelta, int scrollDelta, int scopeDelta, int renderDelta)
     {
-        _publicationHitScratch.Clear();
-        _publicationScrollScratch.Clear();
-        _publicationFocusScopeScratch.Clear();
-        _publicationRenderScratch.Clear();
-        _sparseReplacedMemberships.Clear();
-        UIRecordStore<UIHitRecord> hits = previous.HitRecordStore;
+        _sparseHitSplices.Clear();
+        _sparseScrollReplacement = null;
+        _sparseScopeReplacement = null;
         ReadOnlySpan<UIScrollRecord> oldScroll = previous.ScrollReceivers;
         ReadOnlySpan<UIFocusScopeRecord> oldScopes = previous.FocusScopes;
+        bool scrollChanged = false;
+        bool scopesChanged = false;
+        for (int rangeIndex = 0; rangeIndex < _sparseRanges.Count; rangeIndex++)
+        {
+            UIPublicationSparseRange range = _sparseRanges[rangeIndex];
+            if (range.OldHitCount != 0 || range.NewHitCount != 0)
+                _sparseHitSplices.Add(new UIRecordSplice(range.OldHitStart, range.OldHitCount,
+                    range.NewHitStart, range.NewHitCount));
+            scrollChanged |= range.OldScrollCount != 0 || range.NewScrollCount != 0;
+            scopesChanged |= range.OldScopeCount != 0 || range.NewScopeCount != 0;
+        }
+        // Scroll receivers and open focus scopes are few, so they stay flat arrays.
+        if (scrollChanged)
+            _sparseScrollReplacement = SpliceFlat(oldScroll, scrollDelta,
+                static range => (range.OldScrollStart, range.OldScrollCount,
+                    range.NewScrollStart, range.NewScrollCount),
+                CollectionsMarshal.AsSpan(_sparseNewScroll));
+        if (scopesChanged || !oldScopes.IsEmpty)
+            _sparseScopeReplacement = SpliceFlat(oldScopes, scopeDelta,
+                static range => (range.OldScopeStart, range.OldScopeCount,
+                    range.NewScopeStart, range.NewScopeCount),
+                CollectionsMarshal.AsSpan(_sparseNewScopes));
+
+        // The walk-order membership list moves with the recaptured ranges.
         int oldRenderTotal = _sparseRenderStarts[nodeCount];
         if (_sparseSpareMemberships.Length < oldRenderTotal + renderDelta)
             _sparseSpareMemberships = new long[oldRenderTotal + renderDelta];
         long[] memberships = _sparseSpareMemberships;
-        int hitCursor = 0;
-        int scrollCursor = 0;
-        int scopeCursor = 0;
         int renderCursor = 0;
         int membershipWrite = 0;
         for (int rangeIndex = 0; rangeIndex < _sparseRanges.Count; rangeIndex++)
         {
             UIPublicationSparseRange range = _sparseRanges[rangeIndex];
-            AppendStoreRange(hits, hitCursor, range.OldHitStart, _publicationHitScratch);
-            _publicationHitScratch.AddRange(CollectionsMarshal.AsSpan(_sparseNewHits)
-                .Slice(range.NewHitStart, range.NewHitCount));
-            hitCursor = range.OldHitStart + range.OldHitCount;
-            _publicationScrollScratch.AddRange(oldScroll[scrollCursor..range.OldScrollStart]);
-            _publicationScrollScratch.AddRange(CollectionsMarshal.AsSpan(_sparseNewScroll)
-                .Slice(range.NewScrollStart, range.NewScrollCount));
-            scrollCursor = range.OldScrollStart + range.OldScrollCount;
-            _publicationFocusScopeScratch.AddRange(oldScopes[scopeCursor..range.OldScopeStart]);
-            _publicationFocusScopeScratch.AddRange(CollectionsMarshal.AsSpan(_sparseNewScopes)
-                .Slice(range.NewScopeStart, range.NewScopeCount));
-            scopeCursor = range.OldScopeStart + range.OldScopeCount;
-
             int clean = range.OldRenderStart - renderCursor;
             Array.Copy(_sparseRenderMemberships, renderCursor, memberships, membershipWrite, clean);
             membershipWrite += clean;
-            for (int index = 0; index < range.OldRenderCount; index++)
-                _sparseReplacedMemberships.Add(_sparseRenderMemberships[range.OldRenderStart + index]);
             for (int index = 0; index < range.NewRenderCount; index++)
                 memberships[membershipWrite++] =
                     _sparseNewRenders[range.NewRenderStart + index].MembershipId;
             renderCursor = range.OldRenderStart + range.OldRenderCount;
         }
-        AppendStoreRange(hits, hitCursor, hits.Length, _publicationHitScratch);
-        _publicationScrollScratch.AddRange(oldScroll[scrollCursor..]);
-        _publicationFocusScopeScratch.AddRange(oldScopes[scopeCursor..]);
         Array.Copy(_sparseRenderMemberships, renderCursor, memberships, membershipWrite,
             oldRenderTotal - renderCursor);
         _sparseSpareMemberships = _sparseRenderMemberships;
         _sparseRenderMemberships = memberships;
-
-        // Renders are in painter order. Keep clean records and add the recaptured records.
-        UIRecordStore<UIRenderRecord> renders = previous.RenderRecordStore;
-        for (int page = 0; page < renders.PageCount; page++)
-            foreach (ref readonly UIRenderRecord record in renders.GetPage(page))
-                if (!_sparseReplacedMemberships.Contains(record.MembershipId))
-                    _publicationRenderScratch.Add(record);
-        _publicationRenderScratch.AddRange(_sparseNewRenders);
-        OrderPublicationRenders(painterOrder);
-        OrderPublicationFocusScopes();
         ShiftSparseStarts(nodeCount, hitDelta, scrollDelta, scopeDelta, renderDelta);
+    }
+
+    private T[] SpliceFlat<T>(ReadOnlySpan<T> old, int delta,
+        Func<UIPublicationSparseRange, (int OldStart, int OldCount, int NewStart, int NewCount)> select,
+        ReadOnlySpan<T> inserted)
+    {
+        T[] result = new T[old.Length + delta];
+        int cursor = 0;
+        int write = 0;
+        for (int rangeIndex = 0; rangeIndex < _sparseRanges.Count; rangeIndex++)
+        {
+            (int oldStart, int oldCount, int newStart, int newCount) = select(_sparseRanges[rangeIndex]);
+            old[cursor..oldStart].CopyTo(result.AsSpan(write));
+            write += oldStart - cursor;
+            inserted.Slice(newStart, newCount).CopyTo(result.AsSpan(write));
+            write += newCount;
+            cursor = oldStart + oldCount;
+        }
+        old[cursor..].CopyTo(result.AsSpan(write));
+        return result;
+    }
+
+    /// <summary>
+    /// Describes the render changes as ordered edits of the previous render store. Renders
+    /// follow painter order, which did not change, so each removed record is found and each
+    /// recaptured record is placed by a binary search of its painter position. Returns false
+    /// when a record does not follow the painter order; the caller then captures in full.
+    /// </summary>
+    private bool TryBuildRenderSplices(UIPublication previous, UIRenderPainterIndex painterIndex)
+    {
+        _sparseRenderSplices.Clear();
+        _sparseSplicedRenders.Clear();
+        _sparseRemovedRenders.Clear();
+        _sparseInsertedRenders.Clear();
+        _sparseBackdropDelta = 0;
+        _sparsePreRenderDelta = 0;
+        UIRecordStore<UIRenderRecord> renders = previous.RenderRecordStore;
+        for (int rangeIndex = 0; rangeIndex < _sparseRanges.Count; rangeIndex++)
+        {
+            UIPublicationSparseRange range = _sparseRanges[rangeIndex];
+            for (int index = 0; index < range.OldRenderCount; index++)
+            {
+                long membership = _sparseRenderMemberships[range.OldRenderStart + index];
+                // A membership outside the painter order was never published.
+                if (!painterIndex.TryGetPosition(membership, out _))
+                    continue;
+                if (!painterIndex.TryFind(renders, membership, out int renderIndex))
+                    return false;
+                _sparseRemovedRenders.Add(renderIndex);
+                ref readonly UIRenderRecord old = ref renders[renderIndex];
+                _sparseBackdropDelta -= BackdropCount(old);
+                _sparsePreRenderDelta -= PreRenderCount(old);
+            }
+            for (int index = 0; index < range.NewRenderCount; index++)
+            {
+                UIRenderRecord record = _sparseNewRenders[range.NewRenderStart + index];
+                // A full capture also leaves out records that the painter order does not name.
+                if (!painterIndex.TryGetPosition(record.MembershipId, out int position))
+                    continue;
+                _sparseInsertedRenders.Add((position, record));
+                _sparseBackdropDelta += BackdropCount(record);
+                _sparsePreRenderDelta += PreRenderCount(record);
+            }
+        }
+        _sparseRemovedRenders.Sort();
+        _sparseInsertedRenders.Sort(PainterPositionOrder);
+        for (int index = 1; index < _sparseRemovedRenders.Count; index++)
+            if (_sparseRemovedRenders[index] == _sparseRemovedRenders[index - 1])
+                return false;
+        for (int index = 1; index < _sparseInsertedRenders.Count; index++)
+            if (_sparseInsertedRenders[index].Position == _sparseInsertedRenders[index - 1].Position)
+                return false;
+
+        // Merge removals and insertions in old-store order. An insertion at an index goes
+        // before the old record at that index, which can itself be removed.
+        int removed = 0;
+        int insertedIndex = 0;
+        int insertAt = -1;
+        UIRecordSplice current = default;
+        bool open = false;
+        while (removed < _sparseRemovedRenders.Count || insertedIndex < _sparseInsertedRenders.Count)
+        {
+            if (insertedIndex < _sparseInsertedRenders.Count && insertAt < 0)
+            {
+                insertAt = painterIndex.LowerBound(renders, _sparseInsertedRenders[insertedIndex].Position);
+                if (insertAt < 0)
+                    return false;
+            }
+            int removeAt = removed < _sparseRemovedRenders.Count
+                ? _sparseRemovedRenders[removed] : int.MaxValue;
+            bool insertion = insertedIndex < _sparseInsertedRenders.Count && insertAt <= removeAt;
+            int at = insertion ? insertAt : removeAt;
+            if (!open || at != current.OldStart + current.OldCount)
+            {
+                if (open)
+                    _sparseRenderSplices.Add(current);
+                current = new UIRecordSplice(at, 0, _sparseSplicedRenders.Count, 0);
+                open = true;
+            }
+            if (insertion)
+            {
+                _sparseSplicedRenders.Add(_sparseInsertedRenders[insertedIndex++].Record);
+                current = current with { NewCount = current.NewCount + 1 };
+                insertAt = -1;
+            }
+            else
+            {
+                current = current with { OldCount = current.OldCount + 1 };
+                removed++;
+            }
+        }
+        if (open)
+            _sparseRenderSplices.Add(current);
+        return true;
     }
 
     /// <summary>Moves starts outside recaptured subtrees to the spliced record coordinates.</summary>
@@ -465,26 +588,18 @@ public partial class UICanvasComponent
                 "UI.SparseCapture.SpliceMismatch: spliced record counts do not match the recaptured subtrees.");
     }
 
-    private static void AppendStoreRange<T>(UIRecordStore<T> store, int start, int end, List<T> destination)
-        where T : struct
-    {
-        while (start < end)
-        {
-            int page = start / UIRecordStore<T>.PageSize;
-            int offset = start % UIRecordStore<T>.PageSize;
-            ReadOnlySpan<T> values = store.GetPage(page);
-            int count = Math.Min(values.Length - offset, end - start);
-            destination.AddRange(values.Slice(offset, count));
-            start += count;
-        }
-    }
-
-    /// <summary>Builds the patched publication. The publication owns both new store claims.</summary>
+    /// <summary>Builds the patched or spliced publication. The publication owns both new store claims.</summary>
     private UIPublication CreateSparsePublication(UIPublication previous, ulong generation,
         ulong layoutGeneration, ulong hitGeneration, long changeRevision,
         UILayoutOutputPageView layoutPages, UIScrollRecord[] scroll, UIFocusScopeRecord[] scopes,
-        UIRenderSurface? surfaceWriter, UIDrawPayload? quadPayload, Matrix4x4 quadWorldMatrix)
+        UIRenderSurface? surfaceWriter, UIDrawPayload? quadPayload, Matrix4x4 quadWorldMatrix,
+        UIRenderPainterIndex painterIndex)
     {
+        if (_sparseSpliced)
+            return CreateSplicedPublication(previous, generation, layoutGeneration, hitGeneration,
+                changeRevision, layoutPages, scroll, scopes, surfaceWriter, quadPayload,
+                quadWorldMatrix, painterIndex);
+
         _sparseRenderPatches.Sort(RenderPatchOrder);
         int backdropDelta = 0;
         int preRenderDelta = 0;
@@ -515,13 +630,77 @@ public partial class UICanvasComponent
             hitGeneration, changeRevision, layoutPages, hitStore, renderStore,
             changedRenderPages, backdropDelta, preRenderDelta, scroll, scopes,
             surfaceWriter, quadPayload, quadWorldMatrix);
-
-        static int BackdropCount(in UIRenderRecord record)
-            => record.Visible && record.Backdrop.IsDefined ? 1 : 0;
-
-        static int PreRenderCount(in UIRenderRecord record)
-            => record.Visible && record.RenderPass == (int)Data.Rendering.EDefaultRenderPass.PreRender ? 1 : 0;
     }
+
+    private UIPublication CreateSplicedPublication(UIPublication previous, ulong generation,
+        ulong layoutGeneration, ulong hitGeneration, long changeRevision,
+        UILayoutOutputPageView layoutPages, UIScrollRecord[] scroll, UIFocusScopeRecord[] scopes,
+        UIRenderSurface? surfaceWriter, UIDrawPayload? quadPayload, Matrix4x4 quadWorldMatrix,
+        UIRenderPainterIndex painterIndex)
+    {
+        UIRecordStore<UIHitRecord> hitStore = previous.HitRecordStore.Splice(
+            CollectionsMarshal.AsSpan(_sparseHitSplices), CollectionsMarshal.AsSpan(_sparseNewHits));
+        UIRecordStore<UIRenderRecord> renderStore;
+        try
+        {
+            renderStore = previous.RenderRecordStore.Splice(
+                CollectionsMarshal.AsSpan(_sparseRenderSplices),
+                CollectionsMarshal.AsSpan(_sparseSplicedRenders));
+        }
+        catch
+        {
+            hitStore.Release();
+            throw;
+        }
+        try
+        {
+            // Render indices moved, so each open scope finds its last painted record again.
+            if (scopes.Length > 0 && ReferenceEquals(scopes, _sparseScopeReplacement))
+                for (int index = 0; index < scopes.Length; index++)
+                    scopes[index] = scopes[index] with
+                    {
+                        PainterOrder = LastPaintedRecord(scopes[index], renderStore, painterIndex),
+                    };
+        }
+        catch
+        {
+            renderStore.Release();
+            hitStore.Release();
+            throw;
+        }
+        return UIPublication.CreateSpliced(previous, generation, layoutGeneration,
+            hitGeneration, changeRevision, layoutPages, hitStore, renderStore,
+            CollectionsMarshal.AsSpan(_sparseRenderSplices),
+            CollectionsMarshal.AsSpan(_sparseSplicedRenders), _sparseBackdropDelta,
+            _sparsePreRenderDelta, scroll, scopes, surfaceWriter, quadPayload, quadWorldMatrix);
+    }
+
+    /// <summary>
+    /// Gets the store index of the last painted record that a scope subtree captured, or -1.
+    /// The walk-order membership range of the subtree names its records.
+    /// </summary>
+    private int LastPaintedRecord(UIFocusScopeRecord scope, UIRecordStore<UIRenderRecord> renders,
+        UIRenderPainterIndex painterIndex)
+    {
+        int lastPosition = -1;
+        long lastMembership = 0;
+        for (int index = _sparseRenderStarts[scope.NodeIndex];
+            index < _sparseRenderStarts[scope.SubtreeEndIndex]; index++)
+            if (painterIndex.TryGetPosition(_sparseRenderMemberships[index], out int position) &&
+                position > lastPosition)
+            {
+                lastPosition = position;
+                lastMembership = _sparseRenderMemberships[index];
+            }
+        return lastPosition >= 0 && painterIndex.TryFind(renders, lastMembership, out int found)
+            ? found : -1;
+    }
+
+    private static int BackdropCount(in UIRenderRecord record)
+        => record.Visible && record.Backdrop.IsDefined ? 1 : 0;
+
+    private static int PreRenderCount(in UIRenderRecord record)
+        => record.Visible && record.RenderPass == (int)Data.Rendering.EDefaultRenderPass.PreRender ? 1 : 0;
 
     /// <summary>Copies each changed page once and shares all other record pages.</summary>
     private static UIRecordStore<T> PatchRecordStore<T, TPatch>(UIRecordStore<T> store,
@@ -532,7 +711,7 @@ public partial class UICanvasComponent
         int lastPage = -1;
         for (int index = 0; index < patches.Length; index++)
         {
-            int page = indexOf(patches[index]) / UIRecordStore<T>.PageSize;
+            int page = store.LocatePage(indexOf(patches[index]), out _);
             if (page != lastPage)
             {
                 pageCount++;
@@ -545,8 +724,7 @@ public partial class UICanvasComponent
         int pageSlot = -1;
         for (int index = 0; index < patches.Length; index++)
         {
-            int recordIndex = indexOf(patches[index]);
-            int page = recordIndex / UIRecordStore<T>.PageSize;
+            int page = store.LocatePage(indexOf(patches[index]), out int offset);
             if (page != lastPage)
             {
                 pageSlot++;
@@ -554,7 +732,7 @@ public partial class UICanvasComponent
                 changedPages[pageSlot] = page;
                 pages[pageSlot] = store.GetPage(page).ToArray();
             }
-            pages[pageSlot][recordIndex % UIRecordStore<T>.PageSize] = recordOf(patches[index]);
+            pages[pageSlot][offset] = recordOf(patches[index]);
         }
         return store.WithReplacedPages(changedPages, pages);
     }
@@ -728,7 +906,7 @@ public partial class UICanvasComponent
         for (int page = 0; page < store.PageCount; page++)
         {
             ReadOnlySpan<T> values = store.GetPage(page);
-            if (!records.Slice(page * UIRecordStore<T>.PageSize, values.Length).SequenceEqual(values))
+            if (!records.Slice(store.GetPageStart(page), values.Length).SequenceEqual(values))
                 return false;
         }
         return true;

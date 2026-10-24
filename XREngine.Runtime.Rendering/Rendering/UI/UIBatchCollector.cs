@@ -1197,6 +1197,7 @@ public sealed partial class UIBatchCollector : IDisposable
         {
         lock (_primitiveSlotGate)
             _membershipEpoch++;
+        int segmentCursor = 0;
         for (int page = 0, index = 0; page < records.PageCount; page++)
         {
             foreach (ref readonly UIRenderRecord record in records.GetPage(page))
@@ -1216,7 +1217,8 @@ public sealed partial class UIBatchCollector : IDisposable
                     return;
                 continue;
             }
-            publication.TryGetCompositionSegment(record.MembershipId, out UICompositionSegment segment);
+            // Records and segments share painter order, so one cursor walks both.
+            UICompositionSegment? segment = composition.Advance(ref segmentCursor, index - 1);
             ulong segmentIdentity = segment?.Identity ?? 0;
             ulong segmentRevision = segment?.Revision ?? 0;
             if (record.IsText)

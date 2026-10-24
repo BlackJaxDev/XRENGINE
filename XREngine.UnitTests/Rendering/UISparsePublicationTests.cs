@@ -121,6 +121,77 @@ public sealed class UISparsePublicationTests
     }
 
     [Test]
+    public void CountChangingEditsCopyOnlyTouchedRecordPages()
+    {
+        using Fixture fixture = new(largeRows: 2000);
+        UIPublication baseline = fixture.Capture();
+        UIMaterialComponent row = fixture.LargeRows[700];
+        long copied = UIRuntimeCounters.Read(UIWorkCounter.PublicationRecordCellsCopied);
+        long visits = UIRuntimeCounters.Read(UIWorkCounter.PublicationCaptureNodesVisited);
+        long splices = UIRuntimeCounters.Read(UIWorkCounter.PublicationSparseSplices);
+
+        row.BoundableTransform.Visibility = EVisibility.Hidden;
+        UIPublication hidden = fixture.Capture();
+
+        (UIRuntimeCounters.Read(UIWorkCounter.PublicationSparseSplices) - splices).ShouldBe(1);
+        (UIRuntimeCounters.Read(UIWorkCounter.PublicationCaptureNodesVisited) - visits).ShouldBe(1);
+        // One hit page and one render page lose a record; every other page is shared.
+        (UIRuntimeCounters.Read(UIWorkCounter.PublicationRecordCellsCopied) - copied)
+            .ShouldBeLessThan(2 * UIRecordStore<UIRenderRecord>.PageSize);
+        SharedLeafCount(hidden.RenderRecordStore, baseline.RenderRecordStore)
+            .ShouldBe(baseline.RenderRecordStore.PageCount - 1);
+        SharedLeafCount(hidden.HitRecordStore, baseline.HitRecordStore)
+            .ShouldBe(baseline.HitRecordStore.PageCount - 1);
+        hidden.TryGetRenderRecord(row.RenderInfo2D.MembershipId, out _).ShouldBeFalse();
+        UIMaterialComponent later = fixture.LargeRows[701];
+        hidden.TryGetRenderRecordIndex(later.RenderInfo2D.MembershipId, out int laterIndex)
+            .ShouldBeTrue();
+        hidden.RenderRecordStore[laterIndex].MembershipId.ShouldBe(later.RenderInfo2D.MembershipId);
+        fixture.AssertEqualToFullCapture(hidden);
+
+        copied = UIRuntimeCounters.Read(UIWorkCounter.PublicationRecordCellsCopied);
+        row.BoundableTransform.Visibility = EVisibility.Visible;
+        UIPublication shown = fixture.Capture();
+        (UIRuntimeCounters.Read(UIWorkCounter.PublicationRecordCellsCopied) - copied)
+            .ShouldBeLessThanOrEqualTo(2 * UIRecordStore<UIRenderRecord>.PageSize + 2);
+        shown.RenderRecordCount.ShouldBe(baseline.RenderRecordCount);
+        fixture.AssertEqualToFullCapture(shown);
+    }
+
+    [Test]
+    public void RecapturedPanelKeepsSurvivingRecordsInPlace()
+    {
+        using Fixture fixture = new();
+        UIPublication baseline = fixture.Capture();
+        long splices = UIRuntimeCounters.Read(UIWorkCounter.PublicationSparseSplices);
+        long visits = UIRuntimeCounters.Read(UIWorkCounter.PublicationCaptureNodesVisited);
+
+        // The panel move recaptures every row in it; one hidden row changes the counts.
+        fixture.SmallRows[4].BoundableTransform.Visibility = EVisibility.Hidden;
+        fixture.SmallPanel.Translation = new Vector2(500, 40);
+        UIPublication edited = fixture.Capture();
+
+        (UIRuntimeCounters.Read(UIWorkCounter.PublicationSparseSplices) - splices).ShouldBe(1);
+        (UIRuntimeCounters.Read(UIWorkCounter.PublicationCaptureNodesVisited) - visits)
+            .ShouldBe(SmallRowCount + 1);
+        edited.RenderRecordCount.ShouldBe(baseline.RenderRecordCount - 1);
+        fixture.AssertEqualToFullCapture(edited);
+    }
+
+    private static int SharedLeafCount<T>(UIRecordStore<T> current, UIRecordStore<T> previous)
+        where T : struct
+    {
+        HashSet<UIRecordStoreNode<T>> leaves = new(ReferenceEqualityComparer.Instance);
+        for (int page = 0; page < previous.PageCount; page++)
+            leaves.Add(previous.GetLeaf(page));
+        int shared = 0;
+        for (int page = 0; page < current.PageCount; page++)
+            if (leaves.Contains(current.GetLeaf(page)))
+                shared++;
+        return shared;
+    }
+
+    [Test]
     public void SplicedCaptureIsBasisForLaterEdits()
     {
         using Fixture fixture = new();

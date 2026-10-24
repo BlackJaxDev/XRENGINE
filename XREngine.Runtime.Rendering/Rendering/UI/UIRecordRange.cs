@@ -3,7 +3,11 @@ using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering.UI;
 
-/// <summary>Owns the exact record leaves that intersect one ordered range.</summary>
+/// <summary>
+/// Owns the exact record pages that intersect one ordered range. The range does not depend
+/// on its position in the source store, so a copy can follow the same records after an
+/// edit moves them.
+/// </summary>
 internal sealed class UIRecordRange<T> where T : struct
 {
     private static readonly Action<UIRecordLeafClaim<T>> RetainLeaf =
@@ -11,22 +15,23 @@ internal sealed class UIRecordRange<T> where T : struct
     private static readonly Action<UIRecordLeafClaim<T>> ReleaseLeaf =
         static claim => claim.Leaf.Release();
     private readonly UIRecordStore<UIRecordLeafClaim<T>> _leafStore;
-    private readonly int _firstPage;
-    private readonly int _offset;
+    // Offset of the first range record in the first page.
+    private readonly int _headOffset;
+    // Range-relative end of each page slice.
+    private readonly int[] _ends;
     private int _retired;
 
     private UIRecordRange(UIRecordStore<UIRecordLeafClaim<T>> leafStore,
-        int firstPage, int offset, int length)
+        int headOffset, int[] ends, int length)
     {
         _leafStore = leafStore;
-        _firstPage = firstPage;
-        _offset = offset;
+        _headOffset = headOffset;
+        _ends = ends;
         Length = length;
     }
 
     internal int Length { get; }
-    internal int Offset => _offset;
-    internal int PageCount => _leafStore.Length;
+    internal int PageCount => _ends.Length;
     internal bool ResourcesRetired => Volatile.Read(ref _retired) != 0;
 
     internal static UIRecordRange<T> Create(UIRecordStore<T> store, int offset, int length)
@@ -34,30 +39,69 @@ internal sealed class UIRecordRange<T> where T : struct
         ArgumentNullException.ThrowIfNull(store);
         if (offset < 0 || length < 0 || offset > store.Length - length)
             throw new ArgumentOutOfRangeException(nameof(offset));
-        int firstPage = offset / UIRecordStore<T>.PageSize;
-        int endPage = length == 0 ? firstPage :
-            (offset + length - 1) / UIRecordStore<T>.PageSize + 1;
-        UIRecordLeafClaim<T>[] leaves = new UIRecordLeafClaim<T>[endPage - firstPage];
+        if (length == 0)
+            return new UIRecordRange<T>(UIRecordStore<UIRecordLeafClaim<T>>.Create([],
+                RetainLeaf, ReleaseLeaf), 0, [], 0);
+        int firstPage = store.LocatePage(offset, out int headOffset);
+        int lastPage = store.LocatePage(offset + length - 1, out _);
+        UIRecordLeafClaim<T>[] leaves = new UIRecordLeafClaim<T>[lastPage - firstPage + 1];
+        int[] ends = new int[leaves.Length];
+        int covered = 0;
         for (int index = 0; index < leaves.Length; index++)
-            leaves[index] = new UIRecordLeafClaim<T>(store.GetLeaf(firstPage + index));
+        {
+            UIRecordStoreNode<T> leaf = store.GetLeaf(firstPage + index);
+            leaves[index] = new UIRecordLeafClaim<T>(leaf);
+            int start = index == 0 ? headOffset : 0;
+            covered += Math.Min(leaf.Values!.Length - start, length - covered);
+            ends[index] = covered;
+        }
         UIRecordStore<UIRecordLeafClaim<T>> leafStore =
             UIRecordStore<UIRecordLeafClaim<T>>.Create(leaves, RetainLeaf, ReleaseLeaf);
-        return new UIRecordRange<T>(leafStore, firstPage, offset, length);
+        return new UIRecordRange<T>(leafStore, headOffset, ends, length);
     }
 
-    internal UIRecordRange<T> WithReplacedPage(int pageIndex, UIRecordStore<T> records)
+    /// <summary>Takes a second owner of the same pages. The caller releases each owner once.</summary>
+    internal UIRecordRange<T> Share()
     {
         ObjectDisposedException.ThrowIf(ResourcesRetired, this);
+        _leafStore.Retain();
+        return new UIRecordRange<T>(_leafStore, _headOffset, _ends, Length);
+    }
+
+    /// <summary>
+    /// Checks that each range page has the length of the matching store page, and that the
+    /// range slices start at <paramref name="offset"/> on the same page boundaries. A range made from another page layout of the same records
+    /// fails this check, and the caller then makes a new range.
+    /// </summary>
+    internal bool MatchesPageLayout(UIRecordStore<T> store, int offset)
+    {
+        if (Length == 0 || offset < 0 || offset > store.Length - Length)
+            return false;
+        int firstPage = store.LocatePage(offset, out int headOffset);
+        if (headOffset != _headOffset || firstPage + PageCount > store.PageCount)
+            return false;
+        for (int page = 0; page < PageCount; page++)
+            if (Math.Min(store.GetPageStart(firstPage + page + 1) - offset, Length) != _ends[page] ||
+                _leafStore[page].Leaf.Values!.Length != store.GetPageLength(firstPage + page))
+                return false;
+        return true;
+    }
+
+    /// <summary>Replaces one page with a page of the same record count.</summary>
+    internal UIRecordRange<T> WithReplacedPage(int pageIndex, UIRecordStoreNode<T> leaf)
+    {
+        ObjectDisposedException.ThrowIf(ResourcesRetired, this);
+        ArgumentNullException.ThrowIfNull(leaf);
         if ((uint)pageIndex >= (uint)PageCount ||
-            records.Length < _offset + Length)
+            leaf.Values is not { } values ||
+            values.Length != _leafStore[pageIndex].Leaf.Values!.Length)
             throw new ArgumentOutOfRangeException(nameof(pageIndex));
-        int slotPage = pageIndex / UIRecordStore<UIRecordLeafClaim<T>>.PageSize;
+        int slotPage = _leafStore.LocatePage(pageIndex, out int slot);
         UIRecordLeafClaim<T>[] slots = _leafStore.GetPage(slotPage).ToArray();
-        slots[pageIndex % UIRecordStore<UIRecordLeafClaim<T>>.PageSize] =
-            new UIRecordLeafClaim<T>(records.GetLeaf(_firstPage + pageIndex));
+        slots[slot] = new UIRecordLeafClaim<T>(leaf);
         UIRecordStore<UIRecordLeafClaim<T>> leafStore =
             _leafStore.WithReplacedPage(slotPage, slots);
-        return new UIRecordRange<T>(leafStore, _firstPage, _offset, Length);
+        return new UIRecordRange<T>(leafStore, _headOffset, _ends, Length);
     }
 
     internal T this[int index]
@@ -67,9 +111,10 @@ internal sealed class UIRecordRange<T> where T : struct
             ObjectDisposedException.ThrowIf(ResourcesRetired, this);
             if ((uint)index >= (uint)Length)
                 throw new IndexOutOfRangeException();
-            int absolute = _offset + index;
-            return _leafStore[absolute / UIRecordStore<T>.PageSize - _firstPage]
-                .Leaf.Values![absolute % UIRecordStore<T>.PageSize];
+            int page = PageOf(index);
+            int sliceStart = page == 0 ? 0 : _ends[page - 1];
+            int leafOffset = page == 0 ? _headOffset : 0;
+            return _leafStore[page].Leaf.Values![leafOffset + index - sliceStart];
         }
     }
 
@@ -78,12 +123,10 @@ internal sealed class UIRecordRange<T> where T : struct
         ObjectDisposedException.ThrowIf(ResourcesRetired, this);
         if ((uint)pageIndex >= (uint)PageCount)
             throw new ArgumentOutOfRangeException(nameof(pageIndex));
-        int absolutePage = _firstPage + pageIndex;
-        int start = Math.Max(_offset, absolutePage * UIRecordStore<T>.PageSize);
-        int end = Math.Min(_offset + Length,
-            (absolutePage + 1) * UIRecordStore<T>.PageSize);
-        return _leafStore[pageIndex].Leaf.Values!.AsSpan(
-            start - absolutePage * UIRecordStore<T>.PageSize, end - start);
+        int sliceStart = pageIndex == 0 ? 0 : _ends[pageIndex - 1];
+        int leafOffset = pageIndex == 0 ? _headOffset : 0;
+        return _leafStore[pageIndex].Leaf.Values!.AsSpan(leafOffset,
+            _ends[pageIndex] - sliceStart);
     }
 
     internal void CopyTo(Span<T> destination)
@@ -98,6 +141,21 @@ internal sealed class UIRecordRange<T> where T : struct
             offset += source.Length;
         }
         UIRuntimeCounters.Add(UIWorkCounter.PublicationFlatCellsMaterialized, Length);
+    }
+
+    private int PageOf(int index)
+    {
+        int low = 0;
+        int high = _ends.Length - 1;
+        while (low < high)
+        {
+            int middle = (low + high) >>> 1;
+            if (_ends[middle] > index)
+                high = middle;
+            else
+                low = middle + 1;
+        }
+        return low;
     }
 
     internal void Release()

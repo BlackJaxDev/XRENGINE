@@ -25,7 +25,9 @@ public sealed class UIPublication
     private bool _retainedQuadPayload;
     private int _claims = 1;
     private int _resourcesRetired;
-    private readonly Dictionary<long, int> _renderByMembership;
+    // Exactly one lookup is set: the painter index when records follow its order, else a map.
+    private readonly UIRenderPainterIndex? _painterIndex;
+    private readonly Dictionary<long, int>? _renderByMembership;
     private UIPublishedWorldMeshCommand[]? _worldCommands;
     private readonly object _worldCommandGate = new();
 
@@ -46,7 +48,8 @@ public sealed class UIPublication
         bool authoringOffscreen = false,
         UIRenderSurface? offscreenSurface = null,
         UIDrawPayload? offscreenQuadPayload = null,
-        Matrix4x4? offscreenQuadWorldMatrix = null)
+        Matrix4x4? offscreenQuadWorldMatrix = null,
+        UIRenderPainterIndex? painterIndex = null)
     {
         Generation = generation;
         RenderGeneration = generation;
@@ -77,13 +80,11 @@ public sealed class UIPublication
         _focusScopes = focusScopes ?? [];
         ActiveFocusScopeIdentity = ResolveActiveFocusScope(identities, _focusScopes);
         if (shareRenders)
-            _renderByMembership = previous!._renderByMembership;
+            (_painterIndex, _renderByMembership) = (previous!._painterIndex, previous._renderByMembership);
+        else if (painterIndex is not null && painterIndex.Orders(renders))
+            _painterIndex = painterIndex;
         else
-        {
-            _renderByMembership = new Dictionary<long, int>(renders!.Length);
-            for (int index = 0; index < renders.Length; index++)
-                _renderByMembership.Add(renders[index].MembershipId, index);
-        }
+            _renderByMembership = BuildMembershipMap(renders);
         try
         {
             _hitStore = shareHits
@@ -131,14 +132,36 @@ public sealed class UIPublication
         UIFocusScopeRecord[] focusScopes, UIRenderSurface? offscreenSurface,
         UIDrawPayload? offscreenQuadPayload, Matrix4x4 offscreenQuadWorldMatrix)
         => new(previous, generation, layoutGeneration, hitGeneration, changeRevision,
-            layoutPages, hitStore, renderStore, changedRenderPages, backdropDelta,
-            preRenderDelta, scrollReceivers, focusScopes, offscreenSurface,
+            layoutPages, hitStore, renderStore, changedRenderPages, false, default, default,
+            backdropDelta, preRenderDelta, scrollReceivers, focusScopes, offscreenSurface,
+            offscreenQuadPayload, offscreenQuadWorldMatrix);
+
+    /// <summary>
+    /// Creates the next owner-built publication from spliced record stores. The caller keeps
+    /// the identities and the painter order of <paramref name="previous"/>, and
+    /// <paramref name="renderSplices"/> describes how <paramref name="renderStore"/> differs
+    /// from the previous render store. The new publication takes both store claims, also
+    /// when construction fails.
+    /// </summary>
+    internal static UIPublication CreateSpliced(UIPublication previous, ulong generation,
+        ulong layoutGeneration, ulong hitGeneration, long changeRevision,
+        UILayoutOutputPageView layoutPages, UIRecordStore<UIHitRecord> hitStore,
+        UIRecordStore<UIRenderRecord> renderStore, ReadOnlySpan<UIRecordSplice> renderSplices,
+        ReadOnlySpan<UIRenderRecord> insertedRenders, int backdropDelta, int preRenderDelta,
+        UIScrollRecord[] scrollReceivers, UIFocusScopeRecord[] focusScopes,
+        UIRenderSurface? offscreenSurface, UIDrawPayload? offscreenQuadPayload,
+        Matrix4x4 offscreenQuadWorldMatrix)
+        => new(previous, generation, layoutGeneration, hitGeneration, changeRevision,
+            layoutPages, hitStore, renderStore, default, true, renderSplices, insertedRenders,
+            backdropDelta, preRenderDelta, scrollReceivers, focusScopes, offscreenSurface,
             offscreenQuadPayload, offscreenQuadWorldMatrix);
 
     private UIPublication(UIPublication previous, ulong generation, ulong layoutGeneration,
         ulong hitGeneration, long changeRevision, UILayoutOutputPageView layoutPages,
         UIRecordStore<UIHitRecord> hitStore, UIRecordStore<UIRenderRecord> renderStore,
-        ReadOnlySpan<int> changedRenderPages, int backdropDelta, int preRenderDelta,
+        ReadOnlySpan<int> changedRenderPages, bool spliced,
+        ReadOnlySpan<UIRecordSplice> renderSplices, ReadOnlySpan<UIRenderRecord> insertedRenders,
+        int backdropDelta, int preRenderDelta,
         UIScrollRecord[] scrollReceivers, UIFocusScopeRecord[] focusScopes,
         UIRenderSurface? offscreenSurface, UIDrawPayload? offscreenQuadPayload,
         Matrix4x4 offscreenQuadWorldMatrix)
@@ -147,8 +170,8 @@ public sealed class UIPublication
         _renderStore = renderStore;
         try
         {
-            if (hitStore.Length != previous._hitStore!.Length ||
-                renderStore.Length != previous._renderStore!.Length)
+            if (!spliced && (hitStore.Length != previous._hitStore!.Length ||
+                renderStore.Length != previous._renderStore!.Length))
                 throw new ArgumentException("A patched publication must keep record counts.");
             Generation = generation;
             RenderGeneration = generation;
@@ -171,13 +194,26 @@ public sealed class UIPublication
             _scrollReceivers = scrollReceivers;
             _focusScopes = focusScopes;
             ActiveFocusScopeIdentity = ResolveActiveFocusScope(Identities, focusScopes);
-            // Membership order is unchanged, so the previous index lookup stays exact.
-            _renderByMembership = previous._renderByMembership;
-            _compositionSegments = previous.CanvasLifetime == CanvasLifetime &&
-                previous._compositionSegments.TryWithReplacedRenderPages(renderStore,
-                    changedRenderPages, out UICompositionSegmentSet patched)
-                ? patched
-                : UICompositionSegmentSet.Build(renderStore, previous._compositionSegments);
+            if (!spliced)
+            {
+                // Membership order is unchanged, so the previous lookup stays exact.
+                (_painterIndex, _renderByMembership) =
+                    (previous._painterIndex, previous._renderByMembership);
+                _compositionSegments = previous._compositionSegments.TryWithReplacedRenderPages(
+                    renderStore, changedRenderPages, out UICompositionSegmentSet patched)
+                    ? patched
+                    : UICompositionSegmentSet.Build(renderStore, previous._compositionSegments);
+            }
+            else
+            {
+                // The painter order is unchanged, so its index still orders the spliced records.
+                // A publication without that index needs a new map of every record.
+                _painterIndex = previous._painterIndex;
+                _renderByMembership = _painterIndex is null
+                    ? BuildMembershipMap(renderStore) : null;
+                _compositionSegments = previous._compositionSegments.WithSplicedRenders(
+                    renderStore, renderSplices, insertedRenders);
+            }
             RetainCanvasResources();
         }
         catch
@@ -244,14 +280,25 @@ public sealed class UIPublication
     public ReadOnlySpan<UICompositionSegment> CompositionSegments => _compositionSegments.Segments;
     internal UICompositionSegmentSet CompositionStorage => _compositionSegments;
     internal bool TryGetCompositionSegment(long membershipId, out UICompositionSegment segment)
-        => _compositionSegments.TryGet(membershipId, out segment);
+    {
+        segment = null!;
+        return TryGetRenderRecordIndex(membershipId, out int index) &&
+            _compositionSegments.TryGetAt(index, out segment);
+    }
     public ReadOnlySpan<UIScrollRecord> ScrollReceivers => _scrollReceivers;
     public ReadOnlySpan<UIFocusScopeRecord> FocusScopes => _focusScopes;
     public UIElementIdentity ActiveFocusScopeIdentity { get; }
     internal UIRecordStore<UIHitRecord> HitRecordStore => _hitStore!;
     internal UIRecordStore<UIRenderRecord> RenderRecordStore => _renderStore!;
     internal bool TryGetRenderRecordIndex(long membershipId, out int index)
-        => _renderByMembership.TryGetValue(membershipId, out index);
+    {
+        if (_painterIndex is { } painterIndex)
+            return painterIndex.TryFind(_renderStore!, membershipId, out index);
+        return _renderByMembership!.TryGetValue(membershipId, out index);
+    }
+
+    /// <summary>Gets the painter index that orders the render records, or null.</summary>
+    internal UIRenderPainterIndex? RenderPainterIndex => _painterIndex;
     internal int RenderRecordCount => _renderStore!.Length;
     internal ReadOnlySpan<UIRenderRecord> GetRenderRecordPage(int pageIndex)
         => _renderStore!.GetPage(pageIndex);
@@ -293,9 +340,9 @@ public sealed class UIPublication
                 return;
             }
             UIRecordStore<UIRenderRecord> renders = _renderStore!;
-            for (int index = 0; index < renders.Length; index++)
+            for (int page = 0; page < renders.PageCount; page++)
+            foreach (ref readonly UIRenderRecord record in renders.GetPage(page))
             {
-                ref readonly UIRenderRecord record = ref renders[index];
                 if (!record.Visible)
                     continue;
                 RenderCommandMesh3D template = record.FrozenWorldCommand ??
@@ -328,7 +375,7 @@ public sealed class UIPublication
 
     public bool TryGetRenderRecord(long membershipId, out UIRenderRecord record)
     {
-        if (_renderByMembership.TryGetValue(membershipId, out int index))
+        if (TryGetRenderRecordIndex(membershipId, out int index))
         {
             record = _renderStore![index];
             return true;
@@ -388,13 +435,9 @@ public sealed class UIPublication
         _focusScopes = source._focusScopes;
         ActiveFocusScopeIdentity = source.ActiveFocusScopeIdentity;
         if (shareRenders)
-            _renderByMembership = source._renderByMembership;
+            (_painterIndex, _renderByMembership) = (source._painterIndex, source._renderByMembership);
         else
-        {
-            _renderByMembership = new Dictionary<long, int>(outputRenders!.Length);
-            for (int index = 0; index < outputRenders.Length; index++)
-                _renderByMembership.Add(outputRenders[index].MembershipId, index);
-        }
+            _renderByMembership = BuildMembershipMap(outputRenders);
         try
         {
             _hitStore = RetainStore(source._hitStore!);
@@ -424,6 +467,23 @@ public sealed class UIPublication
         ClipToWorld = clipToWorld;
         NearClipZ = nearClipZ;
         FarClipZ = farClipZ;
+    }
+
+    private static Dictionary<long, int> BuildMembershipMap(ReadOnlySpan<UIRenderRecord> records)
+    {
+        Dictionary<long, int> map = new(records.Length);
+        for (int index = 0; index < records.Length; index++)
+            map.Add(records[index].MembershipId, index);
+        return map;
+    }
+
+    private static Dictionary<long, int> BuildMembershipMap(UIRecordStore<UIRenderRecord> records)
+    {
+        Dictionary<long, int> map = new(records.Length);
+        for (int page = 0, index = 0; page < records.PageCount; page++)
+            foreach (ref readonly UIRenderRecord record in records.GetPage(page))
+                map.Add(record.MembershipId, index++);
+        return map;
     }
 
     private static (int Backdrop, int PreRender) CountBackdropPresence(

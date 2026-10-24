@@ -36,6 +36,22 @@ See the [investigation record](../../investigations/ui/retained-ui-integration.m
 for intermediate failures and repairs. Windows, OpenGL/Vulkan, visual, IME, native
 resource, benchmark, and equal-workload ImGui acceptance remain open.
 
+## Sparse Publication Splice Validation (2026-10-24)
+
+This run checks the count-changing splice of record stores. It used the same Linux
+SDK setup as the sparse capture run below. All builds used
+`Tools/Invoke-AgentBuild.ps1` with `--no-restore`, in sequence. The changed source
+files were hashed before the builds and were unchanged after them.
+
+| Check | Result | Limit |
+|---|---|---|
+| Headless test build | Passed: 0 warnings, 0 errors. | Linux, SDK 10.0.113 with Roslyn 5.9. |
+| Store, segment, and sparse publication tests | Passed. `CountChangingEditsCopyOnlyTouchedRecordPages` bounds copied record cells to fewer than two pages and checks that all other pages are shared. A deliberate fault in the render splice merge order made `RecapturedPanelKeepsSurvivingRecordsInPlace` fail; the source was then restored and rebuilt. | Counter-based work bounds, not time measurements. |
+| Full headless regression suite | Passed: 1041/1041, no warnings, failures, or skips. | The headless project only. |
+| Editor Windows-target compilation | Passed: 0 warnings, 0 errors, with `EnableWindowsTargeting=true`. | Compilation only. |
+| Desktop unit test project compilation | Passed: 0 warnings, 0 errors, with `EnableWindowsTargeting=true`. | Compilation only; no Windows test executed. |
+| Windows editor, OpenGL/Vulkan, visual, performance comparison | Not run. | No live, visual, or speed result is claimed. |
+
 ## Sparse Publication Capture Validation (2026-10-24)
 
 This run checks the sparse publication capture increment. It ran on Linux with
