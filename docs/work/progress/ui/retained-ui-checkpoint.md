@@ -1019,4 +1019,21 @@ The reconciliation remains **46 of 60**. This increment advances the open dockin
 
 Headless tests cover the gate and last-tab behavior. The host itself compiles only
 in the editor and desktop test projects; native docking checks remain open.
+Headless build22 passed with 0 warnings and errors, and the full headless run
+passed **1009 of 1009 tests** in 19.2s. Editor build6 and desktop test build5
+passed with 0 warnings and errors on unchanged source.
+
+## Hierarchy rollback keeps newer callback edits
+
+The reconciliation remains **46 of 60**. This increment advances the open drag/drop
+and Undo item.
+
+- `HierarchyMutationOperation.RestoreInitial` repairs only its own partial write.
+  After the apply completes, a changed placement, activation, or local value came
+  from a callback; rollback keeps it and the step records the remaining state.
+- Grouped and multi-root duplication remain unavailable. Parent, world, and
+  root-list safeguards for grouped replay remain open.
+
+The regression test is in the desktop test project, so it compiles here but does
+not run; Windows execution remains open.
 

@@ -17,6 +17,7 @@ internal sealed class HierarchyMutationOperation
     private IReadOnlyList<XRScene> _currentEditorRoutes;
     private HierarchyPlacement _currentScenePlacement;
     private bool _incompleteFailure;
+    private bool _applyComplete;
     private HierarchyMutationFailureState? _initialFailure;
     private HierarchyMutationFailureState? _undoFailure;
     private HierarchyMutationFailureState? _redoFailure;
@@ -120,7 +121,14 @@ internal sealed class HierarchyMutationOperation
             throw new InvalidOperationException("The hierarchy edit did not preserve its requested values.");
         After = HierarchyPlacement.Capture(Node, Before.World);
         _afterTransform = new(Before.Transform);
+        _applyComplete = true;
     }
+
+    /// <summary>
+    /// Gets whether the last <see cref="RestoreInitial"/> found a newer edit from a callback and
+    /// kept it instead of restoring the original values.
+    /// </summary>
+    public bool PreservedNewerEdit { get; private set; }
 
     public void RequireUndoEntry()
     {
@@ -190,8 +198,20 @@ internal sealed class HierarchyMutationOperation
         }
     }
 
+    /// <summary>
+    /// Compensates a failed initial edit. Before the apply completes, any partial state is this
+    /// edit's own write and is repaired. After it completes, a placement, activation, or local
+    /// value that differs from the applied result was written by a callback. Restoring it would
+    /// discard that newer edit, so the method keeps it and returns false for recovery.
+    /// </summary>
     public bool RestoreInitial()
     {
+        PreservedNewerEdit = false;
+        if (_applyComplete && !IsUnchangedSinceApply())
+        {
+            PreservedNewerEdit = true;
+            return false;
+        }
         try { MoveTo(Before, After, preserveWorld: false); }
         catch { }
         try { RestoreProperties(Before, _beforeTransform, _beforeActive); }
@@ -200,6 +220,17 @@ internal sealed class HierarchyMutationOperation
         catch { return false; }
         return !_uncertainLocalValues && _uncertainActiveValue is null && Before.Matches() &&
             Node.IsActiveSelf == _beforeActive && _beforeTransform.Matches();
+    }
+
+    private bool IsUnchangedSinceApply()
+    {
+        try
+        {
+            _requireIdentity?.Invoke();
+            return !_uncertainLocalValues && _uncertainActiveValue is null && After.Matches() &&
+                Node.IsActiveSelf == _afterActive && _afterTransform?.Matches() == true;
+        }
+        catch { return false; }
     }
 
     public void CaptureFailure()

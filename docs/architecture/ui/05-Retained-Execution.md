@@ -1372,6 +1372,13 @@ shape; history release uses current document custody so a valid later edit does
 not cause false recovery. Failed compensation retains its custody receipt and
 diagnostic instead of destroying a graph whose ownership changed.
 
+`HierarchyMutationOperation.RestoreInitial` repairs a partial write that the edit
+made itself before its apply completed. After the apply completes, a placement,
+activation, or local transform value that differs from the applied result came
+from a callback. Rollback keeps that newer edit, reports `PreservedNewerEdit`, and
+records the remaining state as the step's result; the clone stays in recovery
+custody instead of being retired.
+
 Selection restoration applies only while the action still owns the exact ordered
 selection. A callback or later user selection takes priority. Selection callbacks
 are followed by graph and placement checks before the command settles.

@@ -174,6 +174,33 @@ public sealed class HierarchyCloneCustodyTests
     }
 
     [Test]
+    public void InitialRollbackKeepsANewerCallbackEditOfTheClone()
+    {
+        SceneNode source = new("Source");
+        XRScene scene = new("Hidden", source) { IsVisible = false };
+        using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", scene));
+        HierarchyCloneCustodyStore store = new();
+        SceneNode? clone = null;
+        System.Numerics.Vector3 newer = new(3, 0, 0);
+        HierarchyPlacement sourcePlacement = HierarchyPlacement.Capture(source, world);
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => HierarchyCloneMutation.Execute("Clone", source, world,
+                node => HierarchyPlacement.RootLike(node, sourcePlacement), node =>
+                {
+                    clone = node;
+                    // A callback edits the applied clone, then fails. Rollback must not undo this edit.
+                    ((Transform)node.Transform).Translation = newer;
+                    throw new InvalidOperationException("Expected callback failure.");
+                }, store: store));
+            Assert.That(clone, Is.Not.Null);
+            Assert.That(clone!.IsDestroyed, Is.False);
+            Assert.That(((Transform)clone.Transform).Translation, Is.EqualTo(newer));
+        }
+        finally { clone?.Destroy(true); source.Destroy(true); }
+    }
+
+    [Test]
     public void ACommitObserverCannotStartAnotherCloneAndCanReleaseAppliedHistory()
     {
         SceneNode source = new("Source");
