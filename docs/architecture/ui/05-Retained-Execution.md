@@ -271,6 +271,42 @@ canvas walk state still moves record starts with one pass of integer additions o
 the node arrays. The new publication is complete before acceptance, so no reader
 sees a partial splice.
 
+### Collector page reuse
+
+`UIBatchCollector` collects a published render store one record page at a time
+(`UIBatchCollector.PublishedPages.cs`). A batch run never crosses a page boundary.
+This adds at most one run for each render pass at each page boundary. Each
+collected page keeps:
+
+- its runs and its unbatched draw positions, in painter order;
+- the primitive handle of each record, including hidden records;
+- the composition segments that overlap the page, with their identity, revision,
+  and page-relative range;
+- its unbatched draw count and its pending text-layout flag.
+
+The collector keeps the pages of its latest completed collection, keyed by leaf
+object. A leaf is immutable, so the next collection reuses the page when the same
+leaf holds the same segments at its new position. A reused page adds its shared
+runs and markers to the collect side and does not visit its records. A page moves
+without a visit when a splice shifts it, unless it overlaps a segment that the
+splice moved. A moved segment has a new revision, and runs store that revision.
+
+Only new runs get a run identity from old runs, and only from runs of pages that
+the collection dropped, so reconciliation work depends on the changed pages. A
+primitive slot counts the collected pages that draw it. A dropped page releases
+its counts; a slot with no count and no owner registration becomes free. An
+unregistered owner keeps its handle while a page still draws it. Runs of dropped
+pages return to a pool only at the next swap that replaces the render side,
+because the render side can read them until then. A discard keeps the committed
+render side, and the discarded collection stays the basis for the next one. An
+unchanged store replays the committed painter stream without a record visit.
+
+`ExpectedPublishedDrawIntentCount` and `HasPendingPublishedTextLayout` read page
+summaries that the swap commits, so the per-frame canvas checks do not walk the
+records. `LastCollectedPageCount`, `LastReusedPageCount`,
+`LastCollectedPageRecordCount`, and `LastRunReconcileVisitCount` report this work
+to tests.
+
 `UIWorkCounter.PublicationCaptureNodesVisited`, `PublicationFullCaptures`,
 `PublicationSparseCaptures`, `PublicationSparseSplices`, and
 `PublicationSparseFallbacks` report this work. `PublicationRecordCellsCopied`,
@@ -327,8 +363,8 @@ include primitive type, atlas or image snapshot, shader mode, clip values, pass,
 and material features. An unsupported profile uses an owned draw.
 
 Primitive slots use membership plus element incarnation. Activation registers
-the current owner; deactivation unregisters it. Old packets retain distinct
-historical slots. A shared slot lock prevents collector and owner races. A stale
+the current owner; deactivation unregisters it. A slot stays allocated while a
+collected record page draws it. Old packets retain distinct historical slots. A shared slot lock prevents collector and owner races. A stale
 unregister cannot remove the new owner.
  Common editor borders use
 `SetBatchBorderStyle`; solid backgrounds use `SetBatchSolidColor`. Per-control

@@ -254,19 +254,30 @@ public sealed partial class UIBatchCollector : IDisposable
         }
     }
 
+    /// <summary>
+    /// Holds the runs of one render pass in painter order. The pool owns and reuses runs
+    /// that it creates. Adopted runs belong to a collected record page and stay unchanged.
+    /// </summary>
     private sealed class BatchPool<T> where T : class, new()
     {
         public readonly List<T> Items = [];
         public int Count;
+        private readonly List<T> _ownedActive = [];
+        private readonly Stack<T> _spare = [];
 
         public T Acquire(out int index)
         {
-            index = Count;
-            if (index == Items.Count)
-                Items.Add(new T());
+            T item = _spare.Count != 0 ? _spare.Pop() : new T();
+            _ownedActive.Add(item);
+            index = Adopt(item);
+            return item;
+        }
 
-            Count++;
-            return Items[index];
+        /// <summary>Adds a run that another owner keeps. <see cref="Reset"/> does not clear it.</summary>
+        public int Adopt(T item)
+        {
+            Items.Add(item);
+            return Count++;
         }
 
         public T this[int index] => Items[index];
@@ -285,9 +296,13 @@ public sealed partial class UIBatchCollector : IDisposable
 
         public void Reset(Action<T> clear)
         {
-            for (int i = 0; i < Count; i++)
-                clear(Items[i]);
-
+            foreach (T item in _ownedActive)
+            {
+                clear(item);
+                _spare.Push(item);
+            }
+            _ownedActive.Clear();
+            Items.Clear();
             Count = 0;
         }
     }
@@ -432,93 +447,12 @@ public sealed partial class UIBatchCollector : IDisposable
         return id == 0 ? ++_nextRunId : id;
     }
 
-    // Markers retain their ordinal position in the painter stream. GPU cohorts use
-    // this separate identity so an inserted earlier run cannot rebase later storage.
-    private void ReconcileCollectedRunIds()
-    {
-        _claimedPreviousRunIds.Clear();
-        _oldMaterialRunByHandle.Clear();
-        _oldTextRunByHandle.Clear();
-        LastRunReconcileVisitCount = 0;
-        foreach (var pass in _renderMaterialGroups)
-            for (int group = 0; group < pass.Value.Count; group++)
-            {
-                MaterialQuadBatchData old = pass.Value[group];
-                foreach (MaterialQuadEntry entry in old.Entries)
-                {
-                    LastRunReconcileVisitCount++;
-                    if (entry.PrimitiveHandle != 0)
-                        _oldMaterialRunByHandle.TryAdd(entry.PrimitiveHandle, (pass.Key, old));
-                }
-            }
-        foreach (var pass in _renderTextGroups)
-            for (int group = 0; group < pass.Value.Count; group++)
-            {
-                TextBatchData old = pass.Value[group];
-                foreach (TextEntry entry in old.Entries)
-                {
-                    LastRunReconcileVisitCount++;
-                    if (entry.PrimitiveHandle != 0)
-                        _oldTextRunByHandle.TryAdd(entry.PrimitiveHandle, (pass.Key, old));
-                }
-            }
-        foreach (var pass in _collectMaterialGroups)
-        {
-            for (int index = 0; index < pass.Value.Count; index++)
-            {
-                MaterialQuadBatchData current = pass.Value[index];
-                foreach (MaterialQuadEntry entry in current.Entries)
-                {
-                    LastRunReconcileVisitCount++;
-                    if (entry.PrimitiveHandle == 0 ||
-                        !_oldMaterialRunByHandle.TryGetValue(entry.PrimitiveHandle, out var match) ||
-                        match.Pass != pass.Key) continue;
-                    MaterialQuadBatchData old = match.Run;
-                    if (_claimedPreviousRunIds.Contains(old.RunId) || current.CropRegion != old.CropRegion ||
-                        current.CompositionOwner != old.CompositionOwner ||
-                        current.CompositionSegmentIdentity != old.CompositionSegmentIdentity ||
-                        !ReferenceEquals(current.Texture, old.Texture) ||
-                        !ReferenceEquals(current.ImageSnapshot, old.ImageSnapshot) ||
-                        current.ImageSrgb != old.ImageSrgb || current.Border != old.Border) continue;
-                    current.RunId = old.RunId;
-                    _claimedPreviousRunIds.Add(old.RunId);
-                    break;
-                }
-            }
-        }
-        foreach (var pass in _collectTextGroups)
-        {
-            for (int index = 0; index < pass.Value.Count; index++)
-            {
-                TextBatchData current = pass.Value[index];
-                foreach (TextEntry entry in current.Entries)
-                {
-                    LastRunReconcileVisitCount++;
-                    if (entry.PrimitiveHandle == 0 ||
-                        !_oldTextRunByHandle.TryGetValue(entry.PrimitiveHandle, out var match) ||
-                        match.Pass != pass.Key) continue;
-                    TextBatchData old = match.Run;
-                    if (_claimedPreviousRunIds.Contains(old.RunId) || current.CropRegion != old.CropRegion ||
-                        current.CompositionOwner != old.CompositionOwner ||
-                        current.CompositionSegmentIdentity != old.CompositionSegmentIdentity ||
-                        !ReferenceEquals(current.Atlas, old.Atlas) || current.AtlasType != old.AtlasType ||
-                        !ReferenceEquals(current.AtlasSnapshot, old.AtlasSnapshot) ||
-                        current.DistanceRange != old.DistanceRange ||
-                        current.DistanceRangeMiddle != old.DistanceRangeMiddle ||
-                        current.MsdfFillBias != old.MsdfFillBias || current.DebugMode != old.DebugMode) continue;
-                    current.RunId = old.RunId;
-                    _claimedPreviousRunIds.Add(old.RunId);
-                    break;
-                }
-            }
-        }
-        _oldMaterialRunByHandle.Clear();
-        _oldTextRunByHandle.Clear();
-        _claimedPreviousRunIds.Clear();
-    }
-
     private readonly Dictionary<int, MarkerPool> _markerPools = [];
-    private readonly record struct PublishedMarker(int RecordIndex, int Pass, int ZIndex,
+    /// <summary>
+    /// One item of the committed painter stream: a run marker, or an unbatched record
+    /// when <see cref="GroupIndex"/> is negative. The reuse path replays this stream.
+    /// </summary>
+    private readonly record struct PublishedMarker(int Page, int Offset, int Pass, int ZIndex,
         EBatchMarkerKind Kind, int GroupIndex);
     private List<PublishedMarker> _collectPublishedMarkers = [];
     private List<PublishedMarker> _renderPublishedMarkers = [];
@@ -526,7 +460,6 @@ public sealed partial class UIBatchCollector : IDisposable
     private UIRecordStore<UIRenderRecord>? _renderPublishedStorage;
     private UICompositionSegmentSet? _collectCompositionStorage;
     private UICompositionSegmentSet? _renderCompositionStorage;
-    private int _collectPublishedRecordIndex = -1;
     private long _publishedCollectionEpoch;
     private bool _reusePublishedRuns;
 
@@ -547,39 +480,18 @@ public sealed partial class UIBatchCollector : IDisposable
             throw new AggregateException("UI published storage cleanup failed.", failures);
     }
     /// <summary>Draws authored by the currently published frozen UI packet.</summary>
-    public int ExpectedPublishedDrawIntentCount
-    {
-        get
-        {
-            int count = _renderPublishedMarkers.Count;
-            if (_renderPublishedStorage is { } records)
-                for (int page = 0; page < records.PageCount; page++)
-                    foreach (ref readonly UIRenderRecord record in records.GetPage(page))
-                        if (record.Visible && !record.SupportsBatch && record.FrozenCommand is not null)
-                            count++;
-            return count;
-        }
-    }
+    public int ExpectedPublishedDrawIntentCount => _renderPublishedRunMarkers + _renderUnbatchedDrawCount;
 
-    public bool HasPendingPublishedTextLayout
-    {
-        get
-        {
-            if (_renderPublishedStorage is { } records)
-                for (int page = 0; page < records.PageCount; page++)
-                    foreach (ref readonly UIRenderRecord record in records.GetPage(page))
-                        if (record.Visible && record.SupportsBatch && record.IsText && record.TextLayout is null)
-                            return true;
-            return false;
-        }
-    }
+    /// <summary>Gets whether a visible batched text record of the committed packet has no layout yet.</summary>
+    public bool HasPendingPublishedTextLayout => _renderPendingTextLayout;
     internal ulong RetainedRunReuseCount { get; private set; }
     private sealed class RetainedPrimitiveSlot
     {
         public long MembershipId;
         public UIElementIdentity Identity;
         public uint Generation;
-        public ulong SeenEpoch;
+        /// <summary>The number of collected record pages that draw this primitive.</summary>
+        public int PageRefs;
         public bool Occupied;
         public bool Registered;
     }
@@ -588,7 +500,6 @@ public sealed partial class UIBatchCollector : IDisposable
     private readonly Stack<int> _freePrimitiveSlots = [];
     private readonly Dictionary<(long MembershipId, UIElementIdentity Identity), int> _slotByIdentity = [];
     private readonly Dictionary<long, int> _registeredSlotByMembership = [];
-    private ulong _membershipEpoch;
     private uint _nextPrimitiveGeneration;
 
     internal ulong GetRetainedPrimitiveHandle(long membershipId)
@@ -639,14 +550,16 @@ public sealed partial class UIBatchCollector : IDisposable
             if (!_registeredSlotByMembership.TryGetValue(membershipId, out int index) ||
                 PrimitiveHandle(index) != handle)
                 return;
+            RetainedPrimitiveSlot slot = _primitiveSlots[index];
+            if (slot.PageRefs != 0)
+            {
+                // A collected page still draws this primitive. It keeps the handle until the page drops.
+                slot.Registered = false;
+                _registeredSlotByMembership.Remove(membershipId);
+                return;
+            }
             ReleasePrimitiveSlotLocked(index);
         }
-    }
-
-    private ulong RetainPrimitive(in UIRenderRecord record)
-    {
-        lock (_primitiveSlotGate)
-            return RetainPrimitiveLocked(record.MembershipId, record.Identity);
     }
 
     private ulong RetainPrimitiveLocked(long membershipId, UIElementIdentity identity)
@@ -667,22 +580,28 @@ public sealed partial class UIBatchCollector : IDisposable
         slot.MembershipId = membershipId;
         slot.Identity = identity;
         slot.Occupied = true;
-        slot.SeenEpoch = Math.Max(slot.SeenEpoch, _membershipEpoch);
         return PrimitiveHandle(index);
     }
 
-    private void RetireMissingPrimitives()
+    /// <summary>Adds one collected-page reference to the primitive of a record.</summary>
+    private ulong RetainPagePrimitiveLocked(long membershipId, UIElementIdentity identity)
     {
-        lock (_primitiveSlotGate)
-        {
-            for (int index = 0; index < _primitiveSlots.Count; index++)
-            {
-                RetainedPrimitiveSlot slot = _primitiveSlots[index];
-                if (!slot.Occupied || slot.Registered || slot.SeenEpoch == _membershipEpoch)
-                    continue;
-                ReleasePrimitiveSlotLocked(index);
-            }
-        }
+        ulong handle = RetainPrimitiveLocked(membershipId, identity);
+        _primitiveSlots[(int)(uint)handle].PageRefs++;
+        return handle;
+    }
+
+    /// <summary>Removes one collected-page reference and frees an unregistered slot at zero.</summary>
+    private void ReleasePagePrimitiveLocked(ulong handle)
+    {
+        int index = (int)(uint)handle;
+        if ((uint)index >= (uint)_primitiveSlots.Count)
+            return;
+        RetainedPrimitiveSlot slot = _primitiveSlots[index];
+        if (!slot.Occupied || PrimitiveHandle(index) != handle || slot.PageRefs == 0)
+            return;
+        if (--slot.PageRefs == 0 && !slot.Registered)
+            ReleasePrimitiveSlotLocked(index);
     }
 
     private void ReleasePrimitiveSlotLocked(int index)
@@ -693,6 +612,7 @@ public sealed partial class UIBatchCollector : IDisposable
             _registeredSlotByMembership.Remove(slot.MembershipId);
         slot.Occupied = false;
         slot.Registered = false;
+        slot.PageRefs = 0;
         slot.MembershipId = 0;
         slot.Identity = default;
         _freePrimitiveSlots.Push(index);
@@ -1154,29 +1074,7 @@ public sealed partial class UIBatchCollector : IDisposable
         if (_reusePublishedRuns)
         {
             RetainedRunReuseCount++;
-            int markerIndex = 0;
-            for (int page = 0, index = 0; page < records.PageCount; page++)
-            {
-                foreach (ref readonly UIRenderRecord record in records.GetPage(page))
-                {
-                    if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
-                        return;
-                    int recordIndex = index++;
-                    if (!record.Visible) continue;
-                    while (markerIndex < _renderPublishedMarkers.Count &&
-                        _renderPublishedMarkers[markerIndex].RecordIndex == recordIndex)
-                    {
-                        PublishedMarker marker = _renderPublishedMarkers[markerIndex++];
-                        passes.AddCPU(AcquireMarker(marker.Pass, marker.ZIndex, marker.Kind, marker.GroupIndex));
-                    }
-                    if (!record.SupportsBatch)
-                    {
-                        collectUnbatched(record);
-                        if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
-                            return;
-                    }
-                }
-            }
+            EmitCommittedPublishedStream(records, passes, collectUnbatched, collectionEpoch);
             return;
         }
 
@@ -1193,75 +1091,7 @@ public sealed partial class UIBatchCollector : IDisposable
         _collectPublishedStorage = records;
         _collectCompositionStorage = composition;
         _collectPublishedMarkers.Clear();
-        try
-        {
-        lock (_primitiveSlotGate)
-            _membershipEpoch++;
-        int segmentCursor = 0;
-        for (int page = 0, index = 0; page < records.PageCount; page++)
-        {
-            foreach (ref readonly UIRenderRecord record in records.GetPage(page))
-            {
-            if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
-                return;
-            _collectPublishedRecordIndex = index;
-            index++;
-            ulong primitiveHandle = RetainPrimitive(in record);
-            if (!record.Visible)
-                continue;
-            if (!record.SupportsBatch)
-            {
-                BreakBatchRun(record.RenderPass);
-                collectUnbatched(record);
-                if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
-                    return;
-                continue;
-            }
-            // Records and segments share painter order, so one cursor walks both.
-            UICompositionSegment? segment = composition.Advance(ref segmentCursor, index - 1);
-            ulong segmentIdentity = segment?.Identity ?? 0;
-            ulong segmentRevision = segment?.Revision ?? 0;
-            if (record.IsText)
-            {
-                if (record.TextLayout is not { } layout || record.Atlas is null)
-                {
-                    // Capture rejects these records; reaching this point loses visible text.
-                    // Collection runs before a receipt is active, so report it directly.
-                    UIFailureDiagnostics.Report(
-                        "UI.TextCapture.AtlasPending: a published text record has no layout or font atlas.");
-                    continue;
-                }
-                if (layout.Glyphs.Length == 0)
-                    continue;
-                Matrix4x4 world = record.WorldMatrix;
-                Vector4 color = record.TextColor;
-                Vector4 outline = record.OutlineColor;
-                Vector4 bounds = record.Bounds;
-                AddTextQuadCore(record.RenderPass, record.ZIndex, passes, record.Atlas,
-                    in world, in color, in outline, record.OutlineThickness, in bounds,
-                    record.AtlasType, record.DistanceRange, record.DistanceRangeMiddle,
-                    record.MsdfFillBias, record.DebugMode, layout, record.Crop, primitiveHandle, record.CompositionOwner, segmentIdentity, segmentRevision,
-                    record.AtlasSnapshot);
-            }
-            else
-            {
-                Matrix4x4 world = record.WorldMatrix;
-                Vector4 color = record.QuadColor;
-                Vector4 bounds = record.Bounds;
-                AddMaterialQuadCore(record.RenderPass, record.ZIndex, passes,
-                    in world, in color, in bounds, record.Crop, record.Texture,
-                    record.UV, record.ImageSrgb, record.IsBorder,
-                    record.BorderColor, record.BorderWidth, primitiveHandle, record.CompositionOwner, segmentIdentity, segmentRevision,
-                    record.Backdrop, record.TextureSnapshot);
-            }
-            }
-        }
-        if (Volatile.Read(ref _publishedCollectionEpoch) != collectionEpoch)
-            return;
-        _collectPublishedRecordIndex = -1;
-        ReconcileCollectedRunIds();
-        RetireMissingPrimitives();
-        }
+        try { CollectPublishedPages(records, composition, passes, collectUnbatched, collectionEpoch); }
         finally { ReleasePublicationStorage(oldCollectStorage, oldCollectComposition); }
     }
 
@@ -1302,7 +1132,6 @@ public sealed partial class UIBatchCollector : IDisposable
         ulong compositionSegmentIdentity, ulong compositionSegmentRevision,
         UIBackdropRequest backdrop, UITextureSnapshot? imageSnapshot)
     {
-        UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
 
@@ -1346,11 +1175,16 @@ public sealed partial class UIBatchCollector : IDisposable
             state.ActiveTextAtlas = null;
             state.ActiveGroupIndex = groupIndex;
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Material, groupIndex));
-            if (_collectPublishedRecordIndex >= 0)
-                _collectPublishedMarkers.Add(new(_collectPublishedRecordIndex, renderPass, zIndex,
-                    EBatchMarkerKind.Material, groupIndex));
         }
 
+        AppendMaterialEntry(batch, in worldMatrix, in color, in uixywh, uv, borderColor, borderWidth, primitiveHandle);
+    }
+
+    private static void AppendMaterialEntry(MaterialQuadBatchData batch,
+        in Matrix4x4 worldMatrix, in Vector4 color, in Vector4 uixywh, Vector4 uv,
+        Vector4 borderColor, float borderWidth, ulong primitiveHandle)
+    {
+        UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         batch.Entries.Add(new MaterialQuadEntry
         {
             WorldMatrix = worldMatrix,
@@ -1414,7 +1248,6 @@ public sealed partial class UIBatchCollector : IDisposable
         ulong compositionSegmentIdentity, ulong compositionSegmentRevision,
         UITextureSnapshot? atlasSnapshot)
     {
-        UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
 
@@ -1456,11 +1289,21 @@ public sealed partial class UIBatchCollector : IDisposable
             state.ActiveTextDebugMode = debugMode;
             state.ActiveGroupIndex = groupIndex;
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Text, groupIndex));
-            if (_collectPublishedRecordIndex >= 0)
-                _collectPublishedMarkers.Add(new(_collectPublishedRecordIndex, renderPass, zIndex,
-                    EBatchMarkerKind.Text, groupIndex));
         }
 
+        AppendTextEntry(batch, renderPass, zIndex, state.ActiveGroupIndex, fontAtlas,
+            in worldMatrix, in textColor, in outlineColor, outlineThickness, in uixywh,
+            atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode,
+            layout, primitiveHandle);
+    }
+
+    private static void AppendTextEntry(TextBatchData batch, int renderPass, int zIndex,
+        int groupIndex, XRTexture2D fontAtlas, in Matrix4x4 worldMatrix,
+        in Vector4 textColor, in Vector4 outlineColor, float outlineThickness,
+        in Vector4 uixywh, int atlasType, float distanceRange, float distanceRangeMiddle,
+        float msdfFillBias, int debugMode, UITextLayoutResult layout, ulong primitiveHandle)
+    {
+        UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         int glyphCount = layout.Glyphs.Length;
 
         batch.Entries.Add(new TextEntry
@@ -1486,7 +1329,7 @@ public sealed partial class UIBatchCollector : IDisposable
                 s_textAddDiagCount,
                 renderPass,
                 zIndex,
-                state.ActiveGroupIndex,
+                groupIndex,
                 batch.Entries.Count,
                 batch.TotalGlyphs,
                 glyphCount,
@@ -1541,10 +1384,11 @@ public sealed partial class UIBatchCollector : IDisposable
         UICompositionSegmentSet? oldCollectComposition = _collectCompositionStorage;
         CollectedPublicationGeneration = 0;
         _reusePublishedRuns = false;
-        _collectPublishedRecordIndex = -1;
         _collectPublishedStorage = null;
         _collectCompositionStorage = null;
         _collectPublishedMarkers.Clear();
+        AbandonPendingPages();
+        ResetCollectedPageSummary();
         foreach (var groups in _collectMaterialGroups.Values)
             groups.Reset(static batch => batch.Clear());
         foreach (var groups in _collectTextGroups.Values)
@@ -1567,8 +1411,7 @@ public sealed partial class UIBatchCollector : IDisposable
         if (_reusePublishedRuns)
         {
             _reusePublishedRuns = false;
-            _collectPublishedRecordIndex = -1;
-            foreach (var state in _collectPassStates.Values)
+                foreach (var state in _collectPassStates.Values)
                 state.Reset();
             foreach (var markerPool in _markerPools.Values)
                 markerPool.ResetUsage();
@@ -1577,6 +1420,7 @@ public sealed partial class UIBatchCollector : IDisposable
         (_collectMaterialGroups, _renderMaterialGroups) = (_renderMaterialGroups, _collectMaterialGroups);
         (_collectTextGroups, _renderTextGroups) = (_renderTextGroups, _collectTextGroups);
         (_collectPublishedMarkers, _renderPublishedMarkers) = (_renderPublishedMarkers, _collectPublishedMarkers);
+        CommitCollectedPageSummary();
         UIRecordStore<UIRenderRecord>? oldRenderStorage = _renderPublishedStorage;
         UICompositionSegmentSet? oldRenderComposition = _renderCompositionStorage;
         _renderPublishedStorage = _collectPublishedStorage;
@@ -1593,6 +1437,9 @@ public sealed partial class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
+        // The render side no longer reads runs that left the page set before this swap.
+        RecycleRetiredPageRuns();
+        AbandonPendingPages();
         ReleasePublicationStorage(oldRenderStorage, oldRenderComposition);
     }
 
@@ -1609,13 +1456,13 @@ public sealed partial class UIBatchCollector : IDisposable
         UICompositionSegmentSet? oldRenderComposition = _renderCompositionStorage;
         CollectedPublicationGeneration = 0;
         _reusePublishedRuns = false;
-        _collectPublishedRecordIndex = -1;
         _collectPublishedStorage = null;
         _collectCompositionStorage = null;
         _renderPublishedStorage = null;
         _renderCompositionStorage = null;
         _collectPublishedMarkers.Clear();
         _renderPublishedMarkers.Clear();
+        ClearPublishedPages();
         lock (_primitiveSlotGate)
         {
             _slotByIdentity.Clear();

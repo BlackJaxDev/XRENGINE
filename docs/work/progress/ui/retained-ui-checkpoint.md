@@ -6,8 +6,8 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **46 of 60 implementation items are complete**.
-The active TODO has 14 code items and four owner decisions. Later sections
+Latest code reconciliation: **49 of 60 implementation items are complete**.
+The active TODO has 11 code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -1132,4 +1132,24 @@ The reconciliation remains **48 of 60**. This increment advances the open public
   so the item stays open.
 
 The full headless run passed **1041 of 1041 tests**. Editor and desktop test builds
+passed with 0 warnings and errors.
+
+## Collector page reuse
+
+The reconciliation is now **49 of 60**. This increment closes the publication item.
+
+- `UIBatchCollector` collects published records one page at a time. Runs end at
+  page boundaries, so a page that a later store shares keeps its runs, unbatched
+  draw positions, and primitive handles without a record visit.
+- Run identity reconciliation and primitive slot release depend only on changed
+  pages. Slots count the pages that draw them.
+- The per-frame draw-intent count and pending text-layout check read page summaries
+  instead of all records.
+- `BatchCollectorVisitsOnlyChangedRecordPages` and
+  `DiscardedCollectionKeepsCommittedRunsUntilSwap` cover the bounds and the discard
+  path.
+
+The canvas walk state still moves record starts with one pass of integer additions
+over its node arrays; this is recorded as a limit in the architecture document. The
+full headless run passed **1043 of 1043 tests**. Editor and desktop test builds
 passed with 0 warnings and errors.

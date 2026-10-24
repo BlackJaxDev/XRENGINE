@@ -1,9 +1,11 @@
+using System.Collections;
 using System.Numerics;
 using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Components;
 using XREngine.Data.Colors;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.UI.State;
 using XREngine.Scene;
@@ -396,6 +398,134 @@ public sealed class UISparsePublicationTests
             patched.Release();
             store.Release();
         }
+    }
+
+    [Test]
+    public void BatchCollectorVisitsOnlyChangedRecordPages()
+    {
+        const int pageSize = UIRecordStore<UIRenderRecord>.PageSize;
+        using Fixture fixture = new(largeRows: 2000);
+        UIPublication baseline = fixture.Capture();
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = CreateCollection(baseline);
+        CollectAndSwap(collector, commands, baseline);
+        collector.LastCollectedPageCount.ShouldBe(baseline.RenderRecordStore.PageCount);
+        collector.LastCollectedPageRecordCount.ShouldBe(baseline.RenderRecordCount);
+
+        // A count-preserving edit replaces one page; the collector visits only that page.
+        fixture.LargeRows[300].SetBatchSolidColor(ColorF4.Red);
+        UIPublication patched = fixture.Capture();
+        CollectAndSwap(collector, commands, patched);
+        collector.LastCollectedPageCount.ShouldBe(1);
+        collector.LastReusedPageCount.ShouldBe(patched.RenderRecordStore.PageCount - 1);
+        collector.LastCollectedPageRecordCount.ShouldBeLessThanOrEqualTo(pageSize);
+        ReadRenderRuns(collector).ShouldBe(CollectFresh(patched));
+
+        // A count-changing edit splices one page. Later pages move but keep their runs.
+        UIMaterialComponent row = fixture.LargeRows[700];
+        collector.GetRetainedPrimitiveHandle(row.RenderInfo2D.MembershipId).ShouldNotBe(0ul);
+        row.BoundableTransform.Visibility = EVisibility.Hidden;
+        UIPublication hidden = fixture.Capture();
+        CollectAndSwap(collector, commands, hidden);
+        collector.LastCollectedPageCount.ShouldBe(1);
+        collector.LastCollectedPageRecordCount.ShouldBeLessThanOrEqualTo(pageSize);
+        collector.LastRunReconcileVisitCount.ShouldBeLessThanOrEqualTo(2 * pageSize);
+        collector.GetRetainedPrimitiveHandle(row.RenderInfo2D.MembershipId).ShouldBe(0ul);
+        collector.ExpectedPublishedDrawIntentCount.ShouldBe(CountRenderingCommands(commands, hidden));
+        ReadRenderRuns(collector).ShouldBe(CollectFresh(hidden));
+    }
+
+    [Test]
+    public void DiscardedCollectionKeepsCommittedRunsUntilSwap()
+    {
+        using Fixture fixture = new(largeRows: 600);
+        UIPublication baseline = fixture.Capture();
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = CreateCollection(baseline);
+        CollectAndSwap(collector, commands, baseline);
+        string[] committed = ReadRenderRuns(collector);
+
+        fixture.LargeRows[10].SetBatchSolidColor(ColorF4.Red);
+        UIPublication patched = fixture.Capture();
+        commands.DiscardUpdatingCommands();
+        collector.CollectPublishedRuns(patched, commands, _ => { });
+        commands.DiscardUpdatingCommands();
+        collector.DiscardCollectedCandidate();
+        // The render side still draws the committed runs after the discard.
+        ReadRenderRuns(collector).ShouldBe(committed);
+
+        // The latest collection is the basis, so the same edit reuses every page.
+        CollectAndSwap(collector, commands, patched);
+        collector.LastCollectedPageCount.ShouldBe(0);
+        ReadRenderRuns(collector).ShouldBe(CollectFresh(patched));
+
+        // The committed packet comes back: its changed page is collected again.
+        CollectAndSwap(collector, commands, baseline);
+        collector.LastCollectedPageCount.ShouldBe(1);
+        ReadRenderRuns(collector).ShouldBe(committed);
+    }
+
+    private static RenderCommandCollection CreateCollection(UIPublication publication)
+    {
+        Dictionary<int, IComparer<RenderCommand>?> passes = [];
+        for (int index = 0; index < publication.RenderRecordCount; index++)
+            passes.TryAdd(publication.RenderRecordStore[index].RenderPass, new NearToFarRenderCommandSorter());
+        return new RenderCommandCollection(passes);
+    }
+
+    private static void CollectAndSwap(UIBatchCollector collector, RenderCommandCollection commands,
+        UIPublication publication)
+    {
+        commands.DiscardUpdatingCommands();
+        collector.CollectPublishedRuns(publication, commands, _ => { });
+        collector.SwapBuffers();
+        commands.SwapBuffers();
+    }
+
+    private static int CountRenderingCommands(RenderCommandCollection commands, UIPublication publication)
+    {
+        HashSet<int> passes = [];
+        for (int index = 0; index < publication.RenderRecordCount; index++)
+            passes.Add(publication.RenderRecordStore[index].RenderPass);
+        int count = 0;
+        foreach (int pass in passes)
+            count += commands.GetRenderingPassCommandCount(pass);
+        return count;
+    }
+
+    private static string[] CollectFresh(UIPublication publication)
+    {
+        using UIBatchCollector fresh = new();
+        fresh.CollectPublishedRuns(publication, CreateCollection(publication), _ => { });
+        fresh.SwapBuffers();
+        return ReadRenderRuns(fresh);
+    }
+
+    /// <summary>Describes every committed run in pass and painter order.</summary>
+    private static string[] ReadRenderRuns(UIBatchCollector collector)
+    {
+        List<string> runs = [];
+        foreach (string field in new[] { "_renderMaterialGroups", "_renderTextGroups" })
+        {
+            var pools = (IDictionary)typeof(UIBatchCollector)
+                .GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(collector)!;
+            foreach (int pass in pools.Keys.Cast<int>().Order())
+            {
+                object pool = pools[pass]!;
+                int count = (int)pool.GetType().GetField("Count")!.GetValue(pool)!;
+                var items = (IList)pool.GetType().GetField("Items")!.GetValue(pool)!;
+                for (int index = 0; index < count; index++)
+                {
+                    var entries = (IList)items[index]!.GetType().GetField("Entries")!.GetValue(items[index])!;
+                    string description = $"{field}:{pass}:{entries.Count}";
+                    foreach (object entry in entries)
+                        if (entry is UIBatchCollector.MaterialQuadEntry quad)
+                            description += $"|{quad.Color}{quad.UIXYWH}{quad.WorldMatrix.Translation}";
+                    runs.Add(description);
+                }
+            }
+        }
+        return [.. runs];
     }
 
     private static object? Invoke(UICanvasComponent canvas, string method)

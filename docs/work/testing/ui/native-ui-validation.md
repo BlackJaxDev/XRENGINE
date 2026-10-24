@@ -36,6 +36,22 @@ See the [investigation record](../../investigations/ui/retained-ui-integration.m
 for intermediate failures and repairs. Windows, OpenGL/Vulkan, visual, IME, native
 resource, benchmark, and equal-workload ImGui acceptance remain open.
 
+## Collector Page Reuse Validation (2026-10-24)
+
+This run checks page reuse in `UIBatchCollector`. It used the same Linux SDK setup
+as the sparse capture run below. All builds used `Tools/Invoke-AgentBuild.ps1` with
+`--no-restore`, in sequence. The changed source files were hashed before the builds
+and were unchanged after them.
+
+| Check | Result | Limit |
+|---|---|---|
+| Headless test build | Passed: 0 warnings, 0 errors. | Linux, SDK 10.0.113 with Roslyn 5.9. |
+| Collector and sparse publication tests | Passed. `BatchCollectorVisitsOnlyChangedRecordPages` collects a 2000-row canvas, then checks that a color edit and a hidden row each visit one record page (at most 256 records), that the hidden row's primitive slot is free, and that the runs equal a fresh collection. `DiscardedCollectionKeepsCommittedRunsUntilSwap` checks the committed runs after a discard. A deliberate fault that kept dropped pages made two tests fail; the source was then restored and rebuilt. | Counter-based work bounds, not time measurements. |
+| Full headless regression suite | Passed: 1043/1043, no warnings, failures, or skips. | The headless project only. |
+| Editor Windows-target compilation | Passed: 0 warnings, 0 errors, with `EnableWindowsTargeting=true`. | Compilation only. |
+| Desktop unit test project compilation | Passed: 0 warnings, 0 errors, with `EnableWindowsTargeting=true`. | Compilation only; no Windows test executed. |
+| Windows editor, OpenGL/Vulkan, visual, performance comparison | Not run. | No live, visual, or speed result is claimed. Run-boundary changes at page edges need a visual check on the supported host. |
+
 ## Sparse Publication Splice Validation (2026-10-24)
 
 This run checks the count-changing splice of record stores. It used the same Linux

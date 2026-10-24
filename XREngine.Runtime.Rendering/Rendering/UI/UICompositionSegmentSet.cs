@@ -130,6 +130,24 @@ internal sealed class UICompositionSegmentSet
         return null;
     }
 
+    /// <summary>Gets the index of the first segment that ends after a record index.</summary>
+    internal int LowerBound(int recordIndex)
+    {
+        ObjectDisposedException.ThrowIf(ResourcesRetired, this);
+        int low = 0;
+        int high = Count;
+        while (low < high)
+        {
+            int middle = (low + high) >>> 1;
+            UICompositionSegment segment = GetSegment(middle);
+            if (segment.Start + segment.Count <= recordIndex)
+                low = middle + 1;
+            else
+                high = middle;
+        }
+        return low;
+    }
+
     private int FindSegment(int recordIndex)
     {
         if ((uint)recordIndex >= (uint)_recordCount)
