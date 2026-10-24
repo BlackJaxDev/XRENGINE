@@ -1447,3 +1447,24 @@ warnings/errors in 2m15.57s. Desktop test build27 passed with zero warnings/erro
 in 51.25s. All recorded source inputs remained unchanged through these checks.
 Desktop fixtures were compiled only; Windows and native GPU acceptance remain
 open.
+
+
+## Committed journal reads and retained previews
+
+Headless build125 passed with zero warnings/errors in 2m25.49s. The next check
+linked the existing portable Runtime.Host project and the real native profiler
+selector into the headless harness. No package versions or native dependencies
+changed. Normal restore succeeded. Build126 then failed with zero warnings and
+one CS7036 error in the new selector fixture: it used a node constructor that is
+not available in the active profiler build. The fixture now uses the existing
+four-argument constructor. Production code did not change for the retry.
+
+Headless build127 passed with zero warnings/errors in 18.37s. Full run80 passed
+872 of 872 tests, with zero failures, warnings, or skips, in 14.422s. The real
+Runtime.Host selector and committed journal reader cases passed. The 10,655-file
+source manifest stayed unchanged through the final build and test run.
+
+Editor build54 passed with zero warnings/errors in 2m25.55s. Desktop test build28
+passed with zero warnings/errors in 50.36s. The same 10,655-file source manifest
+remained unchanged through both builds. Desktop fixtures compiled only. All 39
+local documentation links resolve and whitespace checks pass.

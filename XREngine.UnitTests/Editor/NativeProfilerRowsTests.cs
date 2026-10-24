@@ -44,6 +44,26 @@ public sealed class NativeProfilerRowsTests
     }
 
     [Test]
+    public void CompletedWorstWindowLabelsThePublishedHierarchy()
+    {
+        NativeProfilerRows rows = new();
+        Frame frame = Snapshot(1, 1);
+        rows.Request(frame);
+        Finish(rows);
+        rows.GetItem(0).Self.ShouldBeEmpty();
+        ulong previousId = rows.GetItemId(0);
+
+        rows.Request(frame, isWorst: true);
+        Finish(rows);
+        rows.GetItem(0).Self.ShouldContain("Worst CPU hierarchy");
+        rows.GetItemId(0).ShouldNotBe(previousId);
+        ulong worstId = rows.GetItemId(0);
+        rows.Request(frame, isWorst: true);
+        rows.Advance(3).ShouldBeFalse();
+        rows.GetItemId(0).ShouldBe(worstId);
+    }
+
+    [Test]
     public void FormattingIsLazyBoundedAndCancelledIndexingKeepsTheDisplayedSnapshot()
     {
         NativeProfilerRows rows = new();

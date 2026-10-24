@@ -798,3 +798,25 @@ remained unchanged through both builds. Desktop tests were compiled only.
 
 Windows execution, native IME, visual/GPU acceptance, soak tests, and equivalent
 ImGui performance measurements remain open. ImGui remains the default editor.
+
+
+## Committed Journal Reader And Native Refresh
+
+The code reconciliation remains **46 of 60**. The journal reader is a prerequisite
+for sparse publication; it does not close that item. Independent readers copy
+complete transactions without consuming layout changes. Capacity loss requires
+full resynchronization. Unchanged cursors return without scanning the log.
+
+The native CPU hierarchy selects the worst sampled thread time from each
+completed 0.5-second window. Session replacement and backward clock movement
+reset its retained candidate and display. Inspector string previews now use the
+existing property notification path, show mixed values, preserve complete text
+elements, and unsubscribe when recycled. Complete editor parity remains open.
+
+Headless build127 passed with zero warnings/errors in 18.37s. Full run80 passed
+**872 of 872 tests**, without failures, warnings, or skips, in 14.422s. The
+headless harness uses the existing portable Runtime.Host project to test the
+real profiler selector. No package version changed. Editor build54 passed with zero warnings/errors in
+2m25.55s. Desktop test build28 passed with zero warnings/errors in 50.36s.
+All 10,655 source inputs remained unchanged. Inspector-specific fixtures were
+compiled only; Windows execution and live acceptance remain open.

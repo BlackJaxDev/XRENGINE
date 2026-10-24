@@ -27,6 +27,9 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
     private bool _componentTimingEnabled;
     private Frame? _building;
     private Frame? _requested;
+    private bool _requestedIsWorst;
+    private bool _buildingIsWorst;
+    private bool _publishedIsWorst;
     private bool _hasRequest;
     private ulong _firstId = 1;
     private ulong _nextId = 2;
@@ -98,7 +101,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         return true;
     }
 
-    public void Request(Frame? frame)
+    public void Request(Frame? frame, bool isWorst = false)
     {
         if (_view == ENativeProfilerView.CpuRoots)
         {
@@ -108,6 +111,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         if (_view != ENativeProfilerView.CpuTimings)
             return;
         _requested = frame;
+        _requestedIsWorst = isWorst;
         _hasRequest = true;
     }
 
@@ -226,7 +230,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
                 return false;
             }
             _hasRequest = false;
-            if (ReferenceEquals(_requested, _published))
+            if (ReferenceEquals(_requested, _published) && _requestedIsWorst == _publishedIsWorst)
             {
                 _requested = null;
                 _projection.Pump(projectionBudget);
@@ -234,6 +238,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
                 return false;
             }
             _building = _requested;
+            _buildingIsWorst = _requestedIsWorst;
             _requested = null;
             _projection.Begin(_building?.Threads ?? Array.Empty<Thread>());
         }
@@ -242,6 +247,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         if (!completed)
             return false;
         _published = _building;
+        _publishedIsWorst = _buildingIsWorst;
         _building = null;
         PublishView();
         return true;
@@ -350,7 +356,8 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         if (frame is null)
             return new("No profiler sample is available.", string.Empty, string.Empty);
         if (index == 0)
-            return new($"Frame {frame.UpdateFrameId} / Render {frame.RenderFrameId}", Milliseconds(frame.FrameTime), string.Empty);
+            return new($"Frame {frame.UpdateFrameId} / Render {frame.RenderFrameId}", Milliseconds(frame.FrameTime),
+                _publishedIsWorst ? "Worst CPU hierarchy in the last completed 0.5 s window." : string.Empty);
         NativeProfilerRowRef<Node> item = _projection[index - 1];
         if (item.Node is not { } node)
         {
@@ -439,6 +446,7 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
         _selectedRootIndex = -1;
         _selectedRootName = null;
         _published = null;
+        _publishedIsWorst = false;
         _componentFrame = null;
         _diagnostics.Clear();
         _formatted.Clear();
