@@ -90,6 +90,10 @@ namespace XREngine.Rendering.UI
         private Vector2 _pendingPosition;
         private ulong _layoutGenerationAtRequest;
         private bool _awaitingPlacement;
+        private bool _tearingDown;
+        private bool _clearingMenuItems;
+        private bool _hiding;
+        private ulong _showRevision;
 
         /// <summary>
         /// Whether the context menu is currently visible and accepting input.
@@ -147,12 +151,21 @@ namespace XREngine.Rendering.UI
         private void ShowCore(Vector2 parentLocalPosition, ContextMenuItem[] items, IVirtualListProvider? provider,
             Action<SceneNode>? contentBuilder = null, float contentHeight = 0, bool passive = false)
         {
+            if (_tearingDown || IsDestroyed || _clearingMenuItems || _hiding)
+                return;
+            ulong showRevision = ++_showRevision;
             UICanvasTransform canvas = BoundableTransform.GetCanvasTransform() ??
                 throw new InvalidOperationException("A context menu needs an attached UI canvas.");
             Hide(); // Dismiss any existing menu first
+            if (_tearingDown || IsDestroyed || showRevision != _showRevision)
+                return;
             ClearMenuItems(); // Remove content retained when the owner deactivated.
+            if (_tearingDown || IsDestroyed || showRevision != _showRevision)
+                return;
 
             if ((items.Length == 0 && provider is null && contentBuilder is null) || provider is { Count: <= 0 })
+                return;
+            if (_tearingDown || IsDestroyed || showRevision != _showRevision)
                 return;
 
             _items = items;
@@ -160,6 +173,8 @@ namespace XREngine.Rendering.UI
             _contentBuilder = contentBuilder;
             _contentHeight = contentHeight;
             IsOpen = true;
+            if (_tearingDown || IsDestroyed || showRevision != _showRevision || !_isOpen)
+                return;
 
             // Make the node visible (it's collapsed when hidden)
             BoundableTransform.Visibility = EVisibility.Hidden;
@@ -204,6 +219,8 @@ namespace XREngine.Rendering.UI
             bgMat.ClipToBounds = true;
 
             BuildMenuItems();
+            if (_tearingDown || IsDestroyed || showRevision != _showRevision)
+                return;
             tfm.InvalidateLayout();
             canvas.UpdateLayoutAsync();
             RegisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
@@ -260,26 +277,37 @@ namespace XREngine.Rendering.UI
 
         private void HideCore(bool clearMenuItems)
         {
-            if (!_isOpen)
+            if (!_isOpen || _tearingDown || _hiding)
                 return;
+            _hiding = true;
+            try
+            {
+                IsOpen = false;
+                if (_isOpen || _tearingDown || IsDestroyed)
+                    return;
+                _awaitingPlacement = false;
+                UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
+                UnsubscribeForDismiss();
+                if (clearMenuItems)
+                    ClearMenuItems();
+                if (_tearingDown || IsDestroyed)
+                    return;
+                _items = [];
+                _virtualProvider = null;
+                _contentBuilder = null;
+                _contentHeight = 0;
+                _requestedHeight = 0;
+                _virtualList = null;
 
-            IsOpen = false;
-            _awaitingPlacement = false;
-            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
-            UnsubscribeForDismiss();
-            if (clearMenuItems)
-                ClearMenuItems();
-            _items = [];
-            _virtualProvider = null;
-            _contentBuilder = null;
-            _contentHeight = 0;
-            _requestedHeight = 0;
-            _virtualList = null;
-
-            // Collapse the node so the background material stops rendering
-            BoundableTransform.Visibility = EVisibility.Collapsed;
-
-            Dismissed?.Invoke();
+                // Collapse the node so the background material stops rendering.
+                BoundableTransform.Visibility = EVisibility.Collapsed;
+            }
+            finally
+            {
+                _hiding = false;
+            }
+            if (!_tearingDown && !IsDestroyed)
+                Dismissed?.Invoke();
         }
 
         private void BuildMenuItems()
@@ -417,15 +445,25 @@ namespace XREngine.Rendering.UI
 
         private void ClearMenuItems()
         {
-            // Menu content owns its nodes. Destroy them through the scene hierarchy so
-            // their components unsubscribe before the guarded child list is changed.
-            while (SceneNode.Transform.Children.Count > 0)
+            if (_clearingMenuItems || _tearingDown || IsDestroyed)
+                return;
+            _clearingMenuItems = true;
+            try
             {
-                var child = SceneNode.Transform.Children[^1];
-                if (child.SceneNode is { } node)
-                    node.Destroy(true);
-                else
-                    child.Parent = null;
+                // Menu content owns its nodes. Destroy them through the scene hierarchy so
+                // their components unsubscribe before the guarded child list is changed.
+                while (!_tearingDown && !IsDestroyed && SceneNode.Transform.Children.Count > 0)
+                {
+                    var child = SceneNode.Transform.Children[^1];
+                    if (child.SceneNode is { } node)
+                        node.Destroy(true);
+                    else
+                        child.Parent = null;
+                }
+            }
+            finally
+            {
+                _clearingMenuItems = false;
             }
         }
 
@@ -553,6 +591,32 @@ namespace XREngine.Rendering.UI
             base.OnComponentDeactivated();
             if (_isOpen)
                 HideCore(clearMenuItems: false);
+        }
+
+        protected override void OnDestroying()
+        {
+            _tearingDown = true;
+            _showRevision++;
+            _awaitingPlacement = false;
+            _isOpen = false;
+            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
+            UnsubscribeForDismiss();
+            _items = [];
+            _virtualProvider = null;
+            _contentBuilder = null;
+            _virtualList = null;
+            Dismissed = null;
+            base.OnDestroying();
+        }
+
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T value)
+        {
+            if (_tearingDown || IsDestroyed)
+                return false;
+            ulong showRevision = _showRevision;
+            bool allowed = base.OnPropertyChanging(propName, field, value);
+            return allowed && !_tearingDown && !IsDestroyed &&
+                (propName != nameof(IsOpen) || showRevision == _showRevision);
         }
 
         private UIBoundableTransform BoundableTransform => TransformAs<UIBoundableTransform>(true)!;

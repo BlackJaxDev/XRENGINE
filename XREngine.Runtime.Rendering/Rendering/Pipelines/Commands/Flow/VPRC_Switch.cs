@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -70,6 +71,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 next = commands;
             else
                 next = DefaultCase;
+
+            UIWorldPassManifest.Active?.RecordSwitch(this, sw, next);
 
             var state = _switchStates.GetValue(instance, _ => new SwitchState());
             if (!ReferenceEquals(state.ActiveContainer, next))

@@ -1,3 +1,5 @@
+using XREngine.Rendering.UI;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -17,6 +19,7 @@ internal readonly record struct VulkanPreparedCommandChainKey(
 {
     private readonly RecordedPacketKey _recordedPacketKey = RecordedPacketKey;
     internal VulkanIndirectDrawCommandIdentity IndirectCommand { get; init; }
+    internal UIStaticDrawContract StaticUiContract { get; init; }
 
     public RecordedPacketKey RecordedPacketKey
     {
@@ -43,6 +46,7 @@ internal readonly record struct VulkanPreparedCommandChainKey(
             DescriptorHeapBinding == other.DescriptorHeapBinding &&
             DescriptorHeapDraws.Equals(other.DescriptorHeapDraws) &&
             IndirectCommand.Matches(other.IndirectCommand) &&
+            StaticUiContract == other.StaticUiContract &&
             IsComplete == other.IsComplete &&
             recordedPacketKey.Matches(in otherRecordedPacketKey);
     }

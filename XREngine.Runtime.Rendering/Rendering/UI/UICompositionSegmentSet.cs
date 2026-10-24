@@ -18,6 +18,17 @@ internal sealed class UICompositionSegmentSet
 
     internal ReadOnlySpan<UICompositionSegment> Segments => _segments;
 
+    internal bool TryGet(long membershipId, out UICompositionSegment segment)
+    {
+        if (_byMembership.TryGetValue(membershipId, out int index))
+        {
+            segment = _segments[index];
+            return true;
+        }
+        segment = null!;
+        return false;
+    }
+
     private static ulong NextRevision() => unchecked((ulong)Interlocked.Increment(ref _nextRevision));
 
     private bool TryUpdateSameTopology(ReadOnlySpan<UIRenderRecord> records,

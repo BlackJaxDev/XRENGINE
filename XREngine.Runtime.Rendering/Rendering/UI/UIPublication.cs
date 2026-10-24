@@ -110,6 +110,9 @@ public sealed class UIPublication
     public ReadOnlySpan<UIHitRecord> Hits => _hits;
     public ReadOnlySpan<UIRenderRecord> Renders => _renders;
     public ReadOnlySpan<UICompositionSegment> CompositionSegments => _compositionSegments.Segments;
+    internal UICompositionSegmentSet CompositionStorage => _compositionSegments;
+    internal bool TryGetCompositionSegment(long membershipId, out UICompositionSegment segment)
+        => _compositionSegments.TryGet(membershipId, out segment);
     public ReadOnlySpan<UIScrollRecord> ScrollReceivers => _scrollReceivers;
     public ReadOnlySpan<UIFocusScopeRecord> FocusScopes => _focusScopes;
     public UIElementIdentity ActiveFocusScopeIdentity { get; }

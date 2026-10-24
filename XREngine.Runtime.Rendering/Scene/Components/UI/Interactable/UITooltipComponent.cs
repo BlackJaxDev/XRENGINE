@@ -16,6 +16,10 @@ public sealed class UITooltipComponent : UIComponent
     private bool _ownsDescription;
     private bool _waiting;
     private bool _showing;
+    private bool _tearingDown;
+    private ulong _targetRevision;
+    private ulong _popupRevision;
+    private ulong _textRevision;
     private long _triggeredAt;
 
     public UIInteractableComponent? Target
@@ -23,11 +27,22 @@ public sealed class UITooltipComponent : UIComponent
         get => _target;
         set
         {
+            if (_tearingDown || IsDestroyed)
+                return;
             if (ReferenceEquals(_target, value))
                 return;
+            ulong revision = ++_targetRevision;
+            UIInteractableComponent? previous = _target;
             if (IsActiveInHierarchy)
                 DetachTarget();
-            SetField(ref _target, value);
+            if (!OwnsTargetChange(revision))
+                return;
+            bool changed = SetField(ref _target, value);
+            if (!changed && OwnsTargetChange(revision) &&
+                ReferenceEquals(_target, previous) && IsActiveInHierarchy)
+                AttachTarget();
+            if (!OwnsTargetChange(revision) || !ReferenceEquals(_target, value))
+                return;
             if (IsActiveInHierarchy)
                 AttachTarget();
         }
@@ -39,12 +54,25 @@ public sealed class UITooltipComponent : UIComponent
         get => _popup;
         set
         {
+            if (_tearingDown || IsDestroyed)
+                return;
             if (ReferenceEquals(_popup, value))
                 return;
+            ulong revision = ++_popupRevision;
             Hide();
-            if (IsActiveInHierarchy && _popup is not null)
-                _popup.Dismissed -= OnPopupDismissed;
-            SetField(ref _popup, value);
+            if (!OwnsPopupChange(revision))
+                return;
+            UIContextMenuComponent? previous = _popup;
+            if (IsActiveInHierarchy && previous is not null)
+                previous.Dismissed -= OnPopupDismissed;
+            if (!OwnsPopupChange(revision))
+                return;
+            bool changed = SetField(ref _popup, value);
+            if (!changed && OwnsPopupChange(revision) &&
+                ReferenceEquals(_popup, previous) && IsActiveInHierarchy && previous is not null)
+                previous.Dismissed += OnPopupDismissed;
+            if (!OwnsPopupChange(revision) || !ReferenceEquals(_popup, value))
+                return;
             if (IsActiveInHierarchy && _popup is not null)
                 _popup.Dismissed += OnPopupDismissed;
         }
@@ -55,8 +83,13 @@ public sealed class UITooltipComponent : UIComponent
         get => _text;
         set
         {
+            if (_tearingDown || IsDestroyed)
+                return;
+            ulong revision = ++_textRevision;
             string old = _text;
             if (!SetField(ref _text, value ?? string.Empty))
+                return;
+            if (!OwnsTextChange(revision))
                 return;
             if (_ownsDescription && _target?.AccessibilityDescription == old)
                 _target.AccessibilityDescription = _text;
@@ -93,6 +126,49 @@ public sealed class UITooltipComponent : UIComponent
         base.OnComponentDeactivated();
     }
 
+    protected override void OnDestroying()
+    {
+        _tearingDown = true;
+        if (_popup is not null)
+            _popup.Dismissed -= OnPopupDismissed;
+        try
+        {
+            DetachTarget();
+        }
+        finally
+        {
+            _target = null;
+            _popup = null;
+            base.OnDestroying();
+        }
+    }
+
+    protected override bool OnPropertyChanging<T>(string? propName, T field, T value)
+    {
+        if (_tearingDown || IsDestroyed)
+            return false;
+        ulong targetRevision = _targetRevision;
+        ulong popupRevision = _popupRevision;
+        ulong textRevision = _textRevision;
+        bool allowed = base.OnPropertyChanging(propName, field, value);
+        return allowed && !_tearingDown && !IsDestroyed && (propName switch
+        {
+            nameof(Target) => targetRevision == _targetRevision,
+            nameof(Popup) => popupRevision == _popupRevision,
+            nameof(Text) => textRevision == _textRevision,
+            _ => true
+        });
+    }
+
+    private bool OwnsTargetChange(ulong revision)
+        => !_tearingDown && !IsDestroyed && revision == _targetRevision;
+
+    private bool OwnsPopupChange(ulong revision)
+        => !_tearingDown && !IsDestroyed && revision == _popupRevision;
+
+    private bool OwnsTextChange(ulong revision)
+        => !_tearingDown && !IsDestroyed && revision == _textRevision;
+
     private void AttachTarget()
     {
         if (_target is null)
@@ -113,17 +189,21 @@ public sealed class UITooltipComponent : UIComponent
 
     private void DetachTarget()
     {
-        Hide();
-        if (_target is null)
+        UIInteractableComponent? target = _target;
+        if (target is null)
+        {
+            Hide();
             return;
-        _target.MouseOverlapEnter -= OnTargetEntered;
-        _target.MouseOverlapLeave -= OnTargetLeft;
-        _target.GotFocus -= OnTargetEntered;
-        _target.LostFocus -= OnTargetLeft;
-        _target.PropertyChanged -= OnTargetPropertyChanged;
-        if (_ownsDescription && _target.AccessibilityDescription == _text)
-            _target.AccessibilityDescription = null;
+        }
+        target.MouseOverlapEnter -= OnTargetEntered;
+        target.MouseOverlapLeave -= OnTargetLeft;
+        target.GotFocus -= OnTargetEntered;
+        target.LostFocus -= OnTargetLeft;
+        target.PropertyChanged -= OnTargetPropertyChanged;
+        if (_ownsDescription && !target.IsDestroyed && target.AccessibilityDescription == _text)
+            target.AccessibilityDescription = null;
         _ownsDescription = false;
+        Hide();
     }
 
     private void OnTargetEntered(UIInteractableComponent _) => StartWait();
@@ -146,7 +226,8 @@ public sealed class UITooltipComponent : UIComponent
 
     private void StartWait()
     {
-        if (_waiting || _showing || _target is null || _popup is null ||
+        if (_tearingDown || IsDestroyed || _waiting || _showing || _target is null ||
+            _popup is null || _popup.IsDestroyed ||
             _text.Length == 0 || !_target.CanInteract)
             return;
         _triggeredAt = Stopwatch.GetTimestamp();
@@ -156,8 +237,8 @@ public sealed class UITooltipComponent : UIComponent
 
     private void TickTooltip()
     {
-        if (_target is null || !_target.CanInteract ||
-            (!_target.IsMouseOver && !_target.IsFocused) || _popup is null)
+        if (_tearingDown || IsDestroyed || _target is null || !_target.CanInteract ||
+            (!_target.IsMouseOver && !_target.IsFocused) || _popup is null || _popup.IsDestroyed)
         {
             Hide();
             return;
@@ -165,15 +246,16 @@ public sealed class UITooltipComponent : UIComponent
         if (Stopwatch.GetElapsedTime(_triggeredAt) < Delay)
             return;
         StopWait();
-        UIBoundableTransform? parent = _popup.TransformAs<UIBoundableTransform>(true)?.Parent as UIBoundableTransform;
-        if (parent is null || !ReferenceEquals(_target.UserInterfaceCanvas, _popup.UserInterfaceCanvas))
+        UIContextMenuComponent popup = _popup;
+        UIBoundableTransform? parent = popup.TransformAs<UIBoundableTransform>(true)?.Parent as UIBoundableTransform;
+        if (parent is null || !ReferenceEquals(_target.UserInterfaceCanvas, popup.UserInterfaceCanvas))
             return;
         Vector2 canvasPosition = _target.BoundableTransform.LocalToCanvas(
             new Vector2(_target.BoundableTransform.ActualWidth + 8, _target.BoundableTransform.ActualHeight));
         Vector2 localPosition = parent.CanvasToLocal(canvasPosition);
         string label = _text;
-        _popup.PreferredWidth = Math.Clamp(label.Length * 7 + 16, 80, 360);
-        _popup.ShowPassiveContent(localPosition, 24, list =>
+        popup.PreferredWidth = Math.Clamp(label.Length * 7 + 16, 80, 360);
+        popup.ShowPassiveContent(localPosition, 24, list =>
         {
             SceneNode line = new(list) { Name = "Tooltip text" };
             UIBoundableTransform bounds = line.SetTransform<UIBoundableTransform>();
@@ -187,7 +269,8 @@ public sealed class UITooltipComponent : UIComponent
             text.VerticalAlignment = EVerticalAlignment.Center;
             text.BoundableTransform.Margins = new Vector4(6, 0, 6, 0);
         });
-        _showing = _popup.IsOpen;
+        if (!_tearingDown && !IsDestroyed && ReferenceEquals(_popup, popup))
+            _showing = popup.IsOpen;
     }
 
     private void StopWait()
@@ -204,7 +287,8 @@ public sealed class UITooltipComponent : UIComponent
         if (_showing)
         {
             _showing = false;
-            _popup?.Hide();
+            if (_popup is { IsDestroyed: false } popup)
+                popup.Hide();
         }
     }
 

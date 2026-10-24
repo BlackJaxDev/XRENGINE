@@ -9,9 +9,11 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Silk.NET.Vulkan;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -812,7 +814,9 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.ScheduledCommandChainCache is null ||
                 runCount <= 0 ||
                 recordingState.ActiveInlineQuery is not null ||
-                firstContext.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+                (firstContext.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline &&
+                 !IsEligibleStaticUiDraw(recordingState.Ops.Stream, startIndex,
+                     dynamicOverlay: false)))
             {
                 return false;
             }
@@ -1132,8 +1136,16 @@ namespace XREngine.Rendering.Vulkan
                                 ref chain.PreparedKeyReference;
                             ref readonly VulkanPreparedCommandChainKey authorityKey =
                                 ref authority.PreparedKey;
+                            UIStaticDrawContract currentUiContract =
+                                chain.SourceCount == 1 &&
+                                IsEligibleStaticUiDraw(recordingState.Ops.Stream,
+                                    chain.SourceStartIndex, dynamicOverlay: false)
+                                    ? recordingState.Ops.GetMeshDraw(chain.SourceStartIndex)
+                                        .Draw.StaticUiCandidate.Contract
+                                    : default;
                             needsRecording =
                                 !chainKey.IsComplete ||
+                                authorityKey.StaticUiContract != currentUiContract ||
                                 !chainKey.Matches(in authorityKey);
                         }
                     }
@@ -1360,6 +1372,7 @@ namespace XREngine.Rendering.Vulkan
                         CapturePreparedMeshCommandChainKey(
                             batch.PreparedFrame,
                             chain,
+                            recordingState.Ops,
                             startIndex,
                             out string preparedKeyFailureReason);
                     if (!preparedKey.IsComplete)
@@ -1786,6 +1799,7 @@ namespace XREngine.Rendering.Vulkan
         private VulkanPreparedCommandChainKey CapturePreparedMeshCommandChainKey(
             VulkanPreparedFrameRecording preparedFrame,
             CommandChain chain,
+            FrameOperationSequence operations,
             int scheduledStartIndex,
             out string failureReason)
         {
@@ -1801,6 +1815,24 @@ namespace XREngine.Rendering.Vulkan
             VulkanDescriptorHeapDrawIdentityBuffer heapDraws = default;
             heapDraws.Initialize(0);
             bool complete = chain.SourceCount > 0;
+            UIStaticDrawContract staticUiContract = default;
+            if (chain.SourceCount == 1 &&
+                operations.GetHeader(chain.SourceStartIndex).OpCode ==
+                    EVulkanPrimaryPlanNodeKind.MeshDraw)
+            {
+                UIStaticDrawCandidate sourceCandidate = operations
+                    .GetMeshDraw(chain.SourceStartIndex).Draw.StaticUiCandidate;
+                if (sourceCandidate.IsDefined)
+                {
+                    if (!IsEligibleStaticUiDraw(operations.Stream,
+                            chain.SourceStartIndex, dynamicOverlay: false))
+                    {
+                        failureReason = "static UI draw lost its current backend or receipt";
+                        return VulkanPreparedCommandChainKey.Incomplete;
+                    }
+                    staticUiContract = sourceCandidate.Contract;
+                }
+            }
             int descriptorSetCount = 0;
             for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
             {
@@ -1817,6 +1849,13 @@ namespace XREngine.Rendering.Vulkan
                 ref readonly VkPreparedMeshDraw preparedDraw =
                     ref preparedFrame.GetMeshDrawForOwnerValidation(preparedIndex);
                 VulkanPreparedMeshDrawState state = preparedDraw.RecordingState;
+                UIIndexedDrawIntent intent = staticUiContract.Intent;
+                if (staticUiContract.IsDefined &&
+                    !MatchesPreparedStaticUiPrimitive(in intent, in state))
+                {
+                    failureReason = "prepared indexed UI primitive does not match its frozen draw";
+                    return VulkanPreparedCommandChainKey.Incomplete;
+                }
                 VkRenderProgram program = preparedFrame.GetMeshDrawColdData(state.ColdDataIndex).Program;
                 PipelineLayout layout = state.PipelineLayout;
                 if (program is null ||
@@ -1936,7 +1975,27 @@ namespace XREngine.Rendering.Vulkan
                 DescriptorHeapDraws: heapDraws,
                 RecordedPacketKey: preparedPacketKey,
                 IsComplete: complete && preparedPacketKey.IsComplete &&
-                heapDraws.IsComplete);
+                heapDraws.IsComplete)
+            {
+                StaticUiContract = staticUiContract,
+            };
+        }
+
+        internal static bool MatchesPreparedStaticUiPrimitive(
+            in UIIndexedDrawIntent intent,
+            in VulkanPreparedMeshDrawState state)
+        {
+            if (intent.Topology != EPrimitiveType.Triangles ||
+                intent.IndexOffset != 0 || state.PrimitiveCount != 1 ||
+                state.InstanceCount != intent.Instances ||
+                intent.ElementType is not (IndexSize.TwoBytes or IndexSize.FourBytes))
+                return false;
+            VulkanPreparedMeshPrimitive primitive = state.Primitive0;
+            return primitive.Indexed && primitive.IndexBuffer.Handle != 0 &&
+                primitive.Topology == PrimitiveTopology.TriangleList &&
+                primitive.ElementCount == intent.IndexCount &&
+                primitive.IndexType == (intent.ElementType == IndexSize.TwoBytes
+                    ? IndexType.Uint16 : IndexType.Uint32);
         }
 
         private void LogScheduledMeshCommandChainPreparationFallback(string reason)

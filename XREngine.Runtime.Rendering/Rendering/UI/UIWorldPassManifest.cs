@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Threading;
 using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering.UI;
@@ -9,13 +11,27 @@ namespace XREngine.Rendering.UI;
 internal sealed class UIWorldPassManifest : IDisposable
 {
     private const int MaximumNodes = 2048;
+    private const int MaximumSwitchCases = 256;
+    private const int MaximumCanvasPackets = 64;
     private const int MaximumDepth = 32;
     [ThreadStatic] private static UIWorldPassManifest? t_active;
+    private static long s_nextAttemptToken;
     private readonly UIWorldPassManifestNode[] _nodes = new UIWorldPassManifestNode[MaximumNodes];
+    private readonly UIWorldPassManifestSwitchCase[] _switchCases =
+        new UIWorldPassManifestSwitchCase[MaximumSwitchCases];
+    private readonly Dictionary<ViewportRenderCommand, int> _nodeIndices =
+        new(MaximumNodes, ReferenceEqualityComparer.Instance);
+    private readonly object?[] _canvasKeys = new object?[MaximumCanvasPackets];
+    private readonly UIPublication?[] _packets = new UIPublication?[MaximumCanvasPackets];
     private ViewportRenderCommandContainer? _root;
     private int _rootCommandCount;
-    private UIPublication? _publication;
+    private int _switchCaseCount;
+    private int _packetCount;
+    private bool _packetSetSealed;
     private int _count;
+    private long _activeAttemptToken;
+    private int _captureStarted;
+    private int _ownerThreadId;
     private bool _failed;
     private string? _failure;
 
@@ -27,36 +43,159 @@ internal sealed class UIWorldPassManifest : IDisposable
 
     internal int NodeCount => _count;
     internal string? Failure => _failure;
-    internal UIPublication? Publication => _publication;
-    internal UIWorldPassManifestScope EnterScope() => new(this);
+    internal UIWorldPassManifestScope EnterScope(ulong token)
+    {
+        if (token == 0 || Volatile.Read(ref _activeAttemptToken) != (long)token ||
+            _ownerThreadId != Environment.CurrentManagedThreadId ||
+            Volatile.Read(ref _captureStarted) == 0 || !_packetSetSealed)
+            throw new InvalidOperationException("UI world attempt is not reserved and captured.");
+        return new(this);
+    }
+
+    internal bool TryReserveAttempt(out ulong token)
+    {
+        token = 0;
+        if (Interlocked.CompareExchange(ref _activeAttemptToken, -1, 0) != 0)
+            return false;
+        long next = Interlocked.Increment(ref s_nextAttemptToken);
+        if (next <= 0)
+        {
+            Volatile.Write(ref _activeAttemptToken, 0);
+            return false;
+        }
+        _ownerThreadId = Environment.CurrentManagedThreadId;
+        Volatile.Write(ref _captureStarted, 0);
+        Volatile.Write(ref _activeAttemptToken, next);
+        token = (ulong)next;
+        return true;
+    }
+
+    internal bool ReleaseAttempt(ulong token)
+    {
+        if (token == 0 || Volatile.Read(ref _activeAttemptToken) != (long)token ||
+            _ownerThreadId != Environment.CurrentManagedThreadId ||
+            ReferenceEquals(Active, this))
+            return false;
+        Volatile.Write(ref _activeAttemptToken, -1);
+        Volatile.Write(ref _captureStarted, 0);
+        _ownerThreadId = 0;
+        try
+        {
+            ReleasePacketClaims();
+        }
+        finally
+        {
+            _packetSetSealed = false;
+            Volatile.Write(ref _activeAttemptToken, 0);
+        }
+        return true;
+    }
 
     /// <summary>Holds the selected packet through all shadow and color pass decisions.</summary>
-    internal bool TryBindPublication(UIPublication publication)
+    internal bool TryBindPublication(object canvasKey, UIPublication publication)
     {
-        if (_publication is not null)
-            return ReferenceEquals(_publication, publication) ||
-                Fail("UI world attempt selected a different canvas packet.");
+        ArgumentNullException.ThrowIfNull(canvasKey);
+        if (Volatile.Read(ref _activeAttemptToken) <= 0 ||
+            _ownerThreadId != Environment.CurrentManagedThreadId ||
+            Volatile.Read(ref _captureStarted) == 0)
+            return Fail("UI world packet has no active owner attempt.");
+        for (int index = 0; index < _packetCount; index++)
+            if (ReferenceEquals(_canvasKeys[index], canvasKey))
+                return ReferenceEquals(_packets[index], publication) ||
+                    Fail("UI world canvas selected a different packet.");
+        if (_packetSetSealed)
+            return Fail("UI world canvas packet set changed after authoring began.");
+        if (_packetCount == MaximumCanvasPackets)
+            return Fail("UI world attempt exceeds its canvas packet limit.");
         publication.Retain();
-        _publication = publication;
+        _canvasKeys[_packetCount] = canvasKey;
+        _packets[_packetCount++] = publication;
         return true;
+    }
+
+    internal bool SealPacketSet()
+    {
+        if (Volatile.Read(ref _activeAttemptToken) <= 0 ||
+            _ownerThreadId != Environment.CurrentManagedThreadId ||
+            Volatile.Read(ref _captureStarted) == 0)
+            return Fail("UI world packet set has no captured owner attempt.");
+        _packetSetSealed = true;
+        return !_failed;
+    }
+
+    internal bool TryGetPublication(object canvasKey, out UIPublication? publication)
+    {
+        if (Volatile.Read(ref _activeAttemptToken) <= 0 ||
+            _ownerThreadId != Environment.CurrentManagedThreadId)
+        {
+            publication = null;
+            return false;
+        }
+        for (int index = 0; index < _packetCount; index++)
+            if (ReferenceEquals(_canvasKeys[index], canvasKey))
+            {
+                publication = _packets[index];
+                return publication is not null;
+            }
+        publication = null;
+        return false;
     }
 
     public void Dispose()
     {
-        UIPublication? publication = _publication;
-        _publication = null;
-        publication?.Release();
+        if (Interlocked.CompareExchange(ref _activeAttemptToken, -1, 0) != 0)
+            throw new InvalidOperationException("A reserved UI world attempt must end through its token.");
+        try
+        {
+            ReleasePacketClaims();
+            Array.Clear(_nodes, 0, _count);
+            Array.Clear(_switchCases, 0, _switchCaseCount);
+            _nodeIndices.Clear();
+            _root = null;
+            _count = 0;
+            _switchCaseCount = 0;
+        }
+        finally
+        {
+            Volatile.Write(ref _activeAttemptToken, 0);
+        }
     }
 
-    internal bool TryCapture(ViewportRenderCommandContainer root, out string? failure)
+    private void ReleasePacketClaims()
     {
-        Dispose();
+        int count = _packetCount;
+        _packetCount = 0;
+        for (int index = 0; index < count; index++)
+        {
+            UIPublication? packet = _packets[index];
+            _packets[index] = null;
+            _canvasKeys[index] = null;
+            packet?.Release();
+        }
+    }
+
+    internal bool TryCaptureReserved(ViewportRenderCommandContainer root, ulong token,
+        out string? failure)
+    {
+        if (token == 0 || Volatile.Read(ref _activeAttemptToken) != (long)token ||
+            _ownerThreadId != Environment.CurrentManagedThreadId ||
+            Interlocked.CompareExchange(ref _captureStarted, 1, 0) != 0)
+        {
+            failure = "UI world attempt was not reserved or was already captured.";
+            return false;
+        }
+        ReleasePacketClaims();
+        Array.Clear(_nodes, 0, _count);
+        Array.Clear(_switchCases, 0, _switchCaseCount);
         _root = root;
         _rootCommandCount = root.Commands.Count;
         _count = 0;
+        _switchCaseCount = 0;
+        _packetSetSealed = false;
+        _nodeIndices.Clear();
         _failed = false;
         _failure = null;
-        if (!CaptureContainer(root, -1, false, 0))
+        if (!CaptureContainer(root, -1, 0, 0))
         {
             failure = _failure;
             return false;
@@ -67,7 +206,7 @@ internal sealed class UIWorldPassManifest : IDisposable
     }
 
     private bool CaptureContainer(ViewportRenderCommandContainer container,
-        int parentBranchIndex, bool parentBranchValue, int depth)
+        int parentDecisionIndex, int parentChoice, int depth)
     {
         if (depth > MaximumDepth)
             return Fail("UI world command graph exceeds its branch depth limit.");
@@ -79,9 +218,9 @@ internal sealed class UIWorldPassManifest : IDisposable
                 return Fail("UI world command graph exceeds its node limit.");
 
             ViewportRenderCommand command = commands[commandIndex];
-            if (Find(command) >= 0)
+            if (_nodeIndices.ContainsKey(command))
                 return Fail("UI world command graph contains a repeated command instance.");
-            if (command is VPRC_Switch or VPRC_Repeat or VPRC_ConditionalRender or
+            if (command is VPRC_Repeat or VPRC_ConditionalRender or
                 VPRC_ForEachCascade or VPRC_RenderMeshesFiltered or VPRC_RenderByRenderGroup)
                 return Fail($"UI world command graph does not support {command.GetType().Name}.");
             Type commandType = command.GetType();
@@ -90,20 +229,30 @@ internal sealed class UIWorldPassManifest : IDisposable
                 return Fail("UI world command graph does not support dynamic iteration.");
 
             int nodeIndex = _count++;
+            _nodeIndices.Add(command, nodeIndex);
+            VPRC_IfElse? branch = command as VPRC_IfElse;
+            VPRC_Switch? switchCommand = command as VPRC_Switch;
             _nodes[nodeIndex] = new UIWorldPassManifestNode
             {
                 Command = command,
                 Container = container,
                 ContainerIndex = commandIndex,
                 ContainerCommandCount = commands.Count,
-                ParentBranchIndex = parentBranchIndex,
-                ParentBranchValue = parentBranchValue,
-                Branch = command as VPRC_IfElse,
-                Condition = (command as VPRC_IfElse)?.ConditionEvaluator,
-                TrueCommands = (command as VPRC_IfElse)?.TrueCommands,
-                FalseCommands = (command as VPRC_IfElse)?.FalseCommands,
-                TrueCommandCount = (command as VPRC_IfElse)?.TrueCommands?.Commands.Count ?? -1,
-                FalseCommandCount = (command as VPRC_IfElse)?.FalseCommands?.Commands.Count ?? -1,
+                ParentDecisionIndex = parentDecisionIndex,
+                ParentChoice = parentChoice,
+                Branch = branch,
+                Condition = branch?.ConditionEvaluator,
+                TrueCommands = branch?.TrueCommands,
+                FalseCommands = branch?.FalseCommands,
+                TrueCommandCount = branch?.TrueCommands?.Commands.Count ?? -1,
+                FalseCommandCount = branch?.FalseCommands?.Commands.Count ?? -1,
+                Switch = switchCommand,
+                SwitchEvaluator = switchCommand?.SwitchEvaluator,
+                SwitchCases = switchCommand?.Cases,
+                DefaultCase = switchCommand?.DefaultCase,
+                DefaultCommandCount = switchCommand?.DefaultCase?.Commands.Count ?? -1,
+                SwitchCaseStart = _switchCaseCount,
+                SwitchCaseCount = switchCommand?.Cases?.Count ?? 0,
                 Pass = command as VPRC_RenderMeshesPassShared,
                 RenderPass = (command as VPRC_RenderMeshesPassShared)?.RenderPass ?? -1,
                 PathIntent = (command as VPRC_RenderMeshesPassShared)?.PathIntent ?? default,
@@ -117,13 +266,38 @@ internal sealed class UIWorldPassManifest : IDisposable
                 State = EUIWorldPassNodeState.Pending,
             };
 
-            if (command is not VPRC_IfElse branch)
+            if (branch is not null)
+            {
+                if (branch.TrueCommands is { } trueCommands &&
+                    !CaptureContainer(trueCommands, nodeIndex, 1, depth + 1))
+                    return false;
+                if (branch.FalseCommands is { } falseCommands &&
+                    !CaptureContainer(falseCommands, nodeIndex, 0, depth + 1))
+                    return false;
+            }
+            if (switchCommand is null)
                 continue;
-            if (branch.TrueCommands is { } trueCommands &&
-                !CaptureContainer(trueCommands, nodeIndex, true, depth + 1))
-                return false;
-            if (branch.FalseCommands is { } falseCommands &&
-                !CaptureContainer(falseCommands, nodeIndex, false, depth + 1))
+            Dictionary<int, ViewportRenderCommandContainer>? cases = switchCommand.Cases;
+            int firstCase = _switchCaseCount;
+            if (cases is not null)
+                foreach ((int key, ViewportRenderCommandContainer selected) in cases)
+                {
+                    if (_switchCaseCount == MaximumSwitchCases)
+                        return Fail("UI world command graph exceeds its switch case limit.");
+                    if (selected is null)
+                        return Fail("UI world switch has a null case container.");
+                    _switchCases[_switchCaseCount++] = new(key, selected,
+                        selected.Commands.Count);
+                }
+            int caseCount = _switchCaseCount - firstCase;
+            if (caseCount != _nodes[nodeIndex].SwitchCaseCount)
+                return Fail("UI world switch case map changed during capture.");
+            for (int caseIndex = 0; caseIndex < caseCount; caseIndex++)
+                if (!CaptureContainer(_switchCases[firstCase + caseIndex].Commands,
+                        nodeIndex, caseIndex, depth + 1))
+                    return false;
+            if (switchCommand.DefaultCase is { } defaultCase &&
+                !CaptureContainer(defaultCase, nodeIndex, caseCount, depth + 1))
                 return false;
         }
         return true;
@@ -146,13 +320,45 @@ internal sealed class UIWorldPassManifest : IDisposable
     {
         int index = Find(branch);
         if (index < 0 || !ValidateNode(index) || !IsReachable(index) ||
-            _nodes[index].Branch is null || _nodes[index].State != EUIWorldPassNodeState.Pending)
+            _nodes[index].Branch is null || _nodes[index].DecisionRecorded)
         {
             Fail("UI world branch did not match the selected graph.");
             return;
         }
-        _nodes[index].State = selectedTrue
-            ? EUIWorldPassNodeState.BranchTrue : EUIWorldPassNodeState.BranchFalse;
+        _nodes[index].SelectedChoice = selectedTrue ? 1 : 0;
+        _nodes[index].DecisionRecorded = true;
+    }
+
+    /// <summary>Records a frozen case before switch resource callbacks run.</summary>
+    internal void RecordSwitch(VPRC_Switch switchCommand, int key,
+        ViewportRenderCommandContainer? selected)
+    {
+        int index = Find(switchCommand);
+        if (index < 0 || !ValidateNode(index) || !IsReachable(index) ||
+            _nodes[index].Switch is null || _nodes[index].DecisionRecorded)
+        {
+            Fail("UI world switch did not match the selected graph.");
+            return;
+        }
+        ref UIWorldPassManifestNode node = ref _nodes[index];
+        int choice = node.SwitchCaseCount;
+        ViewportRenderCommandContainer? expected = node.DefaultCase;
+        for (int caseIndex = 0; caseIndex < node.SwitchCaseCount; caseIndex++)
+        {
+            UIWorldPassManifestSwitchCase entry = _switchCases[node.SwitchCaseStart + caseIndex];
+            if (entry.Key != key)
+                continue;
+            choice = caseIndex;
+            expected = entry.Commands;
+            break;
+        }
+        if (!ReferenceEquals(expected, selected))
+        {
+            Fail("UI world switch selected a different command container.");
+            return;
+        }
+        node.SelectedChoice = choice;
+        node.DecisionRecorded = true;
     }
 
     internal void RecordExecuted(ViewportRenderCommand command)
@@ -164,10 +370,10 @@ internal sealed class UIWorldPassManifest : IDisposable
             return;
         }
         ref UIWorldPassManifestNode node = ref _nodes[index];
-        if (node.Branch is not null)
+        if (node.Branch is not null || node.Switch is not null)
         {
-            if (node.State is not (EUIWorldPassNodeState.BranchTrue or EUIWorldPassNodeState.BranchFalse))
-                Fail("UI world branch completed without a selected child.");
+            if (!node.DecisionRecorded)
+                Fail("UI world decision completed without a selected child.");
             return;
         }
         if (node.Pass is null)
@@ -190,7 +396,7 @@ internal sealed class UIWorldPassManifest : IDisposable
         ref UIWorldPassManifestNode node = ref _nodes[index];
         if (node.Pass is not null && node.ExpectedUiDraws == 0)
             node.State = EUIWorldPassNodeState.Empty;
-        else if (node.Pass is not null || node.Branch is not null)
+        else if (node.Pass is not null || node.Branch is not null || node.Switch is not null)
             Fail("UI world required command was skipped.");
     }
 
@@ -211,8 +417,8 @@ internal sealed class UIWorldPassManifest : IDisposable
             if (!IsReachable(index))
                 continue;
             ref UIWorldPassManifestNode node = ref _nodes[index];
-            if (node.Branch is not null && node.State is not
-                (EUIWorldPassNodeState.BranchTrue or EUIWorldPassNodeState.BranchFalse))
+            if ((node.Branch is not null || node.Switch is not null) &&
+                !node.DecisionRecorded)
                 Fail("UI world branch has no execution decision.");
             else if (node.Pass is not null && (node.ExpectedUiDraws < 0 ||
                 node.State is not (EUIWorldPassNodeState.Empty or EUIWorldPassNodeState.Executed)))
@@ -223,12 +429,7 @@ internal sealed class UIWorldPassManifest : IDisposable
     }
 
     private int Find(ViewportRenderCommand command)
-    {
-        for (int index = 0; index < _count; index++)
-            if (ReferenceEquals(_nodes[index].Command, command))
-                return index;
-        return -1;
-    }
+        => _nodeIndices.TryGetValue(command, out int index) ? index : -1;
 
     private bool ValidateNode(int index, bool includeTransientState = true)
     {
@@ -248,6 +449,26 @@ internal sealed class UIWorldPassManifest : IDisposable
              node.TrueCommandCount != (branch.TrueCommands?.Commands.Count ?? -1) ||
              node.FalseCommandCount != (branch.FalseCommands?.Commands.Count ?? -1)))
             return Fail("UI world branch configuration changed after capture.");
+        if (node.Switch is { } switchCommand)
+        {
+            if (!ReferenceEquals(node.SwitchEvaluator, switchCommand.SwitchEvaluator) ||
+                !ReferenceEquals(node.SwitchCases, switchCommand.Cases) ||
+                !ReferenceEquals(node.DefaultCase, switchCommand.DefaultCase) ||
+                node.DefaultCommandCount !=
+                    (switchCommand.DefaultCase?.Commands.Count ?? -1) ||
+                node.SwitchCaseCount != (switchCommand.Cases?.Count ?? 0))
+                return Fail("UI world switch configuration changed after capture.");
+            for (int caseIndex = 0; caseIndex < node.SwitchCaseCount; caseIndex++)
+            {
+                UIWorldPassManifestSwitchCase entry =
+                    _switchCases[node.SwitchCaseStart + caseIndex];
+                if (switchCommand.Cases is null ||
+                    !switchCommand.Cases.TryGetValue(entry.Key, out var current) ||
+                    !ReferenceEquals(current, entry.Commands) ||
+                    current.Commands.Count != entry.CommandCount)
+                    return Fail("UI world switch case map changed after capture.");
+            }
+        }
         if (node.Pass is { } pass &&
             (node.RenderPass != pass.RenderPass || node.PathIntent != pass.PathIntent ||
              node.MeshSubmissionStrategy != pass.MeshSubmissionStrategy ||
@@ -261,13 +482,12 @@ internal sealed class UIWorldPassManifest : IDisposable
     private bool IsReachable(int index)
     {
         ref UIWorldPassManifestNode node = ref _nodes[index];
-        if (node.ParentBranchIndex < 0)
+        if (node.ParentDecisionIndex < 0)
             return true;
-        ref UIWorldPassManifestNode parent = ref _nodes[node.ParentBranchIndex];
-        if (!IsReachable(node.ParentBranchIndex))
+        ref UIWorldPassManifestNode parent = ref _nodes[node.ParentDecisionIndex];
+        if (!IsReachable(node.ParentDecisionIndex))
             return false;
-        return parent.State == (node.ParentBranchValue
-            ? EUIWorldPassNodeState.BranchTrue : EUIWorldPassNodeState.BranchFalse);
+        return parent.DecisionRecorded && parent.SelectedChoice == node.ParentChoice;
     }
 
     private bool Fail(string message)

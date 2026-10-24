@@ -117,6 +117,34 @@ public sealed class UICompositionSegmentTests
     }
 
     [Test]
+    public void CanvasLifetimeChangeDoesNotReuseCollectedRunMetadata()
+    {
+        using UITestShaderScope shaders = new();
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        using UIBatchCollector collector = new();
+        RenderCommandCollection commands = new(new Dictionary<int, IComparer<RenderCommand>?> { [pass] = null });
+        UIRenderRecord[] records = [Quad(1, Chrome)];
+        BoundingRectangleF bounds = new(0, 0, 100, 100);
+        UIPublication first = new(1, 1, 1, 1, 1, default, default, [], records,
+            bounds, Matrix4x4.Identity, Matrix4x4.Identity);
+        UIPublication replacement = new(2, 2, 1, 1, 1, default, default, [], records,
+            bounds, Matrix4x4.Identity, Matrix4x4.Identity, previous: first);
+        try
+        {
+            collector.CollectPublishedRuns(first, commands, _ => Assert.Fail("Unexpected unbatched draw."));
+            collector.SwapBuffers();
+            commands.DiscardUpdatingCommands();
+            collector.CollectPublishedRuns(replacement, commands, _ => Assert.Fail("Unexpected unbatched draw."));
+            collector.RetainedRunReuseCount.ShouldBe(0UL);
+        }
+        finally
+        {
+            replacement.Release();
+            first.Release();
+        }
+    }
+
+    [Test]
     public void LayerBoundarySplitsOtherwiseCompatibleMaterialRuns()
     {
         using UITestShaderScope shaders = new();
