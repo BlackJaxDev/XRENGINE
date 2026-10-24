@@ -668,3 +668,34 @@ snapshot contains 10,519 files. Only the clipping test fixture changed after the
 editor input; production inputs match. Windows execution, native IME, OpenGL and
 Vulkan acceptance, visual results, benchmarks, and faster-than-ImGui claims remain
 unverified. ImGui remains the default editor.
+
+
+## Cached Diagnostics And Guarded Collection Edits
+
+The original reconciliation remains **43 of 60 code items complete**. The active
+TODO has 17 code items, four original owner decisions, and three pending proposals.
+No platform acceptance or owner approval was inferred.
+
+- Console categories, clear/copy actions, auto-scroll, counts, and cached row
+  formatting use shared retained controls. Stale menu owners cannot change a
+  later category or selection. Unchanged log entries keep their IDs and strings.
+- Profiler CPU indexing uses a 2,048-operation tick budget, two reused index
+  buffers, coalesced requests, and lazy row formatting. Cancellation preserves
+  the displayed snapshot and retires candidate references within later budgets.
+  Other diagnostic views remain open.
+- Supported exact BCL string/int dictionaries use guarded grouped Set/Add/Remove
+  receipts. Unsupported collections are read-only. Display callbacks cannot
+  write into a retired inspector after user formatting code runs.
+- Owned-clone construction checks adoption and publication ownership. Failed
+  allocations remain retained. Editor Duplicate and safe graph retirement are
+  still gated by hidden root ownership and failure-retention integration.
+- World command-image leases now check traversal, registration, and package
+  generations. The viewport replacement remains inactive. The Vulkan static
+  cache now admits its bounded border variant with exact buffer ownership.
+
+Headless build 112 passed with zero warnings/errors in 2m26.02s. Full run 72
+passed **758 of 758 tests**, with no warnings, failures, or skips, in 11.663s.
+The frozen source snapshot contains 10,556 files. Editor build 44 passed with
+zero warnings/errors in 2m35.43s on the same inputs. Desktop compilation 23 passed
+with zero warnings/errors in 50.98s; its Windows fixtures did not execute. These checks do not establish Windows
+execution, native IME, GPU/visual acceptance, or performance against ImGui.

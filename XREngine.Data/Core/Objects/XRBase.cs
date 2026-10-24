@@ -113,6 +113,30 @@ namespace XREngine.Data.Core
         }
 
         /// <summary>
+        /// Validates a structural assignment before callbacks and immediately before its field write.
+        /// A static validator receives the original and current values to reject stale reentry.
+        /// Validation also runs when property notifications are suppressed.
+        /// </summary>
+        protected bool SetFieldValidated<T, TState>(ref T field, T value, TState state,
+            Action<TState, T, T, T> validate, bool publishNotifications = true,
+            [CallerMemberName] string? propertyName = null)
+        {
+            T original = field;
+            validate(state, original, field, value);
+            if (AreSameReference(field, value))
+                return false;
+            bool notify = publishNotifications && !ArePropertyNotificationsSuppressed;
+            if (notify && !OnPropertyChanging(propertyName, field, value))
+                return false;
+            validate(state, original, field, value);
+            T previous = field;
+            field = value;
+            if (notify)
+                OnPropertyChanged(propertyName, previous, field);
+            return true;
+        }
+
+        /// <summary>
         /// Sets a field while allowing high-frequency telemetry properties to opt out
         /// of change-event publication. Mutation still flows through the standard
         /// equality and field-assignment path.

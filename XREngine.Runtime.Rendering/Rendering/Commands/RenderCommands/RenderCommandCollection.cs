@@ -135,6 +135,42 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
+        internal bool ContainsEveryFrozenWorldSource(
+            ReadOnlySpan<XREngine.Rendering.UI.UIPublishedWorldMeshCommand> frozen)
+        {
+            for (int frozenIndex = 0; frozenIndex < frozen.Length; frozenIndex++)
+            {
+                RenderCommandMesh3D? source = frozen[frozenIndex].SourceWorldCommand;
+                if (source is null || !_membership.Contains(source))
+                    return false;
+            }
+            return true;
+        }
+
+        internal bool ReplaceFrozenWorldSources(
+            ReadOnlySpan<XREngine.Rendering.UI.UIPublishedWorldMeshCommand> frozen)
+        {
+            if (!ContainsEveryFrozenWorldSource(frozen))
+                return false;
+            _membership.EnsureCapacity(_membership.Count + frozen.Length);
+            for (int index = 0; index < _entries.Count; index++)
+            {
+                Entry existing = _entries[index];
+                for (int frozenIndex = 0; frozenIndex < frozen.Length; frozenIndex++)
+                {
+                    XREngine.Rendering.UI.UIPublishedWorldMeshCommand replacement = frozen[frozenIndex];
+                    if (!ReferenceEquals(existing.Command, replacement.SourceWorldCommand))
+                        continue;
+                    _membership.Remove(existing.Command);
+                    _membership.Add(replacement);
+                    _entries[index] = existing with { Command = replacement };
+                    _sortDirty = true;
+                    break;
+                }
+            }
+            return true;
+        }
+
         public void Clear()
         {
             _entries.Clear();
@@ -362,6 +398,7 @@ namespace XREngine.Rendering.Commands
                 }
             }
             DrainRetiredUiPublicationClaims();
+            DrainRetiredWorldUiImages();
         }
 
         /// <summary>
@@ -380,6 +417,7 @@ namespace XREngine.Rendering.Commands
                 pass.Clear();
             RetireUiPublicationClaimsNoLock(_updatingUiPublicationCommands);
             RetireUiPublicationClaimsNoLock(_renderingUiPublicationCommands);
+            RetireWorldUiImagesNoLock();
 
             ClearSwapQueueNoLock(_updatingSwapQueue, _updatingSwapQueueMembership);
             ClearSwapQueueNoLock(_renderingSwapQueue, _renderingSwapQueueMembership);
@@ -793,6 +831,8 @@ namespace XREngine.Rendering.Commands
                 _updatingPasses,
                 passMetadata,
                 nativeAuthoredDecals);
+            _updatingWorldUiPackageGeneration = _updatingWorldUiReplacement is null
+                ? 0 : _updatingBackendReadyPackage.PackageGeneration;
             PrepareMeshOrderPublicationNoLock(scene, camera);
 
             XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
@@ -887,6 +927,7 @@ namespace XREngine.Rendering.Commands
                 ClearPipelineTransitionPublicationsNoLock();
             }
             DrainRetiredUiPublicationClaims();
+            DrainRetiredWorldUiImages();
         }
 
         /// <summary>Releases a completed one-shot output's canonical scene pin.
@@ -2648,6 +2689,14 @@ namespace XREngine.Rendering.Commands
                 foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
                     pass.Clear();
                 RetireUiPublicationClaimsNoLock(_updatingUiPublicationCommands);
+                if (_updatingWorldUiPackets is { } updatingWorldUi)
+                    _retiredWorldUiPackets.Enqueue(updatingWorldUi);
+                _updatingWorldUiPackets = null;
+                _updatingWorldUiWorld = null;
+                _updatingWorldUiGeneration = 0;
+                _updatingWorldUiConflict = false;
+                _updatingWorldUiReplacement = null;
+                _updatingWorldUiPackageGeneration = 0;
                 ClearSwapQueueNoLock(_updatingSwapQueue, _updatingSwapQueueMembership);
                 CancelCollectedResourcesNoLock();
                 if (_updatingPassSortOrderCounters.Count > 0)
@@ -2659,6 +2708,7 @@ namespace XREngine.Rendering.Commands
                 ResetMeshOrderCollectionNoLock();
             }
             DrainRetiredUiPublicationClaims();
+            DrainRetiredWorldUiImages();
         }
 
         public void SwapBuffers()
@@ -2683,6 +2733,7 @@ namespace XREngine.Rendering.Commands
                 (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
                 (_updatingUiPublicationCommands, _renderingUiPublicationCommands) =
                     (_renderingUiPublicationCommands, _updatingUiPublicationCommands);
+                SwapWorldUiImagesNoLock();
                 SwapCollectedResourcesNoLock();
                 (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
                 (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
@@ -2783,6 +2834,7 @@ namespace XREngine.Rendering.Commands
                 ResetMeshOrderCollectionNoLock();
             }
             DrainRetiredUiPublicationClaims();
+            DrainRetiredWorldUiImages();
         }
 
         private void PublishRenderingCommandCountsNoLock(BackendReadyFramePackage package)

@@ -2,6 +2,7 @@ using XREngine.Data.Runtime.AotParity;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
+using XREngine.Scene.Prefabs;
 
 namespace XREngine.Scene
 {
@@ -23,6 +24,7 @@ namespace XREngine.Scene
 
             if (!VerifyComponentAttributesOnAdd(comp, out XRComponent? existingComponent))
             {
+                RequireComponentDiscardAllowed(comp);
                 comp.World = null;
                 comp.Destroy();
                 return existingComponent as T;
@@ -46,6 +48,7 @@ namespace XREngine.Scene
 
             if (!VerifyComponentAttributesOnAdd(comp, out XRComponent? existingComponent))
             {
+                RequireComponentDiscardAllowed(comp);
                 comp.World = null;
                 comp.Destroy();
                 return existingComponent as T;
@@ -68,6 +71,7 @@ namespace XREngine.Scene
 
             if (!VerifyComponentAttributesOnAdd(comp, out existingComponent))
             {
+                RequireComponentDiscardAllowed(comp);
                 comp.World = null;
                 comp.Destroy();
                 return existingComponent;
@@ -76,6 +80,12 @@ namespace XREngine.Scene
             AddComponent(comp);
             comp.Name = name;
             return comp;
+        }
+
+        private static void RequireComponentDiscardAllowed(XRComponent component)
+        {
+            if (HierarchyConstructionScope.Retains(component))
+                throw new InvalidOperationException("An invalid owned clone component must remain in its failure receipt.");
         }
 
         /// <summary>
@@ -105,6 +115,7 @@ namespace XREngine.Scene
         {
             using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentInternal");
 
+            HierarchyConstructionScope.RequireLink(this, comp);
             ComponentsInternal.Add(comp);
 
             comp.Destroying += ComponentDestroying;
@@ -222,6 +233,7 @@ namespace XREngine.Scene
         /// <param name="component">The component to reattach.</param>
         public void ReattachComponent(XRComponent component)
         {
+            HierarchyConstructionScope.RequireLink(this, component);
             ComponentsInternal.Add(component);
             component.Destroying += ComponentDestroying;
             component.Destroyed += ComponentDestroyed;

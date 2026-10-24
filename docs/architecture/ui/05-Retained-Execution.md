@@ -872,8 +872,8 @@ The receipt retains node identity, order, values, source fields, and source dirt
 documents. Shared list aliases mutate once. Undo verifies every owner and exact
 sequence before it writes. Removed nodes remain retained for replay; a node
 attached to another list rejects that replay. History does not retain the
-inspector view. Unsupported sources are read-only. Dictionary and generic
-collection mutation adapters remain separate open work.
+inspector view. Unsupported sources are read-only. Exact supported dictionaries use the adapter described below. Other generic
+collection sources remain read-only until they have an ownership-safe adapter.
 
 `XRObjectBase.ConstructOwned` supplies constructor-origin proof for synchronous
 factories. It separates new allocations from later cache enrollment, retains
@@ -890,3 +890,59 @@ scene tree. Removal uses the recorded source registration. The current source-on
 preparation leaves legacy child draws in place; it is not a completed retained
 world-output path. A future replacement must prove the exact collected image,
 native target lineage, and accepted presentation before it can replace input.
+
+
+## Console, Profiler, And Dictionary Owners
+
+`ConsoleRowCache` assigns row IDs to exact `LogEntry` references. A refresh keeps
+unchanged strings and row sources. Categories, count text, clear commands, copy,
+and auto-scroll share the existing virtual text panel. Delayed menu commands
+retain their panel, category, and selected-entry owners. Clipboard failures are
+explicit. New log entries are formatted once; this is not viewport-only log
+formatting. The existing console source limits history to 5,000 entries.
+
+`NativeProfilerProjection` builds a replacement preorder index in two reused
+buffers. `ProfilerPanel` permits at most 2,048 index operations per tick. Node and
+group visits, stack removal, and old-tail retirement use that budget. Readers
+keep the last complete snapshot. Requests coalesce while a candidate is built.
+Pause preserves the displayed snapshot and cancels candidate work. Later pumps
+retire cancelled references within the same budget. Owner destruction clears the
+remaining managed references. `NativeProfilerRows` formats requested rows in a
+bounded 2,048-entry cache. Stable IDs belong to one exact published snapshot;
+a new sample cannot retarget an old row ID. These limits bound index operations,
+not elapsed time or engine snapshot acquisition. Other profiler diagnostic views
+remain separate work.
+
+`EditorDictionaryMutation` supports exact BCL dictionaries with string keys and
+the default or ordinal comparer, or integer keys and the default comparer. The
+adapter requires a supported value type and an exact compiler-generated property
+owner. Grouped Set, Add, and Remove use one Undo receipt. The receipt checks source,
+key/value identity, owner, and dirty document before replay. Shared aliases mutate
+once. Immutable key indexes avoid repeated linear searches. Unsupported dictionary
+and generic collection sources are read-only; no reflective Clear/Add rewrite is
+used. Read-only display callbacks are also checked after user `ToString` calls.
+
+## Owned Clones And World Image Preparation
+
+`SceneNodePrefabUtility.CloneHierarchyOwned` combines constructor origins with
+pre-adoption guards and final structural validation. It verifies ownership again
+after cache publication. A failed clone retains its allocation ledger and removes
+only its exact cache entries. The original `CloneHierarchy` path is unchanged.
+The new API does not authorize recursive graph destruction or editor Duplicate.
+Hidden scene-root ownership, bounded failure retention, and safe graph retirement
+remain integration gates.
+
+World image preparation now records child command/source registrations and their
+incarnations. Every normal or masked collection traversal stamps the exact world
+and command-set generation. An unstamped traversal rejects replacement. Packet
+claims move with the command image through swap; mutation invalidates prior mesh
+order proof. A staged canvas replacement can validate one complete canonical
+transparent-forward image. The viewport does not invoke this replacement yet.
+Native output lineage, source-seal admission, and accepted presentation remain
+required before activation or input promotion.
+
+The bounded Vulkan static-chrome cache also admits its supported border variant.
+The contract includes exact UV/color and width buffer references, committed
+revisions, native allocation generations, and descriptor resources. Existing
+receipt and fence ownership protects pending commands. This does not establish
+live Vulkan acceptance or reusable OpenGL command buffers.

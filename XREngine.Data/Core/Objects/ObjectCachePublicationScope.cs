@@ -71,7 +71,14 @@ public sealed class ObjectCachePublicationScope : IDisposable
     /// </summary>
     public void Complete() => Complete(allowDestroyedMembers: false);
 
-    private void Complete(bool allowDestroyedMembers)
+    internal void CompleteOwnedConstruction(Action? validateBeforeTransfer)
+    {
+        if (ConstructionOwnership is null || !_ownsBatch)
+            throw new InvalidOperationException("Only an owned construction can validate its ownership transfer.");
+        Complete(allowDestroyedMembers: false, validateBeforeTransfer);
+    }
+
+    private void Complete(bool allowDestroyedMembers, Action? validateBeforeTransfer = null)
     {
         EnsureCurrentThreadAndScope();
 
@@ -98,6 +105,8 @@ public sealed class ObjectCachePublicationScope : IDisposable
             try
             {
                 XRObjectBase.PublishOwnedObjectCacheBatch(_batch.Objects, published);
+                EnsureCurrentThreadAndScope();
+                validateBeforeTransfer?.Invoke();
                 EnsureCurrentThreadAndScope();
                 if (_batch.IsAborted)
                     throw new InvalidOperationException("The owned construction failed during cache publication.");

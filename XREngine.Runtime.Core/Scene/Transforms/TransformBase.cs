@@ -322,7 +322,9 @@ namespace XREngine.Scene.Transforms
         public virtual SceneNode? SceneNode
         {
             get => _sceneNode;
-            set => SetField(ref _sceneNode, value);
+            set => SetFieldValidated(ref _sceneNode, value, this,
+                static (transform, original, current, next) =>
+                    XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireNodeAssignment(transform, original, current, next));
         }
 
         [YamlIgnore]
@@ -344,11 +346,17 @@ namespace XREngine.Scene.Transforms
             get => _parent;
             set
             {
+                XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, value);
                 if (ReferenceEquals(_parent, value))
                     return;
                 using var mutation = PhysicsChainWorld.BeginHierarchyMutation(this, value?.World ?? World, value);
                 _parentAssignmentDepth++;
-                try { SetField(ref _parent, value); }
+                try
+                {
+                    SetFieldValidated(ref _parent, value, this,
+                        static (transform, original, current, next) =>
+                            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(transform, original, current, next));
+                }
                 finally { --_parentAssignmentDepth; }
             }
         }
@@ -362,9 +370,18 @@ namespace XREngine.Scene.Transforms
             {
                 if (value is not null && !ReferenceEquals(_children, value))
                 {
+                    XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, value);
                     using var mutation = PhysicsChainWorld.BeginChildrenMutation(this, value);
+                    foreach (TransformBase child in value)
+                        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, child);
                     value.ThreadSafe = true;
-                    SetField(ref _children, value);
+                    SetFieldValidated(ref _children, value, this,
+                        static (transform, original, current, next) =>
+                        {
+                            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(transform, original, current, next);
+                            foreach (TransformBase child in next)
+                                XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(transform, child);
+                        });
                 }
             }
         }
@@ -803,7 +820,10 @@ namespace XREngine.Scene.Transforms
 
         /// <summary>Checks a child list change before the list writes the child.</summary>
         protected virtual bool ValidateChildListMutation(TransformBase child)
-            => PhysicsChainWorld.ValidateChildListMutation(this, child);
+        {
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, child);
+            return PhysicsChainWorld.ValidateChildListMutation(this, child);
+        }
 
         /// <summary>Reconnects derived child list handlers after cooked data restores a list.</summary>
         protected virtual void OnChildListRestored() { }
@@ -989,6 +1009,7 @@ namespace XREngine.Scene.Transforms
             EParentAssignmentMode mode,
             Action<TransformBase, TransformBase?>? onApplied = null)
         {
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, newParent);
             switch (mode)
             {
                 case EParentAssignmentMode.Immediate:
@@ -1595,6 +1616,8 @@ namespace XREngine.Scene.Transforms
                 switch (propName)
                 {
                     case nameof(Parent):
+                        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(
+                            this, field as TransformBase, _parent, @new as TransformBase);
                         if (@new is TransformBase candidate)
                             for (TransformBase? ancestor = candidate; ancestor is not null; ancestor = ancestor.Parent)
                                 if (ReferenceEquals(ancestor, this))
@@ -1602,6 +1625,8 @@ namespace XREngine.Scene.Transforms
                         _parent?._children.Remove(this);
                         break;
                     case nameof(Children):
+                        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(
+                            this, field as EventList<TransformBase>, _children, @new as EventList<TransformBase>);
                         DetachChildListHandlers();
                         lock (_children)
                         {

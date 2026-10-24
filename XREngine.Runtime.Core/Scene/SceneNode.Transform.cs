@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
+using XREngine.Scene.Prefabs;
 
 namespace XREngine.Scene
 {
@@ -191,6 +192,8 @@ namespace XREngine.Scene
         /// </summary>
         public void SetTransform(TransformBase transform, ETransformSetFlags flags = ETransformSetFlags.Default)
         {
+            TransformBase? expectedTransform = _transform;
+            HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
             if (!RuntimeSceneNodeServices.Current.TryValidateTransformAssignment(this, transform, out string? warningMessage))
             {
                 if (!string.IsNullOrWhiteSpace(warningMessage))
@@ -198,18 +201,27 @@ namespace XREngine.Scene
                 return;
             }
 
+            HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
+
             if (flags.HasFlag(ETransformSetFlags.ClearNewChildren))
                 transform.Clear();
 
+            HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
+
             if (flags.HasFlag(ETransformSetFlags.RetainCurrentParent))
                 transform.SetParent(_transform?.Parent, flags.HasFlag(ETransformSetFlags.RetainWorldTransform), EParentAssignmentMode.Immediate);
+
+            HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
 
             if (flags.HasFlag(ETransformSetFlags.RetainCurrentChildren) && _transform is not null)
             {
                 bool maintainWorldTransform = flags.HasFlag(ETransformSetFlags.RetainedChildrenMaintainWorldTransform);
                 var copy = _transform.Children.ToArray();
                 foreach (var child in copy)
+                {
                     transform.AddChild(child, maintainWorldTransform, EParentAssignmentMode.Immediate);
+                    HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
+                }
             }
 
             Transform = transform;

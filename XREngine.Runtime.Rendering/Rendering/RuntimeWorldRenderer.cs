@@ -263,7 +263,7 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         for (int index = 0; index < _frozenWorldPacketSlots.Length; index++)
         {
             UIWorldCollectPacketSet candidate = _frozenWorldPacketSlots[index];
-            if (!candidate.TryBegin(generation))
+            if (!candidate.TryBegin(generation, WorldContext))
                 continue;
             bool captured = false;
             try

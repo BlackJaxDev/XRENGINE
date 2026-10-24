@@ -11,6 +11,15 @@ public abstract partial class XRObjectBase
     /// </summary>
     public static ObjectConstructionResult<T> ConstructOwned<T>(Func<ObjectConstructionContext, T> factory)
         where T : class
+        => ConstructOwned(factory, validateBeforeTransfer: null);
+
+    /// <summary>
+    /// Validates the result after publication callbacks and before ownership transfer.
+    /// A validation failure removes this batch's exact cache entries and retains its allocations.
+    /// The validator runs outside the cache lock and must not publish or allocate in this batch.
+    /// </summary>
+    public static ObjectConstructionResult<T> ConstructOwned<T>(Func<ObjectConstructionContext, T> factory,
+        Action<T>? validateBeforeTransfer) where T : class
     {
         ArgumentNullException.ThrowIfNull(factory);
         ObjectCachePublicationScope scope = new(CurrentObjectCachePublicationScope,
@@ -22,7 +31,7 @@ public abstract partial class XRObjectBase
         {
             value = factory(new ObjectConstructionContext(ownership)) ??
                 throw new InvalidOperationException("An owned construction returned no result.");
-            scope.Complete();
+            scope.CompleteOwnedConstruction(validateBeforeTransfer is null ? null : () => validateBeforeTransfer(value));
         }
         catch (Exception error)
         {

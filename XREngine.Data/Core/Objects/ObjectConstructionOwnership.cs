@@ -19,14 +19,21 @@ public sealed class ObjectConstructionOwnership
     public IReadOnlyList<XRObjectBase> Objects => _view;
 
     /// <summary>Tests constructor origin, not current lifetime or graph ownership.</summary>
-    public bool Contains(XRObjectBase value) => _origins.Contains(value);
+    public bool Contains(XRObjectBase value)
+    {
+        lock (_origins)
+            return _origins.Contains(value);
+    }
 
     internal void Record(XRObjectBase value)
     {
-        if (_origins.Add(value))
+        lock (_origins)
         {
-            _objects.Add(value);
-            _identityGuard.Attach(value);
+            if (_origins.Add(value))
+            {
+                _objects.Add(value);
+                _identityGuard.Attach(value);
+            }
         }
     }
 

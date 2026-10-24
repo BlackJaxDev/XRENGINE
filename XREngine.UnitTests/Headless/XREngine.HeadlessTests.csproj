@@ -24,6 +24,18 @@
     <Compile Include="../Rendering/UITextDraftPropertyTarget.cs" Link="Rendering/UITextDraftPropertyTarget.cs" />
     <Compile Include="../Rendering/UITextRebindingValidator.cs" Link="Rendering/UITextRebindingValidator.cs" />
     <Compile Include="../Rendering/UITextReentrantDraftBinding.cs" Link="Rendering/UITextReentrantDraftBinding.cs" />
+    <Compile Include="../../XREngine.Editor/UI/ConsoleRowCache.cs" Link="Editor/ConsoleRowCache.cs" />
+    <Compile Include="../../XREngine.Editor/UI/ConsoleCachedEntry.cs" Link="Editor/ConsoleCachedEntry.cs" />
+    <Compile Include="../Editor/ConsoleRowCacheTests.cs" Link="Editor/ConsoleRowCacheTests.cs" />
+    <Compile Include="../Editor/EqualConsoleLogEntry.cs" Link="Editor/EqualConsoleLogEntry.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerProjection.cs" Link="Editor/NativeProfilerProjection.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerRowRef.cs" Link="Editor/NativeProfilerRowRef.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeProfilerTraversalFrame.cs" Link="Editor/NativeProfilerTraversalFrame.cs" />
+    <Compile Include="../Editor/NativeProfilerProjectionTests.cs" Link="Editor/NativeProfilerProjectionTests.cs" />
+    <Compile Include="../Editor/ProfilerProjectionTestNode.cs" Link="Editor/ProfilerProjectionTestNode.cs" />
+    <Compile Include="../Prefabs/OwnedHierarchyCloneTests.cs" Link="Prefabs/OwnedHierarchyCloneTests.cs" />
+    <Compile Include="../Prefabs/OwnedCloneTransformProbe.cs" Link="Prefabs/OwnedCloneTransformProbe.cs" />
+    <Compile Include="../Prefabs/OwnedCloneComponentProbe.cs" Link="Prefabs/OwnedCloneComponentProbe.cs" />
     <Compile Include="../GlobalWorldTypeAliases.cs" Link="GlobalWorldTypeAliases.cs" />
     <Compile Include="../Rendering/UITestShaderScope.cs" Link="Rendering/UITestShaderScope.cs" />
     <Compile Include="../Rendering/UITestRenderingHost.cs" Link="Rendering/UITestRenderingHost.cs" />

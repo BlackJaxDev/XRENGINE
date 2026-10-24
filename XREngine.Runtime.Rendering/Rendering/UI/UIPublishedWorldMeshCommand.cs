@@ -2,6 +2,7 @@ using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Info;
 
 namespace XREngine.Rendering.UI;
 
@@ -14,7 +15,11 @@ internal sealed class UIPublishedWorldMeshCommand : RenderCommandMesh3D, IUiPubl
     private readonly int _indexedDrawIntentCount;
 
     internal UIPublishedWorldMeshCommand(UICanvasComponent canvas, UIPublication publication,
-        RenderCommandMesh3D frozen, bool castsShadows, int layer, Box? cullingVolume)
+        RenderCommandMesh3D frozen, bool castsShadows, int layer, Box? cullingVolume,
+        RenderInfo3D? sourceWorldRenderInfo = null,
+        RenderCommandMesh3D? sourceWorldCommand = null,
+        long worldRegistrationIncarnation = 0,
+        BoundingRectangle? worldCrop = null)
         : base(frozen.RenderPass)
     {
         _canvas = new WeakReference<UICanvasComponent>(canvas);
@@ -23,6 +28,10 @@ internal sealed class UIPublishedWorldMeshCommand : RenderCommandMesh3D, IUiPubl
         CastsShadows = castsShadows;
         Layer = layer;
         FrozenCullingVolume = cullingVolume;
+        SourceWorldRenderInfo = sourceWorldRenderInfo;
+        SourceWorldCommand = sourceWorldCommand;
+        WorldRegistrationIncarnation = worldRegistrationIncarnation;
+        WorldCrop = worldCrop;
         Mesh = frozen.Mesh;
         WorldMatrix = frozen.WorldMatrix;
         MaterialOverride = frozen.MaterialOverride;
@@ -56,6 +65,10 @@ internal sealed class UIPublishedWorldMeshCommand : RenderCommandMesh3D, IUiPubl
     internal bool CastsShadows { get; }
     internal int Layer { get; }
     internal Box? FrozenCullingVolume { get; }
+    internal RenderInfo3D? SourceWorldRenderInfo { get; }
+    internal RenderCommandMesh3D? SourceWorldCommand { get; }
+    internal long WorldRegistrationIncarnation { get; }
+    internal BoundingRectangle? WorldCrop { get; }
     internal ReadOnlySpan<UIIndexedDrawIntent> IndexedDrawIntents
         => _indexedDrawIntents.AsSpan(0, _indexedDrawIntentCount);
 

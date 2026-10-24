@@ -8,6 +8,68 @@ namespace XREngine.UnitTests.Core;
 public sealed class OwnedObjectConstructionTests
 {
     [Test]
+    public void FinalValidationFailureRollsBackPublishedEntriesAndRetainsOriginalFailure()
+    {
+        InvalidOperationException failure = new("Expected final validation failure.");
+        bool sawPublished = false;
+        ObjectConstructionResult<OwnedConstructionProbe> result = XRObjectBase.ConstructOwned(
+            _ => new OwnedConstructionProbe(), value =>
+            {
+                sawPublished = ReferenceEquals(XRObjectBase.ObjectsCache[value.ID], value);
+                throw failure;
+            });
+        try
+        {
+            Assert.That(sawPublished, Is.True);
+            Assert.That(result.Failure, Is.SameAs(failure));
+            Assert.That(result.Value!.IsDestroyed, Is.False);
+            Assert.That(result.Value.DestroyCount, Is.Zero);
+            Assert.That(result.Ownership.Contains(result.Value), Is.True);
+            Assert.That(XRObjectBase.ObjectsCache.ContainsKey(result.Value.ID), Is.False);
+        }
+        finally { RetireProbes(result.Ownership); }
+    }
+
+    [Test]
+    public void FinalValidationRunsOutsideTheCacheLock()
+    {
+        OwnedConstructionProbe ordinary = new();
+        Task? worker = null;
+        ObjectConstructionResult<OwnedConstructionProbe> result = XRObjectBase.ConstructOwned(
+            _ => new OwnedConstructionProbe(), _ =>
+            {
+                worker = Task.Run(ordinary.RequestPublication);
+                if (!worker.Wait(TimeSpan.FromSeconds(5)))
+                    throw new TimeoutException("Final validation held the cache mutation lock.");
+            });
+        try
+        {
+            worker!.GetAwaiter().GetResult();
+            Assert.That(result.Failure, Is.Null);
+        }
+        finally
+        {
+            worker?.GetAwaiter().GetResult();
+            RetireProbes(result.Ownership);
+            ordinary.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void FinalValidationCannotLeaveANestedPublicationScopeOpen()
+    {
+        ObjectConstructionResult<OwnedConstructionProbe> result = XRObjectBase.ConstructOwned(
+            _ => new OwnedConstructionProbe(), _ => XRObjectBase.BeginDeferredObjectCachePublication());
+        try
+        {
+            Assert.That(result.Failure, Is.Not.Null);
+            Assert.That(result.Value!.IsDestroyed, Is.False);
+            Assert.That(XRObjectBase.ObjectsCache.ContainsKey(result.Value.ID), Is.False);
+        }
+        finally { RetireProbes(result.Ownership); }
+    }
+
+    [Test]
     public void ConstructorOriginIncludesSuppressedAndNonCacheAllocations()
     {
         TextFile? suppressed = null;

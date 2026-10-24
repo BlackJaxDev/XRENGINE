@@ -1953,6 +1953,19 @@ namespace XREngine.Rendering.Vulkan
                 complete = false;
             }
 
+            VulkanRecordedBufferIdentity borderColorBuffer = default;
+            VulkanRecordedBufferIdentity borderWidthBuffer = default;
+            if (staticUiContract.IsBorder &&
+                (!staticUiContract.IsDefined ||
+                 !TryCaptureStaticUiBorderBuffer(staticUiContract.BorderColorBuffer!, 3u, out borderColorBuffer) ||
+                 !TryCaptureStaticUiBorderBuffer(staticUiContract.BorderWidthBuffer!, 4u, out borderWidthBuffer) ||
+                 !ContainsStaticUiBorderBuffer(exactDescriptorSets, in borderColorBuffer) ||
+                 !ContainsStaticUiBorderBuffer(exactDescriptorSets, in borderWidthBuffer)))
+            {
+                failureReason = "prepared border UI buffers or descriptor resources changed";
+                return VulkanPreparedCommandChainKey.Incomplete;
+            }
+
             RecordedPacketKey preparedPacketKey =
                 chain.DependencySignature.RecordedPacketKey with
                 {
@@ -1978,7 +1991,49 @@ namespace XREngine.Rendering.Vulkan
                 heapDraws.IsComplete)
             {
                 StaticUiContract = staticUiContract,
+                StaticUiBorderColorBuffer = borderColorBuffer,
+                StaticUiBorderWidthBuffer = borderWidthBuffer,
             };
+        }
+
+        private bool TryCaptureStaticUiBorderBuffer(XRDataBuffer source, uint binding,
+            out VulkanRecordedBufferIdentity identity)
+        {
+            identity = default;
+            if (ResourceRuntime.BackendObjects.Get(source) is not VkDataBuffer native ||
+                native.BufferHandle is not { Handle: not 0 } buffer ||
+                native.AllocatedByteSize == 0)
+                return false;
+            ulong generation = GetCurrentVulkanResourceGeneration(ObjectType.Buffer, buffer.Handle);
+            if (generation == 0)
+                return false;
+            identity = new VulkanRecordedBufferIdentity(
+                EVulkanRecordedBufferBindingKind.Descriptor, binding,
+                buffer.Handle, generation, 0UL, native.AllocatedByteSize);
+            return true;
+        }
+
+        private static bool ContainsStaticUiBorderBuffer(
+            in VulkanRecordedDescriptorSetIdentityBuffer sets,
+            in VulkanRecordedBufferIdentity buffer)
+        {
+            if (!buffer.IsComplete || !sets.IsComplete)
+                return false;
+            for (int setIndex = 0; setIndex < sets.Count; setIndex++)
+            {
+                VulkanRecordedDescriptorSetIdentity set = sets.Get(setIndex);
+                ref readonly VulkanRecordedDescriptorResourceIdentityBuffer resources =
+                    ref VulkanRecordedDescriptorSetIdentity.GetResourcesReference(in set);
+                for (int resourceIndex = 0; resourceIndex < resources.Count; resourceIndex++)
+                {
+                    VulkanRecordedDescriptorResourceIdentity resource = resources.Get(resourceIndex);
+                    if (resource.Type == ObjectType.Buffer &&
+                        resource.Handle == buffer.BufferHandle &&
+                        resource.Generation == buffer.AllocationGeneration)
+                        return true;
+                }
+            }
+            return false;
         }
 
         internal static bool MatchesPreparedStaticUiPrimitive(

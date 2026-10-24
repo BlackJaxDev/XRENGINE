@@ -7,10 +7,8 @@ namespace XREngine.Editor;
 /// <summary>Shows the latest in-process profiler sample.</summary>
 public class ProfilerPanel : NativeVirtualTextPanel
 {
-    private sealed record ScopeRow(string Scope, string Total, string Self);
-
-    private readonly List<(ulong Id, ScopeRow Item)> _rows = [];
-    private readonly NativeTableRows<ScopeRow> _tableRows = new();
+    private const int MaximumIndexStepsPerTick = 2048;
+    private readonly NativeProfilerRows _rows = new();
     private DateTime _lastRefresh;
     private bool _paused;
     private bool _terminal;
@@ -19,10 +17,10 @@ public class ProfilerPanel : NativeVirtualTextPanel
 
     public ProfilerPanel()
     {
-        RowProviderOverride = new UIVirtualTableProvider<ScopeRow>(_tableRows,
-            UIVirtualTableColumn<ScopeRow>.Text("scope", "Scope", 420, row => row.Scope),
-            UIVirtualTableColumn<ScopeRow>.Text("total", "Total ms", 100, row => row.Total),
-            UIVirtualTableColumn<ScopeRow>.Text("self", "Self ms", 100, row => row.Self));
+        RowProviderOverride = new UIVirtualTableProvider<NativeProfilerDisplayRow>(_rows,
+            UIVirtualTableColumn<NativeProfilerDisplayRow>.Text("scope", "Scope", 420, row => row.Scope),
+            UIVirtualTableColumn<NativeProfilerDisplayRow>.Text("total", "Total ms", 100, row => row.Total),
+            UIVirtualTableColumn<NativeProfilerDisplayRow>.Text("self", "Self ms", 100, row => row.Self));
     }
 
     protected override void OnComponentActivated()
@@ -40,6 +38,7 @@ public class ProfilerPanel : NativeVirtualTextPanel
     protected override void OnComponentDeactivated()
     {
         _ownerActive = false;
+        _rows.CancelPending();
         try { DetachTick(); }
         finally { base.OnComponentDeactivated(); }
     }
@@ -48,6 +47,7 @@ public class ProfilerPanel : NativeVirtualTextPanel
     {
         _terminal = true;
         _ownerActive = false;
+        _rows.Clear();
         try { DetachTick(); }
         finally { base.OnDestroying(); }
     }
@@ -60,57 +60,50 @@ public class ProfilerPanel : NativeVirtualTextPanel
     }
 
     protected override void CreateCommands(SceneNode commands)
-        => AddCommand("Pause", () => _paused = !_paused);
+        => AddCommand("Pause / Resume", TogglePause);
+
+    private void TogglePause()
+    {
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
+        SetField(ref _paused, !_paused, publishNotifications: false);
+        if (_paused) _rows.CancelPending();
+        else RefreshRows();
+    }
 
     private void RefreshTick()
     {
         if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
-        if (_paused || DateTime.UtcNow - _lastRefresh < TimeSpan.FromMilliseconds(250))
+        if (_paused)
+        {
+            AdvanceRows();
             return;
-        _lastRefresh = DateTime.UtcNow;
-        RefreshRows();
+        }
+        DateTime now = DateTime.UtcNow;
+        if (now - _lastRefresh >= TimeSpan.FromMilliseconds(250))
+        {
+            _lastRefresh = now;
+            RequestLatest();
+        }
+        AdvanceRows();
     }
 
     protected override void RefreshRows()
     {
-        _rows.Clear();
-        if (!Engine.Profiler.TryGetSnapshot(out var snapshot, out _) || snapshot is null)
-        {
-            _rows.Add((1, new ScopeRow("No profiler sample is available.", string.Empty, string.Empty)));
-            PublishRows();
-            return;
-        }
-        ulong id = 1;
-        _rows.Add((id++, new ScopeRow($"Frame {snapshot.UpdateFrameId} / Render {snapshot.RenderFrameId}",
-            snapshot.FrameTime.ToString("F2"), string.Empty)));
-        foreach (var thread in snapshot.Threads)
-        {
-            _rows.Add((id++, new ScopeRow($"Thread {thread.ThreadId}", thread.TotalTimeMs.ToString("F2"), string.Empty)));
-            foreach (var root in thread.RootNodes)
-                AppendScope(root, 1, ref id);
-        }
-        PublishRows();
+        if (_terminal || _paused) return;
+        RequestLatest();
+        AdvanceRows();
     }
 
-    private void PublishRows()
+    private void RequestLatest()
     {
-        int previousCount = _tableRows.Count;
-        _tableRows.Replace(_rows);
-        SignalRowsChanged(previousCount);
+        Engine.Profiler.TryGetSnapshot(out var snapshot, out _);
+        _rows.Request(snapshot);
     }
 
-    private void AppendScope(Engine.CodeProfiler.ProfilerNodeSnapshot scope, int depth, ref ulong id)
+    private void AdvanceRows()
     {
-        Stack<(Engine.CodeProfiler.ProfilerNodeSnapshot Node, int Depth)> pending = new();
-        pending.Push((scope, depth));
-        while (pending.Count > 0)
-        {
-            var (node, level) = pending.Pop();
-            _rows.Add((id++, new ScopeRow(
-                $"{new string(' ', Math.Min(level, 8) * 2)}{node.Name}",
-                node.ElapsedMs.ToString("F2"), node.SelfMs.ToString("F2"))));
-            for (int index = node.Children.Count - 1; index >= 0; index--)
-                pending.Push((node.Children[index], level + 1));
-        }
+        int previousCount = _rows.Count;
+        if (_rows.Advance(MaximumIndexStepsPerTick))
+            SignalRowsChanged(previousCount);
     }
 }

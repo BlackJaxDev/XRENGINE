@@ -19,6 +19,13 @@ namespace XREngine.Rendering.Info
         private IRuntimeRenderInfo3DRegistrationTarget? _registeredWorldInstance;
         private bool _reconcilingWorldRegistration;
         private bool _collectionSuppressed;
+        private long _worldRegistrationIncarnation;
+
+        internal long WorldRegistrationIncarnation => Volatile.Read(ref _worldRegistrationIncarnation);
+
+        internal bool IsRegisteredInWorld(IRuntimeWorldContext expectedWorld)
+            => _registeredWorldInstance is RuntimeWorldRenderer renderer &&
+                ReferenceEquals(renderer.WorldContext, expectedWorld);
 
         /// <summary>Gets the immutable command source of a scene proxy, if present.</summary>
         [YamlIgnore]
@@ -359,6 +366,7 @@ namespace XREngine.Rendering.Info
                     {
                         registered.RemoveRenderable3D(this);
                         _registeredWorldInstance = null;
+                        Interlocked.Increment(ref _worldRegistrationIncarnation);
                         continue;
                     }
                     if (desired is not null)
@@ -366,6 +374,7 @@ namespace XREngine.Rendering.Info
                         // An add callback may publish and then throw. Retain the
                         // attempted target so terminal disposal can retry removal.
                         _registeredWorldInstance = desired;
+                        Interlocked.Increment(ref _worldRegistrationIncarnation);
                         desired.AddRenderable3D(this);
                     }
                 }

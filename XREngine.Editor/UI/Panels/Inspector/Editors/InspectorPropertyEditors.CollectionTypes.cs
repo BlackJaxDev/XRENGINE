@@ -22,8 +22,6 @@ public static partial class InspectorPropertyEditors
         private const float ButtonHeight = 24.0f;
         private const float ButtonWidth = 80.0f;
 
-        private static readonly Dictionary<Type, CollectionAccessor?> CollectionAccessorCache = new();
-
         public static bool TryCreateEditor(Type propType, out Action<SceneNode, PropertyInfo, object?[]?>? editor)
         {
             if (!IsSupportedCollectionType(propType))
@@ -34,7 +32,8 @@ public static partial class InspectorPropertyEditors
 
             editor = (node, prop, objects) =>
             {
-                if (objects?.Any(target => target is IEditorListElementBinding or IEditorLinkedElementBinding) == true)
+                if (objects?.Any(target => target is IEditorListElementBinding or
+                    IEditorLinkedElementBinding or IEditorDictionaryElementBinding) == true)
                 {
                     AddInfoLabel(node, "Nested collection editing needs an owner path.");
                     return;
@@ -183,8 +182,7 @@ public static partial class InspectorPropertyEditors
 
                 if (sample is ICollection collection)
                 {
-                    var elementType = ResolveElementType(_declaredType, sample.GetType());
-                    RenderGenericCollection(collection, elementType);
+                    RenderGenericCollection(collection);
                     return;
                 }
 
@@ -229,7 +227,11 @@ public static partial class InspectorPropertyEditors
             private void RenderDictionary(IDictionary template, Type keyType, Type valueType)
             {
                 ulong generation = _headerGeneration;
-                bool canMutate = HasWritableDictionary();
+                EditorDictionarySourceLease[] sources = CaptureDictionarySources(generation);
+                bool canMutate = sources.Length == _owners.Count && sources.Length != 0 &&
+                    ReferenceEquals(sources[0].Dictionary, template) &&
+                    sources.All(source => source.Adapter.KeyType == keyType &&
+                        source.Adapter.ValueType == valueType);
                 if (!IsCurrentBuild(generation)) return;
                 List<object?> keys = template.Keys.Cast<object?>().ToList();
                 if (!IsCurrentBuild(generation)) return;
@@ -250,12 +252,12 @@ public static partial class InspectorPropertyEditors
                     CreateInlineButton(header, "Add Entry", () =>
                     {
                         if (!IsCurrentBuild(generation)) return;
-                        AddDictionaryEntry(keyType, valueType, generation);
+                        AddDictionaryEntry(sources, generation);
                     });
                 }
                 else
                 {
-                    AddInfoLabel(header, "Dictionary is read-only.");
+                    AddInfoLabel(header, "Dictionary editing needs exact int or ordinal string keys and auto-property owners.");
                 }
                 if (!KeepRenderedBranch(branch, generation)) return;
 
@@ -270,14 +272,27 @@ public static partial class InspectorPropertyEditors
 
                 foreach (var key in keys)
                 {
-                    BuildDictionaryRow(listNode, key, keyType, valueType, canMutate);
+                    bool rowEditable = canMutate && key is not null &&
+                        sources.All(source => source.Adapter.IndexOf(source.Displayed, key) >= 0);
+                    object? visibleValue;
+                    try { visibleValue = key is null ? null : template[key]; }
+                    catch (Exception error)
+                    {
+                        Debug.LogException(error, "Could not read a dictionary value.");
+                        visibleValue = "<unavailable>";
+                    }
+                    if (!KeepRenderedBranch(branch, generation)) return;
+                    BuildDictionaryRow(listNode, key, keyType, valueType, rowEditable,
+                        sources, visibleValue);
                     if (!KeepRenderedBranch(branch, generation)) return;
                 }
                 }
                 finally { if (!IsCurrentBuild(generation)) KeepRenderedBranch(branch, generation); }
             }
 
-            private void BuildDictionaryRow(SceneNode parent, object? key, Type keyType, Type valueType, bool canMutate)
+            private void BuildDictionaryRow(SceneNode parent, object? key, Type keyType,
+                Type valueType, bool canMutate, EditorDictionarySourceLease[] sources,
+                object? visibleValue)
             {
                 ulong generation = _headerGeneration;
                 var row = parent.NewChild();
@@ -292,7 +307,9 @@ public static partial class InspectorPropertyEditors
                 labelList.ItemSpacing = 4.0f;
 
                 labelNode.NewChild<UITextComponent>(out var label);
-                label.Text = key?.ToString() ?? "<null>";
+                string keyText = key?.ToString() ?? "<null>";
+                if (!IsCurrentBuild(generation)) return;
+                label.Text = keyText;
                 if (!IsCurrentBuild(generation)) return;
                 label.FontSize = EditorUI.Styles.PropertyNameFontSize;
                 label.HorizontalAlignment = EHorizontalAlignment.Left;
@@ -304,41 +321,37 @@ public static partial class InspectorPropertyEditors
                 {
                     CreateInlineButton(labelNode, "Remove", () =>
                     {
-                        if (IsCurrentBuild(generation)) RemoveDictionaryEntry(key, generation);
+                        if (IsCurrentBuild(generation) && key is not null)
+                            RemoveDictionaryEntry(sources, key, generation);
                     });
                 }
 
                 var valueNode = row.NewChild();
+                if (!canMutate)
+                {
+                    string text = visibleValue?.ToString() ?? "<null>";
+                    if (!IsCurrentBuild(generation)) return;
+                    AddInfoLabel(valueNode, text);
+                    return;
+                }
                 var bindingType = typeof(DictionaryValueBinding<,>).MakeGenericType(keyType, valueType);
                 var bindingProperty = bindingType.GetProperty(nameof(DictionaryValueBinding<object, object>.Value))!;
-                var targets = CreateDictionaryBindings(bindingType, key, generation);
+                var targets = CreateDictionaryBindings(bindingType, key!, generation, sources);
                 if (!IsCurrentBuild(generation)) return;
                 BuildValueEditor(valueNode, valueType, bindingProperty, targets);
             }
 
-            private object[] CreateDictionaryBindings(Type bindingType, object? key, ulong generation)
+            private object[] CreateDictionaryBindings(Type bindingType, object key,
+                ulong generation, EditorDictionarySourceLease[] sources)
             {
                 List<object> bindings = new();
-                foreach (var owner in _owners)
+                foreach (EditorDictionarySourceLease source in sources)
                 {
                     if (!IsCurrentBuild(generation)) break;
-                    if (_property.GetValue(owner) is not IDictionary dictionary)
-                        continue;
-                    if (!IsCurrentBuild(generation)) break;
-
-                    if (key is not null && !dictionary.Contains(key))
-                    {
-                        if (!ContainsKeyByEquality(dictionary, key))
-                            continue;
-                    }
-                    else if (key is null && !dictionary.Contains(null!))
-                    {
-                        continue;
-                    }
-
-                    if (!IsCurrentBuild(generation)) break;
-                    var instance = Activator.CreateInstance(bindingType, _property, owner, key,
-                        this, generation);
+                    int index = source.Adapter.IndexOf(source.Displayed, key);
+                    if (index < 0) return [];
+                    var instance = Activator.CreateInstance(bindingType, source,
+                        source.Displayed.Keys[index], (Action)Rebuild);
                     if (!IsCurrentBuild(generation)) break;
                     if (instance is not null)
                         bindings.Add(instance);
@@ -346,145 +359,39 @@ public static partial class InspectorPropertyEditors
                 return bindings.ToArray();
             }
 
-            private static bool ContainsKeyByEquality(IDictionary dictionary, object key)
+            private void RemoveDictionaryEntry(EditorDictionarySourceLease[] sources,
+                object key, ulong generation)
             {
-                foreach (var existingKey in dictionary.Keys)
-                {
-                    if (Equals(existingKey, key))
-                        return true;
-                }
-                return false;
+                if (!IsCurrentBuild(generation)) return;
+                try { EditorDictionaryMutation.Remove(sources, key, Rebuild); }
+                catch (Exception error) { Debug.LogException(error, "Could not remove a dictionary entry."); }
             }
 
-            private void RemoveDictionaryEntry(object? key, ulong generation)
+            private EditorDictionarySourceLease[] CaptureDictionarySources(ulong generation)
             {
+                List<EditorDictionarySourceLease> sources = [];
                 foreach (var owner in _owners)
                 {
-                    if (!IsCurrentBuild(generation)) return;
-                    if (_property.GetValue(owner) is not IDictionary dictionary || dictionary.IsReadOnly)
-                        continue;
-                    if (!IsCurrentBuild(generation)) return;
-
+                    if (!IsCurrentBuild(generation)) return [];
                     try
                     {
-                        bool containsNull = key is null && dictionary.Contains(null!);
-                        if (!IsCurrentBuild(generation)) return;
-                        bool containsKey = key is not null && dictionary.Contains(key);
-                        if (!IsCurrentBuild(generation)) return;
-                        if (containsNull)
-                            dictionary.Remove(null!);
-                        else if (containsKey && key is not null)
-                            dictionary.Remove(key);
-                        else
-                        {
-                            RemoveByEquality(dictionary, key, generation);
-                        }
+                        sources.Add(EditorDictionaryMutation.Capture(owner, _property,
+                            () => IsCurrentBuild(generation)));
                     }
-                    catch (Exception ex)
+                    catch (Exception error)
                     {
-                        Debug.LogException(ex, $"Failed to remove dictionary entry from '{_property.Name}'.");
+                        Debug.LogException(error, "Dictionary editing is unavailable for this source.");
+                        return [];
                     }
                 }
-
-                Rebuild();
+                return [.. sources];
             }
 
-            private void RemoveByEquality(IDictionary dictionary, object? key, ulong generation)
+            private void AddDictionaryEntry(EditorDictionarySourceLease[] sources, ulong generation)
             {
-                object? removeKey = null;
-                foreach (var existingKey in dictionary.Keys)
-                {
-                    if (Equals(existingKey, key))
-                    {
-                        removeKey = existingKey;
-                        break;
-                    }
-                }
-
-                if (removeKey is not null && IsCurrentBuild(generation))
-                    dictionary.Remove(removeKey);
-            }
-
-            private bool HasWritableDictionary()
-            {
-                foreach (var owner in _owners)
-                {
-                    if (_property.GetValue(owner) is IDictionary dictionary && !dictionary.IsReadOnly)
-                        return true;
-                }
-                return false;
-            }
-
-            private void AddDictionaryEntry(Type keyType, Type valueType, ulong generation)
-            {
-                foreach (var owner in _owners)
-                {
-                    if (!IsCurrentBuild(generation)) return;
-                    if (_property.GetValue(owner) is not IDictionary dictionary || dictionary.IsReadOnly)
-                        continue;
-                    if (!IsCurrentBuild(generation)) return;
-
-                    object? baseKey = ImGuiEditorUtilities.CreateDefaultElement(keyType);
-                    if (!IsCurrentBuild(generation)) return;
-                    object? uniqueKey = EnsureUniqueKey(dictionary, baseKey, keyType);
-                    if (!IsCurrentBuild(generation)) return;
-                    if (uniqueKey is null)
-                    {
-                        Debug.LogWarning($"Unable to auto-generate a unique key for '{_property.Name}'.");
-                        continue;
-                    }
-
-                    object? newValue = ImGuiEditorUtilities.CreateDefaultElement(valueType);
-                    if (!IsCurrentBuild(generation)) return;
-                    try
-                    {
-                        dictionary[uniqueKey] = newValue;
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex, $"Failed to add dictionary entry to '{_property.Name}'.");
-                    }
-                }
-
-                Rebuild();
-            }
-
-            private static object? EnsureUniqueKey(IDictionary dictionary, object? baseKey, Type keyType)
-            {
-                if (baseKey is null)
-                    return null;
-
-                if (!dictionary.Contains(baseKey))
-                    return baseKey;
-
-                if (keyType == typeof(string))
-                {
-                    string root = string.IsNullOrWhiteSpace(baseKey as string) ? "Key" : (string)baseKey;
-                    int index = 1;
-                    string candidate;
-                    do
-                    {
-                        candidate = $"{root}_{index++}";
-                    } while (dictionary.Contains(candidate));
-                    return candidate;
-                }
-
-                if (IsNumericType(keyType))
-                {
-                    long attempt = 0;
-                    if (baseKey is IConvertible convertible)
-                        attempt = convertible.ToInt64(null);
-
-                    object? candidate;
-                    do
-                    {
-                        candidate = ConvertValue(attempt++, keyType);
-                    }
-                    while (candidate is not null && dictionary.Contains(candidate));
-                    return candidate;
-                }
-
-                return null;
+                if (!IsCurrentBuild(generation)) return;
+                try { EditorDictionaryMutation.Add(sources, Rebuild); }
+                catch (Exception error) { Debug.LogException(error, "Could not add a dictionary entry."); }
             }
 
             private void RenderList(Type elementType)
@@ -1141,12 +1048,10 @@ public static partial class InspectorPropertyEditors
                 catch (Exception error) { Debug.LogException(error, "Could not remove a linked-list node."); }
             }
 
-            private void RenderGenericCollection(ICollection sample, Type elementType)
+            private void RenderGenericCollection(ICollection sample)
             {
                 ulong generation = _headerGeneration;
                 List<object?> buffer = BuildBuffer(sample);
-                if (!IsCurrentBuild(generation)) return;
-                bool canMutate = HasMutableCollection(elementType);
                 if (!IsCurrentBuild(generation)) return;
                 SceneNode branch = _container.NewChild();
                 try
@@ -1160,22 +1065,7 @@ public static partial class InspectorPropertyEditors
                 headerLayout.DisplayHorizontal = true;
                 headerLayout.ItemSpacing = 6.0f;
 
-                if (canMutate)
-                {
-                    CreateInlineButton(header, "Add", () =>
-                    {
-                        if (!IsCurrentBuild(generation)) return;
-                        object? newValue = ImGuiEditorUtilities.CreateDefaultElement(elementType);
-                        if (!IsCurrentBuild(generation)) return;
-                        buffer.Add(newValue);
-                        ApplyCollectionBuffer(buffer, elementType, generation);
-                        Rebuild();
-                    });
-                }
-                else
-                {
-                    AddInfoLabel(header, "Collection is read-only.");
-                }
+                AddInfoLabel(header, "This collection has no guarded Undo adapter and is read-only.");
                 if (!KeepRenderedBranch(branch, generation)) return;
 
                 var listNode = branch.NewChild();
@@ -1190,14 +1080,14 @@ public static partial class InspectorPropertyEditors
 
                 for (int i = 0; i < buffer.Count; i++)
                 {
-                    BuildCollectionBufferRow(listNode, elementType, buffer, i, canMutate);
+                    BuildCollectionBufferRow(listNode, buffer, i);
                     if (!KeepRenderedBranch(branch, generation)) return;
                 }
                 }
                 finally { if (!IsCurrentBuild(generation)) KeepRenderedBranch(branch, generation); }
             }
 
-            private void BuildCollectionBufferRow(SceneNode parent, Type elementType, List<object?> buffer, int index, bool canMutate)
+            private void BuildCollectionBufferRow(SceneNode parent, List<object?> buffer, int index)
             {
                 ulong generation = _headerGeneration;
                 var row = parent.NewChild();
@@ -1219,137 +1109,11 @@ public static partial class InspectorPropertyEditors
                 label.Color = EditorUI.Styles.PropertyNameTextColor;
                 label.BoundableTransform.Margins = new Vector4(4.0f, 2.0f, 4.0f, 2.0f);
 
-                if (canMutate)
-                {
-                    CreateInlineButton(labelNode, "Remove", () =>
-                    {
-                        if (!IsCurrentBuild(generation)) return;
-                        buffer.RemoveAt(index);
-                        ApplyCollectionBuffer(buffer, elementType, generation);
-                        Rebuild();
-                    });
-                }
-
                 var valueNode = row.NewChild();
-                var bindingType = typeof(CollectionBufferProxy<>).MakeGenericType(elementType);
-                var bindingProperty = bindingType.GetProperty(nameof(CollectionBufferProxy<object>.Value))!;
-                var proxy = Activator.CreateInstance(bindingType, buffer, index,
-                    (Action)(() => ApplyCollectionBuffer(buffer, elementType, generation)),
-                    (Func<bool>)(() => IsCurrentBuild(generation)));
+                string text = buffer[index]?.ToString() ?? "<null>";
                 if (!IsCurrentBuild(generation)) return;
-                BuildValueEditor(valueNode, elementType, bindingProperty, proxy is null ? Array.Empty<object>() : new[] { proxy });
+                AddInfoLabel(valueNode, text);
             }
-
-            private bool HasMutableCollection(Type elementType)
-            {
-                foreach (var owner in _owners)
-                {
-                    var collection = _property.GetValue(owner);
-                    if (collection is null)
-                        continue;
-                    var accessor = GetCollectionAccessor(collection.GetType());
-                    if (accessor?.CanMutate == true)
-                        return true;
-                }
-                return false;
-            }
-
-            private void ApplyCollectionBuffer(List<object?> buffer, Type elementType, ulong generation)
-            {
-                foreach (var owner in _owners)
-                {
-                    if (!IsCurrentBuild(generation)) return;
-                    var collection = _property.GetValue(owner);
-                    if (!IsCurrentBuild(generation)) return;
-                    if (collection is null)
-                        continue;
-
-                    var accessor = GetCollectionAccessor(collection.GetType());
-                    if (accessor is null)
-                        continue;
-                    if (!IsCurrentBuild(generation)) return;
-
-                    try
-                    {
-                        accessor.Apply(collection, buffer, elementType);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex, $"Failed to update collection '{_property.Name}'.");
-                    }
-                }
-            }
-        }
-
-        private sealed class CollectionAccessor
-        {
-            private readonly MethodInfo? _clear;
-            private readonly MethodInfo? _add;
-            private readonly Type? _addParameter;
-
-            private CollectionAccessor(MethodInfo? clear, MethodInfo? add)
-            {
-                _clear = clear;
-                _add = add;
-                _addParameter = add?.GetParameters().FirstOrDefault()?.ParameterType;
-            }
-
-            public bool CanMutate => _clear is not null && _add is not null;
-
-            public void Apply(object collection, IEnumerable<object?> buffer, Type fallbackType)
-            {
-                if (!CanMutate)
-                    return;
-
-                _clear!.Invoke(collection, null);
-                foreach (var entry in buffer)
-                    _add!.Invoke(collection, new[] { ConvertValue(entry, _addParameter ?? fallbackType) });
-            }
-
-            public static CollectionAccessor? Create(Type type)
-            {
-                MethodInfo? clear = FindMethod(type, "Clear", 0);
-                MethodInfo? add = FindMethod(type, "Add", 1);
-
-                if (clear is null || add is null)
-                    return null;
-
-                return new CollectionAccessor(clear, add);
-            }
-        }
-
-        private static CollectionAccessor? GetCollectionAccessor(Type type)
-        {
-            if (!CollectionAccessorCache.TryGetValue(type, out var accessor))
-            {
-                accessor = CollectionAccessor.Create(type);
-                CollectionAccessorCache[type] = accessor;
-            }
-            return accessor;
-        }
-
-        private static MethodInfo? FindMethod(Type type, string name, int parameterCount)
-        {
-            BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-            var method = type.GetMethods(flags).FirstOrDefault(m => m.Name == name && m.GetParameters().Length == parameterCount);
-            if (method is not null)
-                return method;
-
-            foreach (var iface in type.GetInterfaces())
-            {
-                var map = type.GetInterfaceMap(iface);
-                for (int i = 0; i < map.InterfaceMethods.Length; i++)
-                {
-                    var ifaceMethod = map.InterfaceMethods[i];
-                    if (ifaceMethod.Name != name)
-                        continue;
-                    if (ifaceMethod.GetParameters().Length != parameterCount)
-                        continue;
-                    return map.TargetMethods[i];
-                }
-            }
-
-            return null;
         }
 
         private static void BuildValueEditor(SceneNode node, Type valueType, PropertyInfo bindingProperty, object[] targets)
@@ -1543,22 +1307,6 @@ public static partial class InspectorPropertyEditors
             }
         }
 
-        private static bool IsNumericType(Type type)
-        {
-            type = Nullable.GetUnderlyingType(type) ?? type;
-            return type == typeof(byte)
-                || type == typeof(sbyte)
-                || type == typeof(short)
-                || type == typeof(ushort)
-                || type == typeof(int)
-                || type == typeof(uint)
-                || type == typeof(long)
-                || type == typeof(ulong)
-                || type == typeof(float)
-                || type == typeof(double)
-                || type == typeof(decimal);
-        }
-
         private sealed class ListElementBinding<T> : IEditorListElementBinding
         {
             private readonly PropertyInfo _property;
@@ -1637,57 +1385,35 @@ public static partial class InspectorPropertyEditors
             }
         }
 
-        private sealed class DictionaryValueBinding<TKey, TValue>
+        private sealed class DictionaryValueBinding<TKey, TValue> : IEditorDictionaryElementBinding
         {
-            private readonly PropertyInfo _property;
-            private readonly object _owner;
-            private readonly object? _key;
-            private readonly CollectionEditorContext _context;
-            private readonly ulong _generation;
-            private readonly IDictionary? _source;
+            private readonly EditorDictionarySourceLease _source;
+            private readonly object _key;
+            private readonly Action _refresh;
+            private object? _displayedValue;
 
-            public DictionaryValueBinding(PropertyInfo property, object owner, object? key,
-                CollectionEditorContext context, ulong generation)
+            public DictionaryValueBinding(EditorDictionarySourceLease source, object key, Action refresh)
             {
-                _property = property;
-                _owner = owner;
+                _source = source;
                 _key = key;
-                _context = context;
-                _generation = generation;
-                _source = property.GetValue(owner) as IDictionary;
+                _refresh = refresh;
+                int index = source.Adapter.IndexOf(source.Displayed, key);
+                _displayedValue = source.Displayed.Values[index];
             }
 
-            private IDictionary? CurrentSource()
-            {
-                if (!_context.IsCurrentBuild(_generation) || _source is null) return null;
-                object? current = _property.GetValue(_owner);
-                return _context.IsCurrentBuild(_generation) && ReferenceEquals(current, _source)
-                    ? _source : null;
-            }
+            EditorDictionarySourceLease IEditorDictionaryElementBinding.Source => _source;
+            object IEditorDictionaryElementBinding.Key => _key;
+            object? IEditorDictionaryElementBinding.DisplayedValue => _displayedValue;
+            bool IEditorDictionaryElementBinding.IsCurrent => _source.IsCurrent() &&
+                _source.Adapter.IndexOf(_source.Displayed, _key) >= 0;
+            Action IEditorDictionaryElementBinding.Refresh => _refresh;
+            void IEditorDictionaryElementBinding.AcceptCommitted(object? value, object state)
+                => _displayedValue = value;
 
             public TValue? Value
             {
-                get
-                {
-                    if (CurrentSource() is not { } dictionary)
-                        return default;
-                    if (_key is null)
-                        return dictionary.Contains(null!) ? (TValue?)ConvertValue(dictionary[null!], typeof(TValue)) : default;
-                    if (!dictionary.Contains(_key))
-                        return default;
-                    return dictionary[_key] is TValue value ? value : (TValue?)ConvertValue(dictionary[_key], typeof(TValue));
-                }
-                set
-                {
-                    if (CurrentSource() is not { } dictionary || dictionary.IsReadOnly)
-                        return;
-                    object key = _key ?? null!;
-                    if (!dictionary.Contains(key) || CurrentSource() is null)
-                        return;
-                    object? converted = ConvertValue(value, typeof(TValue));
-                    if (CurrentSource() is not null)
-                        dictionary[key] = converted;
-                }
+                get => _source.IsViewCurrent() ? (TValue?)_displayedValue : default;
+                set => EditorDictionaryMutation.Set([this], _ => value, _refresh);
             }
         }
 
@@ -1722,32 +1448,5 @@ public static partial class InspectorPropertyEditors
             }
         }
 
-        private sealed class CollectionBufferProxy<T>
-        {
-            private readonly List<object?> _buffer;
-            private readonly int _index;
-            private readonly Action _apply;
-            private readonly Func<bool> _isCurrent;
-
-            public CollectionBufferProxy(List<object?> buffer, int index, Action apply, Func<bool> isCurrent)
-            {
-                _buffer = buffer;
-                _index = index;
-                _apply = apply;
-                _isCurrent = isCurrent;
-            }
-
-            public T? Value
-            {
-                get => _isCurrent() && _buffer[_index] is T value ? value :
-                    _isCurrent() ? (T?)ConvertValue(_buffer[_index], typeof(T)) : default;
-                set
-                {
-                    if (!_isCurrent()) return;
-                    _buffer[_index] = value;
-                    _apply();
-                }
-            }
-        }
     }
 }

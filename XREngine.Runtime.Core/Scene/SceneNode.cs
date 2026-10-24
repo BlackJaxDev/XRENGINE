@@ -264,6 +264,10 @@ namespace XREngine.Scene
             get => [.. _components];
             set
             {
+                if (value is not null)
+                    foreach (XRComponent component in value)
+                        if (component is not null)
+                            HierarchyConstructionScope.RequireLink(this, component);
                 _components.Clear();
                 if (value is null)
                     return;
@@ -273,6 +277,7 @@ namespace XREngine.Scene
                     if (component is null)
                         continue;
 
+                    HierarchyConstructionScope.RequireLink(this, component);
                     _components.Add(component);
                 }
             }
@@ -391,7 +396,9 @@ namespace XREngine.Scene
                     SetTransform((TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform());
                 return _transform!;
             }
-            private set => SetField(ref _transform, value);
+            private set => SetFieldValidated(ref _transform, value, this,
+                static (node, original, current, next) =>
+                    HierarchyConstructionScope.RequireTransformAssignment(node, original, current, next));
         }
 
         /// <summary>
@@ -403,6 +410,7 @@ namespace XREngine.Scene
             get => _transform?.Parent?.SceneNode;
             set
             {
+                HierarchyConstructionScope.RequireLink(this, value);
                 if (_transform is null)
                     return;
 
@@ -471,6 +479,10 @@ namespace XREngine.Scene
             }
             set
             {
+                if (value is not null)
+                    foreach (SceneNode child in value)
+                        if (child is not null)
+                            HierarchyConstructionScope.RequireLink(this, child);
                 Transform.Clear();
                 if (value is null)
                     return;
@@ -586,6 +598,8 @@ namespace XREngine.Scene
                         }
                         break;
                     case nameof(Transform):
+                        HierarchyConstructionScope.RequireTransformAssignment(
+                            this, field as TransformBase, _transform, (TransformBase)(object)@new!);
                         if (_transform != null)
                             UnlinkTransform();
                         break;

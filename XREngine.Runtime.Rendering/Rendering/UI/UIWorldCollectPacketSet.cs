@@ -11,22 +11,25 @@ internal sealed class UIWorldCollectPacketSet
     private int _count;
     private int _claims;
     private long _generation;
+    private IRuntimeWorldContext? _expectedWorld;
     private bool _sealed;
     private bool _failed;
     private int _collectionFailed;
 
     internal int Count => _count;
     internal long Generation => Volatile.Read(ref _generation);
+    internal IRuntimeWorldContext? ExpectedWorld => _expectedWorld;
     internal bool Failed => _failed || Volatile.Read(ref _collectionFailed) != 0;
     internal bool IsSealed => _sealed;
 
-    internal bool TryBegin(long generation = 1)
+    internal bool TryBegin(long generation = 1, IRuntimeWorldContext? expectedWorld = null)
     {
         if (generation <= 0)
             return false;
         if (Interlocked.CompareExchange(ref _claims, 1, 0) != 0)
             return false;
         Volatile.Write(ref _generation, generation);
+        _expectedWorld = expectedWorld;
         _count = 0;
         _failed = false;
         _collectionFailed = 0;
@@ -92,6 +95,20 @@ internal sealed class UIWorldCollectPacketSet
         return false;
     }
 
+    internal bool TryGetAt(int index, out object? key, out UIPublication? packet)
+    {
+        if (!_sealed || Failed || Volatile.Read(ref _claims) <= 0 ||
+            index < 0 || index >= _count)
+        {
+            key = null;
+            packet = null;
+            return false;
+        }
+        key = _keys[index];
+        packet = _packets[index];
+        return key is not null && packet is not null;
+    }
+
     internal bool TryRetain()
     {
         int claims;
@@ -140,6 +157,7 @@ internal sealed class UIWorldCollectPacketSet
             int count = _count;
             _count = 0;
             _sealed = false;
+            _expectedWorld = null;
             for (int index = 0; index < count; index++)
             {
                 UIPublication? packet = _packets[index];

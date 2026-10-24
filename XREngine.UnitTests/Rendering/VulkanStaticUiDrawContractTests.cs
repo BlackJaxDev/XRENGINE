@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using System.Numerics;
 using Silk.NET.Vulkan;
 using XREngine.Data;
 using XREngine.Data.Rendering;
@@ -64,6 +65,95 @@ public sealed class VulkanStaticUiDrawContractTests
             Is.False);
         Assert.That(first.Matches(first with
             { StaticUiContract = contract }), Is.True);
+    }
+
+    [Test]
+    public void BorderContract_RequiresExactCommittedBuffersAndVariant()
+    {
+        _renderer.Mesh = _mesh;
+        XRDataBuffer<Vector4> color = BorderBuffer("QuadUvBuffer", 3);
+        XRDataBuffer<Vector4> width = BorderBuffer("QuadBorderWidthBuffer", 4);
+        _renderer.Buffers["QuadUvBuffer"] = color;
+        _renderer.Buffers["QuadBorderWidthBuffer"] = width;
+        UIIndexedDrawIntent intent = new(_renderer, _mesh.GeometryRevision,
+            EPrimitiveType.Triangles, IndexSize.TwoBytes, 6, 1, 0);
+        UIStaticDrawContract border = new(1,
+            new UICompositionOwner(new UIElementIdentity(2, 1),
+                EUICompositionLayerKind.StaticChrome),
+            3, 4, 5, 6, intent)
+        {
+            CapturedMesh = _mesh,
+            IsBorder = true,
+            BorderColorBuffer = color,
+            BorderColorRevision = color.Revision,
+            BorderWidthBuffer = width,
+            BorderWidthRevision = width.Revision,
+        };
+        Assert.That(border.IsDefined && border.MatchesIntent(_renderer, 1), Is.True);
+        Assert.That((border with { IsBorder = false }).IsDefined, Is.False);
+        UIStaticDrawContract solid = border with
+        {
+            IsBorder = false,
+            BorderColorBuffer = null,
+            BorderColorRevision = 0,
+            BorderWidthBuffer = null,
+            BorderWidthRevision = 0,
+        };
+        Assert.That(solid.IsDefined, Is.True);
+        Assert.That(solid == border, Is.False);
+        Commit(width, new Vector4(2));
+        Assert.That(border.MatchesIntent(_renderer, 1), Is.False);
+        border = border with { BorderWidthRevision = width.Revision };
+        Assert.That(border.MatchesIntent(_renderer, 1), Is.True);
+        Commit(color, new Vector4(3));
+        Assert.That(border.MatchesIntent(_renderer, 1), Is.False);
+        border = border with { BorderColorRevision = color.Revision };
+        Assert.That(border.MatchesIntent(_renderer, 1), Is.True);
+        width.BindingIndexOverride = 3;
+        Assert.That(border.MatchesIntent(_renderer, 1), Is.False);
+        width.BindingIndexOverride = 4;
+        Assert.That(border.MatchesIntent(_renderer, 1), Is.True);
+        XRDataBuffer<Vector4> replacement = BorderBuffer("QuadUvBuffer", 3);
+        _renderer.Buffers["QuadUvBuffer"] = replacement;
+        Assert.That(border.MatchesIntent(_renderer, 1), Is.False);
+        color.Destroy(true);
+    }
+
+    [Test]
+    public void PreparedBorderAuthority_TracksBothNativeAllocations()
+    {
+        VulkanRecordedBufferIdentity color = new(
+            EVulkanRecordedBufferBindingKind.Descriptor, 3, 11, 12, 0, 16);
+        VulkanRecordedBufferIdentity width = new(
+            EVulkanRecordedBufferBindingKind.Descriptor, 4, 21, 22, 0, 16);
+        VulkanPreparedCommandChainKey first = new(1, 2, 0, false,
+            default, default, default, true)
+        {
+            StaticUiBorderColorBuffer = color,
+            StaticUiBorderWidthBuffer = width,
+        };
+        Assert.That(first.Matches(first), Is.True);
+        Assert.That(first.Matches(first with
+            { StaticUiBorderColorBuffer = color with { AllocationGeneration = 13 } }), Is.False);
+        Assert.That(first.Matches(first with
+            { StaticUiBorderWidthBuffer = width with { BufferHandle = 23 } }), Is.False);
+    }
+
+    private static XRDataBuffer<Vector4> BorderBuffer(string name, uint binding)
+    {
+        XRDataBuffer<Vector4> buffer = new(name, EBufferTarget.ShaderStorageBuffer, 1)
+        {
+            BindingIndexOverride = binding,
+        };
+        Commit(buffer, Vector4.One);
+        return buffer;
+    }
+
+    private static void Commit(XRDataBuffer<Vector4> buffer, Vector4 value)
+    {
+        XRBufferWriter<Vector4> writer = buffer.Alloc<Vector4>(1);
+        writer.Span[0] = value;
+        writer.Commit();
     }
 
     [Test]

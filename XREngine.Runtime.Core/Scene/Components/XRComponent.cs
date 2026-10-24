@@ -200,10 +200,14 @@ namespace XREngine.Components
         }
 
         internal void ConstructionBindSceneNode(SceneNode node)
-            => SetField(ref _sceneNode, node, publishNotifications: false, nameof(SceneNode));
+            => SetFieldValidated(ref _sceneNode, node, this,
+                static (component, original, current, next) =>
+                    XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(component, original, current, next),
+                publishNotifications: false, nameof(SceneNode));
 
         internal void ConstructionSetSceneNode(SceneNode node)
         {
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, node);
             if (ReferenceEquals(_sceneNode, node))
             {
                 if (_sceneNodeEventsSubscribed)
@@ -222,6 +226,9 @@ namespace XREngine.Components
 
         private void AbortComponentConstruction()
         {
+            // Owned clone failure transfers this allocation without running arbitrary teardown.
+            if (XREngine.Scene.Prefabs.HierarchyConstructionScope.Retains(this))
+                return;
             _constructionFailed = true;
             if (_sceneNode is not null)
             {
@@ -253,7 +260,9 @@ namespace XREngine.Components
         public SceneNode SceneNode
         {
             get => _sceneNode;
-            private set => SetField(ref _sceneNode, value);
+            private set => SetFieldValidated(ref _sceneNode, value, this,
+                static (component, original, current, next) =>
+                    XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(component, original, current, next));
         }
 
         /// <summary>
@@ -362,6 +371,8 @@ namespace XREngine.Components
                         }
                         break;
                     case nameof(SceneNode):
+                        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(
+                            this, field as SceneNode, _sceneNode, @new as SceneNode);
                         var oldNode = _sceneNode;
                         if (oldNode is not null)
                         {
@@ -551,21 +562,26 @@ namespace XREngine.Components
         {
         }
 
-        internal void NotifyOwningSceneNodePostDeserialize()
+        internal void NotifyOwningSceneNodePostDeserialize(Action? validateConstruction = null)
         {
             if (_sceneNode is null)
                 return;
 
             World = _sceneNode.World;
+            validateConstruction?.Invoke();
 
             if (_sceneNode.IsTransformNull)
                 return;
 
             OnTransformChanging();
+            validateConstruction?.Invoke();
             OnTransformChanged();
+            validateConstruction?.Invoke();
 
             if (IsActiveInHierarchy)
                 TryActivateComponent();
+
+            validateConstruction?.Invoke();
 
             OwningSceneNodePostDeserialize();
         }

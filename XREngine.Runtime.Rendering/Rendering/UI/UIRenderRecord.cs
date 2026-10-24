@@ -42,6 +42,9 @@ public readonly record struct UIRenderRecord
     public UITextLayoutResult? TextLayout { get; init; }
     public RenderCommandMesh2D? FrozenCommand { get; init; }
     public RenderCommandMesh3D? FrozenWorldCommand { get; init; }
+    internal RenderInfo3D? WorldRenderInfo { get; init; }
+    internal RenderCommandMesh3D? SourceWorldCommand { get; init; }
+    internal long WorldRegistrationIncarnation { get; init; }
     public bool WorldCastsShadows { get; init; }
     public int WorldLayer { get; init; }
     public Box? WorldCullingVolume { get; init; }
