@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Geometry;
+using XREngine.Rendering.UI.State;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
 
@@ -329,6 +330,8 @@ namespace XREngine.Rendering.UI
                     slot = _freeSlots.Count > 0 ? _freeSlots.Pop() : CreateSlot(provider);
                     slot.Index = index;
                     slot.Lease = new UIVirtualRowLease(itemId, ++_nextRowIncarnation);
+                    // Published hit records carry the lease; a sparse capture must revisit this row.
+                    slot.Row.RecordUIChange(UIChangeDomain.HitTest);
                     slot.Revision = provider.Revision;
                     provider.BindRow(slot.Row, index, itemId, slot.Lease.Incarnation);
                     slot.Row.Visibility = EVisibility.Visible;

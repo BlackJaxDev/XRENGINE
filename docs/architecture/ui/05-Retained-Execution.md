@@ -202,6 +202,43 @@ Deferred pick and hover work validates the pane, input owner, window, camera,
 world, focus, and current presentation before applying its result. An inactive
 input dispatcher cannot revive its old presented mapping.
 
+### Sparse publication capture
+
+`UICanvasComponent` captures a publication in layout preorder. A complete capture
+records, for each node, its transform, inherited capture context
+(`UIPublicationCaptureContext`), subtree end, record starts, hidden-subtree root,
+and pointer dependencies. The accepted publication then becomes the sparse basis.
+
+The next capture reads the committed change journal from the basis cursor. It
+also compares layout output pages; a shared page has no changes. A changed node
+becomes a capture root. A scrollbar depends on its scroll target and thumb, and a
+splitter depends on its split target, so a change on the target also captures the
+dependent control. Changes inside a hidden subtree are skipped, because a hidden
+node publishes no records for its descendants.
+
+The canvas uses a complete capture when any of these apply:
+
+- No basis exists, or the basis capture did not visit the tree in preorder.
+- The journal read is incomplete, an element was removed, or an element is unknown.
+- Identities, painter order, canvas bounds, world matrix, draw space, offscreen
+  mode, world collection revision, or canvas lifetime changed.
+- A capture root is the canvas root, or capture roots cover half the nodes or more.
+- A recaptured draw cannot publish (capture failure or missing command).
+
+A sparse capture visits only the capture-root subtrees. When each subtree keeps
+its record counts, render memberships, and focus-scope identities, the canvas
+replaces only changed pages. `UIRecordStore.WithReplacedPages` shares unchanged
+leaves and branches, and composition segments outside changed pages keep their
+identity and revision. When record counts change, the canvas splices the new
+subtree records between the previous records. This visits no clean node, but it
+copies the clean records into new stores in linear time. A rejected sparse
+capture clears the basis before the complete capture.
+
+`UIWorkCounter.PublicationCaptureNodesVisited`, `PublicationFullCaptures`,
+`PublicationSparseCaptures`, `PublicationSparseSplices`, and
+`PublicationSparseFallbacks` report this work. `PublicationRecordPathsCopied`
+and `PublicationFlatCellsMaterialized` report store copies and flat-array use.
+
 The output receipt integration still requires graphics validation. CPU command
 completion alone does not prove that deferred GPU draws reached an output.
 Do not infer atomic rendering, Vulkan replay correctness, or visual parity from
@@ -261,8 +298,8 @@ Changed storage still traverses records; a sparse operation queue remains open. 
 dirty upload ranges. Text instance edits leave glyph buffers unchanged. Stable
 glyph ranges retain unchanged runs when another run changes length; an index
 stream selects each run without moving unrelated glyph payloads. These mechanisms
-do not establish complete sparse capture,
-independent composition layers, or a measured performance advantage over ImGui.
+do not establish independent composition layers or a measured performance
+advantage over ImGui.
 
 Set `XRE_UI_BATCH_DIAGNOSTICS=1` to enable text and batch diagnostic logging.
 Leave it unset for ordinary workloads.
@@ -572,8 +609,8 @@ current native resource authority again. Bindless images, custom draws, offscree
 output, and world UI remain dynamic. Each admitted run owns its retained
 buffers, so unrelated overlays do not change those revisions. An in-flight
 resource cohort can still require a new capture until its fence retires. GPU cache
-acceptance is unverified. Changed publication comparison still visits the record
-set; independent sparse capture remains open.
+acceptance is unverified. A count-preserving sparse capture replaces only changed
+render pages. A complete capture or a spliced capture still compares the record set.
 
 `UISplitterHandleComponent` uses accepted divider metrics from the layout kernel.
 The metrics describe the split before child size constraints alter pane geometry.

@@ -169,6 +169,7 @@
     <Compile Include="../Rendering/FocusRegistrationProbe.cs" Link="Rendering/FocusRegistrationProbe.cs" />
     <Compile Include="../Rendering/UIPublicationReceiptStateTests.cs" Link="Rendering/UIPublicationReceiptStateTests.cs" />
     <Compile Include="../Rendering/UICanvasPublicationCaptureTests.cs" Link="Rendering/UICanvasPublicationCaptureTests.cs" />
+    <Compile Include="../Rendering/UISparsePublicationTests.cs" Link="Rendering/UISparsePublicationTests.cs" />
     <Compile Include="../Rendering/UIPublicationMutationProbe.cs" Link="Rendering/UIPublicationMutationProbe.cs" />
     <Compile Include="../Rendering/UIPointerMetadataProbe.cs" Link="Rendering/UIPointerMetadataProbe.cs" />
     <Compile Include="../Rendering/UIFocusNavigationTests.cs" Link="Rendering/UIFocusNavigationTests.cs" />

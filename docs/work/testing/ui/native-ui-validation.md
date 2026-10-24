@@ -36,6 +36,25 @@ See the [investigation record](../../investigations/ui/retained-ui-integration.m
 for intermediate failures and repairs. Windows, OpenGL/Vulkan, visual, IME, native
 resource, benchmark, and equal-workload ImGui acceptance remain open.
 
+## Sparse Publication Capture Validation (2026-10-24)
+
+This run checks the sparse publication capture increment. It ran on Linux with
+the installed .NET SDK 10.0.113, not the SDK pinned in `global.json`. The run used
+a scratch `global.json`, `MSBuildEnableWorkloadResolver=false`, and the Roslyn 5.9
+`Microsoft.Net.Compilers.Toolset` props through `CustomBeforeMicrosoftCommonProps`.
+The SDK compiler reports `CS0110` for `OpenXrRenderPacingMode`; Roslyn 5.9 does not.
+All builds used `Tools/Invoke-AgentBuild.ps1` with `--no-restore`, in sequence.
+The changed source files were hashed before the builds and were unchanged after them.
+
+| Check | Result | Limit |
+|---|---|---|
+| Headless test build | Passed: 0 warnings, 0 errors. | Linux, SDK 10.0.113 with Roslyn 5.9. |
+| Sparse publication tests | Passed: 9/9. A deliberate fault in the splice start shift made one test fail; the source was then restored and rebuilt. | Counter-based work bounds, not time measurements. |
+| Full headless regression suite | Passed: 988/988, no warnings, failures, or skips, in 17.5s. | The headless project only. |
+| Editor Windows-target compilation | Passed: 0 warnings, 0 errors, with `EnableWindowsTargeting=true`. OpenVR.NET and OscCore were initialized at their tracked commits. | Compilation only. |
+| Desktop unit test project compilation | Passed: 0 warnings, 0 errors, with `EnableWindowsTargeting=true`. | Compilation only; no Windows test executed. |
+| Windows editor, OpenGL/Vulkan, visual, IME, performance comparison | Not run. | No live, visual, or speed result is claimed. |
+
 ## Published Change-Tracking Validation (2026-10-23)
 
 The earlier published scope was contracts and instrumentation: runtime identities,

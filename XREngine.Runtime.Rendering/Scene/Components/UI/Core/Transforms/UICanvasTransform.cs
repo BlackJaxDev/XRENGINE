@@ -115,7 +115,7 @@ namespace XREngine.Rendering.UI
         internal void PublishLayoutValues(UIElementIdentity[] identities, UILayoutNodeOutput[] outputs)
         {
             CurrentLayoutOutputPages = null;
-            _currentLayoutIdentities = identities;
+            _currentLayoutIdentities = StableLayoutIdentities(identities);
             _currentLayoutOutputs = outputs;
             _currentLayoutGeneration++;
         }
@@ -123,10 +123,19 @@ namespace XREngine.Rendering.UI
         internal void PublishLayoutValues(UIElementIdentity[] identities, UILayoutOutputPageView outputs)
         {
             CurrentLayoutOutputPages = outputs;
-            _currentLayoutIdentities = identities;
+            _currentLayoutIdentities = StableLayoutIdentities(identities);
             _currentLayoutOutputs = [];
             _currentLayoutGeneration++;
         }
+
+        /// <summary>
+        /// Keeps the published identity array when a full snapshot finds the same node order.
+        /// Publication uses array identity as its proof that layout topology is unchanged.
+        /// </summary>
+        private UIElementIdentity[] StableLayoutIdentities(UIElementIdentity[] identities)
+            => !ReferenceEquals(identities, _currentLayoutIdentities) &&
+                identities.AsSpan().SequenceEqual(_currentLayoutIdentities)
+                ? _currentLayoutIdentities : identities;
 
         internal void ClearLayoutValues()
         {

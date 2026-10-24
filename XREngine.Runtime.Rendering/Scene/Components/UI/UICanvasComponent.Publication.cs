@@ -27,7 +27,7 @@ public partial class UICanvasComponent
     private bool _capturingPublication;
     private bool _publicationCaptureReentered;
     private readonly Dictionary<UIElementIdentity, int> _publicationLayoutIndices = [];
-    private readonly Dictionary<UIElementIdentity, int> _publicationSubtreeEnds = [];
+    private object? _publicationLayoutIndexSource;
     private readonly Dictionary<UIElementIdentity, (Vector2 Offset, Vector2 Maximum)> _scrollMetricRetry = [];
     private readonly List<UIElementIdentity> _scrollMetricRetired = [];
     private readonly ConcurrentDictionary<object, UIPublication> _presentedPublications =
@@ -220,29 +220,26 @@ public partial class UICanvasComponent
             return;
         layoutPages ??= UILayoutOutputPageView.CopyFrom(legacyLayout.Span);
 
-        _publicationLayoutIndices.Clear();
-        for (int index = 0; index < identities.Length; index++)
-            _publicationLayoutIndices.Add(identities.Span[index], index);
+        EnsurePublicationLayoutIndices(identities);
         _scrollMetricRetired.Clear();
         foreach (UIElementIdentity identity in _scrollMetricRetry.Keys)
             if (!_publicationLayoutIndices.ContainsKey(identity))
                 _scrollMetricRetired.Add(identity);
         for (int index = 0; index < _scrollMetricRetired.Count; index++)
             _scrollMetricRetry.Remove(_scrollMetricRetired[index]);
-        _publicationSubtreeEnds.Clear();
-        CaptureSubtreeEnds(canvas);
-        _publicationHitScratch.Clear();
-        _publicationScrollScratch.Clear();
-        _publicationFocusScopeScratch.Clear();
-        _publicationRenderScratch.Clear();
-        CaptureHitRecords(canvas, canvas, canvas.ElementIdentity, layoutPages,
-            default, default, default, default);
-        OrderPublicationRenders(painterOrder);
-        OrderPublicationFocusScopes();
-        for (int index = 0; index < _publicationRenderScratch.Count; index++)
+        bool directWorld = authoringDrawSpace != ECanvasDrawSpace.Screen && !authoringOffscreen;
+        bool sparse = previous is not null && TryCaptureSparse(previous, canvas, identities,
+            layoutPages, committedCursor, painterOrderChanged, worldCollectionRevision,
+            canvasWorldMatrix, authoringDrawSpace, authoringOffscreen, canvasBounds,
+            painterOrder, directWorld);
+        if (!sparse)
+            CaptureFull(canvas, layoutPages, painterOrder, identities.Length);
+        // A spliced capture fills complete record lists, which the full-capture compare uses.
+        bool patched = sparse && !_sparseSpliced;
+        // A sparse capture checks its recaptured draws before it succeeds.
+        for (int index = 0; !sparse && index < _publicationRenderScratch.Count; index++)
         {
             UIRenderRecord record = _publicationRenderScratch[index];
-            bool directWorld = authoringDrawSpace != ECanvasDrawSpace.Screen && !authoringOffscreen;
             if (!record.Visible || record.CaptureFailure is null &&
                 (directWorld ? record.FrozenWorldCommand is not null :
                     record.SupportsBatch || record.FrozenCommand is not null))
@@ -256,22 +253,35 @@ public partial class UICanvasComponent
             }
             return;
         }
-        bool hitsChanged = previous is null ||
-            !CollectionsMarshal.AsSpan(_publicationHitScratch).SequenceEqual(previous.Hits);
-        bool scrollChanged = previous is null ||
-            !CollectionsMarshal.AsSpan(_publicationScrollScratch).SequenceEqual(previous.ScrollReceivers);
-        bool scopesChanged = previous is null ||
-            !CollectionsMarshal.AsSpan(_publicationFocusScopeScratch).SequenceEqual(previous.FocusScopes);
-        bool rendersChanged = previous is null ||
-            !CollectionsMarshal.AsSpan(_publicationRenderScratch).SequenceEqual(previous.Renders);
-        UIHitRecord[] hits = hitsChanged
-            ? _publicationHitScratch.ToArray() : previous!.HitStorage;
-        UIScrollRecord[] scroll = scrollChanged
-            ? _publicationScrollScratch.ToArray() : previous!.ScrollStorage;
-        UIFocusScopeRecord[] scopes = scopesChanged
-            ? _publicationFocusScopeScratch.ToArray() : previous!.FocusScopeStorage;
-        UIRenderRecord[] renders = rendersChanged
-            ? _publicationRenderScratch.ToArray() : previous!.RenderStorage;
+        bool hitsChanged;
+        UIHitRecord[]? hits = null;
+        UIRenderRecord[]? renders = null;
+        UIScrollRecord[] scroll;
+        UIFocusScopeRecord[] scopes;
+        if (patched)
+        {
+            hitsChanged = _sparseHitPatches.Count > 0;
+            scroll = _sparseScrollReplacement ?? previous!.ScrollStorage;
+            scopes = _sparseScopeReplacement ?? previous!.FocusScopeStorage;
+        }
+        else
+        {
+            hitsChanged = previous is null ||
+                !SameRecords(CollectionsMarshal.AsSpan(_publicationHitScratch), previous.HitRecordStore);
+            bool scrollChanged = previous is null ||
+                !CollectionsMarshal.AsSpan(_publicationScrollScratch).SequenceEqual(previous.ScrollReceivers);
+            bool scopesChanged = previous is null ||
+                !CollectionsMarshal.AsSpan(_publicationFocusScopeScratch).SequenceEqual(previous.FocusScopes);
+            bool rendersChanged = previous is null ||
+                !SameRecords(CollectionsMarshal.AsSpan(_publicationRenderScratch), previous.RenderRecordStore);
+            // Null record arrays share the previous publication's store.
+            hits = hitsChanged ? _publicationHitScratch.ToArray() : null;
+            renders = rendersChanged ? _publicationRenderScratch.ToArray() : null;
+            scroll = scrollChanged
+                ? _publicationScrollScratch.ToArray() : previous!.ScrollStorage;
+            scopes = scopesChanged
+                ? _publicationFocusScopeScratch.ToArray() : previous!.FocusScopeStorage;
+        }
         ulong hitGeneration = previous?.HitGeneration ?? ++_nextHitGeneration;
         if (previous is not null && hitsChanged)
             hitGeneration = ++_nextHitGeneration;
@@ -321,12 +331,16 @@ public partial class UICanvasComponent
                 VisualScene2D.TryCopyRenderableMembershipOrder(
                     ref validationPainterRevision, _publicationPainterOrderValidation))
                 return;
-            UIPublication replacement = new UIPublication(
-                ++_nextPublicationGeneration, (ulong)lifetime, layoutGeneration, hitGeneration,
-                revision, default, identities, hits, renders, canvasBounds,
-                Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
-                layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen,
-                surfaceWriter, quadPayload, quadWorldMatrix);
+            UIPublication replacement = patched
+                ? CreateSparsePublication(previous!, ++_nextPublicationGeneration,
+                    layoutGeneration, hitGeneration, revision, layoutPages, scroll, scopes,
+                    surfaceWriter, quadPayload, quadWorldMatrix)
+                : new UIPublication(
+                    ++_nextPublicationGeneration, (ulong)lifetime, layoutGeneration, hitGeneration,
+                    revision, default, identities, hits, renders, canvasBounds,
+                    Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
+                    layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen,
+                    surfaceWriter, quadPayload, quadWorldMatrix);
             bool staleAfterBuild;
             try
             {
@@ -372,6 +386,7 @@ public partial class UICanvasComponent
                 (_publicationPainterOrder, _publicationPainterOrderCapture) =
                     (_publicationPainterOrderCapture, _publicationPainterOrder);
             _publicationPainterOrderRevision = painterRevision;
+            AcceptSparseBasis(replacement, committedCursor);
             oldCandidate?.Release();
         }
         }
@@ -384,11 +399,15 @@ public partial class UICanvasComponent
     {
         if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int index))
             return 0;
+        // Sparse ranges require layout order to be the preorder of the live tree.
+        if (index != _sparseExpectedIndex)
+            _sparseOrderValid = false;
+        _sparseExpectedIndex = index + 1;
         int end = index + 1;
         for (int childIndex = 0; childIndex < transform.Children.Count; childIndex++)
             if (transform.Children[childIndex] is UITransform child)
                 end = Math.Max(end, CaptureSubtreeEnds(child));
-        _publicationSubtreeEnds[transform.ElementIdentity] = end;
+        _sparseSubtreeEnds[index] = end;
         return end;
     }
 
@@ -425,14 +444,20 @@ public partial class UICanvasComponent
     }
 
     private void CaptureHitRecords(UICanvasTransform canvas, UITransform transform,
-        UIElementIdentity focusScopeIdentity, UILayoutOutputPageView layoutPages,
-        UIElementIdentity virtualListIdentity, UIElementIdentity virtualRowIdentity,
-        UIVirtualRowLease virtualRowLease, ulong virtualProviderIncarnation,
-        UICompositionOwner compositionOwner = default)
+        UILayoutOutputPageView layoutPages, UIPublicationCaptureContext context)
     {
-        if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int layoutIndex) ||
-            !layoutPages[layoutIndex].Visible)
+        if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int layoutIndex))
             return;
+        UIRuntimeCounters.Add(UIWorkCounter.PublicationCaptureNodesVisited);
+        RecordSparseNode(layoutIndex, transform, context);
+        if (!layoutPages[layoutIndex].Visible)
+            return;
+        UIElementIdentity focusScopeIdentity = context.FocusScopeIdentity;
+        UIElementIdentity virtualListIdentity = context.VirtualListIdentity;
+        UIElementIdentity virtualRowIdentity = context.VirtualRowIdentity;
+        UIVirtualRowLease virtualRowLease = context.VirtualRowLease;
+        ulong virtualProviderIncarnation = context.VirtualProviderIncarnation;
+        UICompositionOwner compositionOwner = context.CompositionOwner;
 
         if (transform is UIBoundableTransform row && transform.Parent is UIListTransform list &&
             list.TryGetVirtualRowLease(row, out UIVirtualRowLease rowLease))
@@ -462,12 +487,12 @@ public partial class UICanvasComponent
                     focusScopeIdentity = transform.ElementIdentity;
                     _publicationFocusScopeScratch.Add(new UIFocusScopeRecord(
                         focusScopeIdentity, layoutIndex,
-                        _publicationSubtreeEnds[focusScopeIdentity], transform.Depth, -1));
+                        _sparseSubtreeEnds[layoutIndex], transform.Depth, -1));
                 }
                 if (owner is IUIScrollReceiver receiver)
                     _publicationScrollScratch.Add(new UIScrollRecord(owner, receiver,
                         transform.ElementIdentity, layoutIndex,
-                        _publicationSubtreeEnds[transform.ElementIdentity], transform.Depth, index));
+                        _sparseSubtreeEnds[layoutIndex], transform.Depth, index));
             }
         }
 
@@ -499,6 +524,7 @@ public partial class UICanvasComponent
 
                 long interactionRevision = component is UIInteractableComponent target
                     ? target.InteractionRevision : 0;
+                RecordPointerDependencies(component, layoutIndex);
                 Vector2 acceptedSize = layoutPages[layoutIndex].ActualSize;
                 UIPointerGeometry pointerGeometry = CapturePointerGeometry(
                     component, acceptedSize, layoutPages);
@@ -510,7 +536,7 @@ public partial class UICanvasComponent
                     transform.Parent is UITransform parent &&
                     _publicationLayoutIndices.TryGetValue(parent.ElementIdentity, out int parentIndex)
                         ? parentIndex : -1,
-                    _publicationSubtreeEnds[transform.ElementIdentity], transform.Depth,
+                    _sparseSubtreeEnds[layoutIndex], transform.Depth,
                     renderInfo.LayerIndex, renderInfo.IndexWithinLayer,
                     component is UIInteractableComponent, bounds.BlocksInputBehind,
                     component is UIInteractableComponent focusTarget && focusTarget.IsTabStop,
@@ -520,11 +546,12 @@ public partial class UICanvasComponent
             }
         }
 
+        UIPublicationCaptureContext childContext = new(focusScopeIdentity,
+            virtualListIdentity, virtualRowIdentity, virtualRowLease,
+            virtualProviderIncarnation, compositionOwner);
         for (int index = 0; index < transform.Children.Count; index++)
             if (transform.Children[index] is UITransform child)
-                CaptureHitRecords(canvas, child, focusScopeIdentity, layoutPages,
-                    virtualListIdentity, virtualRowIdentity, virtualRowLease,
-                    virtualProviderIncarnation, compositionOwner);
+                CaptureHitRecords(canvas, child, layoutPages, childContext);
     }
 
     private UIPointerGeometry CapturePointerGeometry(UIComponent component, Vector2 acceptedSize,
@@ -764,6 +791,7 @@ public partial class UICanvasComponent
     private void ClearPublications()
     {
         List<UIPublication> detached = [];
+        _sparseBasis = null;
         _scrollMetricRetry.Clear();
         _scrollMetricRetired.Clear();
         lock (_publicationGate)

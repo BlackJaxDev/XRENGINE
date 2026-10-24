@@ -942,3 +942,30 @@ build61 passed with zero warnings/errors in 53.89s. Desktop test build34 passed
 with zero warnings/errors in 58.93s. All 10,763 source inputs remained unchanged. Desktop execution, native graphics, IME, visual, and
 performance acceptance remain open. The three owner proposals and four original
 owner decisions remain pending.
+
+## Sparse publication capture
+
+The reconciliation remains **46 of 60**. This increment advances the open
+publication item. It does not close it.
+
+- A complete capture keeps a per-node basis: transform, inherited capture
+  context, subtree end, record starts, hidden-subtree root, and pointer
+  dependencies. The next capture reads the committed journal and the changed
+  layout pages, and visits only the changed subtrees.
+- A count-preserving edit replaces only the changed record pages. Unchanged
+  leaves, branches, and composition segments are shared with the previous
+  publication. Flat hit and render arrays are made only on demand.
+- An edit that changes record counts splices the new subtree records between the
+  previous records. It visits no clean node, but it copies clean records into new
+  stores. This copy is the remaining work on the item.
+- Scrollbars and splitters are captured again when their targets change. A
+  rebound virtual row records a hit-test change. An unchanged layout identity
+  array keeps its instance, so an identical capture can use the sparse path.
+- Topology, painter order, canvas, and journal changes use a complete capture.
+
+Headless build13 passed with 0 warnings and errors. The sparse tests passed 9/9,
+and the full headless run passed **988 of 988 tests** in 17.5s. Editor build3 and
+desktop test build2 passed with 0 warnings and errors. See the
+[validation plan](../../testing/ui/native-ui-validation.md) for the environment.
+Desktop execution, native graphics, IME, visual, and performance acceptance remain
+open. The three owner proposals and four original owner decisions remain pending.

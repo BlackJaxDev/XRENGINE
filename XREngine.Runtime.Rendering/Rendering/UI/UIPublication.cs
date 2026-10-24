@@ -11,10 +11,12 @@ public sealed class UIPublication
 {
     private static readonly Action<UIRenderRecord> RetainRenderRecordAction = RetainRenderRecord;
     private static readonly Action<UIRenderRecord> ReleaseRenderRecordAction = ReleaseRenderRecord;
-    private readonly UIHitRecord[] _hits;
+    private UIHitRecord[]? _hits;
     private readonly UIRecordStore<UIHitRecord>? _hitStore;
     private readonly UICompositionSegmentSet _compositionSegments = UICompositionSegmentSet.Empty;
-    private readonly UIRenderRecord[] _renders = [];
+    private UIRenderRecord[]? _renders;
+    private readonly int _visibleBackdropCount;
+    private readonly int _visiblePreRenderCount;
     private readonly UIScrollRecord[] _scrollReceivers;
     private readonly UIFocusScopeRecord[] _focusScopes;
     private readonly UIRecordStore<UIRenderRecord>? _renderStore;
@@ -27,9 +29,13 @@ public sealed class UIPublication
     private UIPublishedWorldMeshCommand[]? _worldCommands;
     private readonly object _worldCommandGate = new();
 
+    /// <summary>
+    /// Creates a publication from complete record arrays. A null record array, or the
+    /// array of <paramref name="previous"/>, shares the previous publication's store.
+    /// </summary>
     internal UIPublication(ulong generation, ulong canvasLifetime, ulong layoutGeneration, ulong hitGeneration,
         long changeRevision, ReadOnlyMemory<UILayoutNodeOutput> layout,
-        ReadOnlyMemory<UIElementIdentity> identities, UIHitRecord[] hits, UIRenderRecord[] renders,
+        ReadOnlyMemory<UIElementIdentity> identities, UIHitRecord[]? hits, UIRenderRecord[]? renders,
         BoundingRectangleF canvasBounds, Matrix4x4 canvasToOutput, Matrix4x4 outputToCanvas,
         UIPublication? previous = null,
         UIScrollRecord[]? scrollReceivers = null,
@@ -51,46 +57,44 @@ public sealed class UIPublication
         _flatLayout = layout.IsEmpty ? null : layout.ToArray();
         LayoutPages = layoutPages;
         Identities = identities;
-        _hits = hits;
-        _renders = renders;
-        (HasVisibleBackdrop, HasVisiblePreRenderDraw) = previous is not null &&
-            ReferenceEquals(renders, previous._renders)
-            ? (previous.HasVisibleBackdrop, previous.HasVisiblePreRenderDraw)
-            : ScanBackdropPresence(renders);
+        bool shareHits = previous is not null && (hits is null || ReferenceEquals(hits, previous._hits));
+        bool shareRenders = previous is not null &&
+            (renders is null || ReferenceEquals(renders, previous._renders));
+        if (!shareHits)
+            ArgumentNullException.ThrowIfNull(hits);
+        if (!shareRenders)
+            ArgumentNullException.ThrowIfNull(renders);
+        _hits = shareHits ? previous!._hits : hits;
+        _renders = shareRenders ? previous!._renders : renders;
+        (_visibleBackdropCount, _visiblePreRenderCount) = shareRenders
+            ? (previous!._visibleBackdropCount, previous._visiblePreRenderCount)
+            : CountBackdropPresence(renders);
         OffscreenSurface = offscreenSurface;
         OffscreenReservationGeneration = offscreenSurface?.ReservationGeneration ?? 0;
         OffscreenQuadPayload = offscreenQuadPayload;
         OffscreenQuadWorldMatrix = offscreenQuadWorldMatrix ?? Matrix4x4.Identity;
         _scrollReceivers = scrollReceivers ?? [];
         _focusScopes = focusScopes ?? [];
-        UIElementIdentity activeScope = identities.Length > 0 ? identities.Span[0] : default;
-        int painterOrder = int.MinValue;
-        for (int index = 0; index < _focusScopes.Length; index++)
-            if (_focusScopes[index].PainterOrder >= painterOrder)
-            {
-                activeScope = _focusScopes[index].Identity;
-                painterOrder = _focusScopes[index].PainterOrder;
-            }
-        ActiveFocusScopeIdentity = activeScope;
-        if (previous is not null && ReferenceEquals(renders, previous._renders))
-            _renderByMembership = previous._renderByMembership;
+        ActiveFocusScopeIdentity = ResolveActiveFocusScope(identities, _focusScopes);
+        if (shareRenders)
+            _renderByMembership = previous!._renderByMembership;
         else
         {
-            _renderByMembership = new Dictionary<long, int>(renders.Length);
+            _renderByMembership = new Dictionary<long, int>(renders!.Length);
             for (int index = 0; index < renders.Length; index++)
                 _renderByMembership.Add(renders[index].MembershipId, index);
         }
         try
         {
-            _hitStore = previous is not null && ReferenceEquals(hits, previous._hits)
-                ? RetainStore(previous._hitStore!)
-                : UIRecordStore<UIHitRecord>.Create(hits);
-            _renderStore = previous is not null && ReferenceEquals(renders, previous._renders)
-                ? RetainStore(previous._renderStore!)
+            _hitStore = shareHits
+                ? RetainStore(previous!._hitStore!)
+                : UIRecordStore<UIHitRecord>.Create(hits!);
+            _renderStore = shareRenders
+                ? RetainStore(previous!._renderStore!)
                 : UIRecordStore<UIRenderRecord>.Create(renders,
                     RetainRenderRecordAction, ReleaseRenderRecordAction);
             _compositionSegments = previous is not null && previous.CanvasLifetime == canvasLifetime
-                ? ReferenceEquals(renders, previous._renders)
+                ? shareRenders
                     ? RetainCompositionSet(previous._compositionSegments)
                     : UICompositionSegmentSet.Build(_renderStore, previous._compositionSegments)
                 : UICompositionSegmentSet.Build(_renderStore, null);
@@ -113,6 +117,100 @@ public sealed class UIPublication
         ClipToWorld = Matrix4x4.Identity;
     }
 
+    /// <summary>
+    /// Creates the next owner-built publication from changed record pages. The caller
+    /// keeps the identities, hit and render record counts, and render membership order
+    /// of <paramref name="previous"/>. The new publication takes both store claims,
+    /// also when construction fails.
+    /// </summary>
+    internal static UIPublication CreatePatched(UIPublication previous, ulong generation,
+        ulong layoutGeneration, ulong hitGeneration, long changeRevision,
+        UILayoutOutputPageView layoutPages, UIRecordStore<UIHitRecord> hitStore,
+        UIRecordStore<UIRenderRecord> renderStore, ReadOnlySpan<int> changedRenderPages,
+        int backdropDelta, int preRenderDelta, UIScrollRecord[] scrollReceivers,
+        UIFocusScopeRecord[] focusScopes, UIRenderSurface? offscreenSurface,
+        UIDrawPayload? offscreenQuadPayload, Matrix4x4 offscreenQuadWorldMatrix)
+        => new(previous, generation, layoutGeneration, hitGeneration, changeRevision,
+            layoutPages, hitStore, renderStore, changedRenderPages, backdropDelta,
+            preRenderDelta, scrollReceivers, focusScopes, offscreenSurface,
+            offscreenQuadPayload, offscreenQuadWorldMatrix);
+
+    private UIPublication(UIPublication previous, ulong generation, ulong layoutGeneration,
+        ulong hitGeneration, long changeRevision, UILayoutOutputPageView layoutPages,
+        UIRecordStore<UIHitRecord> hitStore, UIRecordStore<UIRenderRecord> renderStore,
+        ReadOnlySpan<int> changedRenderPages, int backdropDelta, int preRenderDelta,
+        UIScrollRecord[] scrollReceivers, UIFocusScopeRecord[] focusScopes,
+        UIRenderSurface? offscreenSurface, UIDrawPayload? offscreenQuadPayload,
+        Matrix4x4 offscreenQuadWorldMatrix)
+    {
+        _hitStore = hitStore;
+        _renderStore = renderStore;
+        try
+        {
+            if (hitStore.Length != previous._hitStore!.Length ||
+                renderStore.Length != previous._renderStore!.Length)
+                throw new ArgumentException("A patched publication must keep record counts.");
+            Generation = generation;
+            RenderGeneration = generation;
+            CanvasLifetime = previous.CanvasLifetime;
+            LayoutGeneration = layoutGeneration;
+            HitGeneration = hitGeneration;
+            ChangeRevision = changeRevision;
+            LayoutPages = layoutPages;
+            Identities = previous.Identities;
+            _hits = ReferenceEquals(hitStore, previous._hitStore) ? previous._hits : null;
+            _renders = ReferenceEquals(renderStore, previous._renderStore) ? previous._renders : null;
+            _visibleBackdropCount = previous._visibleBackdropCount + backdropDelta;
+            _visiblePreRenderCount = previous._visiblePreRenderCount + preRenderDelta;
+            if (_visibleBackdropCount < 0 || _visiblePreRenderCount < 0)
+                throw new ArgumentException("A patched publication has invalid backdrop counts.");
+            OffscreenSurface = offscreenSurface;
+            OffscreenReservationGeneration = offscreenSurface?.ReservationGeneration ?? 0;
+            OffscreenQuadPayload = offscreenQuadPayload;
+            OffscreenQuadWorldMatrix = offscreenQuadWorldMatrix;
+            _scrollReceivers = scrollReceivers;
+            _focusScopes = focusScopes;
+            ActiveFocusScopeIdentity = ResolveActiveFocusScope(Identities, focusScopes);
+            // Membership order is unchanged, so the previous index lookup stays exact.
+            _renderByMembership = previous._renderByMembership;
+            _compositionSegments = previous.CanvasLifetime == CanvasLifetime &&
+                previous._compositionSegments.TryWithReplacedRenderPages(renderStore,
+                    changedRenderPages, out UICompositionSegmentSet patched)
+                ? patched
+                : UICompositionSegmentSet.Build(renderStore, previous._compositionSegments);
+            RetainCanvasResources();
+        }
+        catch
+        {
+            RetireDrawPayloads();
+            throw;
+        }
+        CanvasBounds = previous.CanvasBounds;
+        AuthoringCanvasWorldMatrix = previous.AuthoringCanvasWorldMatrix;
+        AuthoringDrawSpace = previous.AuthoringDrawSpace;
+        AuthoringOffscreen = previous.AuthoringOffscreen;
+        CanvasToOutput = Matrix4x4.Identity;
+        OutputToCanvas = Matrix4x4.Identity;
+        DrawSpace = ECanvasDrawSpace.Screen;
+        OutputRegion = previous.CanvasBounds;
+        WorldToCanvas = Matrix4x4.Identity;
+        ClipToWorld = Matrix4x4.Identity;
+    }
+
+    private static UIElementIdentity ResolveActiveFocusScope(
+        ReadOnlyMemory<UIElementIdentity> identities, UIFocusScopeRecord[] focusScopes)
+    {
+        UIElementIdentity activeScope = identities.Length > 0 ? identities.Span[0] : default;
+        int painterOrder = int.MinValue;
+        for (int index = 0; index < focusScopes.Length; index++)
+            if (focusScopes[index].PainterOrder >= painterOrder)
+            {
+                activeScope = focusScopes[index].Identity;
+                painterOrder = focusScopes[index].PainterOrder;
+            }
+        return activeScope;
+    }
+
     public ulong Generation { get; }
     /// <summary>Identifies the immutable render-record set independently of shared hit/layout data.</summary>
     public ulong RenderGeneration { get; }
@@ -132,15 +230,17 @@ public sealed class UIPublication
         => _flatLayout ??= LayoutPages?.ToArray() ?? [];
     public UILayoutOutputPageView? LayoutPages { get; }
     public ReadOnlyMemory<UIElementIdentity> Identities { get; }
-    public ReadOnlySpan<UIHitRecord> Hits => _hits;
+    /// <summary>Gets a flat compatibility copy of the hit records. Prefer the paged readers.</summary>
+    public ReadOnlySpan<UIHitRecord> Hits => _hits ?? MaterializeFlat(ref _hits, _hitStore!);
     public int HitRecordCount => _hitStore!.Length;
     public int HitRecordPageCount => _hitStore!.PageCount;
     public ReadOnlySpan<UIHitRecord> GetHitRecordPage(int pageIndex)
         => _hitStore!.GetPage(pageIndex);
     public UIHitRecord GetHitRecord(int index) => _hitStore![index];
-    public ReadOnlySpan<UIRenderRecord> Renders => _renders;
-    internal bool HasVisibleBackdrop { get; }
-    internal bool HasVisiblePreRenderDraw { get; }
+    /// <summary>Gets a flat compatibility copy of the render records. Prefer the paged readers.</summary>
+    public ReadOnlySpan<UIRenderRecord> Renders => _renders ?? MaterializeFlat(ref _renders, _renderStore!);
+    internal bool HasVisibleBackdrop => _visibleBackdropCount > 0;
+    internal bool HasVisiblePreRenderDraw => _visiblePreRenderCount > 0;
     public ReadOnlySpan<UICompositionSegment> CompositionSegments => _compositionSegments.Segments;
     internal UICompositionSegmentSet CompositionStorage => _compositionSegments;
     internal bool TryGetCompositionSegment(long membershipId, out UICompositionSegment segment)
@@ -148,10 +248,10 @@ public sealed class UIPublication
     public ReadOnlySpan<UIScrollRecord> ScrollReceivers => _scrollReceivers;
     public ReadOnlySpan<UIFocusScopeRecord> FocusScopes => _focusScopes;
     public UIElementIdentity ActiveFocusScopeIdentity { get; }
-    internal UIHitRecord[] HitStorage => _hits;
     internal UIRecordStore<UIHitRecord> HitRecordStore => _hitStore!;
-    internal UIRenderRecord[] RenderStorage => _renders;
     internal UIRecordStore<UIRenderRecord> RenderRecordStore => _renderStore!;
+    internal bool TryGetRenderRecordIndex(long membershipId, out int index)
+        => _renderByMembership.TryGetValue(membershipId, out index);
     internal int RenderRecordCount => _renderStore!.Length;
     internal ReadOnlySpan<UIRenderRecord> GetRenderRecordPage(int pageIndex)
         => _renderStore!.GetPage(pageIndex);
@@ -192,9 +292,10 @@ public sealed class UIPublication
                 _worldCommands = commands.ToArray();
                 return;
             }
-            for (int index = 0; index < _renders.Length; index++)
+            UIRecordStore<UIRenderRecord> renders = _renderStore!;
+            for (int index = 0; index < renders.Length; index++)
             {
-                UIRenderRecord record = _renders[index];
+                ref readonly UIRenderRecord record = ref renders[index];
                 if (!record.Visible)
                     continue;
                 RenderCommandMesh3D template = record.FrozenWorldCommand ??
@@ -274,10 +375,11 @@ public sealed class UIPublication
         LayoutPages = source.LayoutPages;
         Identities = source.Identities;
         _hits = source._hits;
-        _renders = outputRenders ?? source._renders;
-        (HasVisibleBackdrop, HasVisiblePreRenderDraw) = ReferenceEquals(_renders, source._renders)
-            ? (source.HasVisibleBackdrop, source.HasVisiblePreRenderDraw)
-            : ScanBackdropPresence(_renders);
+        bool shareRenders = outputRenders is null || ReferenceEquals(outputRenders, source._renders);
+        _renders = shareRenders ? source._renders : outputRenders;
+        (_visibleBackdropCount, _visiblePreRenderCount) = shareRenders
+            ? (source._visibleBackdropCount, source._visiblePreRenderCount)
+            : CountBackdropPresence(outputRenders);
         OffscreenSurface = source.OffscreenSurface;
         OffscreenReservationGeneration = source.OffscreenReservationGeneration;
         OffscreenQuadPayload = source.OffscreenQuadPayload;
@@ -285,22 +387,22 @@ public sealed class UIPublication
         _scrollReceivers = source._scrollReceivers;
         _focusScopes = source._focusScopes;
         ActiveFocusScopeIdentity = source.ActiveFocusScopeIdentity;
-        if (ReferenceEquals(_renders, source._renders))
+        if (shareRenders)
             _renderByMembership = source._renderByMembership;
         else
         {
-            _renderByMembership = new Dictionary<long, int>(_renders.Length);
-            for (int index = 0; index < _renders.Length; index++)
-                _renderByMembership.Add(_renders[index].MembershipId, index);
+            _renderByMembership = new Dictionary<long, int>(outputRenders!.Length);
+            for (int index = 0; index < outputRenders.Length; index++)
+                _renderByMembership.Add(outputRenders[index].MembershipId, index);
         }
         try
         {
             _hitStore = RetainStore(source._hitStore!);
-            _renderStore = ReferenceEquals(_renders, source._renders)
+            _renderStore = shareRenders
                 ? RetainStore(source._renderStore!)
-                : UIRecordStore<UIRenderRecord>.Create(_renders,
+                : UIRecordStore<UIRenderRecord>.Create(outputRenders,
                     RetainRenderRecordAction, ReleaseRenderRecordAction);
-            _compositionSegments = ReferenceEquals(_renders, source._renders)
+            _compositionSegments = shareRenders
                 ? RetainCompositionSet(source._compositionSegments)
                 : UICompositionSegmentSet.Build(_renderStore, source._compositionSegments);
             RetainCanvasResources();
@@ -324,21 +426,32 @@ public sealed class UIPublication
         FarClipZ = farClipZ;
     }
 
-    private static (bool Backdrop, bool PreRender) ScanBackdropPresence(
+    private static (int Backdrop, int PreRender) CountBackdropPresence(
         ReadOnlySpan<UIRenderRecord> records)
     {
-        bool backdrop = false;
-        bool preRender = false;
+        int backdrop = 0;
+        int preRender = 0;
         foreach (ref readonly UIRenderRecord record in records)
         {
-            if (!record.Visible)
-                continue;
-            backdrop |= record.Backdrop.IsDefined;
-            preRender |= record.RenderPass == (int)EDefaultRenderPass.PreRender;
-            if (backdrop && preRender)
-                break;
+            backdrop += BackdropContribution(record);
+            preRender += PreRenderContribution(record);
         }
         return (backdrop, preRender);
+    }
+
+    private static int BackdropContribution(in UIRenderRecord record)
+        => record.Visible && record.Backdrop.IsDefined ? 1 : 0;
+
+    private static int PreRenderContribution(in UIRenderRecord record)
+        => record.Visible && record.RenderPass == (int)EDefaultRenderPass.PreRender ? 1 : 0;
+
+    private static T[] MaterializeFlat<T>(ref T[]? cache, UIRecordStore<T> store)
+        where T : struct
+    {
+        T[] flat = new T[store.Length];
+        store.CopyTo(flat);
+        UIRuntimeCounters.Add(UIWorkCounter.PublicationFlatCellsMaterialized, flat.Length);
+        return Interlocked.CompareExchange(ref cache, flat, null) ?? flat;
     }
 
     private static UIRecordStore<T> RetainStore<T>(UIRecordStore<T> store) where T : struct

@@ -25,5 +25,15 @@ public enum UIWorkCounter
     PublicationFlatCellsMaterialized,
     PublicationSegmentSlotsMaterialized,
     PublicationSegmentSlotsCopied,
+    /// <summary>Tree nodes visited by publication capture walks.</summary>
+    PublicationCaptureNodesVisited,
+    /// <summary>Captures that rebuilt every record from a full tree walk.</summary>
+    PublicationFullCaptures,
+    /// <summary>Captures that walked only changed subtrees and patched record pages.</summary>
+    PublicationSparseCaptures,
+    /// <summary>Sparse captures that changed record counts and copied clean records into new lists.</summary>
+    PublicationSparseSplices,
+    /// <summary>Sparse attempts that could not capture their changed subtrees and used a full capture.</summary>
+    PublicationSparseFallbacks,
     Count,
 }

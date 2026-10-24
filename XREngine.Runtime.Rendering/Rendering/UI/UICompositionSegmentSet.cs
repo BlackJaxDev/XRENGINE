@@ -174,6 +174,68 @@ internal sealed class UICompositionSegmentSet
             throw new AggregateException("UI composition segment cleanup failed.", failures);
     }
 
+    /// <summary>
+    /// Updates only the segments that intersect changed record pages. Returns false when
+    /// a changed page alters membership or composition ownership; the caller then rebuilds.
+    /// </summary>
+    internal bool TryWithReplacedRenderPages(UIRecordStore<UIRenderRecord> records,
+        ReadOnlySpan<int> changedPages, out UICompositionSegmentSet updated)
+    {
+        updated = null!;
+        ObjectDisposedException.ThrowIf(ResourcesRetired, this);
+        if (_immortal)
+        {
+            // An empty set stays valid only while no changed record names an explicit owner.
+            for (int pageIndex = 0; pageIndex < changedPages.Length; pageIndex++)
+                foreach (ref readonly UIRenderRecord record in records.GetPage(changedPages[pageIndex]))
+                    if (record.CompositionOwner.IsExplicit)
+                        return false;
+            updated = this;
+            return true;
+        }
+        if (records.Length != _byMembership.Count)
+            return false;
+
+        UICompositionSegmentSet? current = this;
+        Retain();
+        try
+        {
+            for (int pageIndex = 0; pageIndex < changedPages.Length; pageIndex++)
+            {
+                int page = changedPages[pageIndex];
+                int pageStart = page * UIRecordStore<UIRenderRecord>.PageSize;
+                int pageEnd = Math.Min(records.Length, pageStart + UIRecordStore<UIRenderRecord>.PageSize);
+                if (pageStart >= pageEnd ||
+                    !_byMembership.TryGetValue(records[pageStart].MembershipId, out int first) ||
+                    !_byMembership.TryGetValue(records[pageEnd - 1].MembershipId, out int last) ||
+                    first > last)
+                    return false;
+                for (int segmentIndex = first; segmentIndex <= last; segmentIndex++)
+                {
+                    UICompositionSegment segment = current.GetSegment(segmentIndex);
+                    // Keep the segment revision when its records in this page are equal.
+                    int overlapStart = Math.Max(segment.Start, pageStart);
+                    int overlapEnd = Math.Min(segment.Start + segment.Count, pageEnd);
+                    bool equal = true;
+                    for (int index = overlapStart; equal && index < overlapEnd; index++)
+                        equal = segment.GetRecord(index - segment.Start).Equals(records[index]);
+                    if (equal)
+                        continue;
+                    if (!current.TryWithReplacedRenderPage(segmentIndex, segment.Start, page,
+                            records, out UICompositionSegmentSet next))
+                        return false;
+                    UICompositionSegmentSet replaced = current;
+                    current = next;
+                    replaced.Release();
+                }
+            }
+            updated = current;
+            current = null;
+            return true;
+        }
+        finally { current?.Release(); }
+    }
+
     internal bool TryWithReplacedRenderPage(int segmentIndex, int segmentStart,
         int recordPageIndex, UIRecordStore<UIRenderRecord> records,
         out UICompositionSegmentSet updated)

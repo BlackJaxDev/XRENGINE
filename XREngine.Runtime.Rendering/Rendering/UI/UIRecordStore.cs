@@ -124,6 +124,87 @@ internal sealed class UIRecordStore<T> where T : struct
         return new UIRecordStore<T>(root, Length, _depth, _retainRecord, _releaseRecord);
     }
 
+    /// <summary>
+    /// Replaces several pages in one copy-on-write update. Page indices must ascend,
+    /// and each page must have the same record count as the page it replaces.
+    /// The new store adopts the page arrays; callers must not change them afterward.
+    /// Unchanged leaves and branches are shared with this store.
+    /// </summary>
+    internal UIRecordStore<T> WithReplacedPages(ReadOnlySpan<int> pageIndices, ReadOnlySpan<T[]> pages)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _claims) == 0, this);
+        if (pageIndices.Length != pages.Length)
+            throw new ArgumentException("Each replaced page index needs one page.", nameof(pages));
+        if (pageIndices.IsEmpty)
+        {
+            Retain();
+            return this;
+        }
+        for (int index = 0; index < pageIndices.Length; index++)
+        {
+            int pageIndex = pageIndices[index];
+            if ((uint)pageIndex >= (uint)PageCount ||
+                index > 0 && pageIndex <= pageIndices[index - 1])
+                throw new ArgumentOutOfRangeException(nameof(pageIndices));
+            if (pages[index] is null ||
+                pages[index].Length != Math.Min(PageSize, Length - pageIndex * PageSize))
+                throw new ArgumentException("A replacement page has the wrong length.", nameof(pages));
+        }
+        UIRecordStoreNode<T> root = ReplaceMany(_root, _depth, pageIndices, pages,
+            _retainRecord, _releaseRecord);
+        return new UIRecordStore<T>(root, Length, _depth, _retainRecord, _releaseRecord);
+    }
+
+    /// <summary>Copies all records in order to caller-owned storage.</summary>
+    internal void CopyTo(Span<T> destination)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _claims) == 0, this);
+        if (destination.Length < Length)
+            throw new ArgumentException("The destination is too short.", nameof(destination));
+        for (int page = 0; page < PageCount; page++)
+            GetPage(page).CopyTo(destination[(page * PageSize)..]);
+    }
+
+    private static UIRecordStoreNode<T> ReplaceMany(UIRecordStoreNode<T> source, int depth,
+        ReadOnlySpan<int> pageIndices, ReadOnlySpan<T[]> pages,
+        Action<T>? retainRecord, Action<T>? releaseRecord)
+    {
+        if (depth == 0)
+            return new UIRecordStoreNode<T>(pages[0], retainRecord, releaseRecord);
+        int divisor = 1;
+        for (int level = 1; level < depth; level++)
+            divisor = checked(divisor * BranchWidth);
+        UIRecordStoreNode<T>?[] children = new UIRecordStoreNode<T>[BranchWidth];
+        try
+        {
+            int next = 0;
+            for (int index = 0; index < BranchWidth; index++)
+            {
+                UIRecordStoreNode<T>? child = source.Children![index];
+                if (child is null)
+                    continue;
+                int end = next;
+                while (end < pageIndices.Length && pageIndices[end] / divisor % BranchWidth == index)
+                    end++;
+                if (end > next)
+                    children[index] = ReplaceMany(child, depth - 1, pageIndices[next..end],
+                        pages[next..end], retainRecord, releaseRecord);
+                else
+                {
+                    child.Retain();
+                    children[index] = child;
+                }
+                next = end;
+            }
+            UIRuntimeCounters.Add(UIWorkCounter.PublicationRecordPathsCopied);
+            return new UIRecordStoreNode<T>(children);
+        }
+        catch (Exception failure)
+        {
+            throw ReleasePartialChildren(children, failure);
+        }
+    }
+
     private static UIRecordStoreNode<T> Replace(UIRecordStoreNode<T> source, int depth, int pageIndex,
         ReadOnlySpan<T> records, Action<T>? retainRecord, Action<T>? releaseRecord)
     {

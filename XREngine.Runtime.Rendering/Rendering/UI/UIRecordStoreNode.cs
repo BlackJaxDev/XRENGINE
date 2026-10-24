@@ -15,8 +15,15 @@ internal sealed class UIRecordStoreNode<T> where T : struct
 
     internal UIRecordStoreNode(ReadOnlySpan<T> values, Action<T>? retainRecord,
         Action<T>? releaseRecord)
+        : this(values.ToArray(), retainRecord, releaseRecord)
     {
-        Values = values.ToArray();
+    }
+
+    /// <summary>Adopts an array that no other owner changes after this call.</summary>
+    internal UIRecordStoreNode(T[] ownedValues, Action<T>? retainRecord,
+        Action<T>? releaseRecord)
+    {
+        Values = ownedValues;
         _releaseRecord = releaseRecord;
         int retained = 0;
         try
