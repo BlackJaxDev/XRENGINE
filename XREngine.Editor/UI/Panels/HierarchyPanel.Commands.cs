@@ -51,7 +51,7 @@ public partial class HierarchyPanel
 
     private void BeginRename(SceneNode? node)
     {
-        if (node is null)
+        if (!CanUseHierarchy || node is null)
             return;
 
         _nodePendingRename = node;
@@ -61,7 +61,7 @@ public partial class HierarchyPanel
 
     private void ApplyRename(UITextInputComponent input)
     {
-        if (_nodePendingRename is null)
+        if (!CanUseHierarchy || _nodePendingRename is null)
             return;
 
         string newName = input.Text?.Trim() ?? string.Empty;
@@ -89,6 +89,8 @@ public partial class HierarchyPanel
 
     private void CancelRename()
     {
+        if (!CanUseHierarchy)
+            return;
         _nodePendingRename = null;
         SaveHierarchyState();
         RefreshVisibleRenameRows();

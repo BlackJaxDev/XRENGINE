@@ -19,6 +19,7 @@ internal readonly record struct NativeScenePointerOwner(
     public bool IsCurrent(EditorFlyingCameraPawnComponent pawn, bool requireContact)
     {
         if (!pawn.IsActiveInHierarchy || !Pane.CanInteract ||
+            !SceneViewPanel.CameraBelongsToWorld(Camera, World as IRuntimeRenderWorld) ||
             !ReferenceEquals(Pane.Panel?.Window, Window) || !Window.IsFocused ||
             !ReferenceEquals(Pane.Panel?.SceneViewport, Viewport) ||
             !ReferenceEquals(pawn.Viewport?.Window, Window) ||

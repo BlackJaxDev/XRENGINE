@@ -32,6 +32,11 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
     public event Action<float>? ScrollOffsetChanged;
 
     protected NativeVirtualTextPanel() => _rows.Activated = OnRowActivated;
+    protected void ReleaseVirtualTextOwnerCallbacks()
+    {
+        _rows.Activated = null;
+        _rows.BeginDrag = null;
+    }
     protected void EnableRowDrag(Func<ulong, UIInteractableComponent, Vector2, bool> beginDrag)
         => _rows.BeginDrag = beginDrag;
 

@@ -12,6 +12,9 @@ internal sealed class UIRenderSurface : IUIDrawProducerLease
     private long _completedGeneration;
     private object? _completedRenderer;
     private long _completedBackendGeneration;
+    internal AbstractRenderer? OwnerRenderer { get; set; }
+    internal long OwnerBackendGeneration { get; set; }
+    internal bool OwnerRetired { get; set; }
 
     internal UIRenderSurface(uint width, uint height, EPixelInternalFormat internalFormat,
         EPixelFormat format, EPixelType type)

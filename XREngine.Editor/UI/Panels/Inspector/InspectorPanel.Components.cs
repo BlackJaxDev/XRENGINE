@@ -67,7 +67,7 @@ public partial class InspectorPanel
         _componentTable.AccessibleRowName = component => component.Name ?? component.GetType().Name;
         _componentTable.Activated += InspectComponent;
         _componentTable.RowPointerMoved += DragComponentPointerMoved;
-        _componentTable.RowPointerLeft += source => _componentDragStarts.Remove(source);
+        _componentTable.RowPointerLeft += ComponentPointerLeft;
         _componentList.VirtualProvider = _componentTable;
 
         (_componentPickerView, _componentPicker) = CreateModeList(propertyPane, "AddComponent");
@@ -102,6 +102,8 @@ public partial class InspectorPanel
 
     private void RefreshComponentViews()
     {
+        if (_destroyingOwner)
+            return;
         if (InspectedObjects is { Length: > 0 } targets && targets.All(target => target is SceneNode))
             _componentTargets = targets.Cast<SceneNode>().ToArray();
         ObserveComponentNodes(_componentTargets);
@@ -311,8 +313,7 @@ public partial class InspectorPanel
 
     private void ReleaseComponentViews()
     {
-        _componentGeneration++;
-        ObserveComponentNodes([]);
+        ReleaseComponentViewOwners();
         if (_componentList is not null)
             _componentList.VirtualProvider = null;
         if (_componentPicker is not null)
@@ -330,4 +331,21 @@ public partial class InspectorPanel
         _componentDragStarts.Clear();
         _componentTypesById.Clear();
     }
+
+    private void ReleaseComponentViewOwners()
+    {
+        _componentGeneration++;
+        ObserveComponentNodes([]);
+        if (_componentTable is not null)
+        {
+            _componentTable.Activated -= InspectComponent;
+            _componentTable.RowPointerMoved -= DragComponentPointerMoved;
+            _componentTable.RowPointerLeft -= ComponentPointerLeft;
+        }
+        if (_componentTypeTable is not null)
+            _componentTypeTable.Activated -= AddComponent;
+    }
+
+    private void ComponentPointerLeft(UIVirtualTableRowComponent source)
+        => _componentDragStarts.Remove(source);
 }

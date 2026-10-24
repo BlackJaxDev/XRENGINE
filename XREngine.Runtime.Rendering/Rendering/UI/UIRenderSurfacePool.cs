@@ -32,6 +32,11 @@ internal sealed class UIRenderSurfacePool : IDisposable
     /// <summary>Returns a writer claim. The caller must Release it after retaining a packet claim.</summary>
     internal bool TryReserve(uint width, uint height, out UIRenderSurface? surface,
         out string? failure)
+        => TryReserve(width, height, null, out surface, out failure);
+
+    /// <summary>Reserves a surface with exact native renderer affinity.</summary>
+    internal bool TryReserve(uint width, uint height, AbstractRenderer? owner,
+        out UIRenderSurface? surface, out string? failure)
     {
         surface = null;
         failure = null;
@@ -48,6 +53,13 @@ internal sealed class UIRenderSurfacePool : IDisposable
         }
         lock (_gate)
         {
+            if (owner is not null && (!ReferenceEquals(AbstractRenderer.Current, owner) ||
+                owner.BackendGeneration == 0))
+            {
+                failure = "UI.RenderSurface.OwnerMismatch: the native surface owner is not current.";
+                return false;
+            }
+            SweepRetiredOwnerSurfaces(owner);
             if (_disposed)
             {
                 failure = "UI.RenderSurface.Disposed: the producer pool has stopped.";
@@ -58,6 +70,7 @@ internal sealed class UIRenderSurfacePool : IDisposable
             {
                 UIRenderSurface candidate = _surfaces[index];
                 if (!ReferenceEquals(candidate, _published) && candidate.IsPoolOnly &&
+                    MatchesOwner(candidate, owner) &&
                     candidate.Width == width && candidate.Height == height)
                 {
                     available = candidate;
@@ -68,7 +81,8 @@ internal sealed class UIRenderSurfacePool : IDisposable
                 for (int index = 0; index < _surfaces.Count; index++)
                 {
                     UIRenderSurface candidate = _surfaces[index];
-                    if (ReferenceEquals(candidate, _published) || !candidate.IsPoolOnly)
+                    if (ReferenceEquals(candidate, _published) || !candidate.IsPoolOnly ||
+                        !MatchesOwner(candidate, owner))
                         continue;
                     ulong oldBytes = checked((ulong)candidate.Width * candidate.Height * _bytesPerPixel);
                     if (_allocatedBytes - oldBytes + requestedBytes > MaximumBytes)
@@ -93,7 +107,15 @@ internal sealed class UIRenderSurfacePool : IDisposable
                 }
                 try
                 {
-                    available = new UIRenderSurface(width, height, _internalFormat, _format, _type);
+                    if (owner is null)
+                        available = new UIRenderSurface(width, height, _internalFormat, _format, _type);
+                    else
+                    {
+                        using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(owner);
+                        available = new UIRenderSurface(width, height, _internalFormat, _format, _type);
+                    }
+                    available.OwnerRenderer = owner;
+                    available.OwnerBackendGeneration = owner?.BackendGeneration ?? 0;
                     _surfaces.Add(available);
                     _allocatedBytes += requestedBytes;
                 }
@@ -107,6 +129,41 @@ internal sealed class UIRenderSurfacePool : IDisposable
             available.Reserve(generation);
             surface = available;
             return true;
+        }
+    }
+
+    private static bool MatchesOwner(UIRenderSurface surface, AbstractRenderer? owner)
+        => !surface.OwnerRetired && ReferenceEquals(surface.OwnerRenderer, owner) &&
+            surface.OwnerBackendGeneration == (owner?.BackendGeneration ?? 0);
+
+    /// <summary>Retires one native owner after known GPU idle without borrowing its slots elsewhere.</summary>
+    internal void RetireOwner(AbstractRenderer owner, long backendGeneration)
+    {
+        lock (_gate)
+        {
+            foreach (UIRenderSurface surface in _surfaces)
+                if (ReferenceEquals(surface.OwnerRenderer, owner) &&
+                    surface.OwnerBackendGeneration == backendGeneration)
+                    surface.OwnerRetired = true;
+            SweepRetiredOwnerSurfaces(owner);
+        }
+    }
+
+    private void SweepRetiredOwnerSurfaces(AbstractRenderer? currentOwner)
+    {
+        for (int index = _surfaces.Count - 1; index >= 0; index--)
+        {
+            UIRenderSurface surface = _surfaces[index];
+            if (!surface.OwnerRetired || !surface.IsPoolOnly ||
+                !ReferenceEquals(surface.OwnerRenderer, currentOwner) ||
+                (!RuntimeEngine.IsRenderThread && RuntimeEngine.RenderThreadId != 0))
+                continue;
+            ulong bytes = checked((ulong)surface.Width * surface.Height * _bytesPerPixel);
+            surface.Release();
+            _surfaces.RemoveAt(index);
+            _allocatedBytes -= bytes;
+            if (ReferenceEquals(surface, _published))
+                _published = null;
         }
     }
 

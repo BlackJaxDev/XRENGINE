@@ -33,6 +33,10 @@ internal sealed class UIBatchMaterialPrototype
         ("UIImageBatched.vs", EShaderType.Vertex),
         ("UIImageBatched.fs", EShaderType.Fragment));
 
+    internal static readonly UIBatchMaterialPrototype Backdrop = new(false,
+        ("UIImageBatched.vs", EShaderType.Vertex),
+        ("UIBackdropBatched.fs", EShaderType.Fragment));
+
     internal static readonly UIBatchMaterialPrototype Text = new(true,
         ("UITextBatched.vs", EShaderType.Vertex),
         ("UITextBatchedStereoMV2.vs", EShaderType.Vertex),

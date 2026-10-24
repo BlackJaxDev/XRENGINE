@@ -7,7 +7,7 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The branch has bounded worker layout, opt-in single-run shaping, shared immutable pages, frozen screen-canvas input, persistent quad/glyph storage, common controls, virtual collections, and native editor panels. Code completion is 40 of the original 60 implementation items; 20 code items and four owner decisions remain. Screen, hidden, inactive, and offscreen UI no longer enters 3D collection; nested canvas and transform transitions have regression coverage. Explicit composition owners preserve unchanged painter spans. A bounded Vulkan solid-chrome cache path is implemented; broader native command reuse remains open. The dock host uses a shared splitter. Hierarchy edits, streaming attachment, and deferred watcher commits carry exact owners. All primary panels can use detached windows; full cross-window workflows remain open. Direct world publication, complete text behavior, remaining teardown, shared backdrop capture, and editor parity remain open. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Platform acceptance is separate. ImGui remains the default editor.
+The branch has bounded worker layout, opt-in single-run shaping, shared immutable pages, frozen screen-canvas input, persistent quad/glyph storage, common controls, virtual collections, and native editor panels. Code completion is 41 of the original 60 implementation items; 19 code items and four original owner decisions remain. Screen, hidden, inactive, and offscreen UI no longer enters 3D collection; nested canvas and transform transitions have regression coverage. Explicit composition owners preserve unchanged painter spans. A bounded Vulkan solid-chrome cache path is implemented; broader native command reuse remains open. The dock host uses a shared splitter. Hierarchy edits, streaming attachment, and deferred watcher commits carry exact owners. All primary panels can use detached windows; full cross-window workflows remain open. Opt-in OpenGL screen-canvas blur shares one bounded prefix capture; unsupported output paths fail explicitly. Direct world publication, complete text behavior, remaining teardown, and editor parity remain open. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md) and [retained execution](../../../architecture/ui/05-Retained-Execution.md) for evidence and limits. Platform acceptance is separate. ImGui remains the default editor.
 
 ## Open Code Items
 
@@ -22,7 +22,6 @@ The branch has bounded worker layout, opt-in single-run shaping, shared immutabl
 - [ ] Define hierarchical clipping in render records, independent of material identity. `UIClipRegion`, `UIBatchCollector`, and render backends. Done when nested regions clip consistently through batched rectangles or a documented scissor fallback on OpenGL and Vulkan.
 - [ ] Preserve reusable backend command buffers for compatible static UI layers. Done when dynamic overlays do not invalidate static chrome.
 - [ ] Cache shaping/layout results by all glyph-placement inputs. Done when unchanged text with matching font/fallback, locale/direction, features, wrap, line policy, and DPI reuses layout.
-- [ ] Make backdrop blur opt-in and share captures by canvas/composition layer when enabled. Done when compatible panels reuse one capture.
 - [ ] Group static chrome, scrolling content, and high-frequency overlays into independently invalidated composition layers. Done when FPS, caret, hover, and selection updates leave static chrome valid.
 
 ### Phase 5: Retained Controls And Virtual Collections
@@ -44,6 +43,8 @@ The branch has bounded worker layout, opt-in single-run shaping, shared immutabl
 - [ ] Switch the default editor to native only after the validation plan passes and owner review accepts the stabilization result. Keep ImGui available as a compatibility/debug option.
 
 ## Decisions Needed
+
+The paragraph analyzer choice remains pending. The separate [native asset recovery proposal](../../design/ui/native-asset-creation-recovery-design.md) also awaits approval; no journal implementation or asset-creation UI is exposed. These choices do not close the remaining text or panel items.
 
 - [ ] Decide when variable-height virtualization is required. Owner: UI owner.
 - [ ] Decide where bindless image handles are allowed in UI batching. Owner: rendering owner.

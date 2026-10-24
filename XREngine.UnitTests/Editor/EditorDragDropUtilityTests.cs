@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using System.Collections;
 using Shouldly;
 using System.Numerics;
 using System.Reflection;
@@ -17,8 +18,11 @@ namespace XREngine.UnitTests.Editor;
 [TestFixture, NonParallelizable]
 public sealed class EditorDragDropUtilityTests
 {
-    [Test]
-    public void RecycledDragSource_LosesItsCapturedIdentityBeforeDrop()
+    [TestCase(false, false)]
+    [TestCase(true, false)]
+    [TestCase(false, true)]
+    public void RecycledDragSource_LosesItsCapturedIdentityBeforeDrop(bool disposeHoveredTarget,
+        bool throwOnCancellation)
     {
         using UITestShaderScope shaders = new();
         UICanvasTransform canvasTransform = new() { Width = 100, Height = 100 };
@@ -65,8 +69,18 @@ public sealed class EditorDragDropUtilityTests
             EditorDragDropUtility.TryGetActivePayload(out _).ShouldBeTrue();
             int drops = 0;
             bool hovered = false;
+            bool cancellationStarted = false;
+            InvalidOperationException cancellationFailure = new("Expected hover cancellation failure.");
             using IDisposable registration = EditorDragDropUtility.RegisterDropTarget(targetTransform,
-                _ => { drops++; return true; }, hoverChanged: value => hovered = value);
+                _ => { drops++; return true; }, hoverChanged: value =>
+                {
+                    hovered = value;
+                    if (!value && cancellationStarted && throwOnCancellation)
+                    {
+                        cancellationStarted = false;
+                        throw cancellationFailure;
+                    }
+                });
             typeof(UICanvasInputComponent).GetProperty(nameof(UICanvasInputComponent.CursorPositionWorld2D))!
                 .SetValue(input, new Vector2(10, 10));
             Type utility = typeof(EditorDragDropUtility);
@@ -75,8 +89,23 @@ public sealed class EditorDragDropUtilityTests
                 .Invoke(null, null).ShouldNotBeNull();
             utility.GetMethod("UpdateHoveredTarget", privateStatic)!.Invoke(null, [session]);
             hovered.ShouldBeTrue();
+            if (disposeHoveredTarget)
+            {
+                registration.Dispose();
+                hovered.ShouldBeFalse();
+                session.GetType().GetProperty("HoveredTarget")!.GetValue(session).ShouldBeNull();
+            }
 
             button.CancelForRecycle();
+            cancellationStarted = true;
+            if (throwOnCancellation)
+                Assert.That(Assert.Throws<InvalidOperationException>(
+                    () => EditorDragDropUtility.CancelDragsForSource(button)), Is.SameAs(cancellationFailure));
+            else
+                EditorDragDropUtility.CancelDragsForSource(button);
+            EditorDragDropUtility.IsDragging.ShouldBeFalse();
+            utility.GetField("_tickSubscribed", privateStatic)!.GetValue(null).ShouldBe(false);
+            hovered.ShouldBeFalse();
             EditorDragDropUtility.IsCurrentDragSource(button, input, canvas, revision, identity)
                 .ShouldBeFalse();
             utility.GetMethod("OnPostUpdateFrame", privateStatic)!.Invoke(null, null);
@@ -92,4 +121,46 @@ public sealed class EditorDragDropUtilityTests
         }
         finally { root.Destroy(true); }
     }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void DropTargetDisposalReleasesRegistryBeforeReentrantOrThrowingNotification(bool throwFromNotification)
+    {
+        using UITestShaderScope shaders = new();
+        SceneNode node = new("Drop target", new UIBoundableTransform());
+        IList targets = (IList)typeof(EditorDragDropUtility).GetField("_dropTargets",
+            BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        int baseline = targets.Count;
+        int notifications = 0;
+        IDisposable? handle = null;
+        InvalidOperationException failure = new("Expected hover observer failure.");
+        try
+        {
+            handle = EditorDragDropUtility.RegisterDropTarget((UIBoundableTransform)node.Transform,
+                _ => true, hoverChanged: hovering =>
+                {
+                    hovering.ShouldBeFalse();
+                    targets.Count.ShouldBe(baseline);
+                    notifications++;
+                    handle!.Dispose();
+                    if (throwFromNotification)
+                        throw failure;
+                });
+            targets.Count.ShouldBe(baseline + 1);
+            if (throwFromNotification)
+                Assert.That(Assert.Throws<InvalidOperationException>(handle.Dispose), Is.SameAs(failure));
+            else
+                Assert.DoesNotThrow(handle.Dispose);
+            targets.Count.ShouldBe(baseline);
+            notifications.ShouldBe(1);
+            Assert.DoesNotThrow(handle.Dispose);
+            notifications.ShouldBe(1);
+        }
+        finally
+        {
+            handle?.Dispose();
+            node.Destroy(true);
+        }
+    }
+
 }

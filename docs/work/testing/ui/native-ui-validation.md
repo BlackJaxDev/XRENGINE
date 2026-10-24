@@ -279,6 +279,17 @@ the code or narrow the supported workload. Do not silently relax the budget.
 
 ## Hardware Matrix
 
+For opt-in backdrop blur, use at least two panels with different strengths in
+one screen canvas. Verify one shared prefix capture, correct viewport origin,
+clamped edges, and unchanged panel order. Check resize, multiple windows,
+context replacement, hidden consumers, and delayed fences. Force a missing or
+duplicate consumer, copy failure, and output-target replacement. Each required
+failure must suppress presentation and input publication. Verify that pending
+or uncertain surfaces stay within the four-slot/128 MiB pool without early
+reuse. Check disabled blur adds no full render-record scan. Unsupported
+backends, world/offscreen canvases, and visible `PreRender` draws must report
+the rejected contract. These native checks remain pending.
+
 | Backend | Required checks | Status | Last evidence |
 |---|---|---|---|
 | OpenGL | Layout, input, batching, clipping, text, composition, and native editor workflow checks. | Planned | none |

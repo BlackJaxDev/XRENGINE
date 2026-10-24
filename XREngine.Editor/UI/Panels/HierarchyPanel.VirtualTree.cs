@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;
@@ -32,18 +33,29 @@ public partial class HierarchyPanel
         public required UITextInputComponent RenameInput;
         public required UIBoundableTransform RenameTransform;
         public IDisposable? DropTarget;
+        public Action<UIInteractableComponent>? Click;
+        public Action<UIInteractableComponent>? ArrowClick;
+        public Action<UIInteractableComponent>? ToggleClick;
+        public Action<UIInteractableComponent>? UnloadClick;
+        public Action<UITextInputComponent>? RenameSubmitted;
+        public Action<UITextInputComponent>? RenameCancelled;
+        public DelMouseMove? DragMove;
+        public Action<UIInteractableComponent>? DragLeave;
+        public bool Released;
         public SceneNode? Node;
         public XRScene? Scene;
         public ulong ItemId;
     }
 
     private UIVirtualTreeProvider? _virtualTree;
+    private IDisposable? _virtualRootDropRegistration;
+    private readonly NativeHierarchySelection _providerSelection = new();
     private readonly Dictionary<Guid, ulong> _hierarchyIds = [];
     private readonly Dictionary<ulong, SceneNode> _hierarchyNodes = [];
     private readonly Dictionary<Guid, ulong> _sceneIds = [];
     private readonly Dictionary<ulong, XRScene> _hierarchyScenes = [];
     private readonly Dictionary<UIBoundableTransform, HierarchyRow> _hierarchyRows = [];
-    private readonly Dictionary<SceneNode, (EventList<TransformBase>.SingleHandler Added, EventList<TransformBase>.SingleHandler Removed)> _sourceListeners = [];
+    private readonly Dictionary<SceneNode, (EventList<TransformBase> Source, EventList<TransformBase>.SingleHandler Added, EventList<TransformBase>.SingleHandler Removed)> _sourceListeners = [];
     private ulong _nextHierarchyId = 4;
     private ulong _sourceFingerprint;
     private long _nextSourcePollTicks;
@@ -55,6 +67,9 @@ public partial class HierarchyPanel
 
     private void CreateVirtualTree(SceneNode parentNode)
     {
+        if (!CanUseHierarchy)
+            return;
+        uint revision = _hierarchyRevision;
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
         menuMat.SetBatchSolidColor(ColorF4.Transparent);
         UIListTransform list = listNode.SetTransform<UIListTransform>();
@@ -66,23 +81,38 @@ public partial class HierarchyPanel
         list.Padding = Vector4.Zero;
         list.ItemAlignment = EListAlignment.TopOrLeft;
         list.ItemSize = ItemHeight;
+        if (!CanUseHierarchy || revision != _hierarchyRevision)
+            return;
         _treeListTransform = list;
 
-        _virtualTree = new UIVirtualTreeProvider(CreateHierarchyRow, BindHierarchyRow, UnbindHierarchyRow);
-        list.VirtualProvider = _virtualTree;
+        UIVirtualTreeProvider provider = new(CreateHierarchyRow, BindHierarchyRow, UnbindHierarchyRow);
+        _virtualTree = provider;
+        Exception? bindingFailure = null;
+        try { list.VirtualProvider = provider; }
+        catch (Exception error) { bindingFailure = error; }
+        if (!CanUseHierarchy || revision != _hierarchyRevision)
+        {
+            if (ReferenceEquals(list.VirtualProvider, provider))
+                AttemptHierarchyRelease(list.DetachVirtualProviderForOwnerTeardown, ref bindingFailure);
+            ThrowHierarchyFailure(bindingFailure);
+            return;
+        }
+        ThrowHierarchyFailure(bindingFailure);
         list.VirtualRowRecycling += OnHierarchyRowRecycling;
 
-        EditorDragDropUtility.RegisterDropTarget(list,
+        _virtualRootDropRegistration = EditorDragDropUtility.RegisterDropTarget(list,
             HandleVirtualRootDrop,
-            payload => EditorDragDropUtility.IsSceneNodePayload(payload) || EditorDragDropUtility.TryGetAssetOrFilePath(payload, out _),
+            payload => CanUseHierarchy && (EditorDragDropUtility.IsSceneNodePayload(payload) || EditorDragDropUtility.TryGetAssetOrFilePath(payload, out _)),
             hovering => menuMat.SetBatchSolidColor(hovering ? RootDropHighlight : Vector4.Zero));
 
         CreateVirtualScrollbar(parentNode);
-        RebuildVirtualTree();
+        if (CanUseHierarchy && revision == _hierarchyRevision)
+            RebuildVirtualTree();
     }
 
     private void CreateVirtualScrollbar(SceneNode parentNode)
     {
+        uint revision = _hierarchyRevision;
         var trackNode = parentNode.NewChild<UIMaterialComponent>(out var trackMaterial);
         UIBoundableTransform track = trackNode.SetTransform<UIBoundableTransform>();
         track.MinAnchor = new Vector2(1, 0);
@@ -90,6 +120,8 @@ public partial class HierarchyPanel
         track.Width = ScrollbarWidth;
         track.Margins = new Vector4(0, ScrollbarPadding, ScrollbarPadding, ScrollbarPadding);
         trackMaterial.SetBatchSolidColor(new Vector4(0, 0, 0, 0.15f));
+        if (!CanUseHierarchy || revision != _hierarchyRevision)
+            return;
         _scrollbarTrackTransform = track;
 
         var thumbNode = trackNode.NewChild<UIMaterialComponent>(out var thumbMaterial);
@@ -100,12 +132,13 @@ public partial class HierarchyPanel
         thumb.NormalizedPivot = new Vector2(0, 1);
         thumb.BlocksInputBehind = true;
         thumbMaterial.SetBatchSolidColor(new Vector4(1, 1, 1, 0.35f));
-        _scrollbarThumbTransform = thumb;
+        if (CanUseHierarchy && revision == _hierarchyRevision)
+            _scrollbarThumbTransform = thumb;
     }
 
     private void RebuildVirtualTree()
     {
-        if (_virtualTree is null)
+        if (!CanUseHierarchy || _virtualTree is null)
             return;
         UnsubscribeAllSourceNodes();
         _hierarchyNodes.Clear();
@@ -142,13 +175,21 @@ public partial class HierarchyPanel
                 if (root is not null)
                     AppendSourceNode(root, 0);
         _virtualTree.EndBulkLoad();
+        SynchronizeVirtualSelection(reset: true);
         _sourceFingerprint = CaptureSourceFingerprint();
         NotifyVirtualTreeChanged();
     }
 
+    private void SynchronizeVirtualSelection(bool reset = false)
+    {
+        if (_virtualTree is not null)
+            _providerSelection.Synchronize(_virtualTree, _hierarchyIds, _hierarchyNodes,
+                Selection.SceneNodes, reset);
+    }
+
     private void PollVirtualTreeSources()
     {
-        if (_virtualTree is null)
+        if (!CanUseHierarchy || _virtualTree is null)
             return;
         long now = Engine.ElapsedTicks;
         if (now < _nextSourcePollTicks)
@@ -229,21 +270,22 @@ public partial class HierarchyPanel
 
     private void SubscribeSourceNode(SceneNode node)
     {
-        if (_sourceListeners.ContainsKey(node))
+        if (!CanUseHierarchy || _sourceListeners.ContainsKey(node))
             return;
         EventList<TransformBase>.SingleHandler added = child => OnSourceChildAdded(node, child);
         EventList<TransformBase>.SingleHandler removed = child => OnSourceChildRemoved(child);
-        node.Transform.Children.PostAnythingAdded += added;
-        node.Transform.Children.PostAnythingRemoved += removed;
-        _sourceListeners.Add(node, (added, removed));
+        EventList<TransformBase> source = node.Transform.Children;
+        source.PostAnythingAdded += added;
+        source.PostAnythingRemoved += removed;
+        _sourceListeners.Add(node, (source, added, removed));
     }
 
     private void UnsubscribeSourceNode(SceneNode node)
     {
         if (!_sourceListeners.Remove(node, out var callbacks))
             return;
-        node.Transform.Children.PostAnythingAdded -= callbacks.Added;
-        node.Transform.Children.PostAnythingRemoved -= callbacks.Removed;
+        callbacks.Source.PostAnythingAdded -= callbacks.Added;
+        callbacks.Source.PostAnythingRemoved -= callbacks.Removed;
         foreach (SceneNode child in GetSceneNodeChildren(node))
             UnsubscribeSourceNode(child);
     }
@@ -252,15 +294,15 @@ public partial class HierarchyPanel
     {
         foreach (var pair in _sourceListeners)
         {
-            pair.Key.Transform.Children.PostAnythingAdded -= pair.Value.Added;
-            pair.Key.Transform.Children.PostAnythingRemoved -= pair.Value.Removed;
+            pair.Value.Source.PostAnythingAdded -= pair.Value.Added;
+            pair.Value.Source.PostAnythingRemoved -= pair.Value.Removed;
         }
         _sourceListeners.Clear();
     }
 
     private void OnSourceChildAdded(SceneNode parent, TransformBase transform)
     {
-        if (_virtualTree is null || transform.SceneNode is not { } node || ReferenceEquals(node, parent))
+        if (!CanUseHierarchy || _virtualTree is null || transform.SceneNode is not { } node || ReferenceEquals(node, parent))
             return;
         if (!_hierarchyIds.TryGetValue(parent.ID, out ulong parentId))
             return;
@@ -286,7 +328,7 @@ public partial class HierarchyPanel
 
     private void OnSourceChildRemoved(TransformBase transform)
     {
-        if (_virtualTree is null || transform.SceneNode is not { } node ||
+        if (!CanUseHierarchy || _virtualTree is null || transform.SceneNode is not { } node ||
             !_hierarchyIds.TryGetValue(node.ID, out ulong id))
             return;
         UnsubscribeSourceNode(node);
@@ -359,9 +401,14 @@ public partial class HierarchyPanel
         if (_virtualTree is null || !_hierarchyIds.TryGetValue(node.ID, out ulong id))
             return;
         _virtualTree.Rename(id, name);
+        uint revision = _hierarchyRevision;
         foreach (HierarchyRow row in _hierarchyRows.Values)
+        {
             if (ReferenceEquals(row.Node, node))
                 row.Label.Text = name;
+            if (!CanUseHierarchy || revision != _hierarchyRevision)
+                return;
+        }
     }
 
     private void ShowVirtualRename(SceneNode node)
@@ -387,13 +434,19 @@ public partial class HierarchyPanel
     {
         if (_virtualTree is null)
             return;
+        uint revision = _hierarchyRevision;
         foreach (HierarchyRow row in _hierarchyRows.Values)
+        {
             if (row.ItemId != 0 && _virtualTree.TryGetNode(row.ItemId, out UIVirtualTreeNode? item) && item is not null)
                 BindHierarchyRow(row.Transform, item, 0, 0);
+            if (!CanUseHierarchy || revision != _hierarchyRevision)
+                return;
+        }
     }
 
     private UIBoundableTransform CreateHierarchyRow()
     {
+        uint revision = _hierarchyRevision;
         SceneNode rowNode = new("HierarchyRow");
         UIBoundableTransform rowTransform = rowNode.SetTransform<UIBoundableTransform>();
         rowTransform.MaxAnchor = Vector2.One;
@@ -469,10 +522,18 @@ public partial class HierarchyPanel
             Unload = unload, UnloadTransform = unloadTransform,
             RenameInput = renameInput, RenameTransform = renameTransform
         };
-        _hierarchyRows.Add(rowTransform, state);
         EditorUI.Styles.UpdateButton(button);
-        button.InteractAction += _ =>
+        if (!CanUseHierarchy || revision != _hierarchyRevision)
         {
+            state.Released = true;
+            rowTransform.Visibility = EVisibility.Hidden;
+            return rowTransform;
+        }
+        _hierarchyRows.Add(rowTransform, state);
+        state.Click = _ =>
+        {
+            if (!IsHierarchyRowCurrent(state))
+                return;
             if (state.ItemId == EditorSceneToggleRowId)
             {
                 _showEditorScene = !_showEditorScene;
@@ -484,22 +545,32 @@ public partial class HierarchyPanel
             else if (state.Node is not null)
                 HandleNodeButtonInteraction(button);
         };
-        arrow.InteractAction += _ =>
+        state.ArrowClick = _ =>
         {
+            if (!IsHierarchyRowCurrent(state))
+                return;
             if (state.Scene is not null)
                 ToggleVirtualSceneSection(state.Scene);
             else if (state.Node is not null)
                 ToggleCollapse(state.Node);
         };
-        toggle.InteractAction += _ => ToggleVirtualNodeActive(state);
-        unload.InteractAction += _ => UnloadVirtualScene(state);
-        renameInput.Submitted += ApplyRename;
-        renameInput.Cancelled += _ => CancelRename();
+        state.ToggleClick = _ => { if (IsHierarchyRowCurrent(state)) ToggleVirtualNodeActive(state); };
+        state.UnloadClick = _ => { if (IsHierarchyRowCurrent(state)) UnloadVirtualScene(state); };
+        state.RenameSubmitted = input => { if (IsHierarchyRowCurrent(state)) ApplyRename(input); };
+        state.RenameCancelled = _ => { if (IsHierarchyRowCurrent(state)) CancelRename(); };
+        button.InteractAction += state.Click;
+        arrow.InteractAction += state.ArrowClick;
+        toggle.InteractAction += state.ToggleClick;
+        unload.InteractAction += state.UnloadClick;
+        renameInput.Submitted += state.RenameSubmitted;
+        renameInput.Cancelled += state.RenameCancelled;
         RegisterVirtualDragHandlers(state);
+        if (!IsHierarchyRowCurrent(state))
+            return rowTransform;
         state.DropTarget = EditorDragDropUtility.RegisterDropTarget(
             rowTransform,
-            payload => state.Node is not null && HandleVirtualNodeDrop(state.Node, payload),
-            payload => state.Node is not null &&
+            payload => IsHierarchyRowCurrent(state) && state.Node is not null && HandleVirtualNodeDrop(state.Node, payload),
+            payload => IsHierarchyRowCurrent(state) && state.Node is not null &&
                 (CanAcceptNodeDrop(state.Node, payload) || EditorDragDropUtility.TryGetAssetOrFilePath(payload, out _)),
             hovering => background.SetBatchSolidColor(hovering ? DropTargetHighlight : Vector4.Zero));
         return rowTransform;
@@ -507,53 +578,63 @@ public partial class HierarchyPanel
 
     private void BindHierarchyRow(UIBoundableTransform row, UIVirtualTreeNode item, int index, ulong incarnation)
     {
-        HierarchyRow state = _hierarchyRows[row];
+        if (!_hierarchyRows.TryGetValue(row, out HierarchyRow? state) || !IsHierarchyRowCurrent(state))
+            return;
         state.ItemId = item.Id;
         state.Node = _hierarchyNodes.GetValueOrDefault(item.Id);
         state.Scene = _hierarchyScenes.GetValueOrDefault(item.Id);
-        state.Button.UserData = state.Node;
-        bool isNode = state.Node is not null;
+        SceneNode? node = state.Node;
+        XRScene? scene = state.Scene;
+        state.Button.UserData = node;
+        if (!IsHierarchyRowCurrent(state))
+            return;
+        bool isNode = node is not null;
         state.Label.Text = item.Id == EditorSceneToggleRowId
             ? (_showEditorScene ? "Show Editor Scene: On" : "Show Editor Scene: Off") : item.Name;
         state.Label.Color = isNode ? ColorF4.White : EditorUI.Styles.SectionHeaderTextColor;
         state.LabelTransform.Translation = isNode
-            ? new Vector2(state.Node!.Transform.Depth * DepthIncrement + ArrowWidth, 0)
+            ? new Vector2(node!.Transform.Depth * DepthIncrement + ArrowWidth, 0)
             : Vector2.Zero;
-        bool hasChildren = state.Scene is not null || isNode && HasSceneNodeChildren(state.Node!);
+        bool hasChildren = scene is not null || isNode && HasSceneNodeChildren(node!);
         state.ArrowTransform.Visibility = hasChildren ? EVisibility.Visible : EVisibility.Hidden;
         state.ArrowTransform.Translation = isNode
-            ? new Vector2(state.Node!.Transform.Depth * DepthIncrement, 0) : Vector2.Zero;
-        state.ArrowGlyph.Text = state.Scene is not null
-            ? (_collapsedSections.Contains(state.Scene.ID) ? "\u25B6" : "\u25BC")
-            : isNode && IsCollapsed(state.Node!) ? "\u25B6" : "\u25BC";
-        state.ToggleTransform.Visibility = isNode || state.Scene is not null ? EVisibility.Visible : EVisibility.Hidden;
-        state.UnloadTransform.Visibility = state.Scene is not null ? EVisibility.Visible : EVisibility.Hidden;
+            ? new Vector2(node!.Transform.Depth * DepthIncrement, 0) : Vector2.Zero;
+        state.ArrowGlyph.Text = scene is not null
+            ? (_collapsedSections.Contains(scene.ID) ? "\u25B6" : "\u25BC")
+            : isNode && IsCollapsed(node!) ? "\u25B6" : "\u25BC";
+        state.ToggleTransform.Visibility = isNode || scene is not null ? EVisibility.Visible : EVisibility.Hidden;
+        state.UnloadTransform.Visibility = scene is not null ? EVisibility.Visible : EVisibility.Hidden;
         if (isNode)
         {
-            state.ToggleGlyph.Text = state.Node!.IsActiveSelf ? "\u2713" : string.Empty;
-            state.ToggleGlyph.Color = state.Node.IsActiveSelf ? ColorF4.White : EditorUI.Styles.DisabledTextColor;
+            state.ToggleGlyph.Text = node!.IsActiveSelf ? "\u2713" : string.Empty;
+            state.ToggleGlyph.Color = node.IsActiveSelf ? ColorF4.White : EditorUI.Styles.DisabledTextColor;
         }
-        else if (state.Scene is not null)
+        else if (scene is not null)
         {
-            state.ToggleGlyph.Text = state.Scene.IsVisible ? "\u2713" : string.Empty;
-            state.ToggleGlyph.Color = state.Scene.IsVisible ? ColorF4.White : EditorUI.Styles.DisabledTextColor;
+            state.ToggleGlyph.Text = scene.IsVisible ? "\u2713" : string.Empty;
+            state.ToggleGlyph.Color = scene.IsVisible ? ColorF4.White : EditorUI.Styles.DisabledTextColor;
         }
-        bool renaming = isNode && ReferenceEquals(_nodePendingRename, state.Node);
+        if (!IsHierarchyRowCurrent(state))
+            return;
+        bool renaming = isNode && ReferenceEquals(_nodePendingRename, node);
         state.LabelTransform.Visibility = renaming ? EVisibility.Hidden : EVisibility.Visible;
         state.RenameTransform.Visibility = renaming ? EVisibility.Visible : EVisibility.Hidden;
         if (renaming)
         {
-            state.RenameInput.Text = state.Node!.Name ?? string.Empty;
-            if (GetCanvasInput() is { } input)
+            state.RenameInput.Text = node!.Name ?? string.Empty;
+            if (IsHierarchyRowCurrent(state) && GetCanvasInput() is { } input)
                 input.FocusedComponent = state.RenameInput;
         }
-        state.Button.DefaultBackgroundColor = isNode && Selection.SceneNodes.Contains(state.Node!)
+        if (!IsHierarchyRowCurrent(state))
+            return;
+        state.Button.DefaultBackgroundColor = isNode && _virtualTree?.IsSelected(item.Id) == true
             ? SelectedNodeColor : EditorUI.Styles.ButtonBackgroundColor;
     }
 
     private void UnbindHierarchyRow(UIBoundableTransform row, ulong itemId, ulong incarnation)
     {
-        HierarchyRow state = _hierarchyRows[row];
+        if (!_hierarchyRows.TryGetValue(row, out HierarchyRow? state))
+            return;
         _pendingDragStarts.Remove(state.Button);
         state.Node = null;
         state.Scene = null;
@@ -563,7 +644,8 @@ public partial class HierarchyPanel
 
     private void OnHierarchyRowRecycling(UIBoundableTransform row, UIVirtualRowLease lease)
     {
-        HierarchyRow state = _hierarchyRows[row];
+        if (!_hierarchyRows.TryGetValue(row, out HierarchyRow? state))
+            return;
         _pendingDragStarts.Remove(state.Button);
         if (GetCanvasInput() is { FocusedComponent: { } focused } input &&
             focused.SceneNode is { } focusedNode && row.SceneNode is { } rowNode &&
@@ -612,6 +694,8 @@ public partial class HierarchyPanel
 
     private void ToggleVirtualSceneSection(XRScene scene)
     {
+        if (!CanUseHierarchy)
+            return;
         if (!_collapsedSections.Remove(scene.ID))
             _collapsedSections.Add(scene.ID);
         if (_virtualTree is not null && _sceneIds.TryGetValue(scene.ID, out ulong id))
@@ -641,8 +725,12 @@ public partial class HierarchyPanel
     private void RegisterVirtualDragHandlers(HierarchyRow state)
     {
         state.Button.NeedsMouseMove = true;
-        state.Button.MouseMove += (x, y, component) =>
+        if (!IsHierarchyRowCurrent(state))
+            return;
+        state.DragMove = (x, y, component) =>
         {
+            if (!IsHierarchyRowCurrent(state))
+                return;
             SceneNode? node = state.Node;
             if (node is null || !EditorDragDropUtility.IsLeftMouseButtonHeldFor(component))
             {
@@ -660,20 +748,91 @@ public partial class HierarchyPanel
             if (EditorDragDropUtility.BeginDrag(component, EditorDragDropUtility.CreateSceneNodePayload(node), point))
                 _pendingDragStarts[component] = point;
         };
-        state.Button.MouseDirectOverlapLeave += component => _pendingDragStarts.Remove(component);
+        state.DragLeave = component => _pendingDragStarts.Remove(component);
+        state.Button.MouseMove += state.DragMove;
+        state.Button.MouseDirectOverlapLeave += state.DragLeave;
     }
 
-    private void ReleaseVirtualTree()
+    private bool IsHierarchyRowCurrent(HierarchyRow state)
+        => CanUseHierarchy && !state.Released &&
+            _hierarchyRows.TryGetValue(state.Transform, out HierarchyRow? current) && ReferenceEquals(current, state);
+
+    private void ReleaseVirtualTree(IUICanvasInputSource? input)
     {
-        UnsubscribeAllSourceNodes();
-        if (_treeListTransform is not null)
-        {
-            _treeListTransform.VirtualRowRecycling -= OnHierarchyRowRecycling;
-            _treeListTransform.VirtualProvider = null;
-        }
-        foreach (HierarchyRow state in _hierarchyRows.Values)
-            state.DropTarget?.Dispose();
-        _hierarchyRows.Clear();
+        UIListTransform? list = _treeListTransform;
+        UIVirtualTreeProvider? provider = _virtualTree;
+        IDisposable? rootDrop = _virtualRootDropRegistration;
+        // This snapshot is limited to owner teardown. Callbacks can create a new owner.
+        HierarchyRow[] rows = _hierarchyRows.Values.ToArray();
+        _treeListTransform = null;
         _virtualTree = null;
+        _virtualRootDropRegistration = null;
+        _hierarchyRows.Clear();
+        _hierarchyNodes.Clear();
+        _hierarchyScenes.Clear();
+        _hierarchyIds.Clear();
+        _sceneIds.Clear();
+        _providerSelection.Clear();
+        _scrollbarTrackTransform = null;
+        _scrollbarThumbTransform = null;
+        _renderedNodeCount = 0;
+
+        Exception? failure = null;
+        AttemptHierarchyRelease(UnsubscribeAllSourceNodes, ref failure);
+        foreach (HierarchyRow row in rows)
+            DetachHierarchyRowCallbacks(row);
+        if (list is not null)
+        {
+            list.VirtualRowRecycling -= OnHierarchyRowRecycling;
+            if (ReferenceEquals(list.VirtualProvider, provider))
+                AttemptHierarchyRelease(list.DetachVirtualProviderForOwnerTeardown, ref failure);
+        }
+        foreach (HierarchyRow row in rows)
+            AttemptHierarchyRelease(() => EditorDragDropUtility.CancelDragsForSource(row.Button), ref failure);
+        foreach (HierarchyRow row in rows)
+        {
+            IDisposable? rowDrop = row.DropTarget;
+            row.DropTarget = null;
+            if (rowDrop is not null)
+                AttemptHierarchyRelease(rowDrop.Dispose, ref failure);
+            // A replacement provider may have bound the same row during a callback.
+            if (list?.TryGetVirtualRowLease(row.Transform, out _) != true)
+            {
+                AttemptHierarchyRelease(() => row.Button.UserData = null, ref failure);
+                if (list?.TryGetVirtualRowLease(row.Transform, out _) != true)
+                    AttemptHierarchyRelease(() => row.Transform.Visibility = EVisibility.Hidden, ref failure);
+                if (input is not null && list?.TryGetVirtualRowLease(row.Transform, out _) != true)
+                    AttemptHierarchyRelease(() => ClearHierarchyRowFocus(input, row), ref failure);
+            }
+        }
+        if (rootDrop is not null)
+            AttemptHierarchyRelease(rootDrop.Dispose, ref failure);
+        ThrowHierarchyFailure(failure);
+    }
+
+    private static void DetachHierarchyRowCallbacks(HierarchyRow state)
+    {
+        state.Released = true;
+        state.Button.InteractAction -= state.Click;
+        state.Arrow.InteractAction -= state.ArrowClick;
+        state.Toggle.InteractAction -= state.ToggleClick;
+        state.Unload.InteractAction -= state.UnloadClick;
+        state.RenameInput.Submitted -= state.RenameSubmitted;
+        state.RenameInput.Cancelled -= state.RenameCancelled;
+        state.Button.MouseMove -= state.DragMove;
+        state.Button.MouseDirectOverlapLeave -= state.DragLeave;
+        state.Click = state.ArrowClick = state.ToggleClick = state.UnloadClick = state.DragLeave = null;
+        state.RenameSubmitted = state.RenameCancelled = null;
+        state.DragMove = null;
+        state.Node = null;
+        state.Scene = null;
+        state.ItemId = 0;
+    }
+
+    private static void ClearHierarchyRowFocus(IUICanvasInputSource input, HierarchyRow row)
+    {
+        if (input.FocusedComponent is { SceneNode: { } focused } &&
+            (ReferenceEquals(focused, row.Transform.SceneNode) || IsDescendantOf(focused, row.Transform.SceneNode!)))
+            input.FocusedComponent = null;
     }
 }

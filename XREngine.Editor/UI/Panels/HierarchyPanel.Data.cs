@@ -120,7 +120,7 @@ public partial class HierarchyPanel
     }
 
     private bool IsCurrentHierarchyWorld(RuntimeWorld world)
-        => !IsDestroyed && !IsDestroyQueued && IsActiveInHierarchy &&
+        => CanUseHierarchy && IsActiveInHierarchy &&
             ReferenceEquals(TryGetActiveWorld(), world);
 
     private static bool IsLiveHierarchyNode(SceneNode? node, RuntimeWorld world)

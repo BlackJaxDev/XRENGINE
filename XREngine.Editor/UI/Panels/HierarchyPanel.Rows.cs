@@ -28,9 +28,11 @@ public partial class HierarchyPanel
 
     private void HandleNodeButtonInteraction(UIInteractableComponent obj)
     {
+        if (!CanUseHierarchy)
+            return;
         _contextMenu?.Hide();
 
-        if (obj.UserData is not SceneNode node)
+        if (!CanUseHierarchy || obj.UserData is not SceneNode node)
             return;
 
         var input = GetCanvasInput();
@@ -66,7 +68,7 @@ public partial class HierarchyPanel
             Selection.SceneNodes = [node];
         }
 
-        if (!FocusCameraOnDoubleClick)
+        if (!CanUseHierarchy || !FocusCameraOnDoubleClick)
             return;
 
         long nowTicks = Engine.ElapsedTicks;
@@ -94,16 +96,22 @@ public partial class HierarchyPanel
 
     private void UpdateNodeHighlights()
     {
-        if (_treeListTransform is null)
+        if (!CanUseHierarchy || _treeListTransform is null)
             return;
 
         var selected = Selection.SceneNodes;
         if (_virtualTree is not null)
         {
+            SynchronizeVirtualSelection();
+            uint revision = _hierarchyRevision;
             foreach (HierarchyRow row in _hierarchyRows.Values)
+            {
                 if (row.Node is not null)
-                    row.Button.DefaultBackgroundColor = selected.Contains(row.Node)
+                    row.Button.DefaultBackgroundColor = _virtualTree.IsSelected(row.ItemId)
                         ? SelectedNodeColor : EditorUI.Styles.ButtonBackgroundColor;
+                if (!CanUseHierarchy || revision != _hierarchyRevision)
+                    return;
+            }
             return;
         }
         foreach (var child in _treeListTransform.SceneNode!.Transform.Children)
@@ -121,7 +129,7 @@ public partial class HierarchyPanel
 
     private bool TryFocusCameraOnNode(SceneNode? node)
     {
-        if (node is null)
+        if (!CanUseHierarchy || node is null)
             return false;
 
         if (Engine.State.MainPlayer?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)

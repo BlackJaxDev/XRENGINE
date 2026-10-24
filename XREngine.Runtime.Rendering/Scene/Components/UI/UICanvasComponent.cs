@@ -470,18 +470,28 @@ namespace XREngine.Components
             if (!IsActive || GetCanvasTransformOrNull() is null || AcquireCurrentPublication() is not { } publication)
                 return;
 
+            bool requiresBackdrop = publication.HasVisibleBackdrop;
+            XRWindow? backdropWindow = (viewport as XRViewport)?.Window;
+            bool backdropSucceeded = false;
+
             try
             {
 
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
             XRViewport? concreteViewport = viewport as XRViewport;
+            if (requiresBackdrop && (outputFBO is not null || backdropWindow is null ||
+                AbstractRenderer.Current?.BackendId != RendererBackendId.OpenGL))
+                throw new NotSupportedException(
+                    "UI.BackdropBlur.OutputUnsupported: the opt-in blur requires a screen canvas on a desktop OpenGL window backbuffer.");
 
             // The camera projection is part of the admitted draw packet. A newer
             // owner layout must not change the projection of the retained packet.
             EnsureScreenCanvasSize(concreteViewport, publication);
             if (!BatchCollector.CanRenderPublishedBatches())
             {
+                if (requiresBackdrop)
+                    backdropWindow!.FailOpenGlBackdropAttempt();
                 if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
                     throw new RenderResourcePreparationPendingException(
                         "UI.Canvas.BatchCapacityPending: no isolated GPU cohort is ready for this canvas.");
@@ -506,6 +516,8 @@ namespace XREngine.Components
                         publication, BatchCollector.ExpectedPublishedDrawIntentCount,
                         requiresSwapchainPresentation: true, out receiptId))
                 {
+                    if (requiresBackdrop)
+                        backdropWindow!.FailOpenGlBackdropAttempt();
                     t_renderingCanvas = previousRenderingCanvas;
                     BatchCollector.BindRenderingPublication(null);
                     return;
@@ -518,11 +530,17 @@ namespace XREngine.Components
                 throw;
             }
             bool collectorStarted = false;
+            bool backdropRegistered = false;
             bool authored = false;
             bool receiptComplete = false;
             XRGpuFence? completionFence = null;
             try
             {
+                if (requiresBackdrop)
+                {
+                    backdropWindow!.RequireOpenGlBackdrop(receiptId);
+                    backdropRegistered = true;
+                }
                 BatchCollector.BeginPublicationReceipt(receiptId);
                 collectorStarted = true;
                 if (BatchCollector.HasPendingPublishedTextLayout)
@@ -546,7 +564,11 @@ namespace XREngine.Components
                         renderer.CancelUiPublicationReceiptBeforeAuthoring(receiptId);
                     else
                     {
-                        try { receiptComplete = renderer.CompleteUiPublicationReceipt(receiptId, authored, out completionFence); }
+                        try
+                        {
+                            BatchCollector.CompleteBackdropAuthoring();
+                            receiptComplete = renderer.CompleteUiPublicationReceipt(receiptId, authored, out completionFence);
+                        }
                         finally
                         {
                             BatchCollector.SealPublicationReceipt(receiptId, completionFence, receiptComplete);
@@ -555,6 +577,10 @@ namespace XREngine.Components
                 }
                 finally
                 {
+                    if (backdropRegistered)
+                        backdropWindow!.CompleteOpenGlBackdrop(receiptId, receiptComplete);
+                    else if (requiresBackdrop)
+                        backdropWindow!.FailOpenGlBackdropAttempt();
                     t_renderingCanvas = previousRenderingCanvas;
                     BatchCollector.BindRenderingPublication(null);
                 }
@@ -564,8 +590,14 @@ namespace XREngine.Components
                     "UI.Canvas.PublicationReceiptIncomplete: the published canvas did not author every required draw.");
             if (viewport is not null && authored && receiptComplete)
                 RecordRenderedPublication(viewport, publication, receiptId);
+            backdropSucceeded = !requiresBackdrop || receiptComplete;
             }
-            finally { publication.Release(); }
+            finally
+            {
+                if (requiresBackdrop && !backdropSucceeded)
+                    backdropWindow?.FailOpenGlBackdropAttempt();
+                publication.Release();
+            }
         }
 
         private int _screenSwapDiagCount = 0;

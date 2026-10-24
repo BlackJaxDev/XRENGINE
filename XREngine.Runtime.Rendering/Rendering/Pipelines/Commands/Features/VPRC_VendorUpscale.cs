@@ -6,6 +6,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.UI;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -40,6 +41,92 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private XRMaterial? _fallbackMaterial;
         private XRQuadFrameBuffer? _fallbackQuad;
+        private long _canonicalFallbackGeometryRevision = -1;
+        private long _canonicalFallbackVertexShaderRevision = -1;
+        private long _canonicalFallbackFragmentShaderRevision = -1;
+        private readonly FallbackOutputCandidatePublisher _fallbackOutputCandidatePublisher = new();
+
+        private sealed class FallbackOutputCandidatePublisher : IDeferredRenderBindingPublisher,
+            IWindowOutputOverwriteCandidateProvider
+        {
+            private const int Capacity = 1024;
+            private readonly object _gate = new();
+            private readonly UIBackdropOutputOverwriteCandidate?[] _deferred = new UIBackdropOutputOverwriteCandidate?[Capacity];
+            private readonly ulong[] _tokens = new ulong[Capacity];
+            private UIBackdropOutputOverwriteCandidate? _candidate;
+            private UIBackdropOutputOverwriteCandidate? _active;
+            private ulong _nextToken;
+            private ulong _activeToken;
+            private ulong _generation = 1;
+            internal UIBackdropOutputOverwriteCandidate? Candidate
+            {
+                get { lock (_gate) return _candidate; }
+                set
+                {
+                    lock (_gate)
+                    {
+                        _candidate = value;
+                        _generation++;
+                        if (_generation == 0UL)
+                            _generation = 1UL;
+                    }
+                }
+            }
+
+            public ERenderBindingFrequency Frequency => ERenderBindingFrequency.Pass;
+            public ulong Generation { get { lock (_gate) return _generation; } }
+            public void PublishUniforms(XRRenderProgram vertexProgram,
+                XRRenderProgram materialProgram) { }
+
+            public ulong CaptureDeferredPublication()
+            {
+                lock (_gate)
+                {
+                    ulong token = ++_nextToken;
+                    if (token == 0UL)
+                        token = ++_nextToken;
+                    int slot = (int)(token % Capacity);
+                    _deferred[slot] = _candidate;
+                    _tokens[slot] = token;
+                    return token;
+                }
+            }
+
+            public bool TryActivateDeferredPublication(ulong token)
+            {
+                lock (_gate)
+                {
+                    int slot = (int)(token % Capacity);
+                    if (token == 0UL || _tokens[slot] != token || _activeToken != 0UL)
+                        return false;
+                    _active = _deferred[slot];
+                    _activeToken = token;
+                    return true;
+                }
+            }
+
+            public void DeactivateDeferredPublication(ulong token)
+            {
+                lock (_gate)
+                {
+                    if (_activeToken != token)
+                        throw new InvalidOperationException("Fallback output publication deactivated out of order.");
+                    _active = null;
+                    _activeToken = 0UL;
+                }
+            }
+
+            public bool TryGetWindowOutputOverwriteCandidate(
+                out UIBackdropOutputOverwriteCandidate candidate)
+            {
+                lock (_gate)
+                {
+                    UIBackdropOutputOverwriteCandidate? selected = _activeToken != 0UL ? _active : _candidate;
+                    candidate = selected.GetValueOrDefault();
+                    return selected.HasValue;
+                }
+            }
+        }
         private XRTexture? _fallbackSourceTexture;
         private XRFrameBuffer? _bridgeSourceTextureFbo;
         private XRTexture? _bridgeSourceTexture;
@@ -171,6 +258,15 @@ void main()
             };
 
             _fallbackQuad = new XRQuadFrameBuffer(_fallbackMaterial);
+            if (_fallbackQuad.FullScreenMesh.Mesh is { } geometry &&
+                _fallbackMaterial.VertexShaders.Count == 1 &&
+                _fallbackMaterial.FragmentShaders.Count == 1)
+            {
+                _canonicalFallbackGeometryRevision = geometry.GeometryRevision;
+                _canonicalFallbackVertexShaderRevision = _fallbackMaterial.VertexShaders[0].SourceRevision;
+                _canonicalFallbackFragmentShaderRevision = _fallbackMaterial.FragmentShaders[0].SourceRevision;
+            }
+            _fallbackQuad.FullScreenMesh.BindingPublishers.Add(_fallbackOutputCandidatePublisher);
             _fallbackQuad.SettingUniforms += FallbackSettingUniforms;
         }
 
@@ -179,6 +275,7 @@ void main()
             ReleaseWebFallbackResources();
             if (_fallbackQuad is not null)
             {
+                _fallbackOutputCandidatePublisher.Candidate = null;
                 _fallbackQuad.SettingUniforms -= FallbackSettingUniforms;
                 _fallbackQuad.Destroy();
                 _fallbackQuad = null;
@@ -186,6 +283,9 @@ void main()
 
             _fallbackMaterial?.Destroy();
             _fallbackMaterial = null;
+            _canonicalFallbackGeometryRevision = -1;
+            _canonicalFallbackVertexShaderRevision = -1;
+            _canonicalFallbackFragmentShaderRevision = -1;
             _fallbackSourceTexture = null;
 
             DestroyBridgeHelperFrameBuffer(ref _bridgeSourceTextureFbo, ref _bridgeSourceTexture);
@@ -462,7 +562,31 @@ void main()
                 : default;
 
             _fallbackEncodeOutputSrgb = ShouldEncodeFallbackOutputForSwapchain(destFbo);
-            _fallbackQuad.Render(destFbo);
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            XRWindow? window = activeInstance.RenderState.WindowViewport?.Window;
+            _fallbackOutputCandidatePublisher.Candidate = destFbo is null &&
+                TargetFrameBufferName is null && renderer?.BackendId == RendererBackendId.OpenGL &&
+                window is not null && ReferenceEquals(renderer.XRWindow, window) &&
+                window.ActiveOpenGlDispatchToken != 0UL && _fallbackMaterial is not null &&
+                _fallbackQuad.FullScreenMesh.Mesh is { } geometry
+                    ? UIBackdropOutputContract.CreateCanonicalWindowPresentCandidate(
+                        renderer, window, renderer.BackendGeneration,
+                        window.ActiveOpenGlDispatchToken,
+                        renderer.MapWindowPresentationRegionToBackbuffer(
+                            activeInstance.RenderState.CurrentRenderRegion),
+                        _fallbackQuad.FullScreenMesh, geometry, _fallbackMaterial,
+                        _canonicalFallbackGeometryRevision,
+                        _canonicalFallbackVertexShaderRevision,
+                        _canonicalFallbackFragmentShaderRevision, FallbackShaderCode)
+                    : null;
+            try
+            {
+                _fallbackQuad.Render(destFbo);
+            }
+            finally
+            {
+                _fallbackOutputCandidatePublisher.Candidate = null;
+            }
         }
 
         private void FallbackSettingUniforms(XRRenderProgram program)

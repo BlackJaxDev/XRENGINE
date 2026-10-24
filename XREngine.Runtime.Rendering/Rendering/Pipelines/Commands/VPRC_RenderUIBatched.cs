@@ -49,6 +49,9 @@ public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
         collector?.BeginRasterMapping(ActivePipelineInstance.RenderState.CurrentRenderRegion);
         try
         {
+            if (_renderPass == (int)EDefaultRenderPass.Background)
+                collector?.BeginBackdropCapture(ActivePipelineInstance.RenderState.WindowViewport?.Window,
+                    ActivePipelineInstance.RenderState.CurrentRenderRegion);
             ActivePipelineInstance.MeshRenderCommands.RenderCPU(_renderPass, false);
         }
         finally

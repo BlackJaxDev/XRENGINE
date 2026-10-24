@@ -37,10 +37,17 @@ public class AnimationPanel : NativeVirtualTextPanel
     private bool _graphView = true;
     private ulong _nextId = 32;
     private DateTime _lastRefresh;
+    private bool _ownerSubscriptionsActive;
+    private bool _destroying;
 
     protected override void OnComponentActivated()
     {
+        if (_destroying)
+            return;
         base.OnComponentActivated();
+        if (_destroying || IsDestroyed || IsDestroyQueued)
+            return;
+        _ownerSubscriptionsActive = true;
         Selection.SelectionChanged += SelectionChanged;
         NativeAssetSelection.SelectionChanged += AssetSelectionChanged;
         RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
@@ -49,10 +56,44 @@ public class AnimationPanel : NativeVirtualTextPanel
 
     protected override void OnComponentDeactivated()
     {
+        ReleaseOwnerSubscriptions();
+        base.OnComponentDeactivated();
+    }
+
+    protected override void OnDestroying()
+    {
+        _destroying = true;
+        ReleaseOwnerSubscriptions();
+        ReleaseVirtualTextOwnerCallbacks();
+        if (_timeInput is { } time)
+        {
+            time.Submitted -= SubmitTime;
+            time.Cancelled -= CancelTime;
+        }
+        if (_valueInput is { } value)
+        {
+            value.Submitted -= SubmitValue;
+            value.Cancelled -= CancelValue;
+        }
+        if (_searchInput is { } search)
+        {
+            search.Submitted -= SubmitPathSearch;
+            search.Cancelled -= CancelPathSearch;
+        }
+        _timeInput = null;
+        _valueInput = null;
+        _searchInput = null;
+        base.OnDestroying();
+    }
+
+    private void ReleaseOwnerSubscriptions()
+    {
+        if (!_ownerSubscriptionsActive)
+            return;
+        _ownerSubscriptionsActive = false;
         Selection.SelectionChanged -= SelectionChanged;
         NativeAssetSelection.SelectionChanged -= AssetSelectionChanged;
         UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
-        base.OnComponentDeactivated();
     }
 
     protected override void CreateCommands(SceneNode commands)
@@ -64,21 +105,37 @@ public class AnimationPanel : NativeVirtualTextPanel
         input.SingleLineMode = true;
         input.Text = "0";
         input.Submitted += SubmitTime;
-        input.Cancelled += _ => RefreshTimeInput();
+        input.Cancelled += CancelTime;
         SceneNode valueNode = commands.NewChild();
         valueNode.SetTransform<UIBoundableTransform>().Width = 150;
         var (valueInput, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(valueNode);
         _valueInput = valueInput;
         valueInput.SingleLineMode = true;
         valueInput.Submitted += SubmitValue;
-        valueInput.Cancelled += _ => RefreshValueInput();
+        valueInput.Cancelled += CancelValue;
         SceneNode searchNode = commands.NewChild();
         searchNode.SetTransform<UIBoundableTransform>().Width = 160;
         var (searchInput, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(searchNode);
         _searchInput = searchInput;
         searchInput.SingleLineMode = true;
-        searchInput.Submitted += field => { _pathSearch = field.Text.Trim(); _candidatePage = 0; RefreshRows(); };
-        searchInput.Cancelled += field => field.Text = _pathSearch;
+        searchInput.Submitted += SubmitPathSearch;
+        searchInput.Cancelled += CancelPathSearch;
+    }
+
+    private void CancelTime(UITextInputComponent _) { if (!_destroying) RefreshTimeInput(); }
+    private void CancelValue(UITextInputComponent _) { if (!_destroying) RefreshValueInput(); }
+    private void SubmitPathSearch(UITextInputComponent field)
+    {
+        if (_destroying)
+            return;
+        _pathSearch = field.Text.Trim();
+        _candidatePage = 0;
+        RefreshRows();
+    }
+    private void CancelPathSearch(UITextInputComponent field)
+    {
+        if (!_destroying)
+            field.Text = _pathSearch;
     }
 
     protected override float FooterHeight => 180;
@@ -203,10 +260,16 @@ public class AnimationPanel : NativeVirtualTextPanel
         _candidateRoot = null;
         RefreshRows();
     }
-    private void AssetSelectionChanged(object? _) => RefreshRows();
+    private void AssetSelectionChanged(object? _)
+    {
+        if (!_destroying)
+            RefreshRows();
+    }
 
     private void RefreshTick()
     {
+        if (_destroying)
+            return;
         DateTime now = DateTime.UtcNow;
         TimeSpan interval = SelectedComponent()?.IsPlaying == true ? TimeSpan.FromMilliseconds(100) : TimeSpan.FromSeconds(1);
         if (now - _lastRefresh < interval)
@@ -217,6 +280,8 @@ public class AnimationPanel : NativeVirtualTextPanel
 
     protected override void OnRowActivated(ulong id)
     {
+        if (_destroying)
+            return;
         if (id is >= 8 and <= 25)
         {
             ActivateCommand(id);
@@ -241,6 +306,8 @@ public class AnimationPanel : NativeVirtualTextPanel
 
     protected override void RefreshRows()
     {
+        if (_destroying)
+            return;
         _rows.Clear();
         _memberRows.Clear();
         _keyRows.Clear();

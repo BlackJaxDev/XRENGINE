@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
 using YamlDotNet.Serialization;
@@ -21,6 +23,11 @@ namespace XREngine.Rendering.UI
         private readonly Dictionary<ulong, int> _visibleIndicesById = [];
         private readonly Dictionary<int, VirtualSlot> _slotsByIndex = [];
         private readonly Dictionary<UIBoundableTransform, VirtualSlot> _slotsByRow = new(ReferenceEqualityComparer.Instance);
+        // Terminal teardown may be reentered through a different list. This weak-key
+        // registry prevents either list from claiming a row until every old lease has
+        // finished unbinding; ordinary row admission only performs a lookup.
+        private static readonly ConditionalWeakTable<UIBoundableTransform, HashSet<object>> RetiringRows = new();
+        private static readonly object RetiringRowsGate = new();
         private readonly Stack<VirtualSlot> _freeSlots = [];
         private int _virtualItemCount;
         private int _virtualFirstIndex;
@@ -68,6 +75,114 @@ namespace XREngine.Rendering.UI
         /// Runs before a row is unbound or assigned to another item. Consumers must cancel row input and editing here.
         /// </summary>
         public event Action<UIBoundableTransform, UIVirtualRowLease>? VirtualRowRecycling;
+
+        /// <summary>
+        /// Ends a provider owner's lifetime while retaining the physical row subtree. Unlike
+        /// VirtualProvider replacement, this never reparents rows during scene transfer.
+        /// Callback failures are reported after every old lease has been canceled and unbound.
+        /// </summary>
+        public void DetachVirtualProviderForOwnerTeardown()
+        {
+            GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+            IVirtualListProvider? provider = _virtualProvider;
+            VirtualSlot[] oldSlots = [.. _virtualSlots];
+            Action<UIBoundableTransform, UIVirtualRowLease>? recycling = VirtualRowRecycling;
+            object reservation = new();
+            int reserved = 0;
+            try
+            {
+                for (; reserved < oldSlots.Length; reserved++)
+                    ReserveRetiringRow(oldSlots[reserved].Row, reservation);
+            }
+            catch
+            {
+                for (int index = 0; index < reserved; index++)
+                    ReleaseRetiringRow(oldSlots[index].Row, reservation);
+                throw;
+            }
+
+            // Retire the old owner before invoking user callbacks. A callback may install a
+            // replacement provider, which must not be cleared by this operation afterward.
+            SetField(ref _virtualProvider, null, publishNotifications: false);
+            VirtualRowRecycling = null;
+            _virtualSlots.Clear();
+            _slotsByIndex.Clear();
+            _slotsByRow.Clear();
+            _freeSlots.Clear();
+            _visibleIndicesById.Clear();
+            _virtualItemCount = 0;
+            _virtualFirstIndex = 0;
+            _virtualEndIndex = 0;
+            _virtualViewportExtent = 0;
+            _virtualScrollOffset = 0;
+            List<Exception>? failures = null;
+            try { InvalidateMeasure(); }
+            catch (Exception error) { (failures ??= []).Add(error); }
+            foreach (VirtualSlot slot in oldSlots)
+            {
+                try
+                {
+                    UIVirtualRowLease lease = slot.Lease;
+                    bool bound = slot.Index >= 0 && lease.ItemId != 0 && provider is not null;
+                    slot.Index = -1;
+                    slot.Lease = default;
+                    slot.Revision = 0;
+                    try { slot.Row.Visibility = EVisibility.Hidden; }
+                    catch (Exception error) { (failures ??= []).Add(error); }
+                    if (!bound)
+                        continue;
+                    if (recycling is not null)
+                        foreach (Delegate callback in recycling.GetInvocationList())
+                            try { ((Action<UIBoundableTransform, UIVirtualRowLease>)callback)(slot.Row, lease); }
+                            catch (Exception error) { (failures ??= []).Add(error); }
+                    try { CancelRowInteractionsForTerminal(slot.Row, ref failures); }
+                    catch (Exception error) { (failures ??= []).Add(error); }
+                    try { provider!.UnbindRow(slot.Row, lease.ItemId, lease.Incarnation); }
+                    catch (Exception error) { (failures ??= []).Add(error); }
+                    if (!_slotsByRow.ContainsKey(slot.Row))
+                        try { slot.Row.Visibility = EVisibility.Hidden; }
+                        catch (Exception error) { (failures ??= []).Add(error); }
+                }
+                finally { ReleaseRetiringRow(slot.Row, reservation); }
+            }
+            if (failures is not null)
+                throw new AggregateException("Virtual row owner teardown completed with callback failures.", failures);
+        }
+
+        private static void CancelRowInteractionsForTerminal(TransformBase transform, ref List<Exception>? failures)
+        {
+            if (transform.SceneNode is { } node)
+                foreach (var component in node.Components.ToArray())
+                    if (component is UIInteractableComponent interactable)
+                        try { interactable.CancelForRecycle(); }
+                        catch (Exception error) { (failures ??= []).Add(error); }
+            foreach (TransformBase child in transform.Children.ToArray())
+                CancelRowInteractionsForTerminal(child, ref failures);
+        }
+
+        private static void ReserveRetiringRow(UIBoundableTransform row, object reservation)
+        {
+            lock (RetiringRowsGate)
+            {
+                HashSet<object> reservations = RetiringRows.GetValue(row,
+                    static _ => new HashSet<object>(ReferenceEqualityComparer.Instance));
+                reservations.Add(reservation);
+            }
+        }
+
+        private static void ReleaseRetiringRow(UIBoundableTransform row, object reservation)
+        {
+            lock (RetiringRowsGate)
+                if (RetiringRows.TryGetValue(row, out HashSet<object>? reservations) &&
+                    reservations.Remove(reservation) && reservations.Count == 0)
+                    RetiringRows.Remove(row);
+        }
+
+        private static bool IsRetiringRow(UIBoundableTransform row)
+        {
+            lock (RetiringRowsGate)
+                return RetiringRows.TryGetValue(row, out HashSet<object>? reservations) && reservations.Count != 0;
+        }
 
         public int VirtualFirstIndex => _virtualFirstIndex;
         public int VirtualEndIndex => _virtualEndIndex;
@@ -253,6 +368,8 @@ namespace XREngine.Rendering.UI
         private VirtualSlot CreateSlot(IVirtualListProvider provider)
         {
             UIBoundableTransform row = provider.CreateRow() ?? throw new InvalidOperationException("The virtual list provider returned a null row.");
+            if (IsRetiringRow(row))
+                throw new InvalidOperationException("A virtual row cannot be reused until its previous lease finishes unbinding.");
             row.Parent = this;
             VirtualSlot slot = new(row);
             _virtualSlots.Add(slot);

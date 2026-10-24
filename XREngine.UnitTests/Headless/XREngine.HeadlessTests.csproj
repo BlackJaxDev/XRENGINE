@@ -26,12 +26,20 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeAssetPathPolicy.cs" Link="Editor/NativeAssetPathPolicy.cs" />
     <Compile Include="../Editor/NativeAssetPathPolicyTests.cs" Link="Editor/NativeAssetPathPolicyTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorPropertyDelegates.cs" Link="Editor/EditorPropertyDelegates.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeHierarchySelection.cs" Link="Editor/NativeHierarchySelection.cs" />
+    <Compile Include="../Editor/NativeHierarchySelectionTests.cs" Link="Editor/NativeHierarchySelectionTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorDragDropUtility.cs" Link="Editor/EditorDragDropUtility.cs" />
     <Compile Include="../Editor/EditorDragDropUtilityTests.cs" Link="Editor/EditorDragDropUtilityTests.cs" />
     <Compile Include="../Editor/EditorPropertyDelegatesTests.cs" Link="Editor/EditorPropertyDelegatesTests.cs" />
     <Compile Include="../Editor/EditorPropertyTestTarget.cs" Link="Editor/EditorPropertyTestTarget.cs" />
     <Compile Include="../Rendering/UILayoutValueKernelTests.cs" Link="Rendering/UILayoutValueKernelTests.cs" />
     <Compile Include="../Rendering/UILayoutGridKernelTests.cs" Link="Rendering/UILayoutGridKernelTests.cs" />
+    <Compile Include="../Rendering/UIBackdropPortableTests.cs" Link="Rendering/UIBackdropPortableTests.cs" />
+    <Compile Include="../Rendering/UIBackdropPublicationTests.cs" Link="Rendering/UIBackdropPublicationTests.cs" />
+    <Compile Include="../Rendering/UIBackdropOutputContractTests.cs" Link="Rendering/UIBackdropOutputContractTests.cs" />
+    <Compile Include="../Rendering/UIListTerminalOwnerTests.cs" Link="Rendering/UIListTerminalOwnerTests.cs" />
+    <Compile Include="../Rendering/UIToggleLifetimeTests.cs" Link="Rendering/UIToggleLifetimeTests.cs" />
+    <Compile Include="../Rendering/ReentrantToggleValueBinding.cs" Link="Rendering/ReentrantToggleValueBinding.cs" />
     <Compile Include="../Rendering/UIBatchCollectionTests.cs" Link="Rendering/UIBatchCollectionTests.cs" />
     <Compile Include="../Rendering/UICompositionSegmentTests.cs" Link="Rendering/UICompositionSegmentTests.cs" />
     <Compile Include="../Rendering/UIControlTeardownTests.cs" Link="Rendering/UIControlTeardownTests.cs" />

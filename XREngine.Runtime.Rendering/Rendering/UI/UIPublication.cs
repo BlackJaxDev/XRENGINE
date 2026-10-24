@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.UI.State;
 
@@ -51,6 +52,10 @@ public sealed class UIPublication
         Identities = identities;
         _hits = hits;
         _renders = renders;
+        (HasVisibleBackdrop, HasVisiblePreRenderDraw) = previous is not null &&
+            ReferenceEquals(renders, previous._renders)
+            ? (previous.HasVisibleBackdrop, previous.HasVisiblePreRenderDraw)
+            : ScanBackdropPresence(renders);
         _compositionSegments = previous is not null && previous.CanvasLifetime == canvasLifetime
             ? ReferenceEquals(renders, previous._renders) ? previous._compositionSegments
                 : UICompositionSegmentSet.Build(renders, previous._compositionSegments)
@@ -109,6 +114,8 @@ public sealed class UIPublication
     public ReadOnlyMemory<UIElementIdentity> Identities { get; }
     public ReadOnlySpan<UIHitRecord> Hits => _hits;
     public ReadOnlySpan<UIRenderRecord> Renders => _renders;
+    internal bool HasVisibleBackdrop { get; }
+    internal bool HasVisiblePreRenderDraw { get; }
     public ReadOnlySpan<UICompositionSegment> CompositionSegments => _compositionSegments.Segments;
     internal UICompositionSegmentSet CompositionStorage => _compositionSegments;
     internal bool TryGetCompositionSegment(long membershipId, out UICompositionSegment segment)
@@ -224,6 +231,9 @@ public sealed class UIPublication
         Identities = source.Identities;
         _hits = source._hits;
         _renders = outputRenders ?? source._renders;
+        (HasVisibleBackdrop, HasVisiblePreRenderDraw) = ReferenceEquals(_renders, source._renders)
+            ? (source.HasVisibleBackdrop, source.HasVisiblePreRenderDraw)
+            : ScanBackdropPresence(_renders);
         _compositionSegments = ReferenceEquals(_renders, source._renders)
             ? source._compositionSegments
             : UICompositionSegmentSet.Build(_renders, source._compositionSegments);
@@ -260,6 +270,23 @@ public sealed class UIPublication
         ClipToWorld = clipToWorld;
         NearClipZ = nearClipZ;
         FarClipZ = farClipZ;
+    }
+
+    private static (bool Backdrop, bool PreRender) ScanBackdropPresence(
+        ReadOnlySpan<UIRenderRecord> records)
+    {
+        bool backdrop = false;
+        bool preRender = false;
+        foreach (ref readonly UIRenderRecord record in records)
+        {
+            if (!record.Visible)
+                continue;
+            backdrop |= record.Backdrop.IsDefined;
+            preRender |= record.RenderPass == (int)EDefaultRenderPass.PreRender;
+            if (backdrop && preRender)
+                break;
+        }
+        return (backdrop, preRender);
     }
 
     private void RetainDrawPayloads()

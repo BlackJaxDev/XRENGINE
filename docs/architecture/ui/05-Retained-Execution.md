@@ -383,6 +383,28 @@ resource recovery must be complete first.
 
 ## Media and callback teardown
 
+`UIListTransform.DetachVirtualProviderForOwnerTeardown` releases the exact old
+provider and row leases without removing the child topology during destruction.
+Retiring rows cannot be rebound by the same or another list until their cleanup
+finishes. Callback failures do not skip later rows. A reentrant replacement
+provider retains its own leases.
+
+Native hierarchy, asset, animation, and inspector panels release their stored
+event, row, and drop-target owners on direct destruction. Hierarchy deactivation
+keeps the child topology until a later rebuild; activation requested during
+cleanup waits for the Late tick. Drop disposal removes registry and hover owners
+before user callbacks. Source retirement cancels its current drag immediately.
+
+Hierarchy selection updates the shared virtual tree by stable ID, including
+offscreen rows, without realizing row visuals. Unchanged selection does not
+change provider revisions. A mapped foreign or destroyed node cannot acquire
+the selected identity.
+
+Toggle binding subscriptions carry their exact source and revision. Direct
+destruction releases the binding and update tick. Stale delivery, replacement,
+and deactivation during subscription cannot restore a retired owner. These
+contracts do not establish that all editor subtree lifetimes are complete.
+
 Video starts, open completions, and retries carry a lifecycle epoch. Teardown
 detaches the exact session, audio sources, and GPU upload helper under the
 producer gate. It resets owner state before external cancellation and close
@@ -441,7 +463,28 @@ all fields. Historical cohorts retain their own slots and buffers until retireme
 This contract does not establish live GPU upload cost or independent static layers.
 
 Editor panel and toolbar backgrounds use intrinsic solid colors. They no longer
-request an implicit grab-pass blur. Shared opt-in backdrop capture remains open.
+request an implicit grab-pass blur. `UIBackdropBlurComponent` is disabled by
+default. Its immutable render record carries a validated blur strength, rather
+than a mutable grab texture. Compatible panels share one canvas-prefix capture;
+each panel samples that capture with its own strength. This captures the scene
+before the canvas, not UI that precedes an individual panel in painter order.
+
+The supported capture path is an OpenGL screen canvas on a single-sample,
+eight-bit default backbuffer. The renderer must prove the current canonical
+full-output replacement, exact native program, raster state, context, window,
+dispatch, and region. Visible `PreRender` UI, offscreen/world canvases, other
+backends, and unproven output fail explicitly. A required capture or consumer
+failure prevents window presentation and input publication. The feature does
+not enable itself or change an editor default.
+
+The process-wide capture pool has four slots and a 128 MiB limit. Slots remain
+affine to their renderer and backend generation. Copy issuance does not release
+the surface: the outer UI submission receipt and native completion retire its
+writer claim. Unknown completion and failed native destruction retain their
+budget and ownership. Required consumer runs are frozen before callbacks, and
+each exact run must complete once. Unbind or disposal cannot erase this proof.
+This managed contract still needs OpenGL visual, fence, and multiwindow checks.
+
 Toolbar rebuild and teardown detach item callbacks and destroy owned child nodes.
 
 Inspector asset drops finish on the scene-edit owner queue. Request identity,
