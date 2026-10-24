@@ -399,7 +399,15 @@ transactions remain open. Windows watcher ordering and complete workflow parity
 remain unverified. `NativeDockTree` provides a bounded, versioned split/tab model with
 move, resize, close, reopen, and malformed-state checks. `NativeDockTreeHost` connects that model to the primary editor canvas. Structural
 changes retain panel instances, deactivate/detach closed slots, and destroy only
-obsolete structural nodes. Existing tool search and scroll state survive. All seven primary panel types use the detached-window path. Legacy numeric
+obsolete structural nodes. `NativeDockRenderGate` serializes rebuilds: a rebuild
+that a callback requests during a rebuild runs once after it, and repeated requests
+stop after four passes with an error. Each pass has a revision. Tab, split, drop,
+drag, and action-menu callbacks act only when their pass is current, no rebuild
+runs, and their stack is still in the tree. Slot deactivation callbacks can
+reparent, replace, or destroy a slot; the host then detaches only the registered
+slot and recreates a slot that teardown destroyed. Closing the last tab keeps an
+empty stack with its Actions menu, so the panel can be reopened.
+Existing tool search and scroll state survive. All seven primary panel types use the detached-window path. Legacy numeric
 window records migrate an existing saved layout; absent records seed the requested
 panel. Detached windows use their own camera, pawn, controller, and input dispatch
 in the source runtime world. They clone camera projection and pose. The main pawn

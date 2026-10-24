@@ -1004,3 +1004,19 @@ Headless build20 passed with 0 warnings and errors. The full headless run passed
 0 warnings and errors. The changed source files were unchanged through the checks.
 Frame-axis pointer behavior and native wheel checks remain open.
 
+## Dock rebuild and stale-callback guards
+
+The reconciliation remains **46 of 60**. This increment advances the open docking item.
+
+- `NativeDockRenderGate` serializes dock rebuilds. A nested request runs one more
+  pass after the current one; endless requests stop after four passes.
+- Tab, split, drop, drag, and action-menu callbacks check the pass revision and
+  that their stack is still in the tree. A callback from an older pass does nothing.
+- Slot detachment iterates a copy of the slot map and detaches only the registered
+  slot. A slot destroyed during teardown is recreated by the next stack render.
+- Closing the last tab keeps an empty, reopenable stack. A panel detached to its own
+  window is closed here even when a callback changed this dock during the open.
+
+Headless tests cover the gate and last-tab behavior. The host itself compiles only
+in the editor and desktop test projects; native docking checks remain open.
+

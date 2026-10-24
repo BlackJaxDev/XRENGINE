@@ -21,6 +21,7 @@ internal sealed class NativeDockTreeHost
     private readonly NativeDockWindowRegistration _registration;
     private readonly List<IDisposable> _dropRegistrations = [];
     private readonly Dictionary<string, SceneNode> _panelSlots = [];
+    private readonly NativeDockRenderGate _renderGate = new();
     private int _closedCursor;
     private ulong _dockMutationRevision;
     private bool _receivingPanel;
@@ -60,18 +61,37 @@ internal sealed class NativeDockTreeHost
             restoring && NativeDockLayoutStore.HasLayout(windowKey) ? null : panel,
             restoreWindows: false);
 
+    /// <summary>
+    /// Rebuilds the dock controls. A rebuild requested by a callback during a rebuild runs
+    /// after it, so callbacks never rebuild a half-built tree.
+    /// </summary>
     private void Render()
     {
+        if (!_disposed)
+            _renderGate.Run(RenderPass);
+    }
+
+    private void RenderPass()
+    {
         DisposeDropTargets();
-        foreach (SceneNode slot in _panelSlots.Values)
-            if (!slot.IsDestroyed && slot.Transform.Parent is not null)
-            {
-                slot.IsActiveSelf = false;
-                slot.Transform.SetParent(null, false, EParentAssignmentMode.Immediate);
-                // Clearing Parent alone retains Transform.World and can turn a detached
-                // editor panel into a live world root until it is reattached.
-                slot.Transform.SetWorldContext(null);
-            }
+        // Deactivation runs panel callbacks. They can reparent, replace, or destroy any slot,
+        // so iterate a copy and detach only a slot that is still the registered one.
+        KeyValuePair<string, SceneNode>[] slots = [.. _panelSlots];
+        foreach ((string panel, SceneNode slot) in slots)
+        {
+            if (slot.IsDestroyed || slot.Transform.Parent is null)
+                continue;
+            slot.IsActiveSelf = false;
+            if (_disposed)
+                return;
+            if (slot.IsDestroyed || !_panelSlots.TryGetValue(panel, out SceneNode? current) ||
+                !ReferenceEquals(current, slot) || slot.Transform.Parent is null)
+                continue;
+            slot.Transform.SetParent(null, false, EParentAssignmentMode.Immediate);
+            // Clearing Parent alone retains Transform.World and can turn a detached
+            // editor panel into a live world root until it is reattached.
+            slot.Transform.SetWorldContext(null);
+        }
         foreach (var child in _root.Transform.Children.ToArray())
             if (child.SceneNode is { } structural)
             {
@@ -79,8 +99,27 @@ internal sealed class NativeDockTreeHost
                 if (!structural.IsDestroyed)
                     throw new InvalidOperationException("A native dock node refused teardown; the layout was not rebuilt.");
             }
+        if (_disposed)
+            return;
+        // A callback can move a slot under a structural node; teardown then destroys it.
+        // Forget destroyed slots so the stack creates a new panel.
+        foreach ((string panel, SceneNode slot) in slots)
+            if (slot.IsDestroyed && _panelSlots.TryGetValue(panel, out SceneNode? current) &&
+                ReferenceEquals(current, slot))
+                _panelSlots.Remove(panel);
         RenderNode(_root, _tree.Root);
     }
+
+    /// <summary>Gets whether a control from the render pass <paramref name="revision"/> may change the dock.</summary>
+    private bool IsCurrentControl(ulong revision)
+        => !_disposed && !_receivingPanel && _renderGate.IsCurrent(revision);
+
+    private bool IsCurrentStack(NativeDockNode stack, ulong revision)
+        => IsCurrentControl(revision) && ContainsNode(_tree.Root, stack);
+
+    private static bool ContainsNode(NativeDockNode root, NativeDockNode node)
+        => ReferenceEquals(root, node) || root.IsSplit &&
+            (ContainsNode(root.First!, node) || ContainsNode(root.Second!, node));
 
     private void DisposeDropTargets()
         => DisposeDropRegistrations(_dropRegistrations);
@@ -106,7 +145,8 @@ internal sealed class NativeDockTreeHost
         List<Exception>? failures = null;
         try { DisposeDropTargets(); }
         catch (Exception exception) { (failures ??= []).Add(exception); }
-        foreach (SceneNode slot in _panelSlots.Values)
+        // Slot teardown runs panel callbacks that can change the slot map.
+        foreach (SceneNode slot in _panelSlots.Values.ToArray())
             if (!slot.IsDestroyed && slot.Transform.Parent is null)
                 try { slot.Destroy(true); }
                 catch (Exception exception) { (failures ??= []).Add(exception); }
@@ -123,6 +163,7 @@ internal sealed class NativeDockTreeHost
             RenderStack(parent, node);
             return;
         }
+        ulong revision = _renderGate.Revision;
         SceneNode container = parent.NewChildWithTransform<UIBoundableTransform>(out _, $"DockSplit-{node.Id}");
         SceneNode root = container.NewChildWithTransform(out UIDualSplitTransform split, "SplitContent");
         split.MinAnchor = Vector2.Zero;
@@ -162,8 +203,8 @@ internal sealed class NativeDockTreeHost
         UpdateHandlePosition();
         split.PropertyChanged += (_, change) =>
         {
-            if (!_receivingPanel && change.PropertyName == nameof(UIDualSplitTransform.FixedSize) &&
-                split.FixedSize is { } size)
+            if (change.PropertyName == nameof(UIDualSplitTransform.FixedSize) &&
+                split.FixedSize is { } size && IsCurrentControl(revision) && ContainsNode(_tree.Root, node))
             {
                 node.FixedSize = size;
                 UpdateHandlePosition();
@@ -182,6 +223,7 @@ internal sealed class NativeDockTreeHost
 
     private void RenderStack(SceneNode parent, NativeDockNode stack)
     {
+        ulong revision = _renderGate.Revision;
         SceneNode stackNode = parent.NewChildWithTransform(out UIDualSplitTransform outer, $"DockStack-{stack.Id}");
         outer.VerticalSplit = true;
         outer.FirstFixedSize = true;
@@ -203,7 +245,8 @@ internal sealed class NativeDockTreeHost
         _dropRegistrations.Add(EditorDragDropUtility.RegisterDropTarget(tabList,
             payload =>
             {
-                if (_receivingPanel || !EditorDragDropUtility.TryGetEditorPayload<NativeDockTabPayload>(payload, "dock-tab", out var tab) || tab is null ||
+                if (!IsCurrentStack(stack, revision) ||
+                    !EditorDragDropUtility.TryGetEditorPayload<NativeDockTabPayload>(payload, "dock-tab", out var tab) || tab is null ||
                     tab.WindowKey != _windowKey || !_tree.Move(tab.Panel, stack.Id, int.MaxValue))
                     return false;
                 CommitStructure();
@@ -236,7 +279,7 @@ internal sealed class NativeDockTreeHost
 
         strip.TabActivated += id =>
         {
-            if (_receivingPanel) return;
+            if (!IsCurrentStack(stack, revision)) return;
             string panel = NativeDockPanel.All[(int)id - 1];
             if (!stack.Tabs.Contains(panel))
                 return;
@@ -246,14 +289,14 @@ internal sealed class NativeDockTreeHost
         };
         strip.CloseRequested += id =>
         {
-            if (_receivingPanel) return;
+            if (!IsCurrentStack(stack, revision)) return;
             string panel = NativeDockPanel.All[(int)id - 1];
             if (_tree.Close(panel))
                 CommitStructure();
         };
         strip.MoveRequested += (id, direction) =>
         {
-            if (_receivingPanel) return;
+            if (!IsCurrentStack(stack, revision)) return;
             string panel = NativeDockPanel.All[(int)id - 1];
             int index = stack.Tabs.IndexOf(panel);
             if (index < 0 || index + direction < 0 || index + direction >= stack.Tabs.Count)
@@ -270,24 +313,31 @@ internal sealed class NativeDockTreeHost
         var actionsButton = NativeUIElements.CreateButton(actionsNode, "Actions", width: 80, height: 28).Button;
         actionsButton.InteractAction += _ =>
         {
+            if (!IsCurrentStack(stack, revision))
+                return;
             Vector2 position = _root.GetTransformAs<UIBoundableTransform>(true)!
                 .CanvasToLocal(actionsButton.BoundableTransform.LocalToCanvas(Vector2.Zero));
             actionMenu.Show(position,
                 new ContextMenuItem("Close", () => strip.RequestCloseSelected()),
                 new ContextMenuItem("Move left", () => strip.RequestMoveSelected(-1)),
                 new ContextMenuItem("Move right", () => strip.RequestMoveSelected(1)),
-                new ContextMenuItem("Move to next stack", () => MoveToNextStack(stack)),
-                new ContextMenuItem("Split left", () => SplitSelected(stack, vertical: false, before: true)),
-                new ContextMenuItem("Split right", () => SplitSelected(stack, vertical: false, before: false)),
-                new ContextMenuItem("Split top", () => SplitSelected(stack, vertical: true, before: true)),
-                new ContextMenuItem("Split bottom", () => SplitSelected(stack, vertical: true, before: false)),
+                new ContextMenuItem("Move to next stack", () => MoveToNextStack(stack, revision)),
+                new ContextMenuItem("Split left", () => SplitSelected(stack, revision, vertical: false, before: true)),
+                new ContextMenuItem("Split right", () => SplitSelected(stack, revision, vertical: false, before: false)),
+                new ContextMenuItem("Split top", () => SplitSelected(stack, revision, vertical: true, before: true)),
+                new ContextMenuItem("Split bottom", () => SplitSelected(stack, revision, vertical: true, before: false)),
                 new ContextMenuItem("Reopen " + (_tree.ClosedPanels.Count == 0 ? "panel" :
                     Title(_tree.ClosedPanels[Math.Abs(_closedCursor % _tree.ClosedPanels.Count)])),
-                    () => ReopenNext(stack), _tree.ClosedPanels.Count > 0),
-                new ContextMenuItem("Next closed panel", () => { _closedCursor++; RefreshClosedLabel(); },
-                    _tree.ClosedPanels.Count > 1),
-                new ContextMenuItem("Detach", () => DetachSelected(stack)),
-                new ContextMenuItem("Move to window", () => MoveToWindow(stack)));
+                    () => ReopenNext(stack, revision), _tree.ClosedPanels.Count > 0),
+                new ContextMenuItem("Next closed panel", () =>
+                {
+                    if (!IsCurrentStack(stack, revision))
+                        return;
+                    _closedCursor++;
+                    RefreshClosedLabel();
+                }, _tree.ClosedPanels.Count > 1),
+                new ContextMenuItem("Detach", () => DetachSelected(stack, revision)),
+                new ContextMenuItem("Move to window", () => MoveToWindow(stack, revision)));
         };
         var drag = NativeUIElements.CreateButton(actionsNode, "Drag", width: 60, height: 28).Button;
         drag.NeedsMouseMove = true;
@@ -305,7 +355,7 @@ internal sealed class NativeDockTreeHost
                 dragStart = point;
                 return;
             }
-            if (stack.Selected is { } panel &&
+            if (IsCurrentStack(stack, revision) && stack.Selected is { } panel &&
                 Vector2.Distance(dragStart.Value, point) >= EditorDragDropUtility.DefaultActivationDistance)
                 EditorDragDropUtility.BeginDrag(source,
                     EditorDragDropUtility.CreateEditorPayload("dock-tab", new NativeDockTabPayload(_windowKey, panel)), point);
@@ -397,9 +447,9 @@ internal sealed class NativeDockTreeHost
         };
     }
 
-    private void MoveToNextStack(NativeDockNode source)
+    private void MoveToNextStack(NativeDockNode source, ulong revision)
     {
-        if (_receivingPanel) return;
+        if (!IsCurrentStack(source, revision)) return;
         if (source.Selected is not { } panel)
             return;
         NativeDockNode? target = _tree.Stacks().FirstOrDefault(candidate => candidate.Id != source.Id);
@@ -407,9 +457,9 @@ internal sealed class NativeDockTreeHost
             CommitStructure();
     }
 
-    private void SplitSelected(NativeDockNode source, bool vertical, bool before)
+    private void SplitSelected(NativeDockNode source, ulong revision, bool vertical, bool before)
     {
-        if (_receivingPanel) return;
+        if (!IsCurrentStack(source, revision)) return;
         if (source.Selected is not { } panel)
             return;
         NativeDockNode? target = source.Tabs.Count > 1 ? source :
@@ -418,9 +468,9 @@ internal sealed class NativeDockTreeHost
             CommitStructure();
     }
 
-    private void ReopenNext(NativeDockNode target)
+    private void ReopenNext(NativeDockNode target, ulong revision)
     {
-        if (_receivingPanel) return;
+        if (!IsCurrentStack(target, revision)) return;
         if (_tree.ClosedPanels.Count == 0)
             return;
         string panel = _tree.ClosedPanels[Math.Abs(_closedCursor % _tree.ClosedPanels.Count)];
@@ -428,18 +478,20 @@ internal sealed class NativeDockTreeHost
             CommitStructure();
     }
 
-    private void DetachSelected(NativeDockNode source)
+    private void DetachSelected(NativeDockNode source, ulong revision)
     {
-        if (_receivingPanel) return;
+        if (!IsCurrentStack(source, revision)) return;
         if (source.Selected is not { } panel || _window is null)
             return;
-        if (NativeDetachedDockWindows.Open(_window, panel) && _tree.Close(panel))
+        // Once the detached window owns the panel, this window must not show it, even when
+        // a callback changed this dock while the window opened.
+        if (NativeDetachedDockWindows.Open(_window, panel) && !_disposed && _tree.Close(panel))
             CommitStructure();
     }
 
-    private void MoveToWindow(NativeDockNode source)
+    private void MoveToWindow(NativeDockNode source, ulong revision)
     {
-        if (_receivingPanel || _disposed || _root.IsDestroyed || _root.IsDestroyQueued ||
+        if (!IsCurrentStack(source, revision) || _root.IsDestroyed || _root.IsDestroyQueued ||
             source.Selected is not { } panel)
             return;
         ulong sourceRevision = _dockMutationRevision;
