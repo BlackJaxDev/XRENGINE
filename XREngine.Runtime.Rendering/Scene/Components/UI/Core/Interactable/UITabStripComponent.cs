@@ -7,7 +7,7 @@ namespace XREngine.Rendering.UI;
 
 /// <summary>Reuses tab buttons while a host updates stable tab IDs and order.</summary>
 [RequiresTransform(typeof(UIListTransform))]
-public sealed class UITabStripComponent : UIComponent
+public sealed partial class UITabStripComponent : UIComponent
 {
     private sealed class Slot
     {
@@ -21,6 +21,10 @@ public sealed class UITabStripComponent : UIComponent
     private readonly HashSet<ulong> _ids = [];
     private int _count;
     private ulong? _selectedId;
+    private bool _settingTabs;
+    private UITabItem[]? _pendingTabs;
+    private ulong? _pendingSelectedId;
+    private ulong _acceptedTabsRevision;
 
     public float TabWidth { get; set; } = 100;
     public float TabHeight { get; set; } = 28;
@@ -35,6 +39,52 @@ public sealed class UITabStripComponent : UIComponent
     /// <summary>Updates tab order and state. The caller owns panel visibility and persistence.</summary>
     public void SetTabs(ReadOnlySpan<UITabItem> tabs, ulong? selectedId)
     {
+        if (IsDestroyed || IsDestroyQueued)
+            return;
+        if (_settingTabs)
+        {
+            ValidateTabRequest(tabs, selectedId);
+            SetField(ref _pendingTabs, tabs.ToArray(), publishNotifications: false);
+            SetField(ref _pendingSelectedId, selectedId, publishNotifications: false);
+            return;
+        }
+        SetField(ref _settingTabs, true, publishNotifications: false);
+        try
+        {
+            ReadOnlySpan<UITabItem> next = tabs;
+            ulong? nextSelected = selectedId;
+            for (int transition = 0; transition < 32; transition++)
+            {
+                SetTabsCore(next, nextSelected);
+                if (IsDestroyed || IsDestroyQueued || _pendingTabs is not { } queued)
+                    return;
+                next = queued;
+                nextSelected = _pendingSelectedId;
+                SetField(ref _pendingTabs, null, publishNotifications: false);
+                SetField(ref _pendingSelectedId, null, publishNotifications: false);
+            }
+            throw new InvalidOperationException("Tab callbacks requested too many updates.");
+        }
+        finally
+        {
+            SetField(ref _pendingTabs, null, publishNotifications: false);
+            SetField(ref _pendingSelectedId, null, publishNotifications: false);
+            SetField(ref _settingTabs, false, publishNotifications: false);
+        }
+    }
+
+    private static void ValidateTabRequest(ReadOnlySpan<UITabItem> tabs, ulong? selectedId)
+    {
+        HashSet<ulong> ids = [];
+        for (int index = 0; index < tabs.Length; index++)
+            if (tabs[index].Id == 0 || !ids.Add(tabs[index].Id))
+                throw new ArgumentException("Tab IDs must be unique and nonzero.", nameof(tabs));
+        if (selectedId is { } selected && !ids.Contains(selected))
+            throw new ArgumentException("The selected tab must exist.", nameof(selectedId));
+    }
+
+    private void SetTabsCore(ReadOnlySpan<UITabItem> tabs, ulong? selectedId)
+    {
         UIListTransform list = TransformAs<UIListTransform>(true) ??
             throw new InvalidOperationException("A tab strip needs a UIListTransform.");
         if (!float.IsFinite(TabWidth) || TabWidth <= 0 || !float.IsFinite(TabHeight) || TabHeight <= 0)
@@ -46,11 +96,18 @@ public sealed class UITabStripComponent : UIComponent
         if (selectedId is { } selected && !_ids.Contains(selected))
             throw new ArgumentException("The selected tab must exist.", nameof(selectedId));
 
+        var focusRequest = CaptureTabFocusRequest();
+
         list.DisplayHorizontal = true;
         list.ItemAlignment = EListAlignment.TopOrLeft;
         list.ItemSize = TabWidth;
         while (_slots.Count < tabs.Length)
-            _slots.Add(CreateSlot(list));
+        {
+            Slot created = CreateSlot(list);
+            _slots.Add(created);
+            if (IsDestroyed || IsDestroyQueued)
+                return;
+        }
         for (int index = 0; index < _slots.Count; index++)
         {
             Slot slot = _slots[index];
@@ -58,23 +115,37 @@ public sealed class UITabStripComponent : UIComponent
             {
                 if (slot.Id != 0)
                     slot.Button.CancelForRecycle();
+                if (IsDestroyed || IsDestroyQueued)
+                    return;
                 slot.Id = 0;
                 slot.Bounds.Visibility = EVisibility.Collapsed;
+                if (IsDestroyed || IsDestroyQueued)
+                    return;
                 continue;
             }
             UITabItem tab = tabs[index];
             if (slot.Id != tab.Id)
                 slot.Button.CancelForRecycle();
+            if (IsDestroyed || IsDestroyQueued)
+                return;
             slot.Id = tab.Id;
             slot.Label.Text = (tab.IsOpen ? string.Empty : "+ ") + (tab.Title ?? string.Empty);
+            if (IsDestroyed || IsDestroyQueued)
+                return;
             slot.Button.AccessibilityLabel = tab.Title;
             slot.Button.AccessibilityDescription = tab.IsOpen ? null : "Closed tab. Activate to reopen.";
             slot.Button.IsSelected = tab.Id == selectedId;
             slot.Bounds.Visibility = EVisibility.Visible;
             slot.Bounds.Height = TabHeight;
+            if (IsDestroyed || IsDestroyQueued)
+                return;
         }
         _count = tabs.Length;
         _selectedId = selectedId;
+        ulong nextRevision = unchecked(_acceptedTabsRevision + 1);
+        SetField(ref _acceptedTabsRevision, nextRevision == 0 ? 1UL : nextRevision,
+            publishNotifications: false);
+        RestoreTabFocusAfterUpdate(focusRequest, _acceptedTabsRevision);
     }
 
     public bool RequestCloseSelected()
@@ -107,43 +178,55 @@ public sealed class UITabStripComponent : UIComponent
     private Slot CreateSlot(UIListTransform list)
     {
         SceneNode node = new(list.SceneNode!) { Name = "Tab" };
-        UIBoundableTransform bounds = node.SetTransform<UIBoundableTransform>();
-        bounds.MinAnchor = Vector2.Zero;
-        bounds.MaxAnchor = new Vector2(0, 1);
-        bounds.Width = TabWidth;
-        bounds.Height = TabHeight;
-        node.AddComponent<UIMaterialComponent>()!.SetBatchSolidColor(new ColorF4(0.18f, 0.18f, 0.18f, 1));
-        UITabButtonComponent button = node.AddComponent<UITabButtonComponent>()!;
-        button.DefaultTextColor = ColorF4.White;
-        SceneNode textNode = new(node) { Name = "TabLabel" };
-        UIBoundableTransform labelBounds = textNode.SetTransform<UIBoundableTransform>();
-        labelBounds.MinAnchor = Vector2.Zero;
-        labelBounds.MaxAnchor = Vector2.One;
-        labelBounds.Margins = new Vector4(6, 0, 6, 0);
-        UITextComponent label = textNode.AddComponent<UITextComponent>()!;
-        label.FontSize = 12;
-        label.Color = ColorF4.White;
-        label.VerticalAlignment = EVerticalAlignment.Center;
-        Slot slot = new() { Bounds = bounds, Button = button, Label = label };
-        button.InteractAction += _ =>
+        try
         {
-            if (slot.Id != 0)
-                TabActivated?.Invoke(slot.Id);
-        };
-        button.KeyboardCloseRequested += sender =>
+            UIBoundableTransform bounds = node.SetTransform<UIBoundableTransform>();
+            bounds.MinAnchor = Vector2.Zero;
+            bounds.MaxAnchor = new Vector2(0, 1);
+            bounds.Width = TabWidth;
+            bounds.Height = TabHeight;
+            node.AddComponent<UIMaterialComponent>()!.SetBatchSolidColor(new ColorF4(0.18f, 0.18f, 0.18f, 1));
+            UITabButtonComponent button = node.AddComponent<UITabButtonComponent>()!;
+            button.DefaultTextColor = ColorF4.White;
+            SceneNode textNode = new(node) { Name = "TabLabel" };
+            UIBoundableTransform labelBounds = textNode.SetTransform<UIBoundableTransform>();
+            labelBounds.MinAnchor = Vector2.Zero;
+            labelBounds.MaxAnchor = Vector2.One;
+            labelBounds.Margins = new Vector4(6, 0, 6, 0);
+            UITextComponent label = textNode.AddComponent<UITextComponent>()!;
+            label.FontSize = 12;
+            label.Color = ColorF4.White;
+            label.VerticalAlignment = EVerticalAlignment.Center;
+            Slot slot = new() { Bounds = bounds, Button = button, Label = label };
+            button.InteractAction += _ =>
+            {
+                if (slot.Id != 0)
+                    TabActivated?.Invoke(slot.Id);
+            };
+            button.KeyboardCloseRequested += sender =>
+            {
+                if (ReferenceEquals(sender, slot.Button) && slot.Id != 0 && FindIndex(slot.Id) >= 0)
+                    CloseRequested?.Invoke(slot.Id);
+            };
+            button.KeyboardMoveRequested += (sender, direction) =>
+            {
+                if (!ReferenceEquals(sender, slot.Button) || slot.Id == 0 || direction == 0)
+                    return;
+                int index = FindIndex(slot.Id);
+                int next = index + Math.Sign(direction);
+                if (index >= 0 && next >= 0 && next < _count)
+                    MoveRequested?.Invoke(slot.Id, Math.Sign(direction));
+            };
+            return slot;
+        }
+        catch (Exception error)
         {
-            if (ReferenceEquals(sender, slot.Button) && slot.Id != 0 && FindIndex(slot.Id) >= 0)
-                CloseRequested?.Invoke(slot.Id);
-        };
-        button.KeyboardMoveRequested += (sender, direction) =>
-        {
-            if (!ReferenceEquals(sender, slot.Button) || slot.Id == 0 || direction == 0)
-                return;
-            int index = FindIndex(slot.Id);
-            int next = index + Math.Sign(direction);
-            if (index >= 0 && next >= 0 && next < _count)
-                MoveRequested?.Invoke(slot.Id, Math.Sign(direction));
-        };
-        return slot;
+            try { node.Destroy(true); }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException("Tab slot creation and cleanup failed.", error, cleanupError);
+            }
+            throw;
+        }
     }
 }

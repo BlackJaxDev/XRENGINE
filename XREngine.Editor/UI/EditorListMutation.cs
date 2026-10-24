@@ -409,7 +409,7 @@ internal static class EditorListMutation
     internal static bool SupportsSource(PropertyInfo property)
         => EditorListSourceAccessor.For(property) is not null;
 
-    private static bool IsComparableElementType(Type type)
+    internal static bool IsComparableElementType(Type type)
     {
         type = Nullable.GetUnderlyingType(type) ?? type;
         return !type.IsValueType || type.IsPrimitive || type.IsEnum ||
@@ -459,7 +459,7 @@ internal static class EditorListMutation
         }
     }
 
-    private static void Reserve(object[] owners)
+    internal static void Reserve(object[] owners)
     {
         lock (BusyLock)
         {
@@ -469,7 +469,7 @@ internal static class EditorListMutation
         }
     }
 
-    private static void Release(object[] owners)
+    internal static void Release(object[] owners)
     {
         lock (BusyLock)
             foreach (object owner in owners) BusyOwners.Remove(owner);

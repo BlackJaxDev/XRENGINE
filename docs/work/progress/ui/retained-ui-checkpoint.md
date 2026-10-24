@@ -632,3 +632,39 @@ source snapshot has 10,488 files. One editor-only nullable-flow guard changed
 after the headless run, and one desktop-only assertion changed after the editor
 build. Headless and production inputs for those checks remain unchanged. Windows, GPU, visual, native IME, benchmark,
 and faster-than-ImGui acceptance remain unverified.
+
+## Draft, Focus, And Collection Ownership
+
+The original reconciliation remains **43 of 60 code items complete**. This
+increment completes parts of the remaining controls, inspector, publication, and
+hierarchy work. The active TODO still has 17 code items, four original owner
+decisions, and three pending proposals. No approval was inferred.
+
+- Multiline controls use Enter for a newline, Ctrl+Enter to submit, and Escape to
+  cancel. Draft commits, cancellation, and blur reject replaced bindings and
+  changed target identities. Text and numeric setter loops stop after an owner
+  changes. Stable tab focus waits for the accepted strip revision and loses to
+  newer focus requests. Nested tab updates coalesce within a bounded loop.
+- Combo selection and context-menu actions reject superseded callback owners.
+  Screen and offscreen-authored publication tests retain nested clip records and
+  painter order across mixed batch/fallback draws. They do not prove native
+  offscreen surface or GPU behavior.
+- Exact BCL linked lists use grouped Undo receipts with retained node identity,
+  exact source/owner checks, and captured dirty documents. Dictionary and generic
+  collection editing still need safe adapters. Console and Profiler action and
+  projection gaps are now explicit in the active TODO.
+- Synchronous construction support retains exact constructor origins and partial
+  failure allocations. Temporary guards reject foreign-thread and foreign-batch
+  identity/publication changes. Rollback removes only its exact cache entries.
+  Clone graph adoption and safe retirement remain unimplemented.
+- World packet sources can register outside the drawable scene tree while legacy
+  child draws remain active. The full retained world-output route remains open.
+
+Headless build 111 passed with zero warnings/errors in 15.36s. Focused publication
+run 70 passed 5 of 5 tests in 0.928s. Full run 71 passed **728 of 728 tests**, with
+no warnings, failures, or skips, in 10.870s. Editor build 43 passed with zero
+warnings/errors in 2m37.59s. Desktop test compilation 22 passed with zero warnings/errors in 48.02s; those tests did not execute. The frozen source
+snapshot contains 10,519 files. Only the clipping test fixture changed after the
+editor input; production inputs match. Windows execution, native IME, OpenGL and
+Vulkan acceptance, visual results, benchmarks, and faster-than-ImGui claims remain
+unverified. ImGui remains the default editor.

@@ -22,7 +22,23 @@ namespace XREngine.Rendering.Info
 
         /// <summary>Gets the immutable command source of a scene proxy, if present.</summary>
         [YamlIgnore]
-        internal IFrozenWorldCommandSource? FrozenWorldCommandSource { get; set; }
+        internal IFrozenWorldCommandSource? FrozenWorldCommandSource { get; private set; }
+
+        /// <summary>Registers a packet source without adding a drawable scene item.</summary>
+        [YamlIgnore]
+        internal bool FrozenWorldPacketSourceOnly { get; private set; }
+
+        /// <summary>Sets the fixed packet source before this item joins a world.</summary>
+        internal void ConfigureFrozenWorldPacketSource(IFrozenWorldCommandSource source,
+            bool sourceOnly = false)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            if (FrozenWorldCommandSource is not null || _registeredWorldInstance is not null ||
+                WorldInstance is not null || sourceOnly && source is not IFrozenWorldPacketSource)
+                throw new InvalidOperationException("The world packet source must be fixed before registration.");
+            FrozenWorldCommandSource = source;
+            FrozenWorldPacketSourceOnly = sourceOnly;
+        }
 
         public override ITreeNode? TreeNode => OctreeNode;
 

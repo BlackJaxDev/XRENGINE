@@ -710,8 +710,9 @@ once. Value preparation cannot redirect a later target to new data. A structural
 inverse is recorded before callbacks, and a replay hold lasts through history
 commit. This does not suppress unrelated property recording. Dirty state uses
 the captured source document. Post-commit UI notification failure does not turn a
-completed mutation into a rejected command. Broader collection accessor support, terminal admission in the dictionary,
-linked-list, and generic detail builders, and full inspector parity remain open.
+completed mutation into a rejected command. Dictionary, linked-list, and generic
+detail builders reject retired callback generations. Broader collection accessor
+support and full inspector parity remain open.
 
 Dock moves require a destination commit confirmation and unchanged source and
 destination registration owners. Source closure affects only the admitted panel.
@@ -835,3 +836,57 @@ and its handlers; it cannot clear a newer session. Node actions cover rename,
 child creation, camera focus, and deletion. Scene actions use canonical visibility
 and unload commands. Duplicate workflows and owned clone failure recovery remain
 open; these menus do not enable a placeholder implementation.
+
+
+## Draft owners, tab focus, and linked-list edits
+
+Multiline text uses Enter for a newline, Ctrl+Enter to submit, and Escape to
+cancel a deferred draft. Escape during composition cancels composition first.
+Submit, cancel, and blur capture the binding revision, property/targets, focus
+epoch, target-element identities, and draft before callbacks. Property writes use
+an event-time target snapshot and recheck the owner before each setter. A callback
+cannot redirect the old draft to
+a replacement owner. Replacing a focused binding adopts its current value and
+starts a new draft baseline. Numeric drag submission also works without a
+focused text editor.
+
+Tab reorder preserves the stable tab ID through deferred presented focus.
+`FocusIntentRevision` advances for explicit focus requests, including a request
+for the current target. Automatic cleanup of a retired target does not advance
+it. A later explicit or virtual focus request cancels tab restoration. Restoration
+requires the exact accepted strip revision, canvas/input owner, and presented
+target. Retries stop after 120 ticks. Nested `SetTabs` requests copy only the
+reentrant request, coalesce to the latest one, and apply after the current writer.
+The update rejects callback loops after 32 transitions.
+
+Combo selection captures its intent before provider or binding callbacks. It
+rechecks exact source, options, and binding owners before commit and notification.
+A nested same-ID selection can cancel an outer pending selection. Context-menu
+actions own one show revision; an old action cannot dismiss a newly opened menu.
+Disabled menu actions also disable interaction and tab navigation.
+
+`EditorLinkedMutation` supports exact BCL `LinkedList<T>` sources with supported
+values and a nonvirtual compiler-generated property getter/backing field. Set,
+AddLast, and Remove share one structural Undo receipt across admitted owners.
+The receipt retains node identity, order, values, source fields, and source dirty
+documents. Shared list aliases mutate once. Undo verifies every owner and exact
+sequence before it writes. Removed nodes remain retained for replay; a node
+attached to another list rejects that replay. History does not retain the
+inspector view. Unsupported sources are read-only. Dictionary and generic
+collection mutation adapters remain separate open work.
+
+`XRObjectBase.ConstructOwned` supplies constructor-origin proof for synchronous
+factories. It separates new allocations from later cache enrollment, retains
+partial allocations on failure, and rolls back only exact cache entries from
+that publication. Temporary object guards reject foreign-thread identity changes
+and enrollment in another batch. Shared nested scopes remain valid; independent
+nested factories keep separate origins. The guards end after completion or
+rollback. Ordinary objects do not allocate a guard. An allocation ledger does
+not authorize recursive scene-graph destruction after callbacks transfer owners;
+clone adoption and graph retirement require their own checks.
+
+The world source registry can register a fixed packet source outside the drawable
+scene tree. Removal uses the recorded source registration. The current source-only
+preparation leaves legacy child draws in place; it is not a completed retained
+world-output path. A future replacement must prove the exact collected image,
+native target lineage, and accepted presentation before it can replace input.

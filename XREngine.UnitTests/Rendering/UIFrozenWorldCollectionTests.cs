@@ -158,15 +158,15 @@ public sealed class UIFrozenWorldCollectionTests
         using var shaders = new UITestShaderScope();
         var scene = new VisualScene3D();
         RuntimeWorldRenderer world = new(new TestWorldContext(), scene);
-        var info = RenderInfo3D.New(new FrozenTestRenderable());
         UIPublication packet = NewPacket(8);
-        info.FrozenWorldCommandSource = new ClosingPacketSource(packet, () =>
-        {
-            if (dispose)
-                world.Dispose();
-            else
-                world.SetCollectPublicationOpen(false);
-        });
+        var info = RenderInfo3D.New(new FrozenTestRenderable());
+        info.ConfigureFrozenWorldPacketSource(new ClosingPacketSource(packet, () =>
+            {
+                if (dispose)
+                    world.Dispose();
+                else
+                    world.SetCollectPublicationOpen(false);
+            }));
         scene.AddRenderable(info);
         world.SetCollectPublicationOpen(true);
         try
@@ -194,7 +194,7 @@ public sealed class UIFrozenWorldCollectionTests
         scene.ApplyRenderDispatchPreference(false);
         var source = new ObservingPacketSource();
         var info = RenderInfo3D.New(new FrozenTestRenderable());
-        info.FrozenWorldCommandSource = source;
+        info.ConfigureFrozenWorldPacketSource(source);
         scene.AddRenderable(info);
         scene.GlobalCollectVisible();
 
@@ -233,6 +233,33 @@ public sealed class UIFrozenWorldCollectionTests
             }
             info.Dispose();
         }
+    }
+
+    [Test]
+    public void PacketSourceOnlyRegistrationNeverAddsADrawableSceneItem()
+    {
+        using var shaders = new UITestShaderScope();
+        var scene = new VisualScene3D();
+        var source = new ObservingPacketSource();
+        var info = RenderInfo3D.New(new FrozenTestRenderable());
+        info.ConfigureFrozenWorldPacketSource(source, sourceOnly: true);
+        try
+        {
+            scene.AddRenderable(info);
+            scene.GlobalCollectVisible();
+            scene.HasFrozenWorldPacketSources.ShouldBeTrue();
+            scene.Renderables.ShouldBeEmpty();
+
+            scene.CollectRenderedItems(new RenderCommandCollection(), null, null,
+                collectMirrors: false);
+            source.Observed.ShouldBeNull();
+
+            scene.RemoveRenderable(info);
+            scene.GlobalCollectVisible();
+            scene.HasFrozenWorldPacketSources.ShouldBeFalse();
+            scene.Renderables.ShouldBeEmpty();
+        }
+        finally { info.Dispose(); }
     }
 
     private sealed class ObservingPacketSource : IFrozenWorldCommandSource,

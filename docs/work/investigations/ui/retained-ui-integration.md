@@ -1170,3 +1170,76 @@ callback assertion selected NUnit's delegate-execution overload. The assertion
 now checks the Boolean null condition explicitly. Desktop compilation 21 passed
 with zero warnings/errors in 45.76s. This desktop-only test change leaves the
 validated production and headless inputs unchanged. Desktop tests did not run.
+
+
+## Draft replacement and exact collection replay
+
+Checkpoint `3130bfc66b246659f357e10994fb314655e5605b` was published and the
+remote SHA was verified. No check runs, Actions runs, or commit statuses were
+attached. The next controls audit found that text validator/getter callbacks
+could replace a binding before an old draft committed or cancelled. Exact draft
+owner checks now reject that continuation. Tab updates also needed bounded
+reentrant requests and a focus-intent token to avoid restoring obsolete focus.
+
+Headless build 105 stopped with five syntax errors and zero warnings in
+1m06.90s. The new world packet source used an object initializer after a factory
+method call. The corrected setup uses a one-time source configuration method
+before world registration. This preparation preserves legacy child collection;
+it does not complete direct-world render or input publication.
+
+Linked-list review removed staging enumeration invalidation, separated Undo
+owner proofs from view leases, checked displayed binding values against frozen
+node values, and guaranteed history/dirty finalization after a failed UI
+notification. Dictionary direct writes and generic collection Clear/Add still
+need safe canonical adapters. The new portable nested-clip tests cover frozen
+records and painter order, not native surface allocation or presentation.
+
+Build 106 compiled production projects, then stopped with six new test compile
+errors and zero warnings in 2m13.05s. Three fixtures lacked the canvas component
+namespace, and two menu test statements used an unavailable transform property.
+The fixtures now import the existing component namespace and use `UITransform`.
+No production change was needed for these errors. The reviewed construction
+support still needs an exact active-object guard against foreign-thread identity
+changes before publication; test compilation alone does not close that finding.
+
+Build 107 passed with zero warnings/errors in 16.84s. Full run 67 passed
+712 of 715 tests, with zero warnings or skips, in 12.404s. Two new nested-clip
+fixtures failed their initial render-record admission assertion. The multiline
+fixture moved only its caret after focus selected the full text; Enter correctly
+replaced the selection. The fixture now collapses its selection before inserting
+a newline. No production change was needed for that failure. The new tab,
+combo/menu, draft-owner, and 13 construction cases all passed in this run.
+
+Build 108 compiled only the headless test project against the already built 107
+dependencies (`BuildProjectReferences=false`), with zero warnings/errors in
+8.20s. Diagnostic run 68 passed three of five publication tests in 0.882s. The
+two failures identified the same fallback shader: its `NormalEncoding` file
+snippet was unavailable in the headless host. The fixture now uses a supported
+self-contained custom fragment material and keeps its frozen fallback, crop,
+and painter-order assertions. This check does not validate later Data edits.
+
+Build 109 compiled production code, then stopped with one ambiguous constructor
+call in the repaired fixture and zero warnings in 2m07.14s. An explicit empty
+`ShaderVar` array resolved that overload. Build 110 passed with zero warnings
+and errors in 16.04s. Full run 69 passed 726 of 728 tests with no warnings or skips
+in 10.245s. All 23 owned-construction cases and the new text target-identity cases
+passed. The two remaining clipping fixtures read deferred transform matrices.
+They now call the normal immediate hierarchy recalculation after applying layout
+and after moving the inner clip. Rendering code and assertions are unchanged.
+Editor build 43 uses the same frozen production input; this last correction is
+test-only.
+
+
+Editor build 43 passed with zero warnings/errors in 2m37.59s. Build 111 passed
+with zero warnings/errors in 15.36s. Focused publication run 70 passed five of
+five tests in 0.928s. Full run 71 passed 728 of 728 tests, with no warnings,
+failures, or skips, in 10.870s. The final source snapshot contains 10,519 files.
+The last change after the editor build input was a headless/desktop test fixture;
+production source stayed unchanged. Construction guard review cleared exact
+thread/batch admission and reference-only rollback. This does not clear scene
+clone adoption or recursive graph cleanup, which remain separate work.
+
+Desktop test compilation 22 passed with zero warnings/errors in 48.02s. Its
+Windows test assembly did not execute. All final checks use the frozen source;
+no source changed after the successful full headless run. The three pending
+proposals and four original owner decisions remain unresolved.

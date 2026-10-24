@@ -34,7 +34,7 @@ public static partial class InspectorPropertyEditors
 
             editor = (node, prop, objects) =>
             {
-                if (objects?.Any(target => target is IEditorListElementBinding) == true)
+                if (objects?.Any(target => target is IEditorListElementBinding or IEditorLinkedElementBinding) == true)
                 {
                     AddInfoLabel(node, "Nested collection editing needs an owner path.");
                     return;
@@ -985,7 +985,10 @@ public static partial class InspectorPropertyEditors
             {
                 ulong generation = _headerGeneration;
                 int count = sample is ICollection collection ? collection.Count : 0;
-                bool canMutate = HasLinkedListTargets();
+                EditorLinkedSourceLease[] sources = CaptureLinkedSources(generation);
+                bool canMutate = sources.Length == _owners.Count && sources.Length != 0 &&
+                    ReferenceEquals(sources[0].List, sample) &&
+                    sources.All(source => source.Displayed.Nodes.Length == count);
                 if (!IsCurrentBuild(generation)) return;
                 List<object?> values = EnumerateLinkedListValues(sample).ToList();
                 if (!IsCurrentBuild(generation)) return;
@@ -1005,12 +1008,12 @@ public static partial class InspectorPropertyEditors
                 {
                     CreateInlineButton(header, "Add", () =>
                     {
-                        if (IsCurrentBuild(generation)) AddLinkedListElement(elementType, generation);
+                        if (IsCurrentBuild(generation)) AddLinkedListElement(sources, generation);
                     });
                 }
                 else
                 {
-                    AddInfoLabel(header, "LinkedList is read-only.");
+                    AddInfoLabel(header, "LinkedList editing needs exact BCL lists and auto-property owners.");
                 }
                 if (!KeepRenderedBranch(branch, generation)) return;
 
@@ -1026,7 +1029,7 @@ public static partial class InspectorPropertyEditors
 
                 for (int i = 0; i < values.Count; i++)
                 {
-                    BuildLinkedListRow(listNode, elementType, i, canMutate);
+                    BuildLinkedListRow(listNode, elementType, i, canMutate, sources, values[i]);
                     if (!KeepRenderedBranch(branch, generation)) return;
                 }
                 }
@@ -1042,20 +1045,28 @@ public static partial class InspectorPropertyEditors
                     yield return value;
             }
 
-            private bool HasLinkedListTargets()
+            private EditorLinkedSourceLease[] CaptureLinkedSources(ulong generation)
             {
+                List<EditorLinkedSourceLease> sources = [];
                 foreach (var owner in _owners)
                 {
-                    var value = _property.GetValue(owner);
-                    if (value is null)
-                        continue;
-                    if (IsLinkedListInstance(value, out _))
-                        return true;
+                    if (!IsCurrentBuild(generation)) return [];
+                    try
+                    {
+                        sources.Add(EditorLinkedMutation.Capture(owner, _property,
+                            () => IsCurrentBuild(generation)));
+                    }
+                    catch (Exception error)
+                    {
+                        Debug.LogException(error, "Linked-list editing is unavailable for this source.");
+                        return [];
+                    }
                 }
-                return false;
+                return [.. sources];
             }
 
-            private void BuildLinkedListRow(SceneNode parent, Type elementType, int index, bool canMutate)
+            private void BuildLinkedListRow(SceneNode parent, Type elementType, int index,
+                bool canMutate, EditorLinkedSourceLease[] sources, object? visibleValue)
             {
                 ulong generation = _headerGeneration;
                 var row = parent.NewChild();
@@ -1081,31 +1092,33 @@ public static partial class InspectorPropertyEditors
                 {
                     CreateInlineButton(labelNode, "Remove", () =>
                     {
-                        if (IsCurrentBuild(generation)) RemoveLinkedListElement(elementType, index, generation);
+                        if (IsCurrentBuild(generation)) RemoveLinkedListElement(sources, index, generation);
                     });
                 }
 
                 var valueNode = row.NewChild();
+                if (!canMutate)
+                {
+                    AddInfoLabel(valueNode, visibleValue?.ToString() ?? "<null>");
+                    return;
+                }
                 var bindingType = typeof(LinkedListElementBinding<>).MakeGenericType(elementType);
                 var bindingProperty = bindingType.GetProperty(nameof(LinkedListElementBinding<object>.Value))!;
-                var targets = CreateLinkedListBindings(bindingType, index, generation);
+                var targets = CreateLinkedListBindings(bindingType, index, generation, sources);
                 if (!IsCurrentBuild(generation)) return;
                 BuildValueEditor(valueNode, elementType, bindingProperty, targets);
             }
 
-            private object[] CreateLinkedListBindings(Type bindingType, int index, ulong generation)
+            private object[] CreateLinkedListBindings(Type bindingType, int index, ulong generation,
+                EditorLinkedSourceLease[] sources)
             {
                 List<object> bindings = new();
-                foreach (var owner in _owners)
+                foreach (EditorLinkedSourceLease source in sources)
                 {
                     if (!IsCurrentBuild(generation)) break;
-                    var value = _property.GetValue(owner);
-                    if (!IsCurrentBuild(generation)) break;
-                    if (value is null || !IsLinkedListInstance(value, out _))
-                        continue;
-
-                    var instance = Activator.CreateInstance(bindingType, _property, owner, index,
-                        this, generation);
+                    if (index >= source.Displayed.Nodes.Length) return [];
+                    var instance = Activator.CreateInstance(bindingType, source, index,
+                        (Action)Rebuild);
                     if (!IsCurrentBuild(generation)) break;
                     if (instance is not null)
                         bindings.Add(instance);
@@ -1113,88 +1126,19 @@ public static partial class InspectorPropertyEditors
                 return bindings.ToArray();
             }
 
-            private void AddLinkedListElement(Type elementType, ulong generation)
+            private void AddLinkedListElement(EditorLinkedSourceLease[] sources, ulong generation)
             {
-                object? newValue = ImGuiEditorUtilities.CreateDefaultElement(elementType);
                 if (!IsCurrentBuild(generation)) return;
-                foreach (var owner in _owners)
-                {
-                    if (!IsCurrentBuild(generation)) return;
-                    var collection = _property.GetValue(owner);
-                    if (!IsCurrentBuild(generation)) return;
-                    if (collection is null)
-                        continue;
-
-                    var listType = typeof(LinkedList<>).MakeGenericType(elementType);
-                    if (!listType.IsInstanceOfType(collection))
-                        continue;
-
-                    var addLast = listType.GetMethod("AddLast", new[] { elementType });
-                    if (addLast is null)
-                        continue;
-
-                    try
-                    {
-                        addLast.Invoke(collection, new[] { ConvertValue(newValue, elementType) });
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex, $"Failed to add linked list node for '{_property.Name}'.");
-                    }
-                }
-
-                Rebuild();
+                try { EditorLinkedMutation.AddLast(sources, Rebuild); }
+                catch (Exception error) { Debug.LogException(error, "Could not add a linked-list node."); }
             }
 
-            private void RemoveLinkedListElement(Type elementType, int index, ulong generation)
+            private void RemoveLinkedListElement(EditorLinkedSourceLease[] sources, int index,
+                ulong generation)
             {
-                foreach (var owner in _owners)
-                {
-                    if (!IsCurrentBuild(generation)) return;
-                    var collection = _property.GetValue(owner);
-                    if (!IsCurrentBuild(generation)) return;
-                    if (collection is null)
-                        continue;
-
-                    var listType = typeof(LinkedList<>).MakeGenericType(elementType);
-                    if (!listType.IsInstanceOfType(collection))
-                        continue;
-
-                    var node = GetLinkedListNode(collection, index);
-                    if (!IsCurrentBuild(generation)) return;
-                    if (node is null)
-                        continue;
-
-                    var removeMethod = listType.GetMethod("Remove", new[] { node.GetType() })
-                        ?? listType.GetMethod("Remove", new[] { elementType });
-
-                    try
-                    {
-                        if (removeMethod?.GetParameters().Length == 1 && removeMethod.GetParameters()[0].ParameterType == node.GetType())
-                            removeMethod.Invoke(collection, new[] { node });
-                        else if (removeMethod is not null)
-                            removeMethod.Invoke(collection, new[] { node.GetType().GetProperty("Value")?.GetValue(node) });
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex, $"Failed to remove linked list node for '{_property.Name}'.");
-                    }
-                }
-
-                Rebuild();
-            }
-
-            private static object? GetLinkedListNode(object linkedList, int index)
-            {
-                var type = linkedList.GetType();
-                var node = type.GetProperty("First")?.GetValue(linkedList);
-                if (node is null)
-                    return null;
-
-                for (int i = 0; i < index && node is not null; i++)
-                    node = node.GetType().GetProperty("Next")?.GetValue(node);
-
-                return node;
+                if (!IsCurrentBuild(generation)) return;
+                try { EditorLinkedMutation.Remove(sources, index, Rebuild); }
+                catch (Exception error) { Debug.LogException(error, "Could not remove a linked-list node."); }
             }
 
             private void RenderGenericCollection(ICollection sample, Type elementType)
@@ -1747,59 +1691,34 @@ public static partial class InspectorPropertyEditors
             }
         }
 
-        private sealed class LinkedListElementBinding<T>
+        private sealed class LinkedListElementBinding<T> : IEditorLinkedElementBinding
         {
-            private readonly PropertyInfo _property;
-            private readonly object _owner;
-            private readonly int _index;
-            private readonly CollectionEditorContext _context;
-            private readonly ulong _generation;
-            private readonly LinkedList<T>? _source;
+            private readonly EditorLinkedSourceLease _source;
+            private readonly object _node;
+            private object? _displayedValue;
+            private readonly Action _refresh;
 
-            public LinkedListElementBinding(PropertyInfo property, object owner, int index,
-                CollectionEditorContext context, ulong generation)
+            public LinkedListElementBinding(EditorLinkedSourceLease source, int index, Action refresh)
             {
-                _property = property;
-                _owner = owner;
-                _index = index;
-                _context = context;
-                _generation = generation;
-                _source = property.GetValue(owner) as LinkedList<T>;
+                _source = source;
+                _node = source.Displayed.Nodes[index];
+                _displayedValue = source.Displayed.Values[index];
+                _refresh = refresh;
             }
 
-            private LinkedList<T>? CurrentSource()
-            {
-                if (!_context.IsCurrentBuild(_generation) || _source is null) return null;
-                object? current = _property.GetValue(_owner);
-                return _context.IsCurrentBuild(_generation) && ReferenceEquals(current, _source)
-                    ? _source : null;
-            }
+            EditorLinkedSourceLease IEditorLinkedElementBinding.Source => _source;
+            object IEditorLinkedElementBinding.Node => _node;
+            object? IEditorLinkedElementBinding.DisplayedValue => _displayedValue;
+            bool IEditorLinkedElementBinding.IsCurrent => _source.IsCurrent() &&
+                Array.IndexOf(_source.Displayed.Nodes, _node) >= 0;
+            Action IEditorLinkedElementBinding.Refresh => _refresh;
+            void IEditorLinkedElementBinding.AcceptCommitted(object? value, object state)
+                => _displayedValue = value;
 
             public T? Value
             {
-                get
-                {
-                    if (CurrentSource() is not { } list)
-                        return default;
-                    var node = GetNode(list, _index);
-                    return node is null ? default : node.Value;
-                }
-                set
-                {
-                    if (CurrentSource() is not { } list)
-                        return;
-                    var node = GetNode(list, _index);
-                    if (node is not null && CurrentSource() is not null)
-                        node.Value = value!;
-                }
-            }
-
-            private static LinkedListNode<T>? GetNode(LinkedList<T> list, int index)
-            {
-                var node = list.First;
-                for (int i = 0; i < index && node is not null; i++)
-                    node = node.Next;
-                return node;
+                get => _source.IsViewCurrent() ? (T?)_displayedValue : default;
+                set => EditorLinkedMutation.Set([this], _ => value, _refresh);
             }
         }
 

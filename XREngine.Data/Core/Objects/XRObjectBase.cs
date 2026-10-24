@@ -74,7 +74,11 @@ namespace XREngine.Data.Core
                     ObjectsCacheInternal.Remove(obj.ID, out _);
         }
 
-        public XRObjectBase() => Generate();
+        public XRObjectBase()
+        {
+            CurrentObjectCachePublicationScope?.RecordConstruction(this);
+            Generate();
+        }
 
         /// <summary>
         /// False for objects that are reached only through their owner and never resolved by ID,
@@ -92,6 +96,7 @@ namespace XREngine.Data.Core
         /// </summary>
         protected XRObjectBase(bool deferObjectCachePublication)
         {
+            CurrentObjectCachePublicationScope?.RecordConstruction(this);
             if (!deferObjectCachePublication)
             {
                 Generate();
@@ -111,6 +116,9 @@ namespace XREngine.Data.Core
 
         public virtual void Generate()
         {
+            ObjectConstructionIdentityGuard.RequireIdentityMutation(this);
+            ObjectConstructionIdentityGuard.RequireOwningBatch(this, CurrentObjectCachePublicationScope?.ConstructionIdentityGuard);
+            CurrentObjectCachePublicationScope?.RequireGeneratedOrigin(this);
             SetObjectID(Guid.NewGuid(), publishNotifications: false);
             IsDestroyed = false;
             ClearDestroyQueuedFlag();
@@ -134,6 +142,10 @@ namespace XREngine.Data.Core
 
         protected void PublishObjectCacheRegistration()
         {
+            ObjectConstructionIdentityGuard.RequireIdentityMutation(this);
+            ObjectConstructionIdentityGuard.RequireOwningBatch(this, CurrentObjectCachePublicationScope?.ConstructionIdentityGuard);
+            if (CurrentObjectCachePublicationScope?.TryDeferOwnedPublication(this) == true)
+                return;
             lock (ObjectCacheMutationLock)
                 PublishObjectCacheRegistrationUnderLock();
         }
@@ -169,6 +181,8 @@ namespace XREngine.Data.Core
 
         protected virtual void PublishObjectCacheRegistrationUnderLock()
         {
+            ObjectConstructionIdentityGuard.RequireOwningBatch(this,
+                CurrentObjectCachePublicationScope?.ConstructionIdentityGuard, requirePublishing: true);
             if (IsDestroyed)
                 throw new InvalidOperationException($"Destroyed object '{GetType().FullName}' cannot be published in the global object cache.");
 
@@ -187,7 +201,7 @@ namespace XREngine.Data.Core
                 }
 
                 // Collision, update ID and try again.
-                SetObjectID(Guid.NewGuid(), publishNotifications: false);
+                SetObjectID(Guid.NewGuid(), publishNotifications: false, allowOwnedPublicationCollision: true);
                 if (tries++ > 10)
                     throw new Exception("Failed to generate a unique ID for an object."); // Highly unlikely.
             }
@@ -298,8 +312,12 @@ namespace XREngine.Data.Core
             ID = persistentID;
         }
 
-        private void SetObjectID(Guid value, bool publishNotifications, bool persistentIdentity = false)
+        private void SetObjectID(Guid value, bool publishNotifications, bool persistentIdentity = false,
+            bool allowOwnedPublicationCollision = false)
         {
+            ObjectConstructionIdentityGuard.RequireIdentityMutation(this, allowOwnedPublicationCollision);
+            if (!allowOwnedPublicationCollision)
+                CurrentObjectCachePublicationScope?.RequireConstructionIdentityChange(this);
             Guid previous = _id;
             bool wasRegistered = _isRegisteredInObjectCache;
             if (previous == value)

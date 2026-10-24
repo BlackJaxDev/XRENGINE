@@ -15,6 +15,15 @@
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Rendering/UITextMultilineSubmitTests.cs" Link="Rendering/UITextMultilineSubmitTests.cs" />
+    <Compile Include="../Rendering/UITabFocusRestoreTests.cs" Link="Rendering/UITabFocusRestoreTests.cs" />
+    <Compile Include="../Core/OwnedObjectConstructionTests.cs" Link="Core/OwnedObjectConstructionTests.cs" />
+    <Compile Include="../Core/OwnedConstructionProbe.cs" Link="Core/OwnedConstructionProbe.cs" />
+    <Compile Include="../Core/NonCacheConstructionProbe.cs" Link="Core/NonCacheConstructionProbe.cs" />
+    <Compile Include="../Rendering/UITextDraftOwnerTests.cs" Link="Rendering/UITextDraftOwnerTests.cs" />
+    <Compile Include="../Rendering/UITextDraftPropertyTarget.cs" Link="Rendering/UITextDraftPropertyTarget.cs" />
+    <Compile Include="../Rendering/UITextRebindingValidator.cs" Link="Rendering/UITextRebindingValidator.cs" />
+    <Compile Include="../Rendering/UITextReentrantDraftBinding.cs" Link="Rendering/UITextReentrantDraftBinding.cs" />
     <Compile Include="../GlobalWorldTypeAliases.cs" Link="GlobalWorldTypeAliases.cs" />
     <Compile Include="../Rendering/UITestShaderScope.cs" Link="Rendering/UITestShaderScope.cs" />
     <Compile Include="../Rendering/UITestRenderingHost.cs" Link="Rendering/UITestRenderingHost.cs" />

@@ -395,18 +395,25 @@ namespace XREngine.Rendering.UI
 
             if (item.Enabled)
             {
+                ulong showRevision = _showRevision;
                 button.DefaultBackgroundColor = ColorF4.Transparent;
                 button.HighlightBackgroundColor = ItemHighlightBackground;
                 button.DefaultTextColor = ItemDefaultTextColor;
                 button.HighlightTextColor = ItemDefaultTextColor;
                 button.RegisterClickActions(_ =>
                 {
+                    if (_tearingDown || IsDestroyed || !_isOpen ||
+                        showRevision != _showRevision || !button.CanInteract)
+                        return;
                     item.Action?.Invoke();
-                    Hide();
+                    if (!_tearingDown && !IsDestroyed && _isOpen && showRevision == _showRevision)
+                        Hide();
                 });
             }
             else
             {
+                button.IsEnabled = false;
+                button.IsTabStop = false;
                 button.DefaultBackgroundColor = ColorF4.Transparent;
                 button.HighlightBackgroundColor = ColorF4.Transparent;
                 button.DefaultTextColor = ItemDisabledTextColor;

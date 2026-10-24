@@ -103,6 +103,198 @@ public sealed class UIControlTeardownTests
     }
 
     [Test]
+    public void DisabledMenuItemCannotFocusOrActivateAndActionReopenKeepsNewMenu()
+    {
+        SceneNode root = CreateCanvas(out _);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            int disabledActions = 0;
+            menu.Show(new Vector2(8, 80), new ContextMenuItem("Disabled", () => disabledActions++, false));
+            UIButtonComponent disabled = FirstMenuButton(menu);
+            disabled.IsEnabled.ShouldBeFalse();
+            disabled.IsTabStop.ShouldBeFalse();
+            disabled.AccessibilityActivate().ShouldBeFalse();
+            disabled.OnInteract();
+            disabledActions.ShouldBe(0);
+            menu.IsOpen.ShouldBeTrue();
+
+            int actions = 0;
+            menu.Show(new Vector2(8, 80), new ContextMenuItem("Reopen", () =>
+            {
+                actions++;
+                menu.Show(new Vector2(18, 70), new ContextMenuItem("Latest", null));
+            }));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            UIButtonComponent reopen = FirstMenuButton(menu);
+            reopen.CanInteract.ShouldBeTrue();
+            reopen.OnInteract();
+
+            actions.ShouldBe(1);
+            menu.IsOpen.ShouldBeTrue();
+            FirstMenuButton(menu).ShouldNotBeSameAs(reopen);
+            reopen.OnInteract();
+            actions.ShouldBe(1);
+
+            menu.Show(new Vector2(8, 80), new ContextMenuItem("Destroy", () => menu.Destroy(true)));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            FirstMenuButton(menu).OnInteract();
+            menu.IsDestroyed.ShouldBeTrue();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void ComboPropertyCallbacksCannotEmitSupersededSelection()
+    {
+        SceneNode root = CreateCanvas(out _);
+        try
+        {
+            SceneNode node = new(root) { Name = "Combo" };
+            node.SetTransform<UIBoundableTransform>();
+            UIComboBoxComponent combo = node.AddComponent<UIComboBoxComponent>()!;
+            combo.SetOptions([new(1, "One"), new(2, "Two")]);
+            List<UIValueChange<ulong?>> changes = [];
+            combo.SelectionChanged += changes.Add;
+            bool reentered = false;
+            combo.PropertyChanged += (_, change) =>
+            {
+                if (reentered || change.PropertyName != nameof(UIComboBoxComponent.SelectedId))
+                    return;
+                reentered = true;
+                combo.Select(2).ShouldBeTrue();
+            };
+
+            combo.Select(1).ShouldBeFalse();
+
+            combo.SelectedId.ShouldBe(2UL);
+            changes.Count.ShouldBe(1);
+            changes[0].NewValue.ShouldBe(2UL);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void ComboPrechangeReplacementAndDestroyRejectOuterSelection()
+    {
+        SceneNode root = CreateCanvas(out _);
+        try
+        {
+            SceneNode replacementNode = new(root) { Name = "Replacement combo" };
+            replacementNode.SetTransform<UIBoundableTransform>();
+            UIComboBoxComponent replacement = replacementNode.AddComponent<UIComboBoxComponent>()!;
+            replacement.SetOptions([new(1, "One"), new(2, "Two")]);
+            int replacementEvents = 0;
+            replacement.SelectionChanged += _ => replacementEvents++;
+            bool reentered = false;
+            replacement.PropertyChanging += (_, change) =>
+            {
+                if (reentered || change.PropertyName != nameof(UIComboBoxComponent.SelectedId))
+                    return;
+                reentered = true;
+                replacement.Select(2).ShouldBeTrue();
+            };
+            replacement.Select(1).ShouldBeFalse();
+            replacement.SelectedId.ShouldBe(2UL);
+            replacementEvents.ShouldBe(1);
+
+            SceneNode destroyedNode = new(root) { Name = "Destroyed combo" };
+            destroyedNode.SetTransform<UIBoundableTransform>();
+            UIComboBoxComponent destroyed = destroyedNode.AddComponent<UIComboBoxComponent>()!;
+            destroyed.SetOptions([new(1, "One")]);
+            int staleEvents = 0;
+            destroyed.SelectionChanged += _ => staleEvents++;
+            destroyed.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(UIComboBoxComponent.SelectedId))
+                    destroyed.Destroy(true);
+            };
+            destroyed.Select(1).ShouldBeFalse();
+            destroyed.IsDestroyed.ShouldBeTrue();
+            staleEvents.ShouldBe(0);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void ComboSameIdReentryCancelsPendingSelection()
+    {
+        UIComboBoxComponent combo = new();
+        combo.SetOptions([new(1, "One")]);
+        int events = 0;
+        combo.SelectionChanged += _ => events++;
+        bool reentered = false;
+        combo.PropertyChanging += (_, change) =>
+        {
+            if (reentered || change.PropertyName != nameof(UIComboBoxComponent.SelectedId))
+                return;
+            reentered = true;
+            combo.Select(null).ShouldBeTrue();
+        };
+
+        combo.Select(1).ShouldBeFalse();
+
+        combo.SelectedId.ShouldBeNull();
+        events.ShouldBe(0);
+    }
+
+    [Test]
+    public void ComboProviderReplacementDuringLookupCancelsOldSelection()
+    {
+        UIComboBoxComponent combo = new();
+        ReentrantComboOptions original = new();
+        ReentrantComboOptions replacement = new();
+        combo.VirtualOptions = original;
+        int events = 0;
+        combo.SelectionChanged += _ => events++;
+        original.OnLookup = () => combo.VirtualOptions = replacement;
+
+        combo.Select(1).ShouldBeFalse();
+
+        combo.VirtualOptions.ShouldBeSameAs(replacement);
+        combo.SelectedId.ShouldBeNull();
+        events.ShouldBe(0);
+    }
+
+    [Test]
+    public void ComboOptionReplacementDuringPrechangeCannotCommitRemovedId()
+    {
+        UIComboBoxComponent combo = new();
+        combo.SetOptions([new(1, "One")]);
+        int events = 0;
+        combo.SelectionChanged += _ => events++;
+        combo.PropertyChanging += (_, change) =>
+        {
+            if (change.PropertyName == nameof(UIComboBoxComponent.SelectedId))
+                combo.SetOptions([new(2, "Two")]);
+        };
+
+        combo.Select(1).ShouldBeFalse();
+
+        combo.SelectedId.ShouldBeNull();
+        events.ShouldBe(0);
+    }
+
+    [Test]
+    public void ComboBindingReplacementDuringWriteCancelsOldSelection()
+    {
+        UIComboBoxComponent combo = new();
+        combo.SetOptions([new(1, "One"), new(2, "Two")]);
+        UIValueState<ulong?> original = new(null);
+        UIValueState<ulong?> replacement = new(2);
+        combo.Binding = original;
+        int events = 0;
+        combo.SelectionChanged += _ => events++;
+        original.ValueChanged += _ => combo.Binding = replacement;
+
+        combo.Select(1).ShouldBeFalse();
+
+        combo.Binding.ShouldBeSameAs(replacement);
+        combo.SelectedId.ShouldBe(2UL);
+        events.ShouldBe(1);
+    }
+
+    [Test]
     public void DestroyingTooltipReleasesTargetHelpAndPopupCallback()
     {
         SceneNode root = CreateCanvas(out _);
@@ -302,5 +494,25 @@ public sealed class UIControlTeardownTests
         SceneNode node = new(root) { Name = "Popup" };
         node.SetTransform<UIBoundableTransform>();
         return node.AddComponent<UIContextMenuComponent>()!;
+    }
+
+    private static UIButtonComponent FirstMenuButton(UIContextMenuComponent menu)
+        => menu.SceneNode.FirstChild!.FirstChild!.FirstChild!
+            .GetComponent<UIButtonComponent>()!;
+
+    private sealed class ReentrantComboOptions : IUIComboOptionSource
+    {
+        public int Count => 1;
+        public ulong Revision => 1;
+        public Action? OnLookup { get; set; }
+        public UIComboOption GetOption(int index) => index == 0 ? new(1, "One") :
+            throw new ArgumentOutOfRangeException(nameof(index));
+        public int IndexOfId(ulong id)
+        {
+            Action? callback = OnLookup;
+            OnLookup = null;
+            callback?.Invoke();
+            return id == 1 ? 0 : -1;
+        }
     }
 }

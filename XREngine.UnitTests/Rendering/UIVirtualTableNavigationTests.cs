@@ -43,6 +43,7 @@ public sealed class UIVirtualTableNavigationTests
 
             first.TryConsumeFocusDirection(new Vector2(0, -1)).ShouldBeTrue();
             requested.ShouldBe(2UL);
+            input.HasPendingFocusRequest.ShouldBeTrue();
             UITestTreeKeyRegistration keys = new();
             first.RegisterInput(keys);
             keys.Press(EKey.Down).ShouldBeTrue();
@@ -76,6 +77,7 @@ public sealed class UIVirtualTableNavigationTests
             RefreshPresentedInput(input);
 
             input.FocusedComponent.ShouldBeSameAs(second);
+            input.HasPendingFocusRequest.ShouldBeFalse();
             table.SelectedId.ShouldBe(2UL);
             source.IndexReads.ShouldBeLessThan(32);
             source.IdReads.ShouldBeLessThan(80);

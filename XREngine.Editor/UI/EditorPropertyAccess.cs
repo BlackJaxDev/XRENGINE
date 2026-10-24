@@ -76,6 +76,16 @@ internal sealed class EditorPropertyAccess
             _changed?.Invoke();
             return;
         }
+        if (_targets.Any(target => target is IEditorLinkedElementBinding))
+        {
+            if (!_targets.All(target => target is IEditorLinkedElementBinding))
+                throw new InvalidOperationException("The linked-list editor targets do not share one mutation route.");
+            EditorLinkedMutation.Set(_targets.Cast<IEditorLinkedElementBinding>().ToArray(),
+                oldValue => update is null ? value : update(oldValue),
+                ((IEditorLinkedElementBinding)_targets[0]).Refresh);
+            _changed?.Invoke();
+            return;
+        }
         using var interaction = Undo.BeginUserInteraction();
         using var change = Undo.BeginChange($"Set {_property.Name}");
         _writing = true;

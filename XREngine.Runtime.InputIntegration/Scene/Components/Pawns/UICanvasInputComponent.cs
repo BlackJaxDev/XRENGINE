@@ -80,6 +80,7 @@ namespace XREngine.Components
         private bool _pressedWasTouch;
 
         private UIInteractableComponent? _focusedComponent;
+        private ulong _focusIntentRevision;
         private bool _inputDeactivating;
         private bool _inputTerminal;
         private bool _inputCleanupActive;
@@ -90,7 +91,25 @@ namespace XREngine.Components
         public UIInteractableComponent? FocusedComponent
         {
             get => _focusedComponent;
-            set => SetField(ref _focusedComponent, _inputDeactivating ? null : value);
+            set
+            {
+                AdvanceFocusIntent();
+                SetField(ref _focusedComponent, _inputDeactivating ? null : value);
+            }
+        }
+
+        /// <summary>Changes before each explicit focus request, including requests for the current target.</summary>
+        [RuntimeOnly, YamlIgnore]
+        public ulong FocusIntentRevision => _focusIntentRevision;
+
+        /// <summary>Whether a virtual focus request is waiting for or accepting a presented row.</summary>
+        [RuntimeOnly, YamlIgnore]
+        public bool HasPendingFocusRequest => _pendingVirtualFocusItemId != 0 || _resolvingVirtualFocus;
+
+        private void AdvanceFocusIntent()
+        {
+            ulong next = unchecked(_focusIntentRevision + 1);
+            SetField(ref _focusIntentRevision, next == 0 ? 1UL : next, publishNotifications: false);
         }
 
         /// <summary>
@@ -179,7 +198,7 @@ namespace XREngine.Components
             {
                 case nameof(UIInteractableComponent.IsFocused):
                     if (!(_focusedComponent?.IsFocused ?? false))
-                        FocusedComponent = null;
+                        SetField(ref _focusedComponent, null, nameof(FocusedComponent));
                     break;
                 case nameof(UIInteractableComponent.IsReadOnly):
                 case nameof(UIInteractableComponent.IsEnabled):

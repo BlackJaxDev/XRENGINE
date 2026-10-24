@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 
@@ -26,6 +25,6 @@ internal sealed class EditorListSourceAccessor
         return new(field);
     }
 
-    public bool IsCurrent(object owner, IList expected)
+    public bool IsCurrent(object owner, object expected)
         => ReferenceEquals(_field.GetValue(owner), expected);
 }

@@ -85,6 +85,37 @@ namespace XREngine.Components
         /// <summary>Signals a change that can alter child 3D collection.</summary>
         internal event Action? WorldCollectionModeChanged;
 
+        private bool _enableRetainedWorldRendering;
+
+        /// <summary>Allows an exact output image to select frozen direct-world UI.</summary>
+        [DefaultValue(false)]
+        public bool EnableRetainedWorldRendering
+        {
+            get => _enableRetainedWorldRendering;
+            set
+            {
+                if (SetField(ref _enableRetainedWorldRendering, value))
+                    SyncFrozenWorldPacketSource();
+            }
+        }
+
+        private void SyncFrozenWorldPacketSource()
+        {
+            if (_frozenWorldRenderInfo is null)
+                return;
+            bool available = _enableRetainedWorldRendering &&
+                IsActiveInHierarchy && !WorldCollectionUnavailable &&
+                CanvasDrawSpaceOrDefault != ECanvasDrawSpace.Screen &&
+                !UseOffscreenRenderingForNonScreenSpaces();
+            _frozenWorldRenderInfo.SetCollectionSuppressed(!available);
+        }
+
+        private void NotifyWorldCollectionModeChanged()
+        {
+            SyncFrozenWorldPacketSource();
+            WorldCollectionModeChanged?.Invoke();
+        }
+
         private bool _preferOffscreenRenderingForNonScreenSpaces = true;
         /// <summary>
         /// When true, Camera/World-space canvases render to an offscreen texture and display that texture on a world quad.
@@ -99,7 +130,7 @@ namespace XREngine.Components
                 bool wasOffscreen = UseOffscreenRenderingForNonScreenSpaces();
                 if (SetField(ref _preferOffscreenRenderingForNonScreenSpaces, value) &&
                     wasOffscreen != UseOffscreenRenderingForNonScreenSpaces())
-                    WorldCollectionModeChanged?.Invoke();
+                    NotifyWorldCollectionModeChanged();
             }
         }
 
@@ -191,7 +222,8 @@ namespace XREngine.Components
             // an output-attempt receipt. Its bound is intentionally unbounded: each
             // frozen child supplies its own layer and culling volume at collection.
             _frozenWorldRenderInfo = RenderInfo3D.New(this);
-            _frozenWorldRenderInfo.FrozenWorldCommandSource = new UICanvasFrozenWorldCommandSource(this);
+            _frozenWorldRenderInfo.ConfigureFrozenWorldPacketSource(
+                new UICanvasFrozenWorldCommandSource(this), sourceOnly: true);
             _frozenWorldRenderInfo.CullingIntersectionOverride = static (_, _, _) => true;
             _frozenWorldRenderInfo.CastsShadows = true;
             _frozenWorldRenderInfo.ReceivesShadows = false;
@@ -199,6 +231,7 @@ namespace XREngine.Components
             _frozenWorldRenderInfo.SetCollectionSuppressed(true);
 
             SetField(ref _renderedObjects, [_worldSpaceQuadRenderInfo, _frozenWorldRenderInfo]);
+            SyncFrozenWorldPacketSource();
         }
 
         /// <summary>Checks the canvas route implemented by the cooked WebGPU UI family.</summary>
@@ -246,7 +279,7 @@ namespace XREngine.Components
             SetField(ref _worldCollectionUnavailable, true, publishNotifications: false);
             base.OnTransformChanging();
 
-            WorldCollectionModeChanged?.Invoke();
+            NotifyWorldCollectionModeChanged();
 
             if (!SceneNode.IsTransformNull && Transform is UICanvasTransform tfm)
             {
@@ -262,7 +295,7 @@ namespace XREngine.Components
             if (!SceneNode.IsTransformNull && Transform is UICanvasTransform tfm)
                 tfm.PropertyChanged += OnCanvasTransformPropertyChanged;
             SetField(ref _worldCollectionUnavailable, false, publishNotifications: false);
-            WorldCollectionModeChanged?.Invoke();
+            NotifyWorldCollectionModeChanged();
         }
 
         private void OnCanvasTransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
@@ -276,6 +309,8 @@ namespace XREngine.Components
                     UpdateWorldSpaceQuadData();
                     break;
             }
+            if (e.PropertyName == nameof(UICanvasTransform.DrawSpace))
+                NotifyWorldCollectionModeChanged();
         }
 
         private void ResizeScreenSpace(BoundingRectangleF bounds)
@@ -621,7 +656,7 @@ namespace XREngine.Components
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
-            WorldCollectionModeChanged?.Invoke();
+            NotifyWorldCollectionModeChanged();
             EnsureOffscreenResourcesInitialized();
             EnsureRenderPipelineInitialized();
             // Layout runs on UpdateFrame, before RuntimeWorld post-update processing (PostUpdateFrame).
@@ -639,7 +674,7 @@ namespace XREngine.Components
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            WorldCollectionModeChanged?.Invoke();
+            NotifyWorldCollectionModeChanged();
             RemoveTimerHooks();
             GetCanvasTransformOrNull()?.CancelLayoutJob();
             ClearPublications();
@@ -649,7 +684,7 @@ namespace XREngine.Components
         {
             SetField(ref _worldCollectionTerminal, true, publishNotifications: false);
             SetField(ref _worldCollectionUnavailable, true, publishNotifications: false);
-            WorldCollectionModeChanged?.Invoke();
+            NotifyWorldCollectionModeChanged();
             RemoveTimerHooks();
             GetCanvasTransformOrNull()?.CancelLayoutJob();
             ClearPublications();
@@ -1174,7 +1209,7 @@ namespace XREngine.Components
 
             SetField(ref _forceDirectRenderingForBackdropBlur, forceDirect, publishNotifications: false);
             if (wasOffscreen != UseOffscreenRenderingForNonScreenSpaces())
-                WorldCollectionModeChanged?.Invoke();
+                NotifyWorldCollectionModeChanged();
             //if (_renderModeDiagCount < 20)
             //{
             //    Debug.UI($"[UICanvas:RenderMode] drawSpace={canvasTransform.DrawSpace} preferOffscreen={_preferOffscreenRenderingForNonScreenSpaces} forceDirectForBackdropBlur={_forceDirectRenderingForBackdropBlur} effectiveOffscreen={UseOffscreenRenderingForNonScreenSpaces()}");

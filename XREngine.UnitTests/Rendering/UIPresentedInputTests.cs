@@ -23,6 +23,42 @@ public sealed class UIPresentedInputTests
     [TearDown] public void RestoreShaderAssets() => _shaderScope.Dispose();
 
     [Test]
+    public void FocusIntentTracksExplicitRequestsButNotRetiredTargetCleanup()
+    {
+        SceneNode root = new("Focus intent", new UICanvasTransform());
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            root.AddComponent<UICanvasComponent>();
+            UICanvasInputComponent input = root.AddComponent<UICanvasInputComponent>()!;
+            UIInteractableComponent first = root.NewChild("First").AddComponent<UIButtonComponent>()!;
+            UIInteractableComponent second = root.NewChild("Second").AddComponent<UIButtonComponent>()!;
+            input.FocusedComponent = first;
+            ulong original = input.FocusIntentRevision;
+            original.ShouldBeGreaterThan(0UL);
+            first.CancelForRecycle();
+            input.FocusedComponent.ShouldBeNull();
+            input.FocusIntentRevision.ShouldBe(original);
+            input.FocusedComponent = first;
+            ulong restored = input.FocusIntentRevision;
+            restored.ShouldBeGreaterThan(original);
+            input.FocusedComponent = first;
+            input.FocusIntentRevision.ShouldBeGreaterThan(restored);
+            ulong sameTarget = input.FocusIntentRevision;
+            input.FocusedComponent = second;
+            input.FocusedComponent = first;
+            input.FocusIntentRevision.ShouldBeGreaterThan(sameTarget);
+            ulong beforeVirtual = input.FocusIntentRevision;
+            UIListTransform unattached = new();
+            try { input.RequestVirtualItemFocus(unattached, 1).ShouldBeFalse(); }
+            finally { unattached.Destroy(true); }
+            input.FocusIntentRevision.ShouldBeGreaterThan(beforeVirtual);
+            input.HasPendingFocusRequest.ShouldBeFalse();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
     public void ReentrantPressKeepsItsPresentedGeometryAndLeavesReplacementCaptureUsable()
     {
         UICanvasInputComponent input = new();
