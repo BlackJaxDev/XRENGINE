@@ -446,7 +446,9 @@ internal sealed class NativeDockTreeHost
         ulong registrationRevision = _registration.RegistrationRevision;
         NativeDockTransferResult result = NativeDockWindowRegistry.TransferToAnotherWindow(_registration, panel);
         if (result == NativeDockTransferResult.Rejected)
-            Debug.UI("[NativeDock] The destination did not accept the panel.");
+            Debug.UI("[NativeDock] Panel transfer could not be confirmed.");
+        else if (result == NativeDockTransferResult.NoTarget)
+            Debug.UI("[NativeDock] Open another native editor window in this world, then retry the panel transfer.");
         if (result == NativeDockTransferResult.Committed && !_disposed && !_root.IsDestroyed &&
             !_root.IsDestroyQueued && _root.IsActiveInHierarchy && ReferenceEquals(_root.World, _world) &&
             _registration.RegistrationRevision == registrationRevision &&

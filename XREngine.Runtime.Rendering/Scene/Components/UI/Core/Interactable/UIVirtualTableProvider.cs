@@ -131,6 +131,18 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
             SelectedId = state.BoundId;
             Activated?.Invoke(state.BoundId);
         };
+        interaction.GotFocus += _ =>
+        {
+            UIListTransform? list = state.BoundList;
+            ulong id = state.BoundId;
+            if (list is null || id == 0 || !interaction.CanInteract ||
+                !UIVirtualRowNavigationLease.IsCurrent(interaction, this, list,
+                    id, state.BoundIncarnation, state.ProviderIncarnation) ||
+                interaction.UserInterfaceCanvas?.GetInputComponent() is not { } input ||
+                !input.IsDispatchingVirtualItemFocus(list, id, interaction))
+                return;
+            SelectedId = id;
+        };
         _rows.Add(layout, state);
         if (_liveRows.Count >= 128)
             for (int i = _liveRows.Count - 1; i >= 0; i--)
@@ -231,6 +243,9 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
                 return;
             }
             state.Interaction.IsSelected = itemId == _selectedId;
+            if (list is not null && IsCurrentBinding(row, state, itemId, incarnation, list,
+                    providerIncarnation, sourceRevision, epoch))
+                state.Interaction.BindNavigation(this, list, itemId, incarnation);
         }
         catch
         {
@@ -393,6 +408,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
         state.BoundIncarnation = 0;
         state.BoundList = null;
         state.ProviderIncarnation = 0;
+        state.Interaction.UnbindNavigation();
         state.BindingEpoch++;
         state.TransitionDepth++;
         List<Exception>? failures = null;

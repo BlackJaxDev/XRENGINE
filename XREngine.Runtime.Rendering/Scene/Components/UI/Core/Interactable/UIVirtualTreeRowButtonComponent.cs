@@ -159,11 +159,8 @@ public sealed class UIVirtualTreeRowButtonComponent : UIButtonComponent
             ReferenceEquals(_list, list) && ReferenceEquals(_provider, provider) &&
             _itemId == itemId && _leaseIncarnation == leaseIncarnation &&
             _providerIncarnation == providerIncarnation &&
-            ReferenceEquals(list.VirtualProvider, provider) &&
-            list.VirtualProviderIncarnation == providerIncarnation &&
-            ReferenceEquals(BoundableTransform.Parent, list) &&
-            list.TryGetVirtualRowLease(BoundableTransform, out UIVirtualRowLease lease) &&
-            lease.ItemId == itemId && lease.Incarnation == leaseIncarnation;
+            UIVirtualRowNavigationLease.IsCurrent(this, provider, list,
+                itemId, leaseIncarnation, providerIncarnation);
 
     private bool RequestFocus(ulong targetId)
     {
@@ -172,8 +169,7 @@ public sealed class UIVirtualTreeRowButtonComponent : UIButtonComponent
         ulong providerIncarnation = _providerIncarnation;
         UIVirtualTreeProvider? provider = _provider;
         if (_list is not { } list || provider is null ||
-            UserInterfaceCanvas?.GetInputComponent() is not { } input ||
-            !input.RequestVirtualItemFocus(list, targetId))
+            !UIVirtualRowNavigationLease.RequestFocus(this, list, targetId))
             return false;
         if (IsFocused && CanInteract &&
             IsSameNavigationOwner(provider, list, fromId, incarnation, providerIncarnation))

@@ -122,7 +122,6 @@ public partial class HierarchyPanel
             _renameDraft = string.Empty;
             _renameFocusRequested = false;
             _renameSession++;
-            _contextMenuTargetNode = null;
         }
         finally
         {
@@ -165,6 +164,7 @@ public partial class HierarchyPanel
         {
             ReconcileRenameSource();
             CompleteRenameFocus();
+            CompleteHierarchyMenuRequest();
         }
     }
 

@@ -1,13 +1,13 @@
 # Retained UI Implementation Checkpoint
 
-Date: 2026-10-23
+Date: 2026-10-24
 Status: Active implementation
 Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **40 of 60 implementation items are complete**.
-The active TODO has 20 code items and four owner decisions. Later sections
+Latest code reconciliation: **43 of 60 implementation items are complete**.
+The active TODO has 17 code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -599,3 +599,36 @@ parameter changed after the editor build; headless and production inputs remain
 unchanged. All checks ran through the build wrapper or a previously built test
 executable. Windows, GPU, visual, IME, native resource, benchmark, and
 faster-than-ImGui acceptance remain unverified.
+
+
+## Displayed Input And Accepted Text Measurements
+
+Code completion is **43 of 60**. The collection teardown item is complete in
+code: every detail branch and retained value binding checks its owner generation,
+and partial branches retire through final cleanup. The active TODO retains
+17 code items and four original owner decisions. Paragraph analysis, recovery
+journaling, and primary-window key migration are still pending separate approval.
+
+| Area | Completed / original code items |
+|---|---:|
+| Worker layout | 9 / 9 |
+| Publication and input | 5 / 8 |
+| Persistent rendering and clipping | 14 / 17 |
+| Controls and virtual collections | 10 / 11 |
+| Fixtures and integration | 3 / 3 |
+| Editor adoption | 2 / 12 |
+
+This checkpoint adds accepted text measurements for inspector sizing, complete
+font-face cache identities, stable-ID table navigation, tab shortcuts, and exact
+hierarchy menu ownership. Hover callbacks retain cleanup owners across reentry
+and failed callbacks. Camera and menu input use displayed geometry. None of these
+narrow changes closes the broader text, docking, or editor parity items.
+
+Headless build 104 passed with zero warnings/errors in 1m10.59s. Full run 66
+passed **682 of 682 tests**, with no warnings, failures, or skips, in 10.069s.
+Editor build 42 passed with zero warnings/errors in 40.99s. Desktop compilation
+21 passed with zero warnings/errors in 45.76s; its tests did not execute. The final
+source snapshot has 10,488 files. One editor-only nullable-flow guard changed
+after the headless run, and one desktop-only assertion changed after the editor
+build. Headless and production inputs for those checks remain unchanged. Windows, GPU, visual, native IME, benchmark,
+and faster-than-ImGui acceptance remain unverified.

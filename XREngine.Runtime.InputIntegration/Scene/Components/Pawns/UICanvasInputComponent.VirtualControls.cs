@@ -83,26 +83,8 @@ public partial class UICanvasInputComponent
             !publication.CanvasBounds.Contains(position))
             return null;
 
-        UIHitRecord? blocker = null;
-        foreach (ref readonly UIHitRecord record in publication.Hits)
-        {
-            if (!record.BlocksInputBehind || !IsCurrentHitRecord(record) || !record.Contains(position))
-                continue;
-            if (blocker is not { } previous || IsBetterInputCandidate(record.Depth,
-                record.LayerIndex, record.IndexWithinLayer, previous.Depth, previous.LayerIndex, previous.IndexWithinLayer))
-                blocker = record;
-        }
-        UIHitRecord? best = null;
-        foreach (ref readonly UIHitRecord record in publication.Hits)
-        {
-            if (!record.IsInteractable || !IsCurrentHitRecord(record) || !record.Contains(position) ||
-                blocker is { } front && !record.IsInSubtreeOf(front))
-                continue;
-            if (best is not { } previous || IsBetterInputCandidate(record.Depth,
-                record.LayerIndex, record.IndexWithinLayer, previous.Depth, previous.LayerIndex, previous.IndexWithinLayer))
-                best = record;
-        }
-        hasUiHit = best is not null || blocker is not null;
+        UIHitRecord? best = FindPresentedPointerHit(publication, position, out bool blocked);
+        hasUiHit = best is not null || blocked;
         if (best is not { } selected)
             return null;
         // Contact events can precede the hover tick. Retain the exact accepted record for dispatch.

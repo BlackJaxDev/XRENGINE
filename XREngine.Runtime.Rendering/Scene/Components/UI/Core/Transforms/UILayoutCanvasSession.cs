@@ -192,6 +192,8 @@ internal sealed class UILayoutCanvasSession
         _canvas.SetUpdatingLayout(false);
 
         bool accepted = false;
+        bool notifyAllText = false;
+        UILayoutOutputPageView? acceptedOutput = null;
         try
         {
             _canvas.RaiseLayoutingFinished();
@@ -202,6 +204,7 @@ internal sealed class UILayoutCanvasSession
                 bool applied;
                 try
                 {
+                    notifyAllText = _forceReapplyAll;
                     applied = Apply(input, targets, output, epoch);
                 }
                 catch (Exception ex)
@@ -218,6 +221,7 @@ internal sealed class UILayoutCanvasSession
                     _lastAcceptedTargets = targets;
                     _lastAcceptedOutput = output;
                     _forceReapplyAll = false;
+                    acceptedOutput = output;
                     accepted = true;
                 }
                 else
@@ -244,8 +248,14 @@ internal sealed class UILayoutCanvasSession
         finally
         {
             lease.RetireOwner();
-            _pumping = false;
         }
+
+        try
+        {
+            if (acceptedOutput is not null && epoch == _epoch)
+                NotifyAcceptedTextLayouts(input, targets, acceptedOutput, notifyAllText, epoch);
+        }
+        finally { _pumping = false; }
 
         if (epoch != _epoch)
             return false;
@@ -254,6 +264,30 @@ internal sealed class UILayoutCanvasSession
         else
             TryStart();
         return accepted;
+    }
+
+    private void NotifyAcceptedTextLayouts(UILayoutSnapshot input, List<UITransform> targets,
+        UILayoutOutputPageView output, bool notifyAll, long epoch)
+    {
+        for (int page = 0; page < output.ChangedPages.Length; page++)
+        {
+            if (!notifyAll && !output.ChangedPages[page])
+                continue;
+            int end = Math.Min((page + 1) * UILayoutOutputPageView.PageSize, targets.Count);
+            for (int i = page * UILayoutOutputPageView.PageSize; i < end; i++)
+            {
+                if (epoch != _epoch)
+                    return;
+                UITransform target = targets[i];
+                if (output[i].TextResult is not { } result ||
+                    target.ElementIdentity != input.Identities[i] ||
+                    !ReferenceEquals(target.GetCanvasTransform(), _canvas) ||
+                    target.SceneNode?.GetComponent<UITextComponent>() is not { } text)
+                    continue;
+                try { text.NotifyAcceptedLayout(result, output[i].ActualSize, i); }
+                catch (Exception error) { Debug.UIException(error); }
+            }
+        }
     }
 
     /// <summary>Reject any result for the old canvas lifetime; a running task keeps its page.</summary>

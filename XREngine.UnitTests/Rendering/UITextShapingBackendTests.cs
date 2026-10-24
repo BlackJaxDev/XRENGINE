@@ -63,6 +63,26 @@ public sealed class UITextShapingBackendTests
     }
 
     [Test]
+    public void FaceIdentityIncludesIndexEmSizeAndGlyphMetricsRegardlessOfMapOrder()
+    {
+        UIRuneMetrics first = new(Vector2.Zero, new(4, 8), 5, new(0, 0, 4, 8));
+        UIRuneMetrics second = new(Vector2.Zero, new(6, 8), 7, new(4, 0, 10, 8));
+        Dictionary<uint, UIRuneMetrics> glyphs = new() { [2] = second, [1] = first };
+        UIFontFaceSnapshot baseline = new([1, 2, 3], 0, 8, glyphs);
+
+        new UIFontFaceSnapshot([1, 2, 3], 0, 8,
+            new Dictionary<uint, UIRuneMetrics> { [1] = first, [2] = second })
+            .ContentIdentity.ShouldBe(baseline.ContentIdentity);
+        new UIFontFaceSnapshot([1, 2, 3], 1, 8, glyphs)
+            .ContentIdentity.ShouldNotBe(baseline.ContentIdentity);
+        new UIFontFaceSnapshot([1, 2, 3], 0, 9, glyphs)
+            .ContentIdentity.ShouldNotBe(baseline.ContentIdentity);
+        glyphs[1] = first with { Advance = 6 };
+        new UIFontFaceSnapshot([1, 2, 3], 0, 8, glyphs)
+            .ContentIdentity.ShouldNotBe(baseline.ContentIdentity);
+    }
+
+    [Test]
     public void RasterizerKeepsTheExactFaceBytesUsedForGlyphIds()
     {
         string source = SourceContractWorkspace.ResolveCanonicalFile(

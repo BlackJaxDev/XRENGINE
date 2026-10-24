@@ -634,32 +634,8 @@ public partial class InspectorPanel
         text.WrapMode = FontGlyphSet.EWrapMode.Word;
         text.BoundableTransform.MinAnchor = Vector2.Zero;
         text.BoundableTransform.MaxAnchor = Vector2.One;
-        bounds.Height = EstimateStringDetailHeight(input.Text);
-        input.PropertyChanged += TextChanged;
-
-        void TextChanged(object? _, IXRPropertyChangedEventArgs change)
-        {
-            if (change.PropertyName == nameof(UITextInputComponent.Text))
-                bounds.Height = EstimateStringDetailHeight(input.Text);
-        }
-    }
-
-    private static float EstimateStringDetailHeight(string? value)
-    {
-        int lines = 1;
-        int width = 0;
-        foreach (char character in value ?? string.Empty)
-        {
-            if (character == '\n')
-            {
-                lines += Math.Max(1, (width + 63) / 64);
-                width = 0;
-            }
-            else if (character != '\r')
-                width++;
-        }
-        lines += Math.Max(1, (width + 63) / 64);
-        return Math.Clamp(lines * 22.0f + 12, 180, 20000);
+        bounds.Height = 180;
+        host.AddComponent<InspectorStringDetailSizeComponent>()?.Bind(text, bounds);
     }
 
     private static string GetStringPreview(PropertyInfo property, object?[]? targets)
@@ -685,6 +661,7 @@ public partial class InspectorPanel
         if (_detailEditor is not null)
         {
             _detailEditor.GetComponent<InspectorListDetailRefreshComponent>()?.Retire();
+            _detailEditor.GetComponent<InspectorStringDetailSizeComponent>()?.Retire();
             if (_detailTransform?.GetCanvasComponent()?.GetInputComponent() is { FocusedComponent: { } focused } input &&
                 focused.SceneNode is { } focusedNode && IsDetailDescendant(focusedNode, _detailEditor))
                 input.FocusedComponent = null;

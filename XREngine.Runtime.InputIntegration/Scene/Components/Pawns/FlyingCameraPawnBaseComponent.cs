@@ -269,20 +269,8 @@ namespace XREngine.Components
                 XRComponent component = LinkedUICanvasInputs[index];
                 if (component is not UICanvasInputComponent canvasInput)
                     continue;
-                if (canvasInput.TopMostInteractable is { } interactable)
-                {
-                    // Re-validate that the cursor is actually inside the interactable's
-                    // world-space bounds. TopMostInteractable is set asynchronously during
-                    // SwapBuffers so it can be stale by the time input handlers read it.
-                    // Use AxisAlignedRegion (world-space AABB) rather than Contains() which
-                    // relies on ScreenToLocal and can give incorrect results for nested elements.
-                    if (interactable.UITransform is UIBoundableTransform bt
-                        && !bt.AxisAlignedRegion.Contains(canvasInput.CursorPositionWorld2D))
-                        continue;
-
-                    Debug.UI($"[IsHoveringUI] TopMostInteractable = {interactable.GetType().Name} ('{interactable.Name}') on canvas '{canvasInput.Name}'");
+                if (canvasInput.IsPointerBlockingCamera())
                     return true;
-                }
             }
             return false;
         }
