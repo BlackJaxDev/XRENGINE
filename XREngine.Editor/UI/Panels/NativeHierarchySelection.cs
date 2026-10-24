@@ -6,6 +6,20 @@ namespace XREngine.Editor;
 /// <summary>Mirrors selected scene identities into a virtual tree without realizing rows.</summary>
 internal sealed class NativeHierarchySelection
 {
+    /// <summary>Applies the editor's modifier order and puts a new active node first.</summary>
+    public static SceneNode[] ApplyInteraction(SceneNode[] current, SceneNode node,
+        bool control, bool shift, bool alt)
+    {
+        bool contains = Array.Exists(current, selected => ReferenceEquals(selected, node));
+        if (control)
+            return contains ? current.Where(selected => !ReferenceEquals(selected, node)).ToArray() : [node, .. current];
+        if (alt)
+            return contains ? current.Where(selected => !ReferenceEquals(selected, node)).ToArray() : current;
+        if (shift)
+            return contains ? current : [node, .. current];
+        return [node];
+    }
+
     private HashSet<ulong> _selected = [];
     private HashSet<ulong> _next = [];
     private UIVirtualTreeProvider? _owner;

@@ -36,15 +36,21 @@ public sealed class NativeHierarchyLifetimeTests
             Action<UIInteractableComponent> otherOwnerCallback = _ => { };
             firstButton.InteractAction += otherOwnerCallback;
             EventList<TransformBase> originalChildren = source.Transform.Children;
+            object oldBinding = Field<IDictionary>(panel, "_sourceListeners")[source]!;
+            Delegate oldAdded = Field<Delegate>(oldBinding, "Added");
+            Delegate oldRemoved = Field<Delegate>(oldBinding, "Removed");
             source.SetTransform<UIBoundableTransform>();
-            Delegate[] sourceAdded = EventCallbacks(originalChildren, "PostAnythingAdded");
-            Delegate[] sourceRemoved = EventCallbacks(originalChildren, "PostAnythingRemoved");
+            Assert.That(EventCallbacks(originalChildren, "PostAnythingAdded"), Does.Not.Contain(oldAdded));
+            Assert.That(EventCallbacks(originalChildren, "PostAnythingRemoved"), Does.Not.Contain(oldRemoved));
+            EventList<TransformBase> currentChildren = source.Transform.Children;
+            Delegate[] sourceAdded = EventCallbacks(currentChildren, "PostAnythingAdded");
+            Delegate[] sourceRemoved = EventCallbacks(currentChildren, "PostAnythingRemoved");
             input.FocusedComponent = Field<UITextInputComponent>(rows[0], "RenameInput");
 
             Assert.That(SelectionSubscriberCount(panel), Is.EqualTo(1));
             Assert.That(input.SubscriberCount, Is.EqualTo(1));
             Assert.That(HasTick(panel, "PollVirtualTreeSources"), Is.True);
-            Assert.That(callbacks, Has.Count.EqualTo(rows.Length * 8));
+            Assert.That(callbacks, Has.Count.EqualTo(rows.Length * 12));
             Assert.That(DropTargetCount, Is.EqualTo(initialDrops + rows.Length + 1));
 
             panel.Destroy(true);
@@ -57,9 +63,9 @@ public sealed class NativeHierarchyLifetimeTests
             foreach (var (owner, eventName, callback) in callbacks)
                 Assert.That(EventCallbacks(owner, eventName), Does.Not.Contain(callback), eventName);
             Assert.That(EventCallbacks(firstButton, "InteractAction"), Does.Contain(otherOwnerCallback));
-            Assert.That(EventCallbacks(originalChildren, "PostAnythingAdded").Length,
+            Assert.That(EventCallbacks(currentChildren, "PostAnythingAdded").Length,
                 Is.EqualTo(sourceAdded.Length - 1));
-            Assert.That(EventCallbacks(originalChildren, "PostAnythingRemoved").Length,
+            Assert.That(EventCallbacks(currentChildren, "PostAnythingRemoved").Length,
                 Is.EqualTo(sourceRemoved.Length - 1));
 
             panel.RemakeChildren();
@@ -246,6 +252,10 @@ public sealed class NativeHierarchyLifetimeTests
             Add("RenameInput", "Cancelled", "RenameCancelled");
             Add("Button", "MouseMove", "DragMove");
             Add("Button", "MouseDirectOverlapLeave", "DragLeave");
+            Add("RenameInput", "PropertyChanged", "RenameTextChanged");
+            Add("Button", "NavigationRequested", "NavigationRequested");
+            Add("Button", "ExpansionChanged", "ExpansionChanged");
+            Add("Button", "GotFocus", "Focused");
 
             void Add(string componentName, string eventName, string callbackName)
             {

@@ -1,6 +1,7 @@
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Scene;
 
@@ -15,6 +16,9 @@ public partial class VisualScene3D
         bool collectMirrors,
         XRRenderPipelineInstance.RenderingState visibilityState)
     {
+        UIWorldCollectPacketSet? worldPacketSet = RetainFrozenWorldPacketSetForCollection();
+        try
+        {
         IRuntimeCullingCamera? cullingCamera = cullingCameraOverride?.Invoke() ?? camera;
         IVolume? collectionVolume = collectionVolumeOverride
             ?? (cullWithFrustum ? cullingCamera?.WorldFrustum() : null);
@@ -30,6 +34,7 @@ public partial class VisualScene3D
             collectMirrors,
             visibilityState,
             allowGpuCollection,
+            worldPacketSet,
             out int visibleRenderables);
         // A failed attempt records its time with no rows. The fallback path then opens its own path.
         CollectVisibleStageTimings.EndPath(
@@ -38,7 +43,8 @@ public partial class VisualScene3D
             maskedCollected ? visibleRenderables : 0);
         if (!maskedCollected)
         {
-            CollectRenderedItems(commands, collectionVolume, camera, collectMirrors, allowGpuCollection);
+            CollectRenderedItemsCore(commands, collectionVolume, camera, collectMirrors,
+                allowGpuCollection, worldPacketSet);
             return;
         }
 
@@ -49,5 +55,7 @@ public partial class VisualScene3D
             "BvhExactMaskedMainFamily",
             _bvhRenderTree.GetOccupancyStats(),
             elapsed);
+        }
+        finally { worldPacketSet?.Release(); }
     }
 }

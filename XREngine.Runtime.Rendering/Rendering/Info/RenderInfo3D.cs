@@ -9,6 +9,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.UI;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Info
@@ -250,12 +251,12 @@ namespace XREngine.Rendering.Info
         /// <summary>Collects a frozen proxy only while its render info is active.</summary>
         internal ERenderInfoCollectResult TryCollectFrozenWorldCommands(
             RenderCommandCollection passes, IRuntimeCullingCamera? camera,
-            IVolume? volume, bool containsOnly)
+            IVolume? volume, bool containsOnly, UIWorldCollectPacketSet? packetSet)
         {
             if (IsDisposalRequested)
                 return ERenderInfoCollectResult.Disposed;
             return FrozenWorldCommandSource?.CollectFrozenCommands(
-                passes, camera, volume, containsOnly) ??
+                passes, camera, volume, containsOnly, packetSet) ??
                 ERenderInfoCollectResult.RejectedForEveryCamera;
         }
 

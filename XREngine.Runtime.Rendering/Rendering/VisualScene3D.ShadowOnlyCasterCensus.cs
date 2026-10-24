@@ -5,6 +5,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Scene;
 
@@ -179,8 +180,9 @@ public partial class VisualScene3D
     /// shadow-only caster candidate. A shadow camera does not collect a render info whose disposal or retirement was
     /// requested, so such a render info is not a candidate.
     /// </summary>
-    private static bool IsRejectedShadowOnlyCasterCandidate(RenderInfo3D renderable)
-        => IsShadowOnlyCasterCandidate(renderable) &&
+    private bool IsRejectedShadowOnlyCasterCandidate(RenderInfo3D renderable,
+        UIWorldCollectPacketSet? worldPacketSet)
+        => IsShadowOnlyCasterCandidate(renderable, worldPacketSet) &&
             !renderable.IsDisposalRequested &&
             renderable.OwnerRenderableMesh?.IsRetirementRequested != true;
 
@@ -193,9 +195,10 @@ public partial class VisualScene3D
     /// <see cref="ERenderInfoCollectResult.Disposed"/>, <see cref="ERenderInfoCollectResult.Retired"/> and
     /// <see cref="ERenderInfoCollectResult.RejectedForEveryCamera"/> apply to the shadow cameras too.
     /// </remarks>
-    private static bool IsCollectedShadowOnlyCasterCandidate(
+    private bool IsCollectedShadowOnlyCasterCandidate(
         RenderInfo3D renderable,
         ERenderInfoCollectResult result,
+        UIWorldCollectPacketSet? worldPacketSet,
         out EShadowOnlyCasterCandidateReason reason)
     {
         switch (result)
@@ -205,7 +208,7 @@ public partial class VisualScene3D
                 return IsShadowPassOnlyRenderable(renderable);
             case ERenderInfoCollectResult.CallbackRejected:
                 reason = EShadowOnlyCasterCandidateReason.CallbackRejected;
-                return IsShadowOnlyCasterCandidate(renderable);
+                return IsShadowOnlyCasterCandidate(renderable, worldPacketSet);
             default:
                 reason = default;
                 return false;
@@ -216,12 +219,14 @@ public partial class VisualScene3D
     /// Returns whether a renderable is a possible shadow-only caster: it casts shadows, and it has a mesh command, which
     /// owns a GPU scene row.
     /// </summary>
-    private static bool IsShadowOnlyCasterCandidate(RenderInfo3D renderable)
+    private bool IsShadowOnlyCasterCandidate(RenderInfo3D renderable,
+        UIWorldCollectPacketSet? worldPacketSet)
     {
         if (!renderable.CastsShadows)
             return false;
 
-        if (renderable.FrozenWorldCommandSource?.HasFrozenShadowCasters == true)
+        if (renderable.FrozenWorldCommandSource?.HasFrozenShadowCasters(
+                worldPacketSet) == true)
             return true;
 
         var commands = renderable.RenderCommands;

@@ -40,33 +40,10 @@ public partial class HierarchyPanel
         bool shift = input?.IsShiftHeld ?? false;
         bool alt = input?.IsAltHeld ?? false;
 
-        if (ctrl)
-        {
-            // Ctrl+Click: toggle node in selection
-            var current = Selection.SceneNodes;
-            if (current.Contains(node))
-                Selection.SceneNodes = current.Where(n => n != node).ToArray();
-            else
-                Selection.SceneNodes = [.. current, node];
-        }
-        else if (shift)
-        {
-            // Shift+Click: add to selection
-            var current = Selection.SceneNodes;
-            if (!current.Contains(node))
-                Selection.SceneNodes = [.. current, node];
-        }
-        else if (alt)
-        {
-            // Alt+Click: remove from selection
-            var current = Selection.SceneNodes;
-            Selection.SceneNodes = current.Where(n => n != node).ToArray();
-        }
-        else
-        {
-            // Plain click: single select
-            Selection.SceneNodes = [node];
-        }
+        SceneNode[] previous = Selection.SceneNodes;
+        SceneNode[] next = NativeHierarchySelection.ApplyInteraction(previous, node, ctrl, shift, alt);
+        if (!ReferenceEquals(previous, next))
+            Selection.SceneNodes = next;
 
         if (!CanUseHierarchy || !FocusCameraOnDoubleClick)
             return;
@@ -129,13 +106,22 @@ public partial class HierarchyPanel
 
     private bool TryFocusCameraOnNode(SceneNode? node)
     {
-        if (!CanUseHierarchy || node is null)
+        if (!CanUseHierarchy || TryGetActiveWorld() is not { } world ||
+            !IsCurrentHierarchyWorld(world) || !IsLiveHierarchyNode(node, world) ||
+            GetCanvasInput() is not UICanvasInputComponent { OwningPawn: EditorFlyingCameraPawnComponent pawn } ||
+            pawn.Viewport is not XRViewport viewport ||
+            !IsHierarchyCameraOwner(pawn, viewport, Window, world))
             return false;
-
-        if (Engine.State.MainPlayer?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
-            return false;
-
-        pawn.FocusOnNode(node, DoubleClickFocusDuration);
+        pawn.FocusOnNode(node!, DoubleClickFocusDuration);
         return true;
     }
+
+    internal static bool IsHierarchyCameraOwner(EditorFlyingCameraPawnComponent pawn, XRViewport viewport,
+        XRWindow? window, RuntimeWorld world)
+        => !world.IsDisposing && !pawn.IsDestroyed && !pawn.IsDestroyQueued &&
+            ReferenceEquals(pawn.World, world) && ReferenceEquals(viewport.Window, window) &&
+            ReferenceEquals(viewport.World?.WorldContext, world) &&
+            (window is null || ReferenceEquals(window.TargetWorldInstance?.WorldContext, world)) &&
+            viewport.CameraComponent is { IsDestroyed: false, IsDestroyQueued: false } camera &&
+            ReferenceEquals(camera.World, world) && ReferenceEquals(pawn.GetCamera(), camera);
 }

@@ -119,6 +119,9 @@ public partial class HierarchyPanel
             _lastClickedNode = null;
             _lastClickTicks = long.MinValue;
             _nodePendingRename = null;
+            _renameDraft = string.Empty;
+            _renameFocusRequested = false;
+            _renameSession++;
             _contextMenuTargetNode = null;
         }
         finally
@@ -158,6 +161,11 @@ public partial class HierarchyPanel
             OnComponentActivated();
         else if (_remakePending && CanUseHierarchy)
             RemakeChildren();
+        if (CanUseHierarchy)
+        {
+            ReconcileRenameSource();
+            CompleteRenameFocus();
+        }
     }
 
     private static void AttemptHierarchyRelease(Action action, ref Exception? failure)

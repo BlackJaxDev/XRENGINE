@@ -9,43 +9,52 @@ namespace XREngine.Components;
 
 public partial class UICanvasComponent
 {
-    internal bool HasFrozenWorldShadowCasters
+    internal bool TryAcquireFrozenWorldCollectPacket(IRuntimeWorldContext expectedWorld,
+        out UIPublication? publication)
     {
-        get
+        lock (_publicationGate)
         {
-            lock (_publicationGate)
-            {
-                UIPublication? publication = _currentPublication;
-                if (!IsActive || publication is null || publication.AuthoringOffscreen ||
-                    publication.AuthoringDrawSpace == ECanvasDrawSpace.Screen ||
-                    publication.CanvasLifetime != (ulong)Volatile.Read(ref _canvasLifetime))
-                    return false;
-
-                ReadOnlySpan<UIPublishedWorldMeshCommand> commands = publication.WorldCommands;
-                for (int index = 0; index < commands.Length; index++)
-                    if (commands[index].CastsShadows && commands[index].Enabled)
-                        return true;
+            publication = null;
+            if (!ReferenceEquals(SceneNode?.World, expectedWorld))
                 return false;
-            }
+            if (!IsActive || WorldCollectionUnavailable ||
+                CanvasDrawSpaceOrDefault == ECanvasDrawSpace.Screen ||
+                UseOffscreenRenderingForNonScreenSpaces())
+                return true;
+            UIPublication? selected = _currentPublication;
+            if (selected is null || selected.AuthoringOffscreen ||
+                selected.AuthoringDrawSpace == ECanvasDrawSpace.Screen ||
+                selected.CanvasLifetime != (ulong)Volatile.Read(ref _canvasLifetime))
+                return false;
+            selected.Retain();
+            publication = selected;
+            return true;
         }
+    }
+
+    internal bool HasFrozenWorldShadowCasters(UIWorldCollectPacketSet? packetSet)
+    {
+        if (packetSet is null || !packetSet.TryGet(this, out UIPublication? publication) ||
+            publication is null)
+            return false;
+        ReadOnlySpan<UIPublishedWorldMeshCommand> commands = publication.WorldCommands;
+        for (int index = 0; index < commands.Length; index++)
+            if (commands[index].CastsShadows && commands[index].Enabled)
+                return true;
+        return false;
     }
 
     internal ERenderInfoCollectResult CollectFrozenWorldCommands(
         RenderCommandCollection passes,
         IRuntimeCullingCamera? camera,
         IVolume? collectionVolume,
-        bool containsOnly)
+        bool containsOnly, UIWorldCollectPacketSet? packetSet)
     {
-        if (!IsActive || AcquireCurrentPublication() is not { } publication)
+        if (packetSet is null || !packetSet.TryGet(this, out UIPublication? publication) ||
+            publication is null)
             return ERenderInfoCollectResult.RejectedForEveryCamera;
-
         try
         {
-            if (publication.AuthoringOffscreen ||
-                publication.AuthoringDrawSpace == ECanvasDrawSpace.Screen ||
-                publication.CanvasLifetime != (ulong)Volatile.Read(ref _canvasLifetime))
-                return ERenderInfoCollectResult.RejectedForEveryCamera;
-
             ReadOnlySpan<UIPublishedWorldMeshCommand> commands = publication.WorldCommands;
             for (int index = 0; index < commands.Length; index++)
             {
@@ -64,11 +73,19 @@ public partial class UICanvasComponent
                     continue;
 
                 command.CollectedForRender(camera);
-                passes.AddCPU(command, camera);
+                if (!passes.TryAddCPU(command, camera))
+                {
+                    packetSet.MarkCollectionFailed();
+                    return ERenderInfoCollectResult.CallbackRejected;
+                }
             }
 
             return ERenderInfoCollectResult.Collected;
         }
-        finally { publication.Release(); }
+        catch
+        {
+            packetSet.MarkCollectionFailed();
+            throw;
+        }
     }
 }

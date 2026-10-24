@@ -16,6 +16,14 @@ public class UIRangeSliderComponent : UIInteractableComponent
     private bool _dragging;
     private float _dragTrackWidth;
     private IUIValueBinding<double>? _binding;
+    private IUIValueBinding<double>? _subscribedBinding;
+    private Action<double>? _subscribedHandler;
+    private IUIValueBinding<double>? _requestedBinding;
+    private long _bindingRevision;
+    private bool _ownerActive;
+    private bool _terminal;
+    private bool _deactivating;
+    private bool _activationPending;
 
     public UIRangeSliderComponent()
     {
@@ -88,39 +96,163 @@ public class UIRangeSliderComponent : UIInteractableComponent
         get => _binding;
         set
         {
+            if (_terminal || IsDestroyed || IsDestroyQueued)
+            {
+                if (value is not null)
+                    throw new ObjectDisposedException(nameof(UIRangeSliderComponent));
+                return;
+            }
             if (ReferenceEquals(_binding, value))
                 return;
-            if (IsActiveInHierarchy && _binding is not null)
-                _binding.ValueChanged -= OnBindingChanged;
-            SetField(ref _binding, value);
-            if (IsActiveInHierarchy && _binding is not null)
-                _binding.ValueChanged += OnBindingChanged;
-            if (_binding is not null)
-                SetValue(_binding.Value, EUIValueChangeOrigin.Binding);
+            long revision = ++_bindingRevision;
+            _requestedBinding = value;
+            DetachBinding();
+            if (!OwnsBindingRevision(revision))
+            {
+                if (!_terminal && !IsDestroyed && !IsDestroyQueued)
+                    SetField(ref _binding, _requestedBinding, publishNotifications: false);
+                return;
+            }
+            try { SetField(ref _binding, value); }
+            finally
+            {
+                if (!OwnsBindingRevision(revision))
+                    SetField(ref _binding, _requestedBinding, publishNotifications: false);
+                else if (_ownerActive)
+                    AttachBinding(_binding, revision);
+            }
+            if (!OwnsBindingRevision(revision))
+                return;
+            _requestedBinding = _binding;
+            SynchronizeBinding();
         }
+    }
+
+    private bool OwnsBindingRevision(long revision)
+        => !_terminal && !IsDestroyed && !IsDestroyQueued && _bindingRevision == revision;
+
+    private void AttachBinding(IUIValueBinding<double>? binding, long revision)
+    {
+        if (binding is null || !_ownerActive || !OwnsBindingRevision(revision) ||
+            ReferenceEquals(_subscribedBinding, binding))
+            return;
+        Action<double> handler = value => OnBindingChanged(binding, revision, value);
+        _subscribedBinding = binding;
+        _subscribedHandler = handler;
+        try { binding.ValueChanged += handler; }
+        catch
+        {
+            if (ReferenceEquals(_subscribedHandler, handler))
+            {
+                _subscribedBinding = null;
+                _subscribedHandler = null;
+            }
+            binding.ValueChanged -= handler;
+            throw;
+        }
+        if (!_ownerActive || !OwnsBindingRevision(revision) ||
+            !ReferenceEquals(_binding, binding) || !ReferenceEquals(_subscribedHandler, handler))
+            binding.ValueChanged -= handler;
+    }
+
+    private void DetachBinding()
+    {
+        IUIValueBinding<double>? source = _subscribedBinding;
+        Action<double>? handler = _subscribedHandler;
+        _subscribedBinding = null;
+        _subscribedHandler = null;
+        if (source is not null && handler is not null)
+            source.ValueChanged -= handler;
+    }
+
+    private void SynchronizeBinding()
+    {
+        IUIValueBinding<double>? source = _binding;
+        long revision = _bindingRevision;
+        if (source is null)
+            return;
+        double value = source.Value;
+        if (!_deactivating && OwnsBindingRevision(revision) &&
+            ReferenceEquals(_binding, source) && (!_ownerActive || IsActiveInHierarchy))
+            SetValue(value, EUIValueChangeOrigin.Binding);
     }
 
     protected override void OnComponentActivated()
     {
+        long entryRevision = _bindingRevision;
         base.OnComponentActivated();
-        if (_binding is not null)
+        if (_deactivating)
         {
-            _binding.ValueChanged += OnBindingChanged;
-            SetValue(_binding.Value, EUIValueChangeOrigin.Binding);
+            _activationPending = true;
+            return;
         }
+        if (_terminal || IsDestroyed || IsDestroyQueued || !IsActiveInHierarchy ||
+            entryRevision != _bindingRevision)
+            return;
+        _ownerActive = true;
+        AttachBinding(_binding, _bindingRevision);
+        if (_ownerActive && IsActiveInHierarchy && OwnsBindingRevision(entryRevision))
+            SynchronizeBinding();
     }
 
     protected override void OnComponentDeactivated()
     {
-        EndDrag(false);
-        if (_binding is not null)
-            _binding.ValueChanged -= OnBindingChanged;
-        base.OnComponentDeactivated();
+        _ownerActive = false;
+        ++_bindingRevision;
+        _deactivating = true;
+        _activationPending = false;
+        try { DetachBinding(); }
+        finally
+        {
+            try { EndDrag(false); }
+            finally
+            {
+                try { base.OnComponentDeactivated(); }
+                finally
+                {
+                    _deactivating = false;
+                    if (_activationPending && !_terminal && IsActiveInHierarchy)
+                    {
+                        _activationPending = false;
+                        _ownerActive = true;
+                        AttachBinding(_binding, _bindingRevision);
+                        if (_ownerActive && IsActiveInHierarchy)
+                            SynchronizeBinding();
+                    }
+                }
+            }
+        }
     }
 
-    private void OnBindingChanged(double value)
+    protected override void OnDestroying()
     {
-        if (!_dragging)
+        _terminal = true;
+        _ownerActive = false;
+        _activationPending = false;
+        ++_bindingRevision;
+        _requestedBinding = null;
+        IUIValueBinding<double>? source = _binding;
+        SetField(ref _binding, null, publishNotifications: false);
+        bool wasDragging = _dragging;
+        _dragging = false;
+        _dragTrackWidth = 0;
+        try
+        {
+            if (wasDragging)
+                SetField(ref _value, Normalize(source?.Value ?? _dragStartValue),
+                    publishNotifications: false, nameof(Value));
+        }
+        finally
+        {
+            try { DetachBinding(); }
+            finally { base.OnDestroying(); }
+        }
+    }
+
+    private void OnBindingChanged(IUIValueBinding<double> source, long revision, double value)
+    {
+        if (_ownerActive && OwnsBindingRevision(revision) &&
+            ReferenceEquals(_subscribedBinding, source) && !_dragging)
             SetValue(value, EUIValueChangeOrigin.Binding);
     }
 
@@ -144,6 +276,8 @@ public class UIRangeSliderComponent : UIInteractableComponent
 
     public void SetValue(double value, EUIValueChangeOrigin origin = EUIValueChangeOrigin.Programmatic)
     {
+        if (_terminal || IsDestroyed || IsDestroyQueued)
+            return;
         value = Normalize(value);
         if (_value == value)
             return;
@@ -152,13 +286,20 @@ public class UIRangeSliderComponent : UIInteractableComponent
         if (binding is not null && origin != EUIValueChangeOrigin.Binding && !_dragging)
         {
             bool wasActive = IsActiveInHierarchy;
+            long revision = _bindingRevision;
             binding.SetValue(value);
-            if (!ReferenceEquals(_binding, binding) || wasActive && !IsActiveInHierarchy)
+            if (!OwnsBindingRevision(revision) || !ReferenceEquals(_binding, binding) ||
+                wasActive && !IsActiveInHierarchy)
                 return;
             value = Normalize(binding.Value);
         }
+        long valueRevision = _bindingRevision;
         SetField(ref _value, value, nameof(Value));
+        if (!OwnsBindingRevision(valueRevision))
+            return;
         ValueChanged?.Invoke(new(previous, value, origin));
+        if (!OwnsBindingRevision(valueRevision))
+            return;
         if (_dragging)
             ValuePreviewed?.Invoke(new(previous, value, origin));
         else if (origin == EUIValueChangeOrigin.User)
@@ -167,17 +308,17 @@ public class UIRangeSliderComponent : UIInteractableComponent
 
     public bool BeginDrag(float normalized)
     {
-        if (!CanInteract || IsReadOnly)
+        if (_terminal || !CanInteract || IsReadOnly)
             return false;
         _dragStartValue = Value;
         _dragging = true;
         UpdateDrag(normalized);
-        return true;
+        return !_terminal && _dragging;
     }
 
     public void UpdateDrag(float normalized)
     {
-        if (!_dragging || !float.IsFinite(normalized))
+        if (_terminal || !_dragging || !float.IsFinite(normalized))
             return;
         SetValue(Minimum + Math.Clamp(normalized, 0, 1) * (Maximum - Minimum), EUIValueChangeOrigin.User);
     }
@@ -188,6 +329,8 @@ public class UIRangeSliderComponent : UIInteractableComponent
             return;
         _dragging = false;
         _dragTrackWidth = 0;
+        if (_terminal || IsDestroyed || IsDestroyQueued)
+            return;
         double previous = _dragStartValue;
         if (!commit || !CanInteract || IsReadOnly)
         {
@@ -197,12 +340,14 @@ public class UIRangeSliderComponent : UIInteractableComponent
         IUIValueBinding<double>? binding = _binding;
         if (binding is not null)
         {
+            long revision = _bindingRevision;
             binding.SetValue(_value);
-            if (!ReferenceEquals(_binding, binding) || !IsActiveInHierarchy)
+            if (!OwnsBindingRevision(revision) || !ReferenceEquals(_binding, binding) ||
+                !IsActiveInHierarchy)
                 return;
             SetField(ref _value, Normalize(binding.Value), nameof(Value));
         }
-        if (previous != _value)
+        if (!_terminal && previous != _value)
             ValueCommitted?.Invoke(new(previous, _value, EUIValueChangeOrigin.User));
     }
 

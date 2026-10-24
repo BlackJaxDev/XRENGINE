@@ -10,20 +10,20 @@ public partial class UITextInputComponent
 
     private void Up(bool pressed)
     {
-        if (pressed && !SingleLineMode)
+        if (!_terminal && pressed && !SingleLineMode)
             MoveCaretVertically(-1, AnyShift);
     }
 
     private void Down(bool pressed)
     {
-        if (pressed && !SingleLineMode)
+        if (!_terminal && pressed && !SingleLineMode)
             MoveCaretVertically(1, AnyShift);
     }
 
     /// <summary>Moves to the closest grapheme boundary on the adjacent placed line.</summary>
     public bool MoveCaretVertically(int direction, bool extendSelection = false)
     {
-        if (SceneNode is null || SceneNode.IsTransformNull ||
+        if (_terminal || SceneNode is null || SceneNode.IsTransformNull ||
             direction == 0 || IsComposing || SingleLineMode ||
             !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult layout))
             return false;
@@ -33,7 +33,7 @@ public partial class UITextInputComponent
     /// <summary>Uses only the current accepted placement result for this text field.</summary>
     public bool TryMoveCaretVertically(UITextLayoutResult layout, int direction, bool extendSelection = false)
     {
-        if (SceneNode is null || SceneNode.IsTransformNull || direction == 0 ||
+        if (_terminal || SceneNode is null || SceneNode.IsTransformNull || direction == 0 ||
             IsComposing || SingleLineMode ||
             !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult currentLayout) ||
             !ReferenceEquals(layout, currentLayout) ||

@@ -38,11 +38,8 @@ public static partial class EditorImGuiUI
             return;
         if (world.RootNodes.Contains(node))
             throw new InvalidOperationException("The detached hierarchy target became a root before Undo/Redo.");
-        if (world.TargetWorld is not { } targetWorld)
-            return;
-        foreach (XRScene scene in targetWorld.Scenes)
-            if (scene.RootNodes.Contains(node))
-                throw new InvalidOperationException("The detached hierarchy target entered a scene before Undo/Redo.");
+        if (HierarchySceneOwnership.FindOwningScene(node, world) is not null)
+            throw new InvalidOperationException("The detached hierarchy target entered a scene before Undo/Redo.");
     }
 
     internal static void ToggleNativeSceneVisibility(XRScene scene, RuntimeWorld world, bool visible)

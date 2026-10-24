@@ -12,7 +12,19 @@ public class UIColorSelectorComponent : UIButtonComponent
     private ColorF4 _editOriginal;
     private bool _editing;
     private IUIValueBinding<ColorF4>? _binding;
+    private IUIValueBinding<ColorF4>? _subscribedBinding;
+    private Action<ColorF4>? _subscribedBindingHandler;
+    private IUIValueBinding<ColorF4>? _requestedBinding;
+    private long _bindingRevision;
     private UIContextMenuComponent? _popup;
+    private UIContextMenuComponent? _subscribedPopup;
+    private Action? _subscribedPopupHandler;
+    private UIContextMenuComponent? _requestedPopup;
+    private long _popupRevision;
+    private bool _ownerActive;
+    private bool _terminal;
+    private bool _deactivating;
+    private bool _activationPending;
 
     private static readonly (string Name, string Hex)[] Palette =
     [
@@ -39,14 +51,36 @@ public class UIColorSelectorComponent : UIButtonComponent
         get => _popup;
         set
         {
+            if (_terminal || IsDestroyed || IsDestroyQueued)
+            {
+                if (value is not null)
+                    throw new ObjectDisposedException(nameof(UIColorSelectorComponent));
+                return;
+            }
             if (ReferenceEquals(_popup, value))
                 return;
-            if (IsActiveInHierarchy && _popup is not null)
-                _popup.Dismissed -= OnPopupDismissed;
-            _popup?.Hide();
-            SetField(ref _popup, value);
-            if (IsActiveInHierarchy && _popup is not null)
-                _popup.Dismissed += OnPopupDismissed;
+            long revision = ++_popupRevision;
+            _requestedPopup = value;
+            UIContextMenuComponent? previous = _popup;
+            DetachPopup();
+            previous?.Hide();
+            CancelEdit();
+            if (!OwnsPopupRevision(revision))
+            {
+                if (!_terminal && !IsDestroyed && !IsDestroyQueued)
+                    SetField(ref _popup, _requestedPopup, publishNotifications: false);
+                return;
+            }
+            try { SetField(ref _popup, value); }
+            finally
+            {
+                if (!OwnsPopupRevision(revision))
+                    SetField(ref _popup, _requestedPopup, publishNotifications: false);
+                else if (_ownerActive)
+                    AttachPopup(_popup, revision);
+            }
+            if (OwnsPopupRevision(revision))
+                _requestedPopup = _popup;
         }
     }
 
@@ -60,44 +94,227 @@ public class UIColorSelectorComponent : UIButtonComponent
         get => _binding;
         set
         {
+            if (_terminal || IsDestroyed || IsDestroyQueued)
+            {
+                if (value is not null)
+                    throw new ObjectDisposedException(nameof(UIColorSelectorComponent));
+                return;
+            }
             if (ReferenceEquals(_binding, value))
                 return;
-            if (IsActiveInHierarchy && _binding is not null)
-                _binding.ValueChanged -= OnBindingChanged;
-            SetField(ref _binding, value);
-            if (IsActiveInHierarchy && _binding is not null)
-                _binding.ValueChanged += OnBindingChanged;
-            if (_binding is not null)
-                ApplyLinear(_binding.Value);
+            long revision = ++_bindingRevision;
+            _requestedBinding = value;
+            DetachBinding();
+            if (!OwnsBindingRevision(revision))
+            {
+                if (!_terminal && !IsDestroyed && !IsDestroyQueued)
+                    SetField(ref _binding, _requestedBinding, publishNotifications: false);
+                return;
+            }
+            try { SetField(ref _binding, value); }
+            finally
+            {
+                if (!OwnsBindingRevision(revision))
+                    SetField(ref _binding, _requestedBinding, publishNotifications: false);
+                else if (_ownerActive)
+                    AttachBinding(_binding, revision);
+            }
+            if (!OwnsBindingRevision(revision))
+                return;
+            _requestedBinding = _binding;
+            SynchronizeBinding();
         }
+    }
+
+    private bool OwnsBindingRevision(long revision)
+        => !_terminal && !IsDestroyed && !IsDestroyQueued && _bindingRevision == revision;
+
+    private bool OwnsPopupRevision(long revision)
+        => !_terminal && !IsDestroyed && !IsDestroyQueued && _popupRevision == revision;
+
+    private void AttachBinding(IUIValueBinding<ColorF4>? source, long revision)
+    {
+        if (source is null || !_ownerActive || !OwnsBindingRevision(revision) ||
+            ReferenceEquals(_subscribedBinding, source))
+            return;
+        Action<ColorF4> handler = value => OnBindingChanged(source, revision, value);
+        _subscribedBinding = source;
+        _subscribedBindingHandler = handler;
+        try { source.ValueChanged += handler; }
+        catch
+        {
+            if (ReferenceEquals(_subscribedBindingHandler, handler))
+            {
+                _subscribedBinding = null;
+                _subscribedBindingHandler = null;
+            }
+            source.ValueChanged -= handler;
+            throw;
+        }
+        if (!_ownerActive || !OwnsBindingRevision(revision) ||
+            !ReferenceEquals(_binding, source) || !ReferenceEquals(_subscribedBindingHandler, handler))
+            source.ValueChanged -= handler;
+    }
+
+    private void DetachBinding()
+    {
+        IUIValueBinding<ColorF4>? source = _subscribedBinding;
+        Action<ColorF4>? handler = _subscribedBindingHandler;
+        _subscribedBinding = null;
+        _subscribedBindingHandler = null;
+        if (source is not null && handler is not null)
+            source.ValueChanged -= handler;
+    }
+
+    private void AttachPopup(UIContextMenuComponent? popup, long revision)
+    {
+        if (popup is null || !_ownerActive || !OwnsPopupRevision(revision) ||
+            ReferenceEquals(_subscribedPopup, popup))
+            return;
+        Action handler = () => OnPopupDismissed(popup, revision);
+        _subscribedPopup = popup;
+        _subscribedPopupHandler = handler;
+        try { popup.Dismissed += handler; }
+        catch
+        {
+            if (ReferenceEquals(_subscribedPopupHandler, handler))
+            {
+                _subscribedPopup = null;
+                _subscribedPopupHandler = null;
+            }
+            popup.Dismissed -= handler;
+            throw;
+        }
+        if (!_ownerActive || !OwnsPopupRevision(revision) ||
+            !ReferenceEquals(_popup, popup) || !ReferenceEquals(_subscribedPopupHandler, handler))
+            popup.Dismissed -= handler;
+    }
+
+    private void DetachPopup()
+    {
+        UIContextMenuComponent? popup = _subscribedPopup;
+        Action? handler = _subscribedPopupHandler;
+        _subscribedPopup = null;
+        _subscribedPopupHandler = null;
+        if (popup is not null && handler is not null)
+            popup.Dismissed -= handler;
+    }
+
+    private void SynchronizeBinding()
+    {
+        IUIValueBinding<ColorF4>? source = _binding;
+        long revision = _bindingRevision;
+        if (source is null)
+            return;
+        ColorF4 value = source.Value;
+        if (!_deactivating && OwnsBindingRevision(revision) &&
+            ReferenceEquals(_binding, source) && (!_ownerActive || IsActiveInHierarchy))
+            ApplyLinear(value);
     }
 
     protected override void OnComponentActivated()
     {
+        long bindingRevision = _bindingRevision;
+        long popupRevision = _popupRevision;
         base.OnComponentActivated();
-        if (_popup is not null)
-            _popup.Dismissed += OnPopupDismissed;
-        if (_binding is not null)
+        if (_deactivating)
         {
-            _binding.ValueChanged += OnBindingChanged;
-            ApplyLinear(_binding.Value);
+            _activationPending = true;
+            return;
         }
+        if (_terminal || IsDestroyed || IsDestroyQueued || !IsActiveInHierarchy ||
+            bindingRevision != _bindingRevision || popupRevision != _popupRevision)
+            return;
+        _ownerActive = true;
+        AttachPopup(_popup, _popupRevision);
+        if (!_ownerActive || !IsActiveInHierarchy || !OwnsPopupRevision(popupRevision))
+            return;
+        AttachBinding(_binding, _bindingRevision);
+        if (_ownerActive && IsActiveInHierarchy && OwnsBindingRevision(bindingRevision))
+            SynchronizeBinding();
     }
 
     protected override void OnComponentDeactivated()
     {
-        _popup?.Hide();
-        if (_popup is not null)
-            _popup.Dismissed -= OnPopupDismissed;
-        CancelEdit();
-        if (_binding is not null)
-            _binding.ValueChanged -= OnBindingChanged;
-        base.OnComponentDeactivated();
+        _ownerActive = false;
+        ++_popupRevision;
+        ++_bindingRevision;
+        _deactivating = true;
+        _activationPending = false;
+        UIContextMenuComponent? popup = _popup;
+        Exception? failure = null;
+        try { DetachPopup(); }
+        catch (Exception error) { failure = error; }
+        try { DetachBinding(); }
+        catch (Exception error) { failure = Combine(failure, error); }
+        try { popup?.Hide(); }
+        catch (Exception error) { failure = Combine(failure, error); }
+        try { CancelEdit(); }
+        catch (Exception error) { failure = Combine(failure, error); }
+        try { base.OnComponentDeactivated(); }
+        catch (Exception error) { failure = Combine(failure, error); }
+        _deactivating = false;
+        if (_activationPending && !_terminal && IsActiveInHierarchy)
+        {
+            _activationPending = false;
+            _ownerActive = true;
+            try { AttachPopup(_popup, _popupRevision); }
+            catch (Exception error) { failure = Combine(failure, error); }
+            try { AttachBinding(_binding, _bindingRevision); }
+            catch (Exception error) { failure = Combine(failure, error); }
+            try { SynchronizeBinding(); }
+            catch (Exception error) { failure = Combine(failure, error); }
+        }
+        if (failure is not null)
+            throw failure;
     }
 
-    private void OnBindingChanged(ColorF4 color)
+    protected override void OnDestroying()
     {
-        if (!_editing)
+        _terminal = true;
+        _ownerActive = false;
+        _activationPending = false;
+        ++_popupRevision;
+        ++_bindingRevision;
+        _requestedBinding = null;
+        _requestedPopup = null;
+        IUIValueBinding<ColorF4>? source = _binding;
+        UIContextMenuComponent? popup = _popup;
+        bool wasEditing = _editing;
+        _editing = false;
+        SetField(ref _binding, null, publishNotifications: false);
+        SetField(ref _popup, null, publishNotifications: false);
+        Exception? failure = null;
+        try { DetachPopup(); }
+        catch (Exception error) { failure = error; }
+        try { DetachBinding(); }
+        catch (Exception error) { failure = Combine(failure, error); }
+        if (wasEditing)
+        {
+            try
+            {
+                ColorF4 rollback = source?.Value ?? _editOriginal;
+                if (IsFinite(rollback))
+                    SetField(ref _linearColor, rollback, publishNotifications: false,
+                        nameof(LinearColor));
+            }
+            catch (Exception error) { failure = Combine(failure, error); }
+        }
+        try { popup?.Hide(); }
+        catch (Exception error) { failure = Combine(failure, error); }
+        try { base.OnDestroying(); }
+        catch (Exception error) { failure = Combine(failure, error); }
+        if (failure is not null)
+            throw failure;
+    }
+
+    private static Exception Combine(Exception? first, Exception next)
+        => first is null ? next : new AggregateException(first, next);
+
+    private void OnBindingChanged(IUIValueBinding<ColorF4> source, long revision, ColorF4 color)
+    {
+        if (_ownerActive && OwnsBindingRevision(revision) &&
+            ReferenceEquals(_subscribedBinding, source) && !_editing)
             ApplyLinear(color);
     }
 
@@ -111,25 +328,38 @@ public class UIColorSelectorComponent : UIButtonComponent
 
     public void SetColor(ColorF4 color, EUIColorSpace colorSpace)
     {
+        if (_terminal || IsDestroyed || IsDestroyQueued)
+            return;
         ColorF4 linear = colorSpace == EUIColorSpace.SRgb ? SrgbToLinear(color) : color;
         ApplyLinear(linear);
+        if (_terminal || IsDestroyed || IsDestroyQueued)
+            return;
         if (!_editing && _binding is not null)
-            _binding.SetValue(linear);
+        {
+            IUIValueBinding<ColorF4> source = _binding;
+            long revision = _bindingRevision;
+            source.SetValue(linear);
+            if (!OwnsBindingRevision(revision) || !ReferenceEquals(_binding, source))
+                return;
+            ApplyLinear(source.Value);
+        }
     }
 
     public bool BeginEdit()
     {
-        if (!CanInteract || IsReadOnly || _editing)
+        if (_terminal || !CanInteract || IsReadOnly || _editing)
             return false;
         _editOriginal = _linearColor;
         _editing = true;
         EditingStarted?.Invoke(this);
-        return true;
+        return !_terminal && _editing;
     }
 
     /// <summary>Opens a bounded native popup with presets and arbitrary sRGB hex/RGBA editing.</summary>
     public bool OpenPalette()
     {
+        if (_terminal || IsDestroyed || IsDestroyQueued)
+            return false;
         if (_popup is null)
             return false;
         if (_popup.IsOpen)
@@ -287,17 +517,24 @@ public class UIColorSelectorComponent : UIButtonComponent
         text.VerticalAlignment = EVerticalAlignment.Center;
     }
 
-    private void OnPopupDismissed() => CancelEdit();
+    private void OnPopupDismissed(UIContextMenuComponent source, long revision)
+    {
+        if (_ownerActive && OwnsPopupRevision(revision) && ReferenceEquals(_subscribedPopup, source))
+            CancelEdit();
+    }
 
     public bool PreviewColor(ColorF4 color, EUIColorSpace colorSpace)
     {
-        if (!_editing || !CanInteract || IsReadOnly)
+        if (_terminal || !_editing || !CanInteract || IsReadOnly)
             return false;
         ColorF4 linear = colorSpace == EUIColorSpace.SRgb ? SrgbToLinear(color) : color;
         ColorF4 previous = _linearColor;
         ApplyLinear(linear);
+        if (_terminal || IsDestroyed || IsDestroyQueued)
+            return false;
+        long revision = _bindingRevision;
         ColorPreviewed?.Invoke(new(previous, linear, EUIValueChangeOrigin.User));
-        return true;
+        return _editing && OwnsBindingRevision(revision);
     }
 
     public bool PreviewHexSrgb(ReadOnlySpan<char> hex)
@@ -318,24 +555,26 @@ public class UIColorSelectorComponent : UIButtonComponent
 
     public void CommitEdit()
     {
-        if (!_editing)
+        if (_terminal || !_editing)
             return;
         _editing = false;
         IUIValueBinding<ColorF4>? binding = _binding;
         if (binding is not null)
         {
+            long revision = _bindingRevision;
             binding.SetValue(_linearColor);
-            if (!ReferenceEquals(_binding, binding) || !IsActiveInHierarchy)
+            if (!OwnsBindingRevision(revision) || !ReferenceEquals(_binding, binding) ||
+                !IsActiveInHierarchy)
                 return;
             ApplyLinear(binding.Value);
         }
-        if (!_editOriginal.Equals(_linearColor))
+        if (!_terminal && !_editOriginal.Equals(_linearColor))
             ColorCommitted?.Invoke(new(_editOriginal, _linearColor, EUIValueChangeOrigin.User));
     }
 
     public void CancelEdit()
     {
-        if (!_editing)
+        if (_terminal || !_editing)
             return;
         _editing = false;
         ApplyLinear(_binding?.Value ?? _editOriginal);

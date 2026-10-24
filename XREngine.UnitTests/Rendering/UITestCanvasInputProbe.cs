@@ -19,6 +19,19 @@ internal sealed class UITestCanvasInputProbe : XRComponent, IUICanvasInputSource
     public Vector2 CursorPositionWorld2D => Vector2.Zero;
     public UIInteractableComponent? FocusedComponent { get; set; }
     public bool TryFocusPresented(UIInteractableComponent target) => false;
+    public bool IsDispatchingVirtualItemFocus(UIListTransform list, ulong itemId,
+        UIInteractableComponent target) => false;
+    public bool VirtualFocusAccepted { get; set; }
+    public Action? OnVirtualFocusRequested { get; set; }
+    public UIListTransform? RequestedList { get; private set; }
+    public ulong RequestedItemId { get; private set; }
+    public bool RequestVirtualItemFocus(UIListTransform list, ulong itemId, bool center = false)
+    {
+        RequestedList = list;
+        RequestedItemId = itemId;
+        OnVirtualFocusRequested?.Invoke();
+        return VirtualFocusAccepted;
+    }
 
     public int SubscriberCount => (_leftClickDown?.GetInvocationList().Length ?? 0) +
         (_rightClick?.GetInvocationList().Length ?? 0) +

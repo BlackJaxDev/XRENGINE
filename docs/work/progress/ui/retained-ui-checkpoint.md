@@ -517,3 +517,44 @@ The final source snapshot retains those two differences explicitly.
 Desktop test compilation 15 passed with zero warnings/errors in 57.51s. No
 desktop tests executed. All 37 local document links and whitespace checks pass.
 The 10,394-file final source snapshot is unchanged.
+
+## Stable Composition And Exact Control Lifetimes
+
+Code reconciliation is **42 of 60 implementation items complete**. The active
+TODO retains 18 code items and four original owner decisions. Paragraph analysis
+and persistent asset recovery still await approval. The completed item is
+independent composition-layer invalidation, backed by real control fixtures.
+Broader native command reuse and all platform/performance acceptance remain open.
+
+| Implementation area | Complete / original total | Open |
+|---|---:|---:|
+| Immutable layout and bounded scheduling | 9 / 9 | 0 |
+| Coherent publication and input | 5 / 8 | 3 |
+| Persistent render data and clipping | 14 / 17 | 3 |
+| Retained controls and virtual collections | 9 / 11 | 2 |
+| First-milestone fixture | 3 / 3 | 0 |
+| Editor adoption | 2 / 12 | 10 |
+| Total | 42 / 60 | 18 |
+
+- Layout recomputes outputs when a node-count change prevents prior-page reuse.
+  Caret insertion/removal no longer hides an unrelated unchanged sibling.
+  Same-size input keeps incremental reuse.
+- Actual text, caret, selection, hover, and distinct virtual rows preserve chrome
+  span identities, revisions, records, passes, and painter order.
+- Tree navigation waits for exact presented focus. Callback replacement, equal
+  numeric leases, modal changes, and cancelled requests cannot redirect selection.
+- Radio, slider, color, text, and canvas input release their exact owners during
+  direct destruction. Stale events and reentrant replacement are covered.
+- Hierarchy source changes and live/editor roots update without losing unrelated
+  bindings. Rename drafts survive reuse. Scene-owner lookup includes the exact
+  editor scene. Broader hidden-scene and dual-membership mutations remain open.
+- World collection retains bounded packet selections across traversal, swap, and
+  teardown. This foundation does not enable frozen direct-world output or input.
+
+Headless build 95 passed with zero warnings/errors in 18.25s. Focused run 58
+passed 39 of 39 tests. Full run 59 passed **616 of 616 tests**, with zero warnings
+or skips, in 11.988s. The frozen source snapshot contains 10,415 files. Editor build 37 passed
+with zero warnings/errors in 3m03.39s. Desktop-test compilation 17 passed
+with zero warnings/errors in 44.86s. One desktop-only fixture argument was
+corrected after the headless/editor checks; their inputs remain unchanged. No Windows execution,
+GPU, visual, IME, benchmark, or faster-than-ImGui result is claimed.

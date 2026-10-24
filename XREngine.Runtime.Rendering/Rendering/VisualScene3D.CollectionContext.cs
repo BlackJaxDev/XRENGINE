@@ -5,6 +5,7 @@ using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Scene;
 
@@ -79,7 +80,8 @@ public partial class VisualScene3D
 
         if (renderable.FrozenWorldCommandSource is not null)
             renderable.TryCollectFrozenWorldCommands(context.Commands!, context.Camera,
-                context.CollectionVolume, context.ContainsOnly);
+                context.CollectionVolume, context.ContainsOnly,
+                context.WorldPacketSet);
         else
             renderable.CollectCommands(context.Commands!, context.Camera);
     }
@@ -103,6 +105,7 @@ public partial class VisualScene3D
     {
         public VisualScene3D? Scene;
         public RenderCommandCollection? Commands;
+        public UIWorldCollectPacketSet? WorldPacketSet;
         public IRuntimeCullingCamera? Camera;
         public IVolume? CollectionVolume;
         public bool ContainsOnly;
@@ -134,7 +137,8 @@ public partial class VisualScene3D
             IVolume? collectionVolume,
             bool containsOnly,
             bool collectMirrors,
-            bool modelDiagnosticsActive)
+            bool modelDiagnosticsActive,
+            UIWorldCollectPacketSet? worldPacketSet)
         {
             if (_depth == _contexts.Length)
                 Array.Resize(ref _contexts, _contexts.Length * 2);
@@ -143,6 +147,7 @@ public partial class VisualScene3D
             {
                 Scene = scene,
                 Commands = commands,
+                WorldPacketSet = worldPacketSet,
                 Camera = camera,
                 CollectionVolume = collectionVolume,
                 ContainsOnly = containsOnly,

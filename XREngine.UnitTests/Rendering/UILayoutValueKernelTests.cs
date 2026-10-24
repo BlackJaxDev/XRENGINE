@@ -463,6 +463,51 @@ public sealed class UILayoutValueKernelTests
     }
 
     [Test]
+    public void TopologyLengthChangeRecomputesUnchangedEarlierOutput()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        UIBoundableTransform chrome = new()
+        {
+            Parent = canvas, Width = 30, Height = 20, MaxAnchor = Vector2.Zero
+        };
+        UIBoundableTransform overlay = new()
+        {
+            Parent = canvas, Width = 30, Height = 20, MaxAnchor = Vector2.Zero
+        };
+        UIBoundableTransform? caret = null;
+        try
+        {
+            UILayoutSnapshot before = UILayoutSnapshot.Capture(canvas, []);
+            UILayoutOutputPageView prior = UILayoutValueKernel.RunPaged(before, null, null);
+            prior[1].Visible.ShouldBeTrue();
+            prior[1].ActualSize.ShouldBe(new Vector2(30, 20));
+
+            caret = new UIBoundableTransform
+            {
+                Parent = overlay, Width = 1, Height = 20, MaxAnchor = Vector2.Zero
+            };
+            UILayoutSnapshot inserted = UILayoutSnapshot.Capture(canvas, []);
+            UILayoutOutputPageView withCaret = UILayoutValueKernel.RunPaged(inserted, before, prior);
+            withCaret[1].Visible.ShouldBeTrue();
+            withCaret[1].ActualSize.ShouldBe(new Vector2(30, 20));
+
+            caret.Destroy(true);
+            caret = null;
+            UILayoutSnapshot removed = UILayoutSnapshot.Capture(canvas, []);
+            UILayoutOutputPageView withoutCaret = UILayoutValueKernel.RunPaged(removed, inserted, withCaret);
+            withoutCaret[1].Visible.ShouldBeTrue();
+            withoutCaret[1].ActualSize.ShouldBe(new Vector2(30, 20));
+        }
+        finally
+        {
+            caret?.Destroy(true);
+            overlay.Destroy(true);
+            chrome.Destroy(true);
+            canvas.Destroy(true);
+        }
+    }
+
+    [Test]
     public void CancelledWorkerStopsBeforeTraversal()
     {
         UICanvasTransform canvas = new() { Width = 100, Height = 100 };

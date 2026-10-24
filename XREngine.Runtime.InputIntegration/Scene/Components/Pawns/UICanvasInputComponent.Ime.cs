@@ -22,8 +22,8 @@ public partial class UICanvasInputComponent
         _imeIdentity = default;
         _imeInteractionRevision = 0;
         _imeFocusEpoch = 0;
-        StopImeCandidateTick();
-        target?.CancelComposition();
+        try { StopImeCandidateTick(); }
+        finally { target?.CancelComposition(); }
     }
 
     private void UpdateImeFocusTarget()

@@ -235,6 +235,13 @@ public abstract class UINumericInputComponent<T> : UITextInputComponent where T 
         base.OnComponentDeactivated();
     }
 
+    protected override void OnDestroying()
+    {
+        _scrubbing = false;
+        _scrubStartText = string.Empty;
+        base.OnDestroying();
+    }
+
     public override void CancelForRecycle()
     {
         EndScrub(false);

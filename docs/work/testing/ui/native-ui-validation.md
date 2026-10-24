@@ -13,15 +13,17 @@ new headless regression tests before Windows and graphics validation on
 acceptance or change the default editor.
 
 The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. All **541 of 541** tests pass, with no
-warnings, failures, or skips, in 9.028 seconds. The final incremental build took
-15.96s. Coverage adds canvas collection transitions, nested transform replacement,
-retained batch reattachment, and non-vetoable viewport owner cleanup. These
-results are from 2026-10-24. Final source verification covers 9,941 files.
+through `Tools/Invoke-AgentBuild.ps1`. Full run 59 passes **616 of 616** tests,
+with no warnings, failures, or skips, in 11.988 seconds. Headless build 95 took
+18.25s. Coverage adds topology insertion/removal, real control composition,
+exact virtual focus, direct control/input destruction, and retained world
+collection readers. These results are from 2026-10-24. The frozen source
+snapshot contains 10,415 files.
 
-The matching editor build passed with zero warnings/errors in 2m44.39s. The
-desktop test project compiled with zero warnings/errors in 50.22s. Desktop
-execution remains subject to the Windows requirement.
+The matching editor build 37 passed with zero warnings/errors in 3m03.39s.
+Desktop test-project compilation 17 passed with zero warnings/errors in 44.86s.
+One desktop-only fixture syntax correction followed the headless/editor checks;
+production and headless inputs are unchanged. No desktop tests executed.
 
 The editor build compiles Windows targets on Linux. The desktop test-project
 build compiles shaping and Vulkan regression tests. Desktop tests did not execute:

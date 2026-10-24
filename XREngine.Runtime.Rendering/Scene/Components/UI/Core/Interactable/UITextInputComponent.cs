@@ -20,7 +20,7 @@ namespace XREngine.Rendering.UI
         public override EUIAccessibilityRole AccessibilityRole => EUIAccessibilityRole.TextBox;
         public override bool TryConsumeFocusDirection(Vector2 direction)
         {
-            if (!CanInteract || !float.IsFinite(direction.X) || !float.IsFinite(direction.Y))
+            if (_terminal || !CanInteract || !float.IsFinite(direction.X) || !float.IsFinite(direction.Y))
                 return false;
             if (MathF.Abs(direction.X) > MathF.Abs(direction.Y))
             {
@@ -44,7 +44,15 @@ namespace XREngine.Rendering.UI
         public UITextComponent TextComponent => GetSiblingComponent<UITextComponent>(true)!;
 
         private IUIValueBinding<string>? _binding;
-        private bool _writingBinding;
+        private IUIValueBinding<string>? _requestedBinding;
+        private IUIValueBinding<string>? _subscribedBinding;
+        private Action<string>? _subscribedHandler;
+        private long _bindingRevision;
+        private bool _ownerActive;
+        private bool _terminal;
+        private bool _deactivating;
+        private bool _activationPending;
+        private IUIValueBinding<string>? _writingBindingSource;
 
         /// <summary>Typed text source. Its callback is active only while this control is active.</summary>
         public IUIValueBinding<string>? Binding
@@ -52,26 +60,132 @@ namespace XREngine.Rendering.UI
             get => _binding;
             set
             {
+                if (_terminal || IsDestroyed || IsDestroyQueued)
+                {
+                    if (value is not null)
+                        throw new ObjectDisposedException(nameof(UITextInputComponent));
+                    return;
+                }
                 if (ReferenceEquals(_binding, value))
                     return;
-                if (IsActiveInHierarchy && _binding is not null)
-                    _binding.ValueChanged -= OnBindingChanged;
-                SetField(ref _binding, value);
-                if (IsActiveInHierarchy && _binding is not null)
-                    _binding.ValueChanged += OnBindingChanged;
-                if (_binding is not null)
-                    OnBindingChanged(_binding.Value);
+                long revision = ++_bindingRevision;
+                _requestedBinding = value;
+                Exception? failure = ReleaseBinding();
+                if (_terminal || IsDestroyed || IsDestroyQueued || revision != _bindingRevision)
+                {
+                    if (!_terminal && !IsDestroyed && !IsDestroyQueued)
+                    {
+                        SetField(ref _binding, _requestedBinding, publishNotifications: false);
+                        if (!ReferenceEquals(_subscribedBinding, _binding) || !_ownerActive)
+                        {
+                            Exception? detachFailure = ReleaseBinding();
+                            if (detachFailure is not null)
+                                failure = CombineLifetimeFailure(failure, detachFailure);
+                        }
+                        if (_ownerActive && OwnsBindingRevision(_bindingRevision))
+                            try { AttachBinding(_binding, _bindingRevision); }
+                            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+                    }
+                    if (failure is not null)
+                        throw failure;
+                    return;
+                }
+                try { SetField(ref _binding, value); }
+                catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+                if (revision == _bindingRevision)
+                    _requestedBinding = _binding;
+                else
+                    SetField(ref _binding, _requestedBinding, publishNotifications: false);
+                if (_ownerActive && OwnsBindingRevision(_bindingRevision))
+                    try { AttachBinding(_binding, _bindingRevision); }
+                    catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+                if (_binding is not null && !_terminal)
+                    try { SynchronizeBinding(_binding, _bindingRevision, allowInactive: true); }
+                    catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+                if (failure is not null)
+                    throw failure;
             }
         }
 
-        private void OnBindingChanged(string value)
+        private bool OwnsBindingRevision(long revision)
+            => !_terminal && !IsDestroyed && !IsDestroyQueued &&
+                _ownerActive && IsActiveInHierarchy && revision == _bindingRevision;
+
+        private void OnBindingChanged(IUIValueBinding<string> source, long revision, string value)
         {
-            if (_writingBinding || IsComposing || IsFocused && CommitOnSubmit)
+            if (!OwnsBindingRevision(revision) || !ReferenceEquals(_subscribedBinding, source) ||
+                ReferenceEquals(_writingBindingSource, source) || IsComposing || IsFocused && CommitOnSubmit)
                 return;
             Text = value ?? string.Empty;
+            if (!OwnsBindingRevision(revision) || !ReferenceEquals(_subscribedBinding, source))
+                return;
             _editOriginalText = Text;
             IsInvalid = false;
         }
+
+        private void SynchronizeBinding(IUIValueBinding<string> source, long revision, bool allowInactive = false)
+        {
+            string value = source.Value;
+            if (OwnsBindingRevision(revision) && ReferenceEquals(_binding, source))
+                OnBindingChanged(source, revision, value);
+            else if (allowInactive && !_ownerActive && !_terminal && revision == _bindingRevision &&
+                ReferenceEquals(_binding, source) && !IsComposing && !(IsFocused && CommitOnSubmit))
+            {
+                Text = value ?? string.Empty;
+                if (_terminal || revision != _bindingRevision || !ReferenceEquals(_binding, source))
+                    return;
+                _editOriginalText = Text;
+                IsInvalid = false;
+            }
+        }
+
+        private void AttachBinding(IUIValueBinding<string>? binding, long revision)
+        {
+            if (binding is null || !OwnsBindingRevision(revision) ||
+                ReferenceEquals(_subscribedBinding, binding))
+                return;
+            Action<string> handler = value => OnBindingChanged(binding, revision, value);
+            _subscribedBinding = binding;
+            _subscribedHandler = handler;
+            try { binding.ValueChanged += handler; }
+            catch (Exception error)
+            {
+                if (ReferenceEquals(_subscribedHandler, handler))
+                {
+                    _subscribedBinding = null;
+                    _subscribedHandler = null;
+                }
+                try { binding.ValueChanged -= handler; }
+                catch (Exception detachError)
+                { throw new AggregateException(error, detachError); }
+                throw;
+            }
+            if (!OwnsBindingRevision(revision) || !ReferenceEquals(_binding, binding) ||
+                !ReferenceEquals(_subscribedHandler, handler))
+            {
+                if (ReferenceEquals(_subscribedHandler, handler))
+                {
+                    _subscribedBinding = null;
+                    _subscribedHandler = null;
+                }
+                binding.ValueChanged -= handler;
+            }
+        }
+
+        private Exception? ReleaseBinding()
+        {
+            IUIValueBinding<string>? binding = _subscribedBinding;
+            Action<string>? handler = _subscribedHandler;
+            _subscribedBinding = null;
+            _subscribedHandler = null;
+            if (binding is null || handler is null)
+                return null;
+            try { binding.ValueChanged -= handler; return null; }
+            catch (Exception error) { return error; }
+        }
+
+        private static Exception CombineLifetimeFailure(Exception? first, Exception second)
+            => first is null ? second : new AggregateException(first, second);
 
         private string _text = string.Empty;
         public string Text
@@ -113,7 +227,7 @@ namespace XREngine.Rendering.UI
 
         public bool BeginComposition()
         {
-            if (!CanInteract || IsReadOnly || !IsFocused)
+            if (_terminal || !CanInteract || IsReadOnly || !IsFocused)
                 return false;
             if (_isComposing)
                 CancelComposition();
@@ -130,7 +244,7 @@ namespace XREngine.Rendering.UI
         /// <summary>Displays preedit text without committing it to a binding or undo history.</summary>
         public bool UpdateComposition(string preedit, int caretOffset)
         {
-            if (!_isComposing || !CanInteract || IsReadOnly || preedit is null ||
+            if (_terminal || !_isComposing || !CanInteract || IsReadOnly || preedit is null ||
                 caretOffset < 0 || caretOffset > preedit.Length)
                 return false;
             if (!IsGraphemeBoundary(preedit, caretOffset))
@@ -158,7 +272,7 @@ namespace XREngine.Rendering.UI
         /// <summary>Commits one IME edit and records the original text as one undo step.</summary>
         public bool CommitComposition(string committedText)
         {
-            if (!_isComposing || committedText is null || !PreValidateInput(committedText))
+            if (_terminal || !_isComposing || committedText is null || !PreValidateInput(committedText))
                 return false;
             string result = _compositionOriginalText.Remove(_compositionStart, _compositionReplacedLength)
                 .Insert(_compositionStart, committedText);
@@ -238,6 +352,8 @@ namespace XREngine.Rendering.UI
 
         protected override void OnGotFocus()
         {
+            if (_terminal)
+                return;
             _focusEpoch++;
             _editOriginalText = Text;
             if (SceneNode is not null)
@@ -248,6 +364,8 @@ namespace XREngine.Rendering.UI
         protected override void OnLostFocus()
         {
             _focusEpoch++;
+            if (_terminal)
+                return;
             StopEditOverlay();
             CancelComposition();
             if (CommitOnSubmit && Text != _editOriginalText && !CommitDraft())
@@ -258,12 +376,25 @@ namespace XREngine.Rendering.UI
         }
         protected override void OnComponentActivated()
         {
+            long entryRevision = _bindingRevision;
             base.OnComponentActivated();
+            if (_deactivating)
+            {
+                _activationPending = true;
+                return;
+            }
+            if (_terminal || IsDestroyed || IsDestroyQueued || !IsActiveInHierarchy ||
+                entryRevision != _bindingRevision)
+                return;
+            _ownerActive = true;
+            long revision = ++_bindingRevision;
             if (_binding is not null)
             {
-                _binding.ValueChanged += OnBindingChanged;
-                OnBindingChanged(_binding.Value);
+                AttachBinding(_binding, revision);
+                SynchronizeBinding(_binding, revision);
             }
+            if (!OwnsBindingRevision(revision))
+                return;
             // Restore the authored input after both components are attached. An empty
             // input leaves independently authored text on the sibling unchanged.
             if (!string.IsNullOrEmpty(Text) &&
@@ -284,13 +415,82 @@ namespace XREngine.Rendering.UI
         }
         protected override void OnComponentDeactivated()
         {
-            StopEditOverlay();
-            CancelComposition();
-            if (_binding is not null)
-                _binding.ValueChanged -= OnBindingChanged;
-            _keyRepeatTimer.Cancel();
+            _ownerActive = false;
+            ++_bindingRevision;
+            _deactivating = true;
+            _activationPending = false;
+            Exception? failure = ReleaseBinding();
+            try { StopEditOverlay(); }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            try { CancelComposition(); }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            try { _keyRepeatTimer.Cancel(); }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
             _controlLeft = _controlRight = _shiftLeft = _shiftRight = false;
-            base.OnComponentDeactivated();
+            try { base.OnComponentDeactivated(); }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            _deactivating = false;
+            if (_activationPending && !_terminal && !IsDestroyed && !IsDestroyQueued && IsActiveInHierarchy)
+            {
+                _activationPending = false;
+                _ownerActive = true;
+                long revision = ++_bindingRevision;
+                try { AttachBinding(_binding, revision); }
+                catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+                if (OwnsBindingRevision(revision) && _binding is not null)
+                    try { SynchronizeBinding(_binding, revision); }
+                    catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            }
+            if (failure is not null)
+                throw failure;
+        }
+
+        protected override void OnDestroying()
+        {
+            _terminal = true;
+            _ownerActive = false;
+            _deactivating = false;
+            _activationPending = false;
+            ++_bindingRevision;
+            ++_focusEpoch;
+            _requestedBinding = null;
+            SetField(ref _binding, null, publishNotifications: false);
+            Exception? failure = ReleaseBinding();
+            try { StopEditOverlay(); }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            try { _keyRepeatTimer.Cancel(); }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            if (_isComposing)
+            {
+                _isComposing = false;
+                SetField(ref _text, _compositionOriginalText, publishNotifications: false);
+            }
+            else if (CommitOnSubmit && IsFocused)
+                SetField(ref _text, _editOriginalText, publishNotifications: false);
+            try
+            {
+                if (SceneNode is not null && TryGetSiblingComponent<UITextComponent>(out var textComponent) &&
+                    textComponent is { IsDestroyed: false, IsDestroyQueued: false })
+                    textComponent.Text = FormatText(_text);
+            }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            _controlLeft = _controlRight = _shiftLeft = _shiftRight = false;
+            _lastChar = null;
+            _undo.Clear();
+            _redo.Clear();
+            try
+            {
+                IUICanvasInputSource? input = UserInterfaceCanvas?.GetInputComponent();
+                if (input is not null && ReferenceEquals(input.FocusedComponent, this))
+                    input.FocusedComponent = null;
+            }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            try { IsFocused = false; }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            try { base.OnDestroying(); }
+            catch (Exception error) { failure = CombineLifetimeFailure(failure, error); }
+            if (failure is not null)
+                throw failure;
         }
 
         public override void CancelForRecycle()
@@ -382,13 +582,15 @@ namespace XREngine.Rendering.UI
 
         private void OnCharacterTyped(char character)
         {
-            if (AnyControl || IsComposing)
+            if (_terminal || AnyControl || IsComposing)
                 return;
             AddChar(true, character.ToString());
         }
 
         private void Enter(bool pressed)
         {
+            if (_terminal)
+                return;
             if (pressed)
             {
                 if (IsComposing)
@@ -402,6 +604,8 @@ namespace XREngine.Rendering.UI
 
         private void Escape(bool pressed)
         {
+            if (_terminal)
+                return;
             if (!pressed)
                 return;
             if (IsComposing)
@@ -459,7 +663,7 @@ namespace XREngine.Rendering.UI
 
         private void SelectAllShortcut(bool pressed)
         {
-            if (pressed && AnyControl)
+            if (!_terminal && pressed && AnyControl)
             {
                 SelectionAnchor = 0;
                 CursorPosition = Text.Length;
@@ -542,6 +746,8 @@ namespace XREngine.Rendering.UI
         private void Space(bool pressed) => AddChar(pressed, " ");
         private void Backspace(bool pressed)
         {
+            if (_terminal)
+                return;
             if (pressed)
             {
                 _lastChar = null;
@@ -554,6 +760,8 @@ namespace XREngine.Rendering.UI
         }
         private void Delete(bool pressed)
         {
+            if (_terminal)
+                return;
             if (pressed)
             {
                 _lastChar = null;
@@ -566,6 +774,8 @@ namespace XREngine.Rendering.UI
         }
         private void Left(bool pressed)
         {
+            if (_terminal)
+                return;
             if (pressed)
             {
                 _lastChar = null;
@@ -579,6 +789,8 @@ namespace XREngine.Rendering.UI
 
         private void Right(bool pressed)
         {
+            if (_terminal)
+                return;
             if (pressed)
             {
                 _lastChar = null;
@@ -592,6 +804,8 @@ namespace XREngine.Rendering.UI
 
         private void AddChar(bool pressed, string c)
         {
+            if (_terminal)
+                return;
             if (pressed)
             {
                 _lastMovementInput = null;
@@ -603,10 +817,15 @@ namespace XREngine.Rendering.UI
         }
 
         private void StartCharTimer()
-            => _keyRepeatTimer.StartMultiFire(AddLastChar, _keyRepeatInterval, -1, _keyRepeatDelay, ETickGroup.Normal, (int)ETickOrder.Input);
+        {
+            if (!_terminal && IsActiveInHierarchy)
+                _keyRepeatTimer.StartMultiFire(AddLastChar, _keyRepeatInterval, -1, _keyRepeatDelay, ETickGroup.Normal, (int)ETickOrder.Input);
+        }
 
         private void AddLastChar(TimeSpan totalElapsed, int fireNumber)
         {
+            if (_terminal || !_ownerActive || !IsActiveInHierarchy)
+                return;
             if (_lastChar is null)
             {
                 switch (_lastMovementInput)
@@ -631,7 +850,7 @@ namespace XREngine.Rendering.UI
 
         public void UserAddText(string text)
         {
-            if (!CanInteract || IsReadOnly || IsComposing)
+            if (_terminal || !CanInteract || IsReadOnly || IsComposing)
                 return;
             int start = SelectionStart;
             int length = SelectionEnd - start;
@@ -663,7 +882,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public bool UserReplaceText(string value, int selectionStart, int selectionEnd)
         {
-            if (!CanInteract || IsReadOnly)
+            if (_terminal || !CanInteract || IsReadOnly)
                 return false;
             CancelComposition();
             ArgumentNullException.ThrowIfNull(value);
@@ -709,7 +928,7 @@ namespace XREngine.Rendering.UI
         /// <summary>Raises the same single-line submit action as the engine Enter key.</summary>
         public virtual void UserSubmit()
         {
-            if (IsComposing)
+            if (_terminal || IsComposing)
                 return;
             if (SingleLineMode && (!CommitOnSubmit || CommitDraft()))
                 Submitted?.Invoke(this);
@@ -718,6 +937,8 @@ namespace XREngine.Rendering.UI
         /// <summary>Raises the same single-line cancel action as the engine Escape key.</summary>
         public virtual void UserCancel()
         {
+            if (_terminal)
+                return;
             if (IsComposing)
             {
                 CancelComposition();
@@ -756,7 +977,7 @@ namespace XREngine.Rendering.UI
 
         public void UserRemoveText(int count, bool backward)
         {
-            if (!CanInteract || IsReadOnly || IsComposing || count <= 0)
+            if (_terminal || !CanInteract || IsReadOnly || IsComposing || count <= 0)
                 return;
             if (SelectionStart != SelectionEnd)
             {
@@ -822,13 +1043,23 @@ namespace XREngine.Rendering.UI
 
         private void SetValue()
         {
+            if (_terminal)
+                return;
             if (_binding is not null)
             {
-                _writingBinding = true;
-                try { _binding.SetValue(Text); }
-                finally { _writingBinding = false; }
-                if (_binding.Value != Text)
-                    Text = _binding.Value;
+                IUIValueBinding<string> binding = _binding;
+                long revision = _bindingRevision;
+                IUIValueBinding<string>? previousWritingSource = _writingBindingSource;
+                _writingBindingSource = binding;
+                try { binding.SetValue(Text); }
+                finally { _writingBindingSource = previousWritingSource; }
+                if (_terminal || revision != _bindingRevision || !ReferenceEquals(_binding, binding))
+                    return;
+                string value = binding.Value;
+                if (_terminal || revision != _bindingRevision || !ReferenceEquals(_binding, binding))
+                    return;
+                if (value != Text)
+                    Text = value;
                 return;
             }
             var prop = Property;
@@ -942,8 +1173,8 @@ namespace XREngine.Rendering.UI
             _redo.Clear();
         }
 
-        public bool Undo() => CanInteract && !IsReadOnly && !IsComposing && RestoreHistory(_undo, _redo);
-        public bool Redo() => CanInteract && !IsReadOnly && !IsComposing && RestoreHistory(_redo, _undo);
+        public bool Undo() => !_terminal && CanInteract && !IsReadOnly && !IsComposing && RestoreHistory(_undo, _redo);
+        public bool Redo() => !_terminal && CanInteract && !IsReadOnly && !IsComposing && RestoreHistory(_redo, _undo);
 
         private bool RestoreHistory(List<(string Text, int Anchor, int Caret)> source,
             List<(string Text, int Anchor, int Caret)> destination)
@@ -973,13 +1204,16 @@ namespace XREngine.Rendering.UI
         {
             // The base implementation raises PropertyChanged, so advance the IME token
             // before the input host observes this transition.
-            if (propName is nameof(IsReadOnly) or nameof(IsEnabled))
+            if (!_terminal && !IsDestroyed && !IsDestroyQueued &&
+                (propName is nameof(IsReadOnly) or nameof(IsEnabled)))
             {
                 _focusEpoch++;
                 if (IsReadOnly || !IsEnabled)
                     CancelComposition();
             }
             base.OnPropertyChanged(propName, prev, field);
+            if (_terminal || IsDestroyed || IsDestroyQueued)
+                return;
             switch (propName)
             {
                 case nameof(Text):
@@ -1004,7 +1238,7 @@ namespace XREngine.Rendering.UI
 
         public void SetCursorPositionWithLocalPoint(Vector3 localPoint)
         {
-            if (SceneNode is null || SceneNode.IsTransformNull ||
+            if (_terminal || IsDestroyed || IsDestroyQueued || SceneNode is null || SceneNode.IsTransformNull ||
                 !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult layout))
                 return;
             TrySetCursorPositionWithLayout(localPoint, layout);
@@ -1013,7 +1247,7 @@ namespace XREngine.Rendering.UI
         /// <summary>Uses placed caret stops only when geometry matches the current text revision.</summary>
         public bool TrySetCursorPositionWithLayout(Vector3 localPoint, UITextLayoutResult layout)
         {
-            if (SceneNode is null || SceneNode.IsTransformNull ||
+            if (_terminal || IsDestroyed || IsDestroyQueued || SceneNode is null || SceneNode.IsTransformNull ||
                 !TextComponent.TryGetCurrentLayoutResult(out UITextLayoutResult currentLayout) ||
                 !ReferenceEquals(layout, currentLayout) || TextComponent.Text != Text ||
                 !layout.HasCompleteGraphemeCaretStops)

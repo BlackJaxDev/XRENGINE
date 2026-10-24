@@ -17,6 +17,13 @@ public interface IUICanvasInputSource
     /// <summary>Focuses a control only when its current row and scope are in the presented input packet.</summary>
     bool TryFocusPresented(UIInteractableComponent target);
 
+    /// <summary>Requests focus for a stable virtual item after its matching row is presented.</summary>
+    bool RequestVirtualItemFocus(UIListTransform list, ulong itemId, bool center = false);
+
+    /// <summary>Reports the exact accepted virtual focus dispatch in progress.</summary>
+    bool IsDispatchingVirtualItemFocus(UIListTransform list, ulong itemId, UIInteractableComponent target)
+        => false;
+
     event Action<UIInteractableComponent?>? LeftClickDown;
     event Action<UIInteractableComponent>? RightClick;
     event Action? EscapePressed;

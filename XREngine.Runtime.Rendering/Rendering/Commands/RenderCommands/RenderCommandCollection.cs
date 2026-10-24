@@ -977,6 +977,10 @@ namespace XREngine.Rendering.Commands
             => AddCPU(item, camera: null);
 
         public void AddCPU(RenderCommand item, IRuntimeRenderCamera? camera)
+            => TryAddCPU(item, camera);
+
+        /// <summary>Reports whether a CPU command entered its selected pass.</summary>
+        internal bool TryAddCPU(RenderCommand item, IRuntimeRenderCamera? camera)
         {
             int pass = item.RenderPass;
             AABB? sortBounds = null;
@@ -995,11 +999,11 @@ namespace XREngine.Rendering.Commands
                         Debug.Rendering($"[RenderCommandCollection:AddCPU] MISSING_PASS pass={pass} cmd={item.GetType().Name} enabled={item.Enabled} owner={ownerName} updatingPassKeys=[{string.Join(",", _updatingPasses.Keys.OrderBy(static x => x))}]");
                         s_addCpuMissingPassDiagCount++;
                     }
-                    return; // No CPU pass found for this render command
+                    return false; // No CPU pass found for this render command
                 }
 
                 if (!TryReserveCollectedResourceNoLock(item))
-                    return;
+                    return false;
 
                 long sortOrderKey = GetSortOrderKey(pass);
                 int beforeCount = set.Count;
@@ -1084,6 +1088,7 @@ namespace XREngine.Rendering.Commands
                 {
                     _updatingSwapQueue.Add(item);
                 }
+                return afterCount > beforeCount;
             }
         }
 

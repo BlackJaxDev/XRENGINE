@@ -22,6 +22,8 @@ public partial class UITextInputComponent
 
     private bool TryMoveCaretByGrapheme(int direction, bool extendSelection = false)
     {
+        if (_terminal)
+            return false;
         if (direction == 0 || IsComposing)
             return false;
         if (SceneNode is not null && !SceneNode.IsTransformNull)

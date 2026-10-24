@@ -17,7 +17,7 @@ public partial class UICanvasInputComponent
     /// </summary>
     private void ReconcileFocusedComponent()
     {
-        if (_reconcilingFocus)
+        if (_reconcilingFocus || _inputCleanupActive)
             return;
         _reconcilingFocus = true;
         try
