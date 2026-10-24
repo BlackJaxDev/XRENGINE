@@ -709,7 +709,7 @@ namespace XREngine.Editor.Mcp
             foreach (SceneNode root in context.World.RootNodes)
                 AddFromRoot(root, "world_root");
 
-            foreach (SceneNode root in context.EditorWorld.EditorScene.RootNodes)
+            foreach (SceneNode root in context.EditorWorld.EditorScene.SceneRoots)
                 AddFromRoot(root, "editor_scene");
 
             for (int windowIndex = 0; windowIndex < RuntimeEngine.Windows.Count; windowIndex++)

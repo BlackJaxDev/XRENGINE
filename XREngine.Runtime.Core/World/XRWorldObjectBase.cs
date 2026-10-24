@@ -5,6 +5,7 @@ using System.Reflection;
 using MemoryPack;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Scene;
 using YamlDotNet.Serialization;
 
 namespace XREngine;
@@ -61,7 +62,7 @@ public static class RuntimeWorldObjectServices
 }
 
 [Serializable]
-public abstract class XRWorldObjectBase : XRObjectBase
+public abstract partial class XRWorldObjectBase : XRObjectBase
 {
     private static readonly ConcurrentDictionary<Type, ReplicationInfo?> ReplicatedTypes = [];
 
@@ -101,14 +102,29 @@ public abstract class XRWorldObjectBase : XRObjectBase
     public IRuntimeWorldContext? World
     {
         get => _world;
-        internal protected set
+        internal protected set => SetWorldValue(value);
+    }
+
+    /// <summary>Rechecks an exact structural owner after callbacks before a world write.</summary>
+    private protected void SetWorldValue(IRuntimeWorldContext? value, Action? validate = null)
+    {
+        using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+        validate?.Invoke();
+        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(this, value);
+        using var mutation = PhysicsChainWorld.BeginWorldObjectMutation(this, _world, value);
+        validate?.Invoke();
+        if (ReferenceEquals(_world, value)) return;
+        bool notify = !ArePropertyNotificationsSuppressed;
+        if (notify && !OnPropertyChanging(nameof(World), _world, value)) return;
+        IRuntimeWorldContext? previous;
+        lock (SceneRootCollection.MutationGate)
         {
+            validate?.Invoke();
             XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(this, value);
-            using var mutation = PhysicsChainWorld.BeginWorldObjectMutation(this, _world, value);
-            SetFieldValidated(ref _world, value, this,
-                static (owner, original, current, next) =>
-                    XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(owner, next));
+            previous = _world;
+            SetField(ref _world, value, publishNotifications: false, propertyName: nameof(World));
         }
+        if (notify) OnPropertyChanged(nameof(World), previous, value);
     }
 
     public TWorld? WorldAs<TWorld>() where TWorld : class

@@ -1251,8 +1251,128 @@ The next frozen input contains 10,556 source files. Headless build 112 passed wi
 zero warnings/errors in 2m26.02s. Full run 72 passed 758/758 tests in 11.663s, with
 no warnings, failures, or skips. New portable tests cover Console cache identities,
 bounded Profiler projection and cancellation, owned-clone adoption/publication,
-world-image traversal admission, and Vulkan border contract identity. Editor-only
+world-image traversal admission. Vulkan-specific border contract tests and editor-only
 adapter tests compiled in desktop build 23 with zero warnings/errors in 50.98s;
 they did not execute on Linux. Editor build 44 passed with zero warnings/errors
 in 2m35.43s. All three builds and the headless run used identical frozen source
 inputs. Build and run evidence is under `Build/_AgentValidation/20261023-080000-native-ui-completion/logs/`.
+
+## Scene Root Compatibility And Console Snapshot Checks (2026-10-24)
+
+A narrow `XREngine.Runtime.Core` build passed with zero warnings/errors in 55.31s.
+It included guarded scene-root ownership and revisioned Console snapshots. The
+frozen input record contains 1,560 Core and shared build files. Rendering work
+was still in progress, so this was not a complete editor validation.
+
+Before the scene-root change, an isolated tool captured YAML, cooked, and asset-
+envelope fixtures from the published `d7aa060df` binaries. It also captured an
+empty direct MemoryPack scene. Nonempty direct MemoryPack already failed because
+`TransformBase` had no registered formatter. A later read through those same old
+binaries confirmed that empty direct MemoryPack also regenerated the scene ID.
+The new tests preserve these existing limits. Exact persistent-ID assertions
+remain for YAML, cooked data, and the asset envelope.
+
+An isolated NUnitLite runner linked the same portable Scene and Console tests
+that belong to the headless suite. It used local DLL references to the new Core
+build and existing test dependencies; it did not build the unfinished rendering
+graph. Its first run passed 30/31 and exposed the incorrect direct-MemoryPack ID
+expectation. After the old-binary read confirmed that limit, the test expectation
+was corrected only for that format. All serialized-byte equality assertions
+remain intact. The second runner build passed with zero warnings/errors in
+3.40s; run 2 passed **31/31** in 0.469s with no warnings, failures, or skips.
+The tests also check Console displayed repeat counts and allocation-free polling
+of an unchanged snapshot. This result is not a complete headless/editor result,
+a throughput benchmark, or Windows/GPU acceptance.
+
+Evidence uses the `scene-root-fixture-*`, `scene-roots-core-build1`, and
+`scene-root-compatibility-*` logs under the existing validation run. Required
+legacy fixture bytes are embedded in tracked tests; tests do not depend on
+ignored evidence.
+
+### Combined integration validation in progress
+
+The headless build at `checkpoint19-headless114-source-hashes.json` passed with
+zero warnings and errors. The next full run completed 804 tests: 803 passed and
+one fixture raised `ObjectDisposedException`. The static-text contract fixture
+replaced a renderer-owned glyph-index buffer, then tried to reinstall the old
+buffer. Replacement correctly retires the old buffer. The fixture now leaves the
+replacement with its renderer owner for normal teardown. This repair does not
+change the buffer lifetime contract. A new build and run must verify the repair.
+
+The editor build remains a separate check. The new animation authoring actions
+also require guarded callback and Undo ownership before publication. The current
+headless result does not establish editor, native renderer, or visual acceptance.
+
+The repaired snapshot passed Headless build115 with zero warnings/errors in
+46.14s. Full run74 passed **806 of 806 tests**, with no warnings, failures, or
+skips, in 13.117s. This includes the repaired static-text fixture and two new
+vector-keyframe conditional-state tests. Runtime owners held their source fixed;
+only the unlinked editor animation action file changed during this check.
+`checkpoint19-headless115-source-hashes.json` records the source snapshot.
+
+Editor build45 failed with four OpenGL integration errors and one CA2014 warning
+in 2m55.44s. The repairs use the exact pinned framebuffer stencil-size query,
+the correct indexed color-mask argument type, one stack allocation outside the
+loop, and an instance-owned sparse texture upload helper. A later editor build
+must verify these repairs. Animation receipt and structural-list work after the
+headless snapshot requires another build before publication.
+
+The constructor-installed `EventList` mutation authority passed the narrow Data
+build with zero warnings/errors in 40.67s. All 673 recorded Data dependency inputs
+remained unchanged during that build. Core child/component ownership wiring is
+not covered by this check. The ordinary list path remains separate from the
+new authority path; mutation, callback, and retirement regressions still require
+the combined validation run.
+
+Editor build46 stopped in Core with one missing `XREngine.Components` import in
+`TransformBase.ChildrenOwnership.cs`; it reported zero warnings and one error
+in 1m06.27s. The import is repaired. This run did not reach editor compilation.
+A replacement-reentry test also exposed an old-child detach ordering gap: after
+public observers replace `Children`, the outer operation must not detach the
+new owner's list. The ownership repair and its regression remain pending the
+next combined check.
+
+Editor build47 stopped in Core on a second missing namespace import, before
+editor compilation. It reported zero warnings and two diagnostics at the same
+`SceneRootCollection.MutationGate` reference in 1m17.75s. The import is repaired.
+The later authority review also separated exact installed ownership from normal
+write eligibility. A queued owner keeps its links through a destruction veto;
+mandatory terminal-component removal can settle, while additions and replacements
+remain rejected.
+
+The repaired Core snapshot passed the narrow build with zero warnings/errors in
+47.09s; all 1,576 recorded dependency inputs remained unchanged. Headless build116
+then stopped on two fixture event-subscription type errors, with zero warnings,
+in 2m07.95s. Both fixtures now add and remove their exact veto delegate instead
+of assigning a lambda to the event wrapper or clearing other handlers. Production
+inputs did not change for the retry.
+
+Headless build117 passed with zero warnings/errors in 19.16s. Full run75 then
+passed **837 of 837 tests**, with no warnings, failures, or skips, in 12.465s.
+The exact 10,631-input snapshot is recorded in
+`checkpoint19-headless117-source-hashes.json`. It includes 24 new hierarchy
+ownership cases, six existing ordinary-list cases, and the public synchronized
+keyframe setter regression. All recorded source inputs stayed unchanged through
+the build and run. Editor build48 uses that same frozen source snapshot.
+
+Editor build48 reached the editor and compiled without errors, but reported 12
+nullable warnings in the new animation ownership helpers. Success-path
+`NotNullWhen` annotations and explicit link traversal removed those warnings.
+The intermediate build49 had one remaining nullable warning; final editor
+build50 passed with zero warnings/errors in 46.64s. These helper files are outside
+the headless compile inputs.
+
+Desktop compilation24 found a nested type name error in `ThrowingUndoCloneStep`;
+compilation25 then found a runtime-world test call incorrectly migrated to
+`SceneRoots`. Both were fixture-only repairs. Compilation26 passed with zero
+warnings/errors in 49.54s. The Windows-target fixtures were not executed.
+
+Final source review confirmed private per-run material/text buffers and stable
+run IDs for the supported Vulkan chrome variants. Unrelated overlays do not
+change those private revisions. Resource and in-flight cohort changes can still
+require a new capture. This closes the bounded code contract, not native cache
+acceptance. The final 10,631-file source manifest differs from the headless
+snapshot only in the editor nullable-flow helper and two desktop-only fixtures.
+All 39 local links in the five edited UI documents resolve; whitespace checks
+pass. No package declarations, dependency versions, branch names, or default
+renderer/editor settings changed in this increment.

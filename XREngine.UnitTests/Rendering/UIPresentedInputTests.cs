@@ -22,6 +22,65 @@ public sealed class UIPresentedInputTests
     [SetUp] public void SetUpShaderAssets() => _shaderScope = new UITestShaderScope();
     [TearDown] public void RestoreShaderAssets() => _shaderScope.Dispose();
 
+    [TestCase(false, true, 0.0f, 1.0f)]
+    [TestCase(true, true, 1.0f, 0.0f)]
+    [TestCase(false, false, -1.0f, 1.0f)]
+    [TestCase(true, false, 1.0f, -1.0f)]
+    public void AcceptedWorldOutputUsesFrozenViewAfterViewportAndCameraChange(
+        bool reversedDepth, bool depthZeroToOne, float nearClip, float farClip)
+    {
+        var canvas = new UICanvasComponent();
+        var viewport = new XRViewport(null, 200, 100)
+        {
+            SetRenderPipelineFromCamera = false,
+            AutomaticallyCollectVisible = false,
+            AutomaticallySwapBuffers = false,
+        };
+        UIPublication packet = new(1, 1, 1, 1, 1,
+            ReadOnlyMemory<UILayoutNodeOutput>.Empty,
+            ReadOnlyMemory<UIElementIdentity>.Empty, [], [],
+            new BoundingRectangleF(Vector2.Zero, new Vector2(100, 50)),
+            Matrix4x4.Identity, Matrix4x4.Identity,
+            authoringCanvasWorldMatrix: Matrix4x4.Identity,
+            authoringDrawSpace: ECanvasDrawSpace.World);
+        RenderFrameViewDescriptor view = new(1,
+            EVrOutputViewKind.DesktopEditor,
+            RenderFrameViewDescriptor.InvalidViewId, 0, -1, 0,
+            new RenderFrameViewRect(0, 0, 200, 100),
+            Matrix4x4.CreateTranslation(-4, 0, 0),
+            Matrix4x4.Identity, Matrix4x4.Identity, default,
+            DepthZeroToOne: depthZeroToOne,
+            ReversedDepth: reversedDepth);
+        try
+        {
+            viewport.Width = 400;
+            viewport.Height = 200;
+            canvas.RecordAcceptedWorldUiOutput(viewport, packet, 73,
+                view, new BoundingRectangle(200, 100));
+            canvas.TryAcquireRenderedPublication(viewport,
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                out UIPublication? mapped, out ulong receipt).ShouldBeTrue();
+            try
+            {
+                receipt.ShouldBe(73UL);
+                mapped.ShouldNotBeNull();
+                mapped.OutputRegion.Width.ShouldBe(200);
+                mapped.OutputRegion.Height.ShouldBe(100);
+                mapped.ClipToWorld.M41.ShouldBe(4.0f);
+                mapped.CanvasToOutput.M11.ShouldBe(2.0f);
+                mapped.NearClipZ.ShouldBe(nearClip);
+                mapped.FarClipZ.ShouldBe(farClip);
+            }
+            finally { mapped?.Release(); }
+        }
+        finally
+        {
+            packet.Release();
+            canvas.Destroy(true);
+            viewport.Destroy();
+        }
+    }
+
     [Test]
     public void FocusIntentTracksExplicitRequestsButNotRetiredTargetCleanup()
     {

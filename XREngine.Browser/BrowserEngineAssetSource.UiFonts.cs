@@ -28,7 +28,7 @@ public sealed partial class BrowserEngineAssetSource : IRuntimeScenePreparationS
         Dictionary<string, FontGlyphSet> loaded = new(StringComparer.Ordinal);
         HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
         foreach (XRScene scene in scenes)
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
                 await Visit(root, 0);
 
         async Task Visit(SceneNode node, int depth)

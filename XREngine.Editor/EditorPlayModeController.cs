@@ -252,10 +252,10 @@ public static class EditorPlayModeController
         int reboundCount = 0;
         foreach (var scene in world.Scenes)
         {
-            if (scene.RootNodes is null)
+            if (scene.SceneRoots is null)
                 continue;
 
-            foreach (var root in scene.RootNodes)
+            foreach (var root in scene.SceneRoots)
             {
                 RebindCameraTransformsRecursive(root, ref reboundCount);
             }
@@ -542,7 +542,7 @@ public static class EditorPlayModeController
             || !ReferenceEquals(runtimeWorld.TargetWorld, sourceWorld))
             return null;
 
-        // Runtime roots also include retained editor-only nodes that are not in XRScene.RootNodes.
+        // Runtime roots also include retained editor-only nodes that are not in XRScene.SceneRoots.
         if (snapshot.PawnId is Guid pawnId
             && FindPawnInRoots(runtimeWorld, pawn => pawn.ID == pawnId) is { } byId)
             return byId;

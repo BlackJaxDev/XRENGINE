@@ -665,7 +665,7 @@ public static partial class EditorImGuiUI
                 if (scene is null || scene.IsEditorOnly)
                     continue;
 
-                var roots = scene.RootNodes;
+                var roots = scene.SceneRoots;
                 for (int rootIndex = 0; rootIndex < roots.Count; rootIndex++)
                     AddVisibleHierarchyNodes(roots[rootIndex], 0, output);
             }
@@ -683,7 +683,7 @@ public static partial class EditorImGuiUI
 
         if (_showEditorSceneHierarchy && EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene is not null)
         {
-            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.RootNodes;
+            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.SceneRoots;
             for (int rootIndex = 0; rootIndex < editorRoots.Count; rootIndex++)
                 AddVisibleHierarchyNodes(editorRoots[rootIndex], 0, output);
         }
@@ -750,7 +750,7 @@ public static partial class EditorImGuiUI
                 if (scene is null || scene.IsEditorOnly)
                     continue;
 
-                var roots = scene.RootNodes;
+                var roots = scene.SceneRoots;
                 for (int rootIndex = 0; rootIndex < roots.Count; rootIndex++)
                     SetHierarchyNodeExpandedRecursive(roots[rootIndex], expanded);
             }
@@ -768,7 +768,7 @@ public static partial class EditorImGuiUI
 
         if (_showEditorSceneHierarchy && EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene is not null)
         {
-            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.RootNodes;
+            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.SceneRoots;
             for (int rootIndex = 0; rootIndex < editorRoots.Count; rootIndex++)
                 SetHierarchyNodeExpandedRecursive(editorRoots[rootIndex], expanded);
         }
@@ -1095,7 +1095,7 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        operation.OwningScene?.RootNodes.Add(operation.DuplicateNode);
+        operation.OwningScene?.SceneRoots.Add(operation.DuplicateNode);
         world.RootNodes.Add(operation.DuplicateNode);
     }
 
@@ -1108,7 +1108,7 @@ public static partial class EditorImGuiUI
         }
 
         world.RootNodes.Remove(operation.DuplicateNode);
-        operation.OwningScene?.RootNodes.Remove(operation.DuplicateNode);
+        operation.OwningScene?.SceneRoots.Remove(operation.DuplicateNode);
     }
 
     private static void RestoreHierarchyAssetReferences(SceneNode source, SceneNode clone)
@@ -1624,7 +1624,7 @@ public static partial class EditorImGuiUI
             if (scene is null)
                 continue;
 
-            var sceneRoots = scene.RootNodes;
+            var sceneRoots = scene.SceneRoots;
             for (int rootIndex = 0; rootIndex < sceneRoots.Count; rootIndex++)
             {
                 SceneNode? root = sceneRoots[rootIndex];
@@ -1644,7 +1644,7 @@ public static partial class EditorImGuiUI
                 if (scene is null || !scene.IsEditorOnly)
                     continue;
 
-                var sceneRoots = scene.RootNodes;
+                var sceneRoots = scene.SceneRoots;
                 for (int rootIndex = 0; rootIndex < sceneRoots.Count; rootIndex++)
                 {
                     SceneNode? root = sceneRoots[rootIndex];

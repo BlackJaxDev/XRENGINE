@@ -250,7 +250,7 @@ public static partial class EditorUnitTests
 
         var scene = new XRScene("Uber Shader Scene");
         var rootNode = new SceneNode("Root Node");
-        scene.RootNodes.Add(rootNode);
+        scene.SceneRoots.Add(rootNode);
 
         Pawns.CreatePlayerPawn(
             setUI,

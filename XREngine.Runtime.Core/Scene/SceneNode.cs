@@ -58,7 +58,7 @@ namespace XREngine.Scene
         /// <summary>
         /// Thread-safe collection of components attached to this node.
         /// </summary>
-        private readonly EventList<XRComponent> _components = new() { ThreadSafe = true };
+        private readonly EventList<XRComponent> _components;
 
         /// <summary>
         /// The transform that defines this node's position, rotation, and scale in the scene.
@@ -149,6 +149,7 @@ namespace XREngine.Scene
         public SceneNode(SceneNode parent, string name, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
+            _components = new(new HierarchyListAuthority<XRComponent>(this));
             Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
             Transform.Parent = parent?.Transform;
 
@@ -166,6 +167,7 @@ namespace XREngine.Scene
         public SceneNode(string name, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
+            _components = new(new HierarchyListAuthority<XRComponent>(this));
             Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
 
             Name = name;
@@ -183,6 +185,7 @@ namespace XREngine.Scene
         public SceneNode(IRuntimeWorldContext? world, string? name = null, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
+            _components = new(new HierarchyListAuthority<XRComponent>(this));
             Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
 
             World = world;
@@ -242,6 +245,8 @@ namespace XREngine.Scene
         /// This is the backing store for components. Use <see cref="Components"/> for read-only access.
         /// </remarks>
         private EventList<XRComponent> ComponentsInternal => _components;
+
+        internal bool OwnsComponentList(object list) => ReferenceEquals(_components, list);
 
         /// <summary>
         /// True after the node has received a begin play call and until end play is invoked.
@@ -396,9 +401,13 @@ namespace XREngine.Scene
                     SetTransform((TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform());
                 return _transform!;
             }
-            private set => SetFieldValidated(ref _transform, value, this,
-                static (node, original, current, next) =>
-                    HierarchyConstructionScope.RequireTransformAssignment(node, original, current, next));
+            private set
+            {
+                using HierarchyMutationLease mutation = new(this, _transform, value);
+                SetFieldValidated(ref _transform, value, this,
+                    static (node, original, current, next) =>
+                        HierarchyConstructionScope.RequireTransformAssignment(node, original, current, next));
+            }
         }
 
         /// <summary>

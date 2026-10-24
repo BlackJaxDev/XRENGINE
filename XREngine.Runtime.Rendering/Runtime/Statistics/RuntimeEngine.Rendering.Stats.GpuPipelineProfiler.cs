@@ -31,6 +31,36 @@ namespace XREngine
                     public static Data.Profiling.GpuPipelineTimingNodeData[] GetGpuRenderPipelineTimingRoots()
                         => RenderPipelineGpuProfiler.Instance.LatestSnapshot.Roots;
 
+                    /// <summary>Copies the newest recorded frame times and returns the total sample count.</summary>
+                    public static int CopyGpuRenderPipelineTimingHistory(
+                        string pipelineName, Span<double> destination, out ulong newestFrameId)
+                        => RenderPipelineGpuProfiler.Instance.CopyTimingHistory(pipelineName, destination, out newestFrameId);
+
+                    /// <summary>Copies frame times with their exact history generation.</summary>
+                    public static int CopyGpuRenderPipelineTimingHistory(
+                        string pipelineName, Span<double> destination,
+                        out ulong newestFrameId, out long historyGeneration)
+                        => RenderPipelineGpuProfiler.Instance.CopyTimingHistory(
+                            pipelineName, destination, out newestFrameId, out historyGeneration);
+
+                    /// <summary>Copies aggregate and retained GPU frame values.</summary>
+                    public static bool TryCopyGpuRenderPipelineHistoryDetails(
+                        string pipelineName,
+                        Span<GpuPipelineHistoryFrame> recentFrames,
+                        Span<GpuPipelineHistoryFrame> worstFrames,
+                        out GpuPipelineHistorySummary summary)
+                        => RenderPipelineGpuProfiler.Instance.TryCopyHistoryDetails(
+                            pipelineName, recentFrames, worstFrames, out summary);
+
+                    /// <summary>Copies a bounded tree from one exact worst GPU frame.</summary>
+                    public static bool TryCopyGpuWorstFrameTree(string pipelineName,
+                        long historyGeneration, ulong frameId,
+                        Span<GpuPipelineTimingTreeRow> destination,
+                        out int copied, out bool truncated)
+                        => RenderPipelineGpuProfiler.Instance.TryCopyWorstFrameTree(
+                            pipelineName, historyGeneration, frameId, destination,
+                            out copied, out truncated);
+
                     public static bool TryDumpGpuRenderPipelineTimingHistory(
                         string pipelineName,
                         out string fileName,

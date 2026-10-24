@@ -26,6 +26,7 @@ namespace XREngine
 
         private const int MaxMainThreadInvokeEntries = 512;
         private static long _mainThreadInvokeSequence;
+        private static long _mainThreadInvokeLogRevision;
         private static int _mainThreadInvokeLogCount;
         private static readonly ConcurrentQueue<MainThreadInvokeEntry> _mainThreadInvokeLog = new();
 
@@ -41,6 +42,7 @@ namespace XREngine
 
             _mainThreadInvokeLog.Enqueue(entry);
             TrimMainThreadInvokeLogIfNeeded();
+            Interlocked.Increment(ref _mainThreadInvokeLogRevision);
 
             if (ShouldWriteMainThreadInvokeDiagnostics())
                 WriteMainThreadInvokeRequest(entry);
@@ -87,6 +89,9 @@ namespace XREngine
 
         public static IReadOnlyList<MainThreadInvokeEntry> GetMainThreadInvokeLogSnapshot()
             => [.. _mainThreadInvokeLog];
+
+        /// <summary>Changes after an invoke entry enters the bounded log.</summary>
+        public static long MainThreadInvokeLogRevision => Volatile.Read(ref _mainThreadInvokeLogRevision);
 
         private static void WriteMainThreadInvokeRequest(in MainThreadInvokeEntry entry)
         {

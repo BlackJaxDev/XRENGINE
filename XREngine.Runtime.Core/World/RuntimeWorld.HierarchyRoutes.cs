@@ -10,7 +10,7 @@ public sealed partial class RuntimeWorld
         RequireHierarchyRouteOwner(node);
         List<XRScene> scenes = [];
         foreach (XRScene scene in _loadedScenes)
-            if (scene.RootNodes.Contains(node))
+            if (scene.SceneRoots.Contains(node))
                 scenes.Add(scene);
         return [.. scenes];
     }
@@ -57,7 +57,7 @@ public sealed partial class RuntimeWorld
         if (!ReferenceEquals(expected.Root, desired.Root) || !HasHierarchyRootRoutes(expected))
             throw new InvalidOperationException("The hierarchy root's routing ownership changed before restoration.");
         foreach (XRScene scene in desired.Scenes)
-            if (!IsSceneReady(scene) || !scene.IsVisible || !scene.RootNodes.Contains(desired.Root) ||
+            if (!IsSceneReady(scene) || !scene.IsVisible || !scene.SceneRoots.Contains(desired.Root) ||
                 desired.Root.Transform.Parent is not null)
                 throw new InvalidOperationException("The restored scene route no longer owns a visible root.");
         ApplyHierarchyRouteMetadata(desired);

@@ -1,0 +1,21 @@
+namespace System.Collections.Generic;
+
+/// <summary>
+/// Owns structural links in one list. The list installs this authority during construction.
+/// Storage hooks must use reference identity and must not invoke application callbacks.
+/// </summary>
+public abstract class EventListMutationAuthority<T>
+{
+    protected internal abstract Lock MutationGate { get; }
+    protected internal abstract void Initialize(EventList<T> list, IReadOnlyList<T> values);
+    protected internal abstract void RequireCurrent(EventList<T> list);
+    protected internal abstract void EnterMutation(EventList<T> list);
+    protected internal virtual void RequireRemovalCurrent(EventList<T> list) => RequireCurrent(list);
+    protected internal virtual void EnterRemoval(EventList<T> list) => EnterMutation(list);
+    protected internal abstract void ExitMutation();
+    protected internal abstract void ReserveItem(T item, bool adding);
+    protected internal abstract void ReleaseItem(T item);
+    protected internal abstract void PrepareAdd(T item);
+    protected internal abstract void Added(T item);
+    protected internal abstract void Removed(T item);
+}

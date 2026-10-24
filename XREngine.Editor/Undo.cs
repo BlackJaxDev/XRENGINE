@@ -40,7 +40,7 @@ namespace XREngine.Editor;
 /// The system uses <see cref="AsyncLocal{T}"/> to track user interaction context per async flow.
 /// </para>
 /// </remarks>
-public static class Undo
+public static partial class Undo
 {
     private static int _openStructuralMutations;
 
@@ -98,6 +98,7 @@ public static class Undo
     {
         lock (_sync)
             _openStructuralMutations--;
+        DrainHistoryResources();
     }
 
     /// <summary>
@@ -423,7 +424,7 @@ public static class Undo
 
             var action = new UndoAction(description, [step], DateTime.UtcNow);
             _undoStack.Push(action);
-            _redoStack.Clear();
+            ClearHistoryStackLocked(_redoStack);
             _historyRevision++;
             addedImmediate = true;
         }
@@ -566,6 +567,7 @@ public static class Undo
         {
             lock (_sync)
                 _replayInProgress = false;
+            DrainHistoryResources();
         }
     }
 
@@ -581,8 +583,8 @@ public static class Undo
     {
         lock (_sync)
         {
-            _undoStack.Clear();
-            _redoStack.Clear();
+            ClearHistoryStackLocked(_undoStack);
+            ClearHistoryStackLocked(_redoStack);
             _historyRevision++;
         }
 
@@ -703,9 +705,9 @@ public static class Undo
             return;
 
         Track(scene);
-        for (int i = 0; i < scene.RootNodes.Count; i++)
+        for (int i = 0; i < scene.SceneRoots.Count; i++)
         {
-            SceneNode node = scene.RootNodes[i];
+            SceneNode node = scene.SceneRoots[i];
             TrackSceneNode(node);
 
             lock (_sync)
@@ -1062,7 +1064,7 @@ public static class Undo
             var step = new PropertyChangeStep(target, propertyName, previousValue, newValue);
             var action = new UndoAction(BuildDescription(step), [step], DateTime.UtcNow);
             _undoStack.Push(action);
-            _redoStack.Clear(); // Clear redo stack when new changes are made
+            ClearHistoryStackLocked(_redoStack);
             _historyRevision++;
             addedImmediate = true;
         }
@@ -1129,43 +1131,63 @@ public static class Undo
     private static void CompleteScope(ChangeScope scope)
     {
         UndoAction? committedAction = null;
-        lock (_sync)
+        bool invalidScopeOrder = false;
+        try
         {
-            // Prevent double-completion
-            if (scope.Completed)
-                return;
-
-            // Verify LIFO order
-            if (_scopeStack.Count == 0 || !ReferenceEquals(_scopeStack.Peek(), scope))
+            lock (_sync)
             {
-                Debug.LogWarning("Change scopes must be disposed in LIFO order.");
-                //Recover by removing all scopes until we find the target
-                while (_scopeStack.Count > 0)
+                if (scope.Completed)
+                    return;
+                if (_scopeStack.Count == 0 || !ReferenceEquals(_scopeStack.Peek(), scope))
                 {
-                    var popped = _scopeStack.Pop();
-                    if (ReferenceEquals(popped, scope))
-                        break;
+                    invalidScopeOrder = true;
+                    while (_scopeStack.Count > 0)
+                    {
+                        ChangeScope popped = _scopeStack.Pop();
+                        popped.Completed = true;
+                        ReleaseScopeResourcesLocked(popped);
+                        if (ReferenceEquals(popped, scope))
+                            break;
+                    }
+                    return;
                 }
-                return;
+
+                _scopeStack.Pop();
+                scope.Completed = true;
+                if (scope.IsCanceled || scope.Steps.Count == 0)
+                {
+                    ReleaseScopeResourcesLocked(scope);
+                    return;
+                }
+
+                try
+                {
+                    var steps = scope.Steps.Select(s => s.Clone()).ToList();
+                    committedAction = new UndoAction(scope.Description, steps, scope.TimestampUtc);
+                    _undoStack.Push(committedAction);
+                    TransferScopeResourcesLocked(scope, committedAction);
+                }
+                catch
+                {
+                    ReleaseScopeResourcesLocked(scope);
+                    throw;
+                }
+                ClearHistoryStackLocked(_redoStack);
+                _historyRevision++;
             }
 
-            _scopeStack.Pop();
-            scope.Completed = true;
-
-            // Don't commit if canceled or empty
-            if (scope.IsCanceled || scope.Steps.Count == 0)
-                return;
-
-            // Clone changes to prevent external modification
-            var steps = scope.Steps.Select(s => s.Clone()).ToList();
-            committedAction = new UndoAction(scope.Description, steps, scope.TimestampUtc);
-            _undoStack.Push(committedAction);
-            _redoStack.Clear();
-            _historyRevision++;
+            if (committedAction is not null)
+                RaiseHistoryChanged();
         }
-
-        if (committedAction is not null)
-            RaiseHistoryChanged();
+        finally
+        {
+            try
+            {
+                if (invalidScopeOrder)
+                    Debug.LogWarning("Change scopes must be disposed in LIFO order.");
+            }
+            finally { DrainHistoryResources(); }
+        }
     }
 
     /// <summary>
@@ -1260,7 +1282,8 @@ public static class Undo
     /// </summary>
     private static void RaiseHistoryChanged()
     {
-        HistoryChanged?.Invoke();
+        try { HistoryChanged?.Invoke(); }
+        finally { DrainHistoryResources(); }
     }
 
     /// <summary>
@@ -1754,7 +1777,7 @@ public static class Undo
             List<SceneRootPlacement> placements = [];
             foreach (XRScene scene in world.TargetWorld?.Scenes ?? [])
             {
-                int index = scene.RootNodes.FindIndex(root => ReferenceEquals(root, node));
+                int index = scene.SceneRoots.IndexOf(node);
                 if (index >= 0)
                     placements.Add(new SceneRootPlacement(scene, index));
             }
@@ -1790,13 +1813,13 @@ public static class Undo
 
         public void Restore(SceneNode node)
         {
-            if (scene.RootNodes.Any(root => ReferenceEquals(root, node)))
+            if (scene.SceneRoots.Any(root => ReferenceEquals(root, node)))
                 return;
 
-            if (index < 0 || index >= scene.RootNodes.Count)
-                scene.RootNodes.Add(node);
+            if (index < 0 || index >= scene.SceneRoots.Count)
+                scene.SceneRoots.Add(node);
             else
-                scene.RootNodes.Insert(index, node);
+                scene.SceneRoots.Insert(index, node);
         }
     }
 
@@ -1935,6 +1958,8 @@ public static class Undo
         /// This is the unified list used for committing to the undo stack.
         /// </summary>
         internal List<IUndoStep> Steps { get; } = [];
+
+        internal List<UndoHistoryResource>? Resources { get; set; }
 
         /// <summary>
         /// Gets a value indicating whether this scope has been canceled.
@@ -2310,6 +2335,7 @@ public static class Undo
     private sealed class UndoAction(string description, List<IUndoStep> steps, DateTime timestampUtc)
     {
         private readonly List<IUndoStep> _steps = steps;
+        internal List<UndoHistoryResource>? Resources { get; set; }
 
         /// <summary>
         /// Gets the human-readable description of this action.

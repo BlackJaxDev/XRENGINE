@@ -66,7 +66,25 @@ public partial class OpenGLRenderer
 
     internal override bool TryBeginUiIndexedDrawScope(UIPublishedWorldMeshCommand command,
         ReadOnlySpan<UIIndexedDrawIntent> expected, out ulong scopeId)
-        => TryBeginUiIndexedDrawScope(expected, out scopeId);
+    {
+        if (_worldUiAttempt != 0UL &&
+            (!WorldUiOwnerCurrent() || _worldUiPhase != 2 ||
+             !ReferenceEquals(command.Publication, _worldUiPublication) ||
+             CurrentUiPublicationReceiptId != _worldUiReceipt ||
+             expected.Length != 1 ||
+             !ReferenceEquals(expected[0].Renderer, command.Mesh)))
+        {
+            scopeId = 0UL;
+            FailWorldUi("World UI indexed command lost its frozen publication or draw owner.");
+            return false;
+        }
+        if (_worldUiAttempt != 0UL)
+            _worldUiDrawCommand = command;
+        bool began = TryBeginUiIndexedDrawScope(expected, out scopeId);
+        if (!began)
+            _worldUiDrawCommand = null;
+        return began;
+    }
 
     internal override bool TryBeginUiIndexedDrawScope(
         ReadOnlySpan<UIIndexedDrawIntent> expected, out ulong scopeId)
@@ -96,6 +114,7 @@ public partial class OpenGLRenderer
             CurrentUiPublicationReceiptId, BackendGeneration);
         if (!complete)
             FailCurrentUiPublicationAuthoring("UI.Draw.NativeIncomplete: a required indexed draw did not complete.");
+        _worldUiDrawCommand = null;
         return complete;
     }
 
@@ -105,6 +124,7 @@ public partial class OpenGLRenderer
             return;
         ulong receiptId = _uiIndexedDrawScope.ReceiptId;
         _uiIndexedDrawScope = default;
+        _worldUiDrawCommand = null;
         AbortUiPublicationReceipt(receiptId,
             "UI.Draw.ScopeAborted: native indexed draw authoring did not finish before output completion.");
     }
@@ -127,6 +147,37 @@ public partial class OpenGLRenderer
             IsCanonicalUiBackdropNativeProgram(in candidate, nativeMaterialProgram, nativeProgramId) &&
             CanOverwriteUiBackdropOutput(in candidate, mesh, indexCount, instances);
         bool consumerDraw = _uiBackdropConsumerScopeId != 0UL;
+        bool worldStepDraw = _worldUiStep != 0UL;
+        bool worldMeshDraw = _worldUiAttempt != 0UL && scopeId != 0UL && !worldStepDraw;
+        int worldDrawFbo = _worldUiAttempt != 0UL
+            ? RawGL.GetInteger(GLEnum.DrawFramebufferBinding) : -1;
+        bool unscopedWorldOutputDraw = _worldUiAttempt != 0UL &&
+            (_worldUiPhase >= 2 || _worldUiDepthCleared) &&
+            !worldStepDraw && !worldMeshDraw &&
+            (IsWorldUiTrackedOutputFbo(worldDrawFbo) ||
+             worldDrawFbo > 0 && WorldUiFboAliasesTrackedTexture((uint)worldDrawFbo));
+        bool lateWorldBackDraw = _worldUiAttempt != 0UL && _worldUiPhase >= 5 &&
+            worldDrawFbo == 0;
+        if (lateWorldBackDraw || unscopedWorldOutputDraw)
+            FailWorldUi("An unscoped native draw replaced a pinned world UI output.");
+        bool worldNativeValid = !worldStepDraw && !worldMeshDraw ||
+            (worldStepDraw
+                ? WorldUiStepNativeMatches(mesh, topology, indexCount, instances,
+                    effectiveMaterial, nativeMaterialProgram, nativeProgramId)
+                : WorldUiMeshDrawNativeMatches(mesh, topology, indexCount, instances,
+                    effectiveMaterial, nativeMaterialProgram, nativeProgramId));
+        if (!worldNativeValid)
+        {
+            FailWorldUi("A world UI native draw lost its exact target, region, or source.");
+            if (scopeId != 0UL)
+            {
+                UIIndexedDrawIntent rejected = new(mesh.MeshRenderer,
+                    mesh.Mesh?.GeometryRevision ?? -1, topology, elementType,
+                    indexCount, instances, 0);
+                AcknowledgeUiIndexedDraw(scopeId, rejected, false);
+            }
+            return;
+        }
         bool consumerTargetValid = !consumerDraw ||
             (++_uiBackdropConsumerDrawCount == 1 &&
              _uiBackdropConsumerWindow is { } consumerWindow &&
@@ -149,10 +200,24 @@ public partial class OpenGLRenderer
             }
             return;
         }
-        bool checkNative = scopeId != 0UL || overwriteCandidate || consumerDraw;
+        bool checkNative = scopeId != 0UL || overwriteCandidate || consumerDraw || worldStepDraw;
         bool cleanBefore = !checkNative || Api.GetError() == GLEnum.NoError;
         Api.DrawElementsInstanced(nativeTopology, indexCount, ToGLEnum(elementType), null, instances);
         bool cleanAfter = !checkNative || Api.GetError() == GLEnum.NoError;
+        if (worldStepDraw)
+        {
+            if (cleanBefore && cleanAfter && WorldUiOwnerCurrent())
+                _worldUiStepDrawCount++;
+            else
+                FailWorldUi("World UI postprocess or BACK draw produced a native GL error.");
+        }
+        if (worldMeshDraw)
+        {
+            if (cleanBefore && cleanAfter && WorldUiOwnerCurrent())
+                _worldUiDrawCount++;
+            else
+                FailWorldUi("World UI scene draw produced a native GL error.");
+        }
         if (consumerDraw)
             _uiBackdropConsumerNativeSucceeded = consumerTargetValid && cleanBefore && cleanAfter &&
                 instances != 0u && indexCount != 0u;

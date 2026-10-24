@@ -197,6 +197,7 @@ public partial class GLTexture2D
         Api.TextureParameterI(BindingId, VirtualPageSizeIndexArb, in pageIndex);
         if (GLSubmitTracer.Enabled)
             TracePreSubmit("TextureStorage2D.Sparse", (uint)request.LogicalMipCount, request.LogicalWidth, request.LogicalHeight);
+        AdvanceNativeWriteGeneration();
         Api.TextureStorage2D(BindingId, (uint)request.LogicalMipCount, ToGLEnum(request.SizedInternalFormat), request.LogicalWidth, request.LogicalHeight);
 
         Api.GetTextureParameterI(BindingId, NumSparseLevelsArb, out numSparseLevels);
@@ -429,6 +430,7 @@ public partial class GLTexture2D
                 using DataSource regionData = CreateSparseMipRegionData(mip, region, sourceBytesPerPixel);
                 if (GLSubmitTracer.Enabled)
                     TracePreSubmit("TexSubImage2D.SparsePage", levels: 0, region.Width, region.Height, mipLevel, (uint)region.XOffset, (uint)region.YOffset);
+                AdvanceNativeWriteGeneration();
                 Api.TexSubImage2D(
                     target,
                     mipLevel,

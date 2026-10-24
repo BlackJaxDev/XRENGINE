@@ -579,12 +579,31 @@ void main()
                         _canonicalFallbackVertexShaderRevision,
                         _canonicalFallbackFragmentShaderRevision, FallbackShaderCode)
                     : null;
+            ulong worldStepToken = 0UL;
+            if (UIWorldRenderAttempt.Active is { } worldAttempt)
+            {
+                if (FrameBufferName != DefaultRenderPipeline.FinalPostProcessOutputFBOName ||
+                    TargetFrameBufferName is not null || destFbo is not null ||
+                    _fallbackSourceTexture is null || _fallbackMaterial is null ||
+                    renderer is null ||
+                    !renderer.TryBeginUiWorldOutputStep(worldAttempt.NativeToken,
+                        EUIWorldOutputStage.WindowPresent, _fallbackSourceTexture,
+                        null, _fallbackQuad.FullScreenMesh, _fallbackMaterial,
+                        renderer.MapWindowPresentationRegionToBackbuffer(
+                            activeInstance.RenderState.CurrentRenderRegion),
+                        out worldStepToken))
+                    throw new InvalidOperationException("World UI window presentation proof was rejected.");
+            }
             try
             {
                 _fallbackQuad.Render(destFbo);
+                if (worldStepToken != 0UL && !renderer!.CompleteUiWorldOutputStep(worldStepToken))
+                    throw new InvalidOperationException("World UI window presentation was not proved.");
             }
             finally
             {
+                if (worldStepToken != 0UL)
+                    renderer!.AbortUiWorldOutputStep(worldStepToken);
                 _fallbackOutputCandidatePublisher.Candidate = null;
             }
         }

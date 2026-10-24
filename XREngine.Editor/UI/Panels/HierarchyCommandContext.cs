@@ -11,7 +11,7 @@ internal sealed class HierarchyCommandContext
     private readonly List<XRScene>? _sceneList;
     private readonly IRuntimeWorldScenePolicy? _policy;
     private readonly XRScene? _scene;
-    private readonly List<SceneNode>? _roots;
+    private readonly SceneRootCollection? _roots;
     private readonly bool _visible;
     private readonly bool _loaded;
 
@@ -31,7 +31,7 @@ internal sealed class HierarchyCommandContext
         _sceneList = world.TargetWorld?.Scenes;
         _policy = world.ScenePolicy;
         _scene = scene;
-        _roots = scene?.RootNodes;
+        _roots = scene?.SceneRoots;
         _visible = scene?.IsVisible == true;
         _loaded = scene is not null && world.IsSceneLoaded(scene);
     }
@@ -51,7 +51,7 @@ internal sealed class HierarchyCommandContext
             if (!source.Matches())
                 return false;
         return _scene is null || !_scene.IsDestroyed && !_scene.IsDestroyQueued &&
-            _sceneList?.Contains(_scene) == true && ReferenceEquals(_scene.RootNodes, _roots) &&
+            _sceneList?.Contains(_scene) == true && ReferenceEquals(_scene.SceneRoots, _roots) &&
             _scene.IsVisible == _visible && World.IsSceneLoaded(_scene) == _loaded &&
             (!_loaded || World.IsSceneReady(_scene));
     }

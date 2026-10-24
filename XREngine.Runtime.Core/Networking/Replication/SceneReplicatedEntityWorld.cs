@@ -33,8 +33,8 @@ public sealed class SceneReplicatedEntityWorld : IReplicatedEntityWorld
         for (int sceneIndex = 0; sceneIndex < asset.Scenes.Count; sceneIndex++)
         {
             XRScene scene = asset.Scenes[sceneIndex];
-            for (int rootIndex = 0; rootIndex < scene.RootNodes.Count; rootIndex++)
-                IndexPackageNode(scene.RootNodes[rootIndex], $"{sceneIndex}/{rootIndex}");
+            for (int rootIndex = 0; rootIndex < scene.SceneRoots.Count; rootIndex++)
+                IndexPackageNode(scene.SceneRoots[rootIndex], $"{sceneIndex}/{rootIndex}");
         }
     }
 

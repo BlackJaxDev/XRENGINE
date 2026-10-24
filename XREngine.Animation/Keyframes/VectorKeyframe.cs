@@ -79,6 +79,42 @@ namespace XREngine.Animation
         }
         private bool _synchronizing = false;
 
+        internal bool TryCaptureAuthoredState(out VectorKeyframeAuthoredState<T> state)
+        {
+            state = new(_inValue, _outValue, _inTangent, _outTangent,
+                _interpolationTypeIn, _interpolationTypeOut,
+                _syncInOutValues, _syncInOutTangentDirections,
+                _syncInOutTangentMagnitudes);
+            return !_synchronizing &&
+                Enum.IsDefined(_interpolationTypeIn) &&
+                Enum.IsDefined(_interpolationTypeOut);
+        }
+
+        /// <summary>
+        /// Commits the complete authored handle before publishing one track change.
+        /// Direct field writes keep observers from seeing a partially updated handle.
+        /// </summary>
+        internal bool TryApplyAuthoredState(VectorKeyframeAuthoredState<T> expected,
+            VectorKeyframeAuthoredState<T> desired, BaseKeyframeTrack? expectedTrack)
+        {
+            if (!Enum.IsDefined(desired.InterpolationIn) ||
+                !Enum.IsDefined(desired.InterpolationOut) ||
+                !ReferenceEquals(OwningTrack, expectedTrack) ||
+                !TryCaptureAuthoredState(out var current) || current != expected)
+                return false;
+            _inValue = desired.InValue;
+            _outValue = desired.OutValue;
+            _inTangent = desired.InTangent;
+            _outTangent = desired.OutTangent;
+            _syncInOutValues = desired.SyncValues;
+            _syncInOutTangentDirections = desired.SyncDirections;
+            _syncInOutTangentMagnitudes = desired.SyncMagnitudes;
+            SetInterpolationInWithoutNotification(desired.InterpolationIn);
+            SetInterpolationOutWithoutNotification(desired.InterpolationOut);
+            expectedTrack?.OnChanged();
+            return true;
+        }
+
         public bool SyncInOutValues
         {
             get => _syncInOutValues;
@@ -88,8 +124,8 @@ namespace XREngine.Animation
                 if (_syncInOutValues && !_synchronizing)
                 {
                     _synchronizing = true;
-                    UnifyValues(EUnifyBias.Average);
-                    _synchronizing = false;
+                    try { UnifyValues(EUnifyBias.Average); }
+                    finally { _synchronizing = false; }
                 }
                 OwningTrack?.OnChanged();
             }
@@ -103,8 +139,8 @@ namespace XREngine.Animation
                 if (_syncInOutTangentDirections && !_synchronizing)
                 {
                     _synchronizing = true;
-                    UnifyTangentDirections(EUnifyBias.Average);
-                    _synchronizing = false;
+                    try { UnifyTangentDirections(EUnifyBias.Average); }
+                    finally { _synchronizing = false; }
                 }
                 OwningTrack?.OnChanged();
             }
@@ -118,8 +154,8 @@ namespace XREngine.Animation
                 if (_syncInOutTangentMagnitudes && !_synchronizing)
                 {
                     _synchronizing = true;
-                    UnifyTangentMagnitudes(EUnifyBias.Average);
-                    _synchronizing = false;
+                    try { UnifyTangentMagnitudes(EUnifyBias.Average); }
+                    finally { _synchronizing = false; }
                 }
                 OwningTrack?.OnChanged();
             }
@@ -133,8 +169,8 @@ namespace XREngine.Animation
                 if (_syncInOutValues && !_synchronizing)
                 {
                     _synchronizing = true;
-                    UnifyValues(EUnifyBias.In);
-                    _synchronizing = false;
+                    try { UnifyValues(EUnifyBias.In); }
+                    finally { _synchronizing = false; }
                 }
                 OwningTrack?.OnChanged();
             }
@@ -148,8 +184,8 @@ namespace XREngine.Animation
                 if (_syncInOutValues && !_synchronizing)
                 {
                     _synchronizing = true;
-                    UnifyValues(EUnifyBias.Out);
-                    _synchronizing = false;
+                    try { UnifyValues(EUnifyBias.Out); }
+                    finally { _synchronizing = false; }
                 }
                 OwningTrack?.OnChanged();
             }
@@ -163,13 +199,16 @@ namespace XREngine.Animation
                 if (!_synchronizing)
                 {
                     _synchronizing = true;
-                    if (SyncInOutTangentDirections && SyncInOutTangentMagnitudes)
-                        UnifyTangents(EUnifyBias.In);
-                    else if (SyncInOutTangentMagnitudes)
-                        UnifyTangentMagnitudes(EUnifyBias.In);
-                    else if (SyncInOutTangentDirections)
-                        UnifyTangentDirections(EUnifyBias.In);
-                    _synchronizing = false;
+                    try
+                    {
+                        if (SyncInOutTangentDirections && SyncInOutTangentMagnitudes)
+                            UnifyTangents(EUnifyBias.In);
+                        else if (SyncInOutTangentMagnitudes)
+                            UnifyTangentMagnitudes(EUnifyBias.In);
+                        else if (SyncInOutTangentDirections)
+                            UnifyTangentDirections(EUnifyBias.In);
+                    }
+                    finally { _synchronizing = false; }
                 }
                 OwningTrack?.OnChanged();
             }
@@ -183,13 +222,16 @@ namespace XREngine.Animation
                 if (!_synchronizing)
                 {
                     _synchronizing = true;
-                    if (SyncInOutTangentDirections && SyncInOutTangentMagnitudes)
-                        UnifyTangents(EUnifyBias.Out);
-                    else if (SyncInOutTangentMagnitudes)
-                        UnifyTangentMagnitudes(EUnifyBias.Out);
-                    else if (SyncInOutTangentDirections)
-                        UnifyTangentDirections(EUnifyBias.Out);
-                    _synchronizing = false;
+                    try
+                    {
+                        if (SyncInOutTangentDirections && SyncInOutTangentMagnitudes)
+                            UnifyTangents(EUnifyBias.Out);
+                        else if (SyncInOutTangentMagnitudes)
+                            UnifyTangentMagnitudes(EUnifyBias.Out);
+                        else if (SyncInOutTangentDirections)
+                            UnifyTangentDirections(EUnifyBias.Out);
+                    }
+                    finally { _synchronizing = false; }
                 }
                 OwningTrack?.OnChanged();
             }
@@ -211,8 +253,15 @@ namespace XREngine.Animation
             get => _interpolationTypeIn;
             set
             {
+                SetInterpolationInWithoutNotification(value);
+                OwningTrack?.OnChanged();
+            }
+        }
+
+        private void SetInterpolationInWithoutNotification(EVectorInterpType value)
+        {
                 _interpolationTypeIn = value;
-                switch (_interpolationTypeIn)
+                switch (value)
                 {
                     case EVectorInterpType.Step:
                         _interpolateIn = StepIn;
@@ -235,16 +284,21 @@ namespace XREngine.Animation
                         _interpolateAccelerationIn = CubicHermiteAccelerationIn;
                         break;
                 }
-                OwningTrack?.OnChanged();
-            }
         }
         public EVectorInterpType InterpolationTypeOut
         {
             get => _interpolationTypeOut;
             set
             {
+                SetInterpolationOutWithoutNotification(value);
+                OwningTrack?.OnChanged();
+            }
+        }
+
+        private void SetInterpolationOutWithoutNotification(EVectorInterpType value)
+        {
                 _interpolationTypeOut = value;
-                switch (_interpolationTypeOut)
+                switch (value)
                 {
                     case EVectorInterpType.Step:
                         _interpolateOut = StepOut;
@@ -267,8 +321,6 @@ namespace XREngine.Animation
                         _interpolateAccelerationOut = CubicHermiteAccelerationOut;
                         break;
                 }
-                OwningTrack?.OnChanged();
-            }
         }
 
         /// <summary>

@@ -110,8 +110,8 @@ public sealed partial class EditorWorldIntegration : IRuntimeWorldScenePolicy, I
         void AddAsEditorRoot()
         {
             XRScene editorScene = EditorScene;
-            if (!editorScene.RootNodes.Contains(node))
-                editorScene.RootNodes.Add(node);
+            if (!editorScene.SceneRoots.Contains(node))
+                editorScene.SceneRoots.Add(node);
             if (!_world.RootNodes.Any(existing => ReferenceEquals(existing, node)))
                 _world.RootNodes.Add(node);
 
@@ -139,7 +139,7 @@ public sealed partial class EditorWorldIntegration : IRuntimeWorldScenePolicy, I
         if (_disposed || node is null || _editorScene is null)
             return;
 
-        _editorScene.RootNodes.Remove(node);
+        _editorScene.SceneRoots.Remove(node);
         _world.RootNodes.Remove(node);
         RemoveFromSourceSceneMembership(node);
     }
@@ -154,7 +154,7 @@ public sealed partial class EditorWorldIntegration : IRuntimeWorldScenePolicy, I
         while (root?.Transform?.Parent?.SceneNode is SceneNode parent)
             root = parent;
 
-        return root is not null && _editorScene.RootNodes.Contains(root);
+        return root is not null && _editorScene.SceneRoots.Contains(root);
     }
 
     /// <summary>
@@ -168,7 +168,7 @@ public sealed partial class EditorWorldIntegration : IRuntimeWorldScenePolicy, I
         if (!scene.IsVisible)
             return;
 
-        foreach (SceneNode node in scene.RootNodes)
+        foreach (SceneNode node in scene.SceneRoots)
             TryAttachSceneRoot(_world, scene, node);
     }
 
@@ -223,7 +223,7 @@ public sealed partial class EditorWorldIntegration : IRuntimeWorldScenePolicy, I
         if (!ReferenceEquals(world, _world) || root is null)
             return;
 
-        _editorScene?.RootNodes.Remove(root);
+        _editorScene?.SceneRoots.Remove(root);
         RemoveFromSourceSceneMembership(root);
     }
 
@@ -242,10 +242,10 @@ public sealed partial class EditorWorldIntegration : IRuntimeWorldScenePolicy, I
         }
 
         _disposed = true;
-        foreach (SceneNode root in _editorScene?.RootNodes.ToArray() ?? [])
+        foreach (SceneNode root in _editorScene?.SceneRoots.ToArray() ?? [])
             _world.RootNodes.Remove(root);
 
-        _editorScene?.RootNodes.Clear();
+        _editorScene?.SceneRoots.Clear();
         _editorOnlyNodesByScene.Clear();
         _world.Disposing -= OnWorldDisposing;
         if (_renderer is not null && ReferenceEquals(_renderer.EditorSceneQuery, this))

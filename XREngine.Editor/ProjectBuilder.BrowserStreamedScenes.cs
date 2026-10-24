@@ -134,7 +134,7 @@ internal static partial class ProjectBuilder
         List<string> paths = [];
         HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
         foreach (XRScene scene in scenes)
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
                 Visit(root, 0);
         return [.. paths];
 

@@ -56,7 +56,7 @@ internal static class SnapshotDiagnostics
 
     public static void LogScenePayload(string action, XRScene scene, int payloadLength)
         => Log(
-            $"{action} scene '{scene.Name ?? "<unnamed>"}' key='{GetSceneDisplayKey(scene)}' payloadBytes={payloadLength} roots={scene.RootNodes?.Count ?? 0}",
+            $"{action} scene '{scene.Name ?? "<unnamed>"}' key='{GetSceneDisplayKey(scene)}' payloadBytes={payloadLength} roots={scene.SceneRoots?.Count ?? 0}",
             ELogCategory.Rendering);
 
     public static void LogAssetSerializationDecision(XRAsset asset, SnapshotAssetSerializationMode mode, string reason)
@@ -125,12 +125,12 @@ internal static class SnapshotDiagnostics
         for (int sceneIndex = 0; sceneIndex < world.Scenes.Count; sceneIndex++)
         {
             XRScene scene = world.Scenes[sceneIndex];
-            if (scene.RootNodes is null)
+            if (scene.SceneRoots is null)
                 continue;
 
-            for (int rootIndex = 0; rootIndex < scene.RootNodes.Count; rootIndex++)
+            for (int rootIndex = 0; rootIndex < scene.SceneRoots.Count; rootIndex++)
             {
-                SceneNode? root = scene.RootNodes[rootIndex];
+                SceneNode? root = scene.SceneRoots[rootIndex];
                 if (root is null)
                     continue;
 

@@ -54,7 +54,7 @@ public sealed partial class EditorMcpActions
         var nodeCandidates = new List<(string Id, string Name)>();
         if (scene != null)
         {
-            foreach (var root in scene.RootNodes)
+            foreach (var root in scene.SceneRoots)
             {
                 if (root == null) continue;
                 CollectCandidateNodes(root, nodeCandidates, 0, maxDepth: 4, maxCount: 30);

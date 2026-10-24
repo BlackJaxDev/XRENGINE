@@ -192,8 +192,8 @@ public sealed class RollingBallInputIntegrationTests
         RollingBallWorldCookedSerializer.Serialize(authored, payload);
         RollingBallWorldAsset cooked = RollingBallWorldCookedSerializer.Deserialize(payload.WrittenSpan);
         cooked.Scenes.Count.ShouldBe(1);
-        cooked.Scenes[0].RootNodes.Count.ShouldBe(1);
-        return cooked.Scenes[0].RootNodes[0]
+        cooked.Scenes[0].SceneRoots.Count.ShouldBe(1);
+        return cooked.Scenes[0].SceneRoots[0]
             .GetComponent<RollingBallPawnComponent>()
             .ShouldNotBeNull();
     }

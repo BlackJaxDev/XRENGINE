@@ -110,7 +110,7 @@ namespace XREngine.Editor.Mcp
                 return Task.FromResult(new McpToolResponse("No active scene found.", isError: true));
 
             bool exact = string.Equals(matchMode, "exact", StringComparison.OrdinalIgnoreCase);
-            var matches = scene.RootNodes
+            var matches = scene.SceneRoots
                 .Where(root => root is not null)
                 .SelectMany(root => EnumerateHierarchy(root!))
                 .Where(node => exact
@@ -179,7 +179,7 @@ namespace XREngine.Editor.Mcp
             else
             {
                 node = new SceneNode(name ?? "Primitive");
-                scene.RootNodes.Add(node);
+                scene.SceneRoots.Add(node);
                 if (scene.IsVisible)
                     world.RootNodes.Add(node);
             }
@@ -348,7 +348,7 @@ namespace XREngine.Editor.Mcp
                     return Task.FromResult(new McpToolResponse("No active scene found to place baked model node.", isError: true));
 
                 targetNode = new SceneNode(resultName ?? $"Baked_{op}");
-                scene.RootNodes.Add(targetNode);
+                scene.SceneRoots.Add(targetNode);
                 if (scene.IsVisible)
                     world.RootNodes.Add(targetNode);
                 createdNode = true;

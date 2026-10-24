@@ -16,11 +16,19 @@ public partial class GLTexture2D
     private uint _allocatedHeight = 0;
     private ESizedInternalFormat _allocatedInternalFormat;
     private int _storageGeneration;
+    private long _nativeWriteGeneration;
     private volatile bool _pendingImmutableStorageRecreate;
     private uint _externalMemoryObject;
 
-    private int CurrentStorageGeneration
+    internal int CurrentStorageGeneration
         => System.Threading.Volatile.Read(ref _storageGeneration);
+
+    /// <summary>Advances before a native CPU upload or storage write, including a failed issue.</summary>
+    internal long NativeWriteGeneration
+        => System.Threading.Volatile.Read(ref _nativeWriteGeneration);
+
+    private void AdvanceNativeWriteGeneration()
+        => System.Threading.Interlocked.Increment(ref _nativeWriteGeneration);
 
     private int AdvanceStorageGeneration()
         => System.Threading.Interlocked.Increment(ref _storageGeneration);
@@ -222,12 +230,14 @@ public partial class GLTexture2D
             {
                 if (GLSubmitTracer.Enabled)
                     TracePreSubmit("TextureStorage2DMultisample", levels: 0, width, height);
+                AdvanceNativeWriteGeneration();
                 Api.TextureStorage2DMultisample(BindingId, Data.MultiSampleCount, ToGLEnum(Data.SizedInternalFormat), width, height, Data.FixedSampleLocations);
             }
             else
             {
                 if (GLSubmitTracer.Enabled)
                     TracePreSubmit("TextureStorage2D", levels, width, height);
+                AdvanceNativeWriteGeneration();
                 Api.TextureStorage2D(BindingId, levels, ToGLEnum(Data.SizedInternalFormat), width, height);
             }
 

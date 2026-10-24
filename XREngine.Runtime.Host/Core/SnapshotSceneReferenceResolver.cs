@@ -23,9 +23,9 @@ internal static class SnapshotSceneReferenceResolver
         var componentsById = new Dictionary<Guid, XRComponent>();
         var physicsChains = new List<PhysicsChainComponent>();
 
-        for (int rootIndex = 0; rootIndex < scene.RootNodes.Count; ++rootIndex)
+        for (int rootIndex = 0; rootIndex < scene.SceneRoots.Count; ++rootIndex)
             CollectCanonicalSceneObjects(
-                scene.RootNodes[rootIndex],
+                scene.SceneRoots[rootIndex],
                 nodes,
                 visitedNodes,
                 transformsById,
@@ -77,7 +77,7 @@ internal static class SnapshotSceneReferenceResolver
         var componentsById = new Dictionary<Guid, XRComponent>();
 
         foreach (XRScene scene in sourceWorld.Scenes)
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
                 CollectCanonicalSceneObjects(root, nodes, visitedNodes, transformsById, componentsById);
 
         foreach (SceneNode root in runtimeWorld.RootNodes)

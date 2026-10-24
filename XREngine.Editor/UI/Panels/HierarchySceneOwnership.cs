@@ -29,13 +29,13 @@ internal static class HierarchySceneOwnership
         List<XRScene> scenes = [];
         if (world.TargetWorld is { } targetWorld)
             foreach (XRScene scene in targetWorld.Scenes)
-                if (scene.RootNodes.Contains(root) && !scenes.Contains(scene))
+                if (scene.SceneRoots.Contains(root) && !scenes.Contains(scene))
                     scenes.Add(scene);
         foreach (XRScene scene in world.CaptureHierarchySceneMemberships(root))
             if (!scenes.Contains(scene))
                 scenes.Add(scene);
         if (EditorWorldIntegrationRegistry.TryGet(world, out EditorWorldIntegration? integration) &&
-            integration?.ExistingEditorScene is { } editorScene && editorScene.RootNodes.Contains(root) &&
+            integration?.ExistingEditorScene is { } editorScene && editorScene.SceneRoots.Contains(root) &&
             !scenes.Contains(editorScene))
             scenes.Add(editorScene);
         return [.. scenes];
@@ -44,7 +44,7 @@ internal static class HierarchySceneOwnership
     internal static bool HasRootScenes(SceneNode root, RuntimeWorld world, IReadOnlyList<XRScene> expected)
     {
         foreach (XRScene scene in expected)
-            if (!scene.RootNodes.Contains(root))
+            if (!scene.SceneRoots.Contains(root))
                 return false;
         foreach (XRScene scene in CaptureRootScenes(root, world))
             if (!expected.Contains(scene))
@@ -64,7 +64,7 @@ internal static class HierarchySceneOwnership
 
         if (world.TargetWorld is { } targetWorld)
             foreach (XRScene scene in targetWorld.Scenes)
-                if (scene.RootNodes.Contains(root))
+                if (scene.SceneRoots.Contains(root))
                     return scene;
 
         foreach (XRScene scene in world.CaptureHierarchySceneMemberships(root))

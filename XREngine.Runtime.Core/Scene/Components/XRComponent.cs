@@ -200,10 +200,13 @@ namespace XREngine.Components
         }
 
         internal void ConstructionBindSceneNode(SceneNode node)
-            => SetFieldValidated(ref _sceneNode, node, this,
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this, _sceneNode, node);
+            SetFieldValidated(ref _sceneNode, node, this,
                 static (component, original, current, next) =>
                     XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(component, original, current, next),
                 publishNotifications: false, nameof(SceneNode));
+        }
 
         internal void ConstructionSetSceneNode(SceneNode node)
         {
@@ -260,9 +263,13 @@ namespace XREngine.Components
         public SceneNode SceneNode
         {
             get => _sceneNode;
-            private set => SetFieldValidated(ref _sceneNode, value, this,
-                static (component, original, current, next) =>
-                    XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(component, original, current, next));
+            private set
+            {
+                using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this, _sceneNode, value);
+                SetFieldValidated(ref _sceneNode, value, this,
+                    static (component, original, current, next) =>
+                        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(component, original, current, next));
+            }
         }
 
         /// <summary>

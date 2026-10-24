@@ -20,6 +20,34 @@ public sealed partial class RenderCommandCollection
     private long _renderingWorldUiPackageGeneration;
     private readonly ConcurrentQueue<UIWorldCollectPacketSet> _retiredWorldUiPackets = new();
 
+    internal bool HasRenderingWorldUiReplacement
+    {
+        get
+        {
+            using (_lock.EnterScope())
+                return _renderingWorldUiReplacement is not null;
+        }
+    }
+
+    internal bool HasAnyWorldUiReplacement
+    {
+        get
+        {
+            using (_lock.EnterScope())
+                return _updatingWorldUiReplacement is not null ||
+                    _renderingWorldUiReplacement is not null;
+        }
+    }
+
+    /// <summary>Forgets a selected image when its owning renderer retires.</summary>
+    internal bool InvalidateWorldUiReplacementAfterRendererRetirement()
+    {
+        if (!HasAnyWorldUiReplacement)
+            return false;
+        ResetUnsubmittedCapture();
+        return true;
+    }
+
     /// <summary>Fixes one packet selection to the CPU command image before traversal.</summary>
     internal void ObserveWorldUiPacketSet(IRuntimeWorldContext world,
         UIWorldCollectPacketSet? selected)
@@ -116,15 +144,17 @@ public sealed partial class RenderCommandCollection
                     !sorted.ContainsEveryFrozenWorldSource(frozen))
                     return false;
                 int matches = 0;
+                int total = 0;
                 foreach (ICollection<RenderCommand> candidatePass in _updatingPasses.Values)
                     for (int commandIndex = 0; commandIndex < candidatePass.Count; commandIndex++)
                     {
+                        total++;
                         RenderCommand command = GetCommandAt(candidatePass, commandIndex);
                         for (int index = 0; index < frozen.Length; index++)
                             if (ReferenceEquals(command, frozen[index].SourceWorldCommand))
                                 matches++;
                     }
-                if (matches != frozen.Length ||
+                if (matches != frozen.Length || total != frozen.Length ||
                     !canvas.MatchesDirectWorldChildren(packet, world,
                         packet.WorldCollectionRevision))
                     return false;
@@ -175,6 +205,29 @@ public sealed partial class RenderCommandCollection
                 return false;
             }
             return true;
+        }
+    }
+
+    /// <summary>Rejects a changed source after package preparation reads the image.</summary>
+    internal void SealUpdatingWorldUiReplacement(IRuntimeWorldContext world)
+    {
+        using (_lock.EnterScope())
+        {
+            if (_updatingWorldUiReplacement is not { } packet)
+                return;
+            if (_updatingWorldUiConflict || _updatingWorldUiPackets is not { } packets ||
+                !ReferenceEquals(_updatingWorldUiWorld, world) ||
+                packets.Generation != _updatingWorldUiGeneration ||
+                packets.Count != 1 ||
+                !packets.TryGetAt(0, out object? key, out UIPublication? selected) ||
+                key is not UICanvasComponent canvas ||
+                !ReferenceEquals(selected, packet) ||
+                !canvas.MatchesDirectWorldChildren(packet, world,
+                    packet.WorldCollectionRevision) ||
+                _updatingWorldUiPackageGeneration <= 0 ||
+                _updatingBackendReadyPackage.PackageGeneration !=
+                    _updatingWorldUiPackageGeneration)
+                _updatingWorldUiConflict = true;
         }
     }
 

@@ -58,7 +58,7 @@ namespace XREngine.Editor.Mcp
                 id = scene.ID,
                 name = scene.Name ?? "<unnamed>",
                 isVisible = scene.IsVisible,
-                rootCount = scene.RootNodes.Count
+                rootCount = scene.SceneRoots.Count
             }).ToArray();
 
             return Task.FromResult(new McpToolResponse("Listed scenes.", new { scenes }));
@@ -314,10 +314,10 @@ namespace XREngine.Editor.Mcp
 
             var issues = new System.Collections.Generic.List<string>();
 
-            if (scene.RootNodes.Any(root => root is null))
+            if (scene.SceneRoots.Any(root => root is null))
                 issues.Add("Scene contains null root nodes.");
 
-            foreach (var root in scene.RootNodes)
+            foreach (var root in scene.SceneRoots)
             {
                 if (root is null)
                     continue;

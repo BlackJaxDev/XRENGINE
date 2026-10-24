@@ -47,7 +47,7 @@ public sealed partial class BrowserWorldPublishExporter
             _cancellation.ThrowIfCancellationRequested();
             if (scene.IsEditorOnly || !scene.IsVisible)
                 continue;
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
             {
                 if (root.Parent is not null)
                     throw Unsupported(root.Name ?? "root", "a scene root references a parent outside its scene");

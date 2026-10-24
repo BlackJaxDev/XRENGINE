@@ -6,6 +6,7 @@ using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -215,7 +216,47 @@ namespace XREngine.Rendering.Pipelines.Commands
                     renderHeight);
             }
 
-            sourceFBO.Render(destFBO);
+            UIWorldRenderAttempt? worldAttempt = UIWorldRenderAttempt.Active;
+            EUIWorldOutputStage? worldStage = worldAttempt is null ? null :
+                SourceQuadFBOName == DefaultRenderPipeline.LightCombineFBOName &&
+                DestinationFBOName == DefaultRenderPipeline.ForwardPassFBOName
+                    ? EUIWorldOutputStage.LightCombine :
+                SourceQuadFBOName == DefaultRenderPipeline.PostProcessFBOName &&
+                DestinationFBOName == DefaultRenderPipeline.PostProcessOutputFBOName
+                    ? EUIWorldOutputStage.PostProcess :
+                SourceQuadFBOName == DefaultRenderPipeline.FinalPostProcessFBOName &&
+                DestinationFBOName == DefaultRenderPipeline.FinalPostProcessOutputFBOName
+                    ? EUIWorldOutputStage.FinalPostProcess : null;
+            ulong stepToken = 0UL;
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (worldStage.HasValue)
+            {
+                XRTexture? source = activeInstance.GetTexture<XRTexture>(
+                    worldStage.Value switch
+                    {
+                        EUIWorldOutputStage.LightCombine => DefaultRenderPipeline.AlbedoOpacityTextureName,
+                        EUIWorldOutputStage.PostProcess => DefaultRenderPipeline.HDRSceneTextureName,
+                        _ => DefaultRenderPipeline.PostProcessOutputTextureName,
+                    });
+                if (renderer is null || source is null || destFBO is null ||
+                    sourceFBO.Material is not { } material ||
+                    !renderer.TryBeginUiWorldOutputStep(worldAttempt!.NativeToken,
+                        worldStage.Value, source, destFBO, sourceFBO.FullScreenMesh,
+                        material, activeInstance.RenderState.CurrentRenderRegion,
+                        out stepToken))
+                    throw new InvalidOperationException("World UI postprocess native proof was rejected.");
+            }
+            try
+            {
+                sourceFBO.Render(destFBO);
+                if (stepToken != 0UL && !renderer!.CompleteUiWorldOutputStep(stepToken))
+                    throw new InvalidOperationException("World UI postprocess native draw was not proved.");
+            }
+            finally
+            {
+                if (stepToken != 0UL)
+                    renderer!.AbortUiWorldOutputStep(stepToken);
+            }
         }
 
         private void ValidateDestinationScreenRegionContract(

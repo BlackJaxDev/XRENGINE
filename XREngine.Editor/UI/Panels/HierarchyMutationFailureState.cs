@@ -54,7 +54,7 @@ internal sealed class HierarchyMutationFailureState
         if (published != _published)
             return false;
         foreach (HierarchySceneRootSlot slot in _scenes)
-            if (!ReferenceEquals(slot.Scene.RootNodes, slot.Roots) || slot.Roots.IndexOf(_node) != slot.Index)
+            if (!ReferenceEquals(slot.Scene.SceneRoots, slot.Roots) || slot.Roots.IndexOf(_node) != slot.Index)
                 return false;
         foreach (XRScene scene in HierarchySceneOwnership.CaptureRootScenes(_node, _world))
             if (!_scenes.Any(slot => ReferenceEquals(slot.Scene, scene)))

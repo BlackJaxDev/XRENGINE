@@ -12,20 +12,30 @@ new headless regression tests before Windows and graphics validation on
 2026-10-23. This approval applies to this task. It does not establish live
 acceptance or change the default editor.
 
-The current headless snapshot passes compilation with zero warnings and errors
-through `Tools/Invoke-AgentBuild.ps1`. Headless build 112 took 2m26.02s. Full run
-72 passes **758 of 758** tests with no warnings, failures, or skips in 11.663s.
-New portable coverage includes Console row identity and formatting reuse, bounded
-Profiler indexing and cancellation, owned-clone adoption/publication, world-image
-traversal admission, and Vulkan border contract identity. The frozen snapshot
-contains 10,556 source files. These results are from 2026-10-24.
+The current headless snapshot passes compilation with zero warnings/errors through
+`Tools/Invoke-AgentBuild.ps1`. Headless build117 took 19.16s. Full run75 passes
+**837 of 837 tests**, with no warnings, failures, or skips, in 12.465s. New portable
+coverage includes exact hierarchy-list ownership and callback reentry, queued
+owner vetoes, legacy scene serialization, Console snapshot reuse, vector-key state
+and latch recovery, backend-independent solid/border/image/text contracts, and
+managed world-output admission. Vulkan native-authority fixtures compile in the
+desktop project; they do not run in the headless suite.
 
-Editor build 44 passed with zero warnings/errors in 2m35.43s. Its source inputs
-match the headless result. Desktop compilation 23 passed with zero warnings/errors
-in 50.98s. The Windows assembly did not execute on Linux. Editor collection and inspector lifecycle fixtures remain
-compile-only here. See the [investigation record](../../investigations/ui/retained-ui-integration.md)
-for intermediate build/test failures and repairs. Windows, OpenGL/Vulkan, visual,
-IME, native resource, benchmark, and equal-workload ImGui acceptance remain open.
+Editor build50 passed with zero warnings/errors in 46.64s. Desktop compilation26
+passed with zero warnings/errors in 49.54s. The Windows assembly did not execute
+on Linux. The final source snapshot contains 10,631 files. Later nullable-flow
+changes in one editor helper and repairs to two desktop-only fixtures are outside
+the headless inputs; its runtime and test inputs match the final source. These
+results are from 2026-10-24.
+
+The supported Vulkan static-cache contract is implemented, but native cache hits,
+fence retirement, image/font changes, and output/clip changes still require GPU
+acceptance. The explicit OpenGL world route also requires cold-start, resize,
+context replacement, failed-output, and accepted-input tests on a native window.
+Editor animation/Undo and profiler-specific fixtures remain compile-only here.
+See the [investigation record](../../investigations/ui/retained-ui-integration.md)
+for intermediate failures and repairs. Windows, OpenGL/Vulkan, visual, IME, native
+resource, benchmark, and equal-workload ImGui acceptance remain open.
 
 ## Published Change-Tracking Validation (2026-10-23)
 

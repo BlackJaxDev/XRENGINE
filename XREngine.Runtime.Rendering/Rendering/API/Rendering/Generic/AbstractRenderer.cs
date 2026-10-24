@@ -141,6 +141,48 @@ namespace XREngine.Rendering
         internal virtual bool CompleteUiBackdropConsumerDrawScope(ulong scopeId) => false;
         internal virtual void AbortUiBackdropConsumerDrawScope() { }
 
+        /// <summary>Reports whether the backend can check the complete world UI output chain.</summary>
+        internal virtual bool SupportsCheckedWorldUiOutput => false;
+
+        /// <summary>Publishes native readiness after an ordinary window render.</summary>
+        internal virtual void ObserveUiWorldOutputImageReadiness(
+            XRWindow window, XRRenderPipelineInstance pipeline) { }
+
+        /// <summary>Reads a prior native-ready generation without GPU access.</summary>
+        internal virtual bool CanAdmitUiWorldOutputImage(
+            XRWindow window, XRRenderPipelineInstance pipeline) => false;
+
+        internal virtual bool TryBeginUiWorldOutputAttempt(
+            XRWindow window, XRRenderPipelineInstance pipeline,
+            UI.UIPublication publication, BoundingRectangle region,
+            ulong dispatchToken, ulong receiptId, out ulong token)
+        {
+            token = 0UL;
+            return false;
+        }
+
+        internal virtual bool CompleteUiWorldOutputAttempt(ulong token,
+            out string? failure)
+        {
+            failure = "The backend has no checked world UI output attempt.";
+            return false;
+        }
+
+        internal virtual void AbortUiWorldOutputAttempt(ulong token) { }
+        internal virtual bool IsUiWorldOutputAttemptStillValid(ulong token) => false;
+
+        internal virtual bool TryBeginUiWorldOutputStep(ulong attemptToken,
+            UI.EUIWorldOutputStage stage, XRTexture source,
+            XRFrameBuffer? destination, XRMeshRenderer mesh, XRMaterial material,
+            BoundingRectangle region, out ulong stepToken)
+        {
+            stepToken = 0UL;
+            return false;
+        }
+
+        internal virtual bool CompleteUiWorldOutputStep(ulong stepToken) => false;
+        internal virtual void AbortUiWorldOutputStep(ulong stepToken) { }
+
         internal bool TryBeginUiPublicationReceipt(
             UI.UIPublication publication, int expectedDrawIntents,
             bool requiresSwapchainPresentation, out ulong receiptId)
