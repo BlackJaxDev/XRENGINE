@@ -503,3 +503,42 @@ logical offset once. Context menus wait for accepted viewport size and provide
 bounded scroll content. During owner deactivation, a menu removes its input and
 placement callbacks without destroying children inside a parent world transfer.
 Its normal Hide or next Show clears those owned nodes.
+
+## Composition boundaries and split handles
+
+`UICompositionLayerComponent` assigns an explicit owner and kind to its subtree.
+Nested owners replace the inherited owner. `UIPublication.CompositionSegments`
+contains immutable contiguous painter spans. Separate spans do not merge across
+an intervening owner. An unchanged span retains its identity and content revision
+when another span changes or an earlier overlay is inserted. Changed sibling
+output variants receive distinct revisions. Readers retain the parent publication
+while using its segments and resources.
+
+Text and material batching respect these owner boundaries. This does not yet admit
+static UI into native command caches. Changed publication comparison still visits
+the record set; independent sparse capture remains open.
+
+`UISplitterHandleComponent` uses accepted divider metrics from the layout kernel.
+The metrics describe the split before child size constraints alter pane geometry.
+Pointer capture holds that presented geometry. Target or configuration changes
+cancel the old drag. Keyboard resizing uses the same limits. `NativeDockTreeHost`
+uses this shared control.
+
+Hierarchy panels carry their owning world into queued edits and Undo actions.
+Deferred model and prefab drops recheck that owner on the scene-edit queue.
+Streaming volumes retain the exact attachment host and world. Direct destruction
+invalidates pending loads before detach, so late completion cannot attach to a
+replacement owner.
+
+## Deferred authoring admission
+
+Watcher-triggered imports receive an opaque `AssetAuthoringTicket`. It binds the
+captured project context, roots, filesystem provider, and provider generation.
+A captured absent cache root remains absent. Named options moves, options deletes,
+and generated-root publication recheck admission after provider callbacks and
+before mutation. Options moves do not overwrite an existing destination.
+
+A stale import preserves its recovery backup instead of applying rollback to a
+replacement project. The diagnostic reports the retained backup location.
+Generated closure writes and already-running import callbacks do not yet share
+full transaction reservations. These guards do not establish crash recovery.

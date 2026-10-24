@@ -114,7 +114,7 @@ namespace XREngine
         public static void UnloadProject()
         {
             RuntimeEngine.Rendering.ProjectDefaultSettings = null;
-            Assets?.InvalidateAuthoringContext();
+            Assets?.UnloadAuthoringProject();
 
             if (CurrentProject is null)
                 return;
@@ -1147,7 +1147,8 @@ namespace XREngine
             EnsureDirectory(project.ConfigDirectory);
             EnsureDirectory(effectiveCacheDirectory);
 
-            Assets.ConfigureAuthoringRoots(project.AssetsDirectory, effectiveMetadataDirectory, effectiveCacheDirectory);
+            Assets.ConfigureAuthoringRoots(project.AssetsDirectory, effectiveMetadataDirectory,
+                effectiveCacheDirectory, project.ProjectDirectory);
             if (project.PackagesDirectory is not null)
                 Assets.PackagesPath = project.PackagesDirectory;
             if (project.IntermediateDirectory is not null)

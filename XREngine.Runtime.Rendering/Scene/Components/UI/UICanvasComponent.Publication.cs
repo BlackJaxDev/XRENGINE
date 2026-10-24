@@ -348,7 +348,7 @@ public partial class UICanvasComponent
     private void CaptureHitRecords(UICanvasTransform canvas, UITransform transform,
         UIElementIdentity focusScopeIdentity, UILayoutOutputPageView layoutPages,
         UIElementIdentity virtualListIdentity, UIElementIdentity virtualRowIdentity,
-        UIVirtualRowLease virtualRowLease)
+        UIVirtualRowLease virtualRowLease, UICompositionOwner compositionOwner = default)
     {
         if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int layoutIndex) ||
             !layoutPages[layoutIndex].Visible)
@@ -364,6 +364,13 @@ public partial class UICanvasComponent
 
         if (transform.SceneNode?.Components is { } nodeComponents)
         {
+            // Resolve one inherited owner during the existing capture walk.
+            for (int index = 0; index < nodeComponents.Count; index++)
+                if (nodeComponents[index] is UICompositionLayerComponent { IsActiveInHierarchy: true } layer)
+                {
+                    compositionOwner = new UICompositionOwner(transform.ElementIdentity, layer.Kind);
+                    break;
+                }
             for (int index = 0; index < nodeComponents.Count; index++)
             {
                 if (nodeComponents[index] is not { IsActiveInHierarchy: true } owner)
@@ -401,13 +408,13 @@ public partial class UICanvasComponent
                 {
                     if (component is UIRenderableComponent hiddenRenderable)
                         _publicationRenderScratch.Add(hiddenRenderable.CapturePublicationRenderRecord(
-                            in layoutPages[layoutIndex]));
+                            in layoutPages[layoutIndex]) with { CompositionOwner = compositionOwner });
                     continue;
                 }
 
                 if (component is UIRenderableComponent renderableComponent)
                     _publicationRenderScratch.Add(renderableComponent.CapturePublicationRenderRecord(
-                        in layoutPages[layoutIndex]));
+                        in layoutPages[layoutIndex]) with { CompositionOwner = compositionOwner });
 
                 long interactionRevision = component is UIInteractableComponent target
                     ? target.InteractionRevision : 0;
@@ -435,12 +442,20 @@ public partial class UICanvasComponent
         for (int index = 0; index < transform.Children.Count; index++)
             if (transform.Children[index] is UITransform child)
                 CaptureHitRecords(canvas, child, focusScopeIdentity, layoutPages,
-                    virtualListIdentity, virtualRowIdentity, virtualRowLease);
+                    virtualListIdentity, virtualRowIdentity, virtualRowLease, compositionOwner);
     }
 
     private UIPointerGeometry CapturePointerGeometry(UIComponent component, Vector2 acceptedSize,
         UILayoutOutputPageView layoutPages)
     {
+        if (component is UISplitterHandleComponent splitter &&
+            splitter.SplitTarget is { IsDestroyed: false } splitTarget &&
+            _publicationLayoutIndices.TryGetValue(splitTarget.ElementIdentity, out int splitIndex) &&
+            layoutPages[splitIndex].Visible &&
+            splitter.TryCapturePointerGeometry(in layoutPages[splitIndex],
+                out UISplitterPointerMetrics splitMetrics))
+            return new UIPointerGeometry(acceptedSize, Splitter: splitMetrics);
+
         if (component is not UIScrollbarComponent scrollbar ||
             scrollbar.ScrollTarget is not { IsDestroyed: false } scrollTarget ||
             scrollbar.ThumbTransform is not { IsDestroyed: false } thumb ||

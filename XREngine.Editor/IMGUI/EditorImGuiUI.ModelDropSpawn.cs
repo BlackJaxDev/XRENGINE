@@ -439,23 +439,31 @@ public static partial class EditorImGuiUI
     /// viewport drag/drop. Kept internal so editor automation can exercise the
     /// user-facing workflow without duplicating its loading or prefab logic.
     /// </summary>
-    internal static bool TryHandleDroppedSpawnableAsset(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition = null)
+    internal static bool TryHandleDroppedSpawnableAsset(RuntimeWorld world, SceneNode? parent, string path,
+        Vector3? worldPosition = null, Func<bool>? canApply = null)
     {
-        if (world is null || string.IsNullOrWhiteSpace(path))
+        if (world is null || string.IsNullOrWhiteSpace(path) || canApply?.Invoke() == false ||
+            !IsValidDropSpawnTarget(world, parent))
             return false;
 
         if (TryGetDroppedAssetLoadResult(path, out var cached))
         {
             if (cached.Prefab is not null)
-                return SpawnDroppedPrefab(world, parent, cached.Prefab, worldPosition, enqueueSceneEdit: true);
+                return SpawnDroppedPrefab(world, parent, cached.Prefab, worldPosition, enqueueSceneEdit: true,
+                    canApply: canApply);
 
             if (cached.Model is not null)
-                return SpawnDroppedModel(world, parent, cached.Model, path, worldPosition, enqueueSceneEdit: true);
+                return SpawnDroppedModel(world, parent, cached.Model, path, worldPosition, enqueueSceneEdit: true,
+                    canApply: canApply);
         }
 
-        QueueDroppedSpawnableAssetSpawn(world, parent, path, worldPosition);
+        QueueDroppedSpawnableAssetSpawn(world, parent, path, worldPosition, canApply);
         return true;
     }
+
+    private static bool IsValidDropSpawnTarget(RuntimeWorld world, SceneNode? parent)
+        => !world.IsDisposing && (parent is null ||
+            parent is { IsDestroyed: false, IsDestroyQueued: false } && ReferenceEquals(parent.World, world));
 
     private static bool TryHandleDroppedAsset(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition = null)
     {
@@ -487,14 +495,16 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static bool SpawnDroppedPrefab(RuntimeWorld world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition, bool enqueueSceneEdit)
+    private static bool SpawnDroppedPrefab(RuntimeWorld world, SceneNode? parent, XRPrefabSource prefab,
+        Vector3? worldPosition, bool enqueueSceneEdit, Func<bool>? canApply = null)
     {
-        if (prefab is null)
+        if (prefab is null || canApply?.Invoke() == false || !IsValidDropSpawnTarget(world, parent))
             return false;
 
         if (enqueueSceneEdit)
         {
-            EnqueueSceneEdit(() => SpawnDroppedPrefab(world, parent, prefab, worldPosition, enqueueSceneEdit: false));
+            EnqueueSceneEdit(() => SpawnDroppedPrefab(world, parent, prefab, worldPosition,
+                enqueueSceneEdit: false, canApply: canApply));
             return true;
         }
 
@@ -509,14 +519,16 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static bool SpawnDroppedModel(RuntimeWorld world, SceneNode? parent, Model model, string path, Vector3? worldPosition, bool enqueueSceneEdit)
+    private static bool SpawnDroppedModel(RuntimeWorld world, SceneNode? parent, Model model, string path,
+        Vector3? worldPosition, bool enqueueSceneEdit, Func<bool>? canApply = null)
     {
-        if (model is null)
+        if (model is null || canApply?.Invoke() == false || !IsValidDropSpawnTarget(world, parent))
             return false;
 
         if (enqueueSceneEdit)
         {
-            EnqueueSceneEdit(() => SpawnDroppedModel(world, parent, model, path, worldPosition, enqueueSceneEdit: false));
+            EnqueueSceneEdit(() => SpawnDroppedModel(world, parent, model, path, worldPosition,
+                enqueueSceneEdit: false, canApply: canApply));
             return true;
         }
 
@@ -527,19 +539,21 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static void QueueDroppedSpawnableAssetSpawn(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition)
+    private static void QueueDroppedSpawnableAssetSpawn(RuntimeWorld world, SceneNode? parent, string path,
+        Vector3? worldPosition, Func<bool>? canApply)
     {
         Guid trackingId = EditorJobTracker.TrackOperation($"Spawn {Path.GetFileName(path)}", "Loading dropped asset...");
-        _ = SpawnDroppedAssetWhenReadyAsync(world, parent, path, worldPosition, trackingId);
+        _ = SpawnDroppedAssetWhenReadyAsync(world, parent, path, worldPosition, trackingId, canApply);
     }
 
-    private static async Task SpawnDroppedAssetWhenReadyAsync(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
+    private static async Task SpawnDroppedAssetWhenReadyAsync(RuntimeWorld world, SceneNode? parent, string path,
+        Vector3? worldPosition, Guid trackingId, Func<bool>? canApply)
     {
         string? error = await TrySpawnDroppedAssetThroughDropPathAsync(
             world,
             parent,
             path,
-            worldPosition).ConfigureAwait(false);
+            worldPosition, canApply).ConfigureAwait(false);
         if (error is null)
             EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
         else
@@ -555,7 +569,8 @@ public static partial class EditorImGuiUI
         RuntimeWorld world,
         SceneNode? parent,
         string path,
-        Vector3? worldPosition)
+        Vector3? worldPosition,
+        Func<bool>? canApply = null)
     {
         try
         {
@@ -571,9 +586,16 @@ public static partial class EditorImGuiUI
             {
                 try
                 {
+                    if (canApply?.Invoke() == false || !IsValidDropSpawnTarget(world, parent))
+                    {
+                        completion.TrySetResult("The scene target changed before the dropped asset was ready.");
+                        return;
+                    }
                     bool spawned = result.Prefab is not null
-                        ? SpawnDroppedPrefab(world, parent, result.Prefab, worldPosition, enqueueSceneEdit: false)
-                        : SpawnDroppedModel(world, parent, result.Model!, path, worldPosition, enqueueSceneEdit: false);
+                        ? SpawnDroppedPrefab(world, parent, result.Prefab, worldPosition, enqueueSceneEdit: false,
+                            canApply: canApply)
+                        : SpawnDroppedModel(world, parent, result.Model!, path, worldPosition, enqueueSceneEdit: false,
+                            canApply: canApply);
                     completion.TrySetResult(spawned
                         ? null
                         : $"The editor could not spawn {Path.GetFileName(path)}.");

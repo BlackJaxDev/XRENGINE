@@ -12,6 +12,7 @@ public readonly record struct UIRenderRecord
     public required RenderInfo2D RenderInfo { get; init; }
     public required long MembershipId { get; init; }
     public required UIElementIdentity Identity { get; init; }
+    public UICompositionOwner CompositionOwner { get; init; }
     public required Matrix4x4 WorldMatrix { get; init; }
     public required Vector4 Bounds { get; init; }
     public BoundingRectangle? Crop { get; init; }

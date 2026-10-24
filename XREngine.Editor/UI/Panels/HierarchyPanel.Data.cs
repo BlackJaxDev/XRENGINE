@@ -109,14 +109,23 @@ public partial class HierarchyPanel
         return null;
     }
 
-    private static RuntimeWorld? TryGetActiveWorld()
+    private RuntimeWorld? TryGetActiveWorld()
     {
-        foreach (XRWindow window in RuntimeEngine.Windows)
-            if (window.TargetWorldInstance?.WorldContext is RuntimeWorld world)
-                return world;
-
-        return RuntimeWorldRegistryServices.Current?.Snapshot().Values.FirstOrDefault();
+        if (SceneNode?.World is not RuntimeWorld world || world.IsDisposing)
+            return null;
+        // A cached panel can briefly remain attached to its old scene after a
+        // window rebind. Never redirect its pending edits into the new window world.
+        return Window is null || ReferenceEquals(Window.TargetWorldInstance?.WorldContext, world)
+            ? world : null;
     }
+
+    private bool IsCurrentHierarchyWorld(RuntimeWorld world)
+        => !IsDestroyed && !IsDestroyQueued && IsActiveInHierarchy &&
+            ReferenceEquals(TryGetActiveWorld(), world);
+
+    private static bool IsLiveHierarchyNode(SceneNode? node, RuntimeWorld world)
+        => node is { IsDestroyed: false, IsDestroyQueued: false } &&
+            ReferenceEquals(node.World, world);
 
     private static bool IsInEditorScene(RuntimeWorld world, SceneNode node)
         => EditorWorldIntegrationRegistry.TryGet(world, out EditorWorldIntegration? integration)

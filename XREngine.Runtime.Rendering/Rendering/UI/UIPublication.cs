@@ -9,6 +9,7 @@ namespace XREngine.Rendering.UI;
 public sealed class UIPublication
 {
     private readonly UIHitRecord[] _hits;
+    private readonly UICompositionSegmentSet _compositionSegments;
     private readonly UIRenderRecord[] _renders = [];
     private readonly UIScrollRecord[] _scrollReceivers;
     private readonly UIFocusScopeRecord[] _focusScopes;
@@ -50,6 +51,10 @@ public sealed class UIPublication
         Identities = identities;
         _hits = hits;
         _renders = renders;
+        _compositionSegments = previous is not null && previous.CanvasLifetime == canvasLifetime
+            ? ReferenceEquals(renders, previous._renders) ? previous._compositionSegments
+                : UICompositionSegmentSet.Build(renders, previous._compositionSegments)
+            : UICompositionSegmentSet.Build(renders, null);
         OffscreenSurface = offscreenSurface;
         OffscreenReservationGeneration = offscreenSurface?.ReservationGeneration ?? 0;
         OffscreenQuadPayload = offscreenQuadPayload;
@@ -104,6 +109,7 @@ public sealed class UIPublication
     public ReadOnlyMemory<UIElementIdentity> Identities { get; }
     public ReadOnlySpan<UIHitRecord> Hits => _hits;
     public ReadOnlySpan<UIRenderRecord> Renders => _renders;
+    public ReadOnlySpan<UICompositionSegment> CompositionSegments => _compositionSegments.Segments;
     public ReadOnlySpan<UIScrollRecord> ScrollReceivers => _scrollReceivers;
     public ReadOnlySpan<UIFocusScopeRecord> FocusScopes => _focusScopes;
     public UIElementIdentity ActiveFocusScopeIdentity { get; }
@@ -215,6 +221,9 @@ public sealed class UIPublication
         Identities = source.Identities;
         _hits = source._hits;
         _renders = outputRenders ?? source._renders;
+        _compositionSegments = ReferenceEquals(_renders, source._renders)
+            ? source._compositionSegments
+            : UICompositionSegmentSet.Build(_renders, source._compositionSegments);
         OffscreenSurface = source.OffscreenSurface;
         OffscreenReservationGeneration = source.OffscreenReservationGeneration;
         OffscreenQuadPayload = source.OffscreenQuadPayload;

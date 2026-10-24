@@ -326,9 +326,10 @@ public partial class HierarchyPanel
     {
         if (EditorDragDropUtility.TryGetSceneNode(payload, out SceneNode? dragged) && dragged is not null)
         {
-            if (TryGetActiveWorld() is not { } world)
+            if (TryGetActiveWorld() is not { } world || !IsCurrentHierarchyWorld(world) ||
+                !IsLiveHierarchyNode(dragged, world))
                 return false;
-            QueueNativeHierarchyMoveToRoot(dragged, world);
+            QueueNativeHierarchyMoveToRoot(dragged, world, () => IsCurrentHierarchyWorld(world));
             return true;
         }
         return HandleRootDrop(payload);
@@ -338,15 +339,18 @@ public partial class HierarchyPanel
     {
         if (EditorDragDropUtility.TryGetAssetOrFilePath(payload, out string? assetPath) &&
             !string.IsNullOrWhiteSpace(assetPath))
-            return TryGetActiveWorld() is { } assetWorld &&
-                TryHandleDroppedSpawnableAsset(assetWorld, target, assetPath);
+            return TryGetActiveWorld() is { } assetWorld && IsCurrentHierarchyWorld(assetWorld) &&
+                IsLiveHierarchyNode(target, assetWorld) &&
+                TryHandleDroppedSpawnableAsset(assetWorld, target, assetPath,
+                    canApply: () => IsCurrentHierarchyWorld(assetWorld) && IsLiveHierarchyNode(target, assetWorld));
 
         if (!EditorDragDropUtility.TryGetSceneNode(payload, out SceneNode? dragged) || dragged is null ||
             !CanAcceptNodeDrop(target, dragged))
             return false;
-        if (TryGetActiveWorld() is not { } world)
+        if (TryGetActiveWorld() is not { } world || !IsCurrentHierarchyWorld(world) ||
+            !IsLiveHierarchyNode(dragged, world) || !IsLiveHierarchyNode(target, world))
             return false;
-        QueueNativeHierarchyReparent(dragged, target, world);
+        QueueNativeHierarchyReparent(dragged, target, world, () => IsCurrentHierarchyWorld(world));
         return true;
     }
 
@@ -574,9 +578,12 @@ public partial class HierarchyPanel
         if (state.Scene is not null)
         {
             XRScene scene = state.Scene;
+            if (TryGetActiveWorld() is not { } world || !IsCurrentHierarchyWorld(world) ||
+                world.TargetWorld?.Scenes.Contains(scene) != true)
+                return;
             EnqueueSceneEdit(() =>
             {
-                if (TryGetActiveWorld() is not { } world)
+                if (!IsCurrentHierarchyWorld(world) || world.TargetWorld?.Scenes.Contains(scene) != true)
                     return;
                 ToggleNativeSceneVisibility(scene, world, !scene.IsVisible);
                 RebuildVirtualTree();
@@ -584,13 +591,17 @@ public partial class HierarchyPanel
             return;
         }
         SceneNode? node = state.Node;
-        if (node is null || (!node.CanDeactivate && node.IsActiveSelf))
+        if (node is null || (!node.CanDeactivate && node.IsActiveSelf) ||
+            TryGetActiveWorld() is not { } nodeWorld || !IsCurrentHierarchyWorld(nodeWorld) ||
+            !IsLiveHierarchyNode(node, nodeWorld))
             return;
         EnqueueSceneEdit(() =>
         {
+            if (!IsCurrentHierarchyWorld(nodeWorld) || !IsLiveHierarchyNode(node, nodeWorld))
+                return;
             using var _ = Undo.TrackChange("Toggle Node Active", node);
             node.IsActiveSelf = !node.IsActiveSelf;
-            MarkSceneHierarchyDirty(node);
+            MarkSceneHierarchyDirty(node, nodeWorld);
             if (ReferenceEquals(state.Node, node))
             {
                 state.ToggleGlyph.Text = node.IsActiveSelf ? "\u2713" : string.Empty;
@@ -615,9 +626,12 @@ public partial class HierarchyPanel
     {
         if (state.Scene is not { } scene)
             return;
+        if (TryGetActiveWorld() is not { } world || !IsCurrentHierarchyWorld(world) ||
+            world.TargetWorld?.Scenes.Contains(scene) != true)
+            return;
         EnqueueSceneEdit(() =>
         {
-            if (TryGetActiveWorld() is not { } world)
+            if (!IsCurrentHierarchyWorld(world) || world.TargetWorld?.Scenes.Contains(scene) != true)
                 return;
             UnloadNativeScene(scene, world);
             RebuildVirtualTree();

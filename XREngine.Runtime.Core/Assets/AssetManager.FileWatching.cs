@@ -52,7 +52,7 @@ namespace XREngine
             OnFileCreated(args);
             if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: true))
                 return;
-            context.AuthoringServices.QueueAutoImport(args.FullPath, "created");
+            context.AuthoringServices.QueueAutoImport(CreateAuthoringTicket(context), args.FullPath, "created");
             if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: true))
                 return;
             GameFileCreated?.Invoke(args);
@@ -98,7 +98,7 @@ namespace XREngine
             }
             if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: true))
                 return;
-            context.AuthoringServices.QueueAutoImport(args.FullPath, "changed");
+            context.AuthoringServices.QueueAutoImport(CreateAuthoringTicket(context), args.FullPath, "changed");
             if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: true))
                 return;
             GameFileChanged?.Invoke(args);
@@ -140,7 +140,7 @@ namespace XREngine
             OnFileDeleted(args);
             if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: false))
                 return;
-            context.AuthoringServices.HandleSourceDeleted(args.FullPath);
+            context.AuthoringServices.HandleSourceDeleted(CreateAuthoringTicket(context), args.FullPath);
             if (!IsAdmittedGameWatcherEvent(sender, context, args.FullPath, shouldExist: false))
                 return;
             GameFileDeleted?.Invoke(args);
@@ -202,10 +202,10 @@ namespace XREngine
             ApplyLoadedBindingRelocation(args, fileAsset, originalAsset, context);
             if (!IsAdmittedGameWatcherRename(sender, context, args.OldFullPath, args.FullPath))
                 return;
-            context.AuthoringServices.HandleSourceRenamed(args.OldFullPath, args.FullPath);
+            context.AuthoringServices.HandleSourceRenamed(CreateAuthoringTicket(context), args.OldFullPath, args.FullPath);
             if (!IsAdmittedGameWatcherRename(sender, context, args.OldFullPath, args.FullPath))
                 return;
-            context.AuthoringServices.QueueAutoImport(args.FullPath, "renamed");
+            context.AuthoringServices.QueueAutoImport(CreateAuthoringTicket(context), args.FullPath, "renamed");
             if (!IsAdmittedGameWatcherRename(sender, context, args.OldFullPath, args.FullPath))
                 return;
             GameFileRenamed?.Invoke(args);

@@ -3,9 +3,9 @@ namespace XREngine;
 /// <summary>Optional authoring reactions invoked by Runtime.Core file watchers.</summary>
 public interface IRuntimeAssetAuthoringServices
 {
-    void QueueAutoImport(string sourcePath, string reason);
-    void HandleSourceDeleted(string sourcePath);
-    void HandleSourceRenamed(string oldSourcePath, string newSourcePath);
+    void QueueAutoImport(AssetAuthoringTicket ticket, string sourcePath, string reason);
+    void HandleSourceDeleted(AssetAuthoringTicket ticket, string sourcePath);
+    void HandleSourceRenamed(AssetAuthoringTicket ticket, string oldSourcePath, string newSourcePath);
 }
 
 public static class RuntimeAssetAuthoringServices
@@ -38,8 +38,8 @@ public static class RuntimeAssetAuthoringServices
 
     private sealed class UninstalledServices : IRuntimeAssetAuthoringServices
     {
-        public void QueueAutoImport(string sourcePath, string reason) { }
-        public void HandleSourceDeleted(string sourcePath) { }
-        public void HandleSourceRenamed(string oldSourcePath, string newSourcePath) { }
+        public void QueueAutoImport(AssetAuthoringTicket ticket, string sourcePath, string reason) { }
+        public void HandleSourceDeleted(AssetAuthoringTicket ticket, string sourcePath) { }
+        public void HandleSourceRenamed(AssetAuthoringTicket ticket, string oldSourcePath, string newSourcePath) { }
     }
 }

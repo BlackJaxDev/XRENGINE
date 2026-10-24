@@ -20,10 +20,12 @@ namespace XREngine.Editor;
 
 public partial class HierarchyPanel
 {
-    private static bool HandleRootDrop(EditorDragDropUtility.DragPayload payload)
+    private bool HandleRootDrop(EditorDragDropUtility.DragPayload payload)
     {
         if (EditorDragDropUtility.TryGetAssetOrFilePath(payload, out var assetPath) && !string.IsNullOrWhiteSpace(assetPath))
-            return TryGetActiveWorld() is { } world && TryHandleDroppedSpawnableAsset(world, null, assetPath);
+            return TryGetActiveWorld() is { } world && IsCurrentHierarchyWorld(world) &&
+                TryHandleDroppedSpawnableAsset(world, null, assetPath,
+                    canApply: () => IsCurrentHierarchyWorld(world));
 
         return false;
     }

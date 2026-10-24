@@ -377,3 +377,33 @@ Desktop tests did not execute. No Windows, graphics, visual, or performance
 acceptance is claimed. See the
 [investigation](../../investigations/ui/retained-ui-integration.md) for repairs
 and intermediate results.
+
+
+## Composition Boundaries And Deferred Ownership
+
+This increment keeps reconciliation at **39 of 60 implementation items**. The
+remaining 21 code items and four original owner decisions stay open.
+
+- Explicit subtree composition owners preserve contiguous painter spans. Unchanged
+  chrome spans retain identity and content revision across overlay edits, insertion,
+  and output mapping. Batch runs respect those boundaries. Native command reuse and
+  sparse publication capture remain open.
+- The dock host uses a shared splitter with accepted layout metrics and captured
+  pointer geometry. Hierarchy mutations use the panel's exact world through queue
+  execution and Undo. Full cross-window editor workflow acceptance remains open.
+- Deferred watcher imports carry exact context tickets. Provider callback reentry
+  cannot continue stale options or generated-root commits. Stale work preserves
+  recovery backups. Generated closure reservations and full import transactions
+  remain open.
+- Streaming volume destruction invalidates pending loads and releases the exact
+  attachment owner. A conditional world-pass tracker distinguishes selected,
+  pruned, empty, missing, and failed work. It remains inactive until supported
+  graph shapes, multiple-canvas claims, native receipts, and output recovery are
+  complete.
+
+The matching headless build passed with zero warnings/errors in 1m29.43s. All
+**510 tests passed**, with zero warnings or skips, in 9.129s. The matching editor
+build passed with zero warnings/errors in 2m17.23s, and the desktop test project
+compiled with zero warnings/errors in 45.06s. All final checks match 9,924
+source/project file hashes. All 32 local document links and the whitespace check
+pass. Desktop tests did not execute. No platform acceptance is claimed.

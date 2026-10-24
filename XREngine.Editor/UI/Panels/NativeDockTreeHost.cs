@@ -108,20 +108,14 @@ internal sealed class NativeDockTreeHost
         split.FixedSize = node.FixedSize;
         split.SplitterSize = 5;
         split.CanUserResize = true;
-        split.PropertyChanged += (_, change) =>
-        {
-            if (change.PropertyName == nameof(UIDualSplitTransform.FixedSize) && split.FixedSize is { } size)
-            {
-                node.FixedSize = size;
-                Save();
-            }
-        };
         RenderNode(root, node.First!);
         RenderNode(root, node.Second!);
 
-        // UIDualSplitTransform lays out its two children but has no input handle.
-        // The handle lives beside it in a wrapper so it cannot become a third split child.
-        SceneNode handleNode = container.NewChild<UIButtonComponent>(out var handle, "SplitHandle");
+        // Keep the handle beside the split so it does not become a third pane.
+        SceneNode handleNode = container.NewChild<UISplitterHandleComponent>(out var handle, "SplitHandle");
+        handle.SplitTarget = split;
+        handle.MinimumSize = 96;
+        handle.MaximumSize = 2000;
         UIBoundableTransform handleBounds = handleNode.GetTransformAs<UIBoundableTransform>(true)!;
         handleBounds.BlocksInputBehind = true;
         handleBounds.NormalizedPivot = node.Vertical
@@ -141,30 +135,15 @@ internal sealed class NativeDockTreeHost
             handleBounds.Width = 10;
         }
         UpdateHandlePosition();
-        handle.NeedsMouseMove = true;
-        float? dragStart = null;
-        float startSize = node.FixedSize;
-        handle.MouseMove += (x, y, source) =>
+        split.PropertyChanged += (_, change) =>
         {
-            if (!EditorDragDropUtility.IsLeftMouseButtonHeldFor(source))
+            if (change.PropertyName == nameof(UIDualSplitTransform.FixedSize) && split.FixedSize is { } size)
             {
-                dragStart = null;
-                return;
+                node.FixedSize = size;
+                UpdateHandlePosition();
+                Save();
             }
-            Vector2 point = source.BoundableTransform.LocalToCanvas(new Vector2(x, y));
-            float coordinate = node.Vertical ? point.Y : point.X;
-            if (dragStart is null)
-            {
-                dragStart = coordinate;
-                startSize = node.FixedSize;
-                return;
-            }
-            float direction = node.Vertical == node.FirstFixedSize ? -1 : 1;
-            node.FixedSize = Math.Clamp(startSize + (coordinate - dragStart.Value) * direction, 96, 2000);
-            split.FixedSize = node.FixedSize;
-            UpdateHandlePosition();
         };
-        handle.MouseDirectOverlapLeave += _ => dragStart = null;
 
         void UpdateHandlePosition()
         {
@@ -330,6 +309,7 @@ internal sealed class NativeDockTreeHost
         {
             case NativeDockPanel.Hierarchy:
                 slot.NewChild<HierarchyPanel>(out var hierarchy);
+                hierarchy.Window = _window;
                 if (_world is not null)
                     hierarchy.RootNodes = [.. _world.RootNodes];
                 break;

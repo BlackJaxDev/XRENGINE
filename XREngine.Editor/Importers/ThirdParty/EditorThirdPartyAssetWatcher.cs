@@ -13,13 +13,13 @@ public static class EditorThirdPartyAssetWatcher
     {
         private readonly AssetManager _assets = assets;
 
-        public void QueueAutoImport(string sourcePath, string reason)
-            => _assets.QueueThirdPartyAutoImport(sourcePath, reason);
+        public void QueueAutoImport(AssetAuthoringTicket ticket, string sourcePath, string reason)
+            => _assets.QueueThirdPartyAutoImport(ticket, sourcePath, reason);
 
-        public void HandleSourceDeleted(string sourcePath)
-            => _assets.HandleThirdPartySourceDeleted(sourcePath);
+        public void HandleSourceDeleted(AssetAuthoringTicket ticket, string sourcePath)
+            => _assets.HandleThirdPartySourceDeleted(ticket, sourcePath);
 
-        public void HandleSourceRenamed(string oldSourcePath, string newSourcePath)
-            => _assets.HandleThirdPartySourceRenamed(oldSourcePath, newSourcePath);
+        public void HandleSourceRenamed(AssetAuthoringTicket ticket, string oldSourcePath, string newSourcePath)
+            => _assets.HandleThirdPartySourceRenamed(ticket, oldSourcePath, newSourcePath);
     }
 }
