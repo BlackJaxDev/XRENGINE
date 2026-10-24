@@ -67,7 +67,21 @@ public partial class UICanvasComponent
                     !info.IsRegisteredInWorld(world) ||
                     !scene.ContainsRegisteredDrawable(info) ||
                     info.HasCommittedWorldBoundsProvider ||
-                    command.WorldCrop is not null ||
+                    (command.WorldCrop is not null &&
+                     (!command.WorldMatrixIsModelMatrix ||
+                      command.WorldCropMinMax is null ||
+                      command.WorldCropModelToCanvas is null ||
+                      command.WorldCropFragmentShader is not { } clipShader ||
+                      clipShader.SourceRevision != command.WorldCropFragmentRevision ||
+                      !UIWorldCropShaderContract.IsCanonicalClippedFragment(clipShader) ||
+                      command.MaterialOverride is not { } clipMaterial ||
+                      clipMaterial.BillboardMode != EMeshBillboardMode.None ||
+                      !clipMaterial.Shaders.Contains(clipShader) ||
+                      (clipMaterial.VertexShaders.Count != 0 &&
+                       (command.WorldCropVertexShader is not { } clipVertex ||
+                        clipVertex.SourceRevision != command.WorldCropVertexRevision ||
+                        !UIWorldCropShaderContract.IsCanonicalVertex(clipVertex) ||
+                        !clipMaterial.VertexShaders.Contains(clipVertex))))) ||
                     !info.IsVisible || !info.SupportsCanonicalGpuCollection ||
                     info.Owner is not UIRenderableComponent renderable ||
                     !renderable.HasCanonicalWorldPreCollect(info) ||

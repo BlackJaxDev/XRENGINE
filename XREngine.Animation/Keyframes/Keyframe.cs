@@ -58,6 +58,16 @@ namespace XREngine.Animation
         public bool IsFirst => _prev is null;
         public bool IsLast => _next is null;
 
+        internal void SetExactEditState(BaseKeyframeTrack? owner,
+            Keyframe? previous, Keyframe? next, float second, int authoredFrame)
+        {
+            _owningTrack = owner;
+            _prev = previous;
+            _next = next;
+            _second = second;
+            _authoredFrameIndex = authoredFrame;
+        }
+
         /// <summary>
         /// Runtime linkage rebuilt when a keyframe is inserted into a track.
         /// Serializing it would recursively walk the owning list for every item.

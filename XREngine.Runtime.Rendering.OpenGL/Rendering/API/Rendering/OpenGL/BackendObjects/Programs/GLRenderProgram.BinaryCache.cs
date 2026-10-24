@@ -516,6 +516,7 @@ namespace XREngine.Rendering.OpenGL
 
             private ulong CalcShaderSourceHash()
             {
+                ObserveWorldUiInitialSourceInputs();
                 ulong hash = 17ul;
                 hash = AccumulateHash(hash, Data.Separable ? "separable" : "monolithic");
                 hash = AccumulateHash(hash, ResolvedShaderSourceOptimizer.BuildIdentitySegment());

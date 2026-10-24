@@ -3,6 +3,8 @@ using XREngine.Rendering;
 using XREngine.Rendering.Shaders;
 using XREngine.Rendering.Models.Materials;
 using System.Numerics;
+using System.Collections.Concurrent;
+using System.Reflection;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -15,6 +17,17 @@ internal sealed class UITestShaderScope : IRuntimeShaderServices, IDisposable
     private readonly FontGlyphSet _font;
     private readonly IDisposable _fontScope;
     private static readonly string ShaderDirectory = FindShaderDirectory();
+    private static readonly string[] CanonicalSnippetNames =
+    [
+        "NormalEncoding", "ExactTransparencyPpll",
+        "ExactTransparencyDepthPeel"
+    ];
+    private static readonly ConcurrentDictionary<string, string> RegisteredSnippets =
+        (ConcurrentDictionary<string, string>)(typeof(ShaderSnippets).Assembly
+            .GetType("XREngine.Rendering.ShaderSourceResolver", throwOnError: true)!
+            .GetField("RegisteredSnippets", BindingFlags.Static |
+                BindingFlags.NonPublic)!.GetValue(null) ??
+            throw new InvalidOperationException("The canonical snippet registry is unavailable."));
 
     public UITestShaderScope()
     {
@@ -37,6 +50,41 @@ internal sealed class UITestShaderScope : IRuntimeShaderServices, IDisposable
         _host.Dispose();
     }
 
+    public IDisposable RegisterCanonicalCropSnippets()
+    {
+        var claims = new (string Name, string Text, string? Previous,
+            bool HadPrevious)[CanonicalSnippetNames.Length];
+        for (int index = 0; index < CanonicalSnippetNames.Length; index++)
+        {
+            string name = CanonicalSnippetNames[index];
+            string text = File.ReadAllText(Path.Combine(ShaderDirectory,
+                "Snippets", name + ".glsl"));
+            bool hadPrevious = RegisteredSnippets.TryGetValue(name,
+                out string? previous);
+            claims[index] = (name, text, previous, hadPrevious);
+            ShaderSnippets.Register(name, text);
+        }
+        return new DisposableAction(() =>
+        {
+            for (int index = claims.Length - 1; index >= 0; index--)
+            {
+                var claim = claims[index];
+                if (!RegisteredSnippets.TryGetValue(claim.Name,
+                        out string? current) || !StringComparer.Ordinal.Equals(
+                        current, claim.Text))
+                    continue;
+                if (claim.HadPrevious)
+                    ShaderSnippets.Register(claim.Name, claim.Previous!);
+                else
+                    ShaderSnippets.Unregister(claim.Name);
+            }
+        });
+    }
+
+    internal static bool TryGetRegisteredSnippet(string name,
+        out string? source)
+        => RegisteredSnippets.TryGetValue(name, out source);
+
     public T? LoadAsset<T>(string filePath) where T : XRAsset, new() => new T();
 
     public T LoadEngineAsset<T>(JobPriority priority, bool bypassJobThread, string assetRoot, string relativePath)
@@ -50,7 +98,8 @@ internal sealed class UITestShaderScope : IRuntimeShaderServices, IDisposable
             shaderText = ShaderSnippets.ResolveCanonical(shaderText,
                 new Dictionary<string, string>
                 {
-                    ["BvhRaycastCore"] = File.ReadAllText(Path.Combine(ShaderDirectory, "Snippets", "BvhRaycastCore.glsl"))
+                    ["BvhRaycastCore"] = File.ReadAllText(Path.Combine(
+                        ShaderDirectory, "Snippets", "BvhRaycastCore.glsl"))
                 });
         TextFile source = TextFile.FromText(shaderText);
         source.FilePath = relativePath;

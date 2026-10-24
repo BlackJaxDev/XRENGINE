@@ -15,9 +15,14 @@ public sealed class UIDrawPayload
     private readonly IUIDrawProducerLease? _producerLease;
     private readonly UITextureSnapshot?[] _textures;
     internal UIDrawGeometry Geometry { get; }
+    internal UIWorldCropCapture? WorldCrop { get; }
+    internal XRShader? WorldCropFragmentShader { get; }
+    internal XRShader? WorldCropVertexShader { get; }
 
     internal UIDrawPayload(XRMeshRenderer renderer, XRMaterial material,
-        RenderingParameters? renderOptions, XRShader[] shaders, long reservedBytes, IUIDrawProducerLease? producerLease, UITextureSnapshot?[] textures, UIDrawGeometry geometry)
+        RenderingParameters? renderOptions, XRShader[] shaders, long reservedBytes, IUIDrawProducerLease? producerLease, UITextureSnapshot?[] textures, UIDrawGeometry geometry,
+        UIWorldCropCapture? worldCrop = null, XRShader? worldCropFragmentShader = null,
+        XRShader? worldCropVertexShader = null)
     {
         Renderer = renderer;
         Material = material;
@@ -27,6 +32,9 @@ public sealed class UIDrawPayload
         _producerLease = producerLease;
         _textures = textures;
         Geometry = geometry;
+        WorldCrop = worldCrop;
+        WorldCropFragmentShader = worldCropFragmentShader;
+        WorldCropVertexShader = worldCropVertexShader;
     }
 
     internal XRMeshRenderer Renderer { get; }

@@ -317,6 +317,7 @@ public partial class ProfilerPanel
                 "Exact retained frame; activate another worst-frame row to inspect it."));
             rows.AddRange(_selectedGpuWorstTree);
         }
+        CaptureGpuRanks(rows, pipeline, summary.HistoryGeneration);
     }
 
     private void ClearSelectedGpuWorstTree()
@@ -399,6 +400,10 @@ public partial class ProfilerPanel
         rows.Add(new("Allocation tracking", debug.EnableThreadAllocationTracking ? "On" : "Off", "Activate to toggle tracking.", (int)ENativeProfilerSetting.AllocationTracking));
         rows.Add(new("Invoke diagnostics", debug.EnableMainThreadInvokeDiagnostics ? "On" : "Off", "Activate to toggle verbose logging.", (int)ENativeProfilerSetting.InvokeDiagnostics));
         rows.Add(new("GPU timing", debug.EnableGpuRenderPipelineProfiling ? "On" : "Off", "Activate to toggle collection.", (int)ENativeProfilerSetting.GpuTiming));
+        rows.Add(new("UDP sending", debug.EnableProfilerUdpSending ? "On" : "Off", "Activate to stream to the external profiler.", (int)ENativeProfilerSetting.UdpSending));
+        rows.Add(new("Native update interval", debug.ProfilerPanelUpdateIntervalSeconds.ToString("F2", CultureInfo.InvariantCulture), "seconds; 0 updates every tick", (int)ENativeProfilerSetting.UpdateInterval));
+        if (_externalProfilerStatus.Length != 0)
+            rows.Add(new("External profiler", string.Empty, _externalProfilerStatus));
         rows.Add(new("Snapshot interval", debug.CodeProfilerSnapshotIntervalMs.ToString(CultureInfo.InvariantCulture), "ms; edit value", (int)ENativeProfilerSetting.SnapshotInterval));
         rows.Add(new("History capacity", debug.CodeProfilerThreadHistoryCapacity.ToString(CultureInfo.InvariantCulture), "samples per thread; edit value", (int)ENativeProfilerSetting.HistoryCapacity));
         rows.Add(new("Drop threshold", debug.CodeProfilerFpsDropMinDeltaMs.ToString("F1", CultureInfo.InvariantCulture), "ms; edit value", (int)ENativeProfilerSetting.DropThreshold));

@@ -26,7 +26,21 @@ internal sealed class HierarchyStructuralReservation : IDisposable
                 if (value.HasStructuralMutation)
                     return null;
             foreach (XRWorldObjectBase value in reservation._objects)
-                value.SetStructuralReservation(reservation);
+                if (!value.TrySetStructuralReservation(reservation))
+                {
+                    foreach (XRWorldObjectBase installed in reservation._objects)
+                        installed.ReleaseStructuralReservation(reservation);
+                    return null;
+                }
+            // A lifetime operation can enter without this gate. If it entered before
+            // installation, it must finish before any reserved operation can proceed.
+            foreach (XRWorldObjectBase value in reservation._objects)
+                if (value.HasActiveStructuralMutation)
+                {
+                    foreach (XRWorldObjectBase installed in reservation._objects)
+                        installed.ReleaseStructuralReservation(reservation);
+                    return null;
+                }
         }
         return reservation;
     }

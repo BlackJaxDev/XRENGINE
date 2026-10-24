@@ -1486,8 +1486,20 @@ namespace XREngine.Rendering
         /// <see cref="XRMaterialBase.Parameters"/> array (they are set automatically
         /// by the render pipeline each frame).
         /// </summary>
-        private static readonly HashSet<string> EngineUniformNames =
-            new(Enum.GetNames<EEngineUniform>(), StringComparer.OrdinalIgnoreCase);
+        private static readonly HashSet<string> EngineUniformNames = CreateEngineUniformNames();
+
+        private static HashSet<string> CreateEngineUniformNames()
+        {
+            HashSet<string> names = new(Enum.GetNames<EEngineUniform>(), StringComparer.OrdinalIgnoreCase);
+
+            // The exact transparency passes set these values for each draw.
+            // They can also appear in resolved shader snippets outside their active branches.
+            names.Add(EngineShaderBindingNames.Uniforms.PpllMaxNodes);
+            names.Add(EngineShaderBindingNames.Uniforms.DepthPeelLayerIndex);
+            names.Add(EngineShaderBindingNames.Uniforms.DepthPeelEpsilon);
+            names.Add("DepthPeelReversedDepth");
+            return names;
+        }
 
         private static readonly HashSet<string> EngineVertexUniformNames = CreateEngineVertexUniformNames();
 

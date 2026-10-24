@@ -10,7 +10,7 @@ using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering;
 
-internal sealed class RenderPipelineGpuProfiler
+internal sealed partial class RenderPipelineGpuProfiler
 {
     public static RenderPipelineGpuProfiler Instance { get; } = new();
     private const ulong PartialPublishDelayFrames = 3;
@@ -220,6 +220,18 @@ internal sealed class RenderPipelineGpuProfiler
         public List<PipelineWorstFrame> WorstFrames { get; } = [];
         public Dictionary<string, PipelineNodeTimingStats> NodesByPath { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, PipelineNodeTimingStats> RenderThreadNodesByPath { get; } = new(StringComparer.Ordinal);
+        public List<PipelineNodeTimingStats> RankedNodes { get; } = [];
+        public int[][] RankHeaps { get; } = [[], [], []];
+        public int[][] RankPositions { get; } = [[], [], []];
+        public GpuPipelineNodeRankRow[][] PublishedRanks { get; } =
+            [new GpuPipelineNodeRankRow[MaximumRankRows],
+                new GpuPipelineNodeRankRow[MaximumRankRows],
+                new GpuPipelineNodeRankRow[MaximumRankRows]];
+        public int[] RankFrontier { get; } = new int[MaximumRankRows + 1];
+        public int PublishedRankCount { get; set; }
+        public long RankRevision { get; set; }
+        public ulong LastRankFrameId { get; set; }
+        public bool HasRankFrame { get; set; }
     }
 
     private readonly record struct PipelineFrameSummary(
@@ -246,6 +258,7 @@ internal sealed class RenderPipelineGpuProfiler
     private sealed class PipelineNodeTimingStats
     {
         public string Path { get; init; } = string.Empty;
+        public int RankSlot { get; set; } = -1;
         public string Name { get; init; } = string.Empty;
         public int Depth { get; init; }
         public bool IsPotentialShaderOrMaterialNode { get; init; }
@@ -1477,6 +1490,15 @@ internal sealed class RenderPipelineGpuProfiler
                     history.WorstFrames.RemoveAt(history.WorstFrames.Count - 1);
             }
         }
+        for (int i = 0; i < frame.Roots.Count; i++)
+        {
+            PipelineTimingHistory history = _pipelineTimingHistories[frame.Roots[i].Name];
+            if (history.HasRankFrame && history.LastRankFrameId == frame.FrameId)
+                continue;
+            PublishNodeRanksNoLock(history);
+            history.LastRankFrameId = frame.FrameId;
+            history.HasRankFrame = true;
+        }
     }
 
     private static void TrimFrameSummariesNoLock(PipelineTimingHistory history)
@@ -1514,9 +1536,13 @@ internal sealed class RenderPipelineGpuProfiler
                 IsPotentialShaderOrMaterialNode = IsPotentialShaderOrMaterialNode(path),
             };
             history.NodesByPath.Add(path, stats);
+            if (depth > 0)
+                AddRankedNodeNoLock(history, stats);
         }
 
         stats.AddFrameSample(frameId, timestamp, node.TotalNanoseconds / 1_000_000.0, node.SampleCount);
+        if (stats.RankSlot >= 0)
+            UpdateRankedNodeNoLock(history, stats.RankSlot);
 
         for (int i = 0; i < node.Children.Count; i++)
         {

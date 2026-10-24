@@ -4,6 +4,7 @@ using XREngine.Rendering.UI.State;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
@@ -550,6 +551,7 @@ namespace XREngine.Rendering.UI
             UIDrawPayload? payload = null;
             string? captureFailure = null;
             Vector4 frozenBounds = new(bottomLeft.X, bottomLeft.Y, output.ActualSize.X, output.ActualSize.Y);
+            BoundingRectangle? effectiveCrop = UIClipRegion.ResolveCrop(bounds, ClipToBounds);
             if (!supportsBatch && visible)
             {
                 if (_publicationPayloadBuilder is null)
@@ -558,10 +560,24 @@ namespace XREngine.Rendering.UI
                     _publicationPayloadBuilder.SourceChanged += PublicationDrawChanged;
                 }
                 _publicationPayloadBuilder.Bounds = frozenBounds;
-                if (TryCapturePublicationPayload(in output, _publicationPayloadBuilder, out payload, out captureFailure) && payload is not null)
+                bool cropReady = true;
+                UIWorldCropCapture? worldClip = null;
+                if (directWorld && effectiveCrop is { } worldCrop)
+                {
+                    cropReady = UIWorldCropShaderContract.TryCapture(
+                        worldCrop, worldMatrix, out UIWorldCropCapture clipped);
+                    if (cropReady)
+                        worldClip = clipped;
+                }
+                _publicationPayloadBuilder.WorldCrop = worldClip;
+                if (!cropReady)
+                    captureFailure = "UI.DrawCapture.WorldCropRange: the captured canvas crop or transform is unsupported.";
+                else if (TryCapturePublicationPayload(in output, _publicationPayloadBuilder,
+                             out payload, out captureFailure) && payload is not null &&
+                         (!directWorld || effectiveCrop == payload.WorldCrop?.Region))
                 {
                     RenderCommandMesh2D source = RenderCommand2D;
-                    var crop = UIClipRegion.ResolveCrop(bounds, ClipToBounds);
+                    var crop = effectiveCrop;
                     var cropSpace = bounds.ParentCanvas?.GetActualBounds();
                     RenderCommandMesh2D? cached = _publicationFrozenCommand;
                     if (cached is not null && ReferenceEquals(cached.Mesh, payload.Renderer) &&
@@ -625,6 +641,9 @@ namespace XREngine.Rendering.UI
                         }
                     }
                 }
+                else if (directWorld && payload is not null &&
+                         effectiveCrop != payload.WorldCrop?.Region)
+                    captureFailure = "UI.DrawCapture.WorldCropChanged: the captured draw crop did not match the frozen record.";
             }
             return new UIRenderRecord
             {
@@ -633,7 +652,7 @@ namespace XREngine.Rendering.UI
                 Identity = bounds.ElementIdentity,
                 WorldMatrix = worldMatrix,
                 Bounds = new Vector4(bottomLeft.X, bottomLeft.Y, output.ActualSize.X, output.ActualSize.Y),
-                Crop = UIClipRegion.ResolveCrop(bounds, ClipToBounds),
+                Crop = effectiveCrop,
                 RenderPass = RenderPass,
                 ZIndex = RenderCommand2D.ZIndex,
                 Material = payload?.Material ?? _material,

@@ -147,6 +147,86 @@ namespace XREngine.Animation
             else
                 First.UpdateLink(key);
         }
+
+        /// <summary>
+        /// Applies one exact key edit before it reports a track change.
+        /// The caller must own the editor transaction and its Undo guard.
+        /// </summary>
+        internal override bool TryApplyExactKeyEdit(ReadOnlySpan<Keyframe> expected,
+            ReadOnlySpan<Keyframe> desired, Keyframe key,
+            float expectedSecond, int expectedFrame,
+            float desiredSecond, int desiredFrame)
+        {
+            if (!CanAdvanceExactEditGeneration ||
+                expected.Length > 1_000_000 || desired.Length > 1_000_000 ||
+                !float.IsFinite(desiredSecond) || desiredSecond < 0 ||
+                desiredFrame < -1 ||
+                key.Second != expectedSecond ||
+                key.AuthoredFrameIndex != expectedFrame ||
+                !HasExactOrder(expected))
+                return false;
+
+            HashSet<Keyframe> expectedKeys =
+                new(ReferenceEqualityComparer.Instance);
+            bool expectedHasKey = false;
+            foreach (Keyframe candidate in expected)
+            {
+                if (candidate is not T || !expectedKeys.Add(candidate))
+                    return false;
+                expectedHasKey |= ReferenceEquals(candidate, key);
+            }
+            if (!expectedHasKey &&
+                (key.OwningTrack is not null || key.Prev is not null ||
+                 key.Next is not null))
+                return false;
+
+            HashSet<Keyframe> desiredKeys =
+                new(ReferenceEqualityComparer.Instance);
+            bool desiredHasKey = false;
+            float previousSecond = float.NegativeInfinity;
+            foreach (Keyframe candidate in desired)
+            {
+                if (candidate is not T || !desiredKeys.Add(candidate) ||
+                    (!ReferenceEquals(candidate, key) &&
+                     (!expectedKeys.Contains(candidate) ||
+                      !ReferenceEquals(candidate.OwningTrack, this))))
+                    return false;
+                float second = ReferenceEquals(candidate, key)
+                    ? desiredSecond : candidate.Second;
+                if (!float.IsFinite(second) || second < previousSecond)
+                    return false;
+                previousSecond = second;
+                desiredHasKey |= ReferenceEquals(candidate, key);
+            }
+            if ((!expectedHasKey && !desiredHasKey) ||
+                desired.Length != expected.Length +
+                    (desiredHasKey ? 1 : 0) - (expectedHasKey ? 1 : 0))
+                return false;
+            foreach (Keyframe candidate in expected)
+                if (!ReferenceEquals(candidate, key) &&
+                    !desiredKeys.Contains(candidate))
+                    return false;
+
+            for (int index = 0; index < desired.Length; index++)
+            {
+                Keyframe candidate = desired[index];
+                candidate.SetExactEditState(this,
+                    index > 0 ? desired[index - 1] : null,
+                    index + 1 < desired.Length ? desired[index + 1] : null,
+                    ReferenceEquals(candidate, key) ? desiredSecond : candidate.Second,
+                    ReferenceEquals(candidate, key) ? desiredFrame :
+                        candidate.AuthoredFrameIndex);
+            }
+            if (!desiredHasKey)
+                key.SetExactEditState(null, null, null, desiredSecond,
+                    desiredFrame);
+            _first = desired.Length > 0 ? (T)desired[0] : null;
+            _last = desired.Length > 0 ? (T)desired[^1] : null;
+            Count = desired.Length;
+            AdvanceExactEditGeneration();
+            OnChanged();
+            return true;
+        }
         public void RemoveLast()
         {
             if (Last is null)

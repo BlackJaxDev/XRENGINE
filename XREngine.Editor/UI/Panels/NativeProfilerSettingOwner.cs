@@ -24,6 +24,8 @@ internal sealed class NativeProfilerSettingOwner
             _overrideDebug.EnableThreadAllocationTrackingOverride,
             _overrideDebug.EnableMainThreadInvokeDiagnosticsOverride,
             _overrideDebug.EnableGpuRenderPipelineProfilingOverride,
+            _overrideDebug.EnableProfilerUdpSendingOverride,
+            _overrideDebug.ProfilerPanelUpdateIntervalSecondsOverride,
             _overrideDebug.CodeProfilerSnapshotIntervalMsOverride,
             _overrideDebug.CodeProfilerThreadHistoryCapacityOverride,
             _overrideDebug.CodeProfilerFpsDropMinDeltaMsOverride,
@@ -61,27 +63,29 @@ internal sealed class NativeProfilerSettingOwner
         ReferenceEquals(_overrideLeaves[3], _overrideDebug.EnableThreadAllocationTrackingOverride) &&
         ReferenceEquals(_overrideLeaves[4], _overrideDebug.EnableMainThreadInvokeDiagnosticsOverride) &&
         ReferenceEquals(_overrideLeaves[5], _overrideDebug.EnableGpuRenderPipelineProfilingOverride) &&
-        ReferenceEquals(_overrideLeaves[6], _overrideDebug.CodeProfilerSnapshotIntervalMsOverride) &&
-        ReferenceEquals(_overrideLeaves[7], _overrideDebug.CodeProfilerThreadHistoryCapacityOverride) &&
-        ReferenceEquals(_overrideLeaves[8], _overrideDebug.CodeProfilerFpsDropMinDeltaMsOverride) &&
-        ReferenceEquals(_overrideLeaves[9], _overrideDebug.CodeProfilerDebugOutputMinElapsedMsOverride) &&
-        ReferenceEquals(_overrideLeaves[10], _overrideDebug.CodeProfilerStatsThreadIntervalMsOverride) &&
-        ReferenceEquals(_overrideLeaves[11], _overrideDebug.CodeProfilerMaxOverflowPerCycleOverride) &&
-        ReferenceEquals(_overrideLeaves[12], _overrideDebug.CodeProfilerMaxOverflowQueueSizeOverride) &&
-        ReferenceEquals(_overrideLeaves[13], _overrideDebug.CodeProfilerProducerBufferCapacityOverride) &&
-        ReferenceEquals(_overrideLeaves[14], _overrideDebug.CodeProfilerFpsDropBaselineWindowSamplesOverride) &&
-        ReferenceEquals(_overrideLeaves[15], _overrideDebug.CodeProfilerFpsDropMinPreviousFpsOverride) &&
-        ReferenceEquals(_overrideLeaves[16], _overrideDebug.CodeProfilerRenderStallThresholdMsOverride) &&
-        ReferenceEquals(_overrideLeaves[17], _overrideDebug.ProfilerPanelGraphSampleCountOverride) &&
-        ReferenceEquals(_overrideLeaves[18], _overrideDebug.ProfilerPanelSmoothingAlphaOverride) &&
-        ReferenceEquals(_overrideLeaves[19], _overrideDebug.ProfilerPanelShowCpuTimingRawMsLineOverride) &&
-        ReferenceEquals(_overrideLeaves[20], _overrideDebug.ProfilerPanelShowCpuTimingSmoothedMsLineOverride) &&
-        ReferenceEquals(_overrideLeaves[21], _overrideDebug.ProfilerPanelShowGpuTimingRawMsLineOverride) &&
-        ReferenceEquals(_overrideLeaves[22], _overrideDebug.ProfilerPanelShowGpuTimingSmoothedMsLineOverride) &&
-        ReferenceEquals(_overrideLeaves[23], _overrideDebug.ProfilerPanelInterpolateCpuTimingGraphsOverride) &&
-        ReferenceEquals(_overrideLeaves[24], _overrideDebug.ProfilerPanelInterpolateGpuTimingGraphsOverride) &&
-        ReferenceEquals(_overrideLeaves[25], _overrideDebug.ProfilerPanelCpuTimingDisplayModeOverride) &&
-        ReferenceEquals(_overrideLeaves[26], _overrideDebug.ProfilerPanelGpuTimingDisplayModeOverride);
+        ReferenceEquals(_overrideLeaves[6], _overrideDebug.EnableProfilerUdpSendingOverride) &&
+        ReferenceEquals(_overrideLeaves[7], _overrideDebug.ProfilerPanelUpdateIntervalSecondsOverride) &&
+        ReferenceEquals(_overrideLeaves[8], _overrideDebug.CodeProfilerSnapshotIntervalMsOverride) &&
+        ReferenceEquals(_overrideLeaves[9], _overrideDebug.CodeProfilerThreadHistoryCapacityOverride) &&
+        ReferenceEquals(_overrideLeaves[10], _overrideDebug.CodeProfilerFpsDropMinDeltaMsOverride) &&
+        ReferenceEquals(_overrideLeaves[11], _overrideDebug.CodeProfilerDebugOutputMinElapsedMsOverride) &&
+        ReferenceEquals(_overrideLeaves[12], _overrideDebug.CodeProfilerStatsThreadIntervalMsOverride) &&
+        ReferenceEquals(_overrideLeaves[13], _overrideDebug.CodeProfilerMaxOverflowPerCycleOverride) &&
+        ReferenceEquals(_overrideLeaves[14], _overrideDebug.CodeProfilerMaxOverflowQueueSizeOverride) &&
+        ReferenceEquals(_overrideLeaves[15], _overrideDebug.CodeProfilerProducerBufferCapacityOverride) &&
+        ReferenceEquals(_overrideLeaves[16], _overrideDebug.CodeProfilerFpsDropBaselineWindowSamplesOverride) &&
+        ReferenceEquals(_overrideLeaves[17], _overrideDebug.CodeProfilerFpsDropMinPreviousFpsOverride) &&
+        ReferenceEquals(_overrideLeaves[18], _overrideDebug.CodeProfilerRenderStallThresholdMsOverride) &&
+        ReferenceEquals(_overrideLeaves[19], _overrideDebug.ProfilerPanelGraphSampleCountOverride) &&
+        ReferenceEquals(_overrideLeaves[20], _overrideDebug.ProfilerPanelSmoothingAlphaOverride) &&
+        ReferenceEquals(_overrideLeaves[21], _overrideDebug.ProfilerPanelShowCpuTimingRawMsLineOverride) &&
+        ReferenceEquals(_overrideLeaves[22], _overrideDebug.ProfilerPanelShowCpuTimingSmoothedMsLineOverride) &&
+        ReferenceEquals(_overrideLeaves[23], _overrideDebug.ProfilerPanelShowGpuTimingRawMsLineOverride) &&
+        ReferenceEquals(_overrideLeaves[24], _overrideDebug.ProfilerPanelShowGpuTimingSmoothedMsLineOverride) &&
+        ReferenceEquals(_overrideLeaves[25], _overrideDebug.ProfilerPanelInterpolateCpuTimingGraphsOverride) &&
+        ReferenceEquals(_overrideLeaves[26], _overrideDebug.ProfilerPanelInterpolateGpuTimingGraphsOverride) &&
+        ReferenceEquals(_overrideLeaves[27], _overrideDebug.ProfilerPanelCpuTimingDisplayModeOverride) &&
+        ReferenceEquals(_overrideLeaves[28], _overrideDebug.ProfilerPanelGpuTimingDisplayModeOverride);
 
     public EditorDebugOptions EffectiveDebug => _effectiveDebug;
     public EditorDebugOverrides OverrideDebug => _overrideDebug;

@@ -11,6 +11,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.UI.State;
 using XREngine.Scene;
+using XREngine.Rendering.Shaders;
 using XREngine.UnitTests.Physics;
 
 namespace XREngine.UnitTests.Rendering;
@@ -21,6 +22,238 @@ public sealed class UICanvasPublicationCaptureTests
     private UITestShaderScope _shaderScope = null!;
     [SetUp] public void SetUpShaderAssets() => _shaderScope = new UITestShaderScope();
     [TearDown] public void RestoreShaderAssets() => _shaderScope.Dispose();
+
+    [Test]
+    public void NestedShaderScopeRestoresOnlyItsOwnSnippetRegistration()
+    {
+        const string prior = "// prior registered owner\n";
+        bool hadOuter = UITestShaderScope.TryGetRegisteredSnippet(
+            "NormalEncoding", out string? outer);
+        ShaderSnippets.Register("NormalEncoding", prior);
+        try
+        {
+            using (_shaderScope.RegisterCanonicalCropSnippets())
+            {
+                ShaderSnippets.TryGet("NormalEncoding", out string? nested)
+                    .ShouldBeTrue();
+                nested.ShouldNotBe(prior);
+            }
+            ShaderSnippets.TryGet("NormalEncoding", out string? restored)
+                .ShouldBeTrue();
+            restored.ShouldBe(prior);
+        }
+        finally
+        {
+            if (hadOuter)
+                ShaderSnippets.Register("NormalEncoding", outer!);
+            else
+                ShaderSnippets.Unregister("NormalEncoding");
+        }
+    }
+
+    [Test]
+    public void CanonicalImageBatchRemainsEligibleWithResolvedSnippets()
+    {
+        using IDisposable snippets = _shaderScope.RegisterCanonicalCropSnippets();
+        using IDisposable target =
+            RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+                EngineMaterialConstructionTarget.DesktopGlsl);
+        XRTexture2D texture = new()
+        {
+            Mipmaps = [new Mipmap2D(2, 2, new byte[16])],
+            SizedInternalFormat = ESizedInternalFormat.Rgba8,
+            MinFilter = ETexMinFilter.Linear,
+            MagFilter = ETexMagFilter.Linear,
+            UWrap = ETexWrapMode.ClampToEdge,
+            VWrap = ETexWrapMode.ClampToEdge,
+        };
+        XRMaterial material = UIMaterialComponent.CreateImageMaterial(texture,
+            Vector4.One);
+        UIMaterialComponent component = new(material);
+        try
+        {
+            ShaderVector4 color = material.Parameter<ShaderVector4>("MatColor")!;
+            color.Value = new Vector4(0.25f, 0.5f, 0.75f, 1.0f);
+            UIMaterialComponent.HasCanonicalImageShader(material).ShouldBeTrue();
+            UIMaterialComponent.TryGetDesktopImageProfile(texture, false,
+                out _).ShouldBeTrue();
+            material.Parameters.Length.ShouldBe(1);
+            component.SupportsBatchedRendering.ShouldBeTrue();
+            material.ShadersChanged();
+            material.Parameters.Length.ShouldBe(1);
+            material.Parameters[0].ShouldBeSameAs(color);
+            color.Value.ShouldBe(new Vector4(0.25f, 0.5f, 0.75f, 1.0f));
+            component.SupportsBatchedRendering.ShouldBeTrue();
+        }
+        finally
+        {
+            component.Destroy(true);
+            material.Destroy(true);
+            texture.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void UnrelatedUserUniformRemainsAnAuthoredMaterialParameter()
+    {
+        ShaderFloat authored = new(7.0f, "UserAmount");
+        XRShader shader = new(EShaderType.Fragment,
+            "uniform float UserAmount;\nvoid main() {}\n");
+        XRMaterial material = new([authored], shader);
+        try
+        {
+            material.ShadersChanged();
+            material.Parameters.Length.ShouldBe(1);
+            material.Parameters[0].ShouldBeSameAs(authored);
+            authored.Value.ShouldBe(7.0f);
+        }
+        finally
+        {
+            material.Destroy(true);
+            shader.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void WorldCropShaderVariantKeepsCanonicalFragmentAuthority()
+    {
+        using IDisposable snippets = _shaderScope.RegisterCanonicalCropSnippets();
+        XRShader canonical = XRShader.EngineShader(
+            Path.Combine("Common", "UiTexturedForward.fs"),
+            EShaderType.Fragment);
+        XRShader custom = new(EShaderType.Fragment,
+            "#version 460\nvoid main() {}\n");
+        XRShader? clipped = null;
+        try
+        {
+            XRMaterial material = new(Array.Empty<ShaderVar>(), canonical);
+            try
+            {
+                UIWorldCropShaderContract.TrySelectFragment(material,
+                    out int index).ShouldBeTrue();
+                index.ShouldBe(0);
+                UIWorldCropShaderContract.TryCreateFragmentVariant(canonical,
+                    out clipped).ShouldBeTrue();
+                clipped.ShouldNotBeNull();
+                UIWorldCropShaderContract.IsCanonicalClippedFragment(clipped!)
+                    .ShouldBeTrue();
+                clipped!.GetResolvedSource().ShouldContain("UiWorldModelToCanvas");
+                clipped.GetResolvedSource().ShouldContain("XRENGINE_ApplyUiWorldCrop();");
+                clipped.Source.Text += "\n// Mutated after capture\n";
+                UIWorldCropShaderContract.IsCanonicalClippedFragment(clipped)
+                    .ShouldBeFalse();
+                UIWorldCropShaderContract.TryCreateFragmentVariant(custom,
+                    out _).ShouldBeFalse();
+
+                XRShader textVertex = XRShader.EngineShader(
+                    Path.Combine("Common", "Text.vs"), EShaderType.Vertex);
+                XRShader textStereo = XRShader.EngineShader(
+                    Path.Combine("Common", "TextStereo.vs"), EShaderType.Vertex);
+                XRShader textFragment = XRShader.EngineShader(
+                    Path.Combine("Common", "TextMsdf.fs"), EShaderType.Fragment);
+                XRMaterial text = new(Array.Empty<ShaderVar>(),
+                    textVertex, textStereo, textFragment);
+                try
+                {
+                    UIWorldCropShaderContract.TrySelectFragment(text,
+                        out int textIndex).ShouldBeTrue();
+                    textIndex.ShouldBe(2);
+                    text.Shaders[1] = textVertex;
+                    UIWorldCropShaderContract.TrySelectFragment(text,
+                        out _).ShouldBeFalse();
+                }
+                finally { text.Destroy(true); }
+            }
+            finally { material.Destroy(true); }
+        }
+        finally
+        {
+            clipped?.Destroy(true);
+            custom.Destroy(true);
+            canonical.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void DirectWorldChildFreezesNestedCropAndCanonicalShader()
+    {
+        using IDisposable snippets = _shaderScope.RegisterCanonicalCropSnippets();
+        using IDisposable materialTarget =
+            RuntimeEngineMaterialConstructionServices.InstallForCurrentThread(
+                EngineMaterialConstructionTarget.DesktopGlsl);
+        UICanvasTransform canvasTransform = new()
+        {
+            Width = 100, Height = 100,
+            DrawSpace = ECanvasDrawSpace.World
+        };
+        SceneNode root = new("Clipped world publication", canvasTransform)
+        {
+            IsActiveSelf = false
+        };
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            canvas.PreferOffscreenRenderingForNonScreenSpaces = false;
+            SceneNode parent = new(root) { Name = "Clip parent" };
+            UIBoundableTransform parentTransform =
+                parent.SetTransform<UIBoundableTransform>();
+            parent.AddComponent<UIMaterialComponent>()!.ClipToBounds = true;
+            UIMaterialComponent child = Quad(parent, "World child", 1);
+            child.RenderInfo3D.IsVisible = true;
+            child.RenderInfo3D.CastsShadows = false;
+            child.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+            root.IsActiveSelf = true;
+            Apply(canvasTransform, new Vector2(100), Vector2.Zero);
+            Apply(parentTransform, new Vector2(40), new Vector2(20));
+            Apply(child.BoundableTransform, new Vector2(24), new Vector2(30));
+            canvasTransform.RecalculateMatrixHierarchyImmediate();
+            parentTransform.RefreshAxisAlignedRegion();
+            UIRenderRecord record = child.CapturePublicationRenderRecord(
+                new UILayoutNodeOutput
+                {
+                    ActualSize = new Vector2(24), Visible = true
+                });
+            record.CaptureFailure.ShouldBeNull();
+            record.FrozenWorldCommand.ShouldNotBeNull();
+            record.Crop.ShouldNotBeNull();
+            record.Payload.ShouldNotBeNull();
+            record.Payload!.WorldCrop!.Value.Region.ShouldBe(record.Crop.Value);
+            record.Payload.WorldCropFragmentShader.ShouldNotBeNull();
+            UIWorldCropShaderContract.IsCanonicalClippedFragment(
+                record.Payload.WorldCropFragmentShader!).ShouldBeTrue();
+            record.Payload.WorldCrop!.Value.ModelToCanvas.M41.ShouldBe(
+                record.WorldMatrix.M41);
+
+            XRShader unsupportedShader = new(EShaderType.Fragment,
+                "#version 460\nlayout(location=0) out vec4 OutColor;\n" +
+                "void main() { OutColor = vec4(1.0); }\n");
+            XRMaterial unsupported = new(Array.Empty<ShaderVar>(),
+                unsupportedShader);
+            try
+            {
+                child.Material = unsupported;
+                UIRenderRecord rejected = child.CapturePublicationRenderRecord(
+                    new UILayoutNodeOutput
+                    {
+                        ActualSize = new Vector2(24), Visible = true
+                    });
+                rejected.CaptureFailure.ShouldNotBeNull();
+                rejected.CaptureFailure!.ShouldContain(
+                    "WorldCropShaderRequired");
+                rejected.FrozenWorldCommand.ShouldBeNull();
+                child.RenderInfo3D.IsVisible.ShouldBeTrue();
+                child.RenderInfo3D.CastsShadows.ShouldBeFalse();
+            }
+            finally
+            {
+                child.Material = null;
+                unsupported.Destroy(true);
+                unsupportedShader.Destroy(true);
+            }
+        }
+        finally { root.Destroy(true); }
+    }
 
     [Test]
     public void PaintChangesKeepHitGenerationButEligibilityChangesReplaceIt()

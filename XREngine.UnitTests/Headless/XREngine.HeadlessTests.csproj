@@ -129,6 +129,12 @@
     <Compile Include="../Rendering/UIVideoDeferredRenderHost.cs" Link="Rendering/UIVideoDeferredRenderHost.cs" />
     <Compile Include="../Rendering/UITabKeyboardTests.cs" Link="Rendering/UITabKeyboardTests.cs" />
     <Compile Include="../Rendering/UIPointerHoverGenerationTests.cs" Link="Rendering/UIPointerHoverGenerationTests.cs" />
+    <Compile Include="../Rendering/UIPointerCaptureGenerationTests.cs" Link="Rendering/UIPointerCaptureGenerationTests.cs" />
+    <Compile Include="../Rendering/GpuNodeRankPageTests.cs" Link="Rendering/GpuNodeRankPageTests.cs" />
+    <Compile Include="../Scene/HierarchyLifetimeAdmissionTests.cs" Link="Scene/HierarchyLifetimeAdmissionTests.cs" />
+    <Compile Include="../Scene/HierarchyLifetimeProbeTransform.cs" Link="Scene/HierarchyLifetimeProbeTransform.cs" />
+    <Compile Include="../Rendering/UICanvasPublicationPainterCaptureTests.cs" Link="Rendering/UICanvasPublicationPainterCaptureTests.cs" />
+    <Compile Include="../Rendering/UIPublicationReentryProbe.cs" Link="Rendering/UIPublicationReentryProbe.cs" />
     <Compile Include="../Rendering/UIVirtualTableNavigationSource.cs" Link="Rendering/UIVirtualTableNavigationSource.cs" />
     <Compile Include="../Rendering/UIVirtualTableNavigationTests.cs" Link="Rendering/UIVirtualTableNavigationTests.cs" />
     <Compile Include="../Rendering/UIInputAllocationTests.cs" Link="Rendering/UIInputAllocationTests.cs" />

@@ -18,6 +18,27 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class UIFrozenWorldCollectionTests
 {
     [Test]
+    public void WorldCropCapturesNestedHalfOpenBoundsAndRejectsImpreciseCoordinates()
+    {
+        Matrix4x4 modelToCanvas = Matrix4x4.CreateRotationZ(0.35f) *
+            Matrix4x4.CreateTranslation(11, 7, 0);
+        BoundingRectangle nested = new(12, 18, 0, 9);
+        UIWorldCropShaderContract.TryCapture(nested, modelToCanvas,
+            out UIWorldCropCapture captured).ShouldBeTrue();
+        captured.Region.ShouldBe(nested);
+        captured.MinMax.ShouldBe(new Vector4(12, 18, 12, 27));
+        captured.ModelToCanvas.ShouldBe(modelToCanvas);
+
+        UIWorldCropShaderContract.TryCapture(
+            new BoundingRectangle((1 << 24) + 2, 0, 0, 1),
+            modelToCanvas, out _).ShouldBeFalse();
+        Matrix4x4 invalid = modelToCanvas;
+        invalid.M41 = float.NaN;
+        UIWorldCropShaderContract.TryCapture(nested, invalid, out _)
+            .ShouldBeFalse();
+    }
+
+    [Test]
     public void IndexedIntentCapturesTheOwnedMeshStreamAndRejectsMissingTopology()
     {
         XRMesh mesh = XRMesh.Create(VertexQuad.PosZ(1, true, 0, false));

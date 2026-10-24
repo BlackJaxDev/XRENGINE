@@ -9,6 +9,8 @@ internal enum ENativeProfilerSetting
     AllocationTracking,
     InvokeDiagnostics,
     GpuTiming,
+    UdpSending,
+    UpdateInterval,
     SnapshotInterval,
     HistoryCapacity,
     DropThreshold,

@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 
 namespace XREngine.Rendering.UI;
 
@@ -19,7 +20,9 @@ public sealed class UIDrawPayloadBuilder : IDisposable
     internal event Action? SourceChanged;
     private void NotifySourceChanged() => SourceChanged?.Invoke();
     private Vector4 _capturedBounds;
+    private UIWorldCropCapture? _capturedWorldCrop;
     public Vector4 Bounds { get; set; }
+    internal UIWorldCropCapture? WorldCrop { get; set; }
     public IUIDrawProducerLease? ProducerLease { get; set; }
     public int ProducerTextureSlot { get; set; }
     internal bool UseCommittedGlyphRevisions { get; set; }
@@ -51,6 +54,7 @@ public sealed class UIDrawPayloadBuilder : IDisposable
     {
         payload = null;
         failure = null;
+        UIWorldCropCapture? requestedCrop = WorldCrop;
         if (UsedGlyphCount is { } glyphCount &&
             (glyphCount == 0 || glyphCount > UIDrawStateCapture.MaximumArrayLength || source.Instances > glyphCount))
         {
@@ -62,6 +66,14 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         if (renderer?.Mesh is not { } mesh || material is null)
         {
             failure = "UI.DrawCapture.MissingResources: a visible draw requires a mesh and material.";
+            return false;
+        }
+        int clippedFragmentIndex = -1;
+        if (requestedCrop is not null &&
+            !UIWorldCropShaderContract.TrySelectFragment(material,
+                out clippedFragmentIndex))
+        {
+            failure = "UI.DrawCapture.WorldCropShaderRequired: the world crop needs a canonical UI shader pair.";
             return false;
         }
         if ((!allowRendererCallbacks && (renderer.HasSettingUniformsHandlers || renderer.HasRenderDataPreparation)) ||
@@ -77,7 +89,16 @@ public sealed class UIDrawPayloadBuilder : IDisposable
             failure = "UI.DrawCapture.DeformationAdapterRequired: bones, blend shapes, and submeshes require an owned data adapter.";
             return false;
         }
-        if (_cached is { } cached && Matches(source, renderer, material, mesh, cached))
+        if (requestedCrop is not null)
+            foreach (ShaderVar parameter in material.Parameters)
+                if (parameter.Name is UIWorldCropShaderContract.MinMaxUniform or
+                    UIWorldCropShaderContract.MatrixUniform)
+                {
+                    failure = "UI.DrawCapture.WorldCropUniformConflict: authored material uses a reserved crop uniform.";
+                    return false;
+                }
+        if (_cached is { } cached && Matches(source, renderer, material, mesh,
+                cached, requestedCrop))
         {
             _rawStorageInvalidated = false;
             payload = cached;
@@ -105,7 +126,8 @@ public sealed class UIDrawPayloadBuilder : IDisposable
             foreach (KeyValuePair<string, XRDataBuffer> entry in meshBuffers)
                 meshBytes = checked(meshBytes + MeasureBuffer(entry.Value));
             long geometryBytes = meshBytes;
-            long bytes = checked(3584L + material.Parameters.Length * 2048L + material.Textures.Count * 64L);
+            long bytes = checked(3584L + (material.Parameters.Length +
+                (requestedCrop is null ? 0 : 2)) * 2048L + material.Textures.Count * 64L);
             foreach (KeyValuePair<string, XRDataBuffer> entry in rendererBuffers)
             {
                 if (entry.Value.BindingIndexOverride is null)
@@ -146,26 +168,42 @@ public sealed class UIDrawPayloadBuilder : IDisposable
                 }
             }
             using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
-            ShaderVar[] parameters = new ShaderVar[material.Parameters.Length];
-            for (int index = 0; index < parameters.Length; index++)
+            ShaderVar[] parameters = new ShaderVar[material.Parameters.Length +
+                (requestedCrop is null ? 0 : 2)];
+            for (int index = 0; index < material.Parameters.Length; index++)
                 parameters[index] = UIDrawStateCapture.CloneParameter(material.Parameters[index]);
+            if (requestedCrop is { } crop)
+            {
+                parameters[^2] = new ShaderVector4(crop.MinMax,
+                    UIWorldCropShaderContract.MinMaxUniform);
+                parameters[^1] = new ShaderMat4(crop.ModelToCanvas,
+                    UIWorldCropShaderContract.MatrixUniform);
+            }
             shaders = new XRShader[material.Shaders.Count];
             long[] revisions = new long[shaders.Length];
             XRShader[] sourceShaders = new XRShader[shaders.Length];
             for (int index = 0; index < shaders.Length; index++)
             {
                 XRShader shader = material.Shaders[index];
-                shaders[index] = new XRShader(shader.Type, shader.GetResolvedSource())
+                if (index == clippedFragmentIndex)
                 {
-                    SourceLanguage = shader.SourceLanguage,
-                    EntryPoint = shader.EntryPoint,
-                    SlangOptions = shader.SlangOptions,
-                    GenerateAsync = shader.GenerateAsync,
-                    IsGeneratedUberVariant = shader.IsGeneratedUberVariant,
-                    GeneratedUberVariantHash = shader.GeneratedUberVariantHash,
-                    CookedArtifact = shader.CookedArtifact,
-                    CookedArtifactIdentity = shader.CookedArtifactIdentity,
-                };
+                    if (!UIWorldCropShaderContract.TryCreateFragmentVariant(shader,
+                            out XRShader? clipped) || clipped is null)
+                        throw new NotSupportedException("Canonical world crop shader could not be captured.");
+                    shaders[index] = clipped;
+                }
+                else
+                    shaders[index] = new XRShader(shader.Type, shader.GetResolvedSource())
+                    {
+                        SourceLanguage = shader.SourceLanguage,
+                        EntryPoint = shader.EntryPoint,
+                        SlangOptions = shader.SlangOptions,
+                        GenerateAsync = shader.GenerateAsync,
+                        IsGeneratedUberVariant = shader.IsGeneratedUberVariant,
+                        GeneratedUberVariantHash = shader.GeneratedUberVariantHash,
+                        CookedArtifact = shader.CookedArtifact,
+                        CookedArtifactIdentity = shader.CookedArtifactIdentity,
+                    };
                 revisions[index] = shader.SourceRevision;
                 sourceShaders[index] = shader;
             }
@@ -188,7 +226,17 @@ public sealed class UIDrawPayloadBuilder : IDisposable
             ownedRenderer.BindingPublishers.Add(new UIFixedDrawBindings(geometry.FixedBuffers, textures, Bounds));
             RenderingParameters? options = source.RenderOptionsOverride is { } raster
                 ? UIDrawStateCapture.CloneRaster(raster) : null;
-            UIDrawPayload replacement = new(ownedRenderer, ownedMaterial, options, shaders, reservedBytes, producerLease, capturedTextures, geometry);
+            XRShader? cropVertex = null;
+            if (requestedCrop is not null)
+                for (int index = 0; index < shaders.Length; index++)
+                    if (UIWorldCropShaderContract.IsCanonicalVertex(shaders[index]))
+                    {
+                        cropVertex = shaders[index];
+                        break;
+                    }
+            UIDrawPayload replacement = new(ownedRenderer, ownedMaterial, options, shaders, reservedBytes, producerLease, capturedTextures, geometry,
+                requestedCrop, clippedFragmentIndex >= 0 ? shaders[clippedFragmentIndex] : null,
+                cropVertex);
             publication.Complete();
             UIDrawSourceObserver observer = new(source, renderer, mesh, material, sourceShaders,
                 meshBuffers, rendererBuffers, capturedTextures, NotifySourceChanged);
@@ -202,6 +250,7 @@ public sealed class UIDrawPayloadBuilder : IDisposable
             _sourceMaterial = material;
             _geometryRevision = mesh.GeometryRevision;
             _capturedBounds = Bounds;
+            _capturedWorldCrop = requestedCrop;
             _capturedProducerLease = producerLease;
             _producerGeneration = producerLease?.Generation ?? 0;
             _producerTextureSlot = ProducerTextureSlot;
@@ -233,15 +282,18 @@ public sealed class UIDrawPayloadBuilder : IDisposable
         }
     }
 
-    private bool Matches(RenderCommandMesh2D source, XRMeshRenderer renderer, XRMaterial material, XRMesh mesh, UIDrawPayload cached)
+    private bool Matches(RenderCommandMesh2D source, XRMeshRenderer renderer, XRMaterial material, XRMesh mesh, UIDrawPayload cached,
+        UIWorldCropCapture? requestedCrop)
     {
         if ((ProducerLease is not null && ProducerTextureSlot != _producerTextureSlot) ||
             !ReferenceEquals(ProducerLease, _capturedProducerLease) || (ProducerLease?.Generation ?? 0) != _producerGeneration ||
             (ProducerLease is not null && !ReferenceEquals(ProducerLease.Texture, cached.Material.Textures[ProducerTextureSlot])) ||
-            Bounds != _capturedBounds || !ReferenceEquals(mesh, _sourceMesh) || !MeshMetadataEquals(mesh, cached.Renderer.Mesh!) ||
+            Bounds != _capturedBounds || requestedCrop != _capturedWorldCrop ||
+            !ReferenceEquals(mesh, _sourceMesh) || !MeshMetadataEquals(mesh, cached.Renderer.Mesh!) ||
             !ReferenceEquals(renderer, _sourceRenderer) || !ReferenceEquals(material, _sourceMaterial) ||
             mesh.GeometryRevision != _geometryRevision || material.Shaders.Count != _shaderRevisions.Length ||
-            material.Parameters.Length != cached.Material.Parameters.Length || material.Textures.Count != cached.Material.Textures.Count ||
+            material.Parameters.Length + (requestedCrop is null ? 0 : 2) != cached.Material.Parameters.Length ||
+            material.Textures.Count != cached.Material.Textures.Count ||
             material.BillboardMode != cached.Material.BillboardMode || material.TransparencyMode != cached.Material.TransparencyMode ||
             material.RenderPass != cached.Material.RenderPass || material.AlphaCutoff != cached.Material.AlphaCutoff || material.TransparentSortPriority != cached.Material.TransparentSortPriority ||
             material.TransparentTechniqueOverride != cached.Material.TransparentTechniqueOverride ||

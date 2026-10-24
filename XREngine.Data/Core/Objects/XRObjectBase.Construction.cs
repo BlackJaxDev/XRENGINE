@@ -54,6 +54,7 @@ public abstract partial class XRObjectBase
             for (int index = 0; index < objects.Count; index++)
             {
                 XRObjectBase value = objects[index];
+                using ObjectLifetimeMutationLease lifetime = new(value, EObjectLifetimeMutation.Publish);
                 if (value.IsDestroyed)
                     continue;
                 bool alreadyPublished = ObjectsCacheInternal.TryGetValue(value.ID, out XRObjectBase? previous) &&
@@ -72,16 +73,24 @@ public abstract partial class XRObjectBase
 
     internal static void RollBackOwnedObjectCacheBatch(IReadOnlyList<ObjectCachePublishedEntry> published)
     {
+        List<Exception>? failures = null;
         lock (ObjectCacheMutationLock)
         {
             for (int index = published.Count - 1; index >= 0; index--)
             {
                 ObjectCachePublishedEntry entry = published[index];
-                bool removed = ObjectsCacheInternal.TryGetValue(entry.Id, out XRObjectBase? current) &&
-                    ReferenceEquals(current, entry.Value) && ObjectsCacheInternal.TryRemove(entry.Id, out _);
-                if (removed && entry.Value.ID == entry.Id)
-                    entry.Value._isRegisteredInObjectCache = false;
+                try
+                {
+                    using ObjectLifetimeMutationLease lifetime = new(entry.Value, EObjectLifetimeMutation.Unpublish);
+                    bool removed = ObjectsCacheInternal.TryGetValue(entry.Id, out XRObjectBase? current) &&
+                        ReferenceEquals(current, entry.Value) && ObjectsCacheInternal.TryRemove(entry.Id, out _);
+                    if (removed && entry.Value.ID == entry.Id)
+                        entry.Value._isRegisteredInObjectCache = false;
+                }
+                catch (Exception failure) { (failures ??= []).Add(failure); }
             }
         }
+        if (failures is not null)
+            throw new AggregateException("Some exact owned cache entries remain retained after rollback was rejected.", failures);
     }
 }

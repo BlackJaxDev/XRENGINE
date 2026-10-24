@@ -84,6 +84,7 @@ internal sealed class UIWorldRenderAttempt
 
             if (!renderer.TryBeginUiWorldOutputAttempt(window, pipeline, publication,
                     region, window.ActiveOpenGlDispatchToken, _receiptId,
+                    _view,
                     out _nativeToken))
                 return RejectBeforeAuthoring();
             window.RequireOpenGlWorldUi(viewport, commands, packageGeneration,

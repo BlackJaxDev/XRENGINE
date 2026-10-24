@@ -40,6 +40,8 @@ namespace XREngine.Animation
         private bool _constrainKeyframedFPS = false;
         private bool _lerpConstrainedFPS = false;
         private VectorKeyframe<TValue>? _prevKeyframe;
+        private KeyframeTrack<TValueKey>? _prevKeyframeTrack;
+        private ulong _prevKeyframeExactEditGeneration;
 
         private TValue _currentPosition;
         private TValue _currentVelocity;
@@ -302,6 +304,16 @@ namespace XREngine.Animation
                 CurrentVelocity = new TValue();
                 CurrentAcceleration = new TValue();
                 return;
+            }
+
+            if (!ReferenceEquals(_prevKeyframeTrack, Keyframes) ||
+                _prevKeyframeExactEditGeneration != Keyframes.ExactEditGeneration ||
+                _prevKeyframe is not null &&
+                !ReferenceEquals(_prevKeyframe.OwningTrack, Keyframes))
+            {
+                _prevKeyframe = null;
+                _prevKeyframeTrack = Keyframes;
+                _prevKeyframeExactEditGeneration = Keyframes.ExactEditGeneration;
             }
 
             float second = Keyframes.ResolveSampleTime(_currentTime, out float velocityScale, out bool clamped);

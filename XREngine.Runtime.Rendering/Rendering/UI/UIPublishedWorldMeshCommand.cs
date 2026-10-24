@@ -3,6 +3,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
+using System.Numerics;
 
 namespace XREngine.Rendering.UI;
 
@@ -19,7 +20,10 @@ internal sealed class UIPublishedWorldMeshCommand : RenderCommandMesh3D, IUiPubl
         RenderInfo3D? sourceWorldRenderInfo = null,
         RenderCommandMesh3D? sourceWorldCommand = null,
         long worldRegistrationIncarnation = 0,
-        BoundingRectangle? worldCrop = null)
+        BoundingRectangle? worldCrop = null,
+        UIWorldCropCapture? cropCapture = null,
+        XRShader? cropFragmentShader = null,
+        XRShader? cropVertexShader = null)
         : base(frozen.RenderPass)
     {
         _canvas = new WeakReference<UICanvasComponent>(canvas);
@@ -32,6 +36,12 @@ internal sealed class UIPublishedWorldMeshCommand : RenderCommandMesh3D, IUiPubl
         SourceWorldCommand = sourceWorldCommand;
         WorldRegistrationIncarnation = worldRegistrationIncarnation;
         WorldCrop = worldCrop;
+        WorldCropModelToCanvas = cropCapture?.ModelToCanvas;
+        WorldCropMinMax = cropCapture?.MinMax;
+        WorldCropFragmentShader = cropFragmentShader;
+        WorldCropFragmentRevision = cropFragmentShader?.SourceRevision ?? 0;
+        WorldCropVertexShader = cropVertexShader;
+        WorldCropVertexRevision = cropVertexShader?.SourceRevision ?? 0;
         Mesh = frozen.Mesh;
         WorldMatrix = frozen.WorldMatrix;
         MaterialOverride = frozen.MaterialOverride;
@@ -69,6 +79,12 @@ internal sealed class UIPublishedWorldMeshCommand : RenderCommandMesh3D, IUiPubl
     internal RenderCommandMesh3D? SourceWorldCommand { get; }
     internal long WorldRegistrationIncarnation { get; }
     internal BoundingRectangle? WorldCrop { get; }
+    internal Matrix4x4? WorldCropModelToCanvas { get; }
+    internal Vector4? WorldCropMinMax { get; }
+    internal XRShader? WorldCropFragmentShader { get; }
+    internal long WorldCropFragmentRevision { get; }
+    internal XRShader? WorldCropVertexShader { get; }
+    internal long WorldCropVertexRevision { get; }
     internal ReadOnlySpan<UIIndexedDrawIntent> IndexedDrawIntents
         => _indexedDrawIntents.AsSpan(0, _indexedDrawIntentCount);
 

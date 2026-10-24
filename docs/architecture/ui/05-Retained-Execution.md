@@ -936,8 +936,17 @@ Setting drafts capture exact effective, override, global, and override-leaf
 owners. A replaced owner rejects commit. Worst-frame activation copies at most
 256 immutable tree rows for the exact pipeline, history generation, and frame.
 Formatting occurs on selection and the panel retains those strings. Historical
-GPU node ranking remains open; canonical dumps preserve those details. Desktop
-test execution and live Windows/GPU acceptance remain separate.
+GPU rankings use three producer-maintained indexed heaps for worst frame, active
+frame average, and total captured time. A completed frame publishes at most 256
+ranked rows per metric. Native pages copy at most 64 rows for an exact history
+generation and ranking revision, and report omitted paths. A changed revision
+rejects an older page request. Existing canonical dumps keep their full details.
+
+The native profiler exposes the canonical external-profiler action, the existing
+UDP preference, and the configured update interval. Preference writes use the
+same captured owner policy. Stale-root persistence, all-root plots, the rolling
+worst CPU hierarchy, and detailed diagnostics remain open. Desktop test execution
+and live Windows/GPU acceptance remain separate.
 
 `EditorDictionaryMutation` supports exact BCL dictionaries with string keys and
 the default or ordinal comparer, or integer keys and the default comparer. The
@@ -996,7 +1005,7 @@ transparent-forward image. `XRViewport.EnableRetainedWorldUiColor` and
 OpenGL route. Both default to false. Admission requires one full-window mono
 viewport, CPU-direct submission, one canonical canvas with authored
 non-shadow-casting TransparentForward commands, and no other 3D commands,
-screen UI, late window output, or nested crop. The pipeline profile rejects VR,
+screen UI, or late window output. The pipeline profile rejects VR,
 AA, temporal/history features, bloom, motion blur, depth of field, occlusion,
 atmosphere, fog, auto-exposure, lens distortion, and output debug overrides.
 
@@ -1008,7 +1017,20 @@ the proof. A selected replacement cannot silently become a legacy frame after
 collection. Failure prevents presentation and discards the receipt and pending
 frame-view history. Renderer retirement also resets unsubmitted capture ownership. Input uses the accepted frozen camera descriptor
 and region. This is an implemented bounded route, not live OpenGL acceptance.
-Mixed scenes, direct-world crop, Vulkan world output, and shadows remain open.
+Canonical direct-world solid, image, and text draws can carry a frozen nested
+canvas crop. A private fragment variant transforms the interpolated model-local
+point into captured canvas coordinates and discards points outside half-open
+bounds. Empty crops discard all fragments. Nonfinite transforms and bounds
+outside the exact supported float-integer range reject capture. Custom shader
+pairs require a separate adapter. Ordinary shader files remain unchanged.
+
+The OpenGL issue check verifies the actual crop, model, view, and projection
+uniforms and exact linked shader inputs. This route requires the combined-program
+mode; readiness rejects the global separable-program mode before collection
+replacement. The same isolated GLSL variant and typed material parameters define
+the Vulkan binding contract, but Vulkan world publication remains inactive.
+Mixed scenes, Vulkan world output, separable OpenGL programs, and shadows remain
+open. This does not establish native clipping acceptance.
 
 The bounded Vulkan static-chrome cache also admits its supported border variant.
 The contract includes exact UV/color and width buffer references, committed
@@ -1036,8 +1058,43 @@ notification targets the captured source after settlement.
 
 Built-in vector edits stage a complete authored handle and commit all fields
 before one track notification. A throwing notification cannot leave the public
-synchronization latch set. Earlier equal-time key positions that the current
-track API cannot restore exactly reject a move or removal before mutation.
-Presented plot-pointer interaction, exact tied-key restoration, and the remaining
+synchronization latch set. Exact typed track edits validate key identities,
+order, membership, and times before committing links and values without
+callbacks. One nonserialized edit generation advances before the final Changed
+notification. Cached vector and lerpable playback cursors reselect after that
+generation or their track owner changes. Remove, time, and frame Undo can restore
+earlier equal-time keys in their original order.
+
+Native commands include incoming values, direct interpolation choices, planar
+Unify and Auto tangents, clip traversal, and clip kind. Auto captures exact
+neighbor values and topology before it stages a complete handle edit. Presented
+plot-pointer interaction, multi-child loop and length changes, and the remaining
 authoring controls are open code items. These contracts do not establish Windows
 editor execution or complete panel parity.
+
+## Candidate Admission And Cold Object Lifetime
+
+Publication capture stages painter membership in reusable scratch storage. It
+commits the order and revision only with the accepted packet. A rejected capture
+keeps the prior census. Recursive capture marks the outer operation stale, and
+final admission repeats layout, canvas, world, and painter checks after command
+construction. Canvas collection acquires its own packet claim under the
+publication gate and releases it after all collection callbacks. Teardown can
+remove holder claims during that interval without retiring the reader's resources.
+This protects retries and collection lifetime; changed publication capture still scans the
+full visible tree.
+
+Cold object identity, generation, cache publication, and destruction calls take
+a lifetime admission lease. Core structural reservations install with an atomic
+compare/exchange and then recheck active leases. The hook does not wait on the
+structural gate while a cache lock is held. Owned cache rollback admits each
+exact unpublication independently, attempts the remaining entries after failure,
+and retains rejected entries for recovery. This support does not yet authorize
+clone graph destruction or activate Duplicate.
+
+Material parameter discovery excludes the exact-transparency pipeline globals
+PpllMaxNodes, DepthPeelLayerIndex, DepthPeelEpsilon, and DepthPeelReversedDepth.
+Their declarations can occur in resolved inactive snippet branches, but the
+pipeline owns their uploads. Canonical image materials retain only their authored
+MatColor parameter through discovery and resync; unrelated user uniforms remain
+editable. The strict image batch parameter contract remains in effect.

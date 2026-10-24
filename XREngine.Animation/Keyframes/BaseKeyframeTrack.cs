@@ -1,5 +1,6 @@
 ﻿using System.Collections;
 using System.ComponentModel;
+using MemoryPack;
 using XREngine.Data.Core;
 
 namespace XREngine.Animation
@@ -15,6 +16,42 @@ namespace XREngine.Animation
 
         protected internal abstract Keyframe? FirstKey { get; internal set; }
         protected internal abstract Keyframe? LastKey { get; internal set; }
+
+        [MemoryPackIgnore]
+        internal ulong ExactEditGeneration { get; private set; }
+
+        internal bool CanAdvanceExactEditGeneration => ExactEditGeneration < ulong.MaxValue;
+
+        internal void AdvanceExactEditGeneration() => ExactEditGeneration++;
+
+        internal bool HasExactOrder(ReadOnlySpan<Keyframe> order)
+        {
+            if (Count != order.Length ||
+                !ReferenceEquals(FirstKey,
+                    order.Length == 0 ? null : order[0]) ||
+                !ReferenceEquals(LastKey,
+                    order.Length == 0 ? null : order[^1]))
+                return false;
+            Keyframe? previous = null;
+            Keyframe? current = FirstKey;
+            for (int index = 0; index < order.Length; index++)
+            {
+                if (current is null || !ReferenceEquals(current, order[index]) ||
+                    !ReferenceEquals(current.OwningTrack, this) ||
+                    !ReferenceEquals(current.Prev, previous) ||
+                    !ReferenceEquals(current.Next,
+                        index + 1 < order.Length ? order[index + 1] : null))
+                    return false;
+                previous = current;
+                current = current.Next;
+            }
+            return current is null;
+        }
+
+        internal virtual bool TryApplyExactKeyEdit(
+            ReadOnlySpan<Keyframe> expected, ReadOnlySpan<Keyframe> desired,
+            Keyframe key, float expectedSecond, int expectedFrame,
+            float desiredSecond, int desiredFrame) => false;
 
         private float _lengthInSeconds = 0.0f;
         private EKeyframeInfinityMode _preInfinityMode = EKeyframeInfinityMode.Loop;

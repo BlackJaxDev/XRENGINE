@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using System.Globalization;
 using Shouldly;
 using XREngine.Editor;
 using XREngine.Data.Core;
@@ -72,5 +73,49 @@ public sealed class NativeProfilerNumericSettingBindingTests
             Engine.EditorPreferences.Debug.CodeProfilerSnapshotIntervalMs.ShouldBe(current);
         }
         finally { overrides.CodeProfilerSnapshotIntervalMsOverride = oldSetting; }
+    }
+
+    [Test]
+    public void UpdateIntervalCommitsThroughTheExistingOwner()
+    {
+        var global = Engine.GlobalEditorPreferences.Debug;
+        var setting = Engine.EditorPreferencesOverrides.Debug.ProfilerPanelUpdateIntervalSecondsOverride;
+        bool hasOverride = setting.HasOverride;
+        float original = hasOverride ? setting.Value : global.ProfilerPanelUpdateIntervalSeconds;
+        try
+        {
+            NativeProfilerNumericSettingBinding binding = new(
+                ENativeProfilerSetting.UpdateInterval, new NativeProfilerSettingOwner());
+            binding.SetValue(0.125f.ToString(CultureInfo.CurrentCulture));
+            Engine.EditorPreferences.Debug.ProfilerPanelUpdateIntervalSeconds.ShouldBe(0.125f);
+            if (hasOverride) setting.Value.ShouldBe(0.125f);
+            else global.ProfilerPanelUpdateIntervalSeconds.ShouldBe(0.125f);
+            Should.Throw<FormatException>(() => binding.SetValue("NaN"));
+        }
+        finally
+        {
+            if (hasOverride) setting.Value = original;
+            else global.ProfilerPanelUpdateIntervalSeconds = original;
+        }
+    }
+
+    [Test]
+    public void ReplacedUdpOwnerRejectsTheOldToggle()
+    {
+        var overrides = Engine.EditorPreferencesOverrides.Debug;
+        OverrideableSetting<bool> original = overrides.EnableProfilerUdpSendingOverride;
+        NativeProfilerSettingOwner owner = new();
+        try
+        {
+            overrides.EnableProfilerUdpSendingOverride = new OverrideableSetting<bool>();
+            bool current = Engine.EditorPreferences.Debug.EnableProfilerUdpSending;
+            owner.IsCurrent.ShouldBeFalse();
+            Should.Throw<InvalidOperationException>(() => NativeProfilerSettingWriter.Set(owner, !current,
+                static debug => debug.EnableProfilerUdpSending,
+                static leaf => leaf.EnableProfilerUdpSendingOverride,
+                static (global, value) => global.EnableProfilerUdpSending = value));
+            Engine.EditorPreferences.Debug.EnableProfilerUdpSending.ShouldBe(current);
+        }
+        finally { overrides.EnableProfilerUdpSendingOverride = original; }
     }
 }

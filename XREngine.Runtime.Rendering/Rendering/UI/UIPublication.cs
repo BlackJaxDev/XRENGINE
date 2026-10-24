@@ -180,7 +180,10 @@ public sealed class UIPublication
                 commands.Add(new UIPublishedWorldMeshCommand(canvas, this, template,
                     record.WorldCastsShadows, record.WorldLayer, record.WorldCullingVolume,
                     record.WorldRenderInfo, record.SourceWorldCommand,
-                    record.WorldRegistrationIncarnation, record.Crop));
+                    record.WorldRegistrationIncarnation, record.Crop,
+                    record.Payload?.WorldCrop,
+                    record.Payload?.WorldCropFragmentShader,
+                    record.Payload?.WorldCropVertexShader));
             }
             _worldCommands = commands.ToArray();
         }
