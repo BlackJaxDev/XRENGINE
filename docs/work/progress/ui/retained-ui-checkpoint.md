@@ -1473,3 +1473,22 @@ child's own callback, concurrent mutation, away-and-back history, the transform
 detach loop, and full menu construction/retirement remain open. The original
 reconciliation remains **50/60**. No Windows, graphics, IME, visual, or benchmark
 acceptance is claimed. Pending owner decisions and ImGui default are unchanged.
+
+
+## Float Key Interpolation Controls
+
+The retained inspector now exposes In and Out interpolation buttons for the
+selected float key. A separate compact row cycles Step, Linear, Smooth, and
+Hermite. Missing or unsupported selections disable the controls. Value and mode
+edits share the existing exact authored-state transaction; both also check the
+key's captured time and authored frame. Conflicting callbacks preserve their
+newer edits and cannot produce unguarded stale Undo.
+
+Headless build207 passed with zero warnings/errors in 2m55.46s. Run151 passed
+7/7 authored-state cases in 0.158s. Full run152 passed **1,262/1,262** in 23.780s,
+with no failures, warnings, or skips. Desktop build63 compiled editor and tests
+with zero warnings/errors in 3m41.54s. All **10,829** source inputs stayed unchanged
+through validation. The six new editor action/history cases compiled only; the
+portable sampling/reversal case executed. The 39 maintained relative links resolve
+and diff checks pass. Windows controls, Undo execution, visuals, and GPU checks
+remain pending. The original reconciliation remains **50/60**.

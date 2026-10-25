@@ -789,3 +789,31 @@ Desktop build62 passed with zero warnings/errors in 3m42.70s. All 10,829 source
 inputs stayed unchanged through final validation. The 39 relative links in the
 five maintained UI documents resolve, and diff checks pass. No platform
 acceptance or broader menu-retirement completion is inferred.
+
+
+## Inspector Float Interpolation Modes
+
+The native float detail previously exposed time and value but no In/Out mode
+commands, while the clip panel already exposed modes. The detail now uses the
+existing staged authored-state transaction for both value and mode edits. The
+shared predicate also retains key time and authored frame. This rejects a callback
+that changes those fields without changing key order. Newer callback edits remain
+intact and conflicting Undo remains guarded. No new mutation framework is added.
+
+Two mode buttons use a separate compact row, cycle the four defined modes, and
+disable for missing or unsupported selected keys. Dirty refresh updates labels
+and enabled states with revision checks. The change does not add idle allocations.
+Review found no blocker. An editor-only fixture correction accounts for the
+existing Second setter clearing AuthoredFrameIndex to -1 after a retime.
+
+Headless build207 passed with zero warnings/errors in 2m55.46s. Run151 passed
+seven authored-state cases in 0.158s, including sampled-curve change and exact
+reversal without seeking playback. Editor action/history cases require separate
+Windows execution; portable tests do not exercise the editor Undo implementation.
+
+Full run152 passed 1,262/1,262 in 23.780s, with no failures, warnings, or skips.
+Desktop build63 passed with zero warnings/errors in 3m41.54s. All 10,829 source
+inputs stayed unchanged through final validation. Six new editor action/history
+cases compiled only. The portable case tests exact authored-state sampling and
+reversal; it does not execute the new editor command or controls. The 39 maintained
+relative links resolve and diff checks pass.

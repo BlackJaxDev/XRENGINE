@@ -1743,7 +1743,7 @@ outer permit. No parent or root removal is implied by world removal.
 
 The retained PropAnimFloat property detail uses the shared virtual table and a
 97-sample retained plot. It exposes key selection, time/value editing, insertion,
-removal, length changes, and stretch. Sampling does not seek playback. Rows show
+removal, In/Out interpolation modes, length changes, and stretch. Sampling does not seek playback. Rows show
 at most 8,192 keys and report that limit. The plot and row data refresh on authored
 changes; playback clock notifications do not rebuild them.
 
@@ -1783,6 +1783,14 @@ and event wiring. Exceptions from the current callback retain their original
 identity. Property commits inside those helpers and full owned-child retirement
 remain separate open work.
 
+
+Float key mode controls cycle through Step, Linear, Smooth, and Hermite. They use
+a separate compact row and disable when the selected key or its authored state
+is unavailable. Value and mode changes share the same staged authored-state
+transaction. Their ownership predicates also retain key time and authored frame;
+a callback that changes either value causes a guarded conflict rather than stale
+Undo history. Mode changes preserve values, tangents, and synchronization flags.
+Sampling does not seek playback.
 
 ## Child Destruction Dispatch
 

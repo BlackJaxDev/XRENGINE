@@ -51,10 +51,14 @@ On Windows, open a getter-only transform animation curve and a transition custom
 blend curve through the state-machine Layers detail. Navigate through a layer,
 ordinary state or AnyState, and transition. Repeat before play, during play, and
 after stop. Select a key and edit time/value.
-Add and remove keys, set length, and stretch length. Undo and Redo each operation,
+Add and remove keys, set length, and stretch length. Cycle the selected key's In
+and Out modes through Step, Linear, Smooth, and Hermite. Check the displayed mode,
+curve sample, and disabled state with no valid key. Undo and Redo each operation,
 including consecutive edits and Undo after closing the navigator. Verify frame
 indices, synchronized handles, source
-dirty state, and unchanged playback time. Repeat with shared selected references;
+dirty state, and unchanged playback time. Mode edits must preserve key time, frame,
+values, tangents, and synchronization flags. Retiming or changing the frame from
+a callback must reject stale edit history and preserve that newer edit. Repeat with shared selected references;
 distinct selected curves must report that editing is unavailable.
 
 Change keys and replace the curve or track externally. The detail must refresh,
@@ -68,10 +72,12 @@ checks remain pending. Compiling the editor cases does not execute them on Linux
 
 ### Managed integration evidence
 
-Latest full portable check (2026-10-25): headless build206 passed with zero
-warnings/errors, and run150 passed **1,261/1,261** tests with no failures or skips.
+Latest full portable check (2026-10-25): headless build207 passed with zero
+warnings/errors, and run152 passed **1,262/1,262** tests with no failures or skips.
 Run145 passed all 100 targeted transition-ownership and menu-navigation cases.
 Run149 passed 13 child-destruction cases, including the actual menu Hide path.
+Run151 passed seven authored-state cases, including interpolation sampling and
+exact reversal without seeking playback.
 The tests-first baseline failed five of seven cases before the repair.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
@@ -122,6 +128,12 @@ The child-dispatch update passed desktop build62 with zero warnings/errors.
 All 10,829 source inputs stayed unchanged through headless206, run149, run150,
 and desktop62. Its 13 new cases execute portably, including the menu Hide
 callback route. The prior editor-only action and UI tests remain compile-only.
+
+The interpolation update passed desktop build63 with zero warnings/errors.
+All 10,829 source inputs stayed unchanged through headless207, run151, run152,
+and desktop63. Six new editor action/history cases compiled only; they cover
+mode history, invalid/replaced sources, and mode/value callbacks that change time
+or frame. The portable sampling/reversal case executed.
 
 The expanded implementation is under integration. The user explicitly approved
 new headless regression tests before Windows and graphics validation on

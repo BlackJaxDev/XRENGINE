@@ -60,6 +60,10 @@ public static partial class InspectorPropertyEditors
             private UITextInputComponent? _time;
             private UITextInputComponent? _value;
             private UITextInputComponent? _length;
+            private UIButtonComponent? _inModeButton;
+            private UIButtonComponent? _outModeButton;
+            private UITextComponent? _inModeLabel;
+            private UITextComponent? _outModeLabel;
             private FloatKeyframe? _selected;
             private float _plotWidth;
             private float _plotHeight;
@@ -123,6 +127,28 @@ public static partial class InspectorPropertyEditors
                 CreateInspectorButton(actions, "Set length", () => SetLength(false));
                 if (!ContinueBuild()) return;
                 CreateInspectorButton(actions, "Stretch length", () => SetLength(true));
+                if (!ContinueBuild()) return;
+                SceneNode modes = card.NewChild();
+                if (!ContinueBuild()) return;
+                UIListTransform modeLayout = modes.SetTransform<UIListTransform>();
+                if (!ContinueBuild()) return;
+                modeLayout.DisplayHorizontal = true;
+                if (!ContinueBuild()) return;
+                modeLayout.ItemSpacing = 5;
+                if (!ContinueBuild()) return;
+                var (_, inModeButton, _, inModeLabel) = NativeUIElements.CreateButton(
+                    modes, "In: —", _ => CycleInterpolation(false), width: 130);
+                if (!ContinueBuild()) return;
+                _inModeButton = inModeButton;
+                _inModeLabel = inModeLabel;
+                _inModeButton.IsEnabled = false;
+                if (!ContinueBuild()) return;
+                var (_, outModeButton, _, outModeLabel) = NativeUIElements.CreateButton(
+                    modes, "Out: —", _ => CycleInterpolation(true), width: 130);
+                if (!ContinueBuild()) return;
+                _outModeButton = outModeButton;
+                _outModeLabel = outModeLabel;
+                _outModeButton.IsEnabled = false;
                 if (!ContinueBuild()) return;
 
                 _plot = new UIRetainedPlot(card, "FloatAnimationPlot");
@@ -355,6 +381,8 @@ public static partial class InspectorPropertyEditors
                     if (!IsCurrent(source, revision)) return;
                     _table!.SelectedId = null;
                     if (!IsCurrent(source, revision)) return;
+                    RefreshModeControls(source, revision);
+                    if (!IsCurrent(source, revision)) return;
                     _list?.InvalidateMeasure();
                     return;
                 }
@@ -480,7 +508,34 @@ public static partial class InspectorPropertyEditors
                 if (_length is not null)
                     _length.Text = source.Curve.LengthInSeconds.ToString("G9",
                         CultureInfo.InvariantCulture);
+                if (!IsCurrent(source, revision)) return;
+                RefreshModeControls(source, revision);
             }
+
+            private void RefreshModeControls(InspectorFloatCurveSource? source,
+                ulong revision)
+            {
+                if (!IsCurrent(source, revision)) return;
+                FloatKeyframe? key = _selected;
+                bool enabled = source is not null && key is not null &&
+                    IsPresentedKey(source, key);
+                if (_inModeLabel is not null)
+                    _inModeLabel.Text = enabled ? $"In: {key!.InterpolationTypeIn}" : "In: —";
+                if (!IsCurrent(source, revision)) return;
+                if (_inModeButton is not null) _inModeButton.IsEnabled = enabled;
+                if (!IsCurrent(source, revision)) return;
+                if (_outModeLabel is not null)
+                    _outModeLabel.Text = enabled ? $"Out: {key!.InterpolationTypeOut}" : "Out: —";
+                if (!IsCurrent(source, revision)) return;
+                if (_outModeButton is not null) _outModeButton.IsEnabled = enabled;
+            }
+
+            private bool IsPresentedKey(InspectorFloatCurveSource source,
+                FloatKeyframe key)
+                => ReferenceEquals(key.OwningTrack, source.Track) &&
+                    key.TryCaptureAuthoredState(out _) &&
+                    _ids.TryGetValue(key, out ulong id) && _keys.TryGetValue(id,
+                        out FloatKeyframe? current) && ReferenceEquals(current, key);
 
             private bool CanEdit(out InspectorFloatCurveSource source)
             {
@@ -506,6 +561,28 @@ public static partial class InspectorPropertyEditors
                 if (CanEdit(out var source) && _selected is { } key &&
                     Parse(input, out float value))
                     InspectorFloatCurveActions.SetValue(source, key, value);
+                RequestRefresh();
+            }
+
+            private void CycleInterpolation(bool outgoing)
+            {
+                if (CanEdit(out var source) && _selected is { } key &&
+                    IsPresentedKey(source, key))
+                {
+                    EVectorInterpType current = outgoing ? key.InterpolationTypeOut :
+                        key.InterpolationTypeIn;
+                    EVectorInterpType? next = current switch
+                    {
+                        EVectorInterpType.Step => EVectorInterpType.Linear,
+                        EVectorInterpType.Linear => EVectorInterpType.Smooth,
+                        EVectorInterpType.Smooth => EVectorInterpType.Hermite,
+                        EVectorInterpType.Hermite => EVectorInterpType.Step,
+                        _ => null
+                    };
+                    if (next is { } mode)
+                        InspectorFloatCurveActions.SetInterpolation(source, key,
+                            outgoing, mode);
+                }
                 RequestRefresh();
             }
 

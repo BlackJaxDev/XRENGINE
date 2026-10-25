@@ -87,29 +87,54 @@ internal static class InspectorFloatCurveActions
     public static bool SetValue(InspectorFloatCurveSource source,
         FloatKeyframe key, float value)
     {
-        if (!source.IsCurrent() || !float.IsFinite(value) ||
+        if (!float.IsFinite(value)) return false;
+        return EditState(source, key, "Edit Animation Key Value",
+            staged => staged.OutValue = value);
+    }
+
+    public static bool SetInterpolation(InspectorFloatCurveSource source,
+        FloatKeyframe key, bool outgoing, EVectorInterpType mode)
+    {
+        if (!Enum.IsDefined(mode)) return false;
+        return EditState(source, key, "Set Animation Key Interpolation",
+            staged =>
+            {
+                if (outgoing) staged.InterpolationTypeOut = mode;
+                else staged.InterpolationTypeIn = mode;
+            });
+    }
+
+    private static bool EditState(InspectorFloatCurveSource source,
+        FloatKeyframe key, string description, Action<FloatKeyframe> edit)
+    {
+        if (!source.IsCurrent() ||
             !ReferenceEquals(key.OwningTrack, source.Track) ||
             AnimationClipAuthoringActions.CaptureOrder(source.Track) is not { } order ||
             !order.Contains(key, ReferenceEqualityComparer.Instance) ||
             !key.TryCaptureAuthoredState(out var before))
             return false;
+        float second = key.Second;
+        int frame = key.AuthoredFrameIndex;
         FloatKeyframe staged = new();
         staged.RestorePublishedHandles(before.InValue, before.OutValue,
             before.InTangent, before.OutTangent,
             before.InterpolationIn, before.InterpolationOut,
             before.SyncValues, before.SyncDirections, before.SyncMagnitudes);
-        staged.OutValue = value;
+        edit(staged);
         if (!staged.TryCaptureAuthoredState(out var after) || after == before)
             return false;
         bool Owns() => source.IsCurrent() &&
             ReferenceEquals(key.OwningTrack, source.Track) &&
+            key.Second == second && key.AuthoredFrameIndex == frame &&
             AnimationClipAuthoringActions.MatchesOrder(source.Track, order);
         return AnimationAuthoringTransaction.Apply(source.Curve, source.Documents,
-            "Edit Animation Key Value",
+            description,
             () => ApplyState(key, before, after, source.Track),
             () => ApplyState(key, after, before, source.Track),
-            () => key.TryCaptureAuthoredState(out var state) && state == after,
-            () => key.TryCaptureAuthoredState(out var state) && state == before,
+            () => key.Second == second && key.AuthoredFrameIndex == frame &&
+                key.TryCaptureAuthoredState(out var state) && state == after,
+            () => key.Second == second && key.AuthoredFrameIndex == frame &&
+                key.TryCaptureAuthoredState(out var state) && state == before,
             Owns, null, [.. source.ReservationOwners, key]);
     }
 
@@ -171,6 +196,6 @@ internal static class InspectorFloatCurveActions
         VectorKeyframeAuthoredState<float> after, BaseKeyframeTrack track)
     {
         if (!key.TryApplyAuthoredState(before, after, track))
-            throw new InvalidOperationException("Animation key changed before value edit.");
+            throw new InvalidOperationException("Animation key changed before authored edit.");
     }
 }

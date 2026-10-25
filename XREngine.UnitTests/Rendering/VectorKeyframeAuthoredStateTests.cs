@@ -7,6 +7,34 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class VectorKeyframeAuthoredStateTests
 {
     [Test]
+    public void ExactInterpolationEditChangesSamplingAndRestoresHandles()
+    {
+        PropAnimFloat animation = new(2, false, true);
+        FloatKeyframe first = new(0f, 0f, 0f, EVectorInterpType.Linear);
+        FloatKeyframe second = new(1f, 1f, 0f, EVectorInterpType.Linear);
+        animation.Keyframes.Add(first);
+        animation.Keyframes.Add(second);
+        animation.Seek(0.25f, false);
+        Assert.That(first.TryCaptureAuthoredState(out var before), Is.True);
+        float linear = animation.GetValue(0.5f);
+        var step = before with { InterpolationOut = EVectorInterpType.Step };
+
+        Assert.That(first.TryApplyAuthoredState(before, step,
+            animation.Keyframes), Is.True);
+        Assert.That(first.TryCaptureAuthoredState(out var committed), Is.True);
+        Assert.That(committed, Is.EqualTo(step));
+        Assert.That(animation.GetValue(0.5f), Is.Not.EqualTo(linear));
+        Assert.That(animation.CurrentTime, Is.EqualTo(0.25f));
+
+        Assert.That(first.TryApplyAuthoredState(step, before,
+            animation.Keyframes), Is.True);
+        Assert.That(first.TryCaptureAuthoredState(out var restored), Is.True);
+        Assert.That(restored, Is.EqualTo(before));
+        Assert.That(animation.GetValue(0.5f), Is.EqualTo(linear).Within(0.0001f));
+        Assert.That(animation.CurrentTime, Is.EqualTo(0.25f));
+    }
+
+    [Test]
     public void ConditionalCommitOwnsCompleteStateEvenWhenTrackObserverThrows()
     {
         PropAnimFloat animation = new(2, false, true);

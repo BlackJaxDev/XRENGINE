@@ -9,6 +9,125 @@ namespace XREngine.UnitTests.Editor;
 public sealed class InspectorFloatCurveActionsTests
 {
     [Test]
+    public void InterpolationModesChangeSamplingAndPreserveExactKeyHistory()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat curve = new(2, false, true);
+            FloatKeyframe first = new(0, 24, 0, 0, 0, 0,
+                EVectorInterpType.Linear);
+            FloatKeyframe second = new(24, 24, 1, 1, 0, 0,
+                EVectorInterpType.Linear);
+            curve.Keyframes.Add(first);
+            curve.Keyframes.Add(second);
+            curve.Seek(0.25f, false);
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
+                out var source, out string reason), Is.True, reason);
+            Assert.That(first.TryCaptureAuthoredState(out var before), Is.True);
+            float linear = curve.GetValue(0.5f);
+
+            Assert.That(InspectorFloatCurveActions.SetInterpolation(source!, first,
+                true, EVectorInterpType.Step), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetInterpolation(source!, first,
+                false, EVectorInterpType.Hermite), Is.True);
+            Assert.That(first.TryCaptureAuthoredState(out var changed), Is.True);
+            Assert.That(changed, Is.EqualTo(before with
+            {
+                InterpolationIn = EVectorInterpType.Hermite,
+                InterpolationOut = EVectorInterpType.Step
+            }));
+            Assert.That((first.Second, first.AuthoredFrameIndex, curve.CurrentTime),
+                Is.EqualTo((0f, 0, 0.25f)));
+            Assert.That(curve.GetValue(0.5f), Is.Not.EqualTo(linear));
+
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(first.TryCaptureAuthoredState(out var restored), Is.True);
+            Assert.That(restored, Is.EqualTo(before));
+            Assert.That(curve.GetValue(0.5f), Is.EqualTo(linear).Within(0.0001f));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(first.TryCaptureAuthoredState(out var redone), Is.True);
+            Assert.That(redone, Is.EqualTo(changed));
+            Assert.That((first.Second, first.AuthoredFrameIndex, curve.CurrentTime),
+                Is.EqualTo((0f, 0, 0.25f)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void InterpolationRejectsInvalidModeAndReplacedSource()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat curve = new(2, false, true);
+            FloatKeyframe key = new(0.5f, 1, 0,
+                EVectorInterpType.Linear);
+            curve.Keyframes.Add(key);
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
+                out var source, out _), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetInterpolation(source!, key,
+                true, (EVectorInterpType)999), Is.False);
+            Assert.That(Undo.CanUndo, Is.False);
+            owner.Curve = new PropAnimFloat(2, false, true);
+            Assert.That(InspectorFloatCurveActions.SetInterpolation(source!, key,
+                true, EVectorInterpType.Step), Is.False);
+            Assert.That(key.InterpolationTypeOut, Is.EqualTo(EVectorInterpType.Linear));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
+    public void AuthoredEditCallbackChangingTimeOrFrameRejectsStaleHistory(
+        bool editValue, bool changeFrame)
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat curve = new(2, false, true);
+            FloatKeyframe key = new(12, 24, 1, 0,
+                EVectorInterpType.Linear);
+            curve.Keyframes.Add(key);
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
+                out var source, out _), Is.True);
+            bool changed = false;
+            curve.Keyframes.Changed += _ =>
+            {
+                if (changed) return;
+                changed = true;
+                if (changeFrame) key.AuthoredFrameIndex = 13;
+                else key.Second = 0.75f;
+            };
+            bool accepted = editValue
+                ? InspectorFloatCurveActions.SetValue(source!, key, 2f)
+                : InspectorFloatCurveActions.SetInterpolation(source!, key,
+                    true, EVectorInterpType.Smooth);
+            Assert.That(accepted, Is.False);
+            Assert.That(changed, Is.True);
+            Assert.That((key.Second, key.AuthoredFrameIndex),
+                Is.EqualTo((changeFrame ? 0.5f : 0.75f, changeFrame ? 13 : -1)));
+            Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
+            Assert.That((key.Second, key.AuthoredFrameIndex),
+                Is.EqualTo((changeFrame ? 0.5f : 0.75f, changeFrame ? 13 : -1)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void GetterOnlyCurveSupportsConsecutiveExactEditsAndHistory()
     {
         Undo.ClearHistory();
@@ -62,6 +181,12 @@ public sealed class InspectorFloatCurveActionsTests
             Assert.That(InspectorFloatCurveActions.Add(source!, 1,
                 out _), Is.True);
             Assert.That(shared.Keyframes.Count, Is.EqualTo(1));
+            FloatKeyframe sharedKey = shared.Keyframes.First!;
+            Assert.That(InspectorFloatCurveActions.SetInterpolation(source!,
+                sharedKey, true, EVectorInterpType.Step), Is.True);
+            Assert.That(sharedKey.InterpolationTypeOut, Is.EqualTo(EVectorInterpType.Step));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(sharedKey.InterpolationTypeOut, Is.EqualTo(EVectorInterpType.Linear));
             Assert.That(Undo.TryUndo(), Is.True);
             Assert.That(shared.Keyframes.Count, Is.Zero);
 
