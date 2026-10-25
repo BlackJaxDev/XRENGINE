@@ -6,6 +6,47 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VectorKeyframeAuthoredStateTests
 {
+    [TestCase(0)]
+    [TestCase(1)]
+    [TestCase(2)]
+    public void StagedSyncSetterCapturesItsCompleteHandleSideEffects(int syncPart)
+    {
+        PropAnimFloat animation = new(2, false, true);
+        FloatKeyframe key = new(0.5f, 1f, 0f, EVectorInterpType.Hermite);
+        key.RestorePublishedHandles(2, 4, -2, 4,
+            EVectorInterpType.Hermite, EVectorInterpType.Hermite,
+            false, false, false);
+        animation.Keyframes.Add(key);
+        Assert.That(key.TryCaptureAuthoredState(out var before), Is.True);
+        FloatKeyframe staged = new();
+        staged.RestorePublishedHandles(before.InValue, before.OutValue,
+            before.InTangent, before.OutTangent,
+            before.InterpolationIn, before.InterpolationOut,
+            before.SyncValues, before.SyncDirections, before.SyncMagnitudes);
+        switch (syncPart)
+        {
+            case 0: staged.SyncInOutValues = true; break;
+            case 1: staged.SyncInOutTangentDirections = true; break;
+            case 2: staged.SyncInOutTangentMagnitudes = true; break;
+        }
+        Assert.That(staged.TryCaptureAuthoredState(out var after), Is.True);
+        if (syncPart == 0)
+            Assert.That((after.InValue, after.OutValue, after.SyncValues),
+                Is.EqualTo((3f, 3f, true)));
+        else
+            Assert.That((after.InTangent, after.OutTangent,
+                syncPart == 1 ? after.SyncDirections : after.SyncMagnitudes),
+                Is.EqualTo((-3f, 3f, true)));
+        Assert.That(key.TryApplyAuthoredState(before, after,
+            animation.Keyframes), Is.True);
+        Assert.That(key.TryCaptureAuthoredState(out var committed), Is.True);
+        Assert.That(committed, Is.EqualTo(after));
+        Assert.That(key.TryApplyAuthoredState(after, before,
+            animation.Keyframes), Is.True);
+        Assert.That(key.TryCaptureAuthoredState(out var restored), Is.True);
+        Assert.That(restored, Is.EqualTo(before));
+    }
+
     [Test]
     public void ExactInterpolationEditChangesSamplingAndRestoresHandles()
     {

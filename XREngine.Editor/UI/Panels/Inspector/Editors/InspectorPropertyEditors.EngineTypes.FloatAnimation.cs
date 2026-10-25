@@ -59,11 +59,20 @@ public static partial class InspectorPropertyEditors
             private UITextComponent? _status;
             private UITextInputComponent? _time;
             private UITextInputComponent? _value;
+            private UITextInputComponent? _inValue;
+            private UITextInputComponent? _inTangent;
+            private UITextInputComponent? _outTangent;
             private UITextInputComponent? _length;
             private UIButtonComponent? _inModeButton;
             private UIButtonComponent? _outModeButton;
             private UITextComponent? _inModeLabel;
             private UITextComponent? _outModeLabel;
+            private UIButtonComponent? _syncValuesButton;
+            private UIButtonComponent? _syncDirectionsButton;
+            private UIButtonComponent? _syncMagnitudesButton;
+            private UITextComponent? _syncValuesLabel;
+            private UITextComponent? _syncDirectionsLabel;
+            private UITextComponent? _syncMagnitudesLabel;
             private FloatKeyframe? _selected;
             private float _plotWidth;
             private float _plotHeight;
@@ -110,9 +119,30 @@ public static partial class InspectorPropertyEditors
                 fieldLayout.ItemSpacing = 5;
                 _time = AddInput(fields, "Key time", 100, SubmitTime);
                 if (!ContinueBuild()) return;
-                _value = AddInput(fields, "Key value", 110, SubmitValue);
+                _value = AddInput(fields, "Out value", 110, SubmitValue);
                 if (!ContinueBuild()) return;
                 _length = AddInput(fields, "Length", 100, SubmitLength);
+                if (!ContinueBuild()) return;
+
+                SceneNode handles = card.NewChild();
+                if (!ContinueBuild()) return;
+                UIListTransform handlesLayout = handles.SetTransform<UIListTransform>();
+                if (!ContinueBuild()) return;
+                handlesLayout.DisplayHorizontal = true;
+                if (!ContinueBuild()) return;
+                handlesLayout.ItemSpacing = 5;
+                if (!ContinueBuild()) return;
+                _inValue = AddInput(handles, "In value", 105, SubmitIncomingValue);
+                if (!ContinueBuild()) return;
+                _inTangent = AddInput(handles, "In tangent", 105, SubmitIncomingTangent);
+                if (!ContinueBuild()) return;
+                _outTangent = AddInput(handles, "Out tangent", 105, SubmitOutgoingTangent);
+                if (!ContinueBuild()) return;
+                _inValue!.IsEnabled = false;
+                if (!ContinueBuild()) return;
+                _inTangent!.IsEnabled = false;
+                if (!ContinueBuild()) return;
+                _outTangent!.IsEnabled = false;
                 if (!ContinueBuild()) return;
 
                 SceneNode actions = card.NewChild();
@@ -149,6 +179,47 @@ public static partial class InspectorPropertyEditors
                 _outModeButton = outModeButton;
                 _outModeLabel = outModeLabel;
                 _outModeButton.IsEnabled = false;
+                if (!ContinueBuild()) return;
+
+                SceneNode syncRow = card.NewChild();
+                if (!ContinueBuild()) return;
+                UIListTransform syncLayout = syncRow.SetTransform<UIListTransform>();
+                if (!ContinueBuild()) return;
+                syncLayout.DisplayHorizontal = true;
+                if (!ContinueBuild()) return;
+                syncLayout.ItemSpacing = 5;
+                if (!ContinueBuild()) return;
+                var (_, syncValuesButton, _, syncValuesLabel) =
+                    NativeUIElements.CreateButton(syncRow, "Link values: —",
+                        _ => ToggleSync(0), width: 135);
+                if (!ContinueBuild()) return;
+                _syncValuesButton = syncValuesButton;
+                _syncValuesLabel = syncValuesLabel;
+                _syncValuesButton.IsEnabled = false;
+                if (!ContinueBuild()) return;
+                var (_, syncDirectionsButton, _, syncDirectionsLabel) =
+                    NativeUIElements.CreateButton(syncRow, "Link directions: —",
+                        _ => ToggleSync(1), width: 160);
+                if (!ContinueBuild()) return;
+                _syncDirectionsButton = syncDirectionsButton;
+                _syncDirectionsLabel = syncDirectionsLabel;
+                _syncDirectionsButton.IsEnabled = false;
+                if (!ContinueBuild()) return;
+
+                SceneNode syncMagnitudeRow = card.NewChild();
+                if (!ContinueBuild()) return;
+                UIListTransform syncMagnitudeLayout =
+                    syncMagnitudeRow.SetTransform<UIListTransform>();
+                if (!ContinueBuild()) return;
+                syncMagnitudeLayout.DisplayHorizontal = true;
+                if (!ContinueBuild()) return;
+                var (_, syncMagnitudesButton, _, syncMagnitudesLabel) =
+                    NativeUIElements.CreateButton(syncMagnitudeRow,
+                        "Link magnitudes: —", _ => ToggleSync(2), width: 160);
+                if (!ContinueBuild()) return;
+                _syncMagnitudesButton = syncMagnitudesButton;
+                _syncMagnitudesLabel = syncMagnitudesLabel;
+                _syncMagnitudesButton.IsEnabled = false;
                 if (!ContinueBuild()) return;
 
                 _plot = new UIRetainedPlot(card, "FloatAnimationPlot");
@@ -528,12 +599,56 @@ public static partial class InspectorPropertyEditors
                     _outModeLabel.Text = enabled ? $"Out: {key!.InterpolationTypeOut}" : "Out: —";
                 if (!IsCurrent(source, revision)) return;
                 if (_outModeButton is not null) _outModeButton.IsEnabled = enabled;
+                if (!IsCurrent(source, revision)) return;
+                if (_inValue is not null)
+                    _inValue.Text = enabled ? key!.InValue.ToString("G9",
+                        CultureInfo.InvariantCulture) : "";
+                if (!IsCurrent(source, revision)) return;
+                if (_inValue is not null) _inValue.IsEnabled = enabled;
+                if (!IsCurrent(source, revision)) return;
+                if (_inTangent is not null)
+                    _inTangent.Text = enabled ? key!.InTangent.ToString("G9",
+                        CultureInfo.InvariantCulture) : "";
+                if (!IsCurrent(source, revision)) return;
+                if (_inTangent is not null) _inTangent.IsEnabled = enabled;
+                if (!IsCurrent(source, revision)) return;
+                if (_outTangent is not null)
+                    _outTangent.Text = enabled ? key!.OutTangent.ToString("G9",
+                        CultureInfo.InvariantCulture) : "";
+                if (!IsCurrent(source, revision)) return;
+                if (_outTangent is not null) _outTangent.IsEnabled = enabled;
+                if (!IsCurrent(source, revision)) return;
+                if (_syncValuesLabel is not null)
+                    _syncValuesLabel.Text = enabled
+                        ? $"Link values: {OnOff(key!.SyncInOutValues)}" : "Link values: —";
+                if (!IsCurrent(source, revision)) return;
+                if (_syncValuesButton is not null) _syncValuesButton.IsEnabled = enabled;
+                if (!IsCurrent(source, revision)) return;
+                if (_syncDirectionsLabel is not null)
+                    _syncDirectionsLabel.Text = enabled
+                        ? $"Link directions: {OnOff(key!.SyncInOutTangentDirections)}"
+                        : "Link directions: —";
+                if (!IsCurrent(source, revision)) return;
+                if (_syncDirectionsButton is not null)
+                    _syncDirectionsButton.IsEnabled = enabled;
+                if (!IsCurrent(source, revision)) return;
+                if (_syncMagnitudesLabel is not null)
+                    _syncMagnitudesLabel.Text = enabled
+                        ? $"Link magnitudes: {OnOff(key!.SyncInOutTangentMagnitudes)}"
+                        : "Link magnitudes: —";
+                if (!IsCurrent(source, revision)) return;
+                if (_syncMagnitudesButton is not null)
+                    _syncMagnitudesButton.IsEnabled = enabled;
             }
+
+            private static string OnOff(bool value) => value ? "on" : "off";
 
             private bool IsPresentedKey(InspectorFloatCurveSource source,
                 FloatKeyframe key)
                 => ReferenceEquals(key.OwningTrack, source.Track) &&
                     key.TryCaptureAuthoredState(out _) &&
+                    float.IsFinite(key.InValue) && float.IsFinite(key.OutValue) &&
+                    float.IsFinite(key.InTangent) && float.IsFinite(key.OutTangent) &&
                     _ids.TryGetValue(key, out ulong id) && _keys.TryGetValue(id,
                         out FloatKeyframe? current) && ReferenceEquals(current, key);
 
@@ -561,6 +676,52 @@ public static partial class InspectorPropertyEditors
                 if (CanEdit(out var source) && _selected is { } key &&
                     Parse(input, out float value))
                     InspectorFloatCurveActions.SetValue(source, key, value);
+                RequestRefresh();
+            }
+
+            private void SubmitIncomingValue(UITextInputComponent input)
+            {
+                if (CanEdit(out var source) && _selected is { } key &&
+                    IsPresentedKey(source, key) && Parse(input, out float value))
+                    InspectorFloatCurveActions.SetIncomingValue(source, key, value);
+                RequestRefresh();
+            }
+
+            private void SubmitIncomingTangent(UITextInputComponent input)
+                => SubmitTangent(input, outgoing: false);
+
+            private void SubmitOutgoingTangent(UITextInputComponent input)
+                => SubmitTangent(input, outgoing: true);
+
+            private void SubmitTangent(UITextInputComponent input, bool outgoing)
+            {
+                if (CanEdit(out var source) && _selected is { } key &&
+                    IsPresentedKey(source, key) && Parse(input, out float value))
+                    InspectorFloatCurveActions.SetTangent(source, key, outgoing, value);
+                RequestRefresh();
+            }
+
+            private void ToggleSync(int part)
+            {
+                if (CanEdit(out var source) && _selected is { } key &&
+                    IsPresentedKey(source, key))
+                {
+                    switch (part)
+                    {
+                        case 0:
+                            InspectorFloatCurveActions.SetSyncValues(source, key,
+                                !key.SyncInOutValues);
+                            break;
+                        case 1:
+                            InspectorFloatCurveActions.SetSyncDirections(source, key,
+                                !key.SyncInOutTangentDirections);
+                            break;
+                        case 2:
+                            InspectorFloatCurveActions.SetSyncMagnitudes(source, key,
+                                !key.SyncInOutTangentMagnitudes);
+                            break;
+                    }
+                }
                 RequestRefresh();
             }
 
@@ -633,6 +794,9 @@ public static partial class InspectorPropertyEditors
                 }
                 if (_time is not null) _time.Submitted -= SubmitTime;
                 if (_value is not null) _value.Submitted -= SubmitValue;
+                if (_inValue is not null) _inValue.Submitted -= SubmitIncomingValue;
+                if (_inTangent is not null) _inTangent.Submitted -= SubmitIncomingTangent;
+                if (_outTangent is not null) _outTangent.Submitted -= SubmitOutgoingTangent;
                 if (_length is not null) _length.Submitted -= SubmitLength;
                 _rows.Replace([]);
                 _keys.Clear();

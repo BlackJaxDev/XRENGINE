@@ -1,13 +1,13 @@
 # Retained UI Implementation Checkpoint
 
-Date: 2026-10-24
+Date: 2026-10-25
 Status: Active implementation
 Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **50 of 60 implementation items are complete**.
-The active TODO has 10 code items and four owner decisions. Later sections
+Latest code reconciliation: **51 of 60 implementation items are complete**.
+The active TODO has nine code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -1492,3 +1492,28 @@ through validation. The six new editor action/history cases compiled only; the
 portable sampling/reversal case executed. The 39 maintained relative links resolve
 and diff checks pass. Windows controls, Undo execution, visuals, and GPU checks
 remain pending. The original reconciliation remains **50/60**.
+
+
+## Unweighted Float Handles And Hierarchy Reconciliation
+
+The native float detail adds incoming value, both tangents, and three sync
+controls through the existing exact authored-state transaction. The controls
+show complete unification effects and reject nonfinite computed handles before
+editing the live source. Weighted-handle authoring remains open.
+
+Headless build208 passed with zero warnings/errors in 3m11.65s. Run153 passed
+10/10 authored-state cases in 0.167s. Full run154 passed **1,265/1,265** in 26.713s,
+with no failures, warnings, or skips. Desktop build64 compiled editor and tests
+with zero warnings/errors in 3m19.50s. All **10,829** source inputs stayed unchanged
+through validation. Three new sync cases execute portably; two new editor
+history/overflow cases compiled only. The 39 relative documentation links resolve
+and diff checks pass.
+
+The hierarchy adoption item is now source-complete. A source audit confirmed all
+listed model, row, visibility, selection, rename, menu, and shared asset-spawn
+routes. Its remaining Windows workflows belong to the validation document. This
+is a reconciliation of existing implementation, not new runtime acceptance. The
+original count is now **51/60**, with nine implementation items and four original
+owner decisions remaining. Grouped duplication, control lifetimes, three pending
+proposals, Windows/GPU/IME checks, and performance acceptance remain open. ImGui
+remains the default.

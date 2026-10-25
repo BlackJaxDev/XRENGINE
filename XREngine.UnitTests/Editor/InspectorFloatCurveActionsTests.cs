@@ -9,6 +9,87 @@ namespace XREngine.UnitTests.Editor;
 public sealed class InspectorFloatCurveActionsTests
 {
     [Test]
+    public void UnweightedHandleAndSyncEditsUndoCompleteAuthoredState()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat curve = new(2, false, true);
+            FloatKeyframe key = new(12, 24, 1, 3, -2, 4,
+                EVectorInterpType.Hermite);
+            key.RestorePublishedHandles(1, 3, -2, 4,
+                EVectorInterpType.Hermite, EVectorInterpType.Hermite,
+                false, false, false);
+            curve.Keyframes.Add(key);
+            curve.Keyframes.Add(new FloatKeyframe(1.5f, 7, 0,
+                EVectorInterpType.Hermite));
+            curve.Seek(0.4f, false);
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
+                out var source, out string reason), Is.True, reason);
+            Assert.That(key.TryCaptureAuthoredState(out var before), Is.True);
+            float sampledBefore = curve.GetValue(1f);
+
+            Assert.That(InspectorFloatCurveActions.SetIncomingValue(source!, key, 5), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetTangent(source!, key, false, -3), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetTangent(source!, key, true, 6), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetSyncValues(source!, key, true), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetSyncDirections(source!, key, true), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetSyncMagnitudes(source!, key, true), Is.True);
+            Assert.That(key.TryCaptureAuthoredState(out var after), Is.True);
+            Assert.That((after.SyncValues, after.SyncDirections, after.SyncMagnitudes),
+                Is.EqualTo((true, true, true)));
+            Assert.That((after.InValue, after.OutValue, after.InTangent,
+                after.OutTangent), Is.EqualTo((4f, 4f, -4.5f, 4.5f)));
+            Assert.That(curve.GetValue(1f), Is.Not.EqualTo(sampledBefore));
+            Assert.That((key.Second, key.AuthoredFrameIndex, curve.CurrentTime),
+                Is.EqualTo((0.5f, 12, 0.4f)));
+
+            for (int index = 0; index < 6; index++)
+                Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(key.TryCaptureAuthoredState(out var restored), Is.True);
+            Assert.That(restored, Is.EqualTo(before));
+            for (int index = 0; index < 6; index++)
+                Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(key.TryCaptureAuthoredState(out var redone), Is.True);
+            Assert.That(redone, Is.EqualTo(after));
+            Assert.That((key.Second, key.AuthoredFrameIndex, curve.CurrentTime),
+                Is.EqualTo((0.5f, 12, 0.4f)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void SyncRejectsNonFiniteComputedHandleBeforeEditingKey()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat curve = new(2, false, true);
+            FloatKeyframe key = new(0.5f, 1, 0,
+                EVectorInterpType.Linear);
+            key.RestorePublishedHandles(float.MaxValue, float.MaxValue, 0, 0,
+                EVectorInterpType.Linear, EVectorInterpType.Linear,
+                false, false, false);
+            curve.Keyframes.Add(key);
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
+                out var source, out _), Is.True);
+            Assert.That(key.TryCaptureAuthoredState(out var before), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetSyncValues(source!, key, true),
+                Is.False);
+            Assert.That(key.TryCaptureAuthoredState(out var after), Is.True);
+            Assert.That(after, Is.EqualTo(before));
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void InterpolationModesChangeSamplingAndPreserveExactKeyHistory()
     {
         Undo.ClearHistory();

@@ -1792,6 +1792,14 @@ a callback that changes either value causes a guarded conflict rather than stale
 Undo history. Mode changes preserve values, tangents, and synchronization flags.
 Sampling does not seek playback.
 
+Selected float keys also expose incoming value, outgoing value, both tangents,
+and the three synchronization flags. Detached staged setters compute the full
+handle state, including the existing unification effects. The transaction applies
+that complete state and reverses it exactly. Nonfinite input or computed handles
+are rejected before a live-key mutation. Compact fields and toggle rows refresh
+only when dirty and disable for unavailable selections. Weighted mode and weights
+are preserved but are outside this editor's authored-state controls.
+
 ## Child Destruction Dispatch
 
 Ordinary SceneNode teardown snapshots each child node and transform with their
@@ -1810,3 +1818,21 @@ during destruction. This is not concurrent mutation admission and does not guard
 transfer inside the selected child's own Destroying callback, away-and-back
 history, or TransformBase's separate detach loop. Full menu ownership remains
 open.
+
+
+## Hierarchy Model Adoption
+
+The native hierarchy uses the live scene/world model.
+`HierarchyPanel.VirtualTree.RebuildVirtualTree`, `AppendSourceScene`, and
+`AppendSourceNode` populate scene sections, editor scenes, and unassigned roots.
+`UIVirtualTreeProvider` reuses the controls from `CreateHierarchyRow` and
+`BindHierarchyRow`. Source subscriptions update names, visibility, active state,
+and dirty markers. Modifier selection, menus, and rename use the panel's shared
+selection and mutation paths.
+
+`HandleVirtualNodeDrop` handles scene-node targets. Root and node asset drops use
+the existing `TryHandleDroppedSpawnableAsset` path for prefab and model sources,
+including hidden-scene parents. This completes the source-level hierarchy adoption
+contract. It does not establish Windows interaction or model-drop acceptance.
+Grouped multi-root duplication and general control-lifetime contracts remain
+separate work.

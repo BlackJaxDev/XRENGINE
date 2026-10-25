@@ -92,6 +92,41 @@ internal static class InspectorFloatCurveActions
             staged => staged.OutValue = value);
     }
 
+    public static bool SetIncomingValue(InspectorFloatCurveSource source,
+        FloatKeyframe key, float value)
+    {
+        if (!float.IsFinite(value)) return false;
+        return EditState(source, key, "Edit Animation Incoming Value",
+            staged => staged.InValue = value);
+    }
+
+    public static bool SetTangent(InspectorFloatCurveSource source,
+        FloatKeyframe key, bool outgoing, float value)
+    {
+        if (!float.IsFinite(value)) return false;
+        return EditState(source, key, outgoing ? "Edit Animation Out Tangent" :
+            "Edit Animation In Tangent", staged =>
+            {
+                if (outgoing) staged.OutTangent = value;
+                else staged.InTangent = value;
+            });
+    }
+
+    public static bool SetSyncValues(InspectorFloatCurveSource source,
+        FloatKeyframe key, bool enabled)
+        => EditState(source, key, "Link Animation Values",
+            staged => staged.SyncInOutValues = enabled);
+
+    public static bool SetSyncDirections(InspectorFloatCurveSource source,
+        FloatKeyframe key, bool enabled)
+        => EditState(source, key, "Link Animation Tangent Directions",
+            staged => staged.SyncInOutTangentDirections = enabled);
+
+    public static bool SetSyncMagnitudes(InspectorFloatCurveSource source,
+        FloatKeyframe key, bool enabled)
+        => EditState(source, key, "Link Animation Tangent Magnitudes",
+            staged => staged.SyncInOutTangentMagnitudes = enabled);
+
     public static bool SetInterpolation(InspectorFloatCurveSource source,
         FloatKeyframe key, bool outgoing, EVectorInterpType mode)
     {
@@ -121,7 +156,9 @@ internal static class InspectorFloatCurveActions
             before.InterpolationIn, before.InterpolationOut,
             before.SyncValues, before.SyncDirections, before.SyncMagnitudes);
         edit(staged);
-        if (!staged.TryCaptureAuthoredState(out var after) || after == before)
+        if (!staged.TryCaptureAuthoredState(out var after) || after == before ||
+            !float.IsFinite(after.InValue) || !float.IsFinite(after.OutValue) ||
+            !float.IsFinite(after.InTangent) || !float.IsFinite(after.OutTangent))
             return false;
         bool Owns() => source.IsCurrent() &&
             ReferenceEquals(key.OwningTrack, source.Track) &&

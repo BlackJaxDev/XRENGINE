@@ -817,3 +817,44 @@ inputs stayed unchanged through final validation. Six new editor action/history
 cases compiled only. The portable case tests exact authored-state sampling and
 reversal; it does not execute the new editor command or controls. The 39 maintained
 relative links resolve and diff checks pass.
+
+
+## Hierarchy Code And Acceptance Reconciliation
+
+A read-only source audit found no missing implementation in the first hierarchy
+adoption item's exact done condition. Root review confirmed the live scene/tree
+population, reusable row binding, visibility mutation, and shared asset-drop
+routes. The remaining reason recorded in the checkbox was Windows execution.
+Repository guidance assigns those checks to the validation document, so the
+source-complete item is removed from the code TODO. The reconciliation is now
+51/60 code items, with nine broad implementation items remaining. This is a
+reclassification of existing code, not a newly executed runtime result.
+
+The source seams are HierarchyPanel.VirtualTree, Sources, Rows, Menu, Rename, and
+EditorImGuiUI.ModelDropSpawn.TryHandleDroppedSpawnableAsset. Existing hierarchy
+workflow, selection, mutation, scene-ownership, menu, and prefab-spawn cases
+corroborate the routes but remain compile-only on Linux. Model drops have no
+fixture, and native mouse/menu checks remain pending. Grouped multi-root
+duplication stays in its separate open implementation item.
+
+
+## Unweighted Float Handle Authoring
+
+The retained detail adds incoming value, both tangent inputs, and the three sync
+flags. The existing value field is labeled Out value. All actions use the same
+staged authored-state transaction. This retains complete setter side effects
+and rejects nonfinite computed handles before the live key or Undo changes.
+Weighted mode and weights are preserved but remain outside these controls.
+
+Read-only review found no blocker in state ownership, sync math, callback guards,
+or idle allocations. Headless build208 passed with zero warnings/errors in
+3m11.65s. Run153 passed ten authored-state cases in 0.167s. Full run154 passed
+1,265/1,265 in 26.713s, with no failures, warnings, or skips. Two new editor cases
+cover six consecutive edits with Undo/Redo and pre-mutation overflow rejection;
+they need Windows execution. Portable tests cover sync effects and exact reversal.
+
+Desktop build64 passed with zero warnings/errors in 3m19.50s. All 10,829 source
+inputs stayed unchanged through validation. The 39 maintained relative links
+resolve and diff checks pass. The active TODO has nine implementation checkboxes,
+consistent with the 51/60 source reconciliation. No Windows, graphics, input,
+visual, or benchmark acceptance is inferred.
