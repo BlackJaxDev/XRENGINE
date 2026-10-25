@@ -4,6 +4,7 @@ using Shouldly;
 using XREngine.Data.Core;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -220,4 +221,52 @@ public sealed partial class UIContextMenuNavigationTests
         }
         finally { root.Destroy(true); }
     }
+
+    [TestCase("moved", false)]
+    [TestCase("moved", true)]
+    [TestCase("node", false)]
+    [TestCase("node", true)]
+    [TestCase("transform", false)]
+    [TestCase("transform", true)]
+    public void ContentAttachmentOwnershipChangeStopsTheBuilder(string change, bool custom)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            SceneNode other = root.NewChild();
+            SceneNode? transferred = null;
+            var children = menu.Transform.Children;
+            void ChangeOwner(TransformBase transform)
+            {
+                children.PostAnythingAdded -= ChangeOwner;
+                transferred = transform.SceneNode!;
+                switch (change)
+                {
+                    case "moved": transform.SetParent(other.Transform, false, EParentAssignmentMode.Immediate); break;
+                    case "node": transferred.Generate(); break;
+                    case "transform": transform.Generate(); break;
+                }
+            }
+            children.PostAnythingAdded += ChangeOwner;
+            bool builderCalled = false;
+            Action show = custom
+                ? () => menu.ShowContent(Vector2.Zero, 40, _ => builderCalled = true)
+                : () => menu.Show(Vector2.Zero, new ContextMenuItem("Action", null));
+
+            Should.Throw<InvalidOperationException>(show);
+
+            transferred.ShouldNotBeNull().IsDestroyed.ShouldBeFalse();
+            transferred!.Name.ShouldBe("ContextMenuContent");
+            transferred.Transform.Children.ShouldBeEmpty();
+            if (change == "moved") transferred.Parent.ShouldBeSameAs(other);
+            builderCalled.ShouldBeFalse();
+            menu.IsOpen.ShouldBeFalse();
+            input.SubscriberCount.ShouldBe(0);
+            menu.Show(Vector2.Zero, new ContextMenuItem("Recovered", null));
+            Rows(menu).Single().Item!.Label.ShouldBe("Recovered");
+        }
+        finally { root.Destroy(true); }
+    }
+
 }

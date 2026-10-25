@@ -395,3 +395,21 @@ passed **1,166/1,166** in 23.189s, without failures, warnings, or skips. Desktop
 build51 compiled the editor and tests with zero warnings/errors in 3m35.64s. All
 10,808 source inputs stayed unchanged through these final checks. Native input
 acceptance remains pending; the broad shared-control item stays open.
+
+## Menu Content Root Attachment
+
+Six new cases changed the content root's parent, node lifetime, or transform
+lifetime inside its attachment callback. Both ordinary and custom-content menus
+were covered. Headless build187 passed with zero warnings/errors in 2m41.41s.
+Baseline run128 passed **75/79** in 2.909s. Parent transfer already failed safely;
+the four node/transform lifetime cases did not abort construction.
+
+CreateContentRoot now validates the captured root and show immediately after
+SetParent returns. It stops before configuring a root from another lifetime or
+invoking a custom builder. Cleanup reuses the same ownership predicate and keeps
+the transferred root. Build188 passed with zero warnings/errors in 1m07.58s;
+run129 passed **79/79** in 2.526s. Full run130 passed **1,172/1,172** in 22.308s,
+without failures, warnings, or skips. Desktop build52 compiled the editor and
+tests with zero warnings/errors in 3m20.33s. All 10,808 source inputs stayed
+unchanged through these checks. This does not close the broader child
+construction/teardown item.

@@ -34,8 +34,8 @@ rebuild, and transfer. These native interaction checks remain pending.
 
 ### Managed integration evidence
 
-Latest continuation check (2026-10-25): headless build186 passed with zero
-warnings/errors, and run127 passed **1,166/1,166** tests with no failures or skips.
+Latest continuation check (2026-10-25): headless build188 passed with zero
+warnings/errors, and run130 passed **1,172/1,172** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
@@ -48,7 +48,8 @@ Asset menu and rename-draft admission add 22 cases, including unchanged refresh,
 changed selection, retired fields, and replaced paths. Table activation adds 18
 cases for selection reentry, recycled rows, stale actions, highlight writes,
 partial bindings, and stale source revisions.
-Desktop test build51
+Six menu content-root cases also cover attachment ownership and lifetime changes.
+Desktop test build52
 compiled the final editor and test assembly with zero warnings/errors. All 10,808
 source inputs stayed unchanged through the final desktop build and portable run.
 Six new AssetsPanelSelectionTests cases compiled but did not execute. A desktop

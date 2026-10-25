@@ -444,7 +444,7 @@ namespace XREngine.Rendering.UI
             SceneNode listParent = SceneNode;
             if (ordinaryItems)
             {
-                SceneNode scrollNode = CreateContentRoot(new UIScrollableTransform());
+                SceneNode scrollNode = CreateContentRoot(new UIScrollableTransform(), showRevision);
                 scrollNode.Name = "ContextMenuScroll";
                 UIScrollableTransform scroll = (UIScrollableTransform)scrollNode.Transform;
                 scroll.MinAnchor = Vector2.Zero;
@@ -457,7 +457,7 @@ namespace XREngine.Rendering.UI
                 scrollInput.ConsumeWheelAtBoundary = true;
                 listParent = scrollNode;
             }
-            var listNode = ordinaryItems ? listParent.NewChild() : CreateContentRoot(new UIListTransform());
+            var listNode = ordinaryItems ? listParent.NewChild() : CreateContentRoot(new UIListTransform(), showRevision);
             listNode.Name = "ContextMenuList";
             var listTfm = ordinaryItems ? listNode.SetTransform<UIListTransform>() : (UIListTransform)listNode.Transform;
             listTfm.DisplayHorizontal = false;
@@ -612,11 +612,7 @@ namespace XREngine.Rendering.UI
             try
             {
                 SceneNode? root = _contentRoot;
-                bool owned = root is not null && _contentRootIdentity.IsCurrent &&
-                    _contentTransformIdentity.IsCurrent && _contentParentIdentity.IsCurrent &&
-                    ReferenceEquals(root.Transform, _contentTransformIdentity.Target) &&
-                    ReferenceEquals(root.Transform.Parent, _contentParentIdentity.Target) &&
-                    ReferenceEquals(Transform, _contentParentIdentity.Target);
+                bool owned = root is not null && OwnsContentRoot(root);
                 _contentRoot = null;
                 _contentRootIdentity = default;
                 _contentTransformIdentity = default;
@@ -632,7 +628,14 @@ namespace XREngine.Rendering.UI
             }
         }
 
-        private SceneNode CreateContentRoot(UIBoundableTransform transform)
+        private bool OwnsContentRoot(SceneNode root)
+            => ReferenceEquals(root, _contentRoot) && _contentRootIdentity.IsCurrent &&
+                _contentTransformIdentity.IsCurrent && _contentParentIdentity.IsCurrent &&
+                ReferenceEquals(root.Transform, _contentTransformIdentity.Target) &&
+                ReferenceEquals(root.Transform.Parent, _contentParentIdentity.Target) &&
+                ReferenceEquals(Transform, _contentParentIdentity.Target);
+
+        private SceneNode CreateContentRoot(UIBoundableTransform transform, ulong showRevision)
         {
             SceneNode root = new("ContextMenuContent", transform);
             _contentRoot = root;
@@ -640,6 +643,11 @@ namespace XREngine.Rendering.UI
             _contentTransformIdentity = ObjectConstructionIdentity.Capture(transform);
             _contentParentIdentity = ObjectConstructionIdentity.Capture(Transform);
             transform.SetParent(Transform, false, EParentAssignmentMode.Immediate);
+            // Attachment publishes callbacks before the builder can configure this root.
+            // Continue only while the captured root still belongs to this show.
+            if (!IsCurrentShow(showRevision) || !OwnsContentRoot(root) ||
+                root.IsDestroyed || root.IsDestroyQueued || transform.IsDestroyed || transform.IsDestroyQueued)
+                throw new InvalidOperationException("Context menu content changed ownership during attachment.");
             return root;
         }
 

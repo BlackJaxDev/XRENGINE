@@ -1329,3 +1329,17 @@ with zero warnings/errors; full run127 passed **1,166/1,166**, without failures,
 warnings, or skips. Desktop build51 compiled the editor and tests with zero
 warnings/errors. All 10,808 source inputs stayed unchanged. Windows input and
 broader controls acceptance remain pending. The reconciliation remains **50/60**.
+
+## Menu Content Root Ownership
+
+Menu construction checks its captured content root after attachment callbacks.
+A changed node or transform lifetime stops construction before configuration
+or a custom builder call. Cleanup preserves the transferred root. Six cases
+cover parent transfer and node/transform lifetime changes for ordinary and custom
+content. Four new cases failed before repair; parent transfer already failed safely.
+
+Headless build188 passed with zero warnings/errors. Run129 passed **79/79** menu
+cases; full run130 passed **1,172/1,172**, without failures, warnings, or skips.
+Desktop build52 compiled the editor and tests with zero warnings/errors. All
+10,808 source inputs stayed unchanged. Individual child property, construction,
+and destruction callbacks remain open. The broader count remains **50/60**.

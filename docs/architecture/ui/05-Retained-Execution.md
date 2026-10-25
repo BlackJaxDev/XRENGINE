@@ -803,6 +803,9 @@ does not sweep unrelated children or destroy content transferred to another
 owner. Requests and content receipts are cleared on terminal component cleanup.
 Full callback-safe construction/teardown, including failures and ownership
 changes inside individual child construction/destruction callbacks, remains open.
+Content-root attachment checks the exact root, transform, parent, and show after
+SetParent callbacks return. A changed lifetime stops construction before root
+configuration or a custom builder callback. Cleanup preserves the transferred root.
 This contract does not establish native keyboard or IME acceptance.
 
 ## Native asset row actions
