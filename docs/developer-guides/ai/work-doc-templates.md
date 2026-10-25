@@ -2,8 +2,6 @@
 
 Use these templates for work docs in the private `BlackJaxDev/XRENGINE-WORK-DOCS` repository. `<work-docs-repo>` is its local checkout, normally a sibling of the XRENGINE checkout. Each document kind holds one kind of information.
 
-[Work docs index](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/README.md) · [Testing docs index](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/README.md)
-
 ## Document Kinds
 
 | Document kind | Location | Holds | Does not hold |

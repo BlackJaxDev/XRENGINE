@@ -12,7 +12,7 @@ General scene materials use the GPU material table:
 
 The current material row is the standard opaque-deferred row. Its canonical contract is `MaterialBindingLayouts.OpaqueDeferred`; `GPUMaterialTable`, the generated material-table draw shader, and the shared GLSL material table header must agree on that layout hash and 144-byte (36-word) row shape.
 
-The broader upgrade for additional pass-declared layouts and shader annotation-driven conversion is tracked in [Dynamic Indirect Material Bindings](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/dynamic-indirect-material-bindings.md), with runtime ladder work tracked by the material-table TODOs.
+A broader upgrade to additional pass-declared layouts and shader annotation-driven conversion is planned.
 
 Texture arrays are not the fallback for arbitrary material diversity. They are allowed only for genuinely homogeneous resource classes where every layer has the same semantic, dimensions, format, sampling policy, and lifetime pattern:
 

@@ -2,8 +2,6 @@
 
 The native hierarchy panel is the native UI tree editor for worlds, scenes, and scene nodes. The ImGui hierarchy remains the default day-to-day editor path, but the native hierarchy now has the tree-editing features needed for production UI work.
 
-This feature doc promotes the completed porting plan from `<work-docs-repo>/design/UI/native-hierarchy-porting-plan.md`.
-
 ## Capabilities
 
 The panel supports:

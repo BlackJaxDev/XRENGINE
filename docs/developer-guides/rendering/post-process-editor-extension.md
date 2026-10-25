@@ -100,7 +100,3 @@ public override IReadOnlyList<string> PreferredPreviewFrameBufferNames => ...;
 ## Target Pipeline Selection
 
 The camera editor lists the active viewport pipeline first, then the other candidate pipelines. It stores the selected pipeline ID in per-camera editor state. Post-process values persist in `CameraPostProcessStateCollection` for each pipeline ID, so edits for one pipeline do not change another.
-
-## Validation
-
-Runtime checks for this feature are in the [Default and Advanced pipeline validation doc](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/default-and-advanced-pipeline-validation.md#post-process-editor).

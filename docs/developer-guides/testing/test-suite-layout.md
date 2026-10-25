@@ -1,6 +1,6 @@
 # Test Suite Layout
 
-[Developer guides](../README.md) · [Unit test project reorganization TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/tests/unit-test-project-reorganization-todo.md)
+[Developer guides](../README.md)
 
 This guide defines where tests belong. Tests must verify code behavior or stable contracts. Tests must not read Markdown docs in `docs/`, `README.md`, todo files, or guide files.
 

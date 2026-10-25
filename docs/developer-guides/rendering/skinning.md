@@ -5,11 +5,6 @@ skin-palette rows for both direct vertex rendering and compute skinning. The
 runtime goal is to reduce mesh influence bandwidth, palette upload cost, and
 redundant compute dispatches while preserving authored deformation quality.
 
-Open implementation work is tracked in
-[Skinning GPU Efficiency Follow-Ups TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/gpu/skinning-gpu-efficiency-followups-todo.md).
-Longer-horizon ideas live in
-[Skinning Deferred GPU Efficiency Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/gpu/skinning-deferred-gpu-efficiency-design.md).
-
 ## Runtime Contract
 
 - Mesh influences use `BoneInfluenceCoreIndices`,

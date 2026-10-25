@@ -1,6 +1,6 @@
 # Portable Engine Host
 
-[Runtime Project Organization](project-organization.md) · [Portable Project Rules](../../developer-guides/runtime/portable-projects.md) · [Platform Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/platform/platform-validation.md)
+[Runtime Project Organization](project-organization.md) · [Portable Project Rules](../../developer-guides/runtime/portable-projects.md)
 
 The portable engine host is the shared managed runtime layer used by desktop and browser composition roots. It owns the engine facade, time source, world host, settings, snapshots, and portable service installation. Platform projects install the concrete leaves that the host needs.
 
@@ -61,6 +61,6 @@ Published runtimes must resolve cooked metadata through generated registries or 
 
 ## Known Limits
 
-The portable host compiles for browser, but that does not prove browser gameplay. Jolt browser execution, real browser-world startup, WebGPU pipeline parity, trim/AOT, device recovery, and physical mobile device support require the checks in [Platform Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/platform/platform-validation.md).
+The portable host compiles for browser, but that does not prove browser gameplay. Jolt browser execution, real browser-world startup, WebGPU pipeline parity, trim/AOT, device recovery, and physical mobile device support require separate platform validation.
 
 PhysX remains the desktop default until Jolt promotion has owner approval and parity evidence. The browser host currently still contains reference-runtime types that the unified path must retire when the engine path covers their cases.

@@ -28,8 +28,7 @@ its staged `joltc.a` and the pinned archive directory's `libJolt.a`; other nativ
 items are rejected. Source, managed patch, compiler pins and notices are checked
 before linking. Desktop Jolt retains its NuGet package. Set
 `-p:XREngineJoltBrowser=true` globally for browser restore/build/publish so NuGet
-and compilation select the same reviewed source graph. See the
-[native supply record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/platform/jolt-browser-native-supply.md).
+and compilation select the same reviewed source graph.
 
 Allowances identify source files and symbols, with a reviewed purpose. They distinguish ordinary methods such as `JsonElement.GetProperty` from type reflection. The check is lexical and cannot prove runtime reachability or metadata preservation.
 
@@ -37,7 +36,7 @@ Published NativeAOT runtimes resolve types from cooked metadata or explicit gene
 
 The [semantic factory generator](generated-runtime-factories.md) resolves factory types from the portable compilation and referenced assemblies. Host emits its accessible portable factories; desktop Bootstrap emits factories from its desktop integration closure. Browser manifest generation preserves its bridge schema and identifiers through the remaining PowerShell template tool. Generated C# stays under `obj`.
 
-Review reflection-heavy serializers, authored animation access, and polymorphic metadata separately for trimming/AOT. Package admission means reviewed managed assets and compilation suitability, not that every API works in a browser. The [package and source audit](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/platform/portable-kernel-audit.md) records the review evidence.
+Review reflection-heavy serializers, authored animation access, and polymorphic metadata separately for trimming/AOT. Package admission means reviewed managed assets and compilation suitability, not that every API works in a browser.
 
 ## Compile lane and qualification
 
@@ -49,8 +48,8 @@ in the Git index so a case-sensitive checkout includes the full project.
 
 [Test-PortableBrowserCompile.ps1](../../../Tools/Test-PortableBrowserCompile.ps1)
 builds the manifest projects for `browser-wasm` using the approved source flag.
-Prepare Jolt using the commands in [browser publishing](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-project-publishing.md),
-or pass `-JoltBrowserManagedSourceDirectory` and `-JoltBrowserArchiveDirectory`
+Prepare Jolt with `Tools/Dependencies/Prepare-JoltBrowserManaged.ps1` and
+`Tools/Dependencies/Build-JoltBrowser.ps1`, or pass `-JoltBrowserManagedSourceDirectory` and `-JoltBrowserArchiveDirectory`
 for explicitly staged outputs. The script also accepts `-ArtifactsPath`.
 [The CI lane](../../../.github/workflows/portable-browser-compile.yml) builds and
 publishes the host and native diagnostic, cooks pinned Slang depth shaders, and
@@ -59,4 +58,4 @@ Its explicit software WebGPU mode does not establish device or performance
 acceptance. Browser trimming/AOT remains rejected until separately qualified;
 desktop NativeAOT has its own [cooked-launcher workflow](aot-final-game-builds.md).
 
-When changing a shared contract, retain dependency direction, update its callers and narrow boundary checks, and qualify the affected desktop and browser paths. A successful source review cannot replace evaluated graph/native-asset inspection or application execution. Current outstanding qualification is tracked in [Platform Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/platform/platform-validation.md).
+When changing a shared contract, retain dependency direction, update its callers and narrow boundary checks, and qualify the affected desktop and browser paths. A successful source review cannot replace evaluated graph/native-asset inspection or application execution.

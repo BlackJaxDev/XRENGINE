@@ -49,9 +49,7 @@ Shared managed feature libraries, `Runtime.Core`, `Runtime.Rendering`, and the i
 ## Further Reading
 - [Audio Architecture](audio/audio-architecture.md)
 - [Animation Baked Value Compression](animation/baked-value-compression.md)
-- [VMD Animation Import Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/animation/vmd-animation-import.md)
 - [Cooked Asset Serialization - AOT And IO Design](assets/cooked-asset-aot-and-io.md)
-- [GPU-Driven Animation Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/gpu/gpu-driven-animation.md)
 - [Modeling XRMesh Editing Architecture](modeling/xrmesh-editing.md)
 - [Scene Architecture](scene/overview.md)
 - [Transform Architecture](scene/transforms.md)

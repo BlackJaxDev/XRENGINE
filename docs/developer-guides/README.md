@@ -53,4 +53,3 @@ These docs are intentionally closer to the code than the user guide. They should
 
 - [Architecture](../architecture/README.md) explains why systems are structured the way they are.
 - [User Guide](../user-guide/README.md) explains surface-level workflows and settings.
-- [Work Docs](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/README.md) contains design docs, TODOs, audits, and in-progress plans.

@@ -9,8 +9,7 @@ namespace XREngine.Rendering
     /// <summary>
     /// P3 instrumentation for the GPU-indirect zero-readback hot path.
     ///
-    /// Documented in the work docs repo at design/rendering/render-submission-perf-debug-plan.md §3
-    /// "Required new logging (P3)" and §4 "P3 hypothesis". All counters are opt-in via
+    /// All counters are opt-in via
     /// <c>XRE_P3_LOGGING=1</c>; bisect toggles are independent env vars.
     ///
     /// Goal: confirm or reject the hypothesis that the zero-readback bucket fan-out

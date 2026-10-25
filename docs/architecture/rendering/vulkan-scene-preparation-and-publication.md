@@ -2,8 +2,6 @@
 
 This document describes the retained preparation and publication contracts.
 It covers shared GPUScene work and the Vulkan consumers of that work.
-Performance measurements and validation limits remain in the
-[result record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/vulkan-stall-remediation-results.md).
 These contracts do not establish a pass for every workload or hardware path.
 
 ## Ownership And Data Flow

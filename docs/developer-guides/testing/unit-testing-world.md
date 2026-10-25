@@ -187,9 +187,7 @@ These defaults apply only to this world. Test names, descriptions, and point
 labels face the current render camera, including after camera movement.
 
 The three root toggles are mutually exclusive and temporarily apply the mode's
-renderer settings. Turning the active test off restores the prior settings. See
-[Math Intersections Occlusion Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/math-intersections-occlusion-tests.md)
-for scene layout, pass criteria, and current qualification status.
+renderer settings. Turning the active test off restores the prior settings.
 
 ### Compare continuous rendering and idle reuse
 
@@ -286,7 +284,6 @@ required and ignores `XRE_ADVANCED_RENDER_PIPELINE_MODE`, which applies to
 desktop outputs only. `Rvc` also needs `VR.RvcPipelineMode`. `Off`, or a mode
 that the RVC resolver cannot run on the current device, rejects the frame. These
 values apply to OpenXR. The OpenVR path does not read `VR.RenderPipeline` yet.
-See the [VR pipeline selection design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/vr-pipeline-selection-design.md).
 
 ```jsonc
 {

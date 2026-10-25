@@ -4,7 +4,7 @@ The local player owns raw tracking sources separately from the solver's concrete
 
 `targetWorld = deviceToTargetOffset * deviceWorld`
 
-The same component owns eleven slots: head, hands, hips, chest, feet, upper arms and knees. The serialized names `LeftElbow` and `RightElbow` mean upper-arm tracker poses; they are not positional elbow hints. Chest and upper-arm orientation constraints yield to reachable head, hip, wrist and foot endpoints. See the [solver investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/avatar/tracked-body-solver-2026-09-30.md).
+The same component owns eleven slots: head, hands, hips, chest, feet, upper arms and knees. The serialized names `LeftElbow` and `RightElbow` mean upper-arm tracker poses; they are not positional elbow hints. Chest and upper-arm orientation constraints yield to reachable head, hip, wrist and foot endpoints.
 
 ## Configure an avatar
 
@@ -65,4 +65,4 @@ The [session store](calibration-session-continuity.md) retains only body binding
 
 ## Qualification
 
-See the [integration guide](openxr-body-tracking.md), [Windows validation record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/avatar/openxr-calibration-spectator-validation-2026-10-01.md), and [hardware acceptance procedure](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/avatar/avatar-validation.md#openxr-body-calibration-and-spectator). Headless tests and software Vulkan checks do not qualify a headset, SteamVR role-independent tracker streaming, actual spectator visuals, controller ergonomics, or frame-deadline cost.
+See the [integration guide](openxr-body-tracking.md). Headless tests and software Vulkan checks do not qualify a headset, SteamVR role-independent tracker streaming, actual spectator visuals, controller ergonomics, or frame-deadline cost.

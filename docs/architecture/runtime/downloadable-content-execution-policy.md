@@ -135,7 +135,4 @@ policy stands, and the package pipeline enforces it.
 
 ## Related Documents
 
-- [Networking Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/networking/networking.md)
-- [Source-Backed C# Script Components](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/scripting/source-backed-csharp-script-components.md)
 - [Control Plane Runtime Architecture](control-plane.md)
-- [Runtime Data Layout And Generated Contracts](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/runtime/runtime-data-layout-and-generated-contracts-design.md)

@@ -7,8 +7,6 @@ Related:
 - [Vulkan Resource Lifetime And Retirement](vulkan-resource-lifetime-and-retirement.md)
 - [Vulkan Renderer](vulkan-renderer.md)
 - [Cooked Texture Payloads](../assets/cooked-texture-payloads.md)
-- [Texture Runtime, Streaming, And Virtual Texturing Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/texturing/texture-runtime-streaming-virtual-texturing-design.md) (future sparse page residency and virtual texturing)
-- [Texture Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/texturing/texture-validation.md)
 
 ## Scope
 

@@ -147,7 +147,7 @@ on the app/update thread, so those calls can change capture state during native
 command recording. Use explicit start/end only when the capture owner controls
 the recording boundary. A Vulkan chain-scale run reproduced a native
 `renderdoc.dll` fault with explicit start/end; presented-frame trigger captures
-passed. See the [capture faults](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#open-faults).
+passed.
 
 1. Verify capture tooling first:
 

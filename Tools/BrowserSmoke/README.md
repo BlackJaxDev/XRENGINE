@@ -582,10 +582,8 @@ The single attempt on October 5 is complete. Run
 [`37283428635`](https://github.com/BlackJaxDev/XRENGINE/actions/runs/37283428635)
 reported `NativeCommandUnavailable` before collector launch and produced no
 samples. Its authorization marker was consumed and raw deletion was verified.
-The request, activation and one-shot workflow are removed. The
-[investigation record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/browser-native-compiler-stall-2026-10-05.md)
-preserves the exact provenance and limits; this result does not diagnose a
-compiler region or qualify Advanced rendering.
+The request, activation and one-shot workflow are removed. This result does
+not diagnose a compiler region or qualify Advanced rendering.
 
 Normal Linux CI records bounded, unprivileged package-query and FIFO-creation
 outcomes in `native-profile-prerequisites.json`. This informational check runs
@@ -621,11 +619,10 @@ modules or code regions.
 Any later capture requires a new explicit scope decision; editing or re-adding
 the request is not an automatic retry.
 
-## Work-note-only pushes
+## Diagnostic-record-only pushes
 
-The portable browser workflow skips a push when its only changes are Markdown
-work notes under `<work-docs-repo>/` or the existing diagnostic request/activation
-records. Pull-request and manual triggers remain unfiltered. A mixed push with
+The portable browser workflow skips a push when its only changes are the
+existing diagnostic request/activation records. Pull-request and manual triggers remain unfiltered. A mixed push with
 source, helper, project or workflow changes still runs within
 [GitHub's path-filter evaluation rules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#git-diff-comparisons).
 The new pattern matches only Markdown names. JSON, TSV and other file extensions

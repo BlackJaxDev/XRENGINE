@@ -229,13 +229,9 @@ stack recovery. The workload generator enumerates the full command-count,
 bounds-distribution, dirty/visible ratio, view, leaf-capacity, and backend
 calibration space.
 
-Live validation and disposable captures are summarized in
-[GPU BVH Scene-Tree Implementation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/gpu-bvh-scene-tree-implementation.md)
-and the bounded agent-validation report referenced there. Automated and
-single-adapter results establish the implementation contract; they do not
-constitute an AMD/Intel/NVIDIA cross-vendor performance claim. Unavailable
-hardware qualification remains explicit in
-[GPU Scene BVH External-Hardware Qualification](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/gpu-scene-bvh-external-hardware-qualification.md).
+Automated and single-adapter results establish the implementation contract; they do not
+constitute an AMD/Intel/NVIDIA cross-vendor performance claim. External
+hardware qualification remains open.
 The flat GPU fallback and runtime strategy kill switch remain production
 architecture until a separate, representative promotion decision removes them.
 

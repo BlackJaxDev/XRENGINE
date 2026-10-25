@@ -8,7 +8,7 @@ The current browser profile uses untrimmed, interpreted .NET 10 WebAssembly with
 
 ## Before you publish
 
-Use an XRENGINE source checkout. The standalone Editor package does not yet include its normal `Build/CommonAssets` tree, so it cannot publish a project by itself. The repository pins the .NET SDK to 10.0.401 in `global.json`. Browser restore and publish also need the pinned `wasm-tools` workload and Jolt source and archive inputs. Use the `Prepare-JoltBrowserManaged.ps1` and `Build-JoltBrowser.ps1` steps and exact pins in the [browser publishing record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-project-publishing.md); do not substitute tool or native-library versions. That record's final `dotnet publish` command prepares an Editor package. It is not the project build command below.
+Use an XRENGINE source checkout. The standalone Editor package does not yet include its normal `Build/CommonAssets` tree, so it cannot publish a project by itself. The repository pins the .NET SDK to 10.0.401 in `global.json`. Browser restore and publish also need the pinned `wasm-tools` workload and Jolt source and archive inputs. Use `Tools/Dependencies/Prepare-JoltBrowserManaged.ps1` and `Tools/Dependencies/Build-JoltBrowser.ps1` with their pinned inputs; do not substitute tool or native-library versions.
 
 Save one startup world as a `.asset` file inside the project's `Assets` folder. Select that same world for each startup window in the saved `Assets/startup.asset` settings. If the saved settings have no startup windows, set the project `StartupScenePath` to the saved asset. Browser publishing does not support `RunWithoutWindows`, multiple different startup worlds, or a startup world outside `Assets`.
 
@@ -58,7 +58,7 @@ This is a dated summary of bounded evidence. It is not a general browser or devi
 | Shadow comparison | Three small shadow-off captures passed. | The first shadow-on/no-decals startup reached its 45-second limit while native `constref` shader creation had been pending for 37.30 seconds. The off-only captures do not qualify directional or point shadows. The full-size shadow run was not performed. |
 | Hardware and browsers | The cited results are from automated CI. | There is no fresh physical-PC matrix for this revision. Do not infer Safari, RTX, broad hardware, numeric MSAA/deformation parity, or performance support. |
 
-This run does not establish a performance result or full desktop parity. Check the [active browser runtime record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/platform/unified-desktop-browser-runtime-todo.md) and [shadow investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/platform/browser-shadow-capture-timeout-2026-10-06.md) for later evidence and open work.
+This run does not establish a performance result or full desktop parity.
 
 A successful publish means that the authored startup world passed the publisher's current checks. It does not promise that every world, shader, material, component, effect, or target device will run. The publisher rejects unsupported startup requirements instead of silently dropping them. Read the named error, correct the asset or setting that it identifies, then publish again.
 

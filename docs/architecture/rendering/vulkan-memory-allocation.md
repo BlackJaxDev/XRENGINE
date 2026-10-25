@@ -6,8 +6,6 @@ Related documents:
 
 - [Vulkan Renderer](vulkan-renderer.md#resource-allocator)
 - [Vulkan Resource Lifetime And Retirement](vulkan-resource-lifetime-and-retirement.md)
-- Code todo: [Vulkan Wrapper Parity TODO: Allocator Integration](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/vulkan-wrapper-parity-todo.md#allocator-integration)
-- Validation: [Vulkan Backend Parity Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/vulkan-backend-parity-validation.md)
 
 ## Ownership
 
@@ -78,5 +76,3 @@ Allocator creation passes the instance, physical device, logical device, API ver
 - The device-local to host-visible retry is counted but is not refused for callers that explicitly request an accelerated path.
 - Allocator creation passes `Vk.Version13` as the VMA API version, although the renderer requires Vulkan 1.4.
 - No CI job builds the bridge, and no native or P/Invoke smoke test exists.
-
-The [Vulkan wrapper parity TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/vulkan-wrapper-parity-todo.md#allocator-integration) tracks the code items for these limits.

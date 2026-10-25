@@ -70,7 +70,7 @@ When `VrDesktopAutoSkipWhenOverBudget` is true and the previous whole-frame time
 
 ## Limits
 
-- All outputs still share one render thread and fence chain. Separate pacing domains for desktop and XR depend on the [dedicated render-thread window ownership plan](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/dedicated-render-thread-window-ownership-plan.md) and are not implemented.
+- All outputs still share one render thread and fence chain. Separate pacing domains for desktop and XR depend on dedicated render-thread window ownership and are not implemented.
 - `LowRatePreview` and `CyclopeanReconstruct` are policy values. Measure their cost with the manifest before using them as a profiling baseline.
 - `CyclopeanReconstruct` needs per-eye sampleable depth, per-eye metadata, and a fullscreen sampled composition pass before it can replace a submitted-eye blit.
 
@@ -83,5 +83,3 @@ When `VrDesktopAutoSkipWhenOverBudget` is true and the previous whole-frame time
 | Settings | `XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs` |
 | Desktop output decisions and skipped-delta scope | `XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs`, `XREngine.Runtime.Rendering/Rendering/XRViewport.cs` |
 | Profiler export | `XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs`, `XREngine.Data/Profiling/ProfilerStatsPacket.cs` |
-
-Validation: [OpenXR Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/xr/openxr-validation.md).

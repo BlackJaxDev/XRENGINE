@@ -116,5 +116,3 @@ Verified scene names/IDs and authored-node paths are indexed before play callbac
 Local transfer limits: 4 MiB baseline, 5 KiB snapshot bytes per chunk, 4,096 entities, 64 components per entity, and 16 KiB per component. One chunk/delta awaits ACK at a time, with one-second retries and four retries. Clients buffer at most 64 deltas/512 KiB; baseline inactivity is limited to 12 seconds and total duration to 64 seconds. Large deltas start a fresh hashed baseline. Relevance includes parent/reference closure and explicit removals.
 
 Each admitted player owns one humanoid avatar. The runtime assigns its inner avatar ID from the server player index and initializes remote pawns from the roster. Richer game pawn composition must retain that identity binding. Gameplay physics authority remains Phase 7.
-
-See [Phase 5–6 runtime evidence](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/networking/managed-transport-and-replication.md).

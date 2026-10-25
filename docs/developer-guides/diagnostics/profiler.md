@@ -1123,8 +1123,7 @@ queries, summary and validation files, optional traces/images/captures, canonica
 recipe and effective configuration, workload identity, source executable and
 assembly hashes, hardware/driver identity, timing intervals, and gate status.
 The source and workload hashes prevent an unrelated build or workload change
-from silently entering a clean comparison. Current live evidence and validation
-are recorded in the [Vulkan component profiling progress report](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/vulkan-component-profiling.md#local-validation-evidence).
+from silently entering a clean comparison.
 
 External GPU captures made by RenderDoc, Nsight, RGP, or an existing capture
 bridge can be attached after the measured interval with `external_capture`:

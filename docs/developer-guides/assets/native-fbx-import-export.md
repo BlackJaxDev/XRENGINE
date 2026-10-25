@@ -150,9 +150,7 @@ Unweighted control points inside a skinned mesh receive a rigid mesh-node
 influence in the authored mesh bind frame. This preserves their scale and
 orientation instead of letting the shader emit unconverted FBX coordinates.
 Native FBX producer version 5 invalidates cached output from the earlier hierarchy
-and skin-bind interpretation. See the
-[avatar transform investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/asset-import/native-fbx-avatar-transforms-2026-09-24.md)
-for runtime evidence.
+and skin-bind interpretation.
 
 Animation stacks import as generic `AnimationClip`s attached to the imported root node. Translation and scale stay as scalar property curves. Blendshape `DeformPercent` curves normalize to `0..1`. Euler rotation curves are baked into quaternion component tracks at the union of source key timestamps.
 
@@ -198,7 +196,7 @@ Focused validation has covered native default dispatch, legacy YAML alias loadin
 
 ## Current Limitations
 
-The native path is the default FBX route, but hardening work remains before the old Assimp FBX path can be removed from normal development workflows. The active follow-up tracker is [Native FBX Import/Export TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/assets/fbx-import-export-todo.md).
+The native path is the default FBX route, but hardening work remains before the old Assimp FBX path can be removed from normal development workflows.
 
 The main remaining gaps are:
 
@@ -215,4 +213,3 @@ The main remaining gaps are:
 
 - [Model Import](model-import.md)
 - [Unit Testing World](../testing/unit-testing-world.md)
-- [Native FBX Import/Export TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/assets/fbx-import-export-todo.md)

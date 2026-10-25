@@ -119,8 +119,7 @@ fork classification from independent GTAO/lighting work and join before native
 opaque shading; the receipt reports the requested/executed modes and submission
 count. Unsupported output cohorts and `GraphicsComputeTransfer` reject explicitly.
 The generic frame-graph multi-queue support gate remains false. The RTX 3090
-comparison increased GPU elapsed time, so this path remains opt-in; see the
-[runtime validation and measurements](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/vulkan14-background-replay-and-queue-overlap-2026-09-09.md).
+comparison increased GPU elapsed time, so this path remains opt-in.
 
 `SubmitBackgroundProductionFrame` provides an exact, engine-owned background
 output transaction. It permits proven indirect-secondary artifact replay while
@@ -148,8 +147,7 @@ an exact presentationless Advanced output. Heap, set-only, desktop/XR and
 reusable-primary cohorts are explicitly unsupported. Scene/image descriptors
 and GPU-generated indirect arguments remain unchanged. Use
 `CaptureNativeShadingRootDiagnostics()` on the explicit-target host to inspect
-recorded dispatch, push-byte and upload counters. See the
-[ABI, ownership and performance decision](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/vulkan14-address-shading-root-2026-09-10.md).
+recorded dispatch, push-byte and upload counters.
 
 Project overrides live under `GameStartupSettings.Rendering.Vulkan` and
 `GameStartupSettings.Rendering.Common`; user fallback overrides live under
@@ -516,8 +514,6 @@ Graphics targets are selected through the resolved render target mode. Dynamic m
 For the complete current primary/secondary lifecycle, persistent worker
 ownership, deterministic merge, lifetime rules, and OpenXR differences, see
 [Vulkan Primary And Secondary Command Recording](vulkan-command-recording.md).
-Future changes are tracked in the
-[Vulkan Command Recording Architecture Optimization TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership).
 
 Vulkan lowers the sorted `FrameOp` stream into reusable packet schedules before
 recording. `Vulkan.CommandRecording.Mode` controls the policy:
@@ -864,7 +860,6 @@ Source-contract tests in `XREngine.UnitTests/Rendering/` hold these rules:
 `XRMeshAndMeshRendererVulkanParityContractTests`,
 `XRMaterialAndShaderVulkanParityContractTests`,
 `XRTextureVulkanParityContractTests`, and `VkDataBufferParityContractTests`.
-Open gaps are in the [Vulkan wrapper parity TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/vulkan-wrapper-parity-todo.md).
 
 ---
 
@@ -974,8 +969,7 @@ mesh/argument-buffer, viewport/scissor and root state. Their encoder validates
 captured native generations before publishing an artifact. Current primary output
 policies prohibit this indirect artifact's reuse; validation mode can inspect key
 matching without relaxing policy. Other schedule and mesh caches retain their own
-admission rules. Runtime evidence and remaining E2 work are recorded in the
-[phase E investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/vulkan14-phase-e-reuse-and-descriptors-2026-09-09.md).
+admission rules.
 
 Multiple files handle descriptor set management:
 
@@ -1372,9 +1366,7 @@ early teardown error from leaking later renderer-owned resources.
 
 ## See Also
 
-- [Native Slang frontend and phase-H validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/vulkan14-native-slang-2026-09-10.md) — `XRShader.SourceLanguage` selects optional Slang 2026.8 direct SPIR-V. `XRE_SLANGC` overrides local compiler discovery; `XRE_SLANG_PILOTS=1` opts into the counter-copy and scene-copy pilots. GLSL stays independent and remains the default. Native Slang uses explicit physical ABI, supplier, descriptor-lifetime, frequency, and provider metadata; OpenGL uses authored GLSL counterparts.
 
-- [Vulkan Render Loop Target Architecture](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/vulkan-render-loop-target-architecture.md) - Target v1 ownership, lifecycle, simplicity, fault-containment, CPU-efficiency, and observability design
 
 - [Window Creation & Renderer Initialization](window-creation-and-renderer-init.md) — How windows and renderers are created at startup
 - [OpenGL Renderer](opengl-renderer.md) — OpenGL-specific initialization and render loop

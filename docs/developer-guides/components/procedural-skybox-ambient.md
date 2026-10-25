@@ -39,9 +39,6 @@ replacement. Native push flag 32 carries that captured decision. Flag 16 only
 requests material exports and must not suppress lighting. Unlit materials keep their own
 color. The shared evaluator serves the single-sample and MSAA paths.
 
-See the [native ambient validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/advanced-world-ambient.md)
-for runtime coverage and remaining checks.
-
 In the deferred combine path, when light probe GI is active and resolves a probe
 ambient term, diffuse ambient is:
 

@@ -37,12 +37,3 @@ The picker preserves notifications, undo/redo, constructor-failure state,
 discovery Retry, search results, enum labels and tooltips. General warmed
 metadata caching was deferred because the measured path was below its entry
 threshold. This contract does not imply that such a cache was added.
-
-## Validation References
-
-The [toolbar investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md)
-records Vulkan/OpenGL output, upload and restart checks. The
-[camera discovery investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md)
-records picker, mutation, reload and unload checks. The
-[result record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/vulkan-stall-remediation-results.md)
-keeps measurements and remaining validation limits separate from these contracts.
