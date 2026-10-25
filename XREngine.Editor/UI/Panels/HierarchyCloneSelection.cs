@@ -12,6 +12,8 @@ internal sealed class HierarchyCloneSelection
     private bool _settled = true;
 
     internal void Select(SceneNode node) => Assign([node]);
+    internal void SelectMany(IReadOnlyList<SceneNode> nodes)
+        => Assign([.. nodes]);
 
     internal void Restore()
         => Assign(_previous.Where(identity => identity.IsCurrent &&

@@ -9,21 +9,41 @@ internal sealed class OwnedHierarchyGraph
 {
     private readonly ObjectConstructionContext _context;
     private readonly OwnedHierarchyGraphEntry[] _entries;
+    private readonly XRWorldObjectBase[] _structuralObjects;
 
     internal OwnedHierarchyGraph(SceneNode root, ObjectConstructionContext context)
+        : this([root], context) { }
+
+    internal OwnedHierarchyGraph(IReadOnlyList<SceneNode> roots, ObjectConstructionContext context)
     {
         _context = context;
-        context.RequireAllocation(root);
-        if (root.OwnedRetirementTransform is not { } transform)
-            throw new InvalidOperationException("An owned clone has no transform.");
+        if (roots.Count == 0)
+            throw new InvalidOperationException("An owned forest needs at least one root.");
         List<OwnedHierarchyGraphEntry> entries = [];
         HashSet<XRObjectBase> visited = new(ReferenceEqualityComparer.Instance);
-        Capture(transform, null, entries, visited);
+        foreach (SceneNode root in roots)
+        {
+            context.RequireAllocation(root);
+            if (root.OwnedRetirementTransform is not { } transform)
+                throw new InvalidOperationException("An owned clone has no transform.");
+            int first = entries.Count;
+            Capture(transform, null, entries, visited);
+            if (!ReferenceEquals(entries[first].Node, root))
+                throw new InvalidOperationException("The cloned root does not own its transform.");
+        }
         _entries = [.. entries];
-        if (!ReferenceEquals(_entries[0].Node, root))
-            throw new InvalidOperationException("The cloned root does not own its transform.");
+        List<XRWorldObjectBase> structural = [];
+        foreach (OwnedHierarchyGraphEntry entry in _entries)
+        {
+            structural.Add(entry.Transform);
+            if (entry.Node is { } node) structural.Add(node);
+            structural.AddRange(entry.Components);
+        }
+        _structuralObjects = [.. structural];
         Validate();
     }
+
+    internal IReadOnlyList<XRWorldObjectBase> StructuralObjects => _structuralObjects;
 
     private void Capture(TransformBase transform, TransformBase? parent,
         List<OwnedHierarchyGraphEntry> entries, HashSet<XRObjectBase> visited)
@@ -84,7 +104,7 @@ internal sealed class OwnedHierarchyGraph
         }
     }
 
-    internal void RegenerateIdentities()
+    internal void RegenerateIdentities(Action? validateAll = null)
     {
         foreach (OwnedHierarchyGraphEntry entry in _entries)
         {
@@ -92,34 +112,40 @@ internal sealed class OwnedHierarchyGraph
             {
                 node.Generate();
                 Validate();
+                validateAll?.Invoke();
             }
             entry.Transform.Generate();
             Validate();
+            validateAll?.Invoke();
             foreach (XRComponent component in entry.Components)
             {
                 component.Generate();
                 Validate();
+                validateAll?.Invoke();
             }
         }
     }
 
-    internal void Initialize()
+    internal void Initialize(Action? validateAll = null)
     {
         foreach (OwnedHierarchyGraphEntry entry in _entries)
         {
             entry.Transform.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: true);
             Validate();
+            validateAll?.Invoke();
         }
         foreach (OwnedHierarchyGraphEntry entry in _entries)
         {
             entry.Transform.SaveBindState();
             Validate();
+            validateAll?.Invoke();
         }
         foreach (OwnedHierarchyGraphEntry entry in _entries)
             foreach (XRComponent component in entry.Components)
             {
-                component.NotifyOwningSceneNodePostDeserialize(Validate);
+                component.NotifyOwningSceneNodePostDeserialize(validateAll ?? Validate);
                 Validate();
+                validateAll?.Invoke();
             }
     }
 }

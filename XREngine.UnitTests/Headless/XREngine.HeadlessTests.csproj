@@ -16,6 +16,10 @@
     <ProjectReference Include="../../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../../XREngine.Editor/UI/Panels/HierarchyBatchLocalValues.cs" Link="Editor/HierarchyBatchLocalValues.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/HierarchyBatchReplayExpectation.cs" Link="Editor/HierarchyBatchReplayExpectation.cs" />
+    <Compile Include="../Editor/HierarchyBatchReplayExpectationTests.cs" Link="Editor/HierarchyBatchReplayExpectationTests.cs" />
+    <Compile Include="../Editor/HierarchyBatchMatrixTransformProbe.cs" Link="Editor/HierarchyBatchMatrixTransformProbe.cs" />
     <Compile Include="../Scene/GuardedComponentCreationTests.cs" Link="Scene/GuardedComponentCreationTests.cs" />
     <Compile Include="../Scene/DetachedLeafRetirementTests.cs" Link="Scene/DetachedLeafRetirementTests.cs" />
     <Compile Include="../Scene/SceneNodeChildDestructionTests.cs" Link="Scene/SceneNodeChildDestructionTests.cs" />

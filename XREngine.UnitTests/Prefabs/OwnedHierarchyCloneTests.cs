@@ -14,6 +14,413 @@ public sealed class OwnedHierarchyCloneTests
     public void RestoreRuntimeMode() => XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);
 
     [Test]
+    public void GroupedCloneReturnsOrderedReadOnlyRootsWithOneRetirableLedger()
+    {
+        SceneNode first = new("First");
+        _ = first.NewChild("First child");
+        SceneNode second = new("Second");
+        _ = second.NewChild("Second child");
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second]);
+        OwnedHierarchyLifetime lifetime = new(result.Ownership, result.Failure);
+        try
+        {
+            Assert.That(result.Succeeded, Is.True, result.Failure?.ToString());
+            IReadOnlyList<SceneNode> roots = result.Value!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(roots.Count, Is.EqualTo(2));
+                Assert.That(roots[0].Name, Is.EqualTo("First"));
+                Assert.That(roots[1].Name, Is.EqualTo("Second"));
+                Assert.That(roots[0].ID, Is.Not.EqualTo(first.ID));
+                Assert.That(roots[1].ID, Is.Not.EqualTo(second.ID));
+                Assert.That(result.Ownership.Contains(roots[0]), Is.True);
+                Assert.That(result.Ownership.Contains(roots[1]), Is.True);
+                Assert.That(result.Ownership.Contains(first), Is.False);
+                Assert.That(roots, Is.Not.TypeOf<SceneNode[]>());
+            });
+            Assert.Throws<NotSupportedException>(() => ((IList<SceneNode>)roots)[0] = first);
+            Assert.That(lifetime.TryRetire(), Is.True, lifetime.Failure?.ToString());
+            Assert.That(roots[0].IsDestroyed, Is.True);
+            Assert.That(roots[1].IsDestroyed, Is.True);
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
+    public void GroupedSourcesValidateBeforeAnyOwnedAllocation()
+    {
+        SceneNode first = new("First");
+        SceneNode second = new("Second");
+        int checks = 0;
+        bool configured = false;
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => SceneNodePrefabUtility.CloneHierarchiesOwned(
+                [first, second], (_, _, _, _) => configured = true, () =>
+                {
+                    if (++checks == 4)
+                        throw new InvalidOperationException("Second source changed.");
+                }));
+            Assert.That(configured, Is.False);
+            Assert.That(first.IsDestroyed, Is.False);
+            Assert.That(second.IsDestroyed, Is.False);
+        }
+        finally { first.Destroy(true); second.Destroy(true); }
+    }
+
+    [Test]
+    public void GroupedSourceReferencesAreCapturedBeforeValidationCallbacks()
+    {
+        SceneNode first = new("First");
+        SceneNode second = new("Second");
+        SceneNode replacement = new("Replacement");
+        List<SceneNode> input = [first, second];
+        int checks = 0;
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned(input, requireSources: () =>
+            {
+                if (++checks == 1) input[1] = replacement;
+            });
+        try
+        {
+            Assert.That(result.Succeeded, Is.True, result.Failure?.ToString());
+            Assert.That(result.Value![1].Name, Is.EqualTo("Second"));
+            Assert.That(result.Ownership.Contains(replacement), Is.False);
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            replacement.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
+    public void LaterAotRootCannotRegenerateAnEarlierRootDuringItsFactory()
+    {
+        SceneNode first = new("First", new OwnedCloneTransformProbe());
+        SceneNode second = new("Second", new OwnedCloneTransformProbe());
+        OwnedCloneTransformProbe? firstCloneTransform = null;
+        Exception? blocked = null;
+        using IDisposable handler = SceneNodePrefabUtility.RegisterTransformCloneHandler<OwnedCloneTransformProbe>(source =>
+        {
+            if (ReferenceEquals(source, first.Transform))
+                return firstCloneTransform = new OwnedCloneTransformProbe();
+            try { firstCloneTransform!.Generate(); }
+            catch (Exception failure) { blocked = failure; }
+            return new OwnedCloneTransformProbe();
+        });
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second]);
+        try
+        {
+            Assert.That(result.Succeeded, Is.True, result.Failure?.ToString());
+            Assert.That(blocked, Is.TypeOf<InvalidOperationException>());
+            Assert.That(firstCloneTransform!.SceneNode, Is.SameAs(result.Value![0]));
+            Assert.That(result.Value[1].IsDestroyed, Is.False);
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
+    public void ConfigurationCannotRegenerateAnotherCapturedRoot()
+    {
+        SceneNode first = new("First");
+        SceneNode second = new("Second");
+        SceneNode? firstClone = null;
+        Exception? blocked = null;
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second], (index, clone, _, validate) =>
+            {
+                if (index == 0) firstClone = clone;
+                else
+                {
+                    try { firstClone!.Generate(); }
+                    catch (Exception failure) { blocked = failure; }
+                }
+                validate();
+            });
+        try
+        {
+            Assert.That(result.Succeeded, Is.True, result.Failure?.ToString());
+            Assert.That(blocked, Is.TypeOf<InvalidOperationException>());
+            Assert.That(result.Value![0], Is.SameAs(firstClone));
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
+    public void LaterInitializationCannotRegenerateEarlierRoot()
+    {
+        SceneNode first = new("First");
+        SceneNode second = new("Second");
+        _ = second.AddComponent(() => new OwnedCloneComponentProbe());
+        SceneNode? firstClone = null;
+        Exception? blocked = null;
+        using IDisposable handler = SceneNodePrefabUtility.RegisterComponentCloneHandler<OwnedCloneComponentProbe>(
+            (_, node) => node.AddComponent(() => new OwnedCloneComponentProbe()));
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second], (index, clone, _, _) =>
+            {
+                if (index == 0)
+                    firstClone = clone;
+                else
+                    ((OwnedCloneComponentProbe)clone.Components[0]).PostDeserialize = () =>
+                    {
+                        try { firstClone!.Generate(); }
+                        catch (Exception failure) { blocked = failure; }
+                    };
+            });
+        try
+        {
+            Assert.That(result.Succeeded, Is.True, result.Failure?.ToString());
+            Assert.That(blocked, Is.TypeOf<InvalidOperationException>());
+            Assert.That(result.Value![0], Is.SameAs(firstClone));
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
+    public void GroupedConfigurationFailureRetainsBothRootsAndOriginalError()
+    {
+        SceneNode first = new("First");
+        SceneNode second = new("Second");
+        SceneNode? firstClone = null;
+        SceneNode? secondClone = null;
+        InvalidOperationException failure = new("Second configuration failed.");
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second], (index, clone, _, _) =>
+            {
+                if (index == 0) firstClone = clone;
+                else
+                {
+                    secondClone = clone;
+                    throw failure;
+                }
+            });
+        try
+        {
+            Assert.That(result.Failure, Is.SameAs(failure));
+            Assert.That(result.Value, Is.Null);
+            Assert.That(result.Ownership.Contains(firstClone!), Is.True);
+            Assert.That(result.Ownership.Contains(secondClone!), Is.True);
+            Assert.That(firstClone!.IsDestroyed, Is.False);
+            Assert.That(secondClone!.IsDestroyed, Is.False);
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
+    public void FinalSourceValidationCannotRegenerateACompletedPeer()
+    {
+        SceneNode first = new("First");
+        SceneNode second = new("Second");
+        SceneNode? firstClone = null;
+        Guid beforeRegeneration = Guid.Empty;
+        Exception? blocked = null;
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second],
+                (index, clone, _, _) =>
+                {
+                    if (index != 0) return;
+                    firstClone = clone;
+                    beforeRegeneration = clone.ID;
+                },
+                () =>
+                {
+                    if (blocked is not null || firstClone is null || firstClone.ID == beforeRegeneration)
+                        return;
+                    try { firstClone.Generate(); }
+                    catch (Exception failure) { blocked = failure; }
+                });
+        try
+        {
+            Assert.That(result.Succeeded, Is.True, result.Failure?.ToString());
+            Assert.That(blocked, Is.TypeOf<InvalidOperationException>());
+            Assert.That(result.Value![0], Is.SameAs(firstClone));
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [TestCase("reparent")]
+    [TestCase("children")]
+    [TestCase("components")]
+    [TestCase("list-lifetime")]
+    public void ConfigurationCannotChangeAnotherRootsStructuralOwner(string change)
+    {
+        SceneNode first = new("First");
+        _ = first.NewChild("Child");
+        _ = first.AddComponent(() => new OwnedCloneComponentProbe());
+        SceneNode second = new("Second");
+        SceneNode? firstClone = null;
+        Exception? blocked = null;
+        using IDisposable handler = SceneNodePrefabUtility.RegisterComponentCloneHandler<OwnedCloneComponentProbe>(
+            (_, node) => node.AddComponent(() => new OwnedCloneComponentProbe()));
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second], (index, clone, _, _) =>
+            {
+                if (index == 0)
+                {
+                    firstClone = clone;
+                    return;
+                }
+                try
+                {
+                    switch (change)
+                    {
+                        case "reparent": firstClone!.Parent = clone; break;
+                        case "children": firstClone!.Transform.Children = new(); break;
+                        case "components": firstClone!.ComponentsSerialized = []; break;
+                        case "list-lifetime": firstClone!.Transform.Children.Generate(); break;
+                    }
+                }
+                catch (Exception failure) { blocked = failure; }
+            });
+        try
+        {
+            Assert.That(result.Succeeded, Is.True, result.Failure?.ToString());
+            Assert.That(blocked, Is.TypeOf<InvalidOperationException>());
+            Assert.That(firstClone!.Parent, Is.Null);
+            Assert.That(firstClone.Transform.Children, Has.Count.EqualTo(1));
+            Assert.That(firstClone.Components, Has.Count.EqualTo(1));
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
+    public void LaterAotFactoryFailureRetainsEarlierRootAndPartialAllocation()
+    {
+        SceneNode first = new("First", new OwnedCloneTransformProbe());
+        SceneNode second = new("Second", new OwnedCloneTransformProbe());
+        OwnedCloneTransformProbe? earlierTransform = null;
+        OwnedCloneTransformProbe? partial = null;
+        InvalidOperationException failure = new("Later transform factory failed.");
+        int destroying = 0;
+        using IDisposable handler = SceneNodePrefabUtility.RegisterTransformCloneHandler<OwnedCloneTransformProbe>(source =>
+        {
+            if (ReferenceEquals(source, first.Transform))
+            {
+                earlierTransform = new OwnedCloneTransformProbe();
+                earlierTransform.Destroying += _ => { destroying++; return true; };
+                return earlierTransform;
+            }
+            partial = new OwnedCloneTransformProbe();
+            throw failure;
+        });
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second]);
+        try
+        {
+            Assert.That(result.Failure, Is.SameAs(failure));
+            Assert.That(result.Value, Is.Null);
+            Assert.That(result.Ownership.Contains(earlierTransform!), Is.True);
+            Assert.That(result.Ownership.Contains(earlierTransform!.SceneNode!), Is.True);
+            Assert.That(result.Ownership.Contains(partial!), Is.True);
+            Assert.That(destroying, Is.Zero);
+            Assert.That(earlierTransform.IsDestroyed, Is.False);
+            Assert.That(partial!.IsDestroyed, Is.False);
+        }
+        finally
+        {
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
+    public void PublicationChangeToAnotherRootRollsBackExactCacheEntries()
+    {
+        SceneNode first = new("First", new OwnedCloneTransformProbe());
+        SceneNode second = new("Second", new OwnedCloneTransformProbe());
+        SceneNode? firstClone = null;
+        SceneNode? secondClone = null;
+        using IDisposable handler = SceneNodePrefabUtility.RegisterTransformCloneHandler<OwnedCloneTransformProbe>(
+            _ => new OwnedCloneTransformProbe());
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        ObjectConstructionResult<IReadOnlyList<SceneNode>> result =
+            SceneNodePrefabUtility.CloneHierarchiesOwned([first, second], (index, clone, _, _) =>
+            {
+                if (index == 0)
+                {
+                    firstClone = clone;
+                    ((OwnedCloneTransformProbe)clone.Transform).Publishing = () => secondClone!.Parent = firstClone;
+                }
+                else secondClone = clone;
+            });
+        try
+        {
+            Assert.That(result.Failure, Is.TypeOf<InvalidOperationException>());
+            Assert.That(result.Ownership.Contains(firstClone!), Is.True);
+            Assert.That(result.Ownership.Contains(secondClone!), Is.True);
+            Assert.That(firstClone!.IsDestroyed, Is.False);
+            Assert.That(secondClone!.IsDestroyed, Is.False);
+            foreach (XRObjectBase allocation in result.Ownership.Objects)
+                Assert.That(XRObjectBase.ObjectsCache.TryGetValue(allocation.ID, out XRObjectBase? cached) &&
+                    ReferenceEquals(cached, allocation), Is.False);
+        }
+        finally
+        {
+            ((OwnedCloneTransformProbe)firstClone!.Transform).Publishing = null;
+            secondClone!.Parent = null;
+            RetireTestAllocations(result.Ownership);
+            first.Destroy(true);
+            second.Destroy(true);
+            XRObjectBase.ProcessPendingDestructions();
+        }
+    }
+
+    [Test]
     public void ConfigurationRunsUnderConstructionOwnershipAndKeepsAdditionalAllocations()
     {
         SceneNode template = new("Template");

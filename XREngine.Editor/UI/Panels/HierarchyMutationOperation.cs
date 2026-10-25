@@ -5,8 +5,9 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Editor;
 
 /// <summary>Applies and compensates one captured hierarchy placement without taking a new owner's links.</summary>
-internal sealed class HierarchyMutationOperation
+internal sealed class HierarchyMutationOperation : IHierarchyMutationWork
 {
+    private readonly SceneNode[] _nodes;
     private readonly HierarchyTransformState _beforeTransform;
     private HierarchyTransformState? _afterTransform;
     private readonly bool _beforeActive;
@@ -40,6 +41,7 @@ internal sealed class HierarchyMutationOperation
         _requireIdentity?.Invoke();
         Before = before;
         After = destination;
+        _nodes = [before.Node];
         _beforeTransform = new(before.Transform);
         _beforeActive = before.Node.IsActiveSelf;
         _afterActive = activeAfter ?? _beforeActive;
@@ -72,6 +74,7 @@ internal sealed class HierarchyMutationOperation
     public HierarchyPlacement Before { get; }
     public HierarchyPlacement After { get; private set; }
     public SceneNode Node => Before.Node;
+    public IReadOnlyList<SceneNode> Nodes => _nodes;
 
     public void ReconcileProperties(StructuralChangeHandle handle)
     {
@@ -254,9 +257,18 @@ internal sealed class HierarchyMutationOperation
     public void MarkDirty()
     {
         Exception? failure = null;
-        try { Before.MarkDirty(); }
+        _requireIdentity?.Invoke();
+        try { Before.MarkDirty(_requireIdentity); }
         catch (Exception exception) { failure = exception; }
-        try { After.MarkDirty(); }
+        try { _requireIdentity?.Invoke(); }
+        catch (Exception exception)
+        {
+            failure ??= exception;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+        try { After.MarkDirty(_requireIdentity); }
+        catch (Exception exception) { failure ??= exception; }
+        try { _requireIdentity?.Invoke(); }
         catch (Exception exception) { failure ??= exception; }
         if (failure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
@@ -332,7 +344,8 @@ internal sealed class HierarchyMutationOperation
 
     private void RestoreListsAndRoutes(HierarchyPlacement goal, HierarchyPlacement other)
     {
-        goal.RestoreListsAndRoutes(other, _currentRoutes, _currentEditorRoutes);
+        goal.RestoreListsAndRoutes(other, _currentRoutes, _currentEditorRoutes,
+            _requireIdentity);
         _currentRoutes = goal.RuntimeRoutes;
         _currentEditorRoutes = goal.EditorRoutes;
         _currentScenePlacement = goal;

@@ -895,3 +895,102 @@ Desktop build65 passed with zero warnings/errors in 3m12.96s. All 10,829 source
 inputs stayed unchanged through validation. The 39 maintained relative links
 resolve and diff checks pass. No Windows runtime, GPU, visual, or performance
 acceptance is inferred.
+
+
+## Grouped Hierarchy Duplication Design Review
+
+The existing request, custody receipt, placement operation, and property replay
+guard each cover one cloned root. Repeating the single-root command would permit
+partial attachment before later construction fails. The grouped command needs
+one forest construction ledger, one custody entry, and one structural history
+transaction with explicit member progress.
+
+The runtime contract keeps separate per-source YAML serialization and registered
+AOT handlers. It constructs all roots under one existing construction scope.
+Temporary structural reservations protect completed peers while another root is
+constructed, configured, regenerated, or initialized. The reservation covers all
+peer nodes, transforms, and components, including linked-list lifetime admission.
+It does not hold the structural gate across callbacks. Final publication uses the
+existing identity guard and whole-forest structural/live validation, then seals
+the ownership identities for editor custody.
+
+This bounded contract preserves current-root identity semantics. It does not
+claim to reject same-target reentrant Generate or temporary structural changes
+inside publication callbacks. No generic Data identity-admission redesign is
+needed. Existing unknown-asset retirement and document-end recovery restrictions
+remain. The editor batch must independently validate peer placement and property
+progress during initial apply, compensation, Undo, and Redo. Group lifetime
+admission alone cannot prevent a callback from editing another clone's values.
+
+Implementation and validation are in progress. The native grouped command remains
+an open code item until the request-to-history path and its tests are complete.
+
+
+The first runtime candidate passed headless build211 with zero warnings/errors in
+2m42.36s. Targeted run157 passed 34/34 owned-clone cases in 0.490s, including eight
+new forest cases and 26 existing single-root cases. This was an interim runtime
+check while unlinked editor transaction files remained in progress. It was not a
+complete grouped-command snapshot or a full-suite acceptance result. Review then
+requested additional partial-factory, structural-peer, and publication-failure
+coverage before final validation.
+
+
+The expanded runtime candidate passed build212 with zero warnings/errors in
+28.81s. Run158 passed 40/40 owned-clone cases in 0.430s. Added cases reject peer
+reparenting, child/component storage replacement, and linked-list regeneration.
+A later AOT factory failure retains earlier roots and partial allocations with
+the original exception. A cross-root publication change fails final validation
+and removes exact cache publications without destroying the retained objects.
+
+Editor review found three integration hazards before final validation. Initial
+clone deactivation needed captured placement and local-value checks for every
+peer before any baseline could advance. Property replay needed direction-aware
+expectations for the four local Transform keys; custom transform matrices remain
+structural-inverse work. The generalized runner also needed to distinguish an
+unallocated rejected request from a retained partial forest before removing its
+inverse. The old typed single-operation entry point remains a forwarding wrapper
+so existing target-typed factories keep their source contract.
+
+
+The combined candidate passed headless build213 with zero warnings/errors in
+22.39s. Targeted run159 passed 44/44 forest and actual replay-helper cases in
+0.427s. Full run160 passed 1,289/1,289 in 30.138s, with no failures, warnings, or
+skips. The portable additions comprise 14 forest cases and four replay-helper
+cases. The latter use real transforms and cover key-by-key Undo/Redo, peer edits,
+setter reentry, and custom matrix phase boundaries. Nine added editor cases and
+one revised menu case still require Windows execution.
+
+
+Final review found a failure-settlement blocker after the portable tests passed:
+when onApplied changes a peer value, batch MarkDirty rejected the stale clone
+expectation before marking the original scene. The corrective path must mark
+captured live document/scene targets independently of rejected clone values,
+retain callback boundary checks, and preserve the original failure. The existing
+peer-conflict editor case needs an explicit clean-to-dirty assertion.
+
+A separate read-only audit keeps the broad mutation TODO open.
+EditorFileDropHandler.ProcessFileDrop still copies an external file, saves a new
+texture asset, then directly assigns material.Textures[0] without shared Undo or
+dirty tracking. Its event-wiring test does not cover the mutation. The persistent
+asset recovery and asset-creation decisions remain pending; this route was not
+changed during the grouped duplicate work.
+
+
+Desktop build66 passed with zero warnings/errors in 3m20.02s before the dirty
+repair. Review accepted the revised captured-document dirty path. It checks live
+scene identity, current root collection, and current document ownership before
+and after callbacks. It does not require rejected clone values to match. The
+runner preserves the original failure, and a positive complete-compensation case
+checks retained unrelated history. Repeated captured dirty targets are harmless
+redundancy under the existing setter; each attempt rechecks authority.
+
+The revised snapshot passed headless build214 with zero warnings/errors in
+23.44s. Run161 passed 44/44 targeted cases in 0.462s. Full run162 passed
+1,289/1,289 in 27.160s, with no failures, warnings, or skips. Ten added editor
+cases and one revised menu case remain compile-only until Windows execution.
+
+Desktop build67 passed with zero warnings/errors in 2m09.08s. All 10,838 source
+inputs stayed unchanged through final validation. The 39 maintained relative
+links resolve and diff checks pass. Review found no remaining publication blocker
+in this bounded transaction. Windows command execution, visual checks, and
+performance acceptance remain pending.

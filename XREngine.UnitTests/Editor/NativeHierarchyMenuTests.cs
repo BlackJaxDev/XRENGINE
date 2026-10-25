@@ -320,22 +320,31 @@ public sealed class NativeHierarchyMenuTests
     }
 
     [Test]
-    public void MultipleSelectedRootsDoNotSilentlyDuplicateOnlyTheClickedNode()
+    public void MultipleSelectedRootsQueueOneGroupedDuplicate()
     {
         SceneNode first = new("First"), second = new("Second");
         using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", new XRScene("Scene", first, second)));
         var (canvas, panel, input) = CreatePanel(world);
-        panel.CloneCustodyStore = new();
+        HierarchyCloneCustodyStore store = new();
+        panel.CloneCustodyStore = store;
         Selection.SceneNodes = [first, second];
         try
         {
             Open(panel, input, Field<UIInteractableComponent>(Row(panel, first), "Button"));
             UIContextMenuComponent menu = Menu(panel)!;
-            Assert.That(Item(menu, "Duplicate").Enabled, Is.False);
-            Assert.That(Item(menu, "Deep Duplicate...").Enabled, Is.False);
-            Assert.That(Item(menu, "Duplicate one selected root at a time.").Enabled, Is.False);
+            Assert.That(Item(menu, "Duplicate").Enabled, Is.True);
+            Assert.That(Item(menu, "Deep Duplicate...").Enabled, Is.True);
             Item(menu, "Duplicate").Action!();
-            Assert.That(Edits.IsEmpty, Is.True);
+            Assert.That(Edits.Count, Is.EqualTo(1));
+            menu.Hide();
+            RunQueuedEdit();
+            HierarchyCloneCustody custody = store.CaptureEntries().Single();
+            Assert.That(custody.Nodes, Has.Count.EqualTo(2));
+            Assert.That(Selection.SceneNodes, Is.EqualTo(custody.Nodes));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(Selection.SceneNodes, Is.EqualTo(new[] { first, second }));
+            Undo.ClearHistory();
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Released));
         }
         finally { canvas.Destroy(true); first.Destroy(true); second.Destroy(true); }
     }

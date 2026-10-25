@@ -1,5 +1,6 @@
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Data.Core;
 
 namespace XREngine.Editor;
 
@@ -20,6 +21,7 @@ internal sealed class HierarchyPlacement
     private readonly bool _anchorRootEditorOnly;
     private readonly IRuntimeWorldContext? _anchorWorld;
     private readonly IRuntimeWorldContext? _parentWorld;
+    private readonly ObjectConstructionIdentity[] _dirtySceneIdentities;
 
     private HierarchyPlacement(SceneNode node, RuntimeWorld world, TransformBase? parent,
         HierarchySceneRootSlot[] scenes, XRScene[] editorRoutes, RuntimeHierarchyRootRoutes runtimeRoutes,
@@ -53,6 +55,8 @@ internal sealed class HierarchyPlacement
         }
         else
             _anchorScenes = [];
+        HierarchySceneRootSlot[] dirtyScenes = Scenes.Length > 0 ? Scenes : _anchorScenes;
+        _dirtySceneIdentities = dirtyScenes.Select(slot => ObjectConstructionIdentity.Capture(slot.Scene)).ToArray();
     }
 
     public SceneNode Node { get; }
@@ -174,19 +178,31 @@ internal sealed class HierarchyPlacement
     }
 
     public void RestoreListsAndRoutes(HierarchyPlacement other, RuntimeHierarchyRootRoutes expectedRoutes,
-        IReadOnlyList<XRScene> expectedEditorRoutes)
+        IReadOnlyList<XRScene> expectedEditorRoutes, Action? requireBoundary = null)
     {
+        requireBoundary?.Invoke();
         if (!World.HasHierarchyRootRoutes(expectedRoutes) ||
             Integration?.HasHierarchySourceRoutes(Node, expectedEditorRoutes) == false)
             throw new InvalidOperationException("The hierarchy route owner changed during the edit.");
         foreach (HierarchySceneRootSlot slot in other.Scenes)
             if (!Scenes.Any(desired => ReferenceEquals(desired.Scene, slot.Scene)))
+            {
+                requireBoundary?.Invoke();
                 slot.Roots.Remove(Node);
+                requireBoundary?.Invoke();
+            }
         foreach (HierarchySceneRootSlot slot in Scenes)
             if (!slot.Roots.Contains(Node))
+            {
+                requireBoundary?.Invoke();
                 slot.Roots.Insert(Math.Min(slot.Index, slot.Roots.Count), Node);
+                requireBoundary?.Invoke();
+            }
+        requireBoundary?.Invoke();
         World.RestoreHierarchyRootRoutes(expectedRoutes, RuntimeRoutes);
+        requireBoundary?.Invoke();
         Integration?.RestoreHierarchySourceRoutes(Node, EditorRoutes);
+        requireBoundary?.Invoke();
     }
 
     public bool IsPublishedRoot()
@@ -209,18 +225,71 @@ internal sealed class HierarchyPlacement
         return true;
     }
 
-    public void MarkDirty()
+    public void MarkDirty(Action? requireBoundary = null)
     {
         bool marked = false;
         Exception? failure = null;
         foreach (HierarchySceneRootSlot slot in Scenes.Length > 0 ? Scenes : _anchorScenes)
         {
+            try { requireBoundary?.Invoke(); }
+            catch (Exception exception)
+            {
+                failure ??= exception;
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            }
             try { slot.Scene.MarkDirty(); }
             catch (Exception exception) { failure ??= exception; }
             marked = true;
+            try { requireBoundary?.Invoke(); }
+            catch (Exception exception)
+            {
+                failure ??= exception;
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            }
         }
         if (!marked)
-            World.TargetWorld?.MarkDirty();
+        {
+            try { requireBoundary?.Invoke(); }
+            catch (Exception exception)
+            {
+                failure ??= exception;
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            }
+            try { World.TargetWorld?.MarkDirty(); }
+            catch (Exception exception) { failure ??= exception; }
+            try { requireBoundary?.Invoke(); }
+            catch (Exception exception) { failure ??= exception; }
+        }
+        if (failure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    public void MarkDirtyCapturedDocument(HierarchyCloneDocument document)
+    {
+        HierarchySceneRootSlot[] targets = Scenes.Length > 0 ? Scenes : _anchorScenes;
+        Exception? failure = null;
+        for (int i = 0; i < targets.Length; i++)
+        {
+            HierarchySceneRootSlot slot = targets[i];
+            ObjectConstructionIdentity identity = _dirtySceneIdentities[i];
+            try
+            {
+                document.RequireDirtyScene(slot.Scene, slot.Roots, identity);
+                slot.Scene.MarkDirty();
+                document.RequireDirtyScene(slot.Scene, slot.Roots, identity);
+            }
+            catch (Exception exception) { failure ??= exception; }
+        }
+        if (targets.Length == 0)
+        {
+            try
+            {
+                document.RequireDirtyWorld();
+                World.TargetWorld!.MarkDirty();
+                document.RequireDirtyWorld();
+            }
+            catch (Exception exception) { failure ??= exception; }
+        }
         if (failure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }

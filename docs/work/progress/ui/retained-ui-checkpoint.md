@@ -1536,3 +1536,28 @@ Desktop build65 passed with zero warnings/errors in 3m12.96s. All 10,829 source
 inputs stayed unchanged through validation. The 39 maintained relative links
 resolve and diff checks pass. No Windows runtime, GPU, visual, or performance
 acceptance is inferred.
+
+
+## Grouped Hierarchy Duplication
+
+Native hierarchy duplication now uses one owned forest receipt and one Undo
+transaction for selected top-level roots. It keeps ordered selection, shared or
+deep asset behavior, unique names in shared destinations, guarded member progress,
+and complete-ledger recovery. Callback edits to peers reject later owned writes.
+Failure dirty marking validates captured document authority independently of the
+rejected clone values. Existing single-root construction remains available.
+
+Headless build214 passed with zero warnings/errors in 23.44s. Run161 passed 44/44
+forest and replay-helper cases in 0.462s. Full run162 passed **1,289/1,289** in
+27.160s, with no failures, warnings, or skips. Ten added editor cases and one
+revised native menu case need Windows execution. These portable results cover
+actual forest construction and replay expectations, not the full editor Undo
+transaction. The code reconciliation remains **51/60**. OS texture-file imports
+still lack canonical mutation/recovery handling, so the broad mutation item stays
+open. The existing asset-recovery decision remains pending.
+
+Desktop build67 passed with zero warnings/errors in 2m09.08s. All 10,838 source
+inputs stayed unchanged through final validation. The 39 maintained relative
+links resolve and diff checks pass. Review found no remaining publication blocker
+in this bounded transaction. Windows command execution, visual checks, and
+performance acceptance remain pending.

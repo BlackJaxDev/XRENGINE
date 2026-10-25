@@ -1,3 +1,4 @@
+using System.Numerics;
 using NUnit.Framework;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -67,6 +68,256 @@ public sealed class NativeHierarchyDuplicateTests
             Assert.That(store.CaptureEntries(), Is.Empty);
         }
         finally { Cleanup(custody); root.Destroy(true); }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void GroupedDuplicateUsesOneForestActionAndRestoresOrderedSelection(bool childSources)
+    {
+        SceneNode parentA = new("Parent A"), parentB = new("Parent B");
+        SceneNode first = childSources ? new(parentA, "Same") : parentA;
+        SceneNode second = childSources ? new(parentB, "Same") : parentB;
+        XRScene scene = new("Hidden", parentA, parentB) { IsVisible = false };
+        using RuntimeWorld world = World(scene);
+        HierarchyCloneCustodyStore store = new();
+        Selection.SceneNodes = [first, second];
+        HierarchyCloneCustody custody = new HierarchyDuplicateRequest([first, second], world, () => true)
+            .Execute(true, store);
+        try
+        {
+            SceneNode[] clones = custody.Nodes!.ToArray();
+            Assert.That(clones, Has.Length.EqualTo(2));
+            Assert.That(clones[0].Name, Is.EqualTo(childSources ? "Same (1)" : "Parent A (1)"));
+            Assert.That(clones[1].Name, Is.EqualTo(childSources ? "Same (1)" : "Parent B (1)"));
+            Assert.That(Selection.SceneNodes, Is.EqualTo(clones));
+            Assert.That(Undo.PendingUndo.Count, Is.EqualTo(1));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(Selection.SceneNodes, Is.EqualTo(new[] { first, second }));
+            Assert.That(clones.All(clone => clone.Parent is null), Is.True);
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(Selection.SceneNodes, Is.EqualTo(clones));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Undo.ClearHistory();
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Released));
+            Assert.That(store.CaptureEntries(), Is.Empty);
+        }
+        finally { Cleanup(custody); parentA.Destroy(true); parentB.Destroy(true); }
+    }
+
+    [Test]
+    public void GroupedDuplicateReservesNamesAndRetainsNewerPeerValue()
+    {
+        SceneNode first = new("Same"), second = new("Same");
+        XRScene scene = new("Hidden", first, second) { IsVisible = false };
+        using RuntimeWorld world = World(scene);
+        HierarchyCloneCustodyStore store = new();
+        SceneNode[]? clones = null;
+        try
+        {
+            scene.ClearDirty();
+            Assert.Throws<InvalidOperationException>(() =>
+                new HierarchyDuplicateRequest([first, second], world, () => true).Execute(true, store,
+                    clone =>
+                    {
+                        if (clones is not null) return;
+                        clones = Selection.SceneNodes;
+                        Assert.That(clones.Select(node => node.Name), Is.EqualTo(new[] { "Same (1)", "Same (2)" }));
+                        ((Transform)clones[1].Transform).Translation = new Vector3(17, 0, 0);
+                    }));
+            Assert.That(clones, Is.Not.Null);
+            Assert.That(((Transform)clones![1].Transform).Translation.X, Is.EqualTo(17));
+            HierarchyCloneCustody retained = store.CaptureEntries().Single();
+            Assert.That(retained.State, Is.EqualTo(EHierarchyCloneCustodyState.RecoveryRequired));
+            Assert.That(retained.RetainedOwnership, Is.Not.Null);
+            Assert.That(scene.IsDirty, Is.True);
+            Cleanup(retained);
+        }
+        finally { first.Destroy(true); second.Destroy(true); }
+    }
+
+    [Test]
+    public void CompleteGroupedCompensationReleasesForestAndKeepsUnrelatedCallbackEdit()
+    {
+        SceneNode first = new("First"), second = new("Second"), unrelated = new("Before callback");
+        using RuntimeWorld world = World(new XRScene("Hidden", first, second, unrelated) { IsVisible = false });
+        HierarchyCloneCustodyStore store = new();
+        HierarchyCloneCustody? custody = null;
+        Undo.TrackSceneNode(unrelated);
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() =>
+                new HierarchyDuplicateRequest([first, second], world, () => true).Execute(true, store,
+                    _ =>
+                    {
+                        custody = store.CaptureEntries().Single();
+                        unrelated.Name = "Callback edit";
+                        throw new InvalidOperationException("Expected observer failure.");
+                    }));
+            Assert.That(custody, Is.Not.Null);
+            Assert.That(custody!.State, Is.EqualTo(EHierarchyCloneCustodyState.Released));
+            Assert.That(store.CaptureEntries(), Is.Empty);
+            Assert.That(unrelated.Name, Is.EqualTo("Callback edit"));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(unrelated.Name, Is.EqualTo("Before callback"));
+        }
+        finally { first.Destroy(true); second.Destroy(true); unrelated.Destroy(true); }
+    }
+
+    [Test]
+    public void GroupedSiblingsReserveNamesWithinTheirSharedParent()
+    {
+        SceneNode parent = new("Parent");
+        SceneNode first = new(parent, "Same"), second = new(parent, "Same");
+        using RuntimeWorld world = World(new XRScene("Hidden", parent) { IsVisible = false });
+        HierarchyCloneCustody custody = new HierarchyDuplicateRequest([first, second], world, () => true)
+            .Execute(true, new());
+        try
+        {
+            Assert.That(custody.Nodes!.Select(node => node.Name), Is.EqualTo(new[] { "Same (1)", "Same (2)" }));
+            Assert.That(custody.Nodes!.All(node => ReferenceEquals(node.Parent, parent)), Is.True);
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(Undo.TryRedo(), Is.True);
+        }
+        finally { Cleanup(custody); parent.Destroy(true); }
+    }
+
+    [Test]
+    public void MenuTargetCaptureExcludesDescendantsOfSelectedRoots()
+    {
+        SceneNode root = new("Root"), child = new(root, "Child"), other = new("Other");
+        try
+        {
+            Selection.SceneNodes = [child, root, other];
+            Assert.That(EditorImGuiUI.CaptureNativeHierarchyDuplicateTargets(child),
+                Is.EqualTo(new[] { root, other }));
+        }
+        finally { root.Destroy(true); other.Destroy(true); }
+    }
+
+    [Test]
+    public void DeactivationCallbackChangingAnotherCloneCannotBecomeItsBeforeState()
+    {
+        SceneNode first = new("First"), second = new("Second");
+        using RuntimeWorld world = World(new XRScene("Hidden", first, second) { IsVisible = false });
+        HierarchyCloneCustodyStore store = new();
+        SceneNode?[] clones = new SceneNode?[2];
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => HierarchyCloneMutation.ExecuteMany(
+                "Duplicate Nodes", [first, second], world,
+                (index, clone) => HierarchyPlacement.RootLike(clone,
+                    HierarchyPlacement.Capture(index == 0 ? first : second, world)),
+                store: store,
+                configure: (index, clone, _, _) =>
+                {
+                    clones[index] = clone;
+                    if (index == 0)
+                        clone.PropertyChanged += (_, change) =>
+                        {
+                            if (change.PropertyName == nameof(SceneNode.IsActiveSelf) && !clone.IsActiveSelf &&
+                                clones[1] is { } peer)
+                                ((Transform)peer.Transform).Translation = new Vector3(17, 0, 0);
+                        };
+                }));
+            Assert.That(clones[1], Is.Not.Null);
+            Assert.That(((Transform)clones[1]!.Transform).Translation.X, Is.EqualTo(17));
+            HierarchyCloneCustody retained = store.CaptureEntries().Single();
+            Assert.That(retained.State, Is.EqualTo(EHierarchyCloneCustodyState.RecoveryRequired));
+            Assert.That(retained.RetainedOwnership, Is.Not.Null);
+            Cleanup(retained);
+        }
+        finally { first.Destroy(true); second.Destroy(true); }
+    }
+
+    [Test]
+    public void PartialForestConstructionKeepsReceiptButPreflightRejectionLeavesNoHistory()
+    {
+        SceneNode first = new("First"), second = new("Second");
+        XRScene scene = new("Hidden", first, second) { IsVisible = false };
+        using RuntimeWorld world = World(scene);
+        HierarchyCloneCustodyStore store = new();
+        try
+        {
+            Assert.Throws<InvalidOperationException>(() => HierarchyCloneMutation.ExecuteMany(
+                "Duplicate Nodes", [first, second], world,
+                (index, clone) => HierarchyPlacement.RootLike(clone,
+                    HierarchyPlacement.Capture(index == 0 ? first : second, world)),
+                store: store, configure: (index, _, _, _) =>
+                {
+                    if (index == 1) throw new InvalidOperationException("Second clone configuration failed.");
+                }));
+            HierarchyCloneCustody retained = store.CaptureEntries().Single();
+            Assert.That(retained.State, Is.EqualTo(EHierarchyCloneCustodyState.RecoveryRequired));
+            Assert.That(retained.RetainedOwnership, Is.Not.Null);
+            Assert.That(Undo.PendingUndo, Has.Count.EqualTo(1));
+            Cleanup(retained);
+
+            SceneNode unsupported = new("Unsupported", new NativeHierarchyDuplicateTransformProbe
+                { Assets = [new TextFile()] });
+            try
+            {
+                scene.SceneRoots.Add(unsupported);
+                HierarchyDuplicateRequest request = new([first, unsupported], world, () => true);
+                Assert.That(request.OrdinaryUnavailable, Is.Not.Null);
+                Assert.Throws<InvalidOperationException>(() => request.Execute(true, new()));
+                Assert.That(Undo.CanUndo, Is.False);
+            }
+            finally
+            {
+                scene.SceneRoots.Remove(unsupported);
+                ((NativeHierarchyDuplicateTransformProbe)unsupported.Transform).Assets![0].Destroy(true);
+                unsupported.Destroy(true);
+            }
+        }
+        finally { first.Destroy(true); second.Destroy(true); }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void PropertyReplayCallbackChangingPeerKeepsTheNewerValue(bool duringRedo)
+    {
+        SceneNode parent = new("Parent");
+        SceneNode first = new(parent, "First"), second = new(parent, "Second");
+        using RuntimeWorld world = World(new XRScene("Hidden", parent) { IsVisible = false });
+        HierarchyCloneCustodyStore store = new();
+        bool configureValues = true;
+        HierarchyCloneCustody custody = HierarchyCloneMutation.ExecuteMany(
+            "Duplicate Nodes", [first, second], world,
+            (_, clone) => HierarchyPlacement.Attached(clone, world, parent.Transform),
+            store: store,
+            configure: (index, clone, _, _) =>
+            {
+                clone.Transform.PropertyChanged += (_, change) =>
+                {
+                    if (configureValues && change.PropertyName == nameof(TransformBase.Parent) &&
+                        ReferenceEquals(clone.Parent, parent))
+                        ((Transform)clone.Transform).Translation = new Vector3(10 + index, 0, 0);
+                };
+            });
+        configureValues = false;
+        try
+        {
+            SceneNode[] clones = custody.Nodes!.ToArray();
+            Transform firstValue = (Transform)clones[0].Transform;
+            Transform peerValue = (Transform)clones[1].Transform;
+            Assert.That(firstValue.Translation.X, Is.EqualTo(10));
+            Assert.That(peerValue.Translation.X, Is.EqualTo(11));
+            if (duringRedo) Assert.That(Undo.TryUndo(), Is.True);
+            firstValue.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(Transform.Translation) &&
+                    firstValue.Translation.X == (duringRedo ? 10 : 0))
+                    peerValue.Translation = new Vector3(99, 0, 0);
+            };
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                if (duringRedo) Undo.TryRedo();
+                else Undo.TryUndo();
+            });
+            Assert.That(peerValue.Translation.X, Is.EqualTo(99));
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.RecoveryRequired));
+        }
+        finally { Cleanup(custody); parent.Destroy(true); }
     }
 
     [Test]

@@ -1,3 +1,5 @@
+using XREngine.Scene;
+
 namespace XREngine.Editor;
 
 /// <summary>Records a hierarchy inverse before callbacks and validates both ends of property replay.</summary>
@@ -6,10 +8,22 @@ internal static class HierarchyMutation
     public static void Execute(string description, Func<HierarchyMutationOperation> prepare,
         Action? onApplied = null, Func<bool>? ownerIsCurrent = null, Action? releaseRestoredCreation = null,
         HierarchyCloneCustody? cloneCustody = null)
+        => ExecuteWork(description, () => prepare(), onApplied, ownerIsCurrent,
+            releaseRestoredCreation, cloneCustody);
+
+    internal static void ExecuteBatch(string description, Func<HierarchyMutationBatchOperation> prepare,
+        Action? onApplied = null, Func<bool>? ownerIsCurrent = null,
+        HierarchyCloneCustody? cloneCustody = null)
+        => ExecuteWork(description, () => prepare(), onApplied, ownerIsCurrent,
+            releaseRestoredCreation: null, cloneCustody: cloneCustody);
+
+    private static void ExecuteWork(string description, Func<IHierarchyMutationWork> prepare,
+        Action? onApplied = null, Func<bool>? ownerIsCurrent = null, Action? releaseRestoredCreation = null,
+        HierarchyCloneCustody? cloneCustody = null)
     {
         using var interaction = Undo.BeginUserInteraction();
         Undo.ChangeScope scope = Undo.BeginChange(description);
-        HierarchyMutationOperation? operation = null;
+        IHierarchyMutationWork? operation = null;
         StructuralChangeHandle? opening = null;
         try
         {
@@ -27,7 +41,12 @@ internal static class HierarchyMutation
                 operation = prepare();
                 cloneCustody?.RequireOperation(operation);
                 RequireOwner(ownerIsCurrent);
-                Undo.TrackSceneNode(operation.Node);
+                foreach (SceneNode node in operation.Nodes)
+                {
+                    operation.RequireBefore(includeProperties: true);
+                    Undo.TrackSceneNode(node);
+                    operation.RequireBefore(includeProperties: true);
+                }
                 operation.PrepareInitial();
                 operation.ApplyInitial();
                 RequireOwner(ownerIsCurrent);
@@ -39,10 +58,27 @@ internal static class HierarchyMutation
             }
             catch (Exception failure)
             {
-                bool restored = operation is null || operation.RestoreInitial();
+                bool restored;
+                try
+                {
+                    restored = operation is null
+                        ? cloneCustody?.RetainedOwnership is null
+                        : operation.RestoreInitial();
+                }
+                catch { restored = false; }
+                bool failureDirtyAttempted = false;
                 if (operation is not null)
                 {
-                    try { operation.MarkDirty(); }
+                    try
+                    {
+                        if (!restored && operation is HierarchyMutationBatchOperation batch && cloneCustody is not null)
+                        {
+                            failureDirtyAttempted = true;
+                            batch.MarkDirtyAfterFailedCompensation(cloneCustody.Document);
+                        }
+                        else
+                            operation.MarkDirty();
+                    }
                     catch { }
                     // Dirty callbacks can change ownership too. Do not discard
                     // the inverse until the entire compensation is still valid.
@@ -73,10 +109,20 @@ internal static class HierarchyMutation
                 }
                 else
                 {
+                    if (!failureDirtyAttempted && operation is HierarchyMutationBatchOperation batch &&
+                        cloneCustody is not null)
+                        try { batch.MarkDirtyAfterFailedCompensation(cloneCustody.Document); }
+                        catch { }
                     cloneCustody?.RetainFailure(failure);
-                    operation!.CaptureFailure();
-                    operation.ReconcileProperties(opening);
-                    AddClosingGuard(description, operation, cloneCustody);
+                    if (operation is not null)
+                    {
+                        try { operation.CaptureFailure(); }
+                        catch { }
+                        try { operation.ReconcileProperties(opening); }
+                        catch { }
+                        try { AddClosingGuard(description, operation, cloneCustody); }
+                        catch { }
+                    }
                 }
                 throw;
             }
@@ -97,7 +143,7 @@ internal static class HierarchyMutation
         }
     }
 
-    private static void AddClosingGuard(string description, HierarchyMutationOperation operation,
+    private static void AddClosingGuard(string description, IHierarchyMutationWork operation,
         HierarchyCloneCustody? cloneCustody)
     {
         using StructuralChangeHandle guard = Undo.BeginStructuralMutation(description,

@@ -1852,3 +1852,52 @@ including hidden-scene parents. This completes the source-level hierarchy adopti
 contract. It does not establish Windows interaction or model-drop acceptance.
 Grouped multi-root duplication and general control-lifetime contracts remain
 separate work.
+
+
+## Grouped Hierarchy Duplication
+
+The native hierarchy duplicate request captures the ordered top-level selection,
+source graph identities, document placements, names, and ordinary asset-sharing
+plans before construction. It rejects an unsupported ordinary profile for any
+member before allocating a clone. Deep duplication keeps canonical per-source
+cloning. Planned names remain unique in overlapping destinations. Callback
+changes to a source name or an occupied planned name reject the request.
+
+`SceneNodePrefabUtility.CloneHierarchiesOwned` constructs all roots in one owned
+ledger. It snapshots source references before callbacks and serializes each YAML
+source separately before allocating. AOT mode uses the registered clone handlers.
+Temporary structural reservations protect completed peer roots during later
+construction, configuration, generation, and initialization. The reservation
+covers their nodes, transforms, and components, including linked structural-list
+lifetimes. A forest graph checks disjoint ownership and exact links. Reservations
+close before cache publication; final structural validation and the existing
+publication identity guard precede sealed ownership transfer. Returned roots are
+an ordered read-only view over private storage.
+
+The forest path preserves the existing current-root identity semantics. It does
+not reject all same-target reentrant Generate calls or prove that no temporary
+structural change occurred inside publication callbacks. Peer reservations also
+do not freeze ordinary property values. Editor mutation checks cover the fields
+owned by the command after construction.
+
+`HierarchyCloneCustody` retains one forest receipt, lifetime, selection owner,
+and history resource. Preparation captures all detached placements and local
+values before deactivating any clone. `HierarchyMutationBatchOperation` applies
+members forward and compensates or undoes started members in reverse. It checks
+peer placement, activation, and local-value expectations at callback boundaries.
+Scene-list changes check peers before and after each collection mutation. Failed
+or mixed compensation keeps the whole receipt in recovery; it never retires a
+detached subset of the group. Failed compensation marks captured scene/document
+targets through their current authority, independently of the rejected clone
+values. Changed or replaced document targets are rejected, and secondary dirty
+failures cannot replace the original command failure.
+
+`HierarchyBatchReplayExpectation` advances only the admitted Transform local key
+through Undo/Redo property replay. It checks all peers before the setter and
+checks the requested state after it. Custom transform matrices remain structural
+inverse work. A callback that changes another member cannot become the next
+baseline. Selection changes once after complete placement, and newer selection
+wins. History release uses existing whole-ledger document custody or strict
+forest retirement. Unknown asset allocations and document-end recovery keep their
+existing restrictions. The single-node command uses the same history runner and
+keeps its existing clone entry point.

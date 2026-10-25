@@ -93,10 +93,31 @@ the inspector during refresh and input callbacks. Check keyboard focus, labels,
 large-table scrolling, the displayed 8,192-key limit, and plot resize. These live
 checks remain pending. Compiling the editor cases does not execute them on Linux.
 
+### Grouped hierarchy duplicate acceptance
+
+On Windows, duplicate two selected sibling roots, roots under different parents,
+and hidden or routed scene roots. Include an ancestor and its selected descendant;
+only top-level sources must be cloned. Check ordered selection, unique names in
+shared destinations, source asset-sharing behavior, and one Undo action. Undo and
+Redo the whole group, then prune detached history and verify complete retirement.
+Repeat with a registered AOT clone profile and a matrix-backed transform.
+
+Run the grouped cases in NativeHierarchyDuplicateTests and NativeHierarchyMenuTests.
+Inject preparation, placement, selection, dirty, and Undo/Redo callbacks that
+change another clone. Check that newer state survives, later owned writes stop,
+and incomplete compensation retains one recovery receipt. A rejected request
+before allocation must leave no phantom history entry. A partial construction
+failure must keep its exact allocation ledger. Live menu, mouse, keyboard, and
+Windows Undo execution remain pending. Portable forest and replay-helper tests
+do not execute the full editor transaction.
+
 ### Managed integration evidence
 
-Latest full portable check (2026-10-25): headless build210 passed with zero
-warnings/errors, and run156 passed **1,271/1,271** tests with no failures or skips.
+Latest full portable check (2026-10-25): headless build214 passed with zero
+warnings/errors, and run162 passed **1,289/1,289** tests with no failures or skips.
+Run161 passed 44 forest and replay-helper cases. Desktop build67 passed with
+zero warnings/errors, and all 10,838 source inputs stayed unchanged. Ten added
+editor transaction cases and one revised native menu case require Windows execution.
 Run155 passed 16 authored-state cases, including weighted sampling, external
 changes, nested setters, observer failure, and invalid weight rejection. Desktop
 build65 passed with zero warnings/errors. Four added editor cases compiled only;

@@ -10,6 +10,7 @@ namespace XREngine.Editor;
 internal sealed class HierarchyCloneDocument
 {
     private readonly XRWorld? _asset;
+    private readonly ObjectConstructionIdentity? _assetIdentity;
     private readonly List<XRScene>? _scenes;
     private readonly IRuntimeWorldScenePolicy? _policy;
     private readonly EditorWorldIntegration? _integration;
@@ -18,6 +19,7 @@ internal sealed class HierarchyCloneDocument
     {
         World = world;
         _asset = world.TargetWorld;
+        _assetIdentity = _asset is null ? null : ObjectConstructionIdentity.Capture(_asset);
         _scenes = _asset?.Scenes;
         _policy = world.ScenePolicy;
         EditorWorldIntegrationRegistry.TryGet(world, out _integration);
@@ -31,8 +33,26 @@ internal sealed class HierarchyCloneDocument
     {
         EditorWorldIntegrationRegistry.TryGet(World, out EditorWorldIntegration? integration);
         return !World.IsDisposing && _asset?.IsDestroyed != true && _asset?.IsDestroyQueued != true &&
+            _assetIdentity?.IsCurrent != false &&
             ReferenceEquals(World.TargetWorld, _asset) && ReferenceEquals(_asset?.Scenes, _scenes) &&
             ReferenceEquals(World.ScenePolicy, _policy) && ReferenceEquals(integration, _integration);
+    }
+
+    internal void RequireDirtyScene(XRScene scene, SceneRootCollection roots,
+        ObjectConstructionIdentity identity)
+    {
+        if (!IsCurrent() || !ReferenceEquals(identity.Target, scene) || !identity.IsCurrent ||
+            scene.IsDestroyed || scene.IsDestroyQueued || !ReferenceEquals(scene.SceneRoots, roots) ||
+            !roots.IsCurrent ||
+            (_scenes?.Contains(scene) != true &&
+             !ReferenceEquals(_integration?.ExistingEditorScene, scene) && !World.IsSceneReady(scene)))
+            throw new InvalidOperationException("A captured duplicate scene is no longer owned by its document.");
+    }
+
+    internal void RequireDirtyWorld()
+    {
+        if (!IsCurrent() || _assetIdentity?.IsCurrent != true)
+            throw new InvalidOperationException("The duplicate world document cannot be marked dirty.");
     }
 
     internal void RequireOperationRoot(SceneNode node)
