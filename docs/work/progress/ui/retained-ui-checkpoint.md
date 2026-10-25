@@ -1284,3 +1284,17 @@ with zero warnings/errors. All 10,804 source inputs stayed unchanged through tha
 build and the final test run. Live context dispatch, rename focus, filesystem
 actions, and Windows/GPU acceptance remain pending. Delete, asset creation, and
 ImGui-only tool actions were not added. The broader count remains **50/60**.
+
+## Table Selection And Activation
+
+Table actions retain the clicked item and binding across selection callbacks.
+A recycled row, newer selection, changed source, or retired owner cancels the
+old action. Selection callbacks cannot apply an old highlight to a new binding
+or publish a superseded selection notification.
+
+Headless build183 passed with zero warnings/errors. Full run122 passed
+**1,160/1,160**, without failures, warnings, or skips. Desktop build48 compiled
+the editor and tests with zero warnings/errors. All 10,805 source inputs stayed
+unchanged. Twelve cases cover these contracts, including failures reproduced
+before repair. Native input and broader editor acceptance remain pending.
+The broader reconciliation remains **50/60**.

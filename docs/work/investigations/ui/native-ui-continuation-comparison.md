@@ -318,3 +318,29 @@ desktop build and headless run. One hundred request-admission checks allocated
 zero managed bytes in the harness. This is not an editor performance benchmark.
 The 22 portable cases exercise request and draft admission, not live right-click
 dispatch, rename focus, or file mutations. The Windows procedures remain pending.
+
+## Table Activation Across Selection Callbacks
+
+Source review found that the table interaction handler selected its current
+BoundId and then read BoundId again after callbacks. A callback could recycle the
+row between those reads. Build180 passed with zero warnings/errors in 2m44.42s.
+Baseline run119 passed **1/11** in 0.932s. It reproduced activation of replacement
+ID22, activation of ID0 after provider removal, a duplicate nested action, stale
+actions after other ownership changes, and an obsolete selection notification.
+
+The provider now captures the action's item and binding before selection and
+checks object, canvas, input, source, and selection ownership afterward. A monotonic
+selection revision rejects a change away and back to the same value. The selection
+setter stops its old visual/notification pass after a newer selection. Build181
+passed with zero warnings/errors in 1m46.14s; run120 passed **11/11** in 0.982s.
+
+A related changing-callback test then reproduced a recycled row receiving its
+predecessor's highlight. Build182 passed with zero warnings/errors in 20.03s;
+run121 passed **11/12** in 0.872s. The row now checks its lifetime and navigation
+binding after IsSelected changing callbacks and rejects the old pending write.
+
+Final headless build183 passed with zero warnings/errors in 1m30.44s. Full run122
+passed **1,160/1,160** in 22.148s, with no failures, warnings, or skips. The matching
+desktop build48 compiled the editor and tests with zero warnings/errors in
+3m01.39s. All 10,805 source inputs stayed unchanged. Native window input and broader table/editor acceptance
+remain in the validation plan; no broad TODO item closes.

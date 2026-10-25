@@ -1086,6 +1086,16 @@ keys. Focused tabs route Ctrl+W through the shared close event and
 Ctrl+Shift+PageUp/PageDown through the shared reorder event. Reused slots use their
 current tab ID.
 
+Table activation captures the item ID, binding epoch, source revision, exact
+object/canvas/input ownership, and selection revision before it selects the row.
+It emits Activated only if those checks still hold after selection callbacks.
+It never rereads a recycled row's new ID as the target of the old click. A newer
+selection, including a change away and back to the same ID, cancels the old
+continuation. Selection visual callbacks cannot emit an obsolete outer selection
+notification. `UIVirtualTableRowComponent` also rejects a pending IsSelected write
+if a changing callback replaces its binding, so a recycled row keeps its own
+selection visual.
+
 ## Hover callbacks and displayed pointer geometry
 
 Hit collection records the accepted input revision. Before hover dispatch, a

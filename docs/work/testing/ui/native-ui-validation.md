@@ -27,8 +27,8 @@ admission tests and managed compilation do not replace them.
 
 ### Managed integration evidence
 
-Latest continuation check (2026-10-25): headless build179 passed with zero
-warnings/errors, and run118 passed **1,148/1,148** tests with no failures or skips.
+Latest continuation check (2026-10-25): headless build183 passed with zero
+warnings/errors, and run122 passed **1,160/1,160** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
@@ -38,9 +38,11 @@ before repair. Initial submenu-focus regressions also failed before the shared
 request replaced its old retry. Menu transition tests also cover coalesced
 Show/Hide requests, stale owners, builder failures, and content ownership.
 Asset menu and rename-draft admission add 22 cases, including unchanged refresh,
-changed selection, retired fields, and replaced paths. Desktop test build47
-compiled the final editor and test assembly with zero warnings/errors. All 10,804
-source inputs stayed unchanged through that build and the final headless run.
+changed selection, retired fields, and replaced paths. Table activation adds 12
+cases for selection reentry, recycled rows, stale actions, and highlight writes.
+Desktop test build48
+compiled the final editor and test assembly with zero warnings/errors. All 10,805
+source inputs stayed unchanged through the headless and desktop checks.
 The new `NativeToolPanelStateTests` compiled but did not execute
 on this Linux host. Check console category/auto-scroll, profiler view, and settled
 scroll saves through the active dock-tree host on Windows. See the

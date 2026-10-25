@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using XREngine.Data.Core;
 using XREngine.Scene;
 
 namespace XREngine.Rendering.UI;
@@ -33,6 +34,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
     private readonly ConditionalWeakTable<UIBoundableTransform, RowState> _rows = new();
     private readonly List<WeakReference<RowState>> _liveRows = [];
     private ulong? _selectedId;
+    private ulong _selectionRevision;
 
     public UIVirtualTableProvider(IUIVirtualTableSource<T> source,
         params UIVirtualTableColumn<T>[] columns)
@@ -71,12 +73,15 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
             if (_selectedId == value)
                 return;
             _selectedId = value;
-            for (int i = _liveRows.Count - 1; i >= 0; i--)
+            ulong revision = ++_selectionRevision;
+            for (int i = _liveRows.Count - 1; i >= 0; i = Math.Min(i - 1, _liveRows.Count - 1))
             {
                 if (_liveRows[i].TryGetTarget(out RowState? state))
                     state.Interaction.IsSelected = state.BoundId != 0 && state.BoundId == value;
                 else
                     _liveRows.RemoveAt(i);
+                if (_selectionRevision != revision)
+                    return;
             }
             SelectionChanged?.Invoke(value);
         }
@@ -124,13 +129,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
                 RowPointerMoved?.Invoke(state.BoundId, interaction, new Vector2(x, y));
         };
         interaction.MouseDirectOverlapLeave += _ => RowPointerLeft?.Invoke(interaction);
-        interaction.InteractAction += _ =>
-        {
-            if (state.BoundId == 0)
-                return;
-            SelectedId = state.BoundId;
-            Activated?.Invoke(state.BoundId);
-        };
+        interaction.InteractAction += _ => ActivateRow(layout, state);
         interaction.GotFocus += _ =>
         {
             UIListTransform? list = state.BoundList;
@@ -150,6 +149,55 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
                     _liveRows.RemoveAt(i);
         _liveRows.Add(new WeakReference<RowState>(state));
         return layout;
+    }
+
+    private void ActivateRow(UIBoundableTransform row, RowState state)
+    {
+        UIVirtualTableRowComponent interaction = state.Interaction;
+        if (state.BoundId == 0 || interaction.IsDestroyed || interaction.IsDestroyQueued ||
+            !interaction.CanInteract || state.BoundList is not { } list ||
+            interaction.UserInterfaceCanvas is not { } canvas)
+            return;
+        ulong itemId = state.BoundId;
+        ulong incarnation = state.BoundIncarnation;
+        ulong providerIncarnation = state.ProviderIncarnation;
+        ulong epoch = state.BindingEpoch;
+        ulong selectionRevision = _selectionRevision;
+        ObjectConstructionIdentity componentIdentity = ObjectConstructionIdentity.Capture(interaction);
+        ObjectConstructionIdentity nodeIdentity = ObjectConstructionIdentity.Capture(interaction.SceneNode);
+        ObjectConstructionIdentity rowIdentity = ObjectConstructionIdentity.Capture(row);
+        ObjectConstructionIdentity listIdentity = ObjectConstructionIdentity.Capture(list);
+        ObjectConstructionIdentity listNodeIdentity = ObjectConstructionIdentity.Capture(list.SceneNode!);
+        ObjectConstructionIdentity canvasIdentity = ObjectConstructionIdentity.Capture(canvas);
+        ObjectConstructionIdentity canvasNodeIdentity = ObjectConstructionIdentity.Capture(canvas.SceneNode);
+        ObjectConstructionIdentity canvasTransformIdentity = ObjectConstructionIdentity.Capture(canvas.Transform);
+        var parent = list.Parent;
+        ObjectConstructionIdentity? parentIdentity = parent is null ? null : ObjectConstructionIdentity.Capture(parent);
+        IUICanvasInputSource? input = canvas.GetInputComponent();
+        ObjectConstructionIdentity? inputIdentity = input is XRObjectBase inputObject ? ObjectConstructionIdentity.Capture(inputObject) : null;
+        ulong sourceRevision = _source.Revision;
+
+        static bool Live(ObjectConstructionIdentity identity)
+            => identity.IsCurrent && !identity.Target.IsDestroyed && !identity.Target.IsDestroyQueued;
+        bool Current() => IsCurrentBinding(row, state, itemId, incarnation, list, providerIncarnation, sourceRevision, epoch) &&
+            Live(componentIdentity) && Live(nodeIdentity) && Live(rowIdentity) && Live(listIdentity) &&
+            Live(listNodeIdentity) && Live(canvasIdentity) && Live(canvasNodeIdentity) && Live(canvasTransformIdentity) &&
+            (parentIdentity is not { } capturedParent || Live(capturedParent)) &&
+            (inputIdentity is not { } capturedInput || Live(capturedInput)) &&
+            ReferenceEquals(interaction.SceneNode, nodeIdentity.Target) && ReferenceEquals(interaction.Transform, row) &&
+            ReferenceEquals(list.SceneNode, listNodeIdentity.Target) && ReferenceEquals(list.SceneNode?.Transform, list) &&
+            ReferenceEquals(list.Parent, parent) && ReferenceEquals(interaction.UserInterfaceCanvas, canvas) &&
+            ReferenceEquals(canvas.SceneNode, canvasNodeIdentity.Target) && ReferenceEquals(canvas.Transform, canvasTransformIdentity.Target) &&
+            ReferenceEquals(canvas.GetInputComponent(), input) && interaction.CanInteract;
+
+        if (!Current() || _selectionRevision != selectionRevision)
+            return;
+        ulong expectedSelectionRevision = selectionRevision + (_selectedId == itemId ? 0UL : 1UL);
+        SelectedId = itemId;
+        // A selection callback can recycle this row, issue a newer click, or return
+        // to the same selected ID. None of those continuations owns this action.
+        if (Current() && _selectionRevision == expectedSelectionRevision && _selectedId == itemId)
+            Activated?.Invoke(itemId);
     }
 
     public void BindRow(UIBoundableTransform row, int index, ulong itemId, ulong incarnation)

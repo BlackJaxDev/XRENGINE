@@ -135,6 +135,7 @@
     <Compile Include="../Rendering/UIContextMenuNavigationTests.Transitions.cs" Link="Rendering/UIContextMenuNavigationTests.Transitions.cs" />
     <Compile Include="../Rendering/UIGridSubscriptionTeardownTests.cs" Link="Rendering/UIGridSubscriptionTeardownTests.cs" />
     <Compile Include="../Rendering/UIVirtualTableRefreshTests.cs" Link="Rendering/UIVirtualTableRefreshTests.cs" />
+    <Compile Include="../Rendering/UIVirtualTableActivationTests.cs" Link="Rendering/UIVirtualTableActivationTests.cs" />
     <Compile Include="../Rendering/UIVirtualTableRefreshSource.cs" Link="Rendering/UIVirtualTableRefreshSource.cs" />
     <Compile Include="../Rendering/UIRenderableMaterialTeardownTests.cs" Link="Rendering/UIRenderableMaterialTeardownTests.cs" />
     <Compile Include="../Rendering/UITestCanvasInputProbe.cs" Link="Rendering/UITestCanvasInputProbe.cs" />

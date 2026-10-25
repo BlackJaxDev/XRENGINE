@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Data.Core;
 using XREngine.Input;
 using XREngine.Input.Devices;
 
@@ -64,6 +65,32 @@ public sealed class UIVirtualTableRowComponent : UIButtonComponent
         NavigationRequested = null;
         UnbindNavigation();
         base.OnDestroying();
+    }
+
+    protected override bool OnPropertyChanging<T>(string? propertyName, T field, T value)
+    {
+        if (propertyName != nameof(IsSelected) || SceneNode is not { } node || node.IsTransformNull)
+            return base.OnPropertyChanging(propertyName, field, value);
+        ObjectConstructionIdentity componentIdentity = ObjectConstructionIdentity.Capture(this);
+        ObjectConstructionIdentity nodeIdentity = ObjectConstructionIdentity.Capture(node);
+        ObjectConstructionIdentity transformIdentity = ObjectConstructionIdentity.Capture(Transform);
+        var parent = Transform.Parent;
+        ObjectConstructionIdentity? parentIdentity = parent is null ? null : ObjectConstructionIdentity.Capture(parent);
+        IVirtualListProvider? provider = _provider;
+        UIListTransform? list = _list;
+        ulong itemId = _itemId;
+        ulong leaseIncarnation = _leaseIncarnation;
+        ulong providerIncarnation = _providerIncarnation;
+        bool allowed = base.OnPropertyChanging(propertyName, field, value);
+        // A changing callback can bind this same visual to a different item before
+        // SetField writes its value. Keep the replacement binding's selection.
+        return allowed && !IsDestroyed && !IsDestroyQueued &&
+            componentIdentity.IsCurrent && nodeIdentity.IsCurrent && transformIdentity.IsCurrent &&
+            (parentIdentity is not { } capturedParent || capturedParent.IsCurrent) &&
+            ReferenceEquals(SceneNode, node) && ReferenceEquals(Transform, transformIdentity.Target) &&
+            ReferenceEquals(Transform.Parent, parent) && ReferenceEquals(_provider, provider) &&
+            ReferenceEquals(_list, list) && _itemId == itemId && _leaseIncarnation == leaseIncarnation &&
+            _providerIncarnation == providerIncarnation;
     }
 
     public override bool TryConsumeFocusDirection(Vector2 direction)
