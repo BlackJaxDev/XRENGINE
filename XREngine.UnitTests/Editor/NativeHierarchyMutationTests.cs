@@ -146,6 +146,36 @@ public sealed class NativeHierarchyMutationTests
     }
 
     [Test]
+    public void TheFirstPromotedEditorChildAllocatesTheEditorScene()
+    {
+        SceneNode root = new("Scene root");
+        SceneNode child = new(root, "Editor child") { IsEditorOnly = true };
+        XRScene scene = new("Source", root);
+        using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", scene));
+        EditorWorldIntegration integration = EditorWorldIntegrationRegistry.GetOrAttach(world);
+        try
+        {
+            Assert.That(integration.ExistingEditorScene, Is.Null);
+            Run(() => EditorImGuiUI.QueueNativeHierarchyMoveToRoot(child, world));
+            XRScene? editor = integration.ExistingEditorScene;
+            Assert.That(editor, Is.Not.Null);
+            Assert.That(child.Parent, Is.Null);
+            Assert.That(scene.SceneRoots, Does.Contain(child));
+            Assert.That(editor!.SceneRoots, Does.Contain(child));
+            Assert.That(integration.CaptureHierarchySourceRoutes(child), Is.EqualTo(new[] { scene }));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(child.Parent, Is.SameAs(root));
+            Assert.That(scene.SceneRoots, Does.Not.Contain(child));
+            Assert.That(editor.SceneRoots, Does.Not.Contain(child));
+            Assert.That(integration.ExistingEditorScene, Is.SameAs(editor));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(scene.SceneRoots, Does.Contain(child));
+            Assert.That(editor.SceneRoots, Does.Contain(child));
+        }
+        finally { child.Destroy(true); root.Destroy(true); }
+    }
+
+    [Test]
     public void AnOrdinaryPromotedChildDoesNotInheritItsParentsEditorRoute()
     {
         SceneNode root = new("Editor root") { IsEditorOnly = true };

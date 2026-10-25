@@ -93,8 +93,9 @@ internal sealed class HierarchyPlacement
         {
             if (node.IsEditorOnly && sourceRoot.RuntimeRoutes.Scenes.Count > 0)
             {
-                XRScene editor = integration.ExistingEditorScene ??
-                    throw new InvalidOperationException("Create an editor scene before promoting this editor-only child to a visible scene root.");
+                // The first editor-only root allocates the editor scene. An empty editor
+                // scene has no runtime effect, so undo keeps it for redo authority checks.
+                XRScene editor = integration.EditorScene;
                 if (!slots.Any(slot => ReferenceEquals(slot.Scene, editor)))
                     slots.Add(HierarchySceneRootSlot.Capture(editor, node, sourceRoot.World) with { Index = int.MaxValue });
                 editorRoutes = [.. sourceRoot.RuntimeRoutes.Scenes];
