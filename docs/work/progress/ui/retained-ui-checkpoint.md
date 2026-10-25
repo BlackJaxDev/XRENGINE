@@ -1409,3 +1409,17 @@ cases executed portably; nine new inspector action/history cases only compiled.
 No Windows execution, native visual, GPU, IME, or performance-comparison result is
 claimed. The original reconciliation remains **50/60**, with 10 broad code items
 and four original decisions open. The three pending proposals are unchanged.
+
+
+## Native Asset Reveal Action
+
+The native asset menu adds Open in Explorer for folders and Show in Explorer for
+files. It reuses the ImGui launch helper, checks the current row and selection
+after callbacks, and skips removed paths. It adds no asset mutation or recovery.
+
+Desktop build58 passed with zero warnings/errors in 6m30.24s. The unchanged
+portable menu-request tests passed **22/22** in run143, in 2.100s, using build201.
+All 10,824 source inputs stayed unchanged through validation. The full portable
+result remains **1,239/1,239** at the preceding checkpoint. The new action compiled;
+Windows Explorer launch and native interaction remain pending. No broad code item
+closes: the original reconciliation remains **50/60**.

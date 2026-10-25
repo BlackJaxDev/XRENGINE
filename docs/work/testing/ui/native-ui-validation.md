@@ -11,12 +11,15 @@ Design: [Native UI retained rendering](../../design/ui/native-ui-retained-render
 
 On Windows, use the active native dock host with both game and engine assets.
 Right-click file and folder rows. Check Open Folder, Inspect, Rename, and Reimport
-against the clicked path, including when another asset is selected. Reimport must
+against the clicked path, including when another asset is selected. Check Open
+in Explorer for a folder and Show in Explorer for a file; the folder must open
+and the file must be selected in Windows Explorer. Reimport must
 be disabled for folders and native asset files. Delete and ImGui-only tool actions
 must not appear.
 
 Scroll or refresh between right-click and the next owner tick. The stale request
-must close without acting on a recycled row. Close, transfer, or rebuild the panel
+must close without acting on a recycled row or launching Explorer. Remove the
+clicked path before the Explorer action; no process should launch. Close, transfer, or rebuild the panel
 with a menu open and check that old input callbacks cannot reopen or act on it.
 For rename, enter a new name, wait through an unchanged periodic refresh, and press
 Enter. Check the canonical rename and Undo path. Escape, a changed selection,
@@ -49,7 +52,7 @@ checks remain pending. Compiling the editor cases does not execute them on Linux
 
 ### Managed integration evidence
 
-Latest continuation check (2026-10-25): headless build201 passed with zero
+Latest full portable check (2026-10-25): headless build201 passed with zero
 warnings/errors, and run142 passed **1,239/1,239** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
@@ -86,6 +89,11 @@ on this Linux host. Check console category/auto-scroll, profiler view, and settl
 scroll saves through the active dock-tree host on Windows. See the
 [continuation comparison](../../investigations/ui/native-ui-continuation-comparison.md)
 for the preserved local snapshot, source differences, and exact validation limits.
+
+The later Explorer action passed editor/test build58 with zero warnings/errors.
+Run143 passed the 22 unchanged portable menu-request cases using build201. Those
+cases do not launch Explorer or execute the editor-only action. Actual Windows
+folder/file reveal remains pending.
 
 The expanded implementation is under integration. The user explicitly approved
 new headless regression tests before Windows and graphics validation on

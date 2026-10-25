@@ -646,3 +646,26 @@ inspector action/history cases compiled but did not execute on this Linux host.
 The five maintained documents have 39 resolving relative links; diff checks pass.
 The bounded contracts are ready for publication. Parent/root transitions, live
 menu integration, distinct-curve editing, and platform acceptance remain open.
+
+
+## Native Asset File-Browser Action
+
+Source comparison found that ImGui could reveal a file or folder in Explorer,
+but the native asset row menu could not. The native action now reuses the existing
+launch implementation through EditorFileBrowser. It runs the same row/selection
+admission as other menu actions, confirms the path still exists, and rechecks the
+request after selection callbacks before launch. The existing ImGui callers use
+the shared helper with the same arguments and error handling. No delete action,
+new storage behavior, or dependency was added.
+
+Desktop build58 starts on 10,824 frozen source inputs. Windows process launch is
+not available for acceptance on this Linux host. Existing portable request tests
+cover the unchanged admission contract; they do not execute the new editor action.
+
+Desktop build58 passed with zero warnings/errors in 6m30.24s. Run143 passed all
+22 existing portable menu-request cases in 2.100s without failures or skips.
+It reused build201 because the portable project inputs did not change; the new
+menu action and shared launch helper are editor-only. All 10,824 source inputs
+stayed unchanged through this validation. The full portable result remains
+run142 at the preceding checkpoint, 1,239/1,239. Windows Explorer launch is still
+pending; the request tests do not execute that process boundary.

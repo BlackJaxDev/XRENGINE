@@ -1,5 +1,6 @@
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Editor.Services;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -91,6 +92,8 @@ public partial class AssetsPanel
                 new ContextMenuItem(Path.GetFileName(request.Path), null, enabled: false),
                 ContextMenuItem.Separator(),
                 new ContextMenuItem(directory ? "Open Folder" : "Inspect", () => OpenMenuAsset(request)),
+                new ContextMenuItem(directory ? "Open in Explorer" : "Show in Explorer",
+                    () => RevealMenuAsset(request)),
                 new ContextMenuItem("Rename", () => PrepareMenuRename(request)),
                 new ContextMenuItem("Reimport", () => ReimportMenuAsset(request), enabled: importable));
             if (IsCurrentAssetMenu(request) && popup.IsOpen)
@@ -137,6 +140,16 @@ public partial class AssetsPanel
     {
         if (!SelectMenuAsset(request)) return;
         ActivateAssetRow(request.Lease.ItemId);
+    }
+
+    private void RevealMenuAsset(NativeAssetMenuRequest request)
+    {
+        if (!SelectMenuAsset(request)) return;
+        bool directory = Directory.Exists(request.Path);
+        if (!directory && !File.Exists(request.Path)) return;
+        if (!IsCurrentAssetMenu(request) || request.AwaitingShow ||
+            _table.SelectedId != request.Lease.ItemId) return;
+        EditorFileBrowser.OpenPath(request.Path, directory);
     }
 
     private bool SelectMenuAsset(NativeAssetMenuRequest request)

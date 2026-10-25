@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -3363,20 +3362,7 @@ public static partial class EditorImGuiUI
         }
 
         private static void OpenPathInExplorer(string path, bool isDirectory)
-        {
-            try
-            {
-                string arguments = isDirectory ? $"\"{path}\"" : $"/select,\"{path}\"";
-                Process.Start(new ProcessStartInfo("explorer.exe", arguments)
-                {
-                    UseShellExecute = true
-                });
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex, $"Failed to open explorer for '{path}'.");
-            }
-        }
+            => EditorFileBrowser.OpenPath(path, isDirectory);
 
 
         private static partial void EnsureAssetExplorerState(AssetExplorerTabState state, string rootPath)

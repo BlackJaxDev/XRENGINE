@@ -822,12 +822,15 @@ source revision, selected item, and path mapping before publishing AssetSelected
 This prevents an obsolete notification after a newer selection or owner change.
 
 `AssetsPanel.Menu` uses the shared context menu for Open Folder or Inspect,
-Rename, and Reimport. `NativeAssetMenuRequest` captures a virtual row lease and
+Rename, Reimport, and Open/Show in Explorer. `NativeAssetMenuRequest` captures a virtual row lease and
 its provider/source revision, owner, canvas, input, and object lifetimes.
 The panel opens the menu on its next owner tick, after the right-click event has
 finished. An old dismissal handler therefore cannot dismiss the new menu during
 the same dispatch. Row recycling, refresh, lost ownership, and input replacement
 cancel the request. Actions recheck it before calling the existing panel paths.
+Explorer actions recheck after selection callbacks, require a current file or
+folder, and use the same EditorFileBrowser helper as ImGui. A folder opens in
+Explorer; a file is selected there. This does not add file mutation or recovery.
 
 Rename fills the existing name field and requests presented focus. Enter uses
 `RenameSelection`; Escape cancels the draft. `NativeAssetRenameDraft` preserves an
