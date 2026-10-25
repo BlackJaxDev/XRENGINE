@@ -53,10 +53,10 @@ public sealed class InspectorFloatCurveActionsTests
         try
         {
             PropAnimFloat shared = new(2, false, true);
-            AnimStateTransition first = new() { CustomBlendFunction = shared };
-            AnimStateTransition second = new() { CustomBlendFunction = shared };
-            var property = typeof(AnimStateTransition).GetProperty(
-                nameof(AnimStateTransition.CustomBlendFunction))!;
+            InspectorFloatCurveTestOwner first = new() { Curve = shared };
+            InspectorFloatCurveTestOwner second = new() { Curve = shared };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
             Assert.That(InspectorFloatCurveSource.TryCapture(property,
                 [first, second], out var source, out string reason), Is.True, reason);
             Assert.That(InspectorFloatCurveActions.Add(source!, 1,
@@ -65,7 +65,7 @@ public sealed class InspectorFloatCurveActionsTests
             Assert.That(Undo.TryUndo(), Is.True);
             Assert.That(shared.Keyframes.Count, Is.Zero);
 
-            second.CustomBlendFunction = new PropAnimFloat(2, false, true);
+            second.Curve = new PropAnimFloat(2, false, true);
             Assert.That(source!.IsCurrent(), Is.False);
             Assert.That(InspectorFloatCurveSource.TryCapture(property,
                 [first, second], out _, out string distinctReason), Is.False);
@@ -81,13 +81,13 @@ public sealed class InspectorFloatCurveActionsTests
         try
         {
             PropAnimFloat curve = new(2, false, true);
-            AnimStateTransition owner = new() { CustomBlendFunction = curve };
-            var property = typeof(AnimStateTransition).GetProperty(
-                nameof(AnimStateTransition.CustomBlendFunction))!;
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
             Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
                 out var source, out _), Is.True);
             Assert.That(InspectorFloatCurveActions.Add(source!, 0.5f, out _), Is.True);
-            owner.CustomBlendFunction = new PropAnimFloat(2, false, true);
+            owner.Curve = new PropAnimFloat(2, false, true);
             Assert.That(source!.IsCurrent(), Is.False);
             Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
             Assert.That(curve.Keyframes.Count, Is.EqualTo(1));
@@ -98,9 +98,9 @@ public sealed class InspectorFloatCurveActionsTests
         try
         {
             PropAnimFloat curve = new(2, false, true);
-            AnimStateTransition owner = new() { CustomBlendFunction = curve };
-            var property = typeof(AnimStateTransition).GetProperty(
-                nameof(AnimStateTransition.CustomBlendFunction))!;
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
             Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
                 out var source, out _), Is.True);
             Assert.That(InspectorFloatCurveActions.Add(source!, 0.5f, out _), Is.True);
@@ -121,9 +121,9 @@ public sealed class InspectorFloatCurveActionsTests
             FloatKeyframe key = new(12, 24, 2, 4, 0, 0,
                 EVectorInterpType.Smooth);
             curve.Keyframes.Add(key);
-            AnimStateTransition owner = new() { CustomBlendFunction = curve };
-            var property = typeof(AnimStateTransition).GetProperty(
-                nameof(AnimStateTransition.CustomBlendFunction))!;
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
             Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
                 out var source, out _), Is.True);
             Assert.That(InspectorFloatCurveActions.Remove(source!, key), Is.True);
@@ -144,9 +144,9 @@ public sealed class InspectorFloatCurveActionsTests
         try
         {
             PropAnimFloat curve = new(2, false, true);
-            AnimStateTransition owner = new() { CustomBlendFunction = curve };
-            var property = typeof(AnimStateTransition).GetProperty(
-                nameof(AnimStateTransition.CustomBlendFunction))!;
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
             Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
                 out var source, out _), Is.True);
             bool changed = false;
@@ -171,9 +171,9 @@ public sealed class InspectorFloatCurveActionsTests
         try
         {
             PropAnimFloat curve = new(2, false, true);
-            AnimStateTransition owner = new() { CustomBlendFunction = curve };
-            var property = typeof(AnimStateTransition).GetProperty(
-                nameof(AnimStateTransition.CustomBlendFunction))!;
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
             Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
                 out var source, out _), Is.True);
             Assert.That(InspectorFloatCurveActions.Add(source!, 0.5f,
@@ -197,8 +197,10 @@ public sealed class InspectorFloatCurveActionsTests
             curve.ClearDirty();
             var property = typeof(AnimStateTransition).GetProperty(
                 nameof(AnimStateTransition.CustomBlendFunction))!;
+            Assert.That(InspectorFloatTransitionOwnership.TryCapture(machine,
+                0, 0, 0, false, out var path, out _), Is.True);
             Assert.That(InspectorFloatCurveSource.TryCapture(property, [transition],
-                out var source, out string reason), Is.True, reason);
+                out var source, out string reason, path), Is.True, reason);
             Assert.That(InspectorFloatCurveActions.Add(source!, 0.5f, out _), Is.True);
             Assert.That(machine.IsDirty, Is.True);
             Assert.That(curve.IsDirty, Is.True);
@@ -216,8 +218,10 @@ public sealed class InspectorFloatCurveActionsTests
             var (machine, layer, state, transition, _) = CreateAttached();
             var property = typeof(AnimStateTransition).GetProperty(
                 nameof(AnimStateTransition.CustomBlendFunction))!;
+            Assert.That(InspectorFloatTransitionOwnership.TryCapture(machine,
+                0, 0, 0, false, out var path, out _), Is.True);
             Assert.That(InspectorFloatCurveSource.TryCapture(property, [transition],
-                out var source, out string reason), Is.True, reason);
+                out var source, out string reason, path), Is.True, reason);
             Assert.That(InspectorFloatCurveActions.Add(source!, 0.5f, out _), Is.True);
             state.Transitions = [transition];
             Assert.That(source!.IsCurrent(), Is.False);
@@ -228,13 +232,18 @@ public sealed class InspectorFloatCurveActionsTests
     }
 
     [Test]
-    public void TransitionTransferAndUnsupportedAnyStateRejectCapture()
+    public void TransitionTransferRejectsOldProofAndAnyStateUsesForwardPath()
     {
         var (machine, layer, _, transition, _) = CreateAttached();
         var property = typeof(AnimStateTransition).GetProperty(
             nameof(AnimStateTransition.CustomBlendFunction))!;
         Assert.That(InspectorFloatCurveSource.TryCapture(property, [transition],
-            out var source, out string reason), Is.True, reason);
+            out _, out string unavailable), Is.False);
+        Assert.That(unavailable, Does.Contain("Layers detail"));
+        Assert.That(InspectorFloatTransitionOwnership.TryCapture(machine,
+            0, 0, 0, false, out var path, out _), Is.True);
+        Assert.That(InspectorFloatCurveSource.TryCapture(property, [transition],
+            out var source, out string reason, path), Is.True, reason);
         machine.Layers.Remove(layer);
         Assert.That(source!.IsCurrent(), Is.False);
 
@@ -243,9 +252,12 @@ public sealed class InspectorFloatCurveActionsTests
             CustomBlendFunction = new PropAnimFloat(2, false, true)
         };
         layer.AnyState.Transitions = [anyTransition];
+        machine.Layers.Add(layer);
+        Assert.That(InspectorFloatTransitionOwnership.TryCapture(machine,
+            0, -1, 0, true, out var anyPath, out _), Is.True);
         Assert.That(InspectorFloatCurveSource.TryCapture(property, [anyTransition],
-            out _, out string unavailable), Is.False);
-        Assert.That(unavailable, Does.Contain("incomplete"));
+            out var anySource, out reason, anyPath), Is.True, reason);
+        Assert.That(anySource!.IsCurrent(), Is.True);
     }
 
     private static (AnimStateMachine Machine, AnimLayer Layer, AnimState State,
@@ -258,7 +270,6 @@ public sealed class InspectorFloatCurveActionsTests
         AnimLayer layer = new(state);
         AnimStateMachine machine = new();
         machine.Layers.Add(layer);
-        layer.Initialize(machine, null);
         return (machine, layer, state, transition, curve);
     }
 }

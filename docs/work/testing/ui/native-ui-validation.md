@@ -38,22 +38,29 @@ rebuild, and transfer. These native interaction checks remain pending.
 ### Float animation inspector acceptance
 
 On Windows, open a getter-only transform animation curve and a transition custom
-blend curve in the native inspector detail view. Select a key and edit time/value.
+blend curve through the state-machine Layers detail. Navigate through a layer,
+ordinary state or AnyState, and transition. Repeat before play, during play, and
+after stop. Select a key and edit time/value.
 Add and remove keys, set length, and stretch length. Undo and Redo each operation,
-including consecutive edits. Verify frame indices, synchronized handles, source
+including consecutive edits and Undo after closing the navigator. Verify frame
+indices, synchronized handles, source
 dirty state, and unchanged playback time. Repeat with shared selected references;
 distinct selected curves must report that editing is unavailable.
 
 Change keys and replace the curve or track externally. The detail must refresh,
-release old subscriptions, and reject stale commands/history. Close or rebuild
+release old subscriptions, and reject stale commands/history. Replace, reorder,
+or regenerate a Layers, States, or Transitions container. Old rows must reject
+actions. Check the 8,192-entry navigation limit and stable row selection during
+an unchanged refresh. Close or rebuild
 the inspector during refresh and input callbacks. Check keyboard focus, labels,
 large-table scrolling, the displayed 8,192-key limit, and plot resize. These live
 checks remain pending. Compiling the editor cases does not execute them on Linux.
 
 ### Managed integration evidence
 
-Latest full portable check (2026-10-25): headless build201 passed with zero
-warnings/errors, and run142 passed **1,239/1,239** tests with no failures or skips.
+Latest full portable check (2026-10-25): headless build203 passed with zero
+warnings/errors, and run146 passed **1,248/1,248** tests with no failures or skips.
+Run145 passed all 100 targeted transition-ownership and menu-navigation cases.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
@@ -74,13 +81,17 @@ remain open. Eight menu cases cover setup cancellation and exception preservatio
 Fifteen initial-leaf cases cover explicit retirement, adoption history, reserved
 factory admission, resources, and retained failures. Twelve live-world leaf cases
 cover source visibility, exact world/store removal, vetoes, exceptions, nested
-writes, and strict clone admission. Four transition-owner cases check exact
-state-machine membership and source documents, including zero allocations in
-1,024 warmed fast checks. Desktop test build57 compiled the final editor and
-test assembly with zero warnings/errors. All 10,823 source inputs stayed unchanged
-through the final desktop build and portable run. Nine new float inspector action
-cases compiled but did not execute; their Undo and UI behavior still needs Windows
-validation.
+writes, and strict clone admission. Eight current transition-owner cases check explicit forward state-machine paths,
+AnyState, uninitialized default lists, replacement, regeneration, duplicate and
+reordered membership, and source documents. The warmed fast-check case reports
+zero allocations across 1,024 calls. Five additional menu cases check queued
+construction cancellation and callback exception identity. The earlier checkpoint
+used four transition-owner cases. Desktop test build61 compiled the current
+editor and test assembly with zero warnings/errors. The final snapshot has 10,827
+source inputs. Only editor-test assertion casts changed after run146; portable
+inputs stayed unchanged. Nine float action/history cases and five detail-build
+retirement cases compiled but did not execute. Their Undo and UI behavior still
+needs Windows validation.
 Six new AssetsPanelSelectionTests cases compiled but did not execute. A desktop
 test probe executed zero tests because NUnit reports `Only supported on Windows7.0`.
 The portable suite excludes AssetsPanel and does not validate these editor cases.

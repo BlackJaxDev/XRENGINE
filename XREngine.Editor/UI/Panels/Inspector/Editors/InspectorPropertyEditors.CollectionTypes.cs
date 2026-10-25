@@ -5,7 +5,9 @@ using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using XREngine;
+using XREngine.Animation;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -32,6 +34,13 @@ public static partial class InspectorPropertyEditors
 
             editor = (node, prop, objects) =>
             {
+                if (prop.DeclaringType == typeof(AnimStateMachine) &&
+                    prop.Name == nameof(AnimStateMachine.Layers) &&
+                    prop.PropertyType == typeof(EventList<AnimLayer>))
+                {
+                    EngineTypes.CreateStateMachineLayerDetail(node, prop, objects);
+                    return;
+                }
                 if (objects?.Any(target => target is IEditorListElementBinding or
                     IEditorLinkedElementBinding or IEditorDictionaryElementBinding) == true)
                 {

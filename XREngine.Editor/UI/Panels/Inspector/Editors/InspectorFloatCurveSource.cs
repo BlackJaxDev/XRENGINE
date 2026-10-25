@@ -31,7 +31,8 @@ internal sealed class InspectorFloatCurveSource
         _owners = owners;
         Documents = [.. owners.Select(entry => entry.Item5).OfType<XRAsset>()
             .Append(_curveDocument).Distinct<XRAsset>(ReferenceEqualityComparer.Instance)];
-        ReservationOwners = [curve, Track, .. owners.Select(entry => entry.Item1)];
+        ReservationOwners = [curve, Track, .. owners.Select(entry => entry.Item1),
+            .. owners.SelectMany(entry => entry.Item8?.ReservationOwners ?? [])];
     }
 
     public PropAnimFloat Curve { get; }
@@ -40,7 +41,8 @@ internal sealed class InspectorFloatCurveSource
     public object[] ReservationOwners { get; }
 
     public static bool TryCapture(PropertyInfo property, object?[]? targets,
-        out InspectorFloatCurveSource? source, out string reason)
+        out InspectorFloatCurveSource? source, out string reason,
+        InspectorFloatTransitionOwnership? transitionPath = null)
     {
         source = null;
         reason = "No valid targets.";
@@ -72,10 +74,15 @@ internal sealed class InspectorFloatCurveSource
             object? world = EditorListMutation.WorldOf(target);
             SceneNode? node = EditorListMutation.NodeOf(target);
             InspectorFloatTransitionOwnership? transitionOwnership = null;
-            if (target is AnimStateTransition transition &&
-                !InspectorFloatTransitionOwnership.TryCapture(transition,
-                    out transitionOwnership, out reason))
-                return false;
+            if (target is AnimStateTransition transition)
+            {
+                reason = "Open this curve from the state machine's Layers detail.";
+                if (transitionPath is null ||
+                    !ReferenceEquals(transitionPath.Transition, transition) ||
+                    !transitionPath.IsCurrent())
+                    return false;
+                transitionOwnership = transitionPath;
+            }
             XRAsset? document = transitionOwnership?.Document ??
                 EditorMutationDirtyState.ResolveDocument(target);
             if (target is XRWorldObjectBase && document is null)

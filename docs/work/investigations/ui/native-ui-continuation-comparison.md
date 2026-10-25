@@ -669,3 +669,78 @@ menu action and shared launch helper are editor-only. All 10,824 source inputs
 stayed unchanged through this validation. The full portable result remains
 run142 at the preceding checkpoint, 1,239/1,239. Windows Explorer launch is still
 pending; the request tests do not execute that process boundary.
+
+
+## Transition Authoring Context
+
+Review after the float-detail checkpoint found that runtime back-references do
+not prove authoring ownership. A layer gains OwningStateMachine during Initialize
+and loses it during Deinitialize. AnyState has no matching OwningLayer link. A
+default state can also contain transitions without their Owner back-reference.
+Thus Owner == null cannot establish that a transition is detached, and a direct
+transition editor can miss the containing machine's dirty document.
+
+The replacement starts from the inspected machine's Layers detail. A retained
+navigator shows one selected level at a time, then opens the existing curve detail
+with a durable forward path through exact containers and positions. Ordinary
+states and AnyState use separate explicit edges. The proof includes machine,
+source-document, and container lifetimes. It does not use runtime back-references
+or search all assets. Bare transition editing now requires that explicit context.
+UI leases do not become requirements for a later valid Undo operation.
+
+Build202 passed with zero warnings/errors in 2m54.33s. Run144 passed the first five
+portable forward-path cases in 0.082s. The frozen source had 10,826 inputs. Further
+coverage and navigator callback repairs follow before final validation: the exact
+default-constructor gap, duplicate/reordered containers, source-document changes,
+active container generation changes, and preservation of transferred detail nodes.
+No source changes to animation ownership, asset formats, or persistence are planned.
+
+
+## Remaining Ordinary Menu Integration Contract
+
+Read-only review confirms that the initial leaf receipt cannot replace ordinary
+menu cleanup directly. Ordinary row factories attach adopted trees and can fail
+before returning their node. Full guarded Show(items), submenus, Hide, and owner
+teardown need one connected runtime path: constructor-origin node/transform/list
+claims, opt-in property-commit and callback-return validation, explicit parent
+transitions with monotonic ownership revisions, recorded leaf-first retirement,
+and a canonical owner-node hook before recursive child destruction. Existing
+component receipts, list authority, and retirement executors should be reused.
+Permanent adoption markers must stay intact. Unknown or transferred content and
+partial failures must remain retained, not enter recursive destruction.
+
+The relevant seams are TransformBase construction, SceneNode constructors and
+lifecycle teardown, XRBase field/notification dispatch, and UIContextMenuComponent
+BuildMenuItem/BuildSeparator/ClearMenuItems. Runtime menus must not depend on the
+editor's NativeUIElements. Raw ShowContent callbacks do not supply arbitrary
+allocation ownership; stronger custom-content cleanup needs explicit context.
+No new dependency, storage decision, or owner approval is required for these
+remaining code contracts.
+
+A smaller active-route increment is safe first: check CanContinueConstruction
+between existing row, label, arrow, separator, line, and scroll-component helper
+calls. This can stop later factories after an earlier helper queues Show/Hide.
+It cannot interrupt a compound factory, stop an internal stale setter write, or
+establish full retirement safety. Tests must preserve callback exceptions even
+when a newer menu request was queued. This bounded menu step is implemented in the forward-context checkpoint. Broader
+construction and retirement work remains open.
+
+## Forward Context And Construction Validation
+
+Headless build203 passed with zero warnings/errors in 1m18.59s. Run145 passed
+100 targeted transition-ownership and menu cases in 3.469s. Full run146 passed
+1,248/1,248 tests in 24.404s, with no failures, warnings, or skips. The source
+snapshot held 10,827 inputs. Eight portable forward-path cases now include default
+lists with absent runtime back-references, AnyState, list regeneration, duplicate
+and reordered membership, document changes, and 1,024 allocation-free fast checks.
+
+Desktop build60 compiled with zero errors and eight CS8604 warnings in 1m24.63s.
+The new retirement tests passed nullable Action values to NUnit, which selected
+the delegate overload. Eight explicit object casts now test the stored callback
+value. Only that editor-only test file changed after the portable run; it is not
+linked by the headless project. A new frozen snapshot records that correction.
+
+Desktop build61 passed with zero warnings/errors in 49.90s. All 10,827 source
+inputs stayed unchanged after the assertion correction. The portable source and
+its run146 result remain valid. Nine action/history tests and five new detail
+construction tests compiled only; no Windows execution is claimed.

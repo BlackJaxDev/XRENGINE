@@ -14,17 +14,27 @@ public static partial class InspectorPropertyEditors
     public static partial class EngineTypes
     {
         private static void CreateFloatAnimationDetail(SceneNode node,
-            PropertyInfo property, object?[]? targets)
+            PropertyInfo property, object?[]? targets,
+            InspectorFloatTransitionOwnership? transitionPath = null)
         {
+            ObjectConstructionIdentity rootIdentity = ObjectConstructionIdentity.Capture(node);
             EnsureVerticalLayout(node);
-            var context = new FloatAnimationDetail(node, property, targets);
+            if (!rootIdentity.IsCurrent || node.IsDestroyed || node.IsDestroyQueued) return;
+            var context = new FloatAnimationDetail(node, property, targets,
+                transitionPath);
             InspectorListDetailRefreshComponent lifetime =
                 node.AddComponent<InspectorListDetailRefreshComponent>()!;
+            if (!rootIdentity.IsCurrent || lifetime is null || lifetime.IsRetired)
+            { context.Retire(); return; }
             lifetime.Refresh = context.RequestRefresh;
             lifetime.Release = context.Retire;
+            if (!context.CanBuild || lifetime.IsRetired) { context.Retire(); return; }
             InspectorFloatCurveTickComponent tick =
                 node.AddComponent<InspectorFloatCurveTickComponent>()!;
+            if (!context.CanBuild || lifetime.IsRetired || tick is null)
+            { context.Retire(); return; }
             tick.Refresh = context.RefreshIfDirty;
+            if (!context.CanBuild || lifetime.IsRetired) { context.Retire(); return; }
             context.Build();
         }
 
@@ -33,8 +43,10 @@ public static partial class InspectorPropertyEditors
             private const int MaximumKeys = 8192;
             private const int SampleCount = 97;
             private readonly SceneNode _root;
+            private readonly ObjectConstructionIdentity _rootIdentity;
             private readonly PropertyInfo _property;
             private readonly object?[]? _targets;
+            private readonly InspectorFloatTransitionOwnership? _transitionPath;
             private readonly NativeTableRows<FloatKeyframe> _rows = new();
             private readonly Dictionary<FloatKeyframe, ulong> _ids =
                 new(ReferenceEqualityComparer.Instance);
@@ -62,54 +74,83 @@ public static partial class InspectorPropertyEditors
             private readonly Func<bool> _plotValidator;
 
             public FloatAnimationDetail(SceneNode root, PropertyInfo property,
-                object?[]? targets)
+                object?[]? targets, InspectorFloatTransitionOwnership? transitionPath)
             {
                 _root = root;
+                _rootIdentity = ObjectConstructionIdentity.Capture(root);
                 _property = property;
                 _targets = targets?.ToArray();
+                _transitionPath = transitionPath;
                 _plotValidator = IsPlotCurrent;
             }
 
             public void Build()
             {
+                if (!ContinueBuild()) return;
                 if (_targets is not null)
                     foreach (object? target in _targets)
                         if (target is XRBase owner)
                             owner.PropertyChanged += OuterChanged;
+                if (!ContinueBuild()) return;
                 SceneNode card = CreateInspectorCard(_root);
+                if (!ContinueBuild()) return;
                 AddSectionHeader(card, "Float animation");
+                if (!ContinueBuild()) return;
                 _status = AddInfoLabel(card, "Loading curve...");
+                if (!ContinueBuild()) return;
 
                 SceneNode fields = card.NewChild();
+                if (!ContinueBuild()) return;
                 UIListTransform fieldLayout = fields.SetTransform<UIListTransform>();
                 fieldLayout.DisplayHorizontal = true;
                 fieldLayout.ItemSpacing = 5;
                 _time = AddInput(fields, "Key time", 100, SubmitTime);
+                if (!ContinueBuild()) return;
                 _value = AddInput(fields, "Key value", 110, SubmitValue);
+                if (!ContinueBuild()) return;
                 _length = AddInput(fields, "Length", 100, SubmitLength);
+                if (!ContinueBuild()) return;
 
                 SceneNode actions = card.NewChild();
+                if (!ContinueBuild()) return;
                 UIListTransform actionLayout = actions.SetTransform<UIListTransform>();
                 actionLayout.DisplayHorizontal = true;
                 actionLayout.ItemSpacing = 5;
                 CreateInspectorButton(actions, "Add key", AddKey);
+                if (!ContinueBuild()) return;
                 CreateInspectorButton(actions, "Remove key", RemoveKey);
+                if (!ContinueBuild()) return;
                 CreateInspectorButton(actions, "Set length", () => SetLength(false));
+                if (!ContinueBuild()) return;
                 CreateInspectorButton(actions, "Stretch length", () => SetLength(true));
+                if (!ContinueBuild()) return;
 
                 _plot = new UIRetainedPlot(card, "FloatAnimationPlot");
+                if (!ContinueBuild()) return;
                 _plot.Root.GetTransformAs<UIBoundableTransform>(true)!.Height = 160;
+                if (!ContinueBuild()) return;
                 SceneNode scrollNode = card.NewChild();
+                if (!ContinueBuild()) return;
                 UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+                if (!ContinueBuild()) return;
                 scroll.Height = 240;
+                if (!ContinueBuild()) return;
                 scroll.MinAnchor = Vector2.Zero;
+                if (!ContinueBuild()) return;
                 scroll.MaxAnchor = Vector2.One;
+                if (!ContinueBuild()) return;
                 scrollNode.AddComponent<UIScrollRegionComponent>();
+                if (!ContinueBuild()) return;
                 SceneNode listNode = scrollNode.NewChild();
+                if (!ContinueBuild()) return;
                 _list = listNode.SetTransform<UIListTransform>();
+                if (!ContinueBuild()) return;
                 _list.ItemSize = 28;
+                if (!ContinueBuild()) return;
                 _list.VirtualOverscan = 2;
+                if (!ContinueBuild()) return;
                 _list.ItemAlignment = EListAlignment.TopOrLeft;
+                if (!ContinueBuild()) return;
                 _table = new UIVirtualTableProvider<FloatKeyframe>(_rows,
                     UIVirtualTableColumn<FloatKeyframe>.Text("time", "Time", 105,
                         key => key.Second.ToString("G6", CultureInfo.InvariantCulture)),
@@ -119,24 +160,68 @@ public static partial class InspectorPropertyEditors
                     $"Key at {key.Second.ToString("G6", CultureInfo.InvariantCulture)}";
                 _table.SelectionChanged += SelectKey;
                 _table.Activated += ActivateKey;
+                if (!ContinueBuild()) return;
+                ObjectConstructionIdentity listIdentity =
+                    ObjectConstructionIdentity.Capture(listNode);
+                ObjectConstructionIdentity transformIdentity =
+                    ObjectConstructionIdentity.Capture(_list);
+                ObjectConstructionIdentity scrollIdentity =
+                    ObjectConstructionIdentity.Capture(scrollNode);
+                ObjectConstructionIdentity scrollTransformIdentity =
+                    ObjectConstructionIdentity.Capture(scrollNode.Transform);
+                ObjectConstructionIdentity cardIdentity =
+                    ObjectConstructionIdentity.Capture(card);
+                bool ListOwned() => listIdentity.IsCurrent && transformIdentity.IsCurrent &&
+                    scrollIdentity.IsCurrent && scrollTransformIdentity.IsCurrent &&
+                    cardIdentity.IsCurrent && _rootIdentity.IsCurrent &&
+                    ReferenceEquals(_list, listNode.Transform) &&
+                    ReferenceEquals(listNode.Parent, scrollNode) &&
+                    ReferenceEquals(listNode.Transform.Parent, scrollNode.Transform) &&
+                    ReferenceEquals(scrollNode.Parent, card) &&
+                    ReferenceEquals(scrollNode.Transform.Parent, card.Transform) &&
+                    ReferenceEquals(card.Parent, _root);
+                if (!ListOwned()) { Retire(); return; }
                 _list.VirtualProvider = _table;
+                if (!CanBuild)
+                {
+                    if (ListOwned()) _list.DetachVirtualProviderForOwnerTeardown();
+                    return;
+                }
                 RequestRefresh();
                 RefreshIfDirty();
             }
 
-            private static UITextInputComponent AddInput(SceneNode parent,
+            public bool CanBuild => !_retired && _rootIdentity.IsCurrent &&
+                !_root.IsDestroyed && !_root.IsDestroyQueued;
+
+            private bool ContinueBuild()
+            {
+                if (CanBuild) return true;
+                Retire();
+                return false;
+            }
+
+            private UITextInputComponent? AddInput(SceneNode parent,
                 string name, float width, Action<UITextInputComponent> submit)
             {
+                if (!ContinueBuild()) return null;
                 SceneNode host = parent.NewChild();
+                if (!ContinueBuild()) return null;
                 UIListTransform layout = host.SetTransform<UIListTransform>();
+                if (!ContinueBuild()) return null;
                 layout.DisplayHorizontal = false;
                 layout.Width = width;
                 AddInfoLabel(host, name);
+                if (!ContinueBuild()) return null;
                 SceneNode inputHost = host.NewChild();
+                if (!ContinueBuild()) return null;
                 var (input, _, _, _) =
                     NativeUIElements.CreateTextInputField<UITextInputComponent>(inputHost);
+                if (!ContinueBuild()) return null;
                 input.AccessibilityLabel = name;
+                if (!ContinueBuild()) return null;
                 input.SingleLineMode = true;
+                if (!ContinueBuild()) return null;
                 input.Submitted += submit;
                 return input;
             }
@@ -186,7 +271,7 @@ public static partial class InspectorPropertyEditors
                 _activePlotSource = null;
                 Unsubscribe();
                 bool found = InspectorFloatCurveSource.TryCapture(_property,
-                    _targets, out _source, out string reason);
+                    _targets, out _source, out string reason, _transitionPath);
                 ulong revision = _revision;
                 if (_status is not null)
                     _status.Text = found ? "Select a key to edit its time and value." : reason;

@@ -1390,7 +1390,8 @@ plot, a virtual key table, key time/value edits, insertion/removal, and length o
 stretch commands. It shares exact animation transactions with clip authoring.
 Shared selected references edit once; distinct curves remain unavailable. Attached
 transition curves retain their exact state/layer/machine membership and dirty the
-state-machine source document. Incomplete and AnyState ownership remain unavailable.
+state-machine source document. That checkpoint left incomplete and AnyState
+ownership unavailable; the forward-path update below replaces this restriction.
 Idle refresh uses a nonallocating identity check; authored changes coalesce on the
 owner thread. Playback sampling does not seek the animation.
 
@@ -1423,3 +1424,29 @@ All 10,824 source inputs stayed unchanged through validation. The full portable
 result remains **1,239/1,239** at the preceding checkpoint. The new action compiled;
 Windows Explorer launch and native interaction remain pending. No broad code item
 closes: the original reconciliation remains **50/60**.
+
+
+## State-Machine Curve Navigation
+
+The native inspector now routes a state machine's Layers detail through virtual
+lists for layers, ordinary states or AnyState, and transitions. Selecting a
+transition embeds the existing retained float curve detail. The explicit forward
+path works without runtime initialization or owner back-references. It retains
+source-document and container lifetimes, rejects stale or duplicate membership,
+and permits valid Undo after the view closes. Bare transition properties require
+this route. Active-list changes coalesce; unchanged idle checks do not allocate.
+
+Detail construction checks retirement before later controls and provider wiring.
+Menu construction also stops later row, label, arrow, separator, line, and scroll
+helpers after a queued replacement. Full compound construction and adopted-child
+retirement remain open.
+
+Headless build203 passed with zero warnings/errors in 1m18.59s. Targeted run145
+passed 100/100 in 3.469s; full run146 passed **1,248/1,248** in 24.404s with no
+failures, warnings, or skips. Desktop build61 compiled the editor and tests with
+zero warnings/errors in 49.90s. The final snapshot has **10,827** source inputs.
+Only eight editor-only test assertion casts changed after the portable run; no
+portable input changed. Nine action/history cases and five new construction
+retirement cases compiled only. Windows interaction, GPU, IME, visual acceptance,
+and performance comparisons remain pending. The original reconciliation remains
+**50/60**. Owner decisions and ImGui default are unchanged.

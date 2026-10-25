@@ -1,6 +1,7 @@
 using System.Numerics;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -10,6 +11,111 @@ namespace XREngine.UnitTests.Rendering;
 
 public sealed partial class UIContextMenuNavigationTests
 {
+    [TestCase("row", 0, 0)]
+    [TestCase("label", 1, 0)]
+    [TestCase("separator", 0, 2)]
+    public void QueuedHideStopsLaterOrdinaryMenuFactories(string boundary, int expectedText,
+        int expectedMaterials)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            int textCount = 0;
+            int materialCount = 0;
+            bool queued = false;
+            void OnCreated(XRComponent component)
+            {
+                if (component is UITextComponent) textCount++;
+                if (component is UIMaterialComponent) materialCount++;
+                if (queued) return;
+                if (boundary == "row" && component is UIContextMenuItemComponent ||
+                    boundary == "label" && component is UITextComponent ||
+                    boundary == "separator" && component is UIMaterialComponent && materialCount == 2)
+                {
+                    queued = true;
+                    menu.Hide();
+                }
+            }
+            XRComponent.ComponentCreated += OnCreated;
+            try
+            {
+                if (boundary == "separator")
+                    menu.Show(Vector2.Zero, ContextMenuItem.Separator());
+                else
+                    menu.Show(Vector2.Zero, ContextMenuItem.Submenu("Old", [new ContextMenuItem("Child", null)]));
+            }
+            finally { XRComponent.ComponentCreated -= OnCreated; }
+
+            queued.ShouldBeTrue();
+            textCount.ShouldBe(expectedText);
+            if (boundary == "separator") materialCount.ShouldBe(expectedMaterials);
+            menu.IsOpen.ShouldBeFalse();
+            Rows(menu).ShouldBeEmpty();
+            input.SubscriberCount.ShouldBe(0);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void QueuedHideDoesNotReplaceLabelFactoryFailure()
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            var failure = new InvalidOperationException("Label factory callback failed.");
+            bool queued = false;
+            void OnCreated(XRComponent component)
+            {
+                if (queued || component is not UITextComponent) return;
+                queued = true;
+                menu.Hide();
+                throw failure;
+            }
+            XRComponent.ComponentCreated += OnCreated;
+            try
+            {
+                Should.Throw<InvalidOperationException>(() => menu.Show(Vector2.Zero,
+                    ContextMenuItem.Submenu("Old", [new ContextMenuItem("Child", null)])))
+                    .ShouldBeSameAs(failure);
+            }
+            finally { XRComponent.ComponentCreated -= OnCreated; }
+
+            queued.ShouldBeTrue();
+            menu.IsOpen.ShouldBeFalse();
+            Rows(menu).ShouldBeEmpty();
+            input.SubscriberCount.ShouldBe(0);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void QueuedHideStopsVirtualScrollConfiguration()
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            UIVirtualPopupScrollComponent? scroll = null;
+            void OnCreated(XRComponent component)
+            {
+                if (component is not UIVirtualPopupScrollComponent created) return;
+                scroll = created;
+                menu.Hide();
+            }
+            XRComponent.ComponentCreated += OnCreated;
+            try { menu.ShowVirtual(Vector2.Zero, new CountingVirtualListProvider(10)); }
+            finally { XRComponent.ComponentCreated -= OnCreated; }
+
+            scroll.ShouldNotBeNull().List.ShouldBeNull();
+            menu.IsOpen.ShouldBeFalse();
+            Rows(menu).ShouldBeEmpty();
+            input.SubscriberCount.ShouldBe(0);
+        }
+        finally { root.Destroy(true); }
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void QueuedRequestDoesNotHideAContentBuilderFailure(bool hide)

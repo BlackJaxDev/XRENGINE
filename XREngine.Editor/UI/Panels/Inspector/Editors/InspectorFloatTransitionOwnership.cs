@@ -4,83 +4,105 @@ using XREngine.Data.Core;
 
 namespace XREngine.Editor;
 
-/// <summary>Retains the exact state-machine path of one transition.</summary>
+/// <summary>Retains a transition path from a selected state-machine asset.</summary>
 internal sealed class InspectorFloatTransitionOwnership
 {
-    private readonly AnimStateTransition _transition;
-    private readonly AnimState? _state;
-    private readonly AnimLayer? _layer;
-    private readonly AnimStateMachine? _machine;
-    private readonly EventList<AnimStateTransition>? _transitions;
+    private readonly AnimStateMachine _machine;
+    private readonly AnimLayer _layer;
+    private readonly AnimStateBase _state;
+    private readonly EventList<AnimLayer> _layers;
     private readonly EventList<AnimState>? _states;
-    private readonly EventList<AnimLayer>? _layers;
-    private readonly int _transitionIndex;
-    private readonly int _stateIndex;
+    private readonly EventList<AnimStateTransition> _transitions;
     private readonly int _layerIndex;
-    private readonly int _transitionCount;
-    private readonly int _stateCount;
+    private readonly int _stateIndex;
+    private readonly int _transitionIndex;
     private readonly int _layerCount;
+    private readonly int _stateCount;
+    private readonly int _transitionCount;
+    private readonly bool _anyState;
     private readonly Guid _machineIdentity;
     private readonly Guid _documentIdentity;
+    private readonly ObjectConstructionIdentity _machineLifetime;
+    private readonly ObjectConstructionIdentity _documentLifetime;
+    private readonly ObjectConstructionIdentity _layersLifetime;
+    private readonly ObjectConstructionIdentity? _statesLifetime;
+    private readonly ObjectConstructionIdentity _transitionsLifetime;
 
-    private InspectorFloatTransitionOwnership(AnimStateTransition transition,
-        AnimState? state = null, AnimLayer? layer = null,
-        AnimStateMachine? machine = null, int transitionIndex = -1,
-        int stateIndex = -1, int layerIndex = -1)
+    private InspectorFloatTransitionOwnership(AnimStateMachine machine,
+        EventList<AnimLayer> layers, int layerIndex, AnimLayer layer,
+        EventList<AnimState>? states, int stateIndex, AnimStateBase state,
+        EventList<AnimStateTransition> transitions, int transitionIndex,
+        AnimStateTransition transition, bool anyState)
     {
-        _transition = transition;
-        _state = state;
-        _layer = layer;
         _machine = machine;
-        _transitions = state?.Transitions;
-        _states = layer?.States;
-        _layers = machine?.Layers;
-        _transitionIndex = transitionIndex;
-        _stateIndex = stateIndex;
+        _layer = layer;
+        _state = state;
+        _layers = layers;
+        _states = states;
+        _transitions = transitions;
         _layerIndex = layerIndex;
-        _transitionCount = _transitions?.Count ?? 0;
-        _stateCount = _states?.Count ?? 0;
-        _layerCount = _layers?.Count ?? 0;
-        _machineIdentity = machine?.ID ?? Guid.Empty;
-        Document = machine?.SourceAsset;
-        _documentIdentity = Document?.ID ?? Guid.Empty;
+        _stateIndex = stateIndex;
+        _transitionIndex = transitionIndex;
+        _layerCount = layers.Count;
+        _stateCount = states?.Count ?? 0;
+        _transitionCount = transitions.Count;
+        _anyState = anyState;
+        _machineIdentity = machine.ID;
+        Document = machine.SourceAsset;
+        _documentIdentity = Document.ID;
+        _machineLifetime = ObjectConstructionIdentity.Capture(machine);
+        _documentLifetime = ObjectConstructionIdentity.Capture(Document);
+        _layersLifetime = ObjectConstructionIdentity.Capture(layers);
+        _statesLifetime = states is null ? null : ObjectConstructionIdentity.Capture(states);
+        _transitionsLifetime = ObjectConstructionIdentity.Capture(transitions);
+        Transition = transition;
+        ReservationOwners = states is null
+            ? [machine, Document, layers, layer, state, transitions, transition]
+            : [machine, Document, layers, layer, states, state, transitions,
+                transition];
     }
 
-    public XRAsset? Document { get; }
+    public AnimStateTransition Transition { get; }
+    public XRAsset Document { get; }
+    public object[] ReservationOwners { get; }
 
-    public static bool TryCapture(AnimStateTransition transition,
+    public static bool TryCapture(AnimStateMachine machine, int layerIndex,
+        int stateIndex, int transitionIndex, bool anyState,
         out InspectorFloatTransitionOwnership? ownership, out string reason)
     {
         ownership = null;
-        reason = "The transition ownership path is incomplete.";
-        if (transition.Owner is null)
+        reason = "The selected state-machine path is unavailable.";
+        if (machine.IsDestroyed || machine.IsDestroyQueued ||
+            machine.Layers is not { IsDestroyed: false, IsDestroyQueued: false } layers ||
+            (uint)layerIndex >= (uint)layers.Count ||
+            layers[layerIndex] is not { } layer)
+            return false;
+        EventList<AnimState>? states = null;
+        AnimStateBase state;
+        if (anyState)
         {
-            ownership = new(transition);
-            reason = string.Empty;
-            return true;
+            state = layer.AnyState;
+            stateIndex = -1;
         }
-        if (transition.Owner is not AnimState state ||
-            state.OwningLayer is not { } layer ||
-            layer.OwningStateMachine is not { } machine ||
-            machine.IsDestroyed || machine.IsDestroyQueued)
-            return false;
-        if (state.Transitions is not { } transitions ||
-            layer.States is not { } states ||
-            machine.Layers is not { } layers ||
-            transitions.IsDestroyed || transitions.IsDestroyQueued ||
-            states.IsDestroyed || states.IsDestroyQueued ||
-            layers.IsDestroyed || layers.IsDestroyQueued)
-            return false;
-        int transitionIndex = UniqueIndex(transitions, transition);
-        int stateIndex = UniqueIndex(states, state);
-        int layerIndex = UniqueIndex(layers, layer);
-        if (transitionIndex < 0 || stateIndex < 0 || layerIndex < 0)
+        else
         {
-            reason = "The transition is absent or repeated in its state-machine path.";
-            return false;
+            states = layer.States;
+            if (states is null || states.IsDestroyed || states.IsDestroyQueued ||
+                (uint)stateIndex >= (uint)states.Count ||
+                states[stateIndex] is not { } selected)
+                return false;
+            state = selected;
         }
-        ownership = new(transition, state, layer, machine,
-            transitionIndex, stateIndex, layerIndex);
+        if (state.Transitions is not
+                { IsDestroyed: false, IsDestroyQueued: false } transitions ||
+            (uint)transitionIndex >= (uint)transitions.Count ||
+            transitions[transitionIndex] is not { } transition ||
+            UniqueIndex(layers, layer) != layerIndex ||
+            !anyState && UniqueIndex(states!, (AnimState)state) != stateIndex ||
+            UniqueIndex(transitions, transition) != transitionIndex)
+            return false;
+        ownership = new(machine, layers, layerIndex, layer, states, stateIndex,
+            state, transitions, transitionIndex, transition, anyState);
         if (!ownership.IsCurrent())
         {
             ownership = null;
@@ -91,37 +113,34 @@ internal sealed class InspectorFloatTransitionOwnership
     }
 
     public bool IsCurrent()
-        => IsCurrentFast() && (_state is null ||
-            UniqueIndex(_transitions!, _transition) == _transitionIndex &&
-            UniqueIndex(_states!, _state) == _stateIndex &&
-            UniqueIndex(_layers!, _layer!) == _layerIndex);
+        => IsCurrentFast() &&
+            UniqueIndex(_layers, _layer) == _layerIndex &&
+            (_anyState || UniqueIndex(_states!, (AnimState)_state) == _stateIndex) &&
+            UniqueIndex(_transitions, Transition) == _transitionIndex;
 
     public bool IsCurrentFast()
-    {
-        if (_state is null)
-            return _transition.Owner is null;
-        return _machine is { IsDestroyed: false, IsDestroyQueued: false } machine &&
-            Document is { IsDestroyed: false, IsDestroyQueued: false } document &&
-            machine.ID == _machineIdentity && document.ID == _documentIdentity &&
-            ReferenceEquals(machine.SourceAsset, document) &&
-            ReferenceEquals(_transition.Owner, _state) &&
+        => !_machine.IsDestroyed && !_machine.IsDestroyQueued &&
+            _machine.ID == _machineIdentity &&
+            !Document.IsDestroyed && !Document.IsDestroyQueued &&
+            Document.ID == _documentIdentity &&
+            _machineLifetime.IsCurrent && _documentLifetime.IsCurrent &&
+            _layersLifetime.IsCurrent &&
+            (_statesLifetime?.IsCurrent ?? true) &&
+            _transitionsLifetime.IsCurrent &&
+            ReferenceEquals(_machine.SourceAsset, Document) &&
+            ReferenceEquals(_machine.Layers, _layers) &&
+            HasAt(_layers, _layerCount, _layerIndex, _layer) &&
+            (_anyState
+                ? ReferenceEquals(_layer.AnyState, _state)
+                : ReferenceEquals(_layer.States, _states) &&
+                    HasAt(_states, _stateCount, _stateIndex, (AnimState)_state)) &&
             ReferenceEquals(_state.Transitions, _transitions) &&
-            _transitions?.Count == _transitionCount &&
-            HasAt(_transitions, _transitionIndex, _transition) &&
-            ReferenceEquals(_state.OwningLayer, _layer) &&
-            ReferenceEquals(_layer?.States, _states) &&
-            _states?.Count == _stateCount &&
-            HasAt(_states, _stateIndex, _state) &&
-            ReferenceEquals(_layer?.OwningStateMachine, machine) &&
-            ReferenceEquals(machine.Layers, _layers) &&
-            _layers?.Count == _layerCount &&
-            HasAt(_layers, _layerIndex, _layer!);
-    }
+            HasAt(_transitions, _transitionCount, _transitionIndex, Transition);
 
-    private static bool HasAt<T>(EventList<T>? list, int index, T item)
+    private static bool HasAt<T>(EventList<T>? list, int count, int index, T item)
         where T : class
         => list is { IsDestroyed: false, IsDestroyQueued: false } &&
-            (uint)index < (uint)list.Count &&
+            list.Count == count && (uint)index < (uint)count &&
             ReferenceEquals(list[index], item);
 
     private static int UniqueIndex<T>(EventList<T> list, T item) where T : class

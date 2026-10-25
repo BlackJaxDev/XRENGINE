@@ -468,6 +468,8 @@ namespace XREngine.Rendering.UI
                 return;
             listNode.Name = "ContextMenuList";
             var listTfm = ordinaryItems ? listNode.SetTransform<UIListTransform>() : (UIListTransform)listNode.Transform;
+            if (!CanContinueConstruction(showRevision))
+                return;
             listTfm.DisplayHorizontal = false;
             listTfm.ItemSpacing = 0;
             listTfm.Padding = new Vector4(0.0f);
@@ -502,6 +504,8 @@ namespace XREngine.Rendering.UI
                 listTfm.VirtualProvider = _virtualProvider;
                 _virtualList = listTfm;
                 UIVirtualPopupScrollComponent scroll = listNode.AddComponent<UIVirtualPopupScrollComponent>()!;
+                if (!CanContinueConstruction(showRevision))
+                    return;
                 scroll.List = listTfm;
                 return;
             }
@@ -513,7 +517,7 @@ namespace XREngine.Rendering.UI
                     return;
                 if (item.IsSeparator)
                 {
-                    BuildSeparator(listNode);
+                    BuildSeparator(listNode, showRevision);
                     contentTop += _separatorHeight;
                 }
                 else
@@ -527,7 +531,7 @@ namespace XREngine.Rendering.UI
         private void BuildMenuItem(SceneNode parent, ContextMenuItem item, ulong showRevision, float contentTop)
         {
             var buttonNode = parent.NewChild<UIContextMenuItemComponent, UIMaterialComponent>(out var button, out var background);
-            if (!IsCurrentShow(showRevision) || !ReferenceEquals(buttonNode.Parent, parent))
+            if (!CanContinueConstruction(showRevision) || !ReferenceEquals(buttonNode.Parent, parent))
                 return;
             button.Bind(this, showRevision, item, contentTop, contentTop + _itemHeight);
 
@@ -540,7 +544,7 @@ namespace XREngine.Rendering.UI
             buttonTfm.Height = _itemHeight;
             buttonTfm.Margins = new Vector4(0.0f);
 
-            if (!IsCurrentItem(button, showRevision))
+            if (!CanContinueConstruction(showRevision) || !IsCurrentItem(button, showRevision))
                 return;
             if (item.Enabled)
             {
@@ -573,7 +577,11 @@ namespace XREngine.Rendering.UI
                 button.HighlightTextColor = ItemDisabledTextColor;
             }
 
+            if (!CanContinueConstruction(showRevision))
+                return;
             buttonNode.NewChild<UITextComponent>(out var label);
+            if (!CanContinueConstruction(showRevision))
+                return;
             label.Text = item.Label;
             label.FontSize = FontSize;
             label.Color = item.Enabled ? ItemDefaultTextColor : ItemDisabledTextColor;
@@ -582,9 +590,11 @@ namespace XREngine.Rendering.UI
             label.BoundableTransform.Margins = new Vector4(ItemPadding, 0.0f, ItemPadding, 0.0f);
             label.RenderCommand2D.ZIndex = LabelZIndex;
 
-            if (!item.HasSubmenu)
+            if (!item.HasSubmenu || !CanContinueConstruction(showRevision))
                 return;
             buttonNode.NewChild<UITextComponent>(out var arrow);
+            if (!CanContinueConstruction(showRevision))
+                return;
             arrow.Text = ">";
             arrow.FontSize = FontSize;
             arrow.Color = label.Color;
@@ -594,9 +604,11 @@ namespace XREngine.Rendering.UI
             arrow.RenderCommand2D.ZIndex = LabelZIndex;
         }
 
-        private void BuildSeparator(SceneNode parent)
+        private void BuildSeparator(SceneNode parent, ulong showRevision)
         {
             var sepNode = parent.NewChild<UIMaterialComponent>(out var background);
+            if (!CanContinueConstruction(showRevision))
+                return;
             var sepTfm = sepNode.GetTransformAs<UIBoundableTransform>(true)!;
             sepTfm.MinAnchor = new Vector2(0.0f, 0.0f);
             sepTfm.MaxAnchor = new Vector2(1.0f, 0.0f);
@@ -604,7 +616,11 @@ namespace XREngine.Rendering.UI
             sepTfm.Margins = new Vector4(0.0f);
 
             // Draw a thin horizontal line in the middle
+            if (!CanContinueConstruction(showRevision))
+                return;
             var lineNode = sepNode.NewChild<UIMaterialComponent>(out var line);
+            if (!CanContinueConstruction(showRevision))
+                return;
             var lineTfm = lineNode.GetTransformAs<UIBoundableTransform>(true)!;
             lineTfm.MinAnchor = new Vector2(0.0f, 0.5f);
             lineTfm.MaxAnchor = new Vector2(1.0f, 0.5f);

@@ -1751,11 +1751,15 @@ InspectorFloatCurveSource retains each outer owner, the exact curve and track,
 and source documents. Compiler-owned properties and the explicit transition blend
 curve accessor provide callback-free reference checks. Idle refresh checks do not
 resolve scene documents. Commands and history validate complete document ownership.
-Attached transition curves also retain the exact state, layer, machine, and
-container membership, plus the state-machine source document. Detached transitions
-remain valid only while detached. Incomplete attached chains and AnyState ownership
-are unavailable in this adapter. Selected targets that share the same curve edit
-it once. Distinct curves and unsupported getter ownership report an unavailable
+Transition curves require an explicit path from the selected state machine. The
+Layers detail shows a virtual list for layers, states (including AnyState), and
+transitions, then embeds the shared curve detail. Each level reports its 8,192-row
+limit. Row IDs remain stable for each object occurrence within the current level.
+The path retains exact list references, positions, counts, construction identities,
+and the state-machine source document. Commands also reject duplicate membership.
+It does not depend on runtime owner back-references or initialization. Bare
+transition properties cannot establish document ownership and remain unavailable.
+Selected targets that share the same curve edit it once. Distinct curves and unsupported getter ownership report an unavailable
 editor rather than partially mutating a selection.
 
 AnimationAuthoringTransaction supplies the existing clip and new property paths
@@ -1764,3 +1768,17 @@ behavior. Exact key edits preserve frame indices and handles on reversal. Length
 changes reuse AnimationLengthEdit. UI retirement rejects new commands; it does not
 invalidate a still-owned history operation. Source replacement detaches authored
 change subscriptions and rejects stale commands and history.
+
+The state-machine navigator coalesces active-list changes. Idle checks compare
+identities and forward references without allocating. Container replacement or
+regeneration rejects old rows and curve actions. Closing the detail releases its
+subscriptions; still-owned Undo operations retain their source path. Detail
+construction stops after retirement at component, child, and property boundaries.
+Provider cleanup requires the captured list and parent chain. These checks do not
+replace the remaining general compound-construction ownership contract.
+
+Menu construction also checks queued requests after row, label, arrow, separator,
+and virtual-scroll helper calls. A queued replacement prevents later helper calls
+and event wiring. Exceptions from the current callback retain their original
+identity. Property commits inside those helpers and full owned-child retirement
+remain separate open work.
