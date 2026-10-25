@@ -7,12 +7,22 @@ Design: [Native UI retained rendering](../../design/ui/native-ui-retained-render
 
 ## Retained UI Integration (2026-10-23)
 
+Latest continuation check (2026-10-25): headless build150 passed with zero
+warnings/errors, and run96 passed **1,054/1,054** tests with no failures or skips.
+The output-swap wheel regression failed before the repair and passed afterward.
+Desktop test build36 compiled the editor and test assembly with zero
+warnings/errors. The new `NativeToolPanelStateTests` compiled but did not execute
+on this Linux host. Check console category/auto-scroll, profiler view, and settled
+scroll saves through the active dock-tree host on Windows. See the
+[continuation comparison](../../investigations/ui/native-ui-continuation-comparison.md)
+for the preserved local snapshot, source differences, and exact validation limits.
+
 The expanded implementation is under integration. The user explicitly approved
 new headless regression tests before Windows and graphics validation on
 2026-10-23. This approval applies to this task. It does not establish live
 acceptance or change the default editor.
 
-The current headless snapshot passes compilation with zero warnings/errors through
+The earlier headless snapshot passed compilation with zero warnings/errors through
 `Tools/Invoke-AgentBuild.ps1`. Headless build141 took 38.98s. Full run90 passes
 **979 of 979 tests**, with no warnings, failures, or skips, in 15.220s. Coverage
 includes paged composition claims, throwing-observer invalidation, bounded

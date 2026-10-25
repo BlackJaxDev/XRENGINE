@@ -109,35 +109,9 @@ public static class EditorPanelHost
         panels[2].NewChild<ProfilerPanel>(out var profilerPanel);
         panels[3].NewChild<AnimationPanel>(out var animationPanel);
         NativeVirtualTextPanel[] panelComponents = [assetsPanel, consolePanel, profilerPanel, animationPanel];
-        assetsPanel.UseEngineAssets = layout.UseEngineAssets;
-        assetsPanel.Folder = layout.AssetFolder;
-        assetsPanel.Search = layout.AssetSearch;
-        consolePanel.Filter = layout.ConsoleFilter;
-        consolePanel.Category = layout.ConsoleCategory;
-        consolePanel.AutoScroll = layout.ConsoleAutoScroll;
-        profilerPanel.View = (ENativeProfilerView)layout.ProfilerView;
-        for (int i = 0; i < panelComponents.Length; i++)
-        {
-            int panelIndex = i;
-            panelComponents[i].ScrollOffset = layout.PanelScrollOffsets[i];
-            panelComponents[i].ScrollOffsetChanged += offset =>
-            {
-                layout.PanelScrollOffsets[panelIndex] = offset;
-                // Wheel input changes the offset often. Write it once after scrolling settles.
-                layoutSaves.Request();
-            };
-        }
-        assetsPanel.ViewStateChanged += () =>
-        {
-            layout.UseEngineAssets = assetsPanel.UseEngineAssets;
-            layout.AssetFolder = assetsPanel.Folder;
-            layout.AssetSearch = assetsPanel.Search;
-            Save();
-        };
-        consolePanel.FilterChanged += filter => { layout.ConsoleFilter = filter; Save(); };
-        consolePanel.CategoryChanged += category => { layout.ConsoleCategory = category; Save(); };
-        consolePanel.AutoScrollChanged += autoScroll => { layout.ConsoleAutoScroll = autoScroll; Save(); };
-        profilerPanel.ViewChanged += view => { layout.ProfilerView = (int)view; Save(); };
+        for (int index = 0; index < panelComponents.Length; index++)
+            NativeToolPanelState.Bind(panelComponents[index], panels[index], layout,
+                index, Save, layoutSaves.Request);
 
         string[] titles = ["Assets", "Console", "Profiler", "Animation"];
         NativeDockWindowRegistration windowRegistration =

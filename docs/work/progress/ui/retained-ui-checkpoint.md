@@ -1171,3 +1171,24 @@ The reconciliation is now **50 of 60**. This increment closes the text editing i
 The full headless run passed **1045 of 1045 tests**. Editor and desktop test builds
 passed with 0 warnings and errors. Native mouse and IME acceptance stays in the
 validation plan.
+
+
+## Continuation Comparison And Active Panel State
+
+The continuation was reconciled against published `7648531f02f7820cc65cf0029e1aa8055bf715b5`.
+The earlier unfinished candidate is preserved locally; it was not applied or
+published. See the [source comparison](../../investigations/ui/native-ui-continuation-comparison.md).
+The recorded reconciliation remains **50 of 60**, with 10 open code items.
+
+- Wheel propagation now stops if a callback replaces the displayed packet before
+  the input cache refreshes. The new regression failed before the repair.
+- Both native hosts share tool-state bindings. The active dock-tree route now
+  restores console category/auto-scroll and profiler view. Scroll changes request
+  the existing save debouncer. No saved schema or window key changed.
+- The fetched baseline passed 1,052 tests. The repaired portable runtime passed
+  1,054 tests without failures, warnings, or skips. The editor and desktop tests
+  compiled with zero warnings/errors; new panel binding tests are compile-only.
+
+Dock ownership work and the other open editor contracts remain unfinished.
+Windows, native GPU, IME, visual, and performance acceptance remain open. The
+three pending proposals and four original owner decisions remain pending.

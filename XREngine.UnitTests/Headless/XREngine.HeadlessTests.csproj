@@ -253,5 +253,7 @@
     <Compile Include="../Editor/InspectorPropertyDropBindingTests.cs" Link="Editor/InspectorPropertyDropBindingTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/AnimationKeyChannels.cs" Link="Editor/AnimationKeyChannels.cs" />
     <Compile Include="../Editor/AnimationKeyChannelsTests.cs" Link="Editor/AnimationKeyChannelsTests.cs" />
+    <Compile Include="../Rendering/UIPresentedScrollGeometryTests.cs" Link="Rendering/UIPresentedScrollGeometryTests.cs" />
+    <Compile Include="../Rendering/UIPresentedScrollProbe.cs" Link="Rendering/UIPresentedScrollProbe.cs" />
   </ItemGroup>
 </Project>

@@ -412,43 +412,31 @@ internal sealed class NativeDockTreeHost
                 break;
             case NativeDockPanel.Assets:
                 slot.NewChild<AssetsPanel>(out var assets);
-                assets.UseEngineAssets = _layout.UseEngineAssets;
-                assets.Folder = _layout.AssetFolder;
-                assets.Search = _layout.AssetSearch;
-                ApplyToolScroll(assets, 0);
-                assets.ViewStateChanged += () =>
-                {
-                    _layout.UseEngineAssets = assets.UseEngineAssets;
-                    _layout.AssetFolder = assets.Folder;
-                    _layout.AssetSearch = assets.Search;
-                    Save();
-                };
+                BindToolState(assets, slot, panel, 0);
                 break;
             case NativeDockPanel.Console:
                 slot.NewChild<ConsolePanel>(out var console);
-                console.Filter = _layout.ConsoleFilter;
-                ApplyToolScroll(console, 1);
-                console.FilterChanged += filter => { _layout.ConsoleFilter = filter; Save(); };
+                BindToolState(console, slot, panel, 1);
                 break;
             case NativeDockPanel.Profiler:
                 slot.NewChild<ProfilerPanel>(out var profiler);
-                ApplyToolScroll(profiler, 2);
+                BindToolState(profiler, slot, panel, 2);
                 break;
             case NativeDockPanel.Animation:
                 slot.NewChild<AnimationPanel>(out var animation);
-                ApplyToolScroll(animation, 3);
+                BindToolState(animation, slot, panel, 3);
                 break;
         }
     }
 
-    private void ApplyToolScroll(NativeVirtualTextPanel panel, int index)
+    private void BindToolState(NativeVirtualTextPanel component, SceneNode slot, string panel, int index)
     {
-        panel.ScrollOffset = _layout.PanelScrollOffsets[index];
-        panel.ScrollOffsetChanged += offset =>
-        {
-            _layout.PanelScrollOffsets[index] = offset;
-            Save();
-        };
+        var rootIdentity = XREngine.Data.Core.ObjectConstructionIdentity.Capture(_root);
+        NativeToolPanelState.Bind(component, slot, _layout, index, Save,
+            () => _layoutSaves?.Request(),
+            () => !_disposed && !_receivingPanel && !_renderGate.IsRendering &&
+                rootIdentity.IsCurrent && !_root.IsDestroyed && !_root.IsDestroyQueued &&
+                _panelSlots.TryGetValue(panel, out SceneNode? current) && ReferenceEquals(current, slot));
     }
 
     private void MoveToNextStack(NativeDockNode source, ulong revision)

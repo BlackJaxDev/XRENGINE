@@ -6,6 +6,21 @@ editor. Use the [implementation TODO](../../work/todo/ui/native-ui-retained-perf
 and [validation record](../../work/testing/ui/native-ui-validation.md) for open
 work and acceptance results.
 
+## Native tool state and wheel continuation
+
+`NativeToolPanelState` supplies the asset, console, profiler, and scroll bindings
+for both `EditorPanelHost` and the active `NativeDockTreeHost`. It restores view
+and filter fields before scroll offset. Console category and auto-scroll and the
+profiler view use the existing layout fields. Scroll events request the existing
+`NativeLayoutSaveDebouncer`; they do not write the layout on each wheel step.
+The bindings retain object-lifetime receipts and reject detached or replaced
+components. The dock host additionally checks its current slot ownership.
+
+Wheel dispatch holds the presented publication and checks the output's current
+publication after callback-bearing receivers. A callback that publishes a new
+packet stops propagation through the old ancestry even when the input cache has
+not yet refreshed. Receiver-local coordinates still come from the held hit record.
+
 ## Layout ownership
 
 `UICanvasTransform.UpdateLayoutAsync` requests layout. `UILayoutCanvasSession`

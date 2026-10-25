@@ -401,14 +401,20 @@ namespace XREngine.Components
 
         private void OnMouseScroll(float diff)
         {
-            if (_inputDeactivating || _inputTerminal || MathF.Abs(diff) <= float.Epsilon)
+            if (_inputDeactivating || _inputTerminal || !float.IsFinite(diff) ||
+                MathF.Abs(diff) <= float.Epsilon)
                 return;
 
             if (RefreshPresentedInput() is not { } publication)
                 return;
             try
             {
+            ulong revision = _inputPublicationRevision;
+            UICanvasComponent? canvas = _inputCanvas;
+            object? output = _inputOutput;
             if (TopMostInteractable is { } target && !IsPointerTargetEligible(target))
+                return;
+            if (!IsCurrentScrollRead(publication, revision, canvas, output))
                 return;
 
             UIComponent? hitOwner = TopMostElement ?? TopMostInteractable;
@@ -455,11 +461,28 @@ namespace XREngine.Components
                     transform.ElementIdentity != receiver.Identity ||
                     !ReferenceEquals(transform.GetCanvasComponent(), GetCameraCanvas()))
                     continue;
-                if (DispatchScroll(receiver, publication, diff) || !ReferenceEquals(_inputPublication, publication))
+                if (!IsCurrentScrollRead(publication, revision, canvas, output) ||
+                    DispatchScroll(receiver, publication, diff) ||
+                    !IsCurrentScrollRead(publication, revision, canvas, output))
                     return;
             }
             }
             finally { publication.Release(); }
+        }
+
+        /// <summary>Stops routing when a callback changes the displayed packet without refreshing input.</summary>
+        private bool IsCurrentScrollRead(UIPublication publication, ulong revision,
+            UICanvasComponent? canvas, object? output)
+        {
+            if (_inputPublicationRevision != revision || canvas is null || output is null ||
+                !IsCurrentInputRead(publication, canvas, output) ||
+                !canvas.TryAcquirePresentedPublication(output, out UIPublication? displayed))
+                return false;
+            bool same;
+            try { same = ReferenceEquals(displayed, publication); }
+            finally { displayed!.Release(); }
+            return same && _inputPublicationRevision == revision &&
+                IsCurrentInputRead(publication, canvas, output);
         }
 
         /// <summary>
