@@ -94,19 +94,25 @@ public static class NativeUIElements
         var focusedColor = focusOutlineColor ?? ColorF4.White;
         var unfocusedColor = unfocusedOutlineColor ?? ColorF4.Transparent;
 
-        void GotFocus(UIInteractableComponent _)
+        // The outline shows while the field has keyboard focus or the pointer is over it.
+        // Leave and lost-focus events run before their state flag clears, so each
+        // handler checks only the other state.
+        void SetOutline(bool highlighted)
         {
+            Vector4 color = highlighted ? focusedColor : unfocusedColor;
+            if (matComp.BatchBorderColor == color)
+                return;
             matComp.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            matComp.BatchBorderColor = focusedColor;
+            matComp.BatchBorderColor = color;
         }
-        void LostFocus(UIInteractableComponent _)
-        {
-            matComp.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            matComp.BatchBorderColor = unfocusedColor;
-        }
+        void Highlight(UIInteractableComponent _) => SetOutline(true);
+        void PointerLeft(UIInteractableComponent _) => SetOutline(textInput.CanInteract && textInput.IsFocused);
+        void FocusLost(UIInteractableComponent _) => SetOutline(textInput.CanInteract && textInput.IsMouseDirectlyOver);
 
-        textInput.MouseDirectOverlapEnter += GotFocus;
-        textInput.MouseDirectOverlapLeave += LostFocus;
+        textInput.GotFocus += Highlight;
+        textInput.MouseDirectOverlapEnter += Highlight;
+        textInput.LostFocus += FocusLost;
+        textInput.MouseDirectOverlapLeave += PointerLeft;
         if (property is not null && targets is not null)
         {
             textInput.Binding = new EditorTextPropertyBinding(property, targets);
