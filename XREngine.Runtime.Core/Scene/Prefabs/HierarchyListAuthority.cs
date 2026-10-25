@@ -27,6 +27,7 @@ internal sealed class HierarchyListAuthority<T>(XRWorldObjectBase owner) : Event
         foreach (T item in values)
         {
             if (item is null) continue;
+            RequireAddableComponent(item);
             item.RequireStructuralMutation();
             HierarchyConstructionScope.RequireLink(Owner, item);
             item.PrepareHierarchyListOwner(this);
@@ -76,13 +77,18 @@ internal sealed class HierarchyListAuthority<T>(XRWorldObjectBase owner) : Event
     protected override void ReserveItem(T item, bool adding)
     {
         if (item is null) return;
-        if (adding) HierarchyConstructionScope.RequireLink(Owner, item);
+        if (adding)
+        {
+            RequireAddableComponent(item);
+            HierarchyConstructionScope.RequireLink(Owner, item);
+        }
         item.EnterStructuralMutation();
     }
 
     protected override void ReleaseItem(T item) => item?.ExitStructuralMutation();
     protected override void PrepareAdd(T item)
     {
+        RequireAddableComponent(item);
         if (item is XRComponent { CreationReceipt: { } receipt })
         {
             if (Owner is not SceneNode node)
@@ -90,6 +96,13 @@ internal sealed class HierarchyListAuthority<T>(XRWorldObjectBase owner) : Event
             receipt.ValidateBeforeInsert(node);
         }
         item?.PrepareHierarchyListOwner(this);
+    }
+
+    private static void RequireAddableComponent(T item)
+    {
+        if (item is XRComponent component &&
+            (component.IsDestroyed || component.IsDestroyQueued || component.HasDestructionAdmission))
+            throw new InvalidOperationException("A destroyed or destroying component cannot enter a structural list.");
     }
 
     protected override void Added(T item)

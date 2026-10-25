@@ -1561,3 +1561,26 @@ inputs stayed unchanged through final validation. The 39 maintained relative
 links resolve and diff checks pass. Review found no remaining publication blocker
 in this bounded transaction. Windows command execution, visual checks, and
 performance acceptance remain pending.
+
+
+## Deferred Destruction Ownership
+
+Deferred destruction now retains exact request tokens. Old entries cannot destroy
+a regenerated lifetime, and terminal self-queued requests settle without another
+virtual call. Nonblocking dispatch admission protects the request through virtual
+Destroy. Normal deferral stays pending; uncertain thrown cleanup does not retry.
+Component insertion rejects queued, destroyed, or actively destroying objects at
+owner-thread callback boundaries. Prequeue detach/reattach and veto remain valid.
+
+Headless build217 passed with zero warnings/errors in 44.26s. Run165 passed 25/25
+cases in 0.189s. Full run166 passed **1,314/1,314** in 20.781s, with no failures,
+warnings, or skips. The initial baseline reproduced six failures in nine cases.
+The code reconciliation remains **51/60**. General concurrent scene-list editing
+and broader menu construction/retirement remain open.
+
+
+Desktop build68 compiled the editor and tests with zero warnings/errors in
+3m25.50s. All 10,841 source inputs stayed unchanged through final validation.
+The 39 maintained relative links resolve and diff checks pass. Review found no
+remaining blocker in this bounded contract. Windows execution, live menu behavior,
+GPU checks, and performance acceptance remain pending.

@@ -48,7 +48,7 @@ and dirty markers, modifier multi-selection, menu actions, rename commit/cancel
 and recycled rows, node reparent/root drops, prefab/model drops, and Undo/Redo.
 Repeat asset drops into a hidden scene and verify the first promoted editor child.
 Native menu interaction and these Windows workflows remain unverified. Grouped
-multi-root duplication is still an open code item, not accepted behavior.
+multi-root duplication is implemented; its Windows acceptance checks appear below.
 
 ### Menu cleanup acceptance
 
@@ -113,8 +113,13 @@ do not execute the full editor transaction.
 
 ### Managed integration evidence
 
-Latest full portable check (2026-10-25): headless build214 passed with zero
-warnings/errors, and run162 passed **1,289/1,289** tests with no failures or skips.
+Latest full portable check (2026-10-25): headless build217 passed with zero
+warnings/errors, and run166 passed **1,314/1,314** tests with no failures, warnings,
+or skips. Run165 passed 25 destruction-request and component-insertion cases.
+Desktop build68 compiled the editor and tests with zero warnings/errors. All
+10,841 source inputs stayed unchanged. These checks do not establish general
+concurrent scene-list editing or Windows runtime acceptance.
+The prior grouped-duplication snapshot passed build214 and run162 (1,289/1,289).
 Run161 passed 44 forest and replay-helper cases. Desktop build67 passed with
 zero warnings/errors, and all 10,838 source inputs stayed unchanged. Ten added
 editor transaction cases and one revised native menu case require Windows execution.

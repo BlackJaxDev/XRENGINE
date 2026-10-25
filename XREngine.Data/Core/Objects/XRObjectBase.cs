@@ -1,6 +1,7 @@
 ﻿using MemoryPack;
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using XREngine.Core;
 using YamlDotNet.Serialization;
@@ -413,9 +414,12 @@ namespace XREngine.Data.Core
         [MemoryPackIgnore]
         public bool IsDestroyed { get; private set; } = false;
 
-        private int _destroyQueued;
-        private static readonly ConcurrentQueue<XRObjectBase> _objectsToDestroy = new();
+        private long _pendingDestructionToken;
+        private static long s_nextDestructionToken;
+        private static readonly ConcurrentQueue<(XRObjectBase Target, long Token)> _objectsToDestroy = new();
+        private static readonly ConcurrentQueue<(XRObjectBase Target, long Token)> _deferredObjectsToDestroy = new();
         private static long s_pendingDestructionCount;
+        private static int s_drainingPendingDestructions;
 
         /// <summary>
         /// True after this object has been queued for deferred destruction.
@@ -423,10 +427,10 @@ namespace XREngine.Data.Core
         [YamlIgnore]
         [Browsable(false)]
         [MemoryPackIgnore]
-        public bool IsDestroyQueued => Volatile.Read(ref _destroyQueued) != 0;
+        public bool IsDestroyQueued => Volatile.Read(ref _pendingDestructionToken) != 0;
 
         /// <summary>
-        /// Number of objects waiting in the global deferred-destruction queue.
+        /// Number of current deferred-destruction requests.
         /// </summary>
         [YamlIgnore]
         [Browsable(false)]
@@ -441,13 +445,58 @@ namespace XREngine.Data.Core
         }
 
         /// <summary>
-        /// Processes all objects that have been requested to be destroyed.
-        /// Must be called by the engine repeatedly at some interval.
+        /// Processes ready destruction requests. A busy or deferred request stays pending
+        /// until the engine calls this method again.
         /// </summary>
         public static void ProcessPendingDestructions()
         {
-            while (_objectsToDestroy.TryDequeue(out XRObjectBase? obj))
-                obj.Destroy(true);
+            if (Interlocked.CompareExchange(ref s_drainingPendingDestructions, 1, 0) != 0)
+                return;
+            try
+            {
+                while (_deferredObjectsToDestroy.TryDequeue(out var deferred))
+                    _objectsToDestroy.Enqueue(deferred);
+                while (_objectsToDestroy.TryDequeue(out var entry))
+                {
+                    XRObjectBase value = entry.Target;
+                    if (Volatile.Read(ref value._pendingDestructionToken) != entry.Token)
+                        continue;
+                    bool claimed = false;
+                    ExceptionDispatchInfo? failure = null;
+                    try
+                    {
+                        claimed = value.TryEnterQueuedDispatch(entry.Token);
+                        if (claimed)
+                        {
+                            try { value.Destroy(true); }
+                            catch
+                            {
+                                // A virtual override can release state before it calls base.
+                                // Do not retry that partial cleanup automatically.
+                                value.ClearDestroyQueuedFlag(entry.Token);
+                                throw;
+                            }
+                        }
+                    }
+                    catch (Exception exception) { failure = ExceptionDispatchInfo.Capture(exception); }
+                    finally
+                    {
+                        try { if (claimed) value.ExitQueuedDispatch(); }
+                        catch (Exception exception) { failure ??= ExceptionDispatchInfo.Capture(exception); }
+                        finally
+                        {
+                            try
+                            {
+                                if (Volatile.Read(ref value._pendingDestructionToken) == entry.Token)
+                                    _deferredObjectsToDestroy.Enqueue(entry);
+                            }
+                            catch (Exception exception) { failure ??= ExceptionDispatchInfo.Capture(exception); }
+                        }
+                    }
+                    failure?.Throw();
+                }
+            }
+            finally { Volatile.Write(ref s_drainingPendingDestructions, 0); }
         }
 
         public virtual void Destroy(bool now = false)
@@ -459,10 +508,16 @@ namespace XREngine.Data.Core
 
             if (!now)
             {
-                if (Interlocked.Exchange(ref _destroyQueued, 1) == 0)
+                if (Volatile.Read(ref _pendingDestructionToken) == 0)
                 {
-                    Interlocked.Increment(ref s_pendingDestructionCount);
-                    _objectsToDestroy.Enqueue(this);
+                    long token = Interlocked.Increment(ref s_nextDestructionToken);
+                    if (token <= 0)
+                        throw new InvalidOperationException("The destruction request token is exhausted.");
+                    if (Interlocked.CompareExchange(ref _pendingDestructionToken, token, 0) == 0)
+                    {
+                        Interlocked.Increment(ref s_pendingDestructionCount);
+                        _objectsToDestroy.Enqueue((this, token));
+                    }
                 }
                 return;
             }
@@ -496,7 +551,13 @@ namespace XREngine.Data.Core
 
         private void ClearDestroyQueuedFlag()
         {
-            if (Interlocked.Exchange(ref _destroyQueued, 0) == 1)
+            if (Interlocked.Exchange(ref _pendingDestructionToken, 0) != 0)
+                Interlocked.Decrement(ref s_pendingDestructionCount);
+        }
+
+        private void ClearDestroyQueuedFlag(long token)
+        {
+            if (Interlocked.CompareExchange(ref _pendingDestructionToken, 0, token) == token)
                 Interlocked.Decrement(ref s_pendingDestructionCount);
         }
 

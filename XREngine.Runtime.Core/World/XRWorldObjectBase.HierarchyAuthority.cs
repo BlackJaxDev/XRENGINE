@@ -14,6 +14,7 @@ public abstract partial class XRWorldObjectBase
     private int _hasEnteredStructuralList;
 
     internal bool HasEnteredStructuralList => Volatile.Read(ref _hasEnteredStructuralList) != 0;
+    internal bool HasDestructionAdmission => HasActiveDestructionAdmission;
 
     /// <summary>Copies exact structural-list ownership at a mutation or release boundary.</summary>
     public HierarchyListMembership[] CaptureHierarchyListMemberships()

@@ -23,6 +23,9 @@
     <Compile Include="../Scene/GuardedComponentCreationTests.cs" Link="Scene/GuardedComponentCreationTests.cs" />
     <Compile Include="../Scene/DetachedLeafRetirementTests.cs" Link="Scene/DetachedLeafRetirementTests.cs" />
     <Compile Include="../Scene/SceneNodeChildDestructionTests.cs" Link="Scene/SceneNodeChildDestructionTests.cs" />
+    <Compile Include="../Scene/ComponentDestructionQueueTests.cs" Link="Scene/ComponentDestructionQueueTests.cs" />
+    <Compile Include="../Scene/QueueObjectProbe.cs" Link="Scene/QueueObjectProbe.cs" />
+    <Compile Include="../Scene/QueueComponentProbe.cs" Link="Scene/QueueComponentProbe.cs" />
     <Compile Include="../Scene/DetachedLeafLiveWorldRetirementTests.cs" Link="Scene/DetachedLeafLiveWorldRetirementTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatTransitionOwnership.cs" Link="Editor/InspectorFloatTransitionOwnership.cs" />
     <Compile Include="../Editor/InspectorFloatCurveTransitionOwnerTests.cs" Link="Editor/InspectorFloatCurveTransitionOwnerTests.cs" />

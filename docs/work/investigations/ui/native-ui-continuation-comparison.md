@@ -994,3 +994,50 @@ inputs stayed unchanged through final validation. The 39 maintained relative
 links resolve and diff checks pass. Review found no remaining publication blocker
 in this bounded transaction. Windows command execution, visual checks, and
 performance acceptance remain pending.
+
+
+## Deferred Component Destruction Admission
+
+A nine-case baseline reproduced two lifetime defects. The deferred queue held raw
+object references, so Generate cancelled the pending flag but left a stale entry
+that could destroy the new lifetime. Generate followed by requeue also caused two
+virtual immediate-destruction calls. Structural component lists accepted queued,
+destroyed, and actively destroying components, including a transfer from an
+external node-list removal callback. Normal prequeue detach/reattach, duplicate
+queue requests, and destruction vetoes passed.
+
+Headless build215 passed with zero warnings/errors in 2m44.44s. Baseline run163
+passed three of nine cases and failed six in 0.196s, with no errors, warnings, or
+skips. No production change was present in this baseline. The repair must use an
+exact queued request identity, retain virtual dispatch, and prevent a regeneration
+race between queue validation and dispatch. Pending counts must describe live
+requests, and an override that defers destruction must not spin in one drain.
+
+
+The first repair candidate passed headless build216 with zero warnings/errors in
+2m48.65s. Run164 passed 24/24 cases in 0.181s, with no failures, warnings, or skips.
+The fixture covers both writer/dispatch orderings, virtual deferral, recursive
+drain, veto, exceptions, release failure, and synchronous pre-add rejection.
+
+Review found another untested edge before publication: a direct destruction
+callback can queue its own object before destruction commits. The next drain must
+settle that exact terminal request without another virtual call. Otherwise an
+already destroyed object can remain pending forever. This finding came from
+source review; the initial nine-case failing baseline did not cover it. The
+terminal-request repair and its regression are required before final validation.
+
+
+The terminal-request repair passed review. Headless build217 passed with zero
+warnings/errors in 44.26s. Run165 passed 25/25 destruction cases in 0.189s. Full
+run166 passed **1,314/1,314** in 20.781s, with no failures, warnings, or skips. The
+queue claim covers admitted base lifetime operations and the complete queued
+virtual dispatch. Component insertion protection covers owner-thread callbacks;
+general concurrent insertion and arbitrary override work outside the base calls
+remain outside this contract.
+
+
+Desktop build68 compiled the editor and tests with zero warnings/errors in
+3m25.50s. All 10,841 source inputs stayed unchanged through final validation.
+The 39 maintained relative links resolve and diff checks pass. Review found no
+remaining blocker in this bounded contract. Windows execution, live menu behavior,
+GPU checks, and performance acceptance remain pending.

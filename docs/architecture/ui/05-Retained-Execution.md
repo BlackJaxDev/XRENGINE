@@ -1069,11 +1069,10 @@ in the owning open scope. A setter or matrix callback that leaves completion
 uncertain prevents history from transferring as success. The failure remains
 visible and requires explicit recovery or reissue.
 
-The current promotion path rejects first-time editor-scene allocation before
-mutation. Hidden-parent asset spawning uses a separate shared spawn path and is
-still unsupported. Native context/scene menus and bounded single-root Duplicate
-use the guarded command routes. Multi-root duplication and broader hierarchy
-parity remain open.
+The shared hierarchy spawn path supports first-time editor-scene allocation and
+hidden-scene parents. Native context/scene menus and single-root or grouped
+Duplicate use the guarded command routes. Broader clone profiles and document-end
+recovery remain open. Windows workflow acceptance is recorded separately.
 
 ## Accepted text measurements and editor navigation
 
@@ -1152,9 +1151,9 @@ before a queued command runs. The popup belongs to the canvas and uses the
 accepted canvas point directly. Setup failure retires only the candidate node
 and its handlers; it cannot clear a newer session. Node actions cover rename,
 child creation, camera focus, and deletion. Scene actions use canonical visibility
-and unload commands. Single-root Duplicate and Deep Duplicate use the owned
-clone request described below. Unsupported sharing shapes and multi-root
-duplication remain explicit follow-on work.
+and unload commands. Duplicate and Deep Duplicate use the owned single-root or
+forest clone request described below. Unsupported sharing shapes remain explicit
+follow-on work.
 
 
 ## Draft owners, tab focus, and linked-list edits
@@ -1632,12 +1631,12 @@ world-UI output remains disabled until all required proofs are complete.
 
 ### Native duplicate command admission
 
-Native hierarchy menus expose single-root Duplicate and Deep Duplicate through
-the canonical clone route. Duplicate preserves supported direct asset references;
+Native hierarchy menus expose Duplicate and Deep Duplicate through the canonical
+clone route for one or more selected top-level roots. Duplicate preserves supported direct asset references;
 unknown containers and callback-defined getters report that ordinary duplication
 is unavailable. Deep Duplicate retains the canonical serialized asset behavior.
-Multiple selected roots remain unavailable until grouped replay and compensation
-are implemented.
+Multiple roots use one owned forest transaction with ordered replay and reverse
+compensation. The grouped transaction contract is described below.
 
 The request pins its source graph, document placement, asset slots, and object
 lifetimes before construction. It admits execution once. Reciprocal parent links,
@@ -1850,8 +1849,8 @@ selection and mutation paths.
 the existing `TryHandleDroppedSpawnableAsset` path for prefab and model sources,
 including hidden-scene parents. This completes the source-level hierarchy adoption
 contract. It does not establish Windows interaction or model-drop acceptance.
-Grouped multi-root duplication and general control-lifetime contracts remain
-separate work.
+Grouped multi-root duplication uses the separate transaction described below.
+General control-lifetime work remains open.
 
 
 ## Grouped Hierarchy Duplication
@@ -1901,3 +1900,29 @@ wins. History release uses existing whole-ledger document custody or strict
 forest retirement. Unknown asset allocations and document-end recovery keep their
 existing restrictions. The single-node command uses the same history runner and
 keeps its existing clone entry point.
+
+
+## Deferred Destruction Request Ownership
+
+Deferred destruction retains an exact request token, separate from the object's
+lifetime revision. Generate cancels the current request. A stale queue entry
+cannot dispatch into the regenerated lifetime or consume a later request. The
+pending count describes current requests, not stale physical queue entries. A
+request queued during direct destruction is discarded without virtual dispatch
+if that exact object is already destroyed when the dispatcher claims it.
+
+Queue dispatch claims an idle object without waiting. That claim excludes
+concurrent lifetime writers through the virtual Destroy call. The canonical base
+entry consumes the request before callbacks. A normal override return that defers
+teardown retains the request for a later drain. Recursive drains do not run a
+second dispatcher, and one deferred override cannot spin in the same drain. A
+throw after virtual dispatch starts cancels that exact request without automatic
+retry. Vetoes retain their existing alive, unqueued result. No callback runs
+under a newly introduced object lock.
+
+Component list installation and final insertion reject queued, destroyed, and
+actively destroying components. An ordinary prequeue detach/reattach remains
+supported. This closes owner-thread callback transfers during teardown; it does
+not establish general concurrent scene-list insertion safety. Custom override
+effects before canonical direct destruction remain the override's responsibility.
+The broader menu construction and adopted-content retirement work remains open.

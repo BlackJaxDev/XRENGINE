@@ -5,13 +5,14 @@ internal readonly struct ObjectLifetimeMutationLease : IDisposable
 {
     private readonly XRObjectBase _owner;
     private readonly EObjectLifetimeMutation _kind;
+    private readonly bool _usesDispatchClaim;
 
     internal ObjectLifetimeMutationLease(XRObjectBase owner, EObjectLifetimeMutation kind)
     {
         _owner = owner;
         _kind = kind;
-        owner.EnterLifetimeMutation(kind);
+        _usesDispatchClaim = owner.EnterLifetimeMutation(kind);
     }
 
-    public void Dispose() => _owner.ExitLifetimeMutation(_kind);
+    public void Dispose() => _owner.ExitLifetimeMutation(_kind, _usesDispatchClaim);
 }

@@ -10,4 +10,5 @@ public enum EObjectLifetimeMutation
     QueueDestruction,
     DestroyNow,
     AbortConstruction,
+    DispatchDestruction,
 }
