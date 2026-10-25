@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using XREngine.Animation;
 using XREngine.Components;
@@ -102,7 +103,7 @@ public sealed class NativeAnimationPanelViewTransferTests
         try
         {
             Selection.SceneNode = candidateRoot;
-            typeof(AnimationPanel).GetMethod("RefreshRows", Fields)!.Invoke(_target, null);
+            InvokePanel(_target, "RefreshRows");
             Assert.That(HasCandidateSection(), Is.True);
             NativeAnimationPanelViewReceipt receipt = Capture();
 
@@ -112,7 +113,7 @@ public sealed class NativeAnimationPanelViewTransferTests
             Assert.That(HasCandidateSection(), Is.False,
                 "Owned row projection must defer scene candidate discovery.");
             Set(_target, "_lastRefresh", DateTime.MinValue);
-            typeof(AnimationPanel).GetMethod("RefreshTick", Fields)!.Invoke(_target, null);
+            InvokePanel(_target, "RefreshTick");
             Assert.That(HasCandidateSection(), Is.True);
             Assert.That(Get<AnimationMember>(_target, "_selectedMember"), Is.SameAs(_member));
             Assert.That(Get<Keyframe>(_target, "_selectedKey"), Is.SameAs(_key));
@@ -273,7 +274,7 @@ public sealed class NativeAnimationPanelViewTransferTests
                     _clip.RootMember = new AnimationMember("Replacement", EAnimationMemberType.Group);
                     break;
                 case "rows":
-                    typeof(AnimationPanel).GetMethod("RefreshRows", Fields)!.Invoke(_target, null);
+                    InvokePanel(_target, "RefreshRows");
                     break;
             }
         };
@@ -310,7 +311,7 @@ public sealed class NativeAnimationPanelViewTransferTests
         {
             if (refreshed || change.PropertyName != nameof(UIListTransform.ContentScrollOffset)) return;
             refreshed = true;
-            typeof(AnimationPanel).GetMethod("RefreshRows", Fields)!.Invoke(_target, null);
+            InvokePanel(_target, "RefreshRows");
         };
         NativeDockPanelStateValues requested = _sourceBinding.CaptureReceipt().Values
             with { ScrollOffset = before + 32 };
@@ -509,6 +510,15 @@ public sealed class NativeAnimationPanelViewTransferTests
 
     private static void Set(AnimationPanel panel, string field, object? value)
         => typeof(AnimationPanel).GetField(field, Fields)!.SetValue(panel, value);
+
+    private static void InvokePanel(AnimationPanel panel, string method)
+    {
+        try { typeof(AnimationPanel).GetMethod(method, Fields)!.Invoke(panel, null); }
+        catch (TargetInvocationException error) when (error.InnerException is not null)
+        {
+            ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+        }
+    }
 
     private static void SelectClip(object? clip)
         => typeof(NativeAssetSelection).GetProperty(nameof(NativeAssetSelection.SelectedTarget))!

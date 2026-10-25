@@ -103,6 +103,45 @@ public sealed class NativeHierarchyMenuTests
         finally { canvas.Destroy(true); source.Destroy(true); }
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void MenuLayoutCaptureKeepsOnlyRowsInTheAppliedViewport(bool retireViewport)
+    {
+        SceneNode source = new("Source");
+        using RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("World", new XRScene("Scene", source)));
+        var (canvas, panel, input) = CreatePanel(world);
+        try
+        {
+            UIListTransform list = Field<UIListTransform>(panel, "_treeListTransform");
+            object row = Row(panel, source);
+            UIBoundableTransform rowTransform = Field<UIBoundableTransform>(row, "Transform");
+            Assert.That(list.TryGetVirtualRowLease(rowTransform, out UIVirtualRowLease original), Is.True);
+            if (retireViewport)
+                ApplyGeometry(list, Vector2.Zero);
+            input.RaiseRightClick(Field<UIInteractableComponent>(row, "Button"));
+            HierarchyMenuSession session = Session(panel)!;
+            Assert.That(session, Is.Not.Null);
+
+            Tick(panel);
+
+            Assert.That(Menu(panel)!.IsOpen, Is.EqualTo(!retireViewport));
+            Assert.That(list.TryGetVirtualRowLease(rowTransform, out UIVirtualRowLease current),
+                Is.EqualTo(!retireViewport));
+            if (retireViewport)
+            {
+                Assert.That(Session(panel), Is.Null);
+                Assert.That(session.Owner, Is.Null);
+            }
+            else
+            {
+                Assert.That(current, Is.EqualTo(original));
+                Assert.That(Session(panel), Is.SameAs(session));
+                Assert.That(session.AwaitingShow, Is.False);
+            }
+        }
+        finally { canvas.Destroy(true); source.Destroy(true); }
+    }
+
     [Test]
     public void AReplacementRequestedDuringShowKeepsItsLiveActions()
     {
@@ -237,6 +276,7 @@ public sealed class NativeHierarchyMenuTests
         {
             UIListTransform list = Field<UIListTransform>(panel, "_treeListTransform");
             list.VirtualOverscan = 0;
+            ApplyGeometry(list, new Vector2(400, 20));
             list.SynchronizeVirtualRows(20);
             list.TryScrollToVirtualItem(Id(panel, first));
             list.SynchronizeVirtualRows(20);
@@ -384,9 +424,18 @@ public sealed class NativeHierarchyMenuTests
         HierarchyMenuInputProbe input = canvas.AddComponent<HierarchyMenuInputProbe>()!;
         HierarchyPanel panel = new SceneNode(canvas, "Hierarchy").AddComponent<HierarchyPanel>()!;
         canvas.IsActiveSelf = true;
-        Field<UIListTransform>(panel, "_treeListTransform").SynchronizeVirtualRows(400);
+        UIListTransform list = Field<UIListTransform>(panel, "_treeListTransform");
+        // The input probe supplies an accepted pointer. Give layout capture the same
+        // viewport instead of realizing rows against an unapplied zero-size list.
+        ApplyGeometry(transform, new Vector2(400));
+        ApplyGeometry(panel.BoundableTransform, new Vector2(400));
+        ApplyGeometry(list, new Vector2(400));
+        list.SynchronizeVirtualRows(400);
         return (canvas, panel, input);
     }
+
+    private static void ApplyGeometry(UIBoundableTransform transform, Vector2 size)
+        => transform.ApplyCalculatedLayout(new UILayoutNodeOutput { ActualSize = size }, Vector2.Zero);
 
     private static void Open(HierarchyPanel panel, HierarchyMenuInputProbe input, UIInteractableComponent target)
     {

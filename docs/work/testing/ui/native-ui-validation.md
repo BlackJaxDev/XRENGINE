@@ -762,3 +762,31 @@ frozen candidate, which includes explicit fixture icon fonts. Keep the original
 inactivity/session bounds. Check validation-disk headroom before producing outputs.
 Combined asset-spawn teardown still needs exact queued-target evidence; no guard
 was relaxed and no production cause is claimed.
+
+### Completed Windows run and bounded repair candidate
+
+Windows at exact `a5e2c0872f7d428ecedbec564a4f7e176f730368` completed the broad
+selection: **381 passed, 17 failed, 0 skipped, 0 incomplete** out of 398 cases. All 12
+tool-state cases and all 4 real-host Animation transfers passed. The earlier stalled
+lifetime/workflow cases also passed individually. The two previously mixed asset
+teardown cases passed in the broad run; their earlier cause is still unproven.
+Do not infer production font-import correctness from explicit test font inputs.
+
+The repair candidate keeps all acceptance assertions and timeout limits. It applies
+fixture viewport geometry before menu capture, synchronizes provider revisions
+before synthetic focus publication, unwraps reflection exceptions in Animation
+callbacks, and makes a destroyed panel's public scroll setter inert. Internal
+owned-write rejection stays intact.
+
+Headless build 246 passes with zero warnings/errors. Run 199 passes **4/4** focused
+viewport and provider-revision controls (0.979s). Run 200 passes **1,484/1,484**
+portable cases (25.543s), with no failures, warnings, or skips. These establish the
+bounded fixture assumptions, not completion of the 17 Windows acceptance failures.
+The corrected editor fixtures require revalidation on the frozen published repair
+candidate. Check disk headroom; no additional laptop deletion is authorized.
+
+Editor/test build 82 passes with zero warnings/errors (3m10.77s). All 10,897
+source inputs stayed unchanged through focused/full portable execution and
+compilation. The next Windows filter should cover hierarchy menus, hierarchy
+workflow, Animation view transfer, and owner-subscription teardown, then the
+broader combination if capacity permits. Do not lower the disk or timeout guards.

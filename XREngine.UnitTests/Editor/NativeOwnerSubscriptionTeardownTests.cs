@@ -95,6 +95,8 @@ public class NativeOwnerSubscriptionTeardownTests
             Assert.That(list.ContentScrollOffset, Is.EqualTo(inactiveOffset));
             panel.Destroy(true);
             float retainedOffset = list.ContentScrollOffset;
+            ulong retainedIntent = panel.StateIntentRevision;
+            ulong retainedScrollIntent = panel.ScrollIntentRevision;
             panel.Filter = "late";
             panel.ScrollOffset = 120;
             panel.HandleMouseScroll(-1);
@@ -104,6 +106,8 @@ public class NativeOwnerSubscriptionTeardownTests
                 Assert.That(list.VirtualProvider, Is.Null);
                 Assert.That(list.IsDestroyed, Is.False);
                 Assert.That(list.ContentScrollOffset, Is.EqualTo(retainedOffset));
+                Assert.That(panel.StateIntentRevision, Is.EqualTo(retainedIntent));
+                Assert.That(panel.ScrollIntentRevision, Is.EqualTo(retainedScrollIntent));
                 Assert.That(filterNotifications, Is.Zero);
                 Assert.That(scrollNotifications, Is.Zero);
                 Assert.That(typeof(ConsolePanel).GetField("FilterChanged", Fields)!.GetValue(panel), Is.Null);

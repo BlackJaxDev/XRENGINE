@@ -11,6 +11,44 @@ namespace XREngine.UnitTests.Rendering;
 
 public sealed partial class UIContextMenuNavigationTests
 {
+    [TestCase(false)]
+    [TestCase(true)]
+    public void MenuLayoutCaptureUsesTheAppliedSiblingListViewport(bool applyViewport)
+    {
+        SceneNode root = CreateCanvas(out _);
+        try
+        {
+            UIListTransform list = new() { ItemSize = 20, VirtualOverscan = 0 };
+            SceneNode listNode = new(root, "Source list", list);
+            list.VirtualProvider = new FocusVirtualListProvider(listNode, 10);
+            if (applyViewport)
+                list.ApplyCalculatedLayout(new UILayoutNodeOutput { ActualSize = new Vector2(240, 120) }, Vector2.Zero);
+            list.SynchronizeVirtualRows(120);
+            list.TryGetRealizedVirtualRow(5, out UIBoundableTransform? originalRow,
+                out UIVirtualRowLease originalLease).ShouldBeTrue();
+            int recycled = 0;
+            list.VirtualRowRecycling += (_, lease) =>
+            {
+                if (lease == originalLease)
+                    recycled++;
+            };
+            UIContextMenuComponent menu = CreateMenu(root);
+
+            menu.Show(new Vector2(8, 80), new ContextMenuItem("Action", null));
+
+            menu.IsOpen.ShouldBeTrue();
+            list.TryGetRealizedVirtualRow(5, out UIBoundableTransform? currentRow,
+                out UIVirtualRowLease currentLease).ShouldBe(applyViewport);
+            recycled.ShouldBe(applyViewport ? 0 : 1);
+            if (applyViewport)
+            {
+                currentRow.ShouldBeSameAs(originalRow);
+                currentLease.ShouldBe(originalLease);
+            }
+        }
+        finally { root.Destroy(true); }
+    }
+
     [Test]
     public void HideKeepsLaterRowAndLabelMovedByEarlierRowDestruction()
     {

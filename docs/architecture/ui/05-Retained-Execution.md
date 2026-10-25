@@ -2126,3 +2126,8 @@ Transfer defers ordinary candidate scanning and plot rebuild to a later refresh.
 General focus, draft text, search state, and expansion are not part of this payload.
 These cold transfer checks allocate captured receipts and traversal storage. They
 do not add a per-frame transfer loop or establish a performance result.
+
+A terminal native text panel ignores public scroll assignments. Retirement keeps
+the last stored offset and does not start another state intent or touch retained
+rows. Internal owned restores still reject a retired owner; this is not a general
+exception suppression path.

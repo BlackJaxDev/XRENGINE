@@ -1758,3 +1758,21 @@ or errors. Windows rerun is pending. The source includes the explicit test-font
 input; production font import and combined asset teardown remain unresolved.
 The full portable result remains 1,480/1,480 from the preceding source checkpoint.
 No broader TODO or platform acceptance is closed.
+
+## Windows fixture and terminal-scroll repairs
+
+The completed Windows run at `a5e2c0872` reports 381/398 passes and 17 failures,
+with no skipped or incomplete cases. The canvas-backed tool-state tests pass 12/12;
+real-host Animation transfer passes 4/4. The prior stalls now complete with explicit
+fixture fonts; production font import remains separate.
+
+The next candidate corrects menu viewport setup, synchronizes provider bindings
+before fixture focus publication, and unwraps expected Animation callback
+exceptions. It also makes public scroll writes inert after panel destruction while
+keeping owned restore guards strict. Four focused portable controls pass; the full
+portable suite passes **1,484/1,484**. Windows acceptance of this repair is pending.
+The original implementation reconciliation remains **51/60**.
+
+The matching editor/test build 82 passes with zero warnings/errors. All 10,897
+source inputs stayed fixed through validation. The working candidate has no
+Windows execution result yet; the 17 failures remain acceptance checks.

@@ -1560,3 +1560,54 @@ destroyed/queued flags, its queue token, its exact child-list identity/flags/cou
 and the authority's exact owner/collection matches and current flag. Compare the
 list reference before dispatch and at failure. Keep the original exception and
 guards; exclude names, paths, and object-cache dumps.
+
+## Windows revalidation with explicit fixture fonts
+
+The separate Windows executor validated exact
+`a5e2c0872f7d428ecedbec564a4f7e176f730368`. Its wrapper build passed with zero
+warnings/errors. The broad run completed all 398 cases: 381 passed and 17 failed,
+with none skipped or incomplete. All 12 tool-state cases and all 4 real-host
+Animation transfers passed. The earlier individual lifetime and workflow stalls
+completed. Both previously mixed asset-spawn cases passed in the broad run; their
+earlier cause remains unproven. Explicit fixture fonts establish these test results
+only, not production system-font import correctness.
+
+The 17 failures divide into four bounded paths:
+
+- 13 hierarchy menu cases used synthetic pointer input and realized 400 pixels of
+  rows, but their applied list geometry was zero. Menu Show captures layout and
+  synchronizes sibling lists from actual size. That can recycle the source row;
+  the existing session guard then closes the menu. The fixture now applies matching
+  canvas, panel, and list geometry before realization. Its explicit recycling case
+  also updates applied geometry. Positive and zero-viewport controls keep the strict
+  lease rejection visible.
+- 2 Animation guard cases called RefreshRows through reflection from callbacks. The
+  expected InvalidOperationException was wrapped in TargetInvocationException. One
+  fixture helper now rethrows the inner exception with ExceptionDispatchInfo.
+  Production behavior and assertions are unchanged.
+- 1 keyboard-selection case changed the provider selection after row realization,
+  then fabricated a presented packet without synchronizing the new provider
+  revision. The ordinary row-lease query does not prove the binding revision; the
+  accepted virtual-focus dispatch does. PresentRow now synchronizes and checks the
+  exact realized row and lease before packet construction. Portable stale/fresh
+  controls exercise this distinction without changing the focus guard.
+- 1 console teardown case called the public ScrollOffset setter after destruction.
+  Other terminal panel setters are inert, but scroll started a new intent and
+  threw inside its owned-write guard. The public setter now returns for a terminal
+  panel. Internal owned restore checks remain strict. The existing teardown test
+  also requires unchanged state and scroll intent revisions after late writes.
+
+The Windows executor stopped at its disk start threshold before extra focused
+Animation reruns. Those cases already ran in the broad run (31 passed, 2 wrapped
+failures). No further deletion is approved. This cloud task performs no laptop
+actions. The fixes above remain candidates for a frozen Windows rerun.
+
+Validation of this candidate: wrapper headless build 246 passed with zero warnings
+and errors (2m43.42s). Run 199 passed 4/4 focused viewport/provider-revision cases
+(0.979s); full run 200 passed 1,484/1,484 (25.543s), with no failures, warnings, or
+skips. Wrapper editor/test build 82 passed with zero warnings/errors (3m10.77s).
+All 10,897 source inputs remained unchanged through those checks. Relative links
+in the five UI documents resolve 42/42, and diff whitespace checks pass. These are
+Linux compilation and portable execution results. The corrected editor cases
+still require a frozen Windows run; none of the 17 failures is marked accepted
+from these checks alone.

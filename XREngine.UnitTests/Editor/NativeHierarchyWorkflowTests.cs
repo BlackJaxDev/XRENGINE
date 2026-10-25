@@ -245,6 +245,8 @@ public sealed class NativeHierarchyWorkflowTests
             UIVirtualTreeRowButtonComponent from = Field<UIVirtualTreeRowButtonComponent>(Row(panel, first), "Button");
             UIVirtualTreeRowButtonComponent target = Field<UIVirtualTreeRowButtonComponent>(Row(panel, second), "Button");
             Selection.SceneNodes = [first];
+            Assert.That(list.TryGetRealizedVirtualRow(Id(panel, second), out _, out _), Is.False,
+                "Selection changes the provider revision; presentation must synchronize its rows.");
             PresentRow(canvas, list, from, 1);
             Assert.That(input.TryFocusPresented(from), Is.True);
 
@@ -390,8 +392,14 @@ public sealed class NativeHierarchyWorkflowTests
     private static void PresentRow(UICanvasComponent canvas, UIListTransform list,
         UIVirtualTreeRowButtonComponent button, ulong generation)
     {
+        // Match the owner-thread synchronization that precedes real layout capture.
+        list.SynchronizeVirtualRows(400);
         UIBoundableTransform row = button.BoundableTransform;
         Assert.That(list.TryGetVirtualRowLease(row, out UIVirtualRowLease lease), Is.True);
+        Assert.That(list.TryGetRealizedVirtualRow(lease.ItemId, out UIBoundableTransform? current,
+            out UIVirtualRowLease currentLease), Is.True);
+        Assert.That(current, Is.SameAs(row));
+        Assert.That(currentLease, Is.EqualTo(lease));
         BoundingRectangleF bounds = new(Vector2.Zero, new Vector2(400));
         UIHitRecord hit = new(button.RenderInfo2D, button.RenderInfo2D.MembershipId,
             button.UITransform.ElementIdentity, button.InteractionRevision, Matrix4x4.Identity,

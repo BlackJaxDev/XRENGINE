@@ -72,6 +72,8 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
             ? _list?.ContentScrollOffset ?? _storedScrollOffset : _storedScrollOffset;
         set
         {
+            if (_terminal)
+                return;
             float next = float.IsFinite(value) ? Math.Max(0, value) : 0;
             SetScrollOffsetCore(next, BeginStateIntent(), null);
         }
