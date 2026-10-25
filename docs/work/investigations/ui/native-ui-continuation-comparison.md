@@ -1299,3 +1299,43 @@ the five maintained UI documents resolve, and `git diff --check` passes. Updated
 Editor-only enum and float fixtures remain execution-pending on Windows; Linux
 compilation is not Windows acceptance. The ordinary queued-teardown interaction
 and the two row-realization stalls also require their Windows reruns.
+
+## Explicit icon-font input for retained fixtures
+
+The row-realization source reads `NativeUiIconFont` while creating the arrow,
+toggle, and unload glyphs. The previous `UITestShaderScope` installed only the
+default text font. Windows icon lookup could therefore enter the synchronous
+system-font import path. The two Windows step-marker runs did not identify the
+instruction that stalled. A separate, bounded cold-font diagnostic remains needed
+before attributing those stalls to font loading.
+
+The scoped default-font API now accepts an explicit icon font. It validates both
+inputs before installation and releases only its installed references on disposal.
+It preserves caller resource ownership, nested-scope rejection, and the original
+text-only overload. Without an override, normal Windows icon lookup is unchanged.
+The test shader scope supplies numeric metrics for the hierarchy icons as well as
+text. This separates control behavior tests from system-font import testing; it
+does not repair or validate the normal Windows import path.
+
+Headless build240 passed with zero warnings/errors (2m28.09s). Run191 passed the
+five font-scope cases (0.120s). Full run192 passed **1,445/1,445** portable cases
+(21.780s), with zero failures, warnings, or skips. The font-scope tests cover
+independent roles, rejected partial installation, repeated disposal, replacement
+scopes, caller resource survival, and the original text-only API. Windows row
+realization must still run with its original behavior assertions and time limits.
+
+Windows revalidation of `68ab6d1675622df30bfef6c26861900a12adb76f` stopped
+before build or tests because the validation disk lacked space. A large
+ImageMagick temporary file from the earlier isolated run remains preserved;
+targeted cleanup approval is pending. This is not a failed repaired test result.
+Further source review found that desktop bootstrap registers the Skia font
+rasterizer. It lays out all supported characters in cells sized by the largest
+glyph, without an explicit atlas-size bound. This is a resource-use lead, not
+proof that font import caused the two incomplete tests or that temporary file.
+Do not run another disk-producing diagnostic until the capacity blocker is resolved.
+
+Desktop build76 compiled the editor and tests with zero warnings/errors (3m23.36s).
+All **10,886 source inputs** remained unchanged through headless build240,
+runs191/192, and desktop build76. Read-only source review found no blocker in the
+scoped font change. The repaired Windows fixtures and the normal system-font import
+remain execution-pending; no Windows, visual, GPU, or performance result is implied.

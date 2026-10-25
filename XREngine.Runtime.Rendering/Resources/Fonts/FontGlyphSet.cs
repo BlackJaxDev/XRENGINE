@@ -884,7 +884,7 @@ namespace XREngine.Rendering
                 => LoadDefaultUIFontBitmap();
 
         public static FontGlyphSet LoadDefaultUIIconFont()
-            => TryLoadWindowsUIFont("seguisym.ttf") ?? LoadDefaultUIFontBitmap();
+            => ScopedDefaultUiIconFont ?? TryLoadWindowsUIFont("seguisym.ttf") ?? LoadDefaultUIFontBitmap();
 
         public static FontGlyphSet LoadDefaultUIEmojiFont()
             => TryLoadWindowsUIFont("seguiemj.ttf")

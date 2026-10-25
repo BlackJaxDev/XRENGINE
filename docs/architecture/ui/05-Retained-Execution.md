@@ -87,6 +87,16 @@ its publications.
 
 ## Text values
 
+`FontGlyphSet.InstallDefaultUiFont(textFont, iconFont)` can supply preloaded
+bitmap fonts for both default UI roles during one runtime session. The caller
+owns the fonts and atlases and must keep them alive until the scope and its UI
+users finish. Both fonts are validated before installation. Nested scopes are
+rejected; disposal releases the exact installed references and does not destroy
+resources. The original text-only overload remains available. Without an icon
+override, icon lookup retains its Windows system-font path and bitmap fallback.
+`UITestShaderScope` supplies text and icon metrics explicitly, so retained-control
+fixtures do not need a cold system-font import to realize rows.
+
 `FontGlyphSet.LayoutSnapshot` copies glyph metrics into numeric inputs.
 `UITextLayoutKernel` returns immutable glyph placements, intrinsic size, and
 UTF-16 caret stops. Caret stops follow grapheme boundaries and include whitespace

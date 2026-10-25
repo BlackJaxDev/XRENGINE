@@ -6,20 +6,48 @@ public partial class FontGlyphSet
 {
     private static readonly Lock DefaultUiFontGate = new();
     private static FontGlyphSet? _scopedDefaultUiFont;
+    private static FontGlyphSet? _scopedDefaultUiIconFont;
 
     /// <summary>Uses a preloaded font for synchronous UI layout during one runtime session.</summary>
     public static IDisposable InstallDefaultUiFont(FontGlyphSet font)
+        => InstallDefaultUiFonts(font, null);
+
+    /// <summary>Uses caller-owned preloaded text and icon fonts during one runtime session.</summary>
+    public static IDisposable InstallDefaultUiFont(FontGlyphSet font, FontGlyphSet iconFont)
     {
-        ArgumentNullException.ThrowIfNull(font);
-        if (font.AtlasType != EFontAtlasType.Bitmap || font.Atlas is null || font.LayoutGlyphCount == 0)
-            throw new NotSupportedException("BrowserFont.DefaultUiFontUnsupported: expected a cooked bitmap font with atlas and glyphs.");
+        ArgumentNullException.ThrowIfNull(iconFont);
+        return InstallDefaultUiFonts(font, iconFont);
+    }
+
+    private static IDisposable InstallDefaultUiFonts(FontGlyphSet font, FontGlyphSet? iconFont)
+    {
+        ValidateDefaultUiFont(font);
+        if (iconFont is not null)
+            ValidateDefaultUiFont(iconFont);
         lock (DefaultUiFontGate)
         {
             if (_scopedDefaultUiFont is not null)
                 throw new InvalidOperationException("BrowserFont.DefaultUiFontAlreadyInstalled.");
             _scopedDefaultUiFont = font;
+            _scopedDefaultUiIconFont = iconFont;
         }
-        return new DefaultUiFontScope(font);
+        return new DefaultUiFontScope(font, iconFont);
+    }
+
+    private static void ValidateDefaultUiFont(FontGlyphSet font)
+    {
+        ArgumentNullException.ThrowIfNull(font);
+        if (font.AtlasType != EFontAtlasType.Bitmap || font.Atlas is null || font.LayoutGlyphCount == 0)
+            throw new NotSupportedException("BrowserFont.DefaultUiFontUnsupported: expected a cooked bitmap font with atlas and glyphs.");
+    }
+
+    private static FontGlyphSet? ScopedDefaultUiIconFont
+    {
+        get
+        {
+            lock (DefaultUiFontGate)
+                return _scopedDefaultUiIconFont;
+        }
     }
 
     private static FontGlyphSet? ScopedDefaultUiFont
@@ -43,7 +71,7 @@ public partial class FontGlyphSet
             CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize));
     }
 
-    private sealed class DefaultUiFontScope(FontGlyphSet font) : IDisposable
+    private sealed class DefaultUiFontScope(FontGlyphSet font, FontGlyphSet? iconFont) : IDisposable
     {
         private FontGlyphSet? _font = font;
 
@@ -56,6 +84,8 @@ public partial class FontGlyphSet
             {
                 if (ReferenceEquals(_scopedDefaultUiFont, installed))
                     _scopedDefaultUiFont = null;
+                if (ReferenceEquals(_scopedDefaultUiIconFont, iconFont))
+                    _scopedDefaultUiIconFont = null;
             }
         }
     }

@@ -19,6 +19,7 @@
     <ProjectReference Include="../../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Rendering/DefaultUiFontScopeTests.cs" Link="Rendering/DefaultUiFontScopeTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/InspectorStringDetailSizeComponent.cs" Link="Editor/InspectorStringDetailSizeComponent.cs" />
     <Compile Include="../Editor/InspectorStringDetailSizeTests.cs" Link="Editor/InspectorStringDetailSizeTests.cs" />
     <Compile Include="../Scene/QueuedTransformDestructionTests.cs" Link="Scene/QueuedTransformDestructionTests.cs" />

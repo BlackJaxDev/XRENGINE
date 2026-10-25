@@ -37,8 +37,10 @@ internal sealed class UITestShaderScope : IRuntimeShaderServices, IDisposable
         for (int codepoint = 32; codepoint < 127; codepoint++)
             glyphs.Add(((char)codepoint).ToString(), new FontGlyphSet.Glyph(new Vector2(8, 10), Vector2.Zero));
         glyphs.Add("\u0301", new FontGlyphSet.Glyph(new Vector2(2, 3), Vector2.Zero));
+        foreach (string icon in new[] { "\u25BC", "\u25B6", "\u2713", "\u2716" })
+            glyphs.Add(icon, new FontGlyphSet.Glyph(new Vector2(8, 10), Vector2.Zero));
         _font = new FontGlyphSet { Atlas = _atlas, Glyphs = glyphs, LayoutEmSize = 10 };
-        _fontScope = FontGlyphSet.InstallDefaultUiFont(_font);
+        _fontScope = FontGlyphSet.InstallDefaultUiFont(_font, _font);
     }
 
     public void Dispose()

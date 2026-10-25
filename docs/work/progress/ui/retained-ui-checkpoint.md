@@ -1682,3 +1682,19 @@ The two hierarchy stalls are narrowed to row realization; their cause and runtim
 acceptance remain open. The separate animation view-transfer draft is preserved
 locally and is not included. The reconciliation remains **51/60**, with nine broad
 code items and four original owner decisions open. ImGui remains the default.
+
+## Explicit test icon fonts
+
+Retained-control fixtures now install preloaded icon metrics with their text font.
+The scoped API validates both fonts before installation and keeps resource ownership
+with the caller. The text-only API and normal platform lookup remain unchanged.
+Five targeted scope cases and **1,445/1,445** full portable tests pass. Headless and
+editor/test builds have zero warnings/errors. All **10,886 source inputs** stayed
+unchanged through validation; read-only review found no blocker.
+
+The prior repair checkpoint `68ab6d167` has no repaired Windows result yet:
+revalidation is blocked before build/tests by disk capacity, with targeted cleanup
+approval pending. The original row-realization stalls and normal font import remain
+unresolved. This fixture change does not establish their cause. The implementation
+reconciliation remains **51/60**. The animation draft and owner proposals remain
+separate, and no platform acceptance or default-editor decision is closed.

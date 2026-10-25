@@ -692,3 +692,18 @@ portable tests execute the real debug-handle factory with fixed test preferences
 they do not initialize the full desktop host. Updated enum and float editor
 fixtures compile here but still require their Windows execution. No repaired
 Windows, GPU, visual, IME, or performance acceptance is inferred from these checks.
+
+### Explicit fixture icon-font input
+
+The next snapshot gives `UITestShaderScope` explicit text and icon fonts through
+the scoped font API. Its five scope tests pass, and the full portable run passes
+**1,445/1,445**, with zero failures, warnings, or skips. Headless and editor/test
+builds pass with zero warnings/errors. All **10,886 source inputs** stayed unchanged.
+The original text-only API and unscoped Windows lookup remain available.
+
+Windows revalidation of the prior repair commit `68ab6d167` is blocked before
+build/tests by validation-disk capacity. Cleanup approval is pending. After that
+blocker is resolved, run the unchanged hierarchy tests on the scoped-font snapshot
+and retain their original limits and assertions. A separate system-font import
+diagnostic is still needed to attribute the original row-realization stalls.
+The explicit test input does not validate or repair that import path.
