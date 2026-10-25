@@ -246,6 +246,80 @@ internal static class InspectorFloatCurveActions
             null, [.. source.ReservationOwners, .. order]);
     }
 
+    public static bool SetLength(InspectorFloatCurveLengthSelection selection,
+        float seconds, bool stretch)
+    {
+        if (!selection.IsCurrent() || !float.IsFinite(seconds) ||
+            seconds < 0 || seconds > 3600)
+            return false;
+        List<AnimationLengthEdit> edits = [];
+        HashSet<object> reservations = new(selection.ReservationOwners,
+            ReferenceEqualityComparer.Instance);
+        int remainingKeys = InspectorFloatCurveLengthSelection.MaximumMembers;
+        foreach (InspectorFloatCurveSource source in selection.Curves)
+        {
+            if (source.Track.Count > remainingKeys ||
+                AnimationClipAuthoringActions.CaptureOrder(source.Track) is not { } order ||
+                order.Length > remainingKeys)
+                return false;
+            remainingKeys -= order.Length;
+            Func<bool>[] payloads = new Func<bool>[order.Length];
+            for (int index = 0; index < order.Length; index++)
+            {
+                if (AnimationClipAuthoringActions.CaptureKeyPayload(order[index]) is not { } payload)
+                    return false;
+                payloads[index] = payload;
+                reservations.Add(order[index]);
+            }
+            if (!AnimationLengthEdit.TryCapture(source.Curve, source.Track,
+                    order, payloads, seconds, stretch, out AnimationLengthEdit? edit,
+                    out _) || edit is null)
+                return false;
+            edits.Add(edit);
+        }
+        if (!edits.Any(edit => edit.HasChange) || !selection.IsCurrent())
+            return false;
+        AnimationLengthEdit[] captured = [.. edits];
+        bool Matches(bool after)
+        {
+            if (!selection.IsCurrent()) return false;
+            foreach (AnimationLengthEdit edit in captured)
+                if (!edit.Matches(after)) return false;
+            return true;
+        }
+        bool CanCommit(bool forward)
+        {
+            if (!Matches(!forward)) return false;
+            foreach (AnimationLengthEdit edit in captured)
+                if (!edit.CanCommit(forward)) return false;
+            return true;
+        }
+        void Commit(bool forward)
+        {
+            if (!CanCommit(forward))
+                throw new InvalidOperationException("Selected animation lengths changed before commit.");
+            foreach (AnimationLengthEdit edit in captured)
+                edit.Commit(forward);
+            void Validate()
+            {
+                if (!Matches(forward))
+                    throw new InvalidOperationException("Selected animation lengths changed during notification.");
+                foreach (AnimationLengthEdit edit in captured)
+                    if (!edit.MatchesCurrentCommit(forward))
+                        throw new InvalidOperationException("A selected animation track changed during notification.");
+            }
+            Validate();
+            foreach (AnimationLengthEdit edit in captured)
+                edit.Publish(forward, Validate);
+        }
+        return AnimationAuthoringTransaction.Apply(selection.Curves[0].Curve,
+            selection.Documents,
+            stretch ? "Stretch Selected Animation Lengths" : "Set Selected Animation Lengths",
+            () => Commit(true), () => Commit(false),
+            () => Matches(true), () => Matches(false), selection.IsCurrent,
+            null, [.. reservations]);
+    }
+
     private static bool Apply(InspectorFloatCurveSource source, string description,
         Action forward, Action reverse, Func<bool> applied, Func<bool> restored,
         Keyframe key)

@@ -1747,7 +1747,8 @@ at most 8,192 keys and report that limit. The plot and row data refresh on autho
 changes; playback clock notifications do not rebuild them.
 
 InspectorFloatCurveSource retains each outer owner, the exact curve and track,
-and source documents. Compiler-owned properties and the explicit transition blend
+and source documents. Owner, curve, and document proofs include their admitted
+lifetime revisions, so restoring an old GUID does not revive a stale binding. Compiler-owned properties and the explicit transition blend
 curve accessor provide callback-free reference checks. Idle refresh checks do not
 resolve scene documents. Commands and history validate complete document ownership.
 Transition curves require an explicit path from the selected state machine. The
@@ -1758,8 +1759,9 @@ The path retains exact list references, positions, counts, construction identiti
 and the state-machine source document. Commands also reject duplicate membership.
 It does not depend on runtime owner back-references or initialization. Bare
 transition properties cannot establish document ownership and remain unavailable.
-Selected targets that share the same curve edit it once. Distinct curves and unsupported getter ownership report an unavailable
-editor rather than partially mutating a selection.
+Selected targets that share the same curve edit it once. Distinct curves support
+Set length and Stretch length as one transaction; their key controls remain
+unavailable. Unsupported getter ownership rejects the whole selection.
 
 AnimationAuthoringTransaction supplies the existing clip and new property paths
 with the same reservation, exact Undo/Redo, rollback, conflict, and dirty-document
@@ -1926,3 +1928,30 @@ supported. This closes owner-thread callback transfers during teardown; it does
 not establish general concurrent scene-list insertion safety. Custom override
 effects before canonical direct destruction remain the override's responsibility.
 The broader menu construction and adopted-content retirement work remains open.
+
+
+## Selected Float Curve Lengths
+
+`InspectorFloatCurveLengthSelection` retains every selected owner and deduplicates
+exact curve references. It combines the existing source documents and reservation
+owners. Capture limits the selection and total key count to 100,000. Idle checks
+use stored references without allocation. Shared curves mutate once; unchanged
+members still participate in ownership and conflict checks.
+
+The batch length action captures one `AnimationLengthEdit` per distinct curve.
+It validates every member before raw timing writes, commits all members before
+notification, then checks every member at each notification boundary. One
+`AnimationAuthoringTransaction` retains all documents, owners, tracks, and keys.
+Undo restores each curve's own length, key times, and frame indices. Callback edits
+to peers reject later owned notifications and retain guarded conflict history.
+Playback time does not change. Dirty marking checks each captured document
+lifetime independently. A callback can invalidate a later document without
+preventing dirty marks for other valid originals. These checks do not acquire
+concurrent lifetime admission.
+
+The retained detail enables length input and length actions for a distinct-curve
+selection. Mixed lengths display an empty input. Key and plot editing stay
+unavailable. The length control retains the displayed selection and revision;
+replacement, invalidated presentation, or retirement rejects stale submissions.
+Subscriptions attach once per distinct curve and track and detach on rebind.
+This does not establish live multi-selection or Windows Undo acceptance.

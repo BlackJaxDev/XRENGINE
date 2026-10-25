@@ -10,24 +10,24 @@ namespace XREngine.Editor;
 /// <summary>Retains the owners and exact track of one inspector float curve.</summary>
 internal sealed class InspectorFloatCurveSource
 {
-    private readonly (object Owner, Guid? Identity, object? World, SceneNode? Node,
-        XRAsset? Document, Guid? DocumentIdentity,
+    private readonly (object Owner, ObjectConstructionIdentity? Identity, object? World, SceneNode? Node,
+        XRAsset? Document, ObjectConstructionIdentity? DocumentIdentity,
         Func<object, PropAnimFloat, bool> IsCurrentSource,
         InspectorFloatTransitionOwnership? TransitionOwnership)[] _owners;
-    private readonly Guid _curveIdentity;
+    private readonly ObjectConstructionIdentity _curveIdentity;
     private readonly XRAsset _curveDocument;
-    private readonly Guid _curveDocumentIdentity;
+    private readonly ObjectConstructionIdentity _curveDocumentIdentity;
 
     private InspectorFloatCurveSource(PropAnimFloat curve,
-        (object, Guid?, object?, SceneNode?, XRAsset?, Guid?,
+        (object, ObjectConstructionIdentity?, object?, SceneNode?, XRAsset?, ObjectConstructionIdentity?,
             Func<object, PropAnimFloat, bool>,
             InspectorFloatTransitionOwnership?)[] owners)
     {
         Curve = curve;
         Track = curve.Keyframes;
-        _curveIdentity = curve.ID;
+        _curveIdentity = ObjectConstructionIdentity.Capture(curve);
         _curveDocument = curve.SourceAsset;
-        _curveDocumentIdentity = _curveDocument.ID;
+        _curveDocumentIdentity = ObjectConstructionIdentity.Capture(_curveDocument);
         _owners = owners;
         Documents = [.. owners.Select(entry => entry.Item5).OfType<XRAsset>()
             .Append(_curveDocument).Distinct<XRAsset>(ReferenceEqualityComparer.Instance)];
@@ -61,7 +61,7 @@ internal sealed class InspectorFloatCurveSource
         reason = "This curve property has an unguarded getter.";
         if (isCurrentSource is null)
             return false;
-        var owners = new List<(object, Guid?, object?, SceneNode?, XRAsset?, Guid?,
+        var owners = new List<(object, ObjectConstructionIdentity?, object?, SceneNode?, XRAsset?, ObjectConstructionIdentity?,
             Func<object, PropAnimFloat, bool>, InspectorFloatTransitionOwnership?)>();
         PropAnimFloat? curve = null;
         foreach (object? target in targets)
@@ -103,8 +103,12 @@ internal sealed class InspectorFloatCurveSource
                 return false;
             }
             curve = value;
-            owners.Add((target, (target as XRObjectBase)?.ID, world, node,
-                document, document?.ID, isCurrentSource, transitionOwnership));
+            owners.Add((target,
+                target is XRObjectBase objectOwner
+                    ? ObjectConstructionIdentity.Capture(objectOwner) : null,
+                world, node, document,
+                document is null ? null : ObjectConstructionIdentity.Capture(document),
+                isCurrentSource, transitionOwnership));
         }
         reason = "The curve or its track is unavailable.";
         if (curve is null || curve.GetType() != typeof(PropAnimFloat) ||
@@ -145,9 +149,9 @@ internal sealed class InspectorFloatCurveSource
     /// <summary>Checks identities without resolving scene documents or allocating.</summary>
     public bool IsCurrentFast()
     {
-        if (Curve.IsDestroyed || Curve.IsDestroyQueued || Curve.ID != _curveIdentity ||
+        if (Curve.IsDestroyed || Curve.IsDestroyQueued || !_curveIdentity.IsCurrent ||
             _curveDocument.IsDestroyed || _curveDocument.IsDestroyQueued ||
-            _curveDocument.ID != _curveDocumentIdentity ||
+            !_curveDocumentIdentity.IsCurrent ||
             !ReferenceEquals(Curve.SourceAsset, _curveDocument) ||
             !ReferenceEquals(Curve.Keyframes, Track))
             return false;
@@ -155,12 +159,12 @@ internal sealed class InspectorFloatCurveSource
         {
             if (entry.Owner is XRObjectBase baseOwner &&
                 (baseOwner.IsDestroyed || baseOwner.IsDestroyQueued ||
-                 baseOwner.ID != entry.Identity) ||
+                 entry.Identity?.IsCurrent != true) ||
                 !ReferenceEquals(EditorListMutation.WorldOf(entry.Owner), entry.World) ||
                 !ReferenceEquals(EditorListMutation.NodeOf(entry.Owner), entry.Node) ||
                 entry.Document is { } document &&
                     (document.IsDestroyed || document.IsDestroyQueued ||
-                     document.ID != entry.DocumentIdentity) ||
+                     entry.DocumentIdentity?.IsCurrent != true) ||
                 entry.TransitionOwnership is { } transition &&
                     !transition.IsCurrentFast() ||
                 !entry.IsCurrentSource(entry.Owner, Curve))

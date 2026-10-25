@@ -303,9 +303,9 @@ public static partial class InspectorPropertyEditors
         return values;
     }
 
-    private static void CreateInspectorButton(SceneNode parent, string text, Action onClick)
+    private static UIButtonComponent CreateInspectorButton(SceneNode parent, string text, Action onClick)
     {
-        NativeUIElements.CreateButton(parent, text, _ =>
+        var (_, button, _, _) = NativeUIElements.CreateButton(parent, text, _ =>
         {
             try
             {
@@ -316,6 +316,7 @@ public static partial class InspectorPropertyEditors
                 Debug.LogException(ex, $"Inspector action '{text}' failed.");
             }
         });
+        return button;
     }
 
     private static UIListTransform EnsureVerticalLayout(SceneNode node)

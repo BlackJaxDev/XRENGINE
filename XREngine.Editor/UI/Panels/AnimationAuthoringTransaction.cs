@@ -21,8 +21,9 @@ internal static class AnimationAuthoringTransaction
             document.IsDestroyed || document.IsDestroyQueued))
             return false;
         XRAsset[] sourceDocuments = [.. documents.Distinct<XRAsset>(ReferenceEqualityComparer.Instance)];
-        (XRAsset Document, Guid Identity)[] documentIdentities = sourceDocuments
-            .Select(document => (document, document.ID)).ToArray();
+        (XRAsset Document, ObjectConstructionIdentity Identity)[] documentIdentities =
+            sourceDocuments.Select(document => (document,
+                ObjectConstructionIdentity.Capture(document))).ToArray();
         object[] owners = [primaryOwner, .. additionalOwners];
         lock (ReservationGate)
         {
@@ -42,13 +43,26 @@ internal static class AnimationAuthoringTransaction
             bool settled = false;
             bool Owned() => documentIdentities.All(entry =>
                     !entry.Document.IsDestroyed && !entry.Document.IsDestroyQueued &&
-                    entry.Document.ID == entry.Identity) && isStillOwned();
+                    entry.Identity.IsCurrent) && isStillOwned();
             void MarkDocumentsDirty(string failure)
             {
-                foreach (XRAsset document in sourceDocuments)
-                    try { document.MarkDirty(); }
+                foreach (var entry in documentIdentities)
+                    try
+                    {
+                        if (entry.Document.IsDestroyed || entry.Document.IsDestroyQueued ||
+                            !entry.Identity.IsCurrent)
+                        {
+                            try { Debug.UI($"[NativeAnimation] Skipped a changed document while marking '{description}' dirty."); }
+                            catch { }
+                            continue;
+                        }
+                        entry.Document.MarkDirty();
+                    }
                     catch (Exception exception)
-                    { Debug.LogException(exception, failure); }
+                    {
+                        try { Debug.LogException(exception, failure); }
+                        catch { }
+                    }
             }
             void Replay(Action action)
             {

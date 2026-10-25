@@ -46,6 +46,7 @@ public static partial class InspectorPropertyEditors
             private readonly ObjectConstructionIdentity _rootIdentity;
             private readonly PropertyInfo _property;
             private readonly object?[]? _targets;
+            private readonly XRBase[] _outerOwners;
             private readonly InspectorFloatTransitionOwnership? _transitionPath;
             private readonly NativeTableRows<FloatKeyframe> _rows = new();
             private readonly Dictionary<FloatKeyframe, ulong> _ids =
@@ -53,6 +54,10 @@ public static partial class InspectorPropertyEditors
             private readonly Dictionary<ulong, FloatKeyframe> _keys = [];
             private readonly float[] _samples = new float[SampleCount];
             private InspectorFloatCurveSource? _source;
+            private InspectorFloatCurveLengthSelection? _lengthSelection;
+            private InspectorFloatCurveLengthSelection? _presentedLengthSelection;
+            private InspectorFloatCurveSource? _presentedLengthSource;
+            private ulong _presentedLengthRevision;
             private UIRetainedPlot? _plot;
             private UIListTransform? _list;
             private UIVirtualTableProvider<FloatKeyframe>? _table;
@@ -65,6 +70,10 @@ public static partial class InspectorPropertyEditors
             private UITextInputComponent? _inWeight;
             private UITextInputComponent? _outWeight;
             private UITextInputComponent? _length;
+            private UIButtonComponent? _addKeyButton;
+            private UIButtonComponent? _removeKeyButton;
+            private UIButtonComponent? _setLengthButton;
+            private UIButtonComponent? _stretchLengthButton;
             private UIButtonComponent? _inModeButton;
             private UIButtonComponent? _outModeButton;
             private UITextComponent? _inModeLabel;
@@ -99,6 +108,8 @@ public static partial class InspectorPropertyEditors
                 _rootIdentity = ObjectConstructionIdentity.Capture(root);
                 _property = property;
                 _targets = targets?.ToArray();
+                _outerOwners = _targets?.OfType<XRBase>()
+                    .Distinct<XRBase>(ReferenceEqualityComparer.Instance).ToArray() ?? [];
                 _transitionPath = transitionPath;
                 _plotValidator = IsPlotCurrent;
             }
@@ -106,10 +117,8 @@ public static partial class InspectorPropertyEditors
             public void Build()
             {
                 if (!ContinueBuild()) return;
-                if (_targets is not null)
-                    foreach (object? target in _targets)
-                        if (target is XRBase owner)
-                            owner.PropertyChanged += OuterChanged;
+                foreach (XRBase owner in _outerOwners)
+                    owner.PropertyChanged += OuterChanged;
                 if (!ContinueBuild()) return;
                 SceneNode card = CreateInspectorCard(_root);
                 if (!ContinueBuild()) return;
@@ -156,13 +165,13 @@ public static partial class InspectorPropertyEditors
                 UIListTransform actionLayout = actions.SetTransform<UIListTransform>();
                 actionLayout.DisplayHorizontal = true;
                 actionLayout.ItemSpacing = 5;
-                CreateInspectorButton(actions, "Add key", AddKey);
+                _addKeyButton = CreateInspectorButton(actions, "Add key", AddKey);
                 if (!ContinueBuild()) return;
-                CreateInspectorButton(actions, "Remove key", RemoveKey);
+                _removeKeyButton = CreateInspectorButton(actions, "Remove key", RemoveKey);
                 if (!ContinueBuild()) return;
-                CreateInspectorButton(actions, "Set length", () => SetLength(false));
+                _setLengthButton = CreateInspectorButton(actions, "Set length", () => SetLength(false));
                 if (!ContinueBuild()) return;
-                CreateInspectorButton(actions, "Stretch length", () => SetLength(true));
+                _stretchLengthButton = CreateInspectorButton(actions, "Stretch length", () => SetLength(true));
                 if (!ContinueBuild()) return;
                 SceneNode modes = card.NewChild();
                 if (!ContinueBuild()) return;
@@ -376,12 +385,16 @@ public static partial class InspectorPropertyEditors
             {
                 _revision++;
                 _dirty = true;
+                _presentedLengthSelection = null;
+                _presentedLengthSource = null;
             }
 
             private bool IsCurrent(InspectorFloatCurveSource? source, ulong revision)
-                => !_retired && !_root.IsDestroyed && !_root.IsDestroyQueued &&
+                => !_retired && _rootIdentity.IsCurrent &&
+                    !_root.IsDestroyed && !_root.IsDestroyQueued &&
                     _revision == revision && ReferenceEquals(_source, source) &&
-                    (source is null || source.IsCurrentFast());
+                    (source is null || source.IsCurrentFast()) &&
+                    (_lengthSelection is null || _lengthSelection.IsCurrentFast());
 
             private bool IsPlotCurrent()
                 => _plot is not null && _activePlotSource is not null &&
@@ -396,13 +409,17 @@ public static partial class InspectorPropertyEditors
                 {
                     if (_source is { } source && !source.IsCurrentFast())
                         RequestRefresh();
+                    if (_lengthSelection is { } group && !group.IsCurrentFast())
+                        RequestRefresh();
                     if (!_dirty && _plot is { } current &&
                         (current.Width != _plotWidth || current.Height != _plotHeight))
                         RequestRefresh();
                     if (!_dirty)
                         return;
                     _dirty = false;
-                    if (_source is null || !_source.IsCurrentFast())
+                    if (_source is null && _lengthSelection is null ||
+                        _source is { } bound && !bound.IsCurrentFast() ||
+                        _lengthSelection is { } selected && !selected.IsCurrentFast())
                         RebindSource();
                     if (_retired || _dirty) return;
                     RefreshRows();
@@ -418,47 +435,81 @@ public static partial class InspectorPropertyEditors
                 Unsubscribe();
                 bool found = InspectorFloatCurveSource.TryCapture(_property,
                     _targets, out _source, out string reason, _transitionPath);
+                if (!found)
+                {
+                    bool grouped = InspectorFloatCurveLengthSelection.TryCapture(
+                        _property, _targets,
+                        out InspectorFloatCurveLengthSelection? selection,
+                        out string groupReason, _transitionPath);
+                    if (grouped && selection is { HasDistinctCurves: true })
+                        _lengthSelection = selection;
+                    else if (!grouped)
+                        reason = groupReason;
+                }
                 ulong revision = _revision;
                 if (_status is not null)
-                    _status.Text = found ? "Select a key to edit its time and value." : reason;
+                    _status.Text = found ? "Select a key to edit its time and value." :
+                        _lengthSelection is not null
+                            ? "Multiple curves selected. Length edits apply to all; key editing is unavailable."
+                            : reason;
                 if (!IsCurrent(_source, revision)) return;
                 if (!found || _source is null)
                 {
                     _selected = null;
+                    if (_lengthSelection is { } group)
+                        foreach (InspectorFloatCurveSource member in group.Curves)
+                        {
+                            Subscribe(member);
+                            if (!IsCurrent(null, revision)) return;
+                        }
                     return;
                 }
-                _source.Curve.PropertyChanged += CurveChanged;
-                _source.Curve.LengthChanged += AnimationChanged;
-                _source.Curve.LoopChanged += AnimationChanged;
-                _source.Curve.DefaultValueChanged += VectorChanged;
-                _source.Curve.ConstrainKeyframedFPSChanged += VectorChanged;
-                _source.Curve.LerpConstrainedFPSChanged += VectorChanged;
-                _source.Curve.IsBakedChanged += BakedChanged;
-                _source.Curve.BakedFPSChanged += BakedChanged;
-                _source.Curve.BakedFrameCountChanged += BakedChanged;
-                _source.Curve.BakedValueCompressionAlgorithmChanged += BakedChanged;
-                _source.Track.Changed += TrackChanged;
-                _source.Track.LengthChanged += TrackLengthChanged;
+                Subscribe(_source);
             }
 
             private void Unsubscribe()
             {
                 if (_source is { } source)
-                {
-                    source.Curve.PropertyChanged -= CurveChanged;
-                    source.Curve.LengthChanged -= AnimationChanged;
-                    source.Curve.LoopChanged -= AnimationChanged;
-                    source.Curve.DefaultValueChanged -= VectorChanged;
-                    source.Curve.ConstrainKeyframedFPSChanged -= VectorChanged;
-                    source.Curve.LerpConstrainedFPSChanged -= VectorChanged;
-                    source.Curve.IsBakedChanged -= BakedChanged;
-                    source.Curve.BakedFPSChanged -= BakedChanged;
-                    source.Curve.BakedFrameCountChanged -= BakedChanged;
-                    source.Curve.BakedValueCompressionAlgorithmChanged -= BakedChanged;
-                    source.Track.Changed -= TrackChanged;
-                    source.Track.LengthChanged -= TrackLengthChanged;
-                }
+                    Unsubscribe(source);
+                if (_lengthSelection is { } group)
+                    foreach (InspectorFloatCurveSource member in group.Curves)
+                        Unsubscribe(member);
                 _source = null;
+                _lengthSelection = null;
+                _presentedLengthSelection = null;
+                _presentedLengthSource = null;
+            }
+
+            private void Subscribe(InspectorFloatCurveSource source)
+            {
+                source.Curve.PropertyChanged += CurveChanged;
+                source.Curve.LengthChanged += AnimationChanged;
+                source.Curve.LoopChanged += AnimationChanged;
+                source.Curve.DefaultValueChanged += VectorChanged;
+                source.Curve.ConstrainKeyframedFPSChanged += VectorChanged;
+                source.Curve.LerpConstrainedFPSChanged += VectorChanged;
+                source.Curve.IsBakedChanged += BakedChanged;
+                source.Curve.BakedFPSChanged += BakedChanged;
+                source.Curve.BakedFrameCountChanged += BakedChanged;
+                source.Curve.BakedValueCompressionAlgorithmChanged += BakedChanged;
+                source.Track.Changed += TrackChanged;
+                source.Track.LengthChanged += TrackLengthChanged;
+            }
+
+            private void Unsubscribe(InspectorFloatCurveSource source)
+            {
+                source.Curve.PropertyChanged -= CurveChanged;
+                source.Curve.LengthChanged -= AnimationChanged;
+                source.Curve.LoopChanged -= AnimationChanged;
+                source.Curve.DefaultValueChanged -= VectorChanged;
+                source.Curve.ConstrainKeyframedFPSChanged -= VectorChanged;
+                source.Curve.LerpConstrainedFPSChanged -= VectorChanged;
+                source.Curve.IsBakedChanged -= BakedChanged;
+                source.Curve.BakedFPSChanged -= BakedChanged;
+                source.Curve.BakedFrameCountChanged -= BakedChanged;
+                source.Curve.BakedValueCompressionAlgorithmChanged -= BakedChanged;
+                source.Track.Changed -= TrackChanged;
+                source.Track.LengthChanged -= TrackLengthChanged;
             }
 
             private void OuterChanged(object? sender, IXRPropertyChangedEventArgs change)
@@ -500,6 +551,24 @@ public static partial class InspectorPropertyEditors
                     _rows.Replace([]);
                     if (!IsCurrent(source, revision)) return;
                     _table!.SelectedId = null;
+                    if (!IsCurrent(source, revision)) return;
+                    _selected = null;
+                    if (_time is not null) _time.IsEnabled = false;
+                    if (!IsCurrent(source, revision)) return;
+                    if (_value is not null) _value.IsEnabled = false;
+                    if (!IsCurrent(source, revision)) return;
+                    if (_length is not null)
+                    {
+                        _length.Text = _lengthSelection?.CommonLength?.ToString("G9",
+                            CultureInfo.InvariantCulture) ?? "";
+                        if (!IsCurrent(source, revision)) return;
+                        _length.IsEnabled = _lengthSelection is not null;
+                        if (!IsCurrent(source, revision)) return;
+                        _presentedLengthSelection = _lengthSelection;
+                        _presentedLengthSource = null;
+                        _presentedLengthRevision = revision;
+                    }
+                    RefreshActionButtons(source, revision);
                     if (!IsCurrent(source, revision)) return;
                     RefreshModeControls(source, revision);
                     if (!IsCurrent(source, revision)) return;
@@ -621,15 +690,43 @@ public static partial class InspectorPropertyEditors
                     _time.Text = _selected?.Second.ToString("G9",
                         CultureInfo.InvariantCulture) ?? "0";
                 if (!IsCurrent(source, revision)) return;
+                if (_time is not null) _time.IsEnabled = _selected is not null;
+                if (!IsCurrent(source, revision)) return;
                 if (_value is not null)
                     _value.Text = _selected?.OutValue.ToString("G9",
                         CultureInfo.InvariantCulture) ?? "0";
+                if (!IsCurrent(source, revision)) return;
+                if (_value is not null) _value.IsEnabled = _selected is not null;
                 if (!IsCurrent(source, revision)) return;
                 if (_length is not null)
                     _length.Text = source.Curve.LengthInSeconds.ToString("G9",
                         CultureInfo.InvariantCulture);
                 if (!IsCurrent(source, revision)) return;
+                if (_length is not null) _length.IsEnabled = true;
+                if (!IsCurrent(source, revision)) return;
+                _presentedLengthSelection = null;
+                _presentedLengthSource = source;
+                _presentedLengthRevision = revision;
+                RefreshActionButtons(source, revision);
+                if (!IsCurrent(source, revision)) return;
                 RefreshModeControls(source, revision);
+            }
+
+            private void RefreshActionButtons(InspectorFloatCurveSource? source,
+                ulong revision)
+            {
+                if (!IsCurrent(source, revision)) return;
+                bool keys = source is not null;
+                bool length = keys || _lengthSelection is not null;
+                if (_addKeyButton is not null) _addKeyButton.IsEnabled = keys;
+                if (!IsCurrent(source, revision)) return;
+                if (_removeKeyButton is not null)
+                    _removeKeyButton.IsEnabled = keys && _selected is { } selected &&
+                        IsPresentedKey(source!, selected);
+                if (!IsCurrent(source, revision)) return;
+                if (_setLengthButton is not null) _setLengthButton.IsEnabled = length;
+                if (!IsCurrent(source, revision)) return;
+                if (_stretchLengthButton is not null) _stretchLengthButton.IsEnabled = length;
             }
 
             private void RefreshModeControls(InspectorFloatCurveSource? source,
@@ -740,8 +837,29 @@ public static partial class InspectorPropertyEditors
             private bool CanEdit(out InspectorFloatCurveSource source)
             {
                 source = _source!;
-                return !_retired && _root.IsActiveInHierarchy &&
+                return !_retired && _rootIdentity.IsCurrent &&
+                    !_root.IsDestroyed && !_root.IsDestroyQueued &&
+                    _root.IsActiveInHierarchy &&
                     source is not null && source.IsCurrent();
+            }
+
+            private bool CanEditLengthSelection(
+                out InspectorFloatCurveLengthSelection selection)
+            {
+                selection = _lengthSelection!;
+                return !_retired && _rootIdentity.IsCurrent &&
+                    !_root.IsDestroyed && !_root.IsDestroyQueued &&
+                    _root.IsActiveInHierarchy &&
+                    selection is not null &&
+                    ReferenceEquals(selection, _presentedLengthSelection) &&
+                    _presentedLengthRevision == _revision && selection.IsCurrent();
+            }
+
+            private bool CanEditLengthSource(out InspectorFloatCurveSource source)
+            {
+                if (!CanEdit(out source)) return false;
+                return ReferenceEquals(source, _presentedLengthSource) &&
+                    _presentedLengthRevision == _revision;
             }
 
             private static bool Parse(UITextInputComponent? input, out float value)
@@ -865,8 +983,13 @@ public static partial class InspectorPropertyEditors
             private void SetLength(bool stretch)
             {
                 _stretch = stretch;
-                if (CanEdit(out var source) && Parse(_length, out float value))
-                    InspectorFloatCurveActions.SetLength(source, value, stretch);
+                if (Parse(_length, out float value))
+                {
+                    if (CanEditLengthSource(out var source))
+                        InspectorFloatCurveActions.SetLength(source, value, stretch);
+                    else if (CanEditLengthSelection(out var selection))
+                        InspectorFloatCurveActions.SetLength(selection, value, stretch);
+                }
                 RequestRefresh();
             }
 
@@ -894,10 +1017,8 @@ public static partial class InspectorPropertyEditors
                 if (_root.GetComponent<InspectorFloatCurveTickComponent>() is { } tick)
                     tick.Refresh = null;
                 Unsubscribe();
-                if (_targets is not null)
-                    foreach (object? target in _targets)
-                        if (target is XRBase owner)
-                            owner.PropertyChanged -= OuterChanged;
+                foreach (XRBase owner in _outerOwners)
+                    owner.PropertyChanged -= OuterChanged;
                 if (_list is not null)
                     _list.DetachVirtualProviderForOwnerTeardown();
                 if (_table is not null)

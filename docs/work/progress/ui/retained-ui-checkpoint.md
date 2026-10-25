@@ -1584,3 +1584,26 @@ Desktop build68 compiled the editor and tests with zero warnings/errors in
 The 39 maintained relative links resolve and diff checks pass. Review found no
 remaining blocker in this bounded contract. Windows execution, live menu behavior,
 GPU checks, and performance acceptance remain pending.
+
+
+## Selected Float Curve Lengths
+
+Distinct selected float curves now support Set length and Stretch length through
+one guarded transaction. Shared references edit once; every selected owner and
+unchanged member remains guarded. Undo retains each curve's own prior timing.
+Length input uses the source and revision that completed field refresh, including
+group-to-single rebinds. Lifetime revisions reject identity round trips. Dirty
+marking skips changed document lifetimes while continuing with valid originals.
+
+The original implementation reconciliation remains **51/60**. Distinct key
+authoring and the broader inspector item remain open. ImGui stays the default.
+
+
+The revised snapshot passed desktop build71 with zero warnings/errors in
+1m22.18s. Headless build218 passed with zero warnings/errors in 22.37s. Full
+run167 passed **1,314/1,314** portable tests in 21.537s, with no failures, warnings,
+or skips. Ten new editor cases compiled only: nine action/history/lifetime cases
+and one retained detail case. They did not execute on Linux. All 10,843 source
+inputs stayed unchanged. The 39 maintained relative links resolve and diff checks
+pass. Final review found no remaining blocker in the bounded length-edit contract.
+Windows input, Undo execution, visual behavior, and performance remain unverified.

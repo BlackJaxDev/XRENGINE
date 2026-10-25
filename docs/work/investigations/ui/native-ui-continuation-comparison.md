@@ -1041,3 +1041,55 @@ Desktop build68 compiled the editor and tests with zero warnings/errors in
 The 39 maintained relative links resolve and diff checks pass. Review found no
 remaining blocker in this bounded contract. Windows execution, live menu behavior,
 GPU checks, and performance acceptance remain pending.
+
+
+## Length Editing Across Selected Float Curves
+
+The inspector previously rejected every distinct-curve selection. The bounded
+extension adds Set length and Stretch length through the existing exact length
+adapter and animation transaction. Each owner remains in the proof even when
+several owners share one curve. Each distinct curve commits once. Unchanged
+members remain guarded, and aggregate key limits apply again at command capture.
+Key editing retains its single/shared-curve contract.
+
+Review during implementation found two UI admission gaps. A replacement selection
+needed a retained length-field source and revision. A group-to-single transition
+also needed that proof on the single-source action path; otherwise a callback
+during field refresh could submit the old draft to the replacement source. Both
+paths now publish their input proof after the field refresh and clear it when
+refresh is requested. Root identity and retirement also gate length input. The
+existing inspector button helper now returns its control for enable/disable
+updates; no duplicate button action wrapper was added.
+
+The new action and retained-UI regressions require the editor test project. Linux
+compilation can check these cases, but cannot execute them. Portable adapter and
+engine regression results must remain separate from their runtime acceptance.
+
+
+Desktop build69 compiled the editor but failed the new UI fixture with CS0246: a
+namespace import for InspectorListDetailRefreshComponent was missing. It reported
+zero warnings and one error in 5m11.89s. The one-line test import repair passed
+desktop build70 with zero warnings/errors in 46.92s.
+
+Final review found a shared dirty-marking gap. An earlier document's callback
+could change a later document's lifetime, but the loop still marked that later
+object. The repair captures ObjectConstructionIdentity and checks each document
+independently before marking it. Valid original documents still become dirty
+after partial failure. Logging failures cannot stop the remaining dirty marks.
+
+The new round-trip identity regression also exposed weak inspector source proofs:
+restoring an old Guid made a stale source look current. Merely changing the test
+assertion would leave old group commands able to capture a new transaction over
+the replacement lifetime. The source proof therefore retains lifetime revisions
+for its existing owner, curve, and document fields as well. This is an identity
+check, not general concurrent mutation admission.
+
+
+The revised snapshot passed desktop build71 with zero warnings/errors in
+1m22.18s. Headless build218 passed with zero warnings/errors in 22.37s. Full
+run167 passed **1,314/1,314** portable tests in 21.537s, with no failures, warnings,
+or skips. Ten new editor cases compiled only: nine action/history/lifetime cases
+and one retained detail case. They did not execute on Linux. All 10,843 source
+inputs stayed unchanged. The 39 maintained relative links resolve and diff checks
+pass. Final review found no remaining blocker in the bounded length-edit contract.
+Windows input, Undo execution, visual behavior, and performance remain unverified.
