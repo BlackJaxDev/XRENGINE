@@ -7,13 +7,14 @@ Design: [Native UI retained rendering](../../design/ui/native-ui-retained-render
 
 ## Retained UI Integration (2026-10-23)
 
-Latest continuation check (2026-10-25): headless build158 passed with zero
-warnings/errors, and run103 passed **1,062/1,062** tests with no failures or skips.
+Latest continuation check (2026-10-25): headless build167 passed with zero
+warnings/errors, and run110 passed **1,107/1,107** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
 Failed rebuilds also retire their partial controls; both new gate cases failed
-before the repair. Desktop test build39 compiled the editor and test assembly with zero
+before the repair. Menu lifetime and scroll-navigation regressions also failed
+before repair. Desktop test build40 compiled the editor and test assembly with zero
 warnings/errors. The new `NativeToolPanelStateTests` compiled but did not execute
 on this Linux host. Check console category/auto-scroll, profiler view, and settled
 scroll saves through the active dock-tree host on Windows. See the
@@ -48,6 +49,22 @@ Editor animation/Undo and profiler-specific fixtures remain compile-only here.
 See the [investigation record](../../investigations/ui/retained-ui-integration.md)
 for intermediate failures and repairs. Windows, OpenGL/Vulkan, visual, IME, native
 resource, benchmark, and equal-workload ImGui acceptance remain open.
+
+## Scrollable Menu Keyboard Checks (2026-10-25)
+
+Headless tests use accepted layout geometry and a presentation probe. They cover
+End/Home scrolling, separator and disabled-row spacing, repeated pending arrows,
+newer focus intent, lifetime cancellation, scroll-callback reentry, and the
+120-tick retry limit. The probe permits focus only when the test allows it; this
+does not establish real window presentation or keyboard-device behavior.
+
+On Windows, open a menu taller than its viewport. Include disabled rows and a
+separator. Use arrows, Home, and End. Confirm that the intended row scrolls into
+view and gets focus only after it is presented. Repeat keys while layout is
+pending. Move focus to another control, hide/reopen the menu, and deactivate its
+owner while focus is pending. Confirm that the old request does not steal focus.
+Check focus outlines and both mouse and keyboard opening. Right/Left/Escape
+submenu behavior and initial submenu-focus cancellation require separate checks.
 
 ## Hierarchy And Panel State Validation (2026-10-25)
 

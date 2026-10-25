@@ -379,7 +379,15 @@ namespace XREngine.Components
         /// Gets the user input component. Not a necessary component, so may be null.
         /// </summary>
         /// <returns></returns>
-        public IUICanvasInputSource? GetInputComponent() => SceneNode?.Components.OfType<IUICanvasInputSource>().FirstOrDefault();
+        public IUICanvasInputSource? GetInputComponent()
+        {
+            if (SceneNode?.Components is not { } components)
+                return null;
+            for (int index = 0; index < components.Count; index++)
+                if (components[index] is IUICanvasInputSource input)
+                    return input;
+            return null;
+        }
 
         bool IRuntimeScreenSpaceUserInterface.IsActive => IsActive && GetCanvasTransformOrNull() is not null;
 

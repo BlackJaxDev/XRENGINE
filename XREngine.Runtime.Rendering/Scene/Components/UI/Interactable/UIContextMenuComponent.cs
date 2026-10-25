@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Rendering.UI.State;
 
@@ -93,7 +94,7 @@ namespace XREngine.Rendering.UI
     /// Auto-dismisses on item click, click outside, or Escape key.
     /// </summary>
     [RequiresTransform(typeof(UIBoundableTransform))]
-    public class UIContextMenuComponent : UIComponent
+    public partial class UIContextMenuComponent : UIComponent
     {
         // --- Style constants (may be overridden or moved to EditorStyles later) ---
         public static ColorF4 BackgroundColor { get; set; } = new(0.15f, 0.15f, 0.15f, 0.95f);
@@ -131,6 +132,9 @@ namespace XREngine.Rendering.UI
         private bool _clearingMenuItems;
         private bool _hiding;
         private ulong _showRevision;
+        private ObjectConstructionIdentity _showIdentity;
+        private ObjectConstructionIdentity _showNodeIdentity;
+        private ObjectConstructionIdentity _showTransformIdentity;
         private UIContextMenuComponent? _ownerMenu;
         private ulong _ownerShowRevision;
         private UIContextMenuComponent? _submenu;
@@ -214,6 +218,9 @@ namespace XREngine.Rendering.UI
             for (int index = 0; index < items.Length; index++)
                 ArgumentNullException.ThrowIfNull(items[index], nameof(items));
             ulong showRevision = ++_showRevision;
+            _showIdentity = ObjectConstructionIdentity.Capture(this);
+            _showNodeIdentity = ObjectConstructionIdentity.Capture(SceneNode);
+            _showTransformIdentity = ObjectConstructionIdentity.Capture(Transform);
             _ = BoundableTransform.GetCanvasTransform() ??
                 throw new InvalidOperationException("A context menu needs an attached UI canvas.");
             // The caller keeps its array. Copy it and the row sizes so that callbacks cannot
@@ -222,15 +229,15 @@ namespace XREngine.Rendering.UI
             float itemHeight = ItemHeight;
             float separatorHeight = SeparatorHeight;
             Hide(); // Dismiss any existing menu first
-            if (_tearingDown || IsDestroyed || showRevision != _showRevision)
+            if (!HasCurrentShowLifetime(showRevision))
                 return;
             ClearMenuItems(); // Remove content retained when the owner deactivated.
-            if (_tearingDown || IsDestroyed || showRevision != _showRevision)
+            if (!HasCurrentShowLifetime(showRevision))
                 return;
 
             if ((items.Length == 0 && provider is null && contentBuilder is null) || provider is { Count: <= 0 })
                 return;
-            if (_tearingDown || IsDestroyed || showRevision != _showRevision)
+            if (!HasCurrentShowLifetime(showRevision))
                 return;
 
             _items = items;
@@ -240,7 +247,7 @@ namespace XREngine.Rendering.UI
             _contentBuilder = contentBuilder;
             _contentHeight = contentHeight;
             IsOpen = true;
-            if (_tearingDown || IsDestroyed || showRevision != _showRevision || !_isOpen)
+            if (!IsCurrentShow(showRevision))
                 return;
 
             // Make the node visible (it's collapsed when hidden)
@@ -266,7 +273,7 @@ namespace XREngine.Rendering.UI
                 foreach (var item in items)
                     totalHeight += item.IsSeparator ? separatorHeight : itemHeight;
             tfm.Height = totalHeight;
-            if (_tearingDown || IsDestroyed || showRevision != _showRevision || !_isOpen)
+            if (!IsCurrentShow(showRevision))
                 return;
             // Property callbacks can move the menu. Use the canvas it is attached to now.
             if (tfm.GetCanvasTransform() is not { } canvas)
@@ -294,8 +301,8 @@ namespace XREngine.Rendering.UI
             bgMat.RenderCommand2D.ZIndex = BackgroundZIndex;
             bgMat.ClipToBounds = true;
 
-            BuildMenuItems();
-            if (_tearingDown || IsDestroyed || showRevision != _showRevision || !_isOpen)
+            BuildMenuItems(showRevision);
+            if (!IsCurrentShow(showRevision))
                 return;
             tfm.InvalidateLayout();
             if (!ReferenceEquals(tfm.GetCanvasTransform(), _placementCanvas))
@@ -410,8 +417,10 @@ namespace XREngine.Rendering.UI
                 Dismissed?.Invoke();
         }
 
-        private void BuildMenuItems()
+        private void BuildMenuItems(ulong showRevision)
         {
+            if (!IsCurrentShow(showRevision))
+                return;
             bool ordinaryItems = _contentBuilder is null && _virtualProvider is null;
             SceneNode listParent = SceneNode;
             if (ordinaryItems)
@@ -467,22 +476,30 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
+            float contentTop = 0;
             foreach (var item in _items)
             {
+                if (!IsCurrentShow(showRevision))
+                    return;
                 if (item.IsSeparator)
                 {
                     BuildSeparator(listNode);
+                    contentTop += _separatorHeight;
                 }
                 else
                 {
-                    BuildMenuItem(listNode, item);
+                    BuildMenuItem(listNode, item, showRevision, contentTop);
+                    contentTop += _itemHeight;
                 }
             }
         }
 
-        private void BuildMenuItem(SceneNode parent, ContextMenuItem item)
+        private void BuildMenuItem(SceneNode parent, ContextMenuItem item, ulong showRevision, float contentTop)
         {
             var buttonNode = parent.NewChild<UIContextMenuItemComponent, UIMaterialComponent>(out var button, out var background);
+            if (!IsCurrentShow(showRevision) || !ReferenceEquals(buttonNode.Parent, parent))
+                return;
+            button.Bind(this, showRevision, item, contentTop, contentTop + _itemHeight);
 
             background.SetBatchSolidColor(ColorF4.Transparent);
             background.RenderCommand2D.ZIndex = ItemBackgroundZIndex;
@@ -493,8 +510,8 @@ namespace XREngine.Rendering.UI
             buttonTfm.Height = _itemHeight;
             buttonTfm.Margins = new Vector4(0.0f);
 
-            ulong showRevision = _showRevision;
-            button.Bind(this, showRevision, item);
+            if (!IsCurrentItem(button, showRevision))
+                return;
             if (item.Enabled)
             {
                 _itemButtons.Add(button);
@@ -504,9 +521,7 @@ namespace XREngine.Rendering.UI
                 button.HighlightTextColor = ItemDefaultTextColor;
                 button.RegisterClickActions(_ =>
                 {
-                    if (_tearingDown || IsDestroyed || !_isOpen ||
-                        showRevision != _showRevision || !button.CanInteract ||
-                        !ReferenceEquals(button.Menu, this))
+                    if (!IsCurrentItem(button, showRevision) || !button.CanInteract)
                         return;
                     if (item.HasSubmenu)
                     {
@@ -514,7 +529,7 @@ namespace XREngine.Rendering.UI
                         return;
                     }
                     item.Action?.Invoke();
-                    if (!_tearingDown && !IsDestroyed && _isOpen && showRevision == _showRevision)
+                    if (IsCurrentShow(showRevision))
                         HideMenuChain();
                 });
             }
@@ -594,20 +609,46 @@ namespace XREngine.Rendering.UI
             }
         }
 
+        private bool HasCurrentShowLifetime(ulong showRevision)
+            => !_tearingDown && !IsDestroyed && !IsDestroyQueued && showRevision == _showRevision &&
+                _showIdentity.Target is not null && _showIdentity.IsCurrent &&
+                _showNodeIdentity.IsCurrent && _showTransformIdentity.IsCurrent &&
+                ReferenceEquals(SceneNode, _showNodeIdentity.Target) &&
+                ReferenceEquals(Transform, _showTransformIdentity.Target) &&
+                !SceneNode.IsDestroyed && !SceneNode.IsDestroyQueued &&
+                !Transform.IsDestroyed && !Transform.IsDestroyQueued;
+
+        private bool IsCurrentShow(ulong showRevision)
+            => _isOpen && HasCurrentShowLifetime(showRevision) &&
+                (_ownerMenu is null ||
+                    (ReferenceEquals(_ownerMenu._submenu, this) && _ownerMenu._submenuRow is { } row &&
+                        _ownerMenu.IsCurrentItem(row, _ownerShowRevision)));
+
+        private bool IsCurrentItem(UIContextMenuItemComponent row, ulong showRevision)
+            => IsCurrentShow(showRevision) && row.HasCurrentBinding(this, showRevision) &&
+                IsDescendantOfSelf(row.SceneNode);
+
         /// <summary>
-        /// Moves focus from a row of the current show to another enabled row. Returns false
-        /// when the row belongs to an earlier show or no other row accepts presented focus.
+        /// Requests focus for an enabled row. Scrolls to that row and waits for presented
+        /// focus when necessary. Returns false when the source or request is no longer valid.
         /// </summary>
         internal bool MoveItemFocus(UIContextMenuItemComponent from, ulong showRevision,
             int direction, bool toEdge)
         {
-            // Rows of a menu that is not placed yet are not presented, so presented focus rejects them.
-            if (_tearingDown || IsDestroyed || !_isOpen || direction == 0 ||
-                showRevision != _showRevision || !ReferenceEquals(from.Menu, this))
+            if (direction == 0 || !IsCurrentItem(from, showRevision))
                 return false;
             int count = _itemButtons.Count;
             int index = _itemButtons.IndexOf(from);
-            if (index < 0 || UITransform.GetCanvasComponent()?.GetInputComponent() is not { } input)
+            if (index < 0 || UITransform.GetCanvasComponent() is not { } canvas ||
+                canvas.GetInputComponent() is not { } input)
+                return false;
+            bool hasPending = _navigationTickRegistered && ReferenceEquals(_navigationSource, from) &&
+                IsCurrentNavigationContext(_navigationSerial) && CanWaitForNavigationFocus();
+            if (hasPending)
+                index = _itemButtons.IndexOf(_navigationTarget!);
+            else
+                CancelNavigationFocus();
+            if (index < 0)
                 return false;
             int step = direction > 0 ? 1 : -1;
             // Home and End search inward from an edge. Arrows search outward and wrap.
@@ -618,15 +659,12 @@ namespace XREngine.Rendering.UI
                     ? (step > 0 ? count - 1 - attempt : attempt)
                     : ((index + step * (attempt + 1)) % count + count) % count;
                 UIContextMenuItemComponent target = _itemButtons[candidate];
-                if (ReferenceEquals(target, from))
+                if (ReferenceEquals(target, from) && !hasPending)
                     return false;
-                if (!target.CanInteract)
+                if (!IsCurrentItem(target, showRevision) || !target.CanInteract)
                     continue;
-                if (input.TryFocusPresented(target))
-                    return showRevision == _showRevision && _isOpen;
-                // A focus callback can hide or replace this menu.
-                if (showRevision != _showRevision || !_isOpen || _itemButtons.Count != count)
-                    return false;
+                // A clipped row remains the intended target. Do not skip it for a visible row.
+                return RequestItemFocus(from, target, showRevision, canvas, input);
             }
             return false;
         }
@@ -639,14 +677,13 @@ namespace XREngine.Rendering.UI
         /// </summary>
         internal bool OpenItemSubmenu(UIContextMenuItemComponent row, ulong showRevision, bool focusFirstItem)
         {
-            if (_tearingDown || IsDestroyed || !_isOpen || _openingSubmenu ||
-                showRevision != _showRevision || !ReferenceEquals(row.Menu, this) ||
+            if (_openingSubmenu || !IsCurrentItem(row, showRevision) ||
                 row.Item is not { HasSubmenu: true, Enabled: true } item)
                 return false;
             if (_submenu is { _isOpen: true } current && ReferenceEquals(_submenuRow, row))
-                return !focusFirstItem || current.FocusFirstItem();
+                return (!focusFirstItem || current.FocusFirstItem()) && IsCurrentItem(row, showRevision);
             CloseSubmenu(refocusRow: false);
-            if (_tearingDown || IsDestroyed || !_isOpen || showRevision != _showRevision ||
+            if (!IsCurrentItem(row, showRevision) ||
                 SceneNode.Parent is not { } host)
                 return false;
 
@@ -660,7 +697,7 @@ namespace XREngine.Rendering.UI
                 _submenu = submenu;
                 _submenuNode = node;
                 _submenuRow = row;
-                if (_tearingDown || IsDestroyed || !_isOpen || showRevision != _showRevision)
+                if (!IsCurrentItem(row, showRevision))
                 {
                     CloseSubmenu(refocusRow: false);
                     return false;
@@ -675,7 +712,7 @@ namespace XREngine.Rendering.UI
                 submenu.ShowCore(ResolveSubmenuPosition(item, submenu.PreferredWidth), items,
                     null, subscribeForDismiss: false);
                 // A show callback can close this menu or replace the submenu.
-                if (_tearingDown || IsDestroyed || !_isOpen || showRevision != _showRevision ||
+                if (!IsCurrentItem(row, showRevision) ||
                     !ReferenceEquals(_submenu, submenu) || !submenu._isOpen ||
                     !ReferenceEquals(submenu._ownerMenu, this))
                 {
@@ -685,7 +722,8 @@ namespace XREngine.Rendering.UI
                 }
                 if (focusFirstItem && submenu.FocusFirstItem())
                     submenu.StopFirstItemFocus();
-                return true;
+                return IsCurrentItem(row, showRevision) && ReferenceEquals(_submenu, submenu) &&
+                    submenu.IsCurrentShow(submenu._showRevision);
             }
             finally
             {
@@ -696,9 +734,9 @@ namespace XREngine.Rendering.UI
         /// <summary>Closes this submenu from one of its rows and returns focus to the owner row.</summary>
         internal bool CloseFromItem(UIContextMenuItemComponent row, ulong showRevision)
         {
-            if (_tearingDown || IsDestroyed || !_isOpen || showRevision != _showRevision ||
-                !ReferenceEquals(row.Menu, this) || _ownerMenu is not { } owner ||
-                !ReferenceEquals(owner._submenu, this) || owner._showRevision != _ownerShowRevision)
+            if (!IsCurrentItem(row, showRevision) || _ownerMenu is not { } owner ||
+                !ReferenceEquals(owner._submenu, this) || !owner.IsCurrentShow(_ownerShowRevision) ||
+                owner._submenuRow is not { } ownerRow || !owner.IsCurrentItem(ownerRow, _ownerShowRevision))
                 return false;
             owner.CloseSubmenu(refocusRow: true);
             return true;
@@ -745,8 +783,7 @@ namespace XREngine.Rendering.UI
             }
             if (destroyNode && node is not null && !node.IsDestroyed)
                 node.Destroy(true);
-            if (refocusRow && row is not null && _isOpen && !_tearingDown && !IsDestroyed &&
-                ReferenceEquals(row.Menu, this) &&
+            if (refocusRow && row is not null && IsCurrentItem(row, row.ShowRevision) &&
                 UITransform.GetCanvasComponent()?.GetInputComponent() is { } input)
                 input.TryFocusPresented(row);
         }
@@ -755,8 +792,7 @@ namespace XREngine.Rendering.UI
         private void HideMenuChain()
         {
             UIContextMenuComponent root = this;
-            while (root._ownerMenu is { } owner && !owner.IsDestroyed && owner._isOpen &&
-                owner._showRevision == root._ownerShowRevision &&
+            while (root._ownerMenu is { } owner && owner.IsCurrentShow(root._ownerShowRevision) &&
                 ReferenceEquals(owner._submenu, root))
                 root = owner;
             root.Hide();
@@ -789,7 +825,7 @@ namespace XREngine.Rendering.UI
         /// <summary>Moves presented focus to the first enabled row of this menu.</summary>
         internal bool FocusFirstItem()
         {
-            if (_tearingDown || IsDestroyed || !_isOpen ||
+            if (!IsCurrentShow(_showRevision) ||
                 UITransform.GetCanvasComponent()?.GetInputComponent() is not { } input)
                 return false;
             ulong showRevision = _showRevision;
@@ -797,11 +833,11 @@ namespace XREngine.Rendering.UI
             for (int index = 0; index < count; index++)
             {
                 UIContextMenuItemComponent target = _itemButtons[index];
-                if (!target.CanInteract)
+                if (!IsCurrentItem(target, showRevision) || !target.CanInteract)
                     continue;
                 if (input.TryFocusPresented(target))
-                    return showRevision == _showRevision && _isOpen;
-                if (showRevision != _showRevision || !_isOpen || _itemButtons.Count != count)
+                    return IsCurrentItem(target, showRevision);
+                if (!IsCurrentShow(showRevision) || _itemButtons.Count != count)
                     return false;
             }
             return false;
@@ -823,6 +859,7 @@ namespace XREngine.Rendering.UI
 
         private void ReleaseItemButtons()
         {
+            CancelNavigationFocus();
             for (int index = 0; index < _itemButtons.Count; index++)
                 _itemButtons[index].Release();
             _itemButtons.Clear();

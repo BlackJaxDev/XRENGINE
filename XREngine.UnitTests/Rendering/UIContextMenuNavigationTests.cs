@@ -11,7 +11,7 @@ using XREngine.UnitTests.Physics;
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture, NonParallelizable]
-public sealed class UIContextMenuNavigationTests
+public sealed partial class UIContextMenuNavigationTests
 {
     private UITestShaderScope _shaderScope = null!;
 
@@ -75,7 +75,7 @@ public sealed class UIContextMenuNavigationTests
 
             Move(menu, rows[0], 1).ShouldBeFalse();
 
-            input.PresentedFocusAttempts.ShouldBe(2);
+            input.PresentedFocusAttempts.ShouldBe(1);
             input.FocusedComponent.ShouldBeSameAs(rows[0]);
         }
         finally { root.Destroy(true); }
@@ -327,6 +327,197 @@ public sealed class UIContextMenuNavigationTests
     private static bool Move(UIContextMenuComponent menu, UIContextMenuItemComponent from,
         int direction, bool toEdge = false)
         => menu.MoveItemFocus(from, from.ShowRevision, direction, toEdge);
+
+    [TestCase("menu")]
+    [TestCase("menu-node")]
+    [TestCase("menu-transform")]
+    [TestCase("row")]
+    [TestCase("row-node")]
+    [TestCase("row-transform")]
+    [TestCase("row-parent")]
+    [TestCase("moved-row")]
+    [TestCase("moved-list")]
+    public void RetiredRowBindingCannotRunItsActionOrMoveFocus(string change)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            int actions = 0;
+            menu.Show(new Vector2(8, 80),
+                new ContextMenuItem("First", () => actions++),
+                new ContextMenuItem("Second", () => { }));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            input.PresentedFocusAccepted = true;
+            UIContextMenuItemComponent row = Rows(menu)[0];
+            row.CanInteract.ShouldBeTrue();
+
+            ChangeBinding(root, menu, row, change);
+            row.CanInteract.ShouldBeTrue();
+            row.OnInteract();
+
+            actions.ShouldBe(0);
+            menu.IsOpen.ShouldBeTrue();
+            Move(menu, row, 1).ShouldBeFalse();
+            input.PresentedFocusAttempts.ShouldBe(0);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [TestCase("menu")]
+    [TestCase("menu-node")]
+    [TestCase("menu-transform")]
+    [TestCase("row")]
+    [TestCase("row-node")]
+    [TestCase("row-transform")]
+    [TestCase("row-parent")]
+    [TestCase("moved-row")]
+    [TestCase("moved-list")]
+    public void RetiredRowBindingCannotOpenASubmenu(string change)
+    {
+        SceneNode root = CreateCanvas(out _);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            menu.Show(new Vector2(8, 80),
+                ContextMenuItem.Submenu("More", [new ContextMenuItem("Child", () => { })]));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            UIContextMenuItemComponent row = Rows(menu)[0];
+            ChangeBinding(root, menu, row, change);
+            row.CanInteract.ShouldBeTrue();
+
+            menu.OpenItemSubmenu(row, row.ShowRevision, focusFirstItem: false).ShouldBeFalse();
+            menu.OpenSubmenu.ShouldBeNull();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void ActionThatRegeneratesItsMenuCannotDismissTheNewLifetime()
+    {
+        SceneNode root = CreateCanvas(out _);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            int actions = 0;
+            menu.Show(new Vector2(8, 80), new ContextMenuItem("Regenerate", () =>
+            {
+                actions++;
+                menu.Generate();
+            }));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            Rows(menu)[0].OnInteract();
+
+            actions.ShouldBe(1);
+            menu.IsOpen.ShouldBeTrue();
+
+            menu.Show(new Vector2(8, 80), new ContextMenuItem("Current", () => actions++));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            Rows(menu)[0].OnInteract();
+            actions.ShouldBe(2);
+            menu.IsOpen.ShouldBeFalse();
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void FocusCallbackThatRetiresTheMenuStopsNavigation(bool firstItem)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            menu.Show(new Vector2(8, 80),
+                new ContextMenuItem("First", () => { }),
+                new ContextMenuItem("Second", () => { }));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            input.PresentedFocusAccepted = true;
+            List<UIContextMenuItemComponent> rows = Rows(menu);
+            rows[firstItem ? 0 : 1].GotFocus += _ => menu.Generate();
+
+            (firstItem ? menu.FocusFirstItem() : Move(menu, rows[0], 1)).ShouldBeFalse();
+            input.PresentedFocusAttempts.ShouldBe(1);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void NavigationSkipsATargetWhoseBindingWasRetired(bool firstItem)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            menu.Show(new Vector2(8, 80),
+                new ContextMenuItem("First", () => { }),
+                new ContextMenuItem("Second", () => { }),
+                new ContextMenuItem("Third", () => { }));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            input.PresentedFocusAccepted = true;
+            List<UIContextMenuItemComponent> rows = Rows(menu);
+            rows[firstItem ? 0 : 1].Generate();
+
+            (firstItem ? menu.FocusFirstItem() : Move(menu, rows[0], 1)).ShouldBeTrue();
+            input.FocusedComponent.ShouldBeSameAs(rows[firstItem ? 1 : 2]);
+            input.PresentedFocusAttempts.ShouldBe(1);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [TestCase("menu")]
+    [TestCase("row")]
+    [TestCase("moved-row")]
+    public void SubmenuCannotActAfterItsOwnerBindingWasRetired(string change)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            int actions = 0;
+            menu.Show(new Vector2(8, 80),
+                ContextMenuItem.Submenu("More", [new ContextMenuItem("Child", () => actions++)]));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            UIContextMenuItemComponent ownerRow = Rows(menu)[0];
+            menu.OpenItemSubmenu(ownerRow, ownerRow.ShowRevision, focusFirstItem: false).ShouldBeTrue();
+            UIContextMenuComponent submenu = menu.OpenSubmenu.ShouldNotBeNull();
+            submenu.UITransform.Visibility = EVisibility.Visible;
+            UIContextMenuItemComponent child = Rows(submenu)[0];
+            ChangeBinding(root, menu, ownerRow, change);
+            child.CanInteract.ShouldBeTrue();
+            input.PresentedFocusAccepted = true;
+
+            child.OnInteract();
+
+            actions.ShouldBe(0);
+            submenu.FocusFirstItem().ShouldBeFalse();
+            submenu.CloseFromItem(child, child.ShowRevision).ShouldBeFalse();
+            input.PresentedFocusAttempts.ShouldBe(0);
+            menu.IsOpen.ShouldBeTrue();
+            submenu.IsOpen.ShouldBeTrue();
+            menu.OpenSubmenu.ShouldBeSameAs(submenu);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    private static void ChangeBinding(SceneNode root, UIContextMenuComponent menu,
+        UIContextMenuItemComponent row, string change)
+    {
+        switch (change)
+        {
+            case "menu": menu.Generate(); break;
+            case "menu-node": menu.SceneNode.Generate(); break;
+            case "menu-transform": menu.UITransform.Generate(); break;
+            case "row": row.Generate(); break;
+            case "row-node": row.SceneNode.Generate(); break;
+            case "row-transform": row.UITransform.Generate(); break;
+            case "row-parent": row.SceneNode.Parent!.Generate(); break;
+            case "moved-row": row.Transform.Parent = root.Transform; break;
+            case "moved-list": row.SceneNode.Parent!.Transform.Parent = root.Transform; break;
+            default: throw new ArgumentException("Unknown binding change.", nameof(change));
+        }
+    }
 
     private static List<UIContextMenuItemComponent> Rows(UIContextMenuComponent menu)
     {

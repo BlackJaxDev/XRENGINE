@@ -147,3 +147,69 @@ recovery acceptance.
 Desktop build39 compiled the editor and desktop tests with zero warnings/errors
 in 3m19.60s. All 10,795 source inputs stayed unchanged through the final headless
 build, test run, and desktop build. No broad TODO item was closed.
+
+## Menu Row Lifetime Reproduction
+
+The existing show revision did not pin the menu's or row's object lifetime.
+Build159 failed on two fixture calls to a nonexistent `SceneNode.SetParent`;
+the fixture now uses the transform parent property. Build160 passed with zero
+warnings/errors in 18.94s. Targeted run104 passed the nine existing menu cases
+and failed all 21 new cases in 1.335s.
+
+The new cases show that regenerated menu/row objects, nodes, transforms, or row
+parents and moved rows/lists still admitted old actions and submenu requests.
+They also show that an action could dismiss a regenerated menu and that focus
+callbacks could retire the menu while navigation still reported success. Each
+action case checks that the row is interactable, so visibility does not hide the
+admission defect.
+
+The first repair pins show and row identities, checks row attachment, and checks
+again after focus callbacks. Build161 passed with zero warnings/errors in
+1m33.28s; targeted run105 passed 30/30 in 1.565s. Review then added valid-target
+navigation, explicit reopening, and submenu-owner coverage. Build162 passed
+with zero warnings/errors in 20.21s. Run106 passed 32/35 and failed all three
+new owner cases: a child action still ran after the owner menu or row regenerated
+or the owner row moved. Submenu admission now includes the full owner chain.
+Row release clears captured references. Full construction/teardown ownership
+and offscreen keyboard focus remain separate open work.
+
+The lifetime candidate passed build163 with zero warnings/errors in 1m11.42s
+and full run107 **1,088/1,088** in 23.449s. It remained local while the same
+control's scroll-navigation contract was completed.
+
+## Scrollable Menu Keyboard Navigation
+
+Three regressions used a menu with accepted 120-pixel viewport geometry.
+Build164 passed with zero warnings/errors in 22.19s. Run108 passed the prior
+35 cases and failed all three new cases in 2.253s. End left the scroll offset at
+zero instead of 232 pixels. The menu did not retain an unpresented target for a
+later focus attempt or advance it on repeated keys.
+
+The implementation uses the existing scroll transform and presented-focus API.
+Rows retain their copied top-down content bounds, including separator and
+disabled-row space. One pending request holds exact ownership and focus intent,
+scrolls to its target, and retries at most 120 ticks. Repeated keys advance the
+pending target. Hide, replacement, deactivation, lost ownership, or newer focus
+intent cancels it. A cached tick delegate and indexed canvas input lookup avoid
+allocations from retry registration and input enumeration.
+
+Build165 failed with four compiler errors because the cached tick delegate used
+`Action` instead of the engine's `WorldTick`. The delegate type was corrected.
+The request guard checks lifetime before reading interaction state. Only a
+registered waiting request advances its pending target during repeated keys;
+a callback inside initial scroll setup starts a fresh request from its source.
+
+Build166 passed with zero warnings/errors in 1m35.04s. Run109 passed 51/52 in
+3.143s, including 20 waiting retries with zero measured managed allocation in
+the presentation-probe harness. The failed fixture expected offset zero after
+a callback selected row two. `ScrollIntoView` correctly selected its top edge,
+22 pixels. The fixture now checks that minimal offset. Coverage also includes
+Home waiting, separator/disabled-row bounds, and a stale keyboard-focus flag.
+
+Final headless build167 passed with zero warnings/errors in 20.99s. Full run110
+passed **1,107/1,107** in 21.526s, with no failures, warnings, or skips. Desktop
+build40 compiled the editor and desktop tests with zero warnings/errors in
+3m31.07s. All 10,797 source inputs stayed unchanged through those checks.
+This completes ordinary-menu deferred arrow/Home/End focus in the headless
+harness. It does not establish native window presentation, hardware keyboard,
+IME, GPU, or end-to-end editor acceptance. The recorded TODO count stays 50/60.

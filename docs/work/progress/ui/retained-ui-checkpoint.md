@@ -1218,3 +1218,21 @@ failed before the repair. Build158 and full run103 pass **1,062/1,062** tests wi
 zero warnings/failures/skips. Desktop build39 compiles the editor and tests with
 zero warnings/errors. The 10,795-file source snapshot stayed unchanged. Live
 window recovery and the broader docking item remain open; the count is **50/60**.
+
+## Scrollable Menu Keyboard Navigation
+
+Ordinary menus now scroll to the intended arrow/Home/End target and wait for
+presented focus. Repeated keys advance the pending target. Requests stop after
+120 retry ticks and cancel on newer focus intent, replacement, deactivation,
+or loss of exact row/canvas/input/scroll ownership. A scroll callback can replace
+the request. Menu and submenu actions also reject stale lifetime and owner
+bindings. This uses the existing retained controls and input publication path.
+
+The regressions failed before repair. Final headless build167 passed with zero
+warnings/errors, and full run110 passed **1,107/1,107** without failures, warnings,
+or skips. Desktop build40 compiled the editor and tests with zero warnings/errors.
+All 10,797 source inputs stayed unchanged. Twenty waiting retries allocated zero
+managed bytes in the presentation-probe harness; this is not a native performance
+benchmark. Windows keyboard/presentation, IME, GPU, and editor acceptance remain
+open. Initial submenu-focus cancellation and full menu construction/teardown
+ownership remain open code work. The broader reconciliation remains **50/60**.

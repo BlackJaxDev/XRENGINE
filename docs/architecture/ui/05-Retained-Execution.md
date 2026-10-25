@@ -744,7 +744,14 @@ Each context menu row is a `UIContextMenuItemComponent` bound to the show that
 created it. Up and Down move presented focus to the adjacent enabled row and wrap.
 Home and End move focus to the first and last enabled rows. Separators and
 disabled rows do not take focus. A row from an earlier show is released and
-cannot click or move focus in a replacement menu. Show copies the item array and
+cannot click or move focus in a replacement menu. The show pins the component,
+node, and transform lifetime. A row pins its own component, node, transform, and
+parent node/transform lifetime and must still belong below that menu. Actions,
+navigation targets, and submenu requests reject stale bindings. Navigation checks
+again after focus callbacks. Submenu admission also checks the owner row and
+each owner menu. Releasing a row clears its captured references. These checks
+do not allocate per dispatch and do not replace presented-input admission.
+Show copies the item array and
 the row and separator heights, so callbacks during Show cannot change the rows
 after the menu height is computed. When a callback moves the menu to another
 canvas, placement waits for that canvas. When it leaves the menu without a canvas,
@@ -763,6 +770,21 @@ and hides the root, which hides the whole chain. A replaced show or Hide destroy
 the submenu node. Deactivation only hides the submenu, and the next open or Hide
 destroys the node, so teardown does not change the hierarchy. A row from an
 earlier show cannot open a submenu.
+
+For ordinary menus, arrows, Home, and End request one intended enabled row.
+The row stores its top-down content bounds from Show, including separator and
+disabled-row spacing. `UIContextMenuComponent.Navigation` scrolls that rectangle
+into the accepted viewport and waits for `TryFocusPresented` to accept the target.
+It does not skip an unpresented target to focus another visible row. Repeated
+keys advance the pending target. One request retries for at most 120 ticks and
+yields to newer focus intent or a pending virtual focus request. It requires the
+same focused source, show, row bindings, canvas, input source, and scroll owner.
+Hide, replacement, deactivation, or ownership loss retires the request. A scroll
+callback can replace it without the old continuation clearing the newer request.
+The retry delegate is cached, and canvas input lookup uses indexed traversal.
+
+Full callback-safe construction/teardown and initial submenu-focus cancellation
+remain open. This contract does not establish native keyboard or IME acceptance.
 
 ## Composition boundaries and split handles
 
