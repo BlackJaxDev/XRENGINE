@@ -17,6 +17,10 @@ public sealed partial class SceneNode
         _runtimeRootOwners.EnsureCapacity(checked(_runtimeRootOwners.Count + 1));
     }
 
-    internal void AddRuntimeRootOwner(RootNodeCollection owner) => _runtimeRootOwners!.Add(owner);
+    internal void AddRuntimeRootOwner(RootNodeCollection owner)
+    {
+        if (_runtimeRootOwners!.Add(owner))
+            MarkRootCollectionAdoption();
+    }
     internal void RemoveRuntimeRootOwner(RootNodeCollection owner) => _runtimeRootOwners?.Remove(owner);
 }

@@ -1,7 +1,6 @@
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Data.Core;
-using XREngine.Components;
 
 namespace XREngine;
 
@@ -12,6 +11,9 @@ public abstract partial class XRWorldObjectBase
     private HierarchyLifetimeAdmission? _hierarchyLifetimeAdmission;
     private OwnedHierarchyDestructionPermit? _ownedDestructionPermit;
     private Dictionary<IHierarchyListAuthority, int>? _hierarchyListOwners;
+    private int _hasEnteredStructuralList;
+
+    internal bool HasEnteredStructuralList => Volatile.Read(ref _hasEnteredStructuralList) != 0;
 
     /// <summary>Copies exact structural-list ownership at a mutation or release boundary.</summary>
     public HierarchyListMembership[] CaptureHierarchyListMemberships()
@@ -156,8 +158,7 @@ public abstract partial class XRWorldObjectBase
     {
         _hierarchyListOwners!.TryGetValue(authority, out int count);
         _hierarchyListOwners[authority] = checked(count + 1);
-        if (this is XRComponent component)
-            component.MarkStructuralListInsertion();
+        Volatile.Write(ref _hasEnteredStructuralList, 1);
     }
 
     internal void RemoveHierarchyListOwner(IHierarchyListAuthority authority)

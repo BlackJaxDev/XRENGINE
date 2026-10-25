@@ -34,8 +34,8 @@ rebuild, and transfer. These native interaction checks remain pending.
 
 ### Managed integration evidence
 
-Latest continuation check (2026-10-25): headless build195 passed with zero
-warnings/errors, and run134 passed **1,200/1,200** tests with no failures or skips.
+Latest continuation check (2026-10-25): headless build198 passed with zero
+warnings/errors, and run138 passed **1,223/1,223** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
@@ -52,8 +52,10 @@ Six menu content-root cases also cover attachment ownership and lifetime changes
 Guarded component creation adds 28 cases for claim retention, callback changes,
 exact list admission, world writes, publication history, and one-attempt cleanup.
 These tests validate a prerequisite; menu child integration and full retirement
-remain open. Desktop test build53
-compiled the final editor and test assembly with zero warnings/errors. All 10,810
+remain open. Eight menu cases cover setup cancellation and exception preservation.
+Fifteen initial-leaf cases cover explicit retirement, adoption history, reserved
+factory admission, resources, and retained failures. Desktop test build54
+compiled the final editor and test assembly with zero warnings/errors. All 10,812
 source inputs stayed unchanged through the final desktop build and portable run.
 Six new AssetsPanelSelectionTests cases compiled but did not execute. A desktop
 test probe executed zero tests because NUnit reports `Only supported on Windows7.0`.

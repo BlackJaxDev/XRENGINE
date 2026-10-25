@@ -70,6 +70,8 @@ namespace XREngine.Scene
             try
             {
                 receipt.Validate();
+                using HierarchyMutationLease structural = new(this, Transform);
+                receipt.Validate();
                 using var parityScope = EnterComponentPlayerPath();
                 using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentFactory");
                 T comp = XRComponent.NewGuarded(this, factory, receipt);
@@ -95,6 +97,7 @@ namespace XREngine.Scene
             }
             finally
             {
+                receipt.MarkFinished();
                 if (receipt.Component is { } claimed)
                     claimed.CreationReceipt = null;
             }

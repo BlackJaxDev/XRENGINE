@@ -251,7 +251,7 @@ namespace XREngine.Rendering.UI
 
             if ((items.Length == 0 && provider is null && contentBuilder is null) || provider is { Count: <= 0 })
                 return;
-            if (!HasCurrentShowLifetime(showRevision))
+            if (_pendingTransition is not null || !HasCurrentShowLifetime(showRevision))
                 return;
 
             _items = items;
@@ -261,7 +261,7 @@ namespace XREngine.Rendering.UI
             _contentBuilder = contentBuilder;
             _contentHeight = contentHeight;
             IsOpen = true;
-            if (!IsCurrentShow(showRevision))
+            if (!CanContinueConstruction(showRevision))
                 return;
 
             // Make the node visible (it's collapsed when hidden)
@@ -276,6 +276,8 @@ namespace XREngine.Rendering.UI
             tfm.BlocksInputBehind = !passive;
             tfm.Margins = Vector4.Zero;
             tfm.Padding = Vector4.Zero;
+            if (!CanContinueConstruction(showRevision))
+                return;
 
             // Calculate total height
             float totalHeight = 0f;
@@ -287,7 +289,7 @@ namespace XREngine.Rendering.UI
                 foreach (var item in items)
                     totalHeight += item.IsSeparator ? separatorHeight : itemHeight;
             tfm.Height = totalHeight;
-            if (!IsCurrentShow(showRevision))
+            if (!CanContinueConstruction(showRevision))
                 return;
             // Property callbacks can move the menu. Use the canvas it is attached to now.
             if (tfm.GetCanvasTransform() is not { } canvas)
@@ -316,7 +318,7 @@ namespace XREngine.Rendering.UI
             bgMat.ClipToBounds = true;
 
             BuildMenuItems(showRevision);
-            if (!IsCurrentShow(showRevision))
+            if (!CanContinueConstruction(showRevision))
                 return;
             tfm.InvalidateLayout();
             if (!ReferenceEquals(tfm.GetCanvasTransform(), _placementCanvas))
@@ -438,13 +440,15 @@ namespace XREngine.Rendering.UI
 
         private void BuildMenuItems(ulong showRevision)
         {
-            if (!IsCurrentShow(showRevision))
+            if (!CanContinueConstruction(showRevision))
                 return;
             bool ordinaryItems = _contentBuilder is null && _virtualProvider is null;
             SceneNode listParent = SceneNode;
             if (ordinaryItems)
             {
                 SceneNode scrollNode = CreateContentRoot(new UIScrollableTransform(), showRevision);
+                if (!CanContinueConstruction(showRevision))
+                    return;
                 scrollNode.Name = "ContextMenuScroll";
                 UIScrollableTransform scroll = (UIScrollableTransform)scrollNode.Transform;
                 scroll.MinAnchor = Vector2.Zero;
@@ -453,11 +457,15 @@ namespace XREngine.Rendering.UI
                 scroll.Height = null;
                 scroll.ScrollableX = false;
                 UIScrollRegionComponent scrollInput = scrollNode.AddComponent<UIScrollRegionComponent>()!;
+                if (!CanContinueConstruction(showRevision))
+                    return;
                 scrollInput.IsTabStop = false;
                 scrollInput.ConsumeWheelAtBoundary = true;
                 listParent = scrollNode;
             }
             var listNode = ordinaryItems ? listParent.NewChild() : CreateContentRoot(new UIListTransform(), showRevision);
+            if (!CanContinueConstruction(showRevision))
+                return;
             listNode.Name = "ContextMenuList";
             var listTfm = ordinaryItems ? listNode.SetTransform<UIListTransform>() : (UIListTransform)listNode.Transform;
             listTfm.DisplayHorizontal = false;
@@ -477,6 +485,9 @@ namespace XREngine.Rendering.UI
                 listTfm.NormalizedPivot = new Vector2(0, 1);
                 listTfm.Height = _requestedHeight;
             }
+
+            if (!CanContinueConstruction(showRevision))
+                return;
 
             if (_contentBuilder is not null)
             {
@@ -498,7 +509,7 @@ namespace XREngine.Rendering.UI
             float contentTop = 0;
             foreach (var item in _items)
             {
-                if (!IsCurrentShow(showRevision))
+                if (!CanContinueConstruction(showRevision))
                     return;
                 if (item.IsSeparator)
                 {
@@ -665,6 +676,11 @@ namespace XREngine.Rendering.UI
                 (_ownerMenu is null ||
                     (ReferenceEquals(_ownerMenu._submenu, this) && _ownerMenu._submenuRow is { } row &&
                         _ownerMenu.IsCurrentItem(row, _ownerShowRevision)));
+
+        // A newer request cancels construction at its next boundary. Keep it queued
+        // for the transition loop; cancellation is not an ownership failure.
+        private bool CanContinueConstruction(ulong showRevision)
+            => _pendingTransition is null && IsCurrentShow(showRevision);
 
         private bool IsCurrentItem(UIContextMenuItemComponent row, ulong showRevision)
             => IsCurrentShow(showRevision) && row.HasCurrentBinding(this, showRevision) &&

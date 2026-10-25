@@ -10,6 +10,77 @@ namespace XREngine.UnitTests.Rendering;
 
 public sealed partial class UIContextMenuNavigationTests
 {
+    [TestCase(false)]
+    [TestCase(true)]
+    public void QueuedRequestDoesNotHideAContentBuilderFailure(bool hide)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            var failure = new InvalidOperationException("Builder failed after requesting a transition.");
+
+            Should.Throw<InvalidOperationException>(() => menu.ShowContent(Vector2.Zero, 40, _ =>
+            {
+                if (hide) menu.Hide();
+                else menu.Show(Vector2.Zero, new ContextMenuItem("Must not open", null));
+                throw failure;
+            })).ShouldBeSameAs(failure);
+
+            menu.IsOpen.ShouldBeFalse();
+            Rows(menu).ShouldBeEmpty();
+            input.SubscriberCount.ShouldBe(0);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [TestCase("open", false)]
+    [TestCase("open", true)]
+    [TestCase("width", false)]
+    [TestCase("width", true)]
+    [TestCase("attachment", false)]
+    [TestCase("attachment", true)]
+    public void NewerRequestStopsTheOldContentBuilder(string boundary, bool hide)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            int oldBuilderCalls = 0;
+            bool requested = false;
+            void Replace()
+            {
+                if (requested) return;
+                requested = true;
+                if (hide) menu.Hide();
+                else menu.Show(Vector2.Zero, new ContextMenuItem("Replacement", null));
+            }
+            void OnMenuChanged(object? sender, IXRPropertyChangedEventArgs args)
+            {
+                if (args.PropertyName == nameof(UIContextMenuComponent.IsOpen) && menu.IsOpen)
+                    Replace();
+            }
+            void OnTransformChanged(object? sender, IXRPropertyChangedEventArgs args)
+            {
+                if (args.PropertyName == nameof(UIBoundableTransform.Width)) Replace();
+            }
+            void OnChildAdded(TransformBase child) => Replace();
+            if (boundary == "open") menu.PropertyChanged += OnMenuChanged;
+            else if (boundary == "width") menu.Transform.PropertyChanged += OnTransformChanged;
+            else menu.Transform.Children.PostAnythingAdded += OnChildAdded;
+
+            menu.ShowContent(Vector2.Zero, 40, _ => oldBuilderCalls++);
+
+            requested.ShouldBeTrue();
+            oldBuilderCalls.ShouldBe(0);
+            menu.IsOpen.ShouldBe(!hide);
+            input.SubscriberCount.ShouldBe(hide ? 0 : 4);
+            if (hide) menu.Transform.Children.ShouldBeEmpty();
+            else Rows(menu).Single().Item!.Label.ShouldBe("Replacement");
+        }
+        finally { root.Destroy(true); }
+    }
+
     [Test]
     public void ShowFromAPlacementPropertyCallbackKeepsTheReplacementSizeAndRows()
     {

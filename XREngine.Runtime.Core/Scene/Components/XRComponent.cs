@@ -263,6 +263,32 @@ namespace XREngine.Components
             // Owned clone failure transfers this allocation without running arbitrary teardown.
             if (XREngine.Scene.Prefabs.HierarchyConstructionScope.Retains(this))
                 return;
+            if (receipt is null)
+            {
+                PrepareComponentAbort();
+                try { AbortFailedConstruction(); }
+                catch { DeferExistingObjectCachePublication(); }
+                return;
+            }
+
+            try
+            {
+                receipt.ValidateDestructionOwner();
+                if (AbortFailedConstruction(() =>
+                    {
+                        receipt.AdmitAbortLifetime();
+                        PrepareComponentAbort();
+                    }, receipt.ValidateDestructionOwner))
+                    receipt.CompleteAbort();
+            }
+            catch (Exception cleanupFailure)
+            {
+                receipt.RecordCleanupFailure(cleanupFailure);
+            }
+        }
+
+        private void PrepareComponentAbort()
+        {
             _constructionFailed = true;
             if (_sceneNode is not null)
             {
@@ -272,34 +298,14 @@ namespace XREngine.Components
                 if (!_sceneNode.IsTransformNull)
                     _sceneNode.Transform.RenderMatrixChanged -= OnTransformRenderWorldMatrixChanged;
             }
-            if (receipt is null)
-            {
-                try { AbortFailedConstruction(); }
-                catch { DeferExistingObjectCachePublication(); }
-                return;
-            }
-
-            try
-            {
-                receipt.ValidateDestructionOwner();
-                if (AbortFailedConstruction(receipt.AdmitAbortLifetime, receipt.ValidateDestructionOwner))
-                    receipt.CompleteAbort();
-            }
-            catch (Exception cleanupFailure)
-            {
-                receipt.RecordCleanupFailure(cleanupFailure);
-            }
         }
 
         private SceneNode _sceneNode;
         private bool _sceneNodeEventsSubscribed;
         private bool _constructionFailed;
-        private int _hasEnteredStructuralList;
         private bool _clearTicksOnStop = true;
         private bool _componentActivated;
         internal RuntimeComponentCreationReceipt? CreationReceipt { get; set; }
-        internal bool HasEnteredStructuralList => Volatile.Read(ref _hasEnteredStructuralList) != 0;
-        internal void MarkStructuralListInsertion() => Volatile.Write(ref _hasEnteredStructuralList, 1);
 
         protected override void ValidateNameWrite() => CreationReceipt?.Validate();
         protected override void ValidateCreationNotification() => CreationReceipt?.Validate();

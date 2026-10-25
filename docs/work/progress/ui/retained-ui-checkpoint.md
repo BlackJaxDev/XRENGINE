@@ -1360,3 +1360,24 @@ or skips. Desktop build53 compiled the editor and tests with zero warnings/error
 All 10,810 source inputs stayed unchanged through these checks. This is a
 prerequisite for menu child construction and retirement. Those integrations remain open,
 and the broader count remains **50/60**.
+
+## Initial Leaf Retirement And Menu Cancellation
+
+An explicit receipt records a currently world-null leaf before guarded component
+creation. It reuses canonical retirement and rejects unregistered components,
+foreign or duplicate links, stale lifetimes, and prior parent/root adoption.
+Failure retains cleanup progress without replay. Confirmed destruction remains
+recorded if a Destroyed observer throws. Factory admission and guarded abort
+preparation also respect existing retirement reservations.
+
+Menu construction returns to its transition loop when a newer Show/Hide request
+arrives at setup boundaries. Six baseline cases reproduced obsolete builder calls;
+they now pass. Two further cases preserve real builder failures after a request
+is queued. Full child ownership and live-menu retirement remain open.
+
+Headless build198 passed with zero warnings/errors. Run137 passed **130/130**
+focused cases, and run138 passed **1,223/1,223** portable tests without failures,
+warnings, or skips. Desktop build54 compiled the editor and tests with zero
+warnings/errors. All 10,812 source inputs stayed unchanged through these checks.
+This closes bounded contracts inside the open shared-control item; the broader count remains
+**50/60**. Windows, graphics, and native input acceptance remain pending.

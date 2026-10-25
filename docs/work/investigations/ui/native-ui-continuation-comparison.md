@@ -514,3 +514,64 @@ in 3m56.54s. All 10,810 source inputs stayed unchanged through final validation.
 The five maintained UI documents have 39 resolving relative links, and
 `git diff --check` passes. This prerequisite does not close menu integration,
 retirement, Windows execution, graphics acceptance, or the broad control item.
+
+## Explicit Detached Leaf Retirement And Menu Cancellation
+
+The next candidate records an already detached, world-null leaf before component
+construction. It registers guarded component attempts before their callbacks and
+feeds their original identities to the existing retirement executor. Clone
+constructor-ledger admission remains separate. The candidate retains partial
+failure and records canonical destruction that completes before a Destroyed
+observer throws. It does not yet prepare live-world nodes or replace menu teardown.
+
+Six new menu cases also cover a newer Show or Hide request from the open, width,
+and content-attachment callbacks. They require the obsolete custom content builder
+not to run. The first compilation includes these cases before the menu fix, to
+establish their baseline. No baseline result is recorded yet.
+
+Review identified a shared cleanup ordering issue: a failed component's guarded
+abort changes subscriptions before lifetime admission rejects a competing reserved
+retirement. That guarded preparation must move after successful admission. The
+explicit retirement input must also be frozen rather than consult mutable creation
+attempts during cleanup. Both repairs await the current build/test boundary.
+
+Build196 passed with zero warnings/errors in 2m39.72s. Run135 passed 9 of 16
+cases in 1.087s. All six new menu cases reproduced an obsolete builder call.
+The leaf test incorrectly expected structural list containers to be destroyed;
+canonical cleanup retires their authorities and keeps the non-cache containers.
+The test will check empty storage and rejected mutation instead. The other nine
+leaf cases passed on this intermediate snapshot.
+
+Menu construction now checks for a newer queued request at setup boundaries and
+returns to the transition loop. It leaves ownership failures distinct. Two
+additional cases require a builder exception to remain observable even after it
+queues another request. Review also found that an unused registered component
+attempt could allocate during reserved retirement before binding was rejected.
+Guarded factory admission must reject that request before it runs the factory.
+
+Build197 passed with zero warnings/errors in 2m14.31s. Run136 passed all 127
+targeted cases in 3.671s: 87 menu cases, 28 guarded creation cases, and 12 detached
+leaf cases. The six cancellation regressions now pass, and builder exceptions
+still propagate after queued requests. This is not the final snapshot.
+
+Review found an adoption-history gap in the new initial-leaf receipt: attachment
+to a foreign parent followed by detach restores the same current graph without
+restoring the original ownership claim. The bounded contract will reject nodes
+or transforms with any prior structural/root adoption. This permanent marker
+must never be reset to admit live menu content. A later live-content adapter needs
+explicit permitted transition receipts. Review also tightened the unused-factory
+regression to run from an orphan component before the node's lifetime advances,
+so it tests the new admission lease rather than the existing identity check.
+
+Build198 passed with zero warnings/errors in 2m29.93s. Run137 passed all 130
+targeted cases in 3.271s, with no warnings or skips. The additional cases cover
+parent, scene-root, and runtime-root adoption followed by removal. Final read-only
+review found no remaining serious issue in this bounded detached-only contract.
+Full portable validation and matching editor/test compilation follow on the
+frozen source snapshot.
+
+Full run138 passed **1,223/1,223** tests in 23.768s, without failures, warnings,
+or skips. Desktop build54 compiled the editor and tests with zero warnings/errors
+in 3m39.35s. All 10,812 source inputs stayed unchanged through final validation.
+The broader reconciliation remains 50/60. Live-world preparation, guarded parent
+removal, menu integration, and platform acceptance remain open.

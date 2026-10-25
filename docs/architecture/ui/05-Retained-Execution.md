@@ -1679,3 +1679,37 @@ This is a construction prerequisite. Context-menu child construction and full
 content retirement do not yet use it. It does not authorize arbitrary callback
 statements, destruction of borrowed objects, or rollback of inserted partials.
 Those paths need explicit content ownership and canonical retirement.
+
+## Initial Detached Leaf Retirement
+
+DetachedLeafRetirementReceipt records a node, transform, and their exact storage
+before guarded component creation starts. Each component attempt must register
+before its factory runs. Retirement uses the original claims and a frozen object
+set. It accepts only a leaf that was never structurally adopted, has no current
+world context or hierarchy store, and contains only registered components. Prior
+parent, scene-root, or runtime-root adoption permanently rejects this initial-leaf
+path, including after detach. A direct world-context change is not itself proof
+of structural adoption; all current detached-state checks still apply.
+
+The receipt supplies a separate input to OwnedHierarchyRetirement. It reuses the
+existing reservation, permits, and canonical cleanup. Constructor-ledger clone
+admission stays strict. Component-owned resources remain the component's cleanup
+responsibility. Canonical cleanup leaves empty non-cache list containers alive
+and retires their mutation authority. Partial cleanup retains failure and exact
+executor progress without replay. A Destroyed observer can throw after destruction
+commits; that completed destruction remains recorded while the receipt retains
+its failure. Completed guarded aborts are omitted only with their completion
+proof. Incomplete guarded aborts prevent another cleanup attempt.
+
+Guarded creation holds a node and transform mutation lease before factory code
+runs. Reserved retirement therefore rejects a new factory before it allocates.
+Guarded abort prepares subscriptions only after lifetime admission succeeds.
+This adapter is not yet the live-menu retirement path. Parent detachment, permitted
+ownership transitions, runtime lifecycle/world removal, early owner-node teardown,
+and arbitrary custom content registration remain separate integration work.
+
+Menu setup checks for newer queued Show/Hide requests at construction boundaries.
+An obsolete setup returns to the existing transition loop before invoking its old
+content builder. Ownership errors and builder exceptions still propagate; a queued
+request does not hide them. These cancellation checks do not replace individual
+child ownership checks or guarded retirement.

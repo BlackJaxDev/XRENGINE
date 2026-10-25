@@ -6,21 +6,44 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Scene.Prefabs;
 
 /// <summary>Executes one reserved structural forest cleanup and retains exact progress on failure.</summary>
-internal sealed class OwnedHierarchyRetirement(ObjectConstructionOwnership ownership)
+internal sealed class OwnedHierarchyRetirement
 {
+    private readonly ObjectConstructionOwnership? _ownership;
+    private readonly DetachedLeafRetirementReceipt? _leaf;
+    private readonly IReadOnlyList<XRObjectBase> _objects;
+    private readonly IReadOnlyList<ObjectConstructionIdentity> _sourceIdentities;
     private readonly Dictionary<XRWorldObjectBase, OwnedHierarchyRetirementEntry> _entries = new(ReferenceEqualityComparer.Instance);
     private readonly int _thread = Environment.CurrentManagedThreadId;
     private readonly Dictionary<XRObjectBase, ObjectConstructionIdentity> _identities = new(ReferenceEqualityComparer.Instance);
     internal HierarchyStructuralReservation Reservation { get; private set; } = null!;
+    internal bool IsConfirmedDestroyed(XRWorldObjectBase value)
+        => _entries.TryGetValue(value, out OwnedHierarchyRetirementEntry? entry) &&
+           entry.Destroyed && entry.CleanupComplete;
+
+    internal OwnedHierarchyRetirement(ObjectConstructionOwnership ownership)
+    {
+        ArgumentNullException.ThrowIfNull(ownership);
+        _ownership = ownership;
+        _objects = ownership.Objects;
+        _sourceIdentities = ownership.Identities;
+    }
+
+    internal OwnedHierarchyRetirement(DetachedLeafRetirementReceipt leaf,
+        IReadOnlyList<XRObjectBase> objects, IReadOnlyList<ObjectConstructionIdentity> identities)
+    {
+        _leaf = leaf;
+        _objects = objects;
+        _sourceIdentities = identities;
+    }
 
     internal void Execute()
     {
-        if (!ownership.HasSealedIdentities)
+        if (_ownership is not null && !_ownership.HasSealedIdentities)
             throw new InvalidOperationException("Owned cleanup requires sealed construction identities.");
-        foreach (ObjectConstructionIdentity identity in ownership.Identities)
+        foreach (ObjectConstructionIdentity identity in _sourceIdentities)
             _identities.Add(identity.Target, identity);
         List<XRWorldObjectBase> objects = [];
-        foreach (XRObjectBase value in ownership.Objects)
+        foreach (XRObjectBase value in _objects)
         {
             Type type = value.GetType();
             if (value is SceneNode or TransformBase or XRComponent)
@@ -38,7 +61,7 @@ internal sealed class OwnedHierarchyRetirement(ObjectConstructionOwnership owner
         Reservation = reservation;
         lock (SceneRootCollection.MutationGate)
         {
-            foreach (ObjectConstructionIdentity identity in ownership.Identities)
+            foreach (ObjectConstructionIdentity identity in _sourceIdentities)
                 if (!identity.IsCurrent)
                     throw new InvalidOperationException("An allocation changed lifetime before owned cleanup admission.");
             foreach (XRWorldObjectBase value in objects)
@@ -124,7 +147,9 @@ internal sealed class OwnedHierarchyRetirement(ObjectConstructionOwnership owner
 
     private void RequireOwnedList<T>(EventList<T> list) where T : XRWorldObjectBase
     {
-        if (!ownership.Contains(list) || list.GetType() != typeof(EventList<T>) ||
+        bool retained = _ownership is not null ? _ownership.Contains(list) : _leaf?.Contains(list) == true;
+        if (!retained ||
+            list.GetType() != typeof(EventList<T>) ||
             list.GetMutationAuthority() is not HierarchyListAuthority<T>)
             throw new InvalidOperationException("An owned hierarchy has borrowed or unsupported structural storage.");
     }
@@ -155,7 +180,7 @@ internal sealed class OwnedHierarchyRetirement(ObjectConstructionOwnership owner
         {
             foreach (OwnedHierarchyRetirementEntry entry in _entries.Values)
                 entry.Validate();
-            foreach (ObjectConstructionIdentity identity in ownership.Identities)
+            foreach (ObjectConstructionIdentity identity in _sourceIdentities)
                 if (identity.Target is not XRWorldObjectBase && !identity.IsCurrent)
                     throw new InvalidOperationException("Owned storage changed lifetime during cleanup.");
         }
@@ -199,6 +224,13 @@ internal sealed class OwnedHierarchyRetirement(ObjectConstructionOwnership owner
                 throw new InvalidOperationException("Owned destruction was vetoed or omitted canonical cleanup.");
             entry.Destroyed = true;
             Validate();
+        }
+        catch
+        {
+            // A Destroyed observer can throw after canonical destruction commits.
+            if (permit.Returned && value.IsDestroyed && entry.CleanupComplete)
+                entry.Destroyed = true;
+            throw;
         }
         finally { value.ClearOwnedDestructionPermit(permit); }
     }

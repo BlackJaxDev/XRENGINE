@@ -7,6 +7,10 @@ namespace XREngine.Scene;
 public sealed partial class SceneNode
 {
     private Dictionary<SceneRootCollection, int>? _sceneRootMemberships;
+    private int _hasEnteredRootCollection;
+
+    internal bool HasEnteredRootCollection => Volatile.Read(ref _hasEnteredRootCollection) != 0;
+    private void MarkRootCollectionAdoption() => Volatile.Write(ref _hasEnteredRootCollection, 1);
 
     /// <summary>Copies this node's exact scene root owners at an authoring or release boundary.</summary>
     public SceneRootMembership[] CaptureSceneRootMemberships()
@@ -44,6 +48,7 @@ public sealed partial class SceneNode
     {
         _sceneRootMemberships!.TryGetValue(roots, out int count);
         _sceneRootMemberships[roots] = checked(count + 1);
+        MarkRootCollectionAdoption();
     }
 
     internal void RemoveSceneRootOccurrence(SceneRootCollection roots)

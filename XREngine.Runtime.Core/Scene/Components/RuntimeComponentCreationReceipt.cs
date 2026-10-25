@@ -18,6 +18,7 @@ internal sealed class RuntimeComponentCreationReceipt
     private readonly IRuntimeWorldContext? _world;
     private readonly Func<bool>? _validateOwner;
     private ObjectConstructionIdentity? _componentIdentity;
+    private ObjectConstructionIdentity? _originalClaimedIdentity;
     private bool _worldAssigned;
     private bool _insertionStarted;
     private bool _insertionCommitted;
@@ -25,6 +26,7 @@ internal sealed class RuntimeComponentCreationReceipt
     private bool _cleanupStarted;
     private bool _cleanupCompleted;
     private bool _started;
+    private bool _finished;
 
     internal RuntimeComponentCreationReceipt(SceneNode node, Func<bool>? validateOwner = null)
     {
@@ -46,6 +48,12 @@ internal sealed class RuntimeComponentCreationReceipt
     internal XRComponent? Component { get; private set; }
     internal Exception? Failure { get; private set; }
     internal SceneNode Node => _node;
+    internal bool HasStarted => _started;
+    internal bool HasFinished => _finished;
+    internal bool CleanupStarted => _cleanupStarted;
+    internal bool CleanupCompleted => _cleanupCompleted;
+    internal ObjectConstructionIdentity? ClaimedIdentity => _originalClaimedIdentity;
+    internal void MarkFinished() => _finished = true;
 
     internal void BeginAttempt()
     {
@@ -58,6 +66,7 @@ internal sealed class RuntimeComponentCreationReceipt
     {
         Component = component;
         _componentIdentity = ObjectConstructionIdentity.Capture(component);
+        _originalClaimedIdentity = _componentIdentity;
     }
 
     internal void RecordFailure(Exception failure) => Failure = failure;
