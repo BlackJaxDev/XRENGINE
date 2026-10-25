@@ -7,17 +7,13 @@ Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 ## Current State
 
-The code reconciliation is **49 of 60 implementation items complete**; 11 items and four original owner decisions remain. Worker layout, retained screen publication, common controls, virtual collections, and native panels are implemented. Guarded scene-root and structural-list ownership, profiler views, Vulkan image/text cache contracts, and an explicit canvas-only OpenGL world route are implemented. Text layout results are cached by all glyph-placement inputs. Native UI failures are reported by code through `UIFailureDiagnostics`. Publication is complete: sparse capture visits only changed subtrees, count-changing edits splice only touched record pages, and the batch collector visits only new record pages. Headless tests and managed editor/test compilation pass. Broader world output, complete text behavior, safe editor mutations, and editor parity remain open. Three additional proposals await approval. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md), [retained execution](../../../architecture/ui/05-Retained-Execution.md), and [validation plan](../../testing/ui/native-ui-validation.md) for evidence and limits. ImGui remains the default editor.
+The code reconciliation is **50 of 60 implementation items complete**; 10 items and four original owner decisions remain. Worker layout, retained screen publication, common controls, virtual collections, and native panels are implemented. Guarded scene-root and structural-list ownership, profiler views, Vulkan image/text cache contracts, and an explicit canvas-only OpenGL world route are implemented. Text layout results are cached by all glyph-placement inputs. Native UI failures are reported by code through `UIFailureDiagnostics`. Publication is complete: sparse capture visits only changed subtrees, count-changing edits splice only touched record pages, and the batch collector visits only new record pages. Headless tests and managed editor/test compilation pass. Text fields place the caret from the presented layout. Broader world output, safe editor mutations, and editor parity remain open. Three additional proposals await approval. See the [checkpoint record](../../progress/ui/retained-ui-checkpoint.md), [retained execution](../../../architecture/ui/05-Retained-Execution.md), and [validation plan](../../testing/ui/native-ui-validation.md) for evidence and limits. ImGui remains the default editor.
 
 ## Open Code Items
 
 ### Phase 4: Persistent Render Data And Clipping
 
 - [ ] Complete hierarchical clipping for direct-world render commands. `UIClipRegion`, `UIBatchCollector`, `UIRenderableComponent`, and render backends. Screen and offscreen 2D records already carry nested crop independently of material identity. The bounded combined-program OpenGL route now uses frozen canvas-local fragment crop. Vulkan world publication and the other unsupported world output profiles remain open. Done when the remaining world route clips nested regions through a defined OpenGL and Vulkan contract, and publication tests preserve mixed batch/fallback painter order. Native acceptance remains in the validation plan.
-
-### Phase 5: Retained Controls And Virtual Collections
-
-- [ ] Complete text selection, grapheme-aware navigation, caret hit testing, undo/redo, and platform IME composition. `UITextInputComponent`, text layout, and input integration. Done when edits preserve text identity during layout changes and IME candidate bounds use the presented generation.
 
 ### Phase 7: Editor Adoption
 

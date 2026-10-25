@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Rendering/UITextMultilineSubmitTests.cs" Link="Rendering/UITextMultilineSubmitTests.cs" />
+    <Compile Include="../Rendering/UITextPointerCaretTests.cs" Link="Rendering/UITextPointerCaretTests.cs" />
     <Compile Include="../Rendering/UITabFocusRestoreTests.cs" Link="Rendering/UITabFocusRestoreTests.cs" />
     <Compile Include="../Core/OwnedObjectConstructionTests.cs" Link="Core/OwnedObjectConstructionTests.cs" />
     <Compile Include="../Core/ObjectLifetimeRevisionTests.cs" Link="Core/ObjectLifetimeRevisionTests.cs" />

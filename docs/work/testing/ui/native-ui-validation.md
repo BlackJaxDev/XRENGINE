@@ -36,6 +36,20 @@ See the [investigation record](../../investigations/ui/retained-ui-integration.m
 for intermediate failures and repairs. Windows, OpenGL/Vulkan, visual, IME, native
 resource, benchmark, and equal-workload ImGui acceptance remain open.
 
+## Text Pointer Caret Validation (2026-10-25)
+
+This run checks pointer caret placement and drag selection in text fields. It used
+the same Linux SDK setup and sequential `Tools/Invoke-AgentBuild.ps1` builds as the
+runs below. The changed source files were hashed before the builds and were
+unchanged after them.
+
+| Check | Result | Limit |
+|---|---|---|
+| Text pointer caret tests | Passed. `UITextPointerCaretTests` checks the nearest line and nearest grapheme boundary, press and drag selection from the press packet, and rejection after an edit or for another field. `TextCaretSelectionAndButtonHoverPreserveChromeSegments` checks that a real capture freezes the typed text's layout in the field hit. | Headless; synthetic pointer calls, not native mouse input. |
+| Full headless regression suite | Passed: 1045/1045, no warnings, failures, or skips. | The headless project only. |
+| Editor and desktop unit test compilation | Passed: 0 warnings, 0 errors, with `EnableWindowsTargeting=true`. | Compilation only; no Windows test executed. |
+| Native mouse, IME, bidirectional and fallback-font caret checks | Not run. | The text and IME row of the acceptance matrix stays open. |
+
 ## Collector Page Reuse Validation (2026-10-24)
 
 This run checks page reuse in `UIBatchCollector`. It used the same Linux SDK setup

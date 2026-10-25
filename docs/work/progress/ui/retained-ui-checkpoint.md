@@ -6,8 +6,8 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **49 of 60 implementation items are complete**.
-The active TODO has 11 code items and four owner decisions. Later sections
+Latest code reconciliation: **50 of 60 implementation items are complete**.
+The active TODO has 10 code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
@@ -1153,3 +1153,19 @@ The canvas walk state still moves record starts with one pass of integer additio
 over its node arrays; this is recorded as a limit in the architecture document. The
 full headless run passed **1043 of 1043 tests**. Editor and desktop test builds
 passed with 0 warnings and errors.
+
+## Text pointer carets
+
+The reconciliation is now **50 of 60**. This increment closes the text editing item.
+
+- A text field hit freezes the layout that the same capture gives to the text render
+  record, and the text that it places (`UITextCaretHitMetadata`).
+- A press places the caret at the nearest grapheme boundary on the nearest line. A
+  drag extends the selection with the press packet's layout. A layout of other text
+  never places the caret.
+- Selection, grapheme navigation, undo/redo, composition state, and presented IME
+  candidate placement were already implemented.
+
+The full headless run passed **1045 of 1045 tests**. Editor and desktop test builds
+passed with 0 warnings and errors. Native mouse and IME acceptance stays in the
+validation plan.

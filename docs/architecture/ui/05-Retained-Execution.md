@@ -441,6 +441,16 @@ selection, and candidate placement rather than inventing logical geometry.
 Logical edits can continue while a newer layout is pending. Text fields provide selection, grapheme navigation,
 undo/redo, and composition state.
 
+A text field hit freezes `UITextCaretHitMetadata`: the field, the text layout that
+the same capture gives to the text render record, and the text that the layout
+places. A press places the caret at the grapheme boundary nearest to the point on
+the nearest placed line. Shift extends the selection. A drag and its release use the
+press packet's layout, so a newer layout cannot move the anchor. The field uses the
+frozen layout only while it holds the same text. After an edit the old layout does
+not place the caret, and the next capture freezes the layout of the new text. A
+field with incomplete grapheme stops publishes no caret metadata. Text fields
+receive pointer moves for drag selection.
+
 The desktop IME adapter uses existing Windows IMM32 APIs. Composition events carry
 an immutable focus identity and focus epoch. A separate interaction revision
 rejects recycled or disabled targets. Candidate placement uses

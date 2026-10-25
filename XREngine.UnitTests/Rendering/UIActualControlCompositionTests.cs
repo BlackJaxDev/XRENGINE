@@ -68,6 +68,16 @@ public sealed class UIActualControlCompositionTests
                 text.TryGetCurrentLayoutResult(out var layout) && layout.Glyphs.Length == 5);
             AssertChromeUnchanged(baseline, typed);
             AssertOwnerChanged(baseline, typed, overlayOwner);
+            // The field hit freezes the presented layout of the typed text for caret placement.
+            text.TryGetCurrentLayoutResult(out UITextLayoutResult typedLayout).ShouldBeTrue();
+            UITextCaretHitMetadata? caretHit = null;
+            for (int index = 0; index < typed.HitRecordCount; index++)
+                if (typed.GetHitRecord(index).PointerGeometry.Metadata is UITextCaretHitMetadata hit)
+                    caretHit = hit;
+            caretHit.ShouldNotBeNull();
+            caretHit.Owner.ShouldBeSameAs(input);
+            caretHit.Text.ShouldBe("abcde");
+            caretHit.Layout.ShouldBeSameAs(typedLayout);
 
             input.CursorPosition = 2;
             input.SelectionAnchor = 2;

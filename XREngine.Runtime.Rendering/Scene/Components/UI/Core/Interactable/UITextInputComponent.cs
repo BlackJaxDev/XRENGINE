@@ -39,6 +39,8 @@ namespace XREngine.Rendering.UI
         public UITextInputComponent() : base()
         {
             _keyRepeatTimer = new(this);
+            // A pointer drag over the field extends the text selection.
+            NeedsMouseMove = true;
         }
 
         public UITextComponent TextComponent => GetSiblingComponent<UITextComponent>(true)!;
@@ -580,6 +582,7 @@ namespace XREngine.Rendering.UI
             Binding = null;
             _undo.Clear();
             _redo.Clear();
+            _pointerSelection = null;
             SelectionAnchor = CursorPosition;
             base.CancelForRecycle();
         }
