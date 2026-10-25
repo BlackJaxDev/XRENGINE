@@ -4,6 +4,7 @@ using XREngine.Core.Attributes;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering.UI
@@ -141,6 +142,10 @@ namespace XREngine.Rendering.UI
         private SceneNode? _submenuNode;
         private UIContextMenuItemComponent? _submenuRow;
         private bool _openingSubmenu;
+        private SceneNode? _contentRoot;
+        private ObjectConstructionIdentity _contentRootIdentity;
+        private ObjectConstructionIdentity _contentTransformIdentity;
+        private ObjectConstructionIdentity _contentParentIdentity;
 
         /// <summary>
         /// Whether the context menu is currently visible and accepting input.
@@ -210,27 +215,38 @@ namespace XREngine.Rendering.UI
             Action<SceneNode>? contentBuilder = null, float contentHeight = 0, bool passive = false,
             bool subscribeForDismiss = true)
         {
-            if (_tearingDown || IsDestroyed || _clearingMenuItems || _hiding)
+            if (_tearingDown || IsDestroyed || IsDestroyQueued)
                 return;
             ArgumentNullException.ThrowIfNull(items);
             for (int index = 0; index < items.Length; index++)
                 ArgumentNullException.ThrowIfNull(items[index], nameof(items));
+            RequestTransition(new(true, true, parentLocalPosition,
+                items.Length == 0 ? [] : (ContextMenuItem[])items.Clone(), provider,
+                contentBuilder, contentHeight, passive, subscribeForDismiss, ItemHeight, SeparatorHeight));
+        }
+
+        private void ExecuteShow(UIContextMenuRequest request)
+        {
+            Vector2 parentLocalPosition = request.Position;
+            ContextMenuItem[] items = request.Items!;
+            IVirtualListProvider? provider = request.Provider;
+            Action<SceneNode>? contentBuilder = request.ContentBuilder;
+            float contentHeight = request.ContentHeight;
+            bool passive = request.Passive;
+            bool subscribeForDismiss = request.SubscribeForDismiss;
             ulong showRevision = ++_showRevision;
             _showIdentity = ObjectConstructionIdentity.Capture(this);
             _showNodeIdentity = ObjectConstructionIdentity.Capture(SceneNode);
             _showTransformIdentity = ObjectConstructionIdentity.Capture(Transform);
             _ = BoundableTransform.GetCanvasTransform() ??
                 throw new InvalidOperationException("A context menu needs an attached UI canvas.");
-            // The caller keeps its array. Copy it and the row sizes so that callbacks cannot
-            // change the rows after the height is computed.
-            items = items.Length == 0 ? [] : (ContextMenuItem[])items.Clone();
-            float itemHeight = ItemHeight;
-            float separatorHeight = SeparatorHeight;
-            Hide(); // Dismiss any existing menu first
-            if (!HasCurrentShowLifetime(showRevision))
+            float itemHeight = request.ItemHeight;
+            float separatorHeight = request.SeparatorHeight;
+            HideNow(clearMenuItems: true);
+            if (_pendingTransition is not null || !HasCurrentShowLifetime(showRevision))
                 return;
             ClearMenuItems(); // Remove content retained when the owner deactivated.
-            if (!HasCurrentShowLifetime(showRevision))
+            if (_pendingTransition is not null || !HasCurrentShowLifetime(showRevision))
                 return;
 
             if ((items.Length == 0 && provider is null && contentBuilder is null) || provider is { Count: <= 0 })
@@ -372,6 +388,13 @@ namespace XREngine.Rendering.UI
 
         private void HideCore(bool clearMenuItems)
         {
+            if (!_isOpen && !_transitioning)
+                return;
+            RequestTransition(new(false, clearMenuItems, default));
+        }
+
+        private void HideNow(bool clearMenuItems)
+        {
             if (!_isOpen || _tearingDown || _hiding)
                 return;
             _hiding = true;
@@ -421,9 +444,9 @@ namespace XREngine.Rendering.UI
             SceneNode listParent = SceneNode;
             if (ordinaryItems)
             {
-                SceneNode scrollNode = SceneNode.NewChild();
+                SceneNode scrollNode = CreateContentRoot(new UIScrollableTransform());
                 scrollNode.Name = "ContextMenuScroll";
-                UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+                UIScrollableTransform scroll = (UIScrollableTransform)scrollNode.Transform;
                 scroll.MinAnchor = Vector2.Zero;
                 scroll.MaxAnchor = Vector2.One;
                 scroll.Width = null;
@@ -434,9 +457,9 @@ namespace XREngine.Rendering.UI
                 scrollInput.ConsumeWheelAtBoundary = true;
                 listParent = scrollNode;
             }
-            var listNode = listParent.NewChild();
+            var listNode = ordinaryItems ? listParent.NewChild() : CreateContentRoot(new UIListTransform());
             listNode.Name = "ContextMenuList";
-            var listTfm = listNode.SetTransform<UIListTransform>();
+            var listTfm = ordinaryItems ? listNode.SetTransform<UIListTransform>() : (UIListTransform)listNode.Transform;
             listTfm.DisplayHorizontal = false;
             listTfm.ItemSpacing = 0;
             listTfm.Padding = new Vector4(0.0f);
@@ -588,21 +611,36 @@ namespace XREngine.Rendering.UI
             ReleaseItemButtons();
             try
             {
-                // Menu content owns its nodes. Destroy them through the scene hierarchy so
-                // their components unsubscribe before the guarded child list is changed.
-                while (!_tearingDown && !IsDestroyed && SceneNode.Transform.Children.Count > 0)
-                {
-                    var child = SceneNode.Transform.Children[^1];
-                    if (child.SceneNode is { } node)
-                        node.Destroy(true);
-                    else
-                        child.Parent = null;
-                }
+                SceneNode? root = _contentRoot;
+                bool owned = root is not null && _contentRootIdentity.IsCurrent &&
+                    _contentTransformIdentity.IsCurrent && _contentParentIdentity.IsCurrent &&
+                    ReferenceEquals(root.Transform, _contentTransformIdentity.Target) &&
+                    ReferenceEquals(root.Transform.Parent, _contentParentIdentity.Target) &&
+                    ReferenceEquals(Transform, _contentParentIdentity.Target);
+                _contentRoot = null;
+                _contentRootIdentity = default;
+                _contentTransformIdentity = default;
+                _contentParentIdentity = default;
+                // Only this menu's captured content belongs to this operation. A callback
+                // can move it or add another owner's child while the menu is open.
+                if (owned && root is { IsDestroyed: false })
+                    root.Destroy(true);
             }
             finally
             {
                 _clearingMenuItems = false;
             }
+        }
+
+        private SceneNode CreateContentRoot(UIBoundableTransform transform)
+        {
+            SceneNode root = new("ContextMenuContent", transform);
+            _contentRoot = root;
+            _contentRootIdentity = ObjectConstructionIdentity.Capture(root);
+            _contentTransformIdentity = ObjectConstructionIdentity.Capture(transform);
+            _contentParentIdentity = ObjectConstructionIdentity.Capture(Transform);
+            transform.SetParent(Transform, false, EParentAssignmentMode.Immediate);
+            return root;
         }
 
         private bool HasCurrentShowLifetime(ulong showRevision)
@@ -982,6 +1020,7 @@ namespace XREngine.Rendering.UI
         protected override void OnDestroying()
         {
             _tearingDown = true;
+            _pendingTransition = null;
             _showRevision++;
             _awaitingPlacement = false;
             _isOpen = false;
@@ -1003,6 +1042,10 @@ namespace XREngine.Rendering.UI
             _contentBuilder = null;
             _virtualList = null;
             _placementCanvas = null;
+            _contentRoot = null;
+            _contentRootIdentity = default;
+            _contentTransformIdentity = default;
+            _contentParentIdentity = default;
             ReleaseItemButtons();
             Dismissed = null;
             base.OnDestroying();

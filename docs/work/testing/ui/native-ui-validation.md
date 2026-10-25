@@ -7,16 +7,19 @@ Design: [Native UI retained rendering](../../design/ui/native-ui-retained-render
 
 ## Retained UI Integration (2026-10-23)
 
-Latest continuation check (2026-10-25): headless build169 passed with zero
-warnings/errors, and run112 passed **1,112/1,112** tests with no failures or skips.
+Latest continuation check (2026-10-25): headless build174 passed with zero
+warnings/errors, and run114 passed **1,126/1,126** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
 Failed rebuilds also retire their partial controls; both new gate cases failed
 before the repair. Menu lifetime and scroll-navigation regressions also failed
 before repair. Initial submenu-focus regressions also failed before the shared
-request replaced its old retry. Desktop test build41 compiled the editor and test assembly with zero
-warnings/errors. The new `NativeToolPanelStateTests` compiled but did not execute
+request replaced its old retry. Menu transition tests also cover coalesced
+Show/Hide requests, stale owners, builder failures, and content ownership.
+Desktop test build42 compiled the editor and test assembly with zero warnings/errors.
+All 10,800 source inputs stayed unchanged through these checks.
+The new `NativeToolPanelStateTests` compiled but did not execute
 on this Linux host. Check console category/auto-scroll, profiler view, and settled
 scroll saves through the active dock-tree host on Windows. See the
 [continuation comparison](../../investigations/ui/native-ui-continuation-comparison.md)

@@ -232,3 +232,44 @@ Desktop build41 compiled the editor and desktop tests with zero warnings/errors
 in 3m40.59s. All 10,797 source inputs stayed unchanged through the final checks.
 The old retry is absent from source. Full construction/teardown, native window,
 keyboard/IME, and GPU acceptance remain open. No broad TODO item was closed.
+
+## Menu Transition Reentry
+
+The next panel audit found that the native asset browser has no row context menu.
+The existing ImGui delete helper can fall back to permanent deletion. Some asset
+type actions open only ImGui tools. Those actions were not added to the native
+route. The persistent recovery proposal still needs owner approval.
+
+Shared menu construction needs a prerequisite repair. A Show callback could
+replace the menu before the outer call finished setting its size. Show requests
+during Hide or child cleanup were discarded. A failed custom builder could leave
+partial live content. Cleanup also removed every child of the menu node, including
+children that the menu did not create.
+
+The candidate serializes Show and Hide through one bounded transition loop. A
+callback replaces one pending request; the latest request runs after the current
+transition. The request captures the item array, row sizes, and owner identities.
+A changed owner lifetime or parent rejects the queued request. Reopen loops stop
+with an error. Cleanup tracks the content root and its exact transform and parent;
+it preserves unrelated children and content transferred to another owner.
+
+Build170 observed an incomplete edit snapshot and failed with one missing-type
+error. It is not a baseline or candidate validation result. Fresh build171 passed
+with zero warnings/errors in 1m46.17s. Targeted run113 passed 56/64 in 2.484s.
+The candidate replaced its content transform after capturing its identity, so
+cleanup skipped its own content. Construction now uses that captured transform.
+Build172 then failed with one local-name shadowing error in the request guard.
+The local name was corrected. Build173 failed with one fixture error: `SceneNode`
+does not expose `Children`. The test now reads children through its transform.
+Review also found that a queued request from Dismissed must stop the outer Show
+before it builds stale content. The existing dismissal/reopen test covers that
+case and remains unchanged.
+
+Final headless build174 passed with zero warnings/errors in 1m21.59s. Full
+run114 passed **1,126/1,126** in 20.780s, with no failures, warnings, or skips.
+This adds 14 cases for replacement size, callbacks during Hide, builder failure,
+unrelated/transferred children, latest-request coalescing, stale owner identities,
+and bounded reopen loops. All 10,800 source inputs stayed unchanged through the
+headless checks and matching desktop build42. That build compiled the editor and
+desktop tests with zero warnings/errors in 3m40.47s. Individual child callback
+failure/ownership paths and native acceptance remain open; no broad item closes.

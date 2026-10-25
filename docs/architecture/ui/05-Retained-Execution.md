@@ -789,8 +789,21 @@ Newer focus intent, another virtual request, or a retired input source cancels
 the initial request. Mouse opening cancels a pending keyboard-focus request.
 Deferred focus requires a nonzero `FocusIntentRevision` from the input adapter.
 
-Full callback-safe construction/teardown remains open. This contract does not
-establish native keyboard or IME acceptance.
+Show and Hide use `UIContextMenuComponent.Transitions` to serialize callback
+reentry. One pending request keeps the latest intent. It captures the item array,
+row sizes, and component/node/transform/parent identities. A stale owner rejects
+the request. A request from old-content dismissal supersedes the outer Show
+before it builds rows. A callback loop stops after 32 transitions and reports an
+error. A failed content builder closes and releases its partial menu; cleanup
+errors remain visible rather than being swallowed.
+
+The menu records its content root, transform, and parent. Hide destroys that
+captured root only while those identities and its attachment still match. It
+does not sweep unrelated children or destroy content transferred to another
+owner. Requests and content receipts are cleared on terminal component cleanup.
+Full callback-safe construction/teardown, including failures and ownership
+changes inside individual child construction/destruction callbacks, remains open.
+This contract does not establish native keyboard or IME acceptance.
 
 ## Composition boundaries and split handles
 

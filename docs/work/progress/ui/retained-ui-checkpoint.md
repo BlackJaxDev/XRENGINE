@@ -1251,3 +1251,19 @@ the editor and tests with zero warnings/errors. The 10,797-file source snapshot
 stayed unchanged. This closes initial submenu-focus cancellation in code and
 headless tests; construction/teardown and native acceptance remain open. The
 broader reconciliation remains **50/60**.
+
+## Menu Transition Ownership
+
+Show and Hide now serialize callback requests through a bounded loop. The latest
+pending request wins and retains its item snapshot and exact owner identities.
+Dismissal can replace an outer Show without building its stale content. A failed
+content builder closes its partial menu. Cleanup removes only the captured content
+root and preserves unrelated children or content transferred to another owner.
+
+Headless build174 passed with zero warnings/errors. Full run114 passed
+**1,126/1,126**, with no failures, warnings, or skips. This adds 14 cases; existing
+dismissal/reopen regressions also pass. Desktop build42 compiled the editor and
+desktop tests with zero warnings/errors. All 10,800 source inputs stayed unchanged.
+Individual child callback failure/ownership paths remain open, as do native
+keyboard, IME, GPU, and editor acceptance. The count remains **50/60**. The asset
+browser audit did not add a row menu, permanent deletion, or ImGui-only actions.
