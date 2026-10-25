@@ -1209,3 +1209,12 @@ zero warnings/failures/skips. Desktop build38 compiles the editor and tests with
 zero warnings/errors. All 10,795 source inputs stayed unchanged. This establishes
 the helper used by the active host, not live Windows, multi-window, or GPU behavior.
 The recorded count remains **50/60**; broader host and transfer lifetime work is open.
+
+## Failed Dock Rebuild Admission
+
+A failed rebuild now retires its callback revision before the gate opens. The
+original error remains visible and a later rebuild can run. Two new regressions
+failed before the repair. Build158 and full run103 pass **1,062/1,062** tests with
+zero warnings/failures/skips. Desktop build39 compiles the editor and tests with
+zero warnings/errors. The 10,795-file source snapshot stayed unchanged. Live
+window recovery and the broader docking item remain open; the count is **50/60**.

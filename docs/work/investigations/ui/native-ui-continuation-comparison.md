@@ -130,3 +130,20 @@ cross-window transfer, play-mode, and native-window acceptance remain open.
 Desktop test build38 passed with zero warnings/errors in 1m32.21s. It compiled
 the editor and desktop tests against the unchanged 10,795-file source snapshot.
 No Windows or GPU execution is implied. No broad TODO item was closed.
+
+## Failed Dock Rebuild Callbacks
+
+`NativeDockRenderGate` reopened after an exception without retiring the failed
+pass revision. Partial controls from that pass could then pass `IsCurrent`.
+Build157 passed, but targeted run102 failed both new cases: a construction error
+and the four-pass nested-request limit each admitted the failed revision.
+
+The catch path now advances the revision before the gate opens. It propagates
+the original error and permits a later rebuild. Build158 passed with zero
+warnings/errors in 20.86s. Full run103 passed **1,062/1,062** in 21.643s, without
+failures, warnings, or skips. This is a callback-admission check, not live dock
+recovery acceptance.
+
+Desktop build39 compiled the editor and desktop tests with zero warnings/errors
+in 3m19.60s. All 10,795 source inputs stayed unchanged through the final headless
+build, test run, and desktop build. No broad TODO item was closed.

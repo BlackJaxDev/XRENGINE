@@ -77,6 +77,28 @@ public sealed class NativeDockRenderGateTests
         gate.Run(() => { }).ShouldBeTrue();
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    public void FailedRebuildRetiresCallbacksFromItsPartialControls(bool repeatedRequests)
+    {
+        NativeDockRenderGate gate = new();
+        ulong failedRevision = 0;
+        Should.Throw<InvalidOperationException>(() => gate.Run(() =>
+        {
+            failedRevision = gate.Revision;
+            if (repeatedRequests)
+                gate.Run(() => { });
+            else
+                throw new InvalidOperationException("A control failed during construction.");
+        }));
+        gate.IsRendering.ShouldBeFalse();
+        gate.IsCurrent(failedRevision).ShouldBeFalse();
+
+        gate.Run(() => { }).ShouldBeTrue();
+        gate.IsCurrent(failedRevision).ShouldBeFalse();
+        gate.IsCurrent(gate.Revision).ShouldBeTrue();
+    }
+
     [Test]
     public void ClosingTheLastTabKeepsAReopenableStack()
     {

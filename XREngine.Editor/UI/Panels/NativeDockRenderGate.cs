@@ -48,6 +48,12 @@ internal sealed class NativeDockRenderGate
                         "Native dock rebuild callbacks kept requesting rebuilds.");
             }
         }
+        catch
+        {
+            // Partial controls from a failed pass must not become active when the gate opens.
+            Revision++;
+            throw;
+        }
         finally
         {
             _pending = false;

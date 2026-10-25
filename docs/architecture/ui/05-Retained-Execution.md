@@ -535,7 +535,9 @@ move, resize, close, reopen, and malformed-state checks. `NativeDockTreeHost` co
 changes retain panel instances, deactivate/detach closed slots, and destroy only
 obsolete structural nodes. `NativeDockRenderGate` serializes rebuilds: a rebuild
 that a callback requests during a rebuild runs once after it, and repeated requests
-stop after four passes with an error. Each pass has a revision. Tab, split, drop,
+stop after four passes with an error. A failed pass retires its revision before
+the gate opens, so its partial controls cannot act. The original error propagates
+and a later rebuild can run. Each pass has a revision. Tab, split, drop,
 drag, and action-menu callbacks act only when their pass is current, no rebuild
 runs, and their stack is still in the tree. Slot deactivation callbacks can
 reparent, replace, or destroy a slot; the host then detaches only the registered
