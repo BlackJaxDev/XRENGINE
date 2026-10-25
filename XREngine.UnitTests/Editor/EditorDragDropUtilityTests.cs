@@ -4,6 +4,7 @@ using Shouldly;
 using System.Numerics;
 using System.Reflection;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Editor.UI;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
@@ -18,11 +19,14 @@ namespace XREngine.UnitTests.Editor;
 [TestFixture, NonParallelizable]
 public sealed class EditorDragDropUtilityTests
 {
-    [TestCase(false, false)]
-    [TestCase(true, false)]
-    [TestCase(false, true)]
+    [TestCase(false, false, 0)]
+    [TestCase(true, false, 0)]
+    [TestCase(false, true, 0)]
+    [TestCase(false, false, 1)]
+    [TestCase(false, false, 2)]
+    [TestCase(false, false, 3)]
     public void RecycledDragSource_LosesItsCapturedIdentityBeforeDrop(bool disposeHoveredTarget,
-        bool throwOnCancellation)
+        bool throwOnCancellation, int regeneratedComponent)
     {
         using UITestShaderScope shaders = new();
         UICanvasTransform canvasTransform = new() { Width = 100, Height = 100 };
@@ -96,6 +100,23 @@ public sealed class EditorDragDropUtilityTests
                 session.GetType().GetProperty("HoveredTarget")!.GetValue(session).ShouldBeNull();
             }
 
+            XRObjectBase? regenerated = regeneratedComponent switch
+            {
+                1 => button,
+                2 => input,
+                3 => canvas,
+                _ => null,
+            };
+            if (regenerated is not null)
+            {
+                Guid oldId = regenerated.ID;
+                regenerated.AdoptPersistentID(Guid.NewGuid());
+                regenerated.AdoptPersistentID(oldId);
+                session.GetType().GetProperty("IsCurrent")!.GetValue(session).ShouldBe(false);
+                EditorDragDropUtility.TryGetActivePayload(out _).ShouldBeFalse();
+                hovered.ShouldBeFalse();
+            }
+
             button.CancelForRecycle();
             cancellationStarted = true;
             if (throwOnCancellation)
@@ -160,6 +181,91 @@ public sealed class EditorDragDropUtilityTests
         {
             handle?.Dispose();
             node.Destroy(true);
+        }
+    }
+
+    [TestCase(false, false, 1)]
+    [TestCase(true, false, 0)]
+    [TestCase(false, true, 0)]
+    public void NativeReleaseUsesOriginalPressAndRejectsRecycledSource(
+        bool recycleDuringDropAdmission, bool cancel, int expectedDrops)
+    {
+        using UITestShaderScope shaders = new();
+        UICanvasTransform canvasTransform = new() { Width = 100, Height = 100 };
+        SceneNode root = new("Native drag canvas", canvasTransform) { IsActiveSelf = false };
+        root.SetWorldContext(new TestWorldContext());
+        IDisposable? targetRegistration = null;
+        IDictionary sessions = (IDictionary)typeof(EditorDragDropUtility)
+            .GetField("_sessions", BindingFlags.Static | BindingFlags.NonPublic)!
+            .GetValue(null)!;
+        UICanvasInputComponent? registeredInput = null;
+        try
+        {
+            UICanvasComponent canvas = root.AddComponent<UICanvasComponent>()!;
+            UICanvasInputComponent input = root.AddComponent<UICanvasInputComponent>()!;
+            registeredInput = input;
+            SceneNode sourceNode = new(root) { Name = "Native drag source" };
+            sourceNode.SetTransform<UIBoundableTransform>();
+            UIButtonComponent source = sourceNode.AddComponent<UIButtonComponent>()!;
+            SceneNode targetNode = new(root) { Name = "Native dock target" };
+            UIBoundableTransform targetTransform = targetNode.SetTransform<UIBoundableTransform>();
+            root.IsActiveSelf = true;
+            canvasTransform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => canvasTransform.PumpLayoutResults(), TimeSpan.FromSeconds(5))
+                .ShouldBeTrue();
+
+            int admissions = 0;
+            int drops = 0;
+            targetRegistration = EditorDragDropUtility.RegisterNativeDockTarget(targetTransform,
+                _ => { drops++; return true; },
+                _ =>
+                {
+                    if (recycleDuringDropAdmission && ++admissions == 2)
+                    {
+                        Guid oldId = source.ID;
+                        source.AdoptPersistentID(Guid.NewGuid());
+                        source.AdoptPersistentID(oldId);
+                    }
+                    return true;
+                },
+                (_, _) => true);
+            RuntimeDesktopDragTerminal terminal = new(7,
+                cancel ? RuntimeDesktopDragTerminalKind.Cancelled :
+                    RuntimeDesktopDragTerminalKind.Released,
+                new Vector2(40, 50), (nint)100, 400,
+                new Vector2(5, 6), new Vector2(100, 100));
+            NativeDockDragPointerProbe pointer = new()
+            {
+                Snapshot = new RuntimeDesktopDragPointerSnapshot(5, (nint)42, 20, 401,
+                    7, true, (nint)42, new Vector2(41, 51), (nint)100,
+                    default, default, default),
+            };
+            Type sessionType = typeof(EditorDragDropUtility).GetNestedType("DragSession",
+                BindingFlags.NonPublic)!;
+            object session = Activator.CreateInstance(sessionType,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                null, [source, input, canvas,
+                    new EditorDragDropUtility.DragPayload("Editor:dock-tab", new object()),
+                    Vector2.Zero, pointer, pointer.Snapshot, (Func<bool>)(() => true)], null)!;
+            sessions.Add(input, session);
+            pointer.Snapshot = pointer.Snapshot with
+            {
+                Sequence = 21,
+                PressSequence = 8,
+                Terminal = terminal,
+            };
+            typeof(EditorDragDropUtility).GetMethod("ProcessNativeDockDrag",
+                BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [session]);
+            drops.ShouldBe(expectedDrops);
+            sessions.Contains(input).ShouldBeFalse();
+            EditorDragDropUtility.IsDragging.ShouldBeFalse();
+        }
+        finally
+        {
+            targetRegistration?.Dispose();
+            if (registeredInput is not null)
+                sessions.Remove(registeredInput);
+            root.Destroy(true);
         }
     }
 

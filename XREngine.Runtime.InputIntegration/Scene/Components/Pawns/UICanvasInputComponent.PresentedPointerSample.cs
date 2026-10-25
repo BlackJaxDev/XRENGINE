@@ -124,7 +124,15 @@ public partial class UICanvasInputComponent
 
     private UIHitRecord? FindPresentedPointerHit(UIPublication publication, Vector2 position, out bool blocked)
     {
-        UIHitRecord? blocker = null;
+        UIHitRecord? result = FindPresentedPointerHitAndBlocker(publication, position, out UIHitRecord? blocker);
+        blocked = blocker is not null;
+        return result;
+    }
+
+    private UIHitRecord? FindPresentedPointerHitAndBlocker(UIPublication publication, Vector2 position,
+        out UIHitRecord? blocker)
+    {
+        blocker = null;
         for (int page = 0; page < publication.HitRecordPageCount; page++)
             foreach (ref readonly UIHitRecord record in publication.GetHitRecordPage(page))
                 if (record.BlocksInputBehind && IsCurrentHitRecord(record) && record.Contains(position) &&
@@ -142,7 +150,6 @@ public partial class UICanvasInputComponent
                     record.LayerIndex, record.IndexWithinLayer, prior.Depth, prior.LayerIndex, prior.IndexWithinLayer))
                     best = record;
             }
-        blocked = blocker is not null;
         return best;
     }
 

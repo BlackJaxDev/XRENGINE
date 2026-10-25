@@ -1,4 +1,5 @@
 using XREngine.Components;
+using XREngine.Rendering;
 using XREngine.Scene;
 
 namespace XREngine.Editor;
@@ -11,6 +12,8 @@ internal sealed class NativeDockWindowRegistration : XRComponent
     private bool _terminal;
     private ulong _registrationRevision;
     internal Func<string, bool>? ReceivePanel { get; private set; }
+    internal Func<string, string, bool>? ReceivePanelAtStack { get; private set; }
+    internal XRWindow? Window { get; private set; }
     private object? _ownerContext;
     internal ulong RegistrationRevision => _registrationRevision;
 
@@ -38,7 +41,8 @@ internal sealed class NativeDockWindowRegistration : XRComponent
         _supportsAllPanels = false;
     }
 
-    public void Configure(string key, Func<string, bool> receivePanel, object? ownerContext)
+    public void Configure(string key, Func<string, bool> receivePanel, object? ownerContext,
+        XRWindow? window = null, Func<string, string, bool>? receivePanelAtStack = null)
     {
         if (_terminal) return;
         _registrationRevision++;
@@ -46,8 +50,10 @@ internal sealed class NativeDockWindowRegistration : XRComponent
             NativeDockWindowRegistry.Unregister(oldKey, this);
         _key = key;
         _ownerContext = ownerContext;
+        Window = window;
         _supportsAllPanels = true;
         ReceivePanel = receivePanel;
+        ReceivePanelAtStack = receivePanelAtStack;
         if (IsActiveInHierarchy)
             NativeDockWindowRegistry.Register(key, this);
     }
@@ -76,7 +82,9 @@ internal sealed class NativeDockWindowRegistration : XRComponent
             NativeDockWindowRegistry.Unregister(key, this);
         _key = null;
         _ownerContext = null;
+        Window = null;
         ReceivePanel = null;
+        ReceivePanelAtStack = null;
         base.OnDestroying();
     }
 }

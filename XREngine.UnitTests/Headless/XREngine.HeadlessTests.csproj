@@ -7,6 +7,9 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopDragPointerState.cs" Link="Rendering/DesktopDragPointerState.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopDragPointerObservation.cs" Link="Rendering/DesktopDragPointerObservation.cs" />
+    <Compile Include="../Rendering/RuntimeDesktopDragPointerStateTests.cs" Link="Rendering/RuntimeDesktopDragPointerStateTests.cs" />
     <PackageReference Include="NUnitLite" Version="4.6.1" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <ProjectReference Include="../../XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj" />
@@ -96,12 +99,17 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockRenderGate.cs" Link="Editor/NativeDockRenderGate.cs" />
     <Compile Include="../Editor/NativeDockRenderGateTests.cs" Link="Editor/NativeDockRenderGateTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockWindowRegistry.cs" Link="Editor/NativeDockWindowRegistry.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockDragWindowAdmission.cs" Link="Editor/NativeDockDragWindowAdmission.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorDesktopDropPoint.cs" Link="Editor/EditorDesktopDropPoint.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockWindowRegistration.cs" Link="Editor/NativeDockWindowRegistration.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockTransferResult.cs" Link="Editor/NativeDockTransferResult.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockWindowPlacement.cs" Link="Editor/NativeDockWindowPlacement.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockSavedWindow.cs" Link="Editor/NativeDockSavedWindow.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockCloseApprovalGate.cs" Link="Editor/NativeDockCloseApprovalGate.cs" />
     <Compile Include="../Editor/NativeDockTransferTests.cs" Link="Editor/NativeDockTransferTests.cs" />
+    <Compile Include="../Editor/NativeDockPointedTransferTests.cs" Link="Editor/NativeDockPointedTransferTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockClosedSlotRetirement.cs" Link="Editor/NativeDockClosedSlotRetirement.cs" />
+    <Compile Include="../Editor/NativeDockClosedSlotRetirementTests.cs" Link="Editor/NativeDockClosedSlotRetirementTests.cs" />
     <Compile Include="../Editor/NativeDockWindowPlacementTests.cs" Link="Editor/NativeDockWindowPlacementTests.cs" />
     <Compile Include="../Editor/NativeDockCloseApprovalGateTests.cs" Link="Editor/NativeDockCloseApprovalGateTests.cs" />
     <Compile Include="../Rendering/WindowCloseApprovalTests.cs" Link="Rendering/WindowCloseApprovalTests.cs" />
@@ -122,6 +130,7 @@
     <Compile Include="../Editor/NativeHierarchySelectionTests.cs" Link="Editor/NativeHierarchySelectionTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorDragDropUtility.cs" Link="Editor/EditorDragDropUtility.cs" />
     <Compile Include="../Editor/EditorDragDropUtilityTests.cs" Link="Editor/EditorDragDropUtilityTests.cs" />
+    <Compile Include="../Editor/NativeDockDragPointerProbe.cs" Link="Editor/NativeDockDragPointerProbe.cs" />
     <Compile Include="../Editor/EditorPropertyDelegatesTests.cs" Link="Editor/EditorPropertyDelegatesTests.cs" />
     <Compile Include="../Editor/EditorPropertyTestTarget.cs" Link="Editor/EditorPropertyTestTarget.cs" />
     <Compile Include="../Rendering/UILayoutValueKernelTests.cs" Link="Rendering/UILayoutValueKernelTests.cs" />
@@ -186,6 +195,7 @@
     <Compile Include="../Rendering/UIVideoDeferredRenderHost.cs" Link="Rendering/UIVideoDeferredRenderHost.cs" />
     <Compile Include="../Rendering/UITabKeyboardTests.cs" Link="Rendering/UITabKeyboardTests.cs" />
     <Compile Include="../Rendering/UIPointerHoverGenerationTests.cs" Link="Rendering/UIPointerHoverGenerationTests.cs" />
+    <Compile Include="../Rendering/UIPresentedDropRegionTests.cs" Link="Rendering/UIPresentedDropRegionTests.cs" />
     <Compile Include="../Rendering/UIPointerCaptureGenerationTests.cs" Link="Rendering/UIPointerCaptureGenerationTests.cs" />
     <Compile Include="../Rendering/GpuNodeRankPageTests.cs" Link="Rendering/GpuNodeRankPageTests.cs" />
     <Compile Include="../Scene/HierarchyLifetimeAdmissionTests.cs" Link="Scene/HierarchyLifetimeAdmissionTests.cs" />

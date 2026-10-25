@@ -1607,3 +1607,33 @@ and one retained detail case. They did not execute on Linux. All 10,843 source
 inputs stayed unchanged. The 39 maintained relative links resolve and diff checks
 pass. Final review found no remaining blocker in the bounded length-edit contract.
 Windows input, Undo execution, visual behavior, and performance remain unverified.
+## Cross-Window Dock Pointer Receipts
+
+Native tab drags can now select an exact stack in another admitted editor window.
+The Windows observer supplies a press sequence and a native release receipt with
+target client geometry. Polling cannot authorize release. Capture loss, stale
+native observations, replaced windows, and changed source owners reject the drop.
+Other editor drags keep their input path, and unsupported backends retain
+same-canvas tab movement.
+
+The target query uses displayed mapping, shape, clip, scope, and input blockers.
+It rejects mismatched native extents, changed component lifetimes, and replaced
+presentations. Source closure follows destination acceptance. Exact old slots stay
+owned through vetoes and exceptions, while callback replacements survive cleanup.
+Active destruction admission prevents nested retirement. Receive rollback pins
+its original root and registration. This is a receive-first contract, not atomic
+rollback across both windows.
+
+The final headless build and editor/test compilation have zero warnings/errors.
+The targeted run passes **59 of 59** cases. The full portable run passes **1,368 of
+1,368**, with no failures, warnings, or skips. All **10,862 source inputs** remain
+unchanged through the final checks. Source review, 39 relative document links,
+and `git diff --check` pass. New portable tests cover production pointer state,
+the editor drag-session path, explicit registry delivery, displayed drop regions,
+and slot retirement. No native Windows window or User32 call runs in those tests.
+
+The original code reconciliation remains **51 of 60**. Primary-window key
+compatibility, complete panel-state transfer, broad menu ownership, and other
+remaining code items stay open. Windows capture, overlap, mixed DPI, outside-window
+release, native teardown, visual/GPU acceptance, and equivalent ImGui benchmarks
+remain in the validation plan. ImGui remains the default editor.

@@ -1093,3 +1093,47 @@ and one retained detail case. They did not execute on Linux. All 10,843 source
 inputs stayed unchanged. The 39 maintained relative links resolve and diff checks
 pass. Final review found no remaining blocker in the bounded length-edit contract.
 Windows input, Undo execution, visual behavior, and performance remain unverified.
+## Cross-Window Dock Pointer Continuation
+
+The existing dock drag route restricted drops to the source canvas. Its local
+mouse state did not supply an event-time release point outside the source window.
+The new route uses an optional native pointer observer, exact window admissions,
+one presented drop-region query, and an explicit destination stack.
+
+Review found and repaired these issues before publication:
+
+- Cursor polling alone could invent a release or use the point of a later press.
+  Only a matching release receipt can dispatch a native drop.
+- Native target queries can run callbacks. Expected HWND, press, and state
+  sequence now guard the subsequent state write.
+- A focus callback could replace the displayed packet or change a query owner's
+  lifetime. The query checks the actual presented latch and captured owners.
+- Coercing transform getters could mutate a stale input owner during hit testing.
+  The touched hit-query path now checks existing transform types directly.
+- Source slot cleanup could destroy callback replacements or lose a vetoed slot.
+  Exact entries remain mapped until terminal destruction. Active admission stops
+  recursive cleanup, and receive rollback retains its original owner identities.
+- Repeated post-threshold mouse movement could allocate another drag payload.
+  An active-session check now precedes window-list and payload capture.
+- Logical primary-button messages and physical key polling differ for swapped
+  mouse buttons. The observer selects the corresponding physical key.
+
+The first two compile attempts exposed missing source links in the portable test
+project. They were repaired without dependency changes. The first targeted run
+passed 55 of 58 cases. One assertion compared `IntPtr.Zero` to an integer zero.
+Two fixtures tried a complete non-UI transform replacement and hit an existing
+world-transfer restriction before reaching the query. Those fixtures now model
+the field-write/pre-relink callback boundary and restore it before teardown.
+The corrected run passed 58 of 58. After the nested-retirement guard, the final
+targeted run passed 59 of 59, and the full portable suite passed 1,368 of 1,368.
+The final headless build has zero warnings/errors (19.81 seconds). Editor/test
+compilation also passes with zero warnings/errors (4 minutes 11.27 seconds).
+The targeted run takes 1.435 seconds; the full run takes 23.490 seconds. All
+10,862 source inputs remain unchanged through these final checks. Source review,
+39 relative document links, and `git diff --check` also pass.
+
+Native Windows capture, coordinate conversion, overlapping windows, mixed DPI,
+outside-window release, observer failure, and live teardown have not run here.
+The route is receive-first; it does not roll both windows back atomically.
+The next confirmed state gap is that a receiver binds its own saved panel view
+state instead of the moved panel's source filter, view, and scroll state.

@@ -676,8 +676,9 @@ namespace XREngine.Components
 
         private bool IsCurrentHitRecord(in UIHitRecord record)
             => record.RenderInfo.Owner is UIComponent component && component.IsActiveInHierarchy &&
-                component.UITransform.ElementIdentity == record.Identity &&
-                ReferenceEquals(component.UserInterfaceCanvas, GetCameraCanvas()) &&
+                component.SceneNode is { IsTransformNull: false } node && node.Transform is UITransform transform &&
+                transform.ElementIdentity == record.Identity &&
+                ReferenceEquals(transform.GetCanvasComponent(), GetCameraCanvas()) &&
                 record.FocusScopeIdentity == (_inputPublication?.ActiveFocusScopeIdentity ?? default) &&
                 (component is not UIInteractableComponent interactable ||
                     interactable.CanInteract && interactable.InteractionRevision == record.InteractionRevision);

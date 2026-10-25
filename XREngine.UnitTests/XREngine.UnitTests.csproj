@@ -9,6 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../XREngine.Runtime.Platform.Desktop/Windowing/DesktopDragPointerState.cs" Link="Rendering/DesktopDragPointerState.cs" />
+    <Compile Include="../XREngine.Runtime.Platform.Desktop/Windowing/DesktopDragPointerObservation.cs" Link="Rendering/DesktopDragPointerObservation.cs" />
     <ProjectReference Include="..\XREngine.Runtime.Net.Sockets\XREngine.Runtime.Net.Sockets.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.ImGui\XREngine.Runtime.Rendering.ImGui.csproj" />
     <ProjectReference Include="..\XREngine.Audio.OpenAL\XREngine.Audio.OpenAL.csproj" />

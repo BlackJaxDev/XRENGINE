@@ -1,5 +1,7 @@
 using System.Numerics;
 using System.Runtime.ExceptionServices;
+using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Rendering;
@@ -47,7 +49,7 @@ internal sealed class NativeDockTreeHost
         _tree = _layout.DockTree!;
         _root.Destroyed += _ => Dispose();
         _registration = _root.AddComponent<NativeDockWindowRegistration>()!;
-        _registration.Configure(_windowKey, ReceivePanel, _world);
+        _registration.Configure(_windowKey, ReceivePanel, _world, _window, ReceivePanelAtStack);
         _layoutSaves = _root.AddComponent<NativeLayoutSaveDebouncer>()!;
         _layoutSaves.Configure(Save);
         Render();
@@ -112,6 +114,227 @@ internal sealed class NativeDockTreeHost
     private bool IsCurrentStack(NativeDockNode stack, ulong revision)
         => IsCurrentControl(revision) && ContainsNode(_tree.Root, stack);
 
+    internal bool IsCurrentDockDrag(NativeDockTabPayload tab)
+        => ReferenceEquals(tab.Source, this) && !_disposed && !_receivingPanel &&
+            _root is { IsDestroyed: false, IsDestroyQueued: false, IsActiveInHierarchy: true } &&
+            ReferenceEquals(_root.World, _world) &&
+            _dockMutationRevision == tab.DockRevision &&
+            IsCurrentStack(tab.SourceStack, tab.RenderRevision) &&
+            tab.SourceStack.Selected == tab.Panel &&
+            tab.SourceStack.Tabs.Contains(tab.Panel) &&
+            ReferenceEquals(tab.SourceWindow.Registration, _registration) &&
+            ReferenceEquals(tab.SourceWindow.Window, _window);
+
+    private bool IsCurrentLocalDockDrag(NativeDockLocalTabPayload tab)
+        => ReferenceEquals(tab.Source, this) && tab.RootIdentity.IsCurrent &&
+            ReferenceEquals(tab.RootIdentity.Target, _root) &&
+            !_root.IsDestroyed && !_root.IsDestroyQueued && _root.IsActiveInHierarchy &&
+            _dockMutationRevision == tab.DockRevision &&
+            IsCurrentStack(tab.SourceStack, tab.RenderRevision) &&
+            tab.SourceStack.Selected == tab.Panel && tab.SourceStack.Tabs.Contains(tab.Panel);
+
+    private void BeginTabDrag(UIInteractableComponent source, NativeDockNode stack,
+        ulong revision, string panel, Vector2 startPoint)
+    {
+        if (!IsCurrentStack(stack, revision) || stack.Selected != panel ||
+            EditorDragDropUtility.HasDragFor(source))
+            return;
+        if (_window?.DesktopWindowBackend is IRuntimeDesktopDragPointerSource)
+        {
+            NativeDockDragWindowAdmission[] windows =
+                NativeDockWindowRegistry.CaptureDragWindows(_registration);
+            for (int index = 0; index < windows.Length; index++)
+            {
+                NativeDockDragWindowAdmission admission = windows[index];
+                if (!ReferenceEquals(admission.Registration, _registration) || !admission.IsCurrent)
+                    continue;
+                NativeDockTabPayload tab = new(this, stack, revision, _dockMutationRevision,
+                    panel, admission, windows);
+                if (tab.IsSourceCurrent && EditorDragDropUtility.BeginNativeDockDrag(source,
+                        new EditorDragDropUtility.DragPayload(NativeDockTabPayload.DragType, tab),
+                        startPoint, admission.Backend, () => tab.IsSourceCurrent))
+                    return;
+                break;
+            }
+        }
+        NativeDockLocalTabPayload local = new(this, stack, revision,
+            _dockMutationRevision, panel, ObjectConstructionIdentity.Capture(_root));
+        if (IsCurrentLocalDockDrag(local))
+            EditorDragDropUtility.BeginDrag(source,
+                new EditorDragDropUtility.DragPayload(NativeDockLocalTabPayload.DragType, local),
+                startPoint);
+    }
+
+    private bool CanDropLocalTab(EditorDragDropUtility.DragPayload payload,
+        NativeDockNode stack, ulong revision)
+    {
+        NativeDockLocalTabPayload? tab = NativeDockLocalTabPayload.Read(payload);
+        return tab is not null && ReferenceEquals(tab.Source, this) &&
+            IsCurrentStack(stack, revision) && IsCurrentLocalDockDrag(tab);
+    }
+
+    private bool TryDropLocalTab(EditorDragDropUtility.DragPayload payload,
+        NativeDockNode stack, ulong revision)
+    {
+        NativeDockLocalTabPayload? tab = NativeDockLocalTabPayload.Read(payload);
+        if (tab is null || !CanDropLocalTab(payload, stack, revision) ||
+            !_tree.Move(tab.Panel, stack.Id, int.MaxValue))
+            return false;
+        CommitStructure();
+        return true;
+    }
+
+    private bool CanDropTab(EditorDragDropUtility.DragPayload payload,
+        NativeDockNode stack, ulong revision)
+    {
+        NativeDockTabPayload? tab = NativeDockTabPayload.Read(payload);
+        if (!IsCurrentStack(stack, revision) || tab is null ||
+            !tab.IsSourceCurrent || !NativeDockPanel.All.Contains(tab.Panel) ||
+            _window?.DesktopWindowBackend is not { } backend ||
+            !tab.TryGetWindow(backend.OperatingSystemWindowHandle,
+                out NativeDockDragWindowAdmission admission) ||
+            !ReferenceEquals(admission.Registration, _registration) ||
+            !ReferenceEquals(admission.Window, _window))
+            return false;
+        return ReferenceEquals(tab.Source, this) ||
+            !ReferenceEquals(tab.SourceWindow.Context, null) &&
+            ReferenceEquals(tab.SourceWindow.Context, admission.Context) &&
+            _registration.CanReceive(tab.Panel);
+    }
+
+    private bool TryHitDockTarget(EditorDragDropUtility.DragPayload payload,
+        NativeDockNode stack, ulong revision, UIButtonComponent probe,
+        UIListTransform probeTransform, ObjectConstructionIdentity probeIdentity,
+        ObjectConstructionIdentity probeNodeIdentity,
+        ObjectConstructionIdentity probeTransformIdentity,
+        EditorDesktopDropPoint point)
+    {
+        NativeDockTabPayload? tab = NativeDockTabPayload.Read(payload);
+        if (!CanDropTab(payload, stack, revision) || tab is null ||
+            !probeIdentity.IsCurrent || !probeNodeIdentity.IsCurrent ||
+            !probeTransformIdentity.IsCurrent ||
+            probe.IsDestroyed || probe.IsDestroyQueued ||
+            probe.SceneNode is not { IsDestroyed: false, IsDestroyQueued: false } probeNode ||
+            !ReferenceEquals(probeNode, probeNodeIdentity.Target) ||
+            !ReferenceEquals(probeNode.Transform, probeTransform) ||
+            !tab.TryGetWindow(point.TargetWindowHandle,
+                out NativeDockDragWindowAdmission admission) ||
+            !ReferenceEquals(admission.Registration, _registration) ||
+            admission.Backend is not IRuntimeDesktopDragPointerSource pointerSource ||
+            probeTransform.GetCanvasComponent() is not { } canvas ||
+            canvas.GetInputComponent() is not UICanvasInputComponent input ||
+            input.OwningPawn?.Viewport is not XRViewport viewport ||
+            !ReferenceEquals(viewport.Window, _window))
+            return false;
+        ObjectConstructionIdentity canvasIdentity = ObjectConstructionIdentity.Capture(canvas);
+        ObjectConstructionIdentity inputIdentity = ObjectConstructionIdentity.Capture(input);
+        RuntimeDesktopDragPointerSnapshot snapshot = pointerSource.ReadDesktopDragPointer();
+        if (!admission.IsCurrent || snapshot.BackendLifetime != admission.BackendLifetime ||
+            snapshot.SourceWindowHandle != admission.WindowHandle ||
+            !snapshot.Surface.HasValidClientExtent)
+            return false;
+        Vector2 origin = point.IsRelease ? point.TargetClientScreenPosition :
+            snapshot.ClientScreenPosition;
+        Vector2 extent = point.IsRelease ? point.TargetClientSize :
+            new Vector2(snapshot.Surface.ClientWidth, snapshot.Surface.ClientHeight);
+        if (point.IsRelease &&
+            (origin != snapshot.ClientScreenPosition ||
+             extent.X != snapshot.Surface.ClientWidth ||
+             extent.Y != snapshot.Surface.ClientHeight))
+            return false;
+        bool hit = input.TryGetPresentedDropRegion(probe,
+            point.ScreenPosition - origin, extent, out _);
+        RuntimeDesktopDragPointerSnapshot after = pointerSource.ReadDesktopDragPointer();
+        return hit && probeIdentity.IsCurrent && probeNodeIdentity.IsCurrent &&
+            probeTransformIdentity.IsCurrent &&
+            canvasIdentity.IsCurrent && inputIdentity.IsCurrent &&
+            !canvas.IsDestroyed && !canvas.IsDestroyQueued &&
+            !input.IsDestroyed && !input.IsDestroyQueued &&
+            ReferenceEquals(probe.SceneNode, probeNode) &&
+            ReferenceEquals(probeNode.Transform, probeTransform) &&
+            ReferenceEquals(probeTransform.GetCanvasComponent(), canvas) &&
+            ReferenceEquals(canvas.GetInputComponent(), input) &&
+            ReferenceEquals(input.OwningPawn?.Viewport, viewport) &&
+            ReferenceEquals(viewport.Window, _window) &&
+            admission.IsCurrent && tab.IsSourceCurrent &&
+            after.BackendLifetime == admission.BackendLifetime &&
+            after.SourceWindowHandle == admission.WindowHandle &&
+            after.ClientScreenPosition == origin &&
+            after.Surface.ClientWidth == extent.X &&
+            after.Surface.ClientHeight == extent.Y &&
+            IsCurrentStack(stack, revision);
+    }
+
+    private bool TryDropTab(EditorDragDropUtility.DragPayload payload,
+        NativeDockNode stack, ulong revision)
+    {
+        NativeDockTabPayload? tab = NativeDockTabPayload.Read(payload);
+        if (!CanDropTab(payload, stack, revision) || tab is null)
+            return false;
+        if (ReferenceEquals(tab.Source, this))
+        {
+            if (!_tree.Move(tab.Panel, stack.Id, int.MaxValue))
+                return false;
+            CommitStructure();
+            return true;
+        }
+        if (_window?.DesktopWindowBackend is not { } backend ||
+            !tab.TryGetWindow(backend.OperatingSystemWindowHandle,
+                out NativeDockDragWindowAdmission destination) ||
+            !ReferenceEquals(destination.Registration, _registration) ||
+            NativeDockWindowRegistry.TransferToWindow(tab.SourceWindow,
+                destination, tab.Panel, stack.Id) != NativeDockTransferResult.Committed)
+            return false;
+        return tab.Source.CloseTransferredTab(tab);
+    }
+
+    private bool CloseTransferredTab(NativeDockTabPayload tab)
+    {
+        if (!tab.IsSourceCurrent)
+            return false;
+        _panelSlots.TryGetValue(tab.Panel, out SceneNode? oldSlot);
+        NativeDockClosedSlotReceipt receipt = NativeDockClosedSlotReceipt.Capture(
+            tab.Panel, oldSlot, _root, _registration, unchecked(_dockMutationRevision + 1));
+        if (!_tree.Close(tab.Panel))
+            return false;
+        CommitStructure();
+        ReleaseClosedPanelSlot(receipt, tab.SourceWindow);
+        return true;
+    }
+
+    private void ReleaseClosedPanelSlot(NativeDockClosedSlotReceipt receipt,
+        NativeDockDragWindowAdmission? sourceWindow = null)
+    {
+        SceneNode? slot = receipt.Slot;
+        TransformBase? transform = receipt.Transform;
+        if (slot is null || transform is null)
+            return;
+        // The source check below stays separate from the slot check. A transfer callback
+        // can change either owner before the old slot is released.
+        bool Current() => !_disposed && !slot.IsDestroyed &&
+            !slot.IsDestroyQueued && !transform.IsDestroyed && !transform.IsDestroyQueued &&
+            receipt.RootIdentity.IsCurrent && receipt.RegistrationIdentity.IsCurrent &&
+            receipt.SlotIdentity?.IsCurrent == true &&
+            receipt.TransformIdentity?.IsCurrent == true &&
+            _root.IsActiveInHierarchy && !_root.IsDestroyed && !_root.IsDestroyQueued &&
+            _registration.RegistrationRevision == receipt.RegistrationRevision &&
+            _dockMutationRevision == receipt.ExpectedDockRevision &&
+            (sourceWindow is null || sourceWindow.Value.IsCurrent) &&
+            ReferenceEquals(slot.Transform, transform) && transform.Parent is null &&
+            transform.World is null && !slot.IsActiveSelf &&
+            _tree.ClosedPanels.Contains(receipt.Panel) &&
+            !_tree.Stacks().Any(stack => stack.Tabs.Contains(receipt.Panel)) &&
+            _panelSlots.TryGetValue(receipt.Panel, out SceneNode? current) &&
+            ReferenceEquals(current, slot);
+        if (!Current())
+            return;
+        try { NativeDockClosedSlotRetirement.TryDestroy(_panelSlots, receipt.Panel, slot); }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, "[NativeDock] Could not release the transferred panel slot.");
+        }
+    }
+
     private static bool ContainsNode(NativeDockNode root, NativeDockNode node)
         => ReferenceEquals(root, node) || root.IsSplit &&
             (ContainsNode(root.First!, node) || ContainsNode(root.Second!, node));
@@ -142,7 +365,8 @@ internal sealed class NativeDockTreeHost
         catch (Exception exception) { (failures ??= []).Add(exception); }
         // Slot teardown runs panel callbacks that can change the slot map.
         foreach (SceneNode slot in _panelSlots.Values.ToArray())
-            if (!slot.IsDestroyed && slot.Transform.Parent is null)
+            if (!slot.IsDestroyed && !slot.HasDestructionAdmission &&
+                slot.Transform.Parent is null)
                 try { slot.Destroy(true); }
                 catch (Exception exception) { (failures ??= []).Add(exception); }
         _panelSlots.Clear();
@@ -238,18 +462,23 @@ internal sealed class NativeDockTreeHost
         tabList.ItemSize = 82;
         UITabStripComponent strip = tabsNode.AddComponent<UITabStripComponent>()!;
         strip.TabWidth = 82;
+        UIButtonComponent dropProbe = tabsNode.AddComponent<UIButtonComponent>()!;
+        dropProbe.IsEnabled = false;
+        dropProbe.IsTabStop = false;
+        dropProbe.AccessibilityHidden = true;
+        tabList.BlocksInputBehind = false;
+        ObjectConstructionIdentity probeIdentity = ObjectConstructionIdentity.Capture(dropProbe);
+        ObjectConstructionIdentity probeNodeIdentity = ObjectConstructionIdentity.Capture(tabsNode);
+        ObjectConstructionIdentity probeTransformIdentity = ObjectConstructionIdentity.Capture(tabList);
+        _dropRegistrations.Add(EditorDragDropUtility.RegisterNativeDockTarget(tabList,
+            payload => TryDropTab(payload, stack, revision),
+            payload => CanDropTab(payload, stack, revision),
+            (payload, point) =>
+                TryHitDockTarget(payload, stack, revision, dropProbe, tabList,
+                    probeIdentity, probeNodeIdentity, probeTransformIdentity, point)));
         _dropRegistrations.Add(EditorDragDropUtility.RegisterDropTarget(tabList,
-            payload =>
-            {
-                if (!IsCurrentStack(stack, revision) ||
-                    !EditorDragDropUtility.TryGetEditorPayload<NativeDockTabPayload>(payload, "dock-tab", out var tab) || tab is null ||
-                    tab.WindowKey != _windowKey || !_tree.Move(tab.Panel, stack.Id, int.MaxValue))
-                    return false;
-                CommitStructure();
-                return true;
-            },
-            payload => EditorDragDropUtility.TryGetEditorPayload<NativeDockTabPayload>(payload, "dock-tab", out var tab) && tab is not null &&
-                tab.WindowKey == _windowKey && NativeDockPanel.All.Contains(tab.Panel)));
+            payload => TryDropLocalTab(payload, stack, revision),
+            payload => CanDropLocalTab(payload, stack, revision)));
         SceneNode actionsNode = header.NewChildWithTransform(out UIListTransform actions, "DockActions");
         actionsNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
         actions.DisplayHorizontal = true;
@@ -353,8 +582,7 @@ internal sealed class NativeDockTreeHost
             }
             if (IsCurrentStack(stack, revision) && stack.Selected is { } panel &&
                 Vector2.Distance(dragStart.Value, point) >= EditorDragDropUtility.DefaultActivationDistance)
-                EditorDragDropUtility.BeginDrag(source,
-                    EditorDragDropUtility.CreateEditorPayload("dock-tab", new NativeDockTabPayload(_windowKey, panel)), point);
+                BeginTabDrag(source, stack, revision, panel, point);
         };
         drag.MouseDirectOverlapLeave += _ => dragStart = null;
         RefreshClosedLabel();
@@ -480,31 +708,36 @@ internal sealed class NativeDockTreeHost
             return;
         ulong sourceRevision = _dockMutationRevision;
         ulong registrationRevision = _registration.RegistrationRevision;
+        ObjectConstructionIdentity rootIdentity = ObjectConstructionIdentity.Capture(_root);
+        ObjectConstructionIdentity registrationIdentity = ObjectConstructionIdentity.Capture(_registration);
         NativeDockTransferResult result = NativeDockWindowRegistry.TransferToAnotherWindow(_registration, panel);
         if (result == NativeDockTransferResult.Rejected)
             Debug.UI("[NativeDock] Panel transfer could not be confirmed.");
         else if (result == NativeDockTransferResult.NoTarget)
             Debug.UI("[NativeDock] Open another native editor window in this world, then retry the panel transfer.");
-        if (result == NativeDockTransferResult.Committed && !_disposed && !_root.IsDestroyed &&
+        if (result == NativeDockTransferResult.Committed && rootIdentity.IsCurrent &&
+            registrationIdentity.IsCurrent && !_disposed && !_root.IsDestroyed &&
             !_root.IsDestroyQueued && _root.IsActiveInHierarchy && ReferenceEquals(_root.World, _world) &&
             _registration.RegistrationRevision == registrationRevision &&
             _dockMutationRevision == sourceRevision && source.Selected == panel &&
-            _tree.Stacks().Any(stack => ReferenceEquals(stack, source) && stack.Tabs.Contains(panel)) &&
-            _tree.Close(panel))
+            _tree.Stacks().Any(stack => ReferenceEquals(stack, source) && stack.Tabs.Contains(panel)))
         {
+            _panelSlots.TryGetValue(panel, out SceneNode? oldSlot);
+            NativeDockClosedSlotReceipt receipt = NativeDockClosedSlotReceipt.Capture(
+                panel, oldSlot, _root, _registration, unchecked(_dockMutationRevision + 1));
+            if (!_tree.Close(panel))
+                return;
             CommitStructure();
-            if (_panelSlots.Remove(panel, out SceneNode? oldSlot) && !oldSlot.IsDestroyed)
-                try { oldSlot.Destroy(true); }
-                catch (Exception exception)
-                {
-                    if (!oldSlot.IsDestroyed)
-                        _panelSlots[panel] = oldSlot;
-                    Debug.LogException(exception, "[NativeDock] Could not release the transferred panel slot.");
-                }
+            ReleaseClosedPanelSlot(receipt);
         }
     }
 
-    private bool ReceivePanel(string panel)
+    private bool ReceivePanel(string panel) => ReceivePanelCore(panel, null);
+
+    private bool ReceivePanelAtStack(string panel, string stackId)
+        => ReceivePanelCore(panel, stackId);
+
+    private bool ReceivePanelCore(string panel, string? targetStackId)
     {
         if (_receivingPanel || _disposed || _world is null || !_root.IsActiveInHierarchy ||
             _root.IsDestroyed || _root.IsDestroyQueued || !ReferenceEquals(_root.World, _world) ||
@@ -516,30 +749,41 @@ internal sealed class NativeDockTreeHost
         List<string> priorClosed = [.. _tree.ClosedPanels];
         ulong priorRevision = _dockMutationRevision;
         ulong registrationRevision = _registration.RegistrationRevision;
+        ObjectConstructionIdentity rootIdentity = ObjectConstructionIdentity.Capture(_root);
+        ObjectConstructionIdentity registrationIdentity = ObjectConstructionIdentity.Capture(_registration);
         _receivingPanel = true;
         try
         {
-            NativeDockNode target = _tree.Stacks().FirstOrDefault(stack =>
-                stack.Tabs.Any(item => NativeDockPanel.LegacyTools.Contains(item))) ?? _tree.Stacks().First();
+            NativeDockNode? target = targetStackId is null
+                ? _tree.Stacks().FirstOrDefault(stack =>
+                    stack.Tabs.Any(item => NativeDockPanel.LegacyTools.Contains(item))) ??
+                    _tree.Stacks().FirstOrDefault()
+                : _tree.Stacks().FirstOrDefault(stack => stack.Id == targetStackId);
+            if (target is null)
+                return false;
             if (!_tree.Move(panel, target.Id, int.MaxValue))
                 return false;
             CommitStructure();
-            if (!_disposed && _root.IsActiveInHierarchy && !_root.IsDestroyed &&
+            if (!_disposed && rootIdentity.IsCurrent && registrationIdentity.IsCurrent &&
+                _root.IsActiveInHierarchy && !_root.IsDestroyed &&
                 !_root.IsDestroyQueued && ReferenceEquals(_root.World, _world) &&
                 _registration.TryGetRegistration(out registeredKey, out registeredWorld) &&
                 registeredKey == _windowKey && ReferenceEquals(registeredWorld, _world) &&
                 _registration.RegistrationRevision == registrationRevision &&
                 _dockMutationRevision == priorRevision + 1 &&
-                _tree.Stacks().Any(stack => stack.Tabs.Contains(panel)))
+                _tree.Stacks().Any(stack => stack.Tabs.Contains(panel) &&
+                    (targetStackId is null || stack.Id == targetStackId)))
                 return true;
-            RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1, registrationRevision);
+            RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
+                registrationRevision, rootIdentity, registrationIdentity);
             return false;
         }
         catch (Exception exception)
         {
             ulong admittedRevision = _dockMutationRevision == priorRevision
                 ? priorRevision : priorRevision + 1;
-            RestoreReceiveSnapshot(priorRoot, priorClosed, admittedRevision, registrationRevision);
+            RestoreReceiveSnapshot(priorRoot, priorClosed, admittedRevision,
+                registrationRevision, rootIdentity, registrationIdentity);
             Debug.LogException(exception, "[NativeDock] Destination panel commit failed.");
             return false;
         }
@@ -547,9 +791,12 @@ internal sealed class NativeDockTreeHost
     }
 
     private void RestoreReceiveSnapshot(NativeDockNode root, List<string> closedPanels,
-        ulong admittedRevision, ulong registrationRevision)
+        ulong admittedRevision, ulong registrationRevision,
+        ObjectConstructionIdentity rootIdentity,
+        ObjectConstructionIdentity registrationIdentity)
     {
-        if (_disposed || _root.IsDestroyed || _root.IsDestroyQueued || !_root.IsActiveInHierarchy ||
+        if (_disposed || !rootIdentity.IsCurrent || !registrationIdentity.IsCurrent ||
+            _root.IsDestroyed || _root.IsDestroyQueued || !_root.IsActiveInHierarchy ||
             _world is null || !ReferenceEquals(_root.World, _world) ||
             _registration.RegistrationRevision != registrationRevision ||
             !_registration.TryGetRegistration(out string registeredKey, out object? registeredWorld) ||

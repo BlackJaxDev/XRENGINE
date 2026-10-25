@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using System.Runtime.ExceptionServices;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
@@ -143,6 +144,31 @@ public static class EditorDragDropUtility
     }
 
     public static bool BeginDrag(UIInteractableComponent source, DragPayload payload, Vector2 startCanvasPosition)
+        => BeginDragCore(source, payload, startCanvasPosition, null, default, null);
+
+    internal static bool BeginNativeDockDrag(UIInteractableComponent source, DragPayload payload,
+        Vector2 startCanvasPosition, IRuntimeWindowBackend backend, Func<bool> sourceCurrent)
+    {
+        if (backend is not IRuntimeDesktopDragPointerSource pointerSource || !sourceCurrent())
+            return false;
+        RuntimeDesktopDragPointerSnapshot snapshot = pointerSource.ReadDesktopDragPointer();
+        if (!snapshot.LeftButtonDown || snapshot.PressSequence == 0 ||
+            snapshot.CaptureWindowHandle == 0 ||
+            snapshot.CaptureWindowHandle != snapshot.SourceWindowHandle ||
+            snapshot.BackendLifetime != backend.LifetimeGeneration ||
+            snapshot.SourceWindowHandle != backend.OperatingSystemWindowHandle)
+            return false;
+        return BeginDragCore(source, payload, startCanvasPosition, pointerSource,
+            snapshot, sourceCurrent);
+    }
+
+    /// <summary>Checks whether this canvas input already owns a drag.</summary>
+    internal static bool HasDragFor(UIInteractableComponent source)
+        => ResolveCanvasInput(source) is { } input && _sessions.ContainsKey(input);
+
+    private static bool BeginDragCore(UIInteractableComponent source, DragPayload payload,
+        Vector2 startCanvasPosition, IRuntimeDesktopDragPointerSource? pointerSource,
+        RuntimeDesktopDragPointerSnapshot pointerSnapshot, Func<bool>? sourceCurrent)
     {
         if (source is null)
             throw new ArgumentNullException(nameof(source));
@@ -158,7 +184,8 @@ public static class EditorDragDropUtility
         if (canvas is null)
             return false;
         EnsureTickSubscribed();
-        _sessions.Add(input, new DragSession(source, input, canvas, payload, startCanvasPosition));
+        _sessions.Add(input, new DragSession(source, input, canvas, payload, startCanvasPosition,
+            pointerSource, pointerSnapshot, sourceCurrent));
         return true;
     }
 
@@ -173,7 +200,22 @@ public static class EditorDragDropUtility
         if (onDrop is null)
             throw new ArgumentNullException(nameof(onDrop));
 
-        var registration = new DropTargetRegistration(transform, onDrop, canAccept, hoverChanged);
+        var registration = new DropTargetRegistration(transform, onDrop, canAccept,
+            hoverChanged, null);
+        _dropTargets.Add(registration);
+        return new DropTargetHandle(registration);
+    }
+
+    internal static IDisposable RegisterNativeDockTarget(UIBoundableTransform transform,
+        Func<DragPayload, bool> onDrop, Func<DragPayload, bool> canAccept,
+        Func<DragPayload, EditorDesktopDropPoint, bool> contains)
+    {
+        ArgumentNullException.ThrowIfNull(transform);
+        ArgumentNullException.ThrowIfNull(onDrop);
+        ArgumentNullException.ThrowIfNull(canAccept);
+        ArgumentNullException.ThrowIfNull(contains);
+        var registration = new DropTargetRegistration(transform, onDrop, canAccept,
+            null, contains);
         _dropTargets.Add(registration);
         return new DropTargetHandle(registration);
     }
@@ -201,6 +243,21 @@ public static class EditorDragDropUtility
                     CancelDrag(session);
                     continue;
                 }
+                if (session.DockPointerSource is not null)
+                {
+                    try { ProcessNativeDockDrag(session); }
+                    catch (Exception failure)
+                    {
+                        try { CancelDrag(session); }
+                        catch (Exception cleanup)
+                        {
+                            try { Debug.LogException(cleanup, "[NativeDock] Drag cleanup failed."); }
+                            catch { }
+                        }
+                        ExceptionDispatchInfo.Capture(failure).Throw();
+                    }
+                    continue;
+                }
                 UpdateHoveredTarget(session);
                 if (!IsRegisteredSession(session) || !session.IsCurrent)
                 {
@@ -217,6 +274,109 @@ public static class EditorDragDropUtility
             _updatingSessions = false;
             StopTickIfUnused();
         }
+    }
+
+    private static void ProcessNativeDockDrag(DragSession session)
+    {
+        if (session.DockPointerSource is not { } pointerSource ||
+            session.DockSourceCurrent?.Invoke() != true)
+        {
+            CancelDrag(session);
+            return;
+        }
+        RuntimeDesktopDragPointerSnapshot snapshot = pointerSource.ReadDesktopDragPointer();
+        if (snapshot.BackendLifetime != session.DockBackendLifetime ||
+            snapshot.SourceWindowHandle != session.DockWindowHandle)
+        {
+            CancelDrag(session);
+            return;
+        }
+        RuntimeDesktopDragTerminal terminal = snapshot.Terminal;
+        if (terminal.PressSequence == session.DockPressSequence &&
+            terminal.Kind != RuntimeDesktopDragTerminalKind.None)
+        {
+            if (terminal.Kind != RuntimeDesktopDragTerminalKind.Released)
+            {
+                CancelDrag(session);
+                return;
+            }
+            EditorDesktopDropPoint releasePoint = new(terminal.ScreenPosition,
+                terminal.TargetWindowHandle, terminal.TargetClientScreenPosition,
+                terminal.TargetClientSize, true);
+            UpdateDockHoveredTarget(session, releasePoint);
+            CompleteNativeDockDrag(session, terminal, releasePoint);
+            return;
+        }
+        if (snapshot.PressSequence != session.DockPressSequence ||
+            !snapshot.LeftButtonDown || snapshot.CaptureWindowHandle != session.DockWindowHandle)
+        {
+            CancelDrag(session);
+            return;
+        }
+        UpdateDockHoveredTarget(session, new EditorDesktopDropPoint(snapshot.ScreenPosition,
+            snapshot.TargetWindowHandle, default, default, false));
+    }
+
+    private static bool IsCurrentDockRelease(DragSession session,
+        RuntimeDesktopDragTerminal expected)
+    {
+        if (!session.IsCurrent || session.DockSourceCurrent?.Invoke() != true ||
+            session.DockPointerSource is not { } pointerSource)
+            return false;
+        RuntimeDesktopDragPointerSnapshot snapshot = pointerSource.ReadDesktopDragPointer();
+        return snapshot.BackendLifetime == session.DockBackendLifetime &&
+            snapshot.SourceWindowHandle == session.DockWindowHandle &&
+            snapshot.Terminal == expected;
+    }
+
+    private static void CompleteNativeDockDrag(DragSession session,
+        RuntimeDesktopDragTerminal terminal,
+        EditorDesktopDropPoint releasePoint)
+    {
+        if (!IsRegisteredSession(session) || !session.IsCurrent || !RemoveSession(session))
+        {
+            CancelDrag(session);
+            return;
+        }
+        DropTargetRegistration? target = session.HoveredTarget;
+        try
+        {
+            SetHoveredTarget(session, null);
+            if (target is null || !target.IsValid ||
+                !IsCurrentDockRelease(session, terminal))
+                return;
+            if (terminal.PressSequence != session.DockPressSequence ||
+                terminal.Kind != RuntimeDesktopDragTerminalKind.Released ||
+                !target.CanAccept(session.Payload) || !target.IsValid ||
+                !IsCurrentDockRelease(session, terminal) ||
+                !target.ContainsDock(session.Payload, releasePoint) ||
+                !target.IsValid || !IsCurrentDockRelease(session, terminal))
+                return;
+            target.TryDrop(session.Payload);
+        }
+        finally { StopTickIfUnused(); }
+    }
+
+    private static void UpdateDockHoveredTarget(DragSession session,
+        EditorDesktopDropPoint point)
+    {
+        DropTargetRegistration? candidate = null;
+        for (int index = _dropTargets.Count - 1; index >= 0; index--)
+        {
+            if (index >= _dropTargets.Count)
+                continue;
+            DropTargetRegistration registration = _dropTargets[index];
+            if (!registration.IsValid || !registration.HasDockHit ||
+                !registration.CanAccept(session.Payload))
+                continue;
+            if (registration.IsValid && _dropTargets.Contains(registration) &&
+                registration.ContainsDock(session.Payload, point))
+            {
+                candidate = registration;
+                break;
+            }
+        }
+        SetHoveredTarget(session, candidate);
     }
 
     private static void CompleteDrag(DragSession session)
@@ -280,7 +440,8 @@ public static class EditorDragDropUtility
             if (i >= _dropTargets.Count)
                 continue;
             var registration = _dropTargets[i];
-            if (!registration.IsValid || !ReferenceEquals(registration.Canvas, session.Canvas))
+            if (!registration.IsValid || registration.HasDockHit ||
+                !ReferenceEquals(registration.Canvas, session.Canvas))
                 continue;
 
             if (!registration.CanAccept(payload))
@@ -397,25 +558,42 @@ public static class EditorDragDropUtility
     }
 
     private sealed class DragSession(UIInteractableComponent source, UICanvasInputComponent input,
-        UICanvasComponent canvas, DragPayload payload, Vector2 startPosition)
+        UICanvasComponent canvas, DragPayload payload, Vector2 startPosition,
+        IRuntimeDesktopDragPointerSource? dockPointerSource,
+        RuntimeDesktopDragPointerSnapshot dockSnapshot, Func<bool>? dockSourceCurrent)
     {
         public UIInteractableComponent Source { get; } = source;
         public UICanvasInputComponent Input { get; } = input;
         public UICanvasComponent Canvas { get; } = canvas;
         public long SourceRevision { get; } = source.InteractionRevision;
         public UIElementIdentity SourceIdentity { get; } = source.AccessibilityIdentity;
-        public bool IsCurrent => IsCurrentDragSource(Source, Input, Canvas,
-            SourceRevision, SourceIdentity);
+        private ObjectConstructionIdentity SourceConstructionIdentity { get; } =
+            ObjectConstructionIdentity.Capture(source);
+        private ObjectConstructionIdentity InputConstructionIdentity { get; } =
+            ObjectConstructionIdentity.Capture(input);
+        private ObjectConstructionIdentity CanvasConstructionIdentity { get; } =
+            ObjectConstructionIdentity.Capture(canvas);
+        public bool IsCurrent => SourceConstructionIdentity.IsCurrent &&
+            InputConstructionIdentity.IsCurrent && CanvasConstructionIdentity.IsCurrent &&
+            IsCurrentDragSource(Source, Input, Canvas, SourceRevision, SourceIdentity);
         public DragPayload Payload { get; } = payload;
         public Vector2 StartPosition { get; } = startPosition;
         public DropTargetRegistration? HoveredTarget { get; set; }
+        public IRuntimeDesktopDragPointerSource? DockPointerSource { get; } = dockPointerSource;
+        public Func<bool>? DockSourceCurrent { get; } = dockSourceCurrent;
+        public long DockBackendLifetime { get; } = dockSnapshot.BackendLifetime;
+        public nint DockWindowHandle { get; } = dockSnapshot.SourceWindowHandle;
+        public ulong DockPressSequence { get; } = dockSnapshot.PressSequence;
     }
 
     internal static bool IsCurrentDragSource(UIInteractableComponent source,
         UICanvasInputComponent input, UICanvasComponent canvas,
         long revision, UIElementIdentity identity)
-        => source.SceneNode is { IsActiveInHierarchy: true } && source.CanInteract &&
-            input.IsActiveInHierarchy && canvas.IsActiveInHierarchy &&
+        => source.SceneNode is { IsDestroyed: false, IsDestroyQueued: false,
+                IsActiveInHierarchy: true } &&
+            !source.IsDestroyed && !source.IsDestroyQueued && source.CanInteract &&
+            !input.IsDestroyed && !input.IsDestroyQueued && input.IsActiveInHierarchy &&
+            !canvas.IsDestroyed && !canvas.IsDestroyQueued && canvas.IsActiveInHierarchy &&
             source.InteractionRevision == revision && source.AccessibilityIdentity == identity &&
             ReferenceEquals(source.BoundableTransform.GetCanvasComponent(), canvas) &&
             ReferenceEquals(canvas.GetInputComponent(), input);
@@ -440,6 +618,7 @@ public static class EditorDragDropUtility
         private Func<DragPayload, bool>? _onDrop;
         private Func<DragPayload, bool>? _canAccept;
         private Action<bool>? _hoverChanged;
+        private Func<DragPayload, EditorDesktopDropPoint, bool>? _dockHit;
         private bool _hovering;
         private bool _disposed;
 
@@ -447,12 +626,14 @@ public static class EditorDragDropUtility
             UIBoundableTransform transform,
             Func<DragPayload, bool> onDrop,
             Func<DragPayload, bool>? canAccept,
-            Action<bool>? hoverChanged)
+            Action<bool>? hoverChanged,
+            Func<DragPayload, EditorDesktopDropPoint, bool>? dockHit)
         {
             _transformRef = new WeakReference<UIBoundableTransform>(transform);
             _onDrop = onDrop;
             _canAccept = canAccept;
             _hoverChanged = hoverChanged;
+            _dockHit = dockHit;
         }
 
         public bool IsValid
@@ -476,6 +657,11 @@ public static class EditorDragDropUtility
             BoundingRectangleF bounds = transform.GetActualBounds();
             return bounds.Contains(local);
         }
+
+        public bool HasDockHit => _dockHit is not null;
+
+        public bool ContainsDock(DragPayload payload, EditorDesktopDropPoint point)
+            => !_disposed && _dockHit?.Invoke(payload, point) == true;
 
         public bool CanAccept(DragPayload payload)
         {
@@ -512,6 +698,7 @@ public static class EditorDragDropUtility
             _onDrop = null;
             _canAccept = null;
             _hoverChanged = null;
+            _dockHit = null;
             _hovering = false;
             // Release every retained owner before a user notification can reenter or throw.
             hoverChanged?.Invoke(false);

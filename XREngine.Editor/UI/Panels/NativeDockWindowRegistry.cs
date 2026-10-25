@@ -1,3 +1,6 @@
+using XREngine.Data.Core;
+using XREngine.Rendering;
+
 namespace XREngine.Editor;
 
 /// <summary>Connects native dock hosts already attached to live editor windows.</summary>
@@ -6,6 +9,34 @@ internal static class NativeDockWindowRegistry
     private static readonly Dictionary<string, NativeDockWindowRegistration> Hosts = new(StringComparer.Ordinal);
 
     public static void Register(string key, NativeDockWindowRegistration host) => Hosts[key] = host;
+
+    internal static bool IsCurrentHost(string key, NativeDockWindowRegistration host)
+        => Hosts.TryGetValue(key, out NativeDockWindowRegistration? current) &&
+            ReferenceEquals(current, host);
+
+    /// <summary>Captures native window lifetimes before a dock drag starts.</summary>
+    internal static NativeDockDragWindowAdmission[] CaptureDragWindows(
+        NativeDockWindowRegistration source)
+    {
+        if (!source.TryGetRegistration(out string sourceKey, out object? sourceContext) ||
+            sourceContext is null || !IsCurrentHost(sourceKey, source))
+            return [];
+        List<NativeDockDragWindowAdmission> admissions = [];
+        foreach ((string key, NativeDockWindowRegistration host) in Hosts)
+        {
+            if (!host.TryGetRegistration(out string registeredKey, out object? context) ||
+                key != registeredKey || !ReferenceEquals(sourceContext, context) ||
+                host.SceneNode is not { IsDestroyed: false, IsDestroyQueued: false } root ||
+                host.Window is not { DesktopWindowBackend: { } backend } window ||
+                backend.OperatingSystemWindowHandle == 0)
+                continue;
+            admissions.Add(new NativeDockDragWindowAdmission(host, host.RegistrationRevision,
+                ObjectConstructionIdentity.Capture(host), ObjectConstructionIdentity.Capture(root),
+                window, backend,
+                backend.LifetimeGeneration, backend.OperatingSystemWindowHandle, key, context));
+        }
+        return admissions.ToArray();
+    }
 
     public static void Unregister(string key, NativeDockWindowRegistration host)
     {
@@ -64,5 +95,57 @@ internal static class NativeDockWindowRegistry
             }
         }
         return NativeDockTransferResult.NoTarget;
+    }
+
+    /// <summary>Transfers to the exact dock host and stack under the released pointer.</summary>
+    internal static NativeDockTransferResult TransferToWindow(
+        NativeDockDragWindowAdmission sourceWindow,
+        NativeDockDragWindowAdmission destinationWindow, string panel, string stackId)
+    {
+        if (!sourceWindow.IsCurrent || !destinationWindow.IsCurrent)
+            return NativeDockTransferResult.Rejected;
+        NativeDockTransferResult result = TransferToWindow(sourceWindow.Registration,
+            destinationWindow.Registration, panel, stackId);
+        return result == NativeDockTransferResult.Committed &&
+            sourceWindow.IsCurrent && destinationWindow.IsCurrent
+                ? NativeDockTransferResult.Committed : NativeDockTransferResult.Rejected;
+    }
+
+    internal static NativeDockTransferResult TransferToWindow(NativeDockWindowRegistration source,
+        NativeDockWindowRegistration destination, string panel, string stackId)
+    {
+        if (!NativeDockPanel.All.Contains(panel) || string.IsNullOrEmpty(stackId) ||
+            ReferenceEquals(source, destination) ||
+            !source.TryGetRegistration(out string sourceKey, out object? context) ||
+            context is null || !IsCurrentHost(sourceKey, source) ||
+            !destination.TryGetRegistration(out string destinationKey, out object? destinationContext) ||
+            destinationKey == sourceKey || !ReferenceEquals(context, destinationContext) ||
+            !IsCurrentHost(destinationKey, destination) || !destination.CanReceive(panel) ||
+            destination.ReceivePanelAtStack is not { } receive)
+            return NativeDockTransferResult.Rejected;
+        ulong sourceRevision = source.RegistrationRevision;
+        ulong destinationRevision = destination.RegistrationRevision;
+        try
+        {
+            if (!receive(panel, stackId))
+                return NativeDockTransferResult.Rejected;
+            return source.RegistrationRevision == sourceRevision &&
+                destination.RegistrationRevision == destinationRevision &&
+                source.TryGetRegistration(out string currentSourceKey, out object? currentContext) &&
+                currentSourceKey == sourceKey && ReferenceEquals(currentContext, context) &&
+                IsCurrentHost(sourceKey, source) &&
+                destination.TryGetRegistration(out string currentDestinationKey,
+                    out object? currentDestinationContext) &&
+                currentDestinationKey == destinationKey &&
+                ReferenceEquals(currentDestinationContext, context) &&
+                IsCurrentHost(destinationKey, destination) &&
+                ReferenceEquals(destination.ReceivePanelAtStack, receive)
+                    ? NativeDockTransferResult.Committed : NativeDockTransferResult.Rejected;
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, "[NativeDock] Destination rejected the pointed panel transfer.");
+            return NativeDockTransferResult.Rejected;
+        }
     }
 }

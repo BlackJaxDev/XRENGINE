@@ -1955,3 +1955,53 @@ unavailable. The length control retains the displayed selection and revision;
 replacement, invalidated presentation, or retirement rejects stale submissions.
 Subscriptions attach once per distinct curve and track and detach on rebind.
 This does not establish live multi-selection or Windows Undo acceptance.
+
+## Native Dock Pointer Transfer
+
+Native dock drags use an optional `IRuntimeDesktopDragPointerSource`. Ordinary
+editor drags keep their existing input route. The Windows backend observes normal
+mouse capture; it does not lock the cursor or take capture from another owner.
+Each primary press gets a sequence. A release receipt retains that sequence,
+the message point, the exact target HWND, and the target client origin and size.
+Polling can update hover or cancel a press. It cannot authorize a drop. A later
+press cannot replace the release point of the current editor session.
+
+The observer decodes signed `WM_LBUTTONUP` coordinates and calls `ClientToScreen`
+before downstream message callbacks. Native queries run on the window owner
+thread. Complete value snapshots cross threads under the existing backend lock.
+Capture loss, cancellation, shutdown, and unavailable target geometry reject the
+transfer. Failed subclass removal retains the callback until native destruction.
+The observer uses the same lifetime pattern as the existing IME observer.
+See Microsoft's [release-message contract](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-lbuttonup),
+[capture query](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getcapture),
+and [coordinate conversion](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-clienttoscreen).
+
+`WindowFromPoint` excludes disabled windows. The observer also checks the first
+visible top-level rectangle at the point and rejects ambiguous coverage. Unknown
+child windows and overlays do not map to an underlying registered editor window.
+This conservative check can reject a valid drop; Windows acceptance must cover
+overlapping windows and mixed DPI. See the [target-query contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-windowfrompoint).
+
+The editor captures eligible window, backend, root, and registration lifetimes
+when a drag starts. Release selects that exact destination and stack, rather than
+the first other window. The target client geometry must still match the release
+receipt. A disabled, hidden-from-accessibility button supplies a tab-strip hit
+record without receiving ordinary pointer input. `TryGetPresentedDropRegion`
+uses one displayed publication for mapping, shape, nested clip, active focus
+scope, and blockers. Full-client output must match the sampled native extent.
+The query checks the actual presented latch after focus callbacks and does not
+convert replaced transforms. Missing or stale geometry has no live-layout fallback.
+
+The editor removes the drag session before terminal callbacks and checks its
+source and release receipt again before dispatch. The destination receives the
+panel through the explicit stack route. Source closure follows a confirmed
+destination commit. Callback-owned replacements must survive source slot cleanup.
+The exact old slot stays registered during destruction. A veto or exception keeps
+the live entry; successful destruction removes only that entry. Active destruction
+admission prevents recursive slot cleanup through host disposal. Transfer is
+receive-first, not an atomic transaction across both windows. If a callback changes
+the source after delivery, the destination can retain its accepted panel while the
+source remains unchanged. Rollback never overwrites a replaced root or registration
+lifetime.
+Unsupported desktop backends retain same-canvas tab movement. Saved window-key
+migration and live multi-window acceptance remain separate requirements.

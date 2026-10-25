@@ -595,3 +595,41 @@ the rejected contract. These native checks remain pending.
 
 | Check | Symptom | Investigation or code item |
 |---|---|---|
+## Cross-Window Dock Pointer Validation
+
+The portable candidate passes 59 targeted cases and all 1,368 headless tests,
+with no failures, warnings, or skips. The headless project builds with zero
+warnings and errors. The matching editor/test project also compiles with zero
+warnings and errors. All 10,862 source inputs remained unchanged through the
+final checks. This does not establish Windows execution.
+
+Portable evidence covers press sequences, real-release receipt retention,
+release/repress, superseded observations, capture-loss cancellation, swapped-button
+mapping, signed coordinates, explicit target/stack selection, stale component
+lifetimes, presented shape/clip/scope/occlusion, extent mismatch, focus-callback
+replacement, slot destruction vetoes, callback replacement, and nested retirement.
+These tests supply native snapshots and callbacks. They do not call User32 or
+establish OS capture behavior.
+
+Windows acceptance remains open:
+
+- Drag a selected tab through the source window edge and release over each
+  destination stack. Confirm one transfer to the pointed stack.
+- Release, move, and press again before the next update. Confirm that the old
+  drag uses only its recorded release point or cancels if its receipt is lost.
+- Test swapped mouse buttons, negative desktop coordinates, and mixed-DPI
+  monitors. Move or resize the destination after release and confirm rejection
+  when its client geometry no longer matches.
+- Test overlapping windows, disabled windows, unknown child HWNDs, menus, and
+  transparent or irregular windows. Ambiguous coverage must cancel safely.
+- Change focus, lose capture, close either window, and cancel close requests
+  during a drag. Confirm no transfer to a retired or replaced window.
+- Exercise source and destination callbacks that replace a stack, regenerate a
+  component, veto slot destruction, or destroy the host during cleanup.
+- Confirm ordinary scene/asset drags and unsupported-backend same-canvas tab
+  movement still work. Test observer setup failure and failed native unhook.
+
+Transfer remains receive-first. A changed source can retain its panel after the
+destination accepts delivery. This is not atomic rollback across both hosts.
+Primary-window key compatibility, full panel-state transfer, and broader editor
+parity remain in the active TODO. ImGui remains the default editor.

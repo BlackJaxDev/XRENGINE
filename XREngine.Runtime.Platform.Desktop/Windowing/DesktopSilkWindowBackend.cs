@@ -17,7 +17,8 @@ namespace XREngine.Runtime.Platform.Desktop.Windowing;
 /// Owns one Silk desktop window and its native input subscriptions. Callers may read published
 /// snapshots from other threads; native operations stay on the thread that created this object.
 /// </summary>
-internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntimeImeCandidateWindow
+internal sealed partial class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntimeImeCandidateWindow,
+    IRuntimeDesktopDragPointerSource
 {
     private static readonly ConcurrentBag<DesktopSilkWindowBackend> AbandonedResources = new();
     private readonly IWindow _window;
@@ -133,6 +134,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntime
             RefreshMonitors();
             InstallResizeHook();
             InstallImeHook();
+            InstallDragPointerHook();
             Vector2D<int> requestedPosition = new(_options.Position.X, _options.Position.Y);
             if (_window.Position != requestedPosition)
                 _window.Position = requestedPosition;
@@ -150,6 +152,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntime
             DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
             _imeHook?.Dispose();
             _imeHook = null;
+            DisposeDragPointerHook();
             _resizeHook?.Dispose();
             _resizeHook = null;
             UnlinkWindow();
@@ -186,6 +189,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntime
     {
         AssertOwnerThread();
         _window.DoEvents();
+        _dragPointerHook?.PollHover();
         SyncNativeFocusState();
         PublishSurface();
         PublishEvents(false);
@@ -353,6 +357,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntime
             _window.IsClosing = false;
             _closeRequested = false;
             PublishEvents(false);
+            RestoreDesktopDragPointer();
             return true;
         }
         catch
@@ -456,6 +461,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntime
         DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
         _imeHook?.Dispose();
         _imeHook = null;
+        DisposeDragPointerHook();
         _resizeHook?.Dispose();
         _resizeHook = null;
         UnlinkWindow();
@@ -474,6 +480,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntime
         DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
         _imeHook?.Dispose();
         _imeHook = null;
+        DisposeDragPointerHook();
         _resizeHook?.Dispose();
         _resizeHook = null;
         UnlinkWindow();
@@ -531,6 +538,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntime
             // Cancel Silk's immediate destruction while the callback is still on its stack.
             _window.IsClosing = false;
             _closeRequested = approved;
+            if (approved)
+                InvalidateDesktopDragPointer(Stopwatch.GetTimestamp());
             PublishEvents(approved);
             _closeCallbackDepth--;
         }
@@ -666,7 +675,12 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntime
             _window.WindowState == WindowState.Minimized,
             _interactiveResize,
             Stopwatch.GetTimestamp());
-        lock (_snapshotSync) _surface = snapshot;
+        lock (_snapshotSync)
+        {
+            _surface = snapshot;
+            _dragPointerState?.RefreshGeometry(snapshot,
+                new System.Numerics.Vector2(_clientScreenPosition.X, _clientScreenPosition.Y));
+        }
     }
 
     private void PublishClientScreenPosition()
