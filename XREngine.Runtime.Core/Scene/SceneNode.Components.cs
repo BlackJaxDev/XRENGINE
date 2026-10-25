@@ -3,6 +3,7 @@ using XREngine.Components;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Scene.Prefabs;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Scene
 {
@@ -56,6 +57,47 @@ namespace XREngine.Scene
 
             AddComponent(comp);
             return comp;
+        }
+
+        /// <summary>Creates a component while checking its retained owner after callbacks.</summary>
+        internal T? AddComponentGuarded<T>(Func<T> factory, RuntimeComponentCreationReceipt receipt,
+            string? name = null) where T : XRComponent
+        {
+            ArgumentNullException.ThrowIfNull(receipt);
+            if (!ReferenceEquals(receipt.Node, this))
+                throw new ArgumentException("The receipt belongs to another node.", nameof(receipt));
+            receipt.BeginAttempt();
+            try
+            {
+                receipt.Validate();
+                using var parityScope = EnterComponentPlayerPath();
+                using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentFactory");
+                T comp = XRComponent.NewGuarded(this, factory, receipt);
+                receipt.Validate();
+                comp.Name = name;
+                receipt.Validate();
+                if (!VerifyComponentAttributesOnAdd(comp, out _))
+                {
+                    receipt.Validate();
+                    throw new InvalidOperationException(
+                        $"Guarded component '{typeof(T)}' failed its scene-node attributes.");
+                }
+
+                receipt.Validate();
+                AddComponent(comp);
+                receipt.Validate();
+                return comp;
+            }
+            catch (Exception failure)
+            {
+                receipt.RecordFailure(failure);
+                throw;
+            }
+            finally
+            {
+                if (receipt.Component is { } claimed)
+                    claimed.CreationReceipt = null;
+            }
         }
 
         /// <summary>
@@ -117,16 +159,25 @@ namespace XREngine.Scene
             using var scope = RuntimeSceneNodeServices.Current.StartProfileScope("SceneNode.AddComponentInternal");
 
             HierarchyConstructionScope.RequireLink(this, comp);
+            comp.CreationReceipt?.StartInsertion();
             ComponentsInternal.Add(comp);
+            comp.CreationReceipt?.RequireCommittedInsertion();
+            comp.CreationReceipt?.Validate();
 
             comp.Destroying += ComponentDestroying;
             comp.Destroyed += ComponentDestroyed;
 
             if (HasBegunPlay)
+            {
                 comp.NotifyBeginPlay();
+                comp.CreationReceipt?.Validate();
+            }
 
             if (comp.IsActive && IsActiveInHierarchy && World is not null)
+            {
                 comp.NotifyComponentActivated();
+                comp.CreationReceipt?.Validate();
+            }
         }
 
         /// <summary>
@@ -164,12 +215,33 @@ namespace XREngine.Scene
             existingComponent = GetComponent<T>();
 
             var attribs = comp.GetType().GetCustomAttributes(true);
+            comp.CreationReceipt?.Validate();
             if (attribs.Length == 0)
                 return true;
 
             foreach (var attrib in attribs)
-                if (attrib is XRComponentAttribute xrAttrib && !xrAttrib.VerifyComponentOnAdd(this, comp))
+            {
+                if (comp.CreationReceipt is not null)
+                {
+                    if (attrib is RequireComponentsAttribute requirements)
+                    {
+                        foreach (Type requiredType in requirements.RequiredComponents)
+                            if (!HasComponent(requiredType))
+                                throw new InvalidOperationException(
+                                    $"Guarded component '{comp.GetType()}' requires existing component '{requiredType}'.");
+                    }
+                    if (attrib is RequiresTransformAttribute requiredTransform &&
+                        requiredTransform.Type.IsAssignableTo(typeof(TransformBase)) &&
+                        !requiredTransform.Type.IsAssignableFrom(Transform.GetType()))
+                        throw new InvalidOperationException(
+                            $"Guarded component '{comp.GetType()}' requires existing transform '{requiredTransform.Type}'.");
+                    comp.CreationReceipt.Validate();
+                }
+                bool accepted = attrib is not XRComponentAttribute xrAttrib || xrAttrib.VerifyComponentOnAdd(this, comp);
+                comp.CreationReceipt?.Validate();
+                if (!accepted)
                     return false;
+            }
 
             return true;
         }
@@ -616,6 +688,7 @@ namespace XREngine.Scene
         /// <param name="item">The component that was added.</param>
         private void OnComponentAdded(XRComponent item)
         {
+            item.CreationReceipt?.Validate();
             // During deserialization (YAML/clone), components are added without going
             // through XRComponent.New(), so SceneNode is never set. Wire it up here to
             // avoid a NullReferenceException on any subsequent property access.
@@ -623,8 +696,11 @@ namespace XREngine.Scene
                 item.ConstructionSetSceneNode(this);
 
             item.NotifyAddedToSceneNode(this);
+            item.CreationReceipt?.Validate();
             ApplyLayerToComponent(item);
+            item.CreationReceipt?.Validate();
             ComponentAdded?.Invoke((this, item));
+            item.CreationReceipt?.Validate();
         }
 
         /// <summary>

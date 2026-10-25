@@ -413,3 +413,104 @@ without failures, warnings, or skips. Desktop build52 compiled the editor and
 tests with zero warnings/errors in 3m20.33s. All 10,808 source inputs stayed
 unchanged through these checks. This does not close the broader child
 construction/teardown item.
+
+## Guarded Component Creation For Menu Builders
+
+The remaining menu item needs checks inside shared creation and cleanup methods.
+Detached staging alone is insufficient: XRComponent.New invokes ComponentCreated
+before AddComponent returns. The compound SceneNode.NewChild factories attach a
+node and create multiple components without giving their caller an intervening
+ownership check. Ordinary SetField also writes after PropertyChanging, and the
+world/component notification methods resume engine work after external observers.
+
+The current implementation candidate adds an internal guarded component factory
+with a caller-retained receipt. It captures the exact node, transform, parent,
+world, and claimed component lifetime before public creation callbacks. It checks
+callbacks before later engine work, retains failures and inserted partials, and
+keeps the existing public factory route. Menu integration and complete content
+retirement remain open. Constructor origin alone does not authorize destruction
+of a component that moved or changed lifetime.
+
+Headless build189 compiled the core changes with zero warnings/errors in 2m43.44s.
+The command's first test-link marker assertion failed, so this build did not
+include the new GuardedComponentCreationTests fixture. The fixture was linked
+afterward. No test execution for that candidate is recorded yet.
+
+Review found that the legacy AbortFailedConstruction method marks an object
+destroyed in a finally block even when cleanup throws. A guard inside OnDestroying
+cannot prevent that final commit after ownership changes. The guarded creation
+path therefore needs a separate opt-in abort admission before the cache/destruction
+commit. It must retain cleanup failure and permit a later retry while preserving
+changed ownership. The legacy abort behavior remains outside this opt-in path.
+The candidate is unpublished while this repair and its regression checks are open.
+
+The next menu integration must capture construction parent/ancestor/canvas/world
+ownership after initial placement accepts its current canvas. It must preserve
+later canvas migration in CompletePlacement. A newer queued Show/Hide is
+cancellation and must reach the transition loop. Custom builder delegates retain
+responsibility for arbitrary statements inside their own body; exact owned
+content must be registered before callback publication for guarded retirement.
+
+Headless build190 failed with CS1061 because the receipt read the Data assembly's
+internal lifetime property. The repair uses ObjectConstructionIdentity.Capture.
+Build191 then failed with CS0200 in the new same-ID test, which tried to assign
+the read-only ID property. No tests ran from these two failed builds.
+
+Review found three further admission gaps before publication. A creation callback
+can add a claimed component to a foreign structural list while its SceneNode
+still points to the original node. List pre-add callbacks can also change ownership
+before the insertion write; post-add callbacks run before the node's own handler.
+Finally, a successful creation receipt must not authorize abort after a later
+normal detach. The candidate needs exact list ownership, a pre-insertion check,
+and a record of actual insertion before its failed-uninserted cleanup contract
+is ready. A vetoed insertion remains a separate, abortable case.
+
+Build192 passed with zero warnings/errors in 1m51.92s. Targeted run131 passed
+23 of 24 creation cases in 0.225s. The vetoed-insertion case did not throw:
+pre-insertion validation correctly permitted zero membership, but the caller
+also needed to require a committed insertion after Add returned. The fix must
+stop before subscribing destruction handlers or starting component lifecycle.
+Review also identified a derived world-change override that can change ownership
+after its base callback checks. World assignment needs an intrinsic check at its
+actual write boundary, including when property notifications are suppressed.
+
+Build193 passed with zero warnings/errors in 1m49.40s. Run132 passed all 27
+creation cases in 0.377s. Review then added the case where a failed component
+enters a foreign list and is later detached before abort. Current membership alone
+cannot prove that the component was never published. Constructor abort needs a
+monotonic component publication marker, including insertions after the failed
+creation method has cleared its active receipt. This check does not revoke normal
+component detach or reuse.
+
+Build194 passed with zero warnings/errors in 1m54.72s. No tests ran on this
+intermediate snapshot. Final review rejected the proposed retry after arbitrary
+OnDestroying failure: a callback can release a resource and then throw. Repeating
+it can release that resource twice. The final contract marks cleanup as started
+before OnDestroying and retains failure without repeating cleanup. An admission
+failure before cleanup begins remains distinct. A nested external destruction
+must not be reported as successful guarded abort merely because IsDestroyed is
+true after its callback.
+
+The next retirement integration can reuse OwnedHierarchyRetirement through a
+separate explicit structural-receipt input. It must not convert a current tree
+snapshot into constructor ownership or relax clone admission. The first bounded
+unit is an already detached, world-null leaf with captured node, transform,
+component/child storage, and explicitly registered components. Component-owned
+render resources remain the component's cleanup responsibility. Live menu use
+also needs guarded parent detach, exact lifecycle/world removal, and retention
+of partial cleanup results. That preparation is not implemented by the component
+creation receipt. Owner-node teardown must enter guarded content retirement before
+ordinary child recursion; a component OnDestroying hook alone runs too late.
+
+Headless build195 passed with zero warnings/errors in 2m50.99s. Targeted run133
+passed all 28 guarded creation cases in 0.209s, with no warnings or skips. This
+includes one-attempt cleanup and confirmed abort completion after nested
+independent destruction. Full portable validation and matching editor/test
+compilation follow on the frozen source snapshot.
+
+Full run134 passed **1,200/1,200** tests in 22.640s, without failures, warnings,
+or skips. Desktop build53 compiled the editor and tests with zero warnings/errors
+in 3m56.54s. All 10,810 source inputs stayed unchanged through final validation.
+The five maintained UI documents have 39 resolving relative links, and
+`git diff --check` passes. This prerequisite does not close menu integration,
+retirement, Windows execution, graphics acceptance, or the broad control item.

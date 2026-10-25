@@ -1,6 +1,7 @@
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Data.Core;
+using XREngine.Components;
 
 namespace XREngine;
 
@@ -155,6 +156,8 @@ public abstract partial class XRWorldObjectBase
     {
         _hierarchyListOwners!.TryGetValue(authority, out int count);
         _hierarchyListOwners[authority] = checked(count + 1);
+        if (this is XRComponent component)
+            component.MarkStructuralListInsertion();
     }
 
     internal void RemoveHierarchyListOwner(IHierarchyListAuthority authority)

@@ -305,6 +305,34 @@ namespace XREngine.Data.Core
             }
         }
 
+        /// <summary>Aborts a guarded construction only if its owner remains current after cleanup callbacks.</summary>
+        protected bool AbortFailedConstruction(Action onAdmitted, Action validate)
+        {
+            ArgumentNullException.ThrowIfNull(onAdmitted);
+            ArgumentNullException.ThrowIfNull(validate);
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.AbortConstruction);
+            if (IsDestroyed)
+                return false;
+
+            onAdmitted();
+            ClearDestroyQueuedFlag();
+            OnDestroying();
+            validate();
+            lock (ObjectCacheMutationLock)
+            {
+                validate();
+                if (_isRegisteredInObjectCache)
+                {
+                    if (ObjectsCacheInternal.TryGetValue(ID, out XRObjectBase? current) && ReferenceEquals(current, this))
+                        ObjectsCacheInternal.TryRemove(ID, out _);
+                    _isRegisteredInObjectCache = false;
+                }
+                _constructorObjectCachePublicationDeferred = false;
+                IsDestroyed = true;
+            }
+            return true;
+        }
+
         /// <summary>
         /// Adopts a stable identifier derived from persistent source identity.
         /// Importers use this before serialization so unchanged object graphs retain
@@ -370,8 +398,12 @@ namespace XREngine.Data.Core
         public string? Name
         {
             get => _name;
-            set => SetField(ref _name, value);
+            set => SetFieldValidated(ref _name, value, this,
+                static (obj, _, _, _) => obj.ValidateNameWrite());
         }
+
+        /// <summary>Checks an opt-in owner before a name field write.</summary>
+        protected virtual void ValidateNameWrite() { }
 
         /// <summary>
         /// True if the object has been destroyed and no longer exists in a valid state.

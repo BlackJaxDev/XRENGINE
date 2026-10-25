@@ -16,6 +16,7 @@
     <ProjectReference Include="../../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Scene/GuardedComponentCreationTests.cs" Link="Scene/GuardedComponentCreationTests.cs" />
     <Compile Include="../Rendering/UITextMultilineSubmitTests.cs" Link="Rendering/UITextMultilineSubmitTests.cs" />
     <Compile Include="../Rendering/UITextPointerCaretTests.cs" Link="Rendering/UITextPointerCaretTests.cs" />
     <Compile Include="../Rendering/UITabFocusRestoreTests.cs" Link="Rendering/UITabFocusRestoreTests.cs" />

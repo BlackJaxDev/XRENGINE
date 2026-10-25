@@ -1343,3 +1343,20 @@ cases; full run130 passed **1,172/1,172**, without failures, warnings, or skips.
 Desktop build52 compiled the editor and tests with zero warnings/errors. All
 10,808 source inputs stayed unchanged. Individual child property, construction,
 and destruction callbacks remain open. The broader count remains **50/60**.
+
+## Guarded Component Construction
+
+The internal guarded factory retains the component claim before constructor and
+creation callbacks. It checks exact owner and list identities, prevents stale
+insertion and field writes, and requires pre-existing transform/component
+dependencies. The public factory behavior remains unchanged. Failed construction
+can abort only a component that never entered a structural list. Cleanup runs at
+most once after admission, preserves both failures, and reports only its own
+confirmed destruction commit.
+
+Headless build195 passed with zero warnings/errors. Targeted run133 passed
+**28/28** cases; full run134 passed **1,200/1,200**, without failures, warnings,
+or skips. Desktop build53 compiled the editor and tests with zero warnings/errors.
+All 10,810 source inputs stayed unchanged through these checks. This is a
+prerequisite for menu child construction and retirement. Those integrations remain open,
+and the broader count remains **50/60**.

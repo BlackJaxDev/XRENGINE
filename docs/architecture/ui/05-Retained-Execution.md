@@ -1654,3 +1654,28 @@ custody instead of being retired.
 Selection restoration applies only while the action still owns the exact ordered
 selection. A callback or later user selection takes priority. Selection callbacks
 are followed by graph and placement checks before the command settles.
+
+## Guarded Component Construction
+
+The internal SceneNode.AddComponentGuarded path retains a
+RuntimeComponentCreationReceipt before the component base constructor binds its
+node. The receipt captures exact node, transform, parent, component-list, world,
+and component identity. It checks callback boundaries, the final Name and World
+writes, and structural-list insertion. List commit checks use intrinsic ownership
+only; they do not invoke the caller's validator while the list lock is held.
+Required transforms and component dependencies must already exist. The public
+component factory keeps its existing behavior.
+
+A failed attempt retains its original exception and claimed component. Only a
+failed component that never entered a structural list can use guarded constructor
+abort. A vetoed insertion is such a case. A component that entered a list, was
+later detached, changed lifetime, or acquired a foreign list owner cannot use
+that abort. Cleanup checks ownership after callbacks before it commits destruction.
+It retains cleanup failure. Once cleanup starts, the receipt prevents a second
+attempt. An admission failure before cleanup starts can retry only while the
+same intrinsic ownership remains valid.
+
+This is a construction prerequisite. Context-menu child construction and full
+content retirement do not yet use it. It does not authorize arbitrary callback
+statements, destruction of borrowed objects, or rollback of inserted partials.
+Those paths need explicit content ownership and canonical retirement.

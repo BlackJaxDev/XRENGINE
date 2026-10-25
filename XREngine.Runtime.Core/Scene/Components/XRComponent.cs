@@ -79,13 +79,22 @@ namespace XREngine.Components
             return (T)NewFromFactory(node, typeof(T), factory, requireExactType: false);
         }
 
-        private static XRComponent NewFromFactory(SceneNode node, Type type, Func<XRComponent> factory, bool requireExactType)
+        internal static T NewGuarded<T>(SceneNode node, Func<T> factory,
+            RuntimeComponentCreationReceipt receipt) where T : XRComponent
         {
-            RuntimeComponentConstructionContext context = RuntimeComponentConstructionContext.Push(node, type, requireExactType);
+            ArgumentNullException.ThrowIfNull(factory);
+            return (T)NewFromFactory(node, typeof(T), factory, requireExactType: false, receipt);
+        }
+
+        private static XRComponent NewFromFactory(SceneNode node, Type type, Func<XRComponent> factory,
+            bool requireExactType, RuntimeComponentCreationReceipt? receipt = null)
+        {
+            RuntimeComponentConstructionContext context = RuntimeComponentConstructionContext.Push(node, type, requireExactType, receipt);
             XRComponent? component = null;
             try
             {
                 component = factory();
+                receipt?.Validate();
                 if (component is null || !ReferenceEquals(component, context.Claimed) ||
                     (requireExactType && component.GetType() != type))
                 {
@@ -94,7 +103,8 @@ namespace XREngine.Components
             }
             catch
             {
-                context.Claimed?.AbortComponentConstruction();
+                if (receipt is null)
+                    context.Claimed?.AbortComponentConstruction();
                 throw;
             }
             finally
@@ -105,14 +115,19 @@ namespace XREngine.Components
             try
             {
                 component.ConstructionSetSceneNode(node);
+                receipt?.Validate();
                 component.OnTransformChanged();
+                receipt?.Validate();
                 component.World = node.World;
+                receipt?.MarkWorldAssigned();
                 ComponentCreated?.Invoke(component);
+                receipt?.Validate();
                 return component;
             }
             catch
             {
-                component.AbortComponentConstruction();
+                if (receipt is null)
+                    component.AbortComponentConstruction();
                 throw;
             }
         }
@@ -229,7 +244,21 @@ namespace XREngine.Components
             _sceneNodeEventsSubscribed = true;
         }
 
-        private void AbortComponentConstruction()
+        internal void AbortGuardedConstruction(RuntimeComponentCreationReceipt receipt)
+        {
+            if (!receipt.CanAbortClaimed || !ReferenceEquals(receipt.Component, this))
+                return;
+            CreationReceipt = receipt;
+            receipt.BeginAbort();
+            try { AbortComponentConstruction(receipt); }
+            finally
+            {
+                receipt.EndAbort();
+                CreationReceipt = null;
+            }
+        }
+
+        private void AbortComponentConstruction(RuntimeComponentCreationReceipt? receipt = null)
         {
             // Owned clone failure transfers this allocation without running arbitrary teardown.
             if (XREngine.Scene.Prefabs.HierarchyConstructionScope.Retains(this))
@@ -243,15 +272,42 @@ namespace XREngine.Components
                 if (!_sceneNode.IsTransformNull)
                     _sceneNode.Transform.RenderMatrixChanged -= OnTransformRenderWorldMatrixChanged;
             }
-            try { AbortFailedConstruction(); }
-            catch { DeferExistingObjectCachePublication(); }
+            if (receipt is null)
+            {
+                try { AbortFailedConstruction(); }
+                catch { DeferExistingObjectCachePublication(); }
+                return;
+            }
+
+            try
+            {
+                receipt.ValidateDestructionOwner();
+                if (AbortFailedConstruction(receipt.AdmitAbortLifetime, receipt.ValidateDestructionOwner))
+                    receipt.CompleteAbort();
+            }
+            catch (Exception cleanupFailure)
+            {
+                receipt.RecordCleanupFailure(cleanupFailure);
+            }
         }
 
         private SceneNode _sceneNode;
         private bool _sceneNodeEventsSubscribed;
         private bool _constructionFailed;
+        private int _hasEnteredStructuralList;
         private bool _clearTicksOnStop = true;
         private bool _componentActivated;
+        internal RuntimeComponentCreationReceipt? CreationReceipt { get; set; }
+        internal bool HasEnteredStructuralList => Volatile.Read(ref _hasEnteredStructuralList) != 0;
+        internal void MarkStructuralListInsertion() => Volatile.Write(ref _hasEnteredStructuralList, 1);
+
+        protected override void ValidateNameWrite() => CreationReceipt?.Validate();
+        protected override void ValidateCreationNotification() => CreationReceipt?.Validate();
+        protected override void ValidateWorldValueWrite(IRuntimeWorldContext? value)
+        {
+            CreationReceipt?.ValidateIntrinsicOwner();
+            CreationReceipt?.ValidateWorldWrite(value);
+        }
 
         internal bool IsComponentActivated => _componentActivated;
 
@@ -361,7 +417,10 @@ namespace XREngine.Components
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
+            if (propName == nameof(World))
+                CreationReceipt?.ValidateWorldWrite(@new as IRuntimeWorldContext);
             bool change = base.OnPropertyChanging(propName, field, @new);
+            CreationReceipt?.Validate();
             if (change)
             {
                 switch (propName)
@@ -393,11 +452,13 @@ namespace XREngine.Components
                         break;
                 }
             }
+            CreationReceipt?.Validate();
             return change;
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            CreationReceipt?.Validate();
 
             switch (propName)
             {
@@ -548,7 +609,9 @@ namespace XREngine.Components
 
         protected override void OnDestroying()
         {
+            CreationReceipt?.ValidateDestructionOwner();
             base.OnDestroying();
+            CreationReceipt?.ValidateDestructionOwner();
 
             //Unsubscribe from scene node events
             if (_sceneNode is not null)
@@ -564,6 +627,7 @@ namespace XREngine.Components
 
             if (!_constructionFailed)
                 ComponentDestroyed?.Invoke(this);
+            CreationReceipt?.ValidateDestructionOwner();
             GetOwnedRetirement()?.CompleteCanonicalCleanup(this);
         }
 

@@ -1,4 +1,5 @@
 using XREngine.Scene.Transforms;
+using XREngine.Components;
 
 namespace XREngine.Scene.Prefabs;
 
@@ -80,8 +81,23 @@ internal sealed class HierarchyListAuthority<T>(XRWorldObjectBase owner) : Event
     }
 
     protected override void ReleaseItem(T item) => item?.ExitStructuralMutation();
-    protected override void PrepareAdd(T item) => item?.PrepareHierarchyListOwner(this);
-    protected override void Added(T item) => item?.AddHierarchyListOwner(this);
+    protected override void PrepareAdd(T item)
+    {
+        if (item is XRComponent { CreationReceipt: { } receipt })
+        {
+            if (Owner is not SceneNode node)
+                throw new InvalidOperationException("A guarded component requires its exact scene node.");
+            receipt.ValidateBeforeInsert(node);
+        }
+        item?.PrepareHierarchyListOwner(this);
+    }
+
+    protected override void Added(T item)
+    {
+        item?.AddHierarchyListOwner(this);
+        if (item is XRComponent { CreationReceipt: { } receipt })
+            receipt.CommitInsertion();
+    }
     protected override void Removed(T item) => item?.RemoveHierarchyListOwner(this);
 
     protected override void EnterLifetimeMutation(EventList<T> list)

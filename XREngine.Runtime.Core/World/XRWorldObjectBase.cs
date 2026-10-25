@@ -122,10 +122,14 @@ public abstract partial class XRWorldObjectBase : XRObjectBase
             validate?.Invoke();
             XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(this, value);
             previous = _world;
+            ValidateWorldValueWrite(value);
             SetField(ref _world, value, publishNotifications: false, propertyName: nameof(World));
         }
         if (notify) OnPropertyChanged(nameof(World), previous, value);
     }
+
+    /// <summary>Checks an opt-in owner immediately before a world field write.</summary>
+    protected virtual void ValidateWorldValueWrite(IRuntimeWorldContext? value) { }
 
     public TWorld? WorldAs<TWorld>() where TWorld : class
     {
@@ -187,6 +191,7 @@ public abstract partial class XRWorldObjectBase : XRObjectBase
         ReplicationInfo? replication = World is not null ? GetReplicationInfo() : null;
 
         base.OnPropertyChanged(propName, prev, field);
+        ValidateCreationNotification();
         switch (propName)
         {
             case nameof(World):
@@ -213,6 +218,7 @@ public abstract partial class XRWorldObjectBase : XRObjectBase
     protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
     {
         bool changed = base.OnPropertyChanging(propName, field, @new);
+        ValidateCreationNotification();
         if (changed && propName == nameof(World) && World is not null)
         {
             foreach ((ETickGroup group, int order, WorldTick tick) in _tickCache)
@@ -221,6 +227,9 @@ public abstract partial class XRWorldObjectBase : XRObjectBase
 
         return changed;
     }
+
+    /// <summary>Checks an opt-in creation owner after external observers run.</summary>
+    protected virtual void ValidateCreationNotification() { }
 
     protected override void OnDestroying()
     {

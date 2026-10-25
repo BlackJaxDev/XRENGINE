@@ -9,28 +9,34 @@ internal readonly struct RuntimeComponentConstructionContext
     [ThreadStatic] private static Type? _expectedType;
     [ThreadStatic] private static XRComponent? _claimed;
     [ThreadStatic] private static bool _requireExactType;
+    [ThreadStatic] private static RuntimeComponentCreationReceipt? _receipt;
 
     private readonly SceneNode? _previousNode;
     private readonly Type? _previousExpectedType;
     private readonly XRComponent? _previousClaimed;
     private readonly bool _previousRequireExactType;
+    private readonly RuntimeComponentCreationReceipt? _previousReceipt;
 
-    private RuntimeComponentConstructionContext(SceneNode node, Type expectedType, bool requireExactType)
+    private RuntimeComponentConstructionContext(SceneNode node, Type expectedType, bool requireExactType,
+        RuntimeComponentCreationReceipt? receipt)
     {
         _previousNode = _node;
         _previousExpectedType = _expectedType;
         _previousClaimed = _claimed;
         _previousRequireExactType = _requireExactType;
+        _previousReceipt = _receipt;
         _node = node;
         _expectedType = expectedType;
         _claimed = null;
         _requireExactType = requireExactType;
+        _receipt = receipt;
     }
 
     internal XRComponent? Claimed => _claimed;
 
-    internal static RuntimeComponentConstructionContext Push(SceneNode node, Type expectedType, bool requireExactType)
-        => new(node, expectedType, requireExactType);
+    internal static RuntimeComponentConstructionContext Push(SceneNode node, Type expectedType, bool requireExactType,
+        RuntimeComponentCreationReceipt? receipt = null)
+        => new(node, expectedType, requireExactType, receipt);
 
     internal static void TryClaim(XRComponent component)
     {
@@ -44,6 +50,8 @@ internal readonly struct RuntimeComponentConstructionContext
             return;
 
         _claimed = component;
+        _receipt?.Claim(component);
+        component.CreationReceipt = _receipt;
         component.ConstructionBindSceneNode(node);
     }
 
@@ -53,5 +61,6 @@ internal readonly struct RuntimeComponentConstructionContext
         _expectedType = _previousExpectedType;
         _claimed = _previousClaimed;
         _requireExactType = _previousRequireExactType;
+        _receipt = _previousReceipt;
     }
 }
