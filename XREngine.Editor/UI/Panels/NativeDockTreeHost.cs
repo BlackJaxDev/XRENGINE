@@ -19,6 +19,7 @@ internal sealed class NativeDockTreeHost
     private readonly NativeDockLayout _layout;
     private readonly NativeDockTree _tree;
     private readonly NativeDockWindowRegistration _registration;
+    private readonly NativeLayoutSaveDebouncer? _layoutSaves;
     private readonly List<IDisposable> _dropRegistrations = [];
     private readonly Dictionary<string, SceneNode> _panelSlots = [];
     private readonly NativeDockRenderGate _renderGate = new();
@@ -47,6 +48,8 @@ internal sealed class NativeDockTreeHost
         _root.Destroyed += _ => Dispose();
         _registration = _root.AddComponent<NativeDockWindowRegistration>()!;
         _registration.Configure(_windowKey, ReceivePanel, _world);
+        _layoutSaves = _root.AddComponent<NativeLayoutSaveDebouncer>()!;
+        _layoutSaves.Configure(Save);
         Render();
         if (restoreWindows && _window is not null)
             NativeDetachedDockWindows.Restore(_window);
@@ -208,7 +211,8 @@ internal sealed class NativeDockTreeHost
             {
                 node.FixedSize = size;
                 UpdateHandlePosition();
-                Save();
+                // A drag changes the size on each pointer move. Write it once after the drag settles.
+                _layoutSaves?.Request();
             }
         };
 
@@ -595,7 +599,11 @@ internal sealed class NativeDockTreeHost
         Render();
     }
 
-    private void Save() => NativeDockLayoutStore.Save(_windowKey, _layout);
+    private void Save()
+    {
+        _layoutSaves?.MarkSaved();
+        NativeDockLayoutStore.Save(_windowKey, _layout);
+    }
 
     private static NativeDockNode CopyDockNode(NativeDockNode source)
         => new()

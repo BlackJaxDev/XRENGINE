@@ -523,7 +523,9 @@ CPU Timings, and an unknown console category shows all categories. Wheel scrolli
 updates the stored offset in memory. `NativeLayoutSaveDebouncer` writes the layout
 once after scrolling stops for 500 ms, or when the tool host leaves the scene. A
 discrete layout change writes the complete layout immediately and clears the
-pending scroll save. All seven primary panel types use the detached-window path. Legacy numeric
+pending scroll save. The scene/tools split and the dock tree splits use the shared
+`UISplitterHandleComponent`. A splitter drag updates the stored size in memory, and
+the same debouncer writes it after the drag settles. All seven primary panel types use the detached-window path. Legacy numeric
 window records migrate an existing saved layout; absent records seed the requested
 panel. Detached windows use their own camera, pawn, controller, and input dispatch
 in the source runtime world. They clone camera projection and pose. The main pawn

@@ -47,38 +47,25 @@ public static class EditorPanelHost
             SceneNode sceneNode = splitNode.NewChildWithTransform<UIBoundableTransform>(out _, "SceneView");
             sceneNode.NewChild<SceneViewPanel>(out var sceneView);
             sceneView.Window = window;
-            SceneNode handleNode = sceneNode.NewChild<UIButtonComponent>(out var handle, "SceneSplitter");
+            // The shared splitter handle owns drag capture, clamping, and keyboard steps.
+            SceneNode handleNode = sceneNode.NewChild<UISplitterHandleComponent>(out var handle, "SceneSplitter");
+            handleNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
+            handle.SplitTarget = sceneSplit;
+            handle.MinimumSize = 96;
+            handle.MaximumSize = 2000;
             UIBoundableTransform handleTransform = handleNode.GetTransformAs<UIBoundableTransform>(true)!;
             handleTransform.MinAnchor = Vector2.Zero;
             handleTransform.MaxAnchor = new Vector2(1, 0);
             handleTransform.Height = 10;
             handleTransform.BlocksInputBehind = true;
-            handle.NeedsMouseMove = true;
-            float? dragStartY = null;
-            float dragStartSize = layout.BottomSize;
-            handle.MouseMove += (x, y, component) =>
+            sceneSplit.PropertyChanged += (_, change) =>
             {
-                if (!EditorDragDropUtility.IsLeftMouseButtonHeldFor(component))
-                {
-                    if (dragStartY.HasValue)
-                        Save();
-                    dragStartY = null;
+                if (change.PropertyName != nameof(UIDualSplitTransform.FixedSize) ||
+                    sceneSplit.FixedSize is not { } size || size == layout.BottomSize)
                     return;
-                }
-                float canvasY = component.BoundableTransform.LocalToCanvas(new Vector2(x, y)).Y;
-                if (!dragStartY.HasValue)
-                {
-                    dragStartY = canvasY;
-                    dragStartSize = layout.BottomSize;
-                }
-                layout.BottomSize = Math.Clamp(dragStartSize + canvasY - dragStartY.Value, 96, 2000);
-                sceneSplit.FixedSize = layout.BottomSize;
-            };
-            handle.MouseDirectOverlapLeave += _ =>
-            {
-                if (dragStartY.HasValue)
-                    Save();
-                dragStartY = null;
+                layout.BottomSize = size;
+                // A drag changes the size on each pointer move. Write it once after the drag settles.
+                saveDebouncer?.Request();
             };
             toolsParent = splitNode;
         }
