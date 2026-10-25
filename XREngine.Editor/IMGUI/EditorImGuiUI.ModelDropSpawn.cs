@@ -461,9 +461,12 @@ public static partial class EditorImGuiUI
         return true;
     }
 
+    /// <summary>
+    /// Accepts the world root, a live node in the world, or a node of a hidden scene
+    /// that the world still owns.
+    /// </summary>
     private static bool IsValidDropSpawnTarget(RuntimeWorld world, SceneNode? parent)
-        => !world.IsDisposing && (parent is null ||
-            parent is { IsDestroyed: false, IsDestroyQueued: false } && ReferenceEquals(parent.World, world));
+        => !world.IsDisposing && (parent is null || HierarchySceneOwnership.CanAuthor(parent, world));
 
     private static bool TryHandleDroppedAsset(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition = null)
     {
@@ -680,7 +683,9 @@ public static partial class EditorImGuiUI
         if (world is null || prefab is null)
             return false;
 
-        SceneNode instance = SceneNodePrefabUtility.Instantiate(prefab, world, parent, maintainWorldTransform: false);
+        // A child of a hidden scene stays detached from the world, like its parent.
+        IRuntimeWorldContext? attachWorld = parent is null || ReferenceEquals(parent.World, world) ? world : null;
+        SceneNode instance = SceneNodePrefabUtility.Instantiate(prefab, attachWorld, parent, maintainWorldTransform: false);
 
         ApplySpawnWorldPosition(instance, worldPosition);
         FinalizeSpawnedPrefabNode(world, instance);

@@ -579,9 +579,10 @@ original owner decisions remain open; no approval was inferred.
 - Hierarchy create/delete/reparent/promotion preserve exact hidden and dual scene
   memberships, runtime route metadata, and source dirty documents. Undo restores
   placement before activation. Uncertain setter or matrix callback completion
-  keeps history and requires explicit recovery/reissue. Hidden-parent asset
-  spawning remains open. The first promoted editor-only child now allocates the
-  editor scene, and the native node and scene menus match the ImGui actions.
+  keeps history and requires explicit recovery/reissue. The first promoted
+  editor-only child allocates the editor scene. Prefab and model drops accept a
+  parent in a hidden scene, and the spawned prefab stays detached like its parent.
+  The native node and scene menus match the ImGui actions.
 - Dock transfer requires a confirmed destination and unchanged registration
   owners. Detached windows store optional bounds and consume exact approved-close
   receipts. Primary-key migration is pending. The optional SDL/Vulkan split-pump
