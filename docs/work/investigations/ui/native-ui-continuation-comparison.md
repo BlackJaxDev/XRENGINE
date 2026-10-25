@@ -1339,3 +1339,106 @@ All **10,886 source inputs** remained unchanged through headless build240,
 runs191/192, and desktop build76. Read-only source review found no blocker in the
 scoped font change. The repaired Windows fixtures and the normal system-font import
 remain execution-pending; no Windows, visual, GPU, or performance result is implied.
+
+## Guarded Animation toolbar publication plan
+
+The scoped-font checkpoint is published at
+`c1bbb973d2946dabdaa4bc7c299600cde8c3dded`. Its first push failed because the
+existing HTTPS Git route could not obtain credentials. A later authorized single
+retry through the unchanged route succeeded after remote ancestry inspection.
+The remote SHA matches. No credential, permission, identity, remote, or account
+setting changed. GitHub reports no attached check runs, workflow runs, or statuses.
+
+The revised Animation transfer draft remains local in stash
+`196632e3217b7340488f9ddd71e65eb41fe28653`. The earlier draft and comparison
+stashes remain intact. Draft build241 passed with zero warnings/errors (2m36.87s).
+Run193 passed 17 portable value/routing cases (1.458s), with no failures, warnings,
+or skips. Those cases use fake transfer receivers; they do not execute the real
+Animation panel or hosts. All 10,891 draft source inputs stayed unchanged.
+The draft's editor paths were not compiled in that run. Do not publish the draft
+or close a transfer item from these results.
+
+### Confirmed source defects
+
+The draft's `AnimationPanel.ViewTransfer.cs` calls `RefreshTimeInput` and
+`RefreshValueInput`. In `AnimationPanel.cs`, these methods assign
+`UITextInputComponent.Text` through its ordinary setter. That setter uses
+`XRBase.SetField`, which calls `OnPropertyChanging` and then assigns the field
+without rechecking caller ownership or newer writes. A callback can reparent the
+input or assign newer text before the outer assignment. The draft's checks run
+after that assignment and therefore cannot prevent the stale write.
+
+The value refresh can retry up to three times against changed state. A transfer
+must instead publish one fixed pair of values under its original ownership proof.
+The draft also checks time text after value publication only when a key is selected.
+A value callback can therefore change the time field in the no-key case without
+causing transfer rejection.
+
+There is a second callback boundary inside `UITextInputComponent.OnPropertyChanged`.
+It raises external notifications through the base method, then updates cursor,
+selection, and `TextComponent.Text`. A guard only around the initial `_text`
+assignment does not protect these later writes. These are source findings, not
+newly executed Windows failures.
+
+### Bounded implementation sequence
+
+1. Add an opt-in guarded text-publication path in a focused
+   `UITextInputComponent` partial file. Reuse `XRBase.SetFieldValidated` and the
+   existing typed-state validator pattern in `UIListTransform.ScrollWrites.cs`.
+   Track every text-write attempt, including ordinary and equal-value attempts,
+   so a callback that writes a value and then restores it cannot revive an old
+   guard. Preserve ordinary deserialization and text-editing behavior. Do not
+   change the global `XRBase` event contract.
+2. Carry the fixed guard through the text notification path. Recheck the input
+   lifetime and caller proof before and after callbacks and before later cursor,
+   selection, or display-text writes. A display sibling must retain its exact
+   node/component ownership. Use an explicit guarded display-text write where
+   needed; a final check after an unguarded sibling write is insufficient. Nested
+   writes must retain their own admission and restore any outer guard in `finally`.
+   On conflict, stop subsequent work and preserve the callback's edit or adopted
+   object. Do not roll back into a newer owner.
+3. In the preserved `AnimationPanel.ViewTransfer.cs`, capture the exact two inputs,
+   node/transform/parent identities, clip/root/track proof, and both expected text
+   values before the first publication callback. Use the guarded path once per
+   input instead of the ordinary refresh methods. Recheck both text results after
+   the second publication, including the no-key case. Capture and check any
+   playback component/time used for that no-key display; do not seek or change
+   global selection to make a restore pass.
+4. Retain the draft's binding proof at each final scroll/bounds write. Verify row
+   projection and source ownership before restoring scroll. Keep the receive-first
+   contract: a rejected destination does not authorize source closure, and partial
+   destination changes do not justify rollback into a callback's newer state.
+
+This work needs no new dependency, persistent format, window key, renderer default,
+or owner decision. Keep it separate from system-font import diagnosis and from
+the pending asset recovery and paragraph-analysis proposals.
+
+### Regression and acceptance matrix
+
+| Layer | Required case | Required result |
+| --- | --- | --- |
+| Portable text input | Initial admission fails, including an equal-value request | No field write or notification; caller cannot report acceptance. |
+| Portable text input | `PropertyChanging` assigns newer text; writes away and back; or makes an equal-value attempt | Old guarded write rejects and preserves the newer attempt. |
+| Portable text input | Callback reparents the input, replaces its transform/sibling, queues destruction, or destroys it | No later write through the old owner and no recreated retired sibling. |
+| Portable text input | `PropertyChanged` changes ownership or text before caret/display propagation | Stop remaining old-owner work; preserve callback text and adopted display state. |
+| Portable text input | Veto, thrown callback, suppressed notifications, or validator reentry | No stale write; cleanup releases only its own guard; a fresh later write can proceed. |
+| Portable text input | Successful guarded write, nested guarded write, and unchanged ordinary editing | Exact accepted text, normal caret/binding behavior, and no retained guard. |
+| Animation panel | Time/value callback writes newer text or reparents either input | Transfer rejects and preserves the callback-owned text/input. |
+| Animation panel | Value callback changes time text without a selected key | Transfer rejects; both fixed text values are required for acceptance. |
+| Animation panel | Clip/root/track changes, pending row/value refresh, or scroll callback changes the view | Reject before a stale later write; retain the source panel. |
+| Actual hosts | Inactive destination retains clip A while source/current clip is B | Activate and accept B without changing global clip selection. |
+| Actual hosts | Save fails after B restore; prior view is A | Source stays open; compensation does not restore A or change global selection. |
+| Actual hosts | Save fails with a still-current same-clip prior view | Restore only the exact retained prior view, or report compensation failure. |
+
+Add portable cases under `XREngine.UnitTests/Rendering/` and link them in the
+Headless project. Extend the preserved Animation fixture for panel cases; add real
+host cases rather than treating fake receiver routing as host coverage. Run builds
+sequentially through `Tools/Invoke-AgentBuild.ps1`, then focused portable cases,
+the full portable suite, and editor/test compilation against one frozen snapshot.
+Run actual panel/host cases on Windows when disk capacity permits. Keep existing
+assertions and time limits. No live graphics, IME, or performance acceptance follows
+from portable tests or managed compilation.
+
+Windows revalidation remains held by disk capacity and pending targeted cleanup
+approval. No additional laptop operation is part of this plan. The original
+implementation reconciliation remains 51/60; this plan closes no code item.

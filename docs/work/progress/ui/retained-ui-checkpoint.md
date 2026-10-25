@@ -1698,3 +1698,10 @@ approval pending. The original row-realization stalls and normal font import rem
 unresolved. This fixture change does not establish their cause. The implementation
 reconciliation remains **51/60**. The animation draft and owner proposals remain
 separate, and no platform acceptance or default-editor decision is closed.
+
+The scoped-font checkpoint is now published at `c1bbb973d2946dabdaa4bc7c299600cde8c3dded`.
+The unchanged Git route recovered on one authorized retry; the remote SHA matches.
+No CI checks or workflows are attached. The revised Animation draft remains stashed
+and unpublished. Its toolbar source defects and bounded source/test plan are in the
+[continuation investigation](../../investigations/ui/native-ui-continuation-comparison.md#guarded-animation-toolbar-publication-plan).
+Its 17 portable value/routing cases do not establish actual panel or host acceptance.
