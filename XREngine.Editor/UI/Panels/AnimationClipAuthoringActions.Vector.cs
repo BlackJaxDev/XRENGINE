@@ -35,6 +35,9 @@ internal static partial class AnimationClipAuthoringActions
             before.InterpolationIn, before.InterpolationOut,
             before.SyncValues, before.SyncDirections,
             before.SyncMagnitudes);
+        if (!staged.TryRestoreAuthoredWeights(before.WeightedMode,
+                before.InWeight, before.OutWeight))
+            return false;
         edit(staged);
         if (!staged.TryCaptureAuthoredState(out var after) || after == before)
             return false;

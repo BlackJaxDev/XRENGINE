@@ -1517,3 +1517,22 @@ original count is now **51/60**, with nine implementation items and four origina
 owner decisions remaining. Grouped duplication, control lifetimes, three pending
 proposals, Windows/GPU/IME checks, and performance acceptance remain open. ImGui
 remains the default.
+
+
+## Weighted Float Handles
+
+Retained float details now edit normalized incoming and outgoing weights on
+Hermite sides. Complete snapshots preserve weights across ordinary handle edits
+and guarded Undo/Redo. Public weight setters invalidate the track after accepted
+writes, including nested writes and committed writes whose observer throws.
+Serialized fields and interpolation math remain unchanged.
+
+Headless build210 passed with zero warnings/errors in 55.07s. Run155 passed 16/16
+cases in 0.136s. Full run156 passed **1,271/1,271** in 24.418s, with no failures,
+warnings, or skips. Four added editor cases require Windows execution. The code
+reconciliation remains **51/60**; the broader inspector item stays open.
+
+Desktop build65 passed with zero warnings/errors in 3m12.96s. All 10,829 source
+inputs stayed unchanged through validation. The 39 maintained relative links
+resolve and diff checks pass. No Windows runtime, GPU, visual, or performance
+acceptance is inferred.

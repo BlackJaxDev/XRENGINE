@@ -62,6 +62,8 @@ public static partial class InspectorPropertyEditors
             private UITextInputComponent? _inValue;
             private UITextInputComponent? _inTangent;
             private UITextInputComponent? _outTangent;
+            private UITextInputComponent? _inWeight;
+            private UITextInputComponent? _outWeight;
             private UITextInputComponent? _length;
             private UIButtonComponent? _inModeButton;
             private UIButtonComponent? _outModeButton;
@@ -73,6 +75,10 @@ public static partial class InspectorPropertyEditors
             private UITextComponent? _syncValuesLabel;
             private UITextComponent? _syncDirectionsLabel;
             private UITextComponent? _syncMagnitudesLabel;
+            private UIButtonComponent? _inWeightedButton;
+            private UIButtonComponent? _outWeightedButton;
+            private UITextComponent? _inWeightedLabel;
+            private UITextComponent? _outWeightedLabel;
             private FloatKeyframe? _selected;
             private float _plotWidth;
             private float _plotHeight;
@@ -220,6 +226,49 @@ public static partial class InspectorPropertyEditors
                 _syncMagnitudesButton = syncMagnitudesButton;
                 _syncMagnitudesLabel = syncMagnitudesLabel;
                 _syncMagnitudesButton.IsEnabled = false;
+                if (!ContinueBuild()) return;
+
+                SceneNode weights = card.NewChild();
+                if (!ContinueBuild()) return;
+                UIListTransform weightsLayout = weights.SetTransform<UIListTransform>();
+                if (!ContinueBuild()) return;
+                weightsLayout.DisplayHorizontal = true;
+                if (!ContinueBuild()) return;
+                weightsLayout.ItemSpacing = 5;
+                if (!ContinueBuild()) return;
+                _inWeight = AddInput(weights, "In weight", 105, SubmitIncomingWeight);
+                if (!ContinueBuild()) return;
+                _outWeight = AddInput(weights, "Out weight", 105, SubmitOutgoingWeight);
+                if (!ContinueBuild()) return;
+                _inWeight!.IsEnabled = false;
+                if (!ContinueBuild()) return;
+                _outWeight!.IsEnabled = false;
+                if (!ContinueBuild()) return;
+
+                SceneNode weightedModes = card.NewChild();
+                if (!ContinueBuild()) return;
+                UIListTransform weightedLayout =
+                    weightedModes.SetTransform<UIListTransform>();
+                if (!ContinueBuild()) return;
+                weightedLayout.DisplayHorizontal = true;
+                if (!ContinueBuild()) return;
+                weightedLayout.ItemSpacing = 5;
+                if (!ContinueBuild()) return;
+                var (_, inWeightedButton, _, inWeightedLabel) =
+                    NativeUIElements.CreateButton(weightedModes, "Weighted in: —",
+                        _ => ToggleWeighted(false), width: 135);
+                if (!ContinueBuild()) return;
+                _inWeightedButton = inWeightedButton;
+                _inWeightedLabel = inWeightedLabel;
+                _inWeightedButton.IsEnabled = false;
+                if (!ContinueBuild()) return;
+                var (_, outWeightedButton, _, outWeightedLabel) =
+                    NativeUIElements.CreateButton(weightedModes, "Weighted out: —",
+                        _ => ToggleWeighted(true), width: 135);
+                if (!ContinueBuild()) return;
+                _outWeightedButton = outWeightedButton;
+                _outWeightedLabel = outWeightedLabel;
+                _outWeightedButton.IsEnabled = false;
                 if (!ContinueBuild()) return;
 
                 _plot = new UIRetainedPlot(card, "FloatAnimationPlot");
@@ -639,6 +688,42 @@ public static partial class InspectorPropertyEditors
                 if (!IsCurrent(source, revision)) return;
                 if (_syncMagnitudesButton is not null)
                     _syncMagnitudesButton.IsEnabled = enabled;
+                if (!IsCurrent(source, revision)) return;
+                bool incomingHermite = enabled &&
+                    key!.InterpolationTypeIn == EVectorInterpType.Hermite;
+                bool outgoingHermite = enabled &&
+                    key!.InterpolationTypeOut == EVectorInterpType.Hermite;
+                bool incomingWeighted = incomingHermite &&
+                    (key!.WeightedMode & EKeyframeWeightedMode.In) != 0;
+                bool outgoingWeighted = outgoingHermite &&
+                    (key!.WeightedMode & EKeyframeWeightedMode.Out) != 0;
+                if (_inWeightedLabel is not null)
+                    _inWeightedLabel.Text = incomingHermite
+                        ? $"Weighted in: {OnOff(incomingWeighted)}"
+                        : enabled ? "In: Hermite only" : "Weighted in: —";
+                if (!IsCurrent(source, revision)) return;
+                if (_inWeightedButton is not null)
+                    _inWeightedButton.IsEnabled = incomingHermite;
+                if (!IsCurrent(source, revision)) return;
+                if (_outWeightedLabel is not null)
+                    _outWeightedLabel.Text = outgoingHermite
+                        ? $"Weighted out: {OnOff(outgoingWeighted)}"
+                        : enabled ? "Out: Hermite only" : "Weighted out: —";
+                if (!IsCurrent(source, revision)) return;
+                if (_outWeightedButton is not null)
+                    _outWeightedButton.IsEnabled = outgoingHermite;
+                if (!IsCurrent(source, revision)) return;
+                if (_inWeight is not null)
+                    _inWeight.Text = incomingWeighted
+                        ? key!.InWeight.ToString("G9", CultureInfo.InvariantCulture) : "";
+                if (!IsCurrent(source, revision)) return;
+                if (_inWeight is not null) _inWeight.IsEnabled = incomingWeighted;
+                if (!IsCurrent(source, revision)) return;
+                if (_outWeight is not null)
+                    _outWeight.Text = outgoingWeighted
+                        ? key!.OutWeight.ToString("G9", CultureInfo.InvariantCulture) : "";
+                if (!IsCurrent(source, revision)) return;
+                if (_outWeight is not null) _outWeight.IsEnabled = outgoingWeighted;
             }
 
             private static string OnOff(bool value) => value ? "on" : "off";
@@ -725,6 +810,34 @@ public static partial class InspectorPropertyEditors
                 RequestRefresh();
             }
 
+            private void SubmitIncomingWeight(UITextInputComponent input)
+                => SubmitWeight(input, outgoing: false);
+
+            private void SubmitOutgoingWeight(UITextInputComponent input)
+                => SubmitWeight(input, outgoing: true);
+
+            private void SubmitWeight(UITextInputComponent input, bool outgoing)
+            {
+                if (CanEdit(out var source) && _selected is { } key &&
+                    IsPresentedKey(source, key) && Parse(input, out float weight) &&
+                    weight is >= 0 and <= 1)
+                    InspectorFloatCurveActions.SetWeight(source, key, outgoing, weight);
+                RequestRefresh();
+            }
+
+            private void ToggleWeighted(bool outgoing)
+            {
+                if (CanEdit(out var source) && _selected is { } key &&
+                    IsPresentedKey(source, key))
+                {
+                    EKeyframeWeightedMode side = outgoing
+                        ? EKeyframeWeightedMode.Out : EKeyframeWeightedMode.In;
+                    InspectorFloatCurveActions.SetWeightedSide(source, key,
+                        outgoing, (key.WeightedMode & side) == 0);
+                }
+                RequestRefresh();
+            }
+
             private void CycleInterpolation(bool outgoing)
             {
                 if (CanEdit(out var source) && _selected is { } key &&
@@ -797,6 +910,8 @@ public static partial class InspectorPropertyEditors
                 if (_inValue is not null) _inValue.Submitted -= SubmitIncomingValue;
                 if (_inTangent is not null) _inTangent.Submitted -= SubmitIncomingTangent;
                 if (_outTangent is not null) _outTangent.Submitted -= SubmitOutgoingTangent;
+                if (_inWeight is not null) _inWeight.Submitted -= SubmitIncomingWeight;
+                if (_outWeight is not null) _outWeight.Submitted -= SubmitOutgoingWeight;
                 if (_length is not null) _length.Submitted -= SubmitLength;
                 _rows.Replace([]);
                 _keys.Clear();

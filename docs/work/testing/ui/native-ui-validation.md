@@ -72,7 +72,11 @@ curve sample, and disabled state with no valid key. Edit In value, Out value,
 and both tangents. Toggle linked values, tangent directions, and tangent
 magnitudes. Enabling a link must show the resulting handle changes; Undo must
 restore the prior asymmetric handles and flags. Check rejection of a computed
-nonfinite result without changing the source or adding Undo history. Undo and Redo each operation,
+nonfinite result without changing the source or adding Undo history. Enable each
+weighted Hermite side and edit asymmetric weights from zero to one. Check that
+non-Hermite sides and disabled weight modes disable the related inputs. Ordinary
+value, tangent, mode, and sync edits must preserve weights. External weight edits
+must refresh the plot and reject stale history. Undo and Redo each operation,
 including consecutive edits and Undo after closing the navigator. Verify frame
 indices, synchronized handles, source
 dirty state, and unchanged playback time. Mode edits must preserve key time, frame,
@@ -91,8 +95,12 @@ checks remain pending. Compiling the editor cases does not execute them on Linux
 
 ### Managed integration evidence
 
-Latest full portable check (2026-10-25): headless build208 passed with zero
-warnings/errors, and run154 passed **1,265/1,265** tests with no failures or skips.
+Latest full portable check (2026-10-25): headless build210 passed with zero
+warnings/errors, and run156 passed **1,271/1,271** tests with no failures or skips.
+Run155 passed 16 authored-state cases, including weighted sampling, external
+changes, nested setters, observer failure, and invalid weight rejection. Desktop
+build65 passed with zero warnings/errors. Four added editor cases compiled only;
+all 10,829 source inputs stayed unchanged through validation.
 Run145 passed all 100 targeted transition-ownership and menu-navigation cases.
 Run149 passed 13 child-destruction cases, including the actual menu Hide path.
 Run151 passed seven authored-state cases, including interpolation sampling and

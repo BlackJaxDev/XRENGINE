@@ -11,6 +11,46 @@ namespace XREngine.UnitTests.Editor;
 public class AnimationClipAuthoringActionsTests
 {
     [Test]
+    public void WeightedScalarClipEditPreservesWeightsAndRemovalPayload()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat animation = new(2, false, true);
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                animation);
+            AnimationClip clip = new(member) { LengthInSeconds = 2 };
+            FloatKeyframe key = new(0.5f, 1f, 2f,
+                EVectorInterpType.Hermite);
+            key.WeightedMode = EKeyframeWeightedMode.Both;
+            key.InWeight = 0.2f;
+            key.OutWeight = 0.8f;
+            animation.Keyframes.Add(key);
+            Assert.That(key.TryCaptureAuthoredState(out var before), Is.True);
+
+            Assert.That(AnimationClipAuthoringActions.SetKeyValue(clip, key, 3f),
+                Is.True);
+            Assert.That(key.TryCaptureAuthoredState(out var edited), Is.True);
+            Assert.That((edited.WeightedMode, edited.InWeight, edited.OutWeight),
+                Is.EqualTo((EKeyframeWeightedMode.Both, 0.2f, 0.8f)));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(key.TryCaptureAuthoredState(out var restored), Is.True);
+            Assert.That(restored, Is.EqualTo(before));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(key.TryCaptureAuthoredState(out var redone), Is.True);
+            Assert.That(redone, Is.EqualTo(edited));
+
+            Assert.That(AnimationClipAuthoringActions.RemoveKey(clip, member, key),
+                Is.True);
+            key.OutWeight = 0.6f;
+            Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
+            Assert.That(key.OutWeight, Is.EqualTo(0.6f));
+            Assert.That(animation.Keyframes.Count, Is.Zero);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void ConsecutiveLengthBatchesUndoAndRedoAllUniqueChildren()
     {
         Undo.ClearHistory();
@@ -345,8 +385,10 @@ public class AnimationClipAuthoringActionsTests
         finally { Undo.ClearHistory(); }
     }
 
-    [Test]
-    public void AutoTangentCallbackNeighborEditIsKeptAndHistoryIsGuarded()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void AutoTangentCallbackNeighborEditIsKeptAndHistoryIsGuarded(
+        bool changeWeight)
     {
         Undo.ClearHistory();
         try
@@ -373,13 +415,16 @@ public class AnimationClipAuthoringActionsTests
                 if (changed || middle.OutTangent != 2f)
                     return;
                 changed = true;
-                first.OutValue = 9f;
+                if (changeWeight) first.OutWeight = 0.9f;
+                else first.OutValue = 9f;
             };
             Assert.That(AnimationClipAuthoringActions.AutoKeyTangents(clip,
                 middle), Is.False);
-            Assert.That(first.OutValue, Is.EqualTo(9f));
+            Assert.That(changeWeight ? first.OutWeight : first.OutValue,
+                Is.EqualTo(changeWeight ? 0.9f : 9f));
             Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
-            Assert.That(first.OutValue, Is.EqualTo(9f));
+            Assert.That(changeWeight ? first.OutWeight : first.OutValue,
+                Is.EqualTo(changeWeight ? 0.9f : 9f));
         }
         finally { Undo.ClearHistory(); }
     }

@@ -9,6 +9,91 @@ namespace XREngine.UnitTests.Editor;
 public sealed class InspectorFloatCurveActionsTests
 {
     [Test]
+    public void WeightedHermiteEditsAndOrdinaryValueEditPreserveCompleteHistory()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat curve = new(2, false, true);
+            FloatKeyframe first = new(0f, 0f, 5f, EVectorInterpType.Hermite);
+            FloatKeyframe second = new(1f, 1f, -1f, EVectorInterpType.Hermite);
+            curve.Keyframes.Add(first);
+            curve.Keyframes.Add(second);
+            curve.Seek(0.25f, false);
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
+                out var source, out string reason), Is.True, reason);
+            Assert.That(first.TryCaptureAuthoredState(out var before), Is.True);
+            float unweightedSample = curve.GetValue(0.4f);
+
+            Assert.That(InspectorFloatCurveActions.SetWeightedSide(source!, first,
+                true, true), Is.True);
+            Assert.That(InspectorFloatCurveActions.SetWeight(source!, first,
+                true, 0.8f), Is.True);
+            Assert.That(curve.GetValue(0.4f), Is.Not.EqualTo(unweightedSample));
+            Assert.That(InspectorFloatCurveActions.SetValue(source!, first, 2f), Is.True);
+            Assert.That(first.TryCaptureAuthoredState(out var after), Is.True);
+            Assert.That((after.WeightedMode, after.OutWeight, curve.CurrentTime),
+                Is.EqualTo((EKeyframeWeightedMode.Out, 0.8f, 0.25f)));
+
+            for (int index = 0; index < 3; index++)
+                Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(first.TryCaptureAuthoredState(out var restored), Is.True);
+            Assert.That(restored, Is.EqualTo(before));
+            for (int index = 0; index < 3; index++)
+                Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(first.TryCaptureAuthoredState(out var redone), Is.True);
+            Assert.That(redone, Is.EqualTo(after));
+            Assert.That(curve.CurrentTime, Is.EqualTo(0.25f));
+            Assert.That(InspectorFloatCurveActions.SetWeight(source!, first,
+                true, 1.1f), Is.False);
+            Assert.That(InspectorFloatCurveActions.SetWeight(source!, first,
+                true, float.NaN), Is.False);
+            second.InterpolationTypeOut = EVectorInterpType.Linear;
+            Assert.That(InspectorFloatCurveActions.SetWeightedSide(source!, second,
+                true, true), Is.False);
+            Assert.That(InspectorFloatCurveActions.SetWeight(source!, second,
+                true, 0.5f), Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void WeightedEditCallbackConflictKeepsExternalWeight()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat curve = new(2, false, true);
+            FloatKeyframe key = new(0.5f, 1f, 2f,
+                EVectorInterpType.Hermite);
+            key.WeightedMode = EKeyframeWeightedMode.Out;
+            curve.Keyframes.Add(key);
+            InspectorFloatCurveTestOwner owner = new() { Curve = curve };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveSource.TryCapture(property, [owner],
+                out var source, out _), Is.True);
+            bool changed = false;
+            curve.Keyframes.Changed += _ =>
+            {
+                if (changed) return;
+                changed = true;
+                key.OutWeight = 0.9f;
+            };
+            Assert.That(InspectorFloatCurveActions.SetWeight(source!, key,
+                true, 0.8f), Is.False);
+            Assert.That(changed, Is.True);
+            Assert.That(key.OutWeight, Is.EqualTo(0.9f));
+            Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
+            Assert.That(key.OutWeight, Is.EqualTo(0.9f));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void UnweightedHandleAndSyncEditsUndoCompleteAuthoredState()
     {
         Undo.ClearHistory();

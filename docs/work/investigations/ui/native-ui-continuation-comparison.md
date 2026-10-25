@@ -858,3 +858,40 @@ inputs stayed unchanged through validation. The 39 maintained relative links
 resolve and diff checks pass. The active TODO has nine implementation checkboxes,
 consistent with the 51/60 source reconciliation. No Windows, graphics, input,
 visual, or benchmark acceptance is inferred.
+
+
+## Weighted Float Handle Authoring
+
+The retained detail now exposes Hermite weight toggles and normalized inputs.
+The generic authored-state snapshot includes scalar weights. Both clip and
+inspector staging restore them before ordinary edits, so value, mode, tangent,
+and sync commands preserve weighted curves. Exact commits validate all fields
+before mutation and notify only after the complete state is visible. Existing
+serialized fields and interpolation math are unchanged.
+
+Review found two setter-publication hazards. A throwing property observer can
+leave an accepted write unpublished. A nested setter can publish an intermediate
+value before the outer setter stores its final value. Public setters now notify
+for each accepted write and conservatively invalidate a changed field when a
+property observer throws. Secondary notification failures cannot replace the
+original setter exception. An attempted revision-based suppression was removed
+because it could suppress that final outer value.
+
+Headless build209 failed with one CS0103 error and zero warnings in 2m19.18s:
+the animation library cannot call the runtime Debug logger. The repair uses
+System.Diagnostics.Trace inside the existing guarded diagnostic path. It adds no
+reference or dependency. Build210 passed with zero warnings/errors in 55.07s.
+Run155 passed 16/16 authored-state cases in 0.136s. Full run156 passed
+1,271/1,271 in 24.418s, with no failures, warnings, or skips. Six new portable cases
+cover weighted samples, complete-state publication, stale-state rejection,
+nested setters, observer failure, and invalid/non-scalar weighted state.
+
+The editor fixtures add four cases across clip and inspector actions, including
+weight-preserving Undo/Redo, removed-key payload conflicts, and neighboring-key
+callback conflicts. These require Windows execution; the portable suite does not
+execute the editor action or Undo implementations.
+
+Desktop build65 passed with zero warnings/errors in 3m12.96s. All 10,829 source
+inputs stayed unchanged through validation. The 39 maintained relative links
+resolve and diff checks pass. No Windows runtime, GPU, visual, or performance
+acceptance is inferred.

@@ -1797,8 +1797,24 @@ and the three synchronization flags. Detached staged setters compute the full
 handle state, including the existing unification effects. The transaction applies
 that complete state and reverses it exactly. Nonfinite input or computed handles
 are rejected before a live-key mutation. Compact fields and toggle rows refresh
-only when dirty and disable for unavailable selections. Weighted mode and weights
-are preserved but are outside this editor's authored-state controls.
+only when dirty and disable for unavailable selections. Hermite sides also expose
+weighted-mode toggles and normalized weight inputs. Weight inputs require the
+corresponding toggle and accept only finite values from zero to one. Changing a
+mode does not discard its stored weights.
+
+The internal authored-state snapshot includes scalar weights even when captured
+through `VectorKeyframe<float>`. Clip and inspector edits restore those weights
+into detached staging keys. Exact commits validate the complete prior and desired
+state, write all handle fields, then publish one track change. Non-scalar keys
+accept only neutral weight state. Serialization fields and interpolation math are
+unchanged.
+
+Public scalar weight setters publish a track change for each accepted write.
+Nested writes publish their own accepted values. If a property observer throws
+after a changed value is stored, the setter conservatively invalidates the track
+and preserves the original exception. Secondary notification or diagnostic
+failures cannot replace that exception. This recovery can notify more than once
+under nested callbacks; it does not use the exact-commit notification guarantee.
 
 ## Child Destruction Dispatch
 

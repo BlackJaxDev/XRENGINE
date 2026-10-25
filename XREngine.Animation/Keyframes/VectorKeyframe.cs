@@ -81,14 +81,41 @@ namespace XREngine.Animation
 
         internal bool TryCaptureAuthoredState(out VectorKeyframeAuthoredState<T> state)
         {
+            EKeyframeWeightedMode weightedMode = EKeyframeWeightedMode.None;
+            float inWeight = 0.0f;
+            float outWeight = 0.0f;
+            if ((object)this is FloatKeyframe scalar)
+                scalar.CaptureAuthoredWeights(out weightedMode, out inWeight,
+                    out outWeight);
             state = new(_inValue, _outValue, _inTangent, _outTangent,
                 _interpolationTypeIn, _interpolationTypeOut,
                 _syncInOutValues, _syncInOutTangentDirections,
-                _syncInOutTangentMagnitudes);
+                _syncInOutTangentMagnitudes, weightedMode, inWeight, outWeight);
             return !_synchronizing &&
                 Enum.IsDefined(_interpolationTypeIn) &&
-                Enum.IsDefined(_interpolationTypeOut);
+                Enum.IsDefined(_interpolationTypeOut) &&
+                ValidAuthoredWeights(weightedMode, inWeight, outWeight);
         }
+
+        internal bool TryRestoreAuthoredWeights(EKeyframeWeightedMode mode,
+            float inWeight, float outWeight)
+        {
+            // Only detached editor staging uses this path; live edits use the exact commit.
+            if (OwningTrack is not null ||
+                !ValidAuthoredWeights(mode, inWeight, outWeight))
+                return false;
+            if ((object)this is FloatKeyframe scalar)
+                scalar.RestoreAuthoredWeightsWithoutNotification(mode, inWeight,
+                    outWeight);
+            return true;
+        }
+
+        private bool ValidAuthoredWeights(EKeyframeWeightedMode mode,
+            float inWeight, float outWeight)
+            => (object)this is FloatKeyframe
+                ? FloatKeyframe.IsValidAuthoredWeights(mode, inWeight, outWeight)
+                : mode == EKeyframeWeightedMode.None && inWeight == 0.0f &&
+                    outWeight == 0.0f;
 
         /// <summary>
         /// Commits the complete authored handle before publishing one track change.
@@ -99,6 +126,8 @@ namespace XREngine.Animation
         {
             if (!Enum.IsDefined(desired.InterpolationIn) ||
                 !Enum.IsDefined(desired.InterpolationOut) ||
+                !ValidAuthoredWeights(desired.WeightedMode, desired.InWeight,
+                    desired.OutWeight) ||
                 !ReferenceEquals(OwningTrack, expectedTrack) ||
                 !TryCaptureAuthoredState(out var current) || current != expected)
                 return false;
@@ -111,6 +140,10 @@ namespace XREngine.Animation
             _syncInOutTangentMagnitudes = desired.SyncMagnitudes;
             SetInterpolationInWithoutNotification(desired.InterpolationIn);
             SetInterpolationOutWithoutNotification(desired.InterpolationOut);
+            // Publish after every base and scalar-only weight field is complete.
+            if ((object)this is FloatKeyframe scalar)
+                scalar.RestoreAuthoredWeightsWithoutNotification(desired.WeightedMode,
+                    desired.InWeight, desired.OutWeight);
             expectedTrack?.OnChanged();
             return true;
         }

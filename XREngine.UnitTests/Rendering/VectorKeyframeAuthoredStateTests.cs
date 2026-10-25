@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using System.Numerics;
 using XREngine.Animation;
 
 namespace XREngine.UnitTests.Rendering;
@@ -6,6 +7,146 @@ namespace XREngine.UnitTests.Rendering;
 [TestFixture]
 public sealed class VectorKeyframeAuthoredStateTests
 {
+    [Test]
+    public void WeightedFloatSnapshotCommitsCompleteStateAndChangesHermiteSample()
+    {
+        PropAnimFloat animation = new(2, false, true);
+        FloatKeyframe first = new(0f, 0f, 5f, EVectorInterpType.Hermite);
+        FloatKeyframe second = new(1f, 1f, -1f, EVectorInterpType.Hermite);
+        first.WeightedMode = EKeyframeWeightedMode.Out;
+        first.OutWeight = 0.1f;
+        second.WeightedMode = EKeyframeWeightedMode.In;
+        second.InWeight = 0.2f;
+        animation.Keyframes.Add(first);
+        animation.Keyframes.Add(second);
+        animation.Seek(0.25f, false);
+        VectorKeyframe<float> generic = first;
+        Assert.That(generic.TryCaptureAuthoredState(out var before), Is.True);
+        Assert.That((before.WeightedMode, before.OutWeight),
+            Is.EqualTo((EKeyframeWeightedMode.Out, 0.1f)));
+        float originalSample = animation.GetValue(0.4f);
+        var after = before with { OutWeight = 0.8f };
+        int notices = 0;
+        animation.Keyframes.Changed += _ =>
+        {
+            notices++;
+            Assert.That(generic.TryCaptureAuthoredState(out var observed), Is.True);
+            Assert.That(observed, Is.EqualTo(notices == 1 ? after : before));
+        };
+        Assert.That(generic.TryApplyAuthoredState(before, after,
+            animation.Keyframes), Is.True);
+        Assert.That(notices, Is.EqualTo(1));
+        Assert.That(animation.GetValue(0.4f), Is.Not.EqualTo(originalSample));
+        Assert.That(animation.CurrentTime, Is.EqualTo(0.25f));
+        Assert.That(generic.TryApplyAuthoredState(after, before,
+            animation.Keyframes), Is.True);
+        Assert.That(notices, Is.EqualTo(2));
+        Assert.That(animation.GetValue(0.4f),
+            Is.EqualTo(originalSample).Within(0.0001f));
+    }
+
+    [Test]
+    public void ExternalWeightChangePublishesTrackAndRejectsStaleExactRestore()
+    {
+        PropAnimFloat animation = new(2, false, true);
+        FloatKeyframe key = new(0.5f, 1, 0, EVectorInterpType.Hermite);
+        animation.Keyframes.Add(key);
+        Assert.That(key.TryCaptureAuthoredState(out var before), Is.True);
+        var after = before with { WeightedMode = EKeyframeWeightedMode.Out,
+            OutWeight = 0.8f };
+        int notices = 0;
+        animation.Keyframes.Changed += _ => notices++;
+        Assert.That(key.TryApplyAuthoredState(before, after,
+            animation.Keyframes), Is.True);
+        Assert.That(notices, Is.EqualTo(1));
+        key.OutWeight = 0.6f;
+        Assert.That(notices, Is.EqualTo(2));
+        key.OutWeight = 0.6f;
+        Assert.That(notices, Is.EqualTo(2));
+        Assert.That(key.TryApplyAuthoredState(after, before,
+            animation.Keyframes), Is.False);
+        Assert.That(key.OutWeight, Is.EqualTo(0.6f));
+        Assert.That(key.WeightedMode, Is.EqualTo(EKeyframeWeightedMode.Out));
+    }
+
+    [Test]
+    public void ThrowingWeightPropertyObserverStillInvalidatesCommittedTrack()
+    {
+        PropAnimFloat animation = new(2, false, true);
+        FloatKeyframe key = new(0.5f, 1f, 0f,
+            EVectorInterpType.Hermite);
+        animation.Keyframes.Add(key);
+        int notices = 0;
+        animation.Keyframes.Changed += _ => notices++;
+        key.PropertyChanged += (_, change) =>
+        {
+            if (change.PropertyName == nameof(key.OutWeight))
+                throw new InvalidOperationException("Property observer failed.");
+        };
+        InvalidOperationException? error = Assert.Throws<InvalidOperationException>(
+            () => key.OutWeight = 0.7f);
+        Assert.That(error!.Message, Is.EqualTo("Property observer failed."));
+        Assert.That(key.OutWeight, Is.EqualTo(0.7f));
+        Assert.That(notices, Is.EqualTo(1));
+    }
+
+    [Test]
+    public void ReentrantWeightSetterPublishesItsFinalOuterValue()
+    {
+        PropAnimFloat animation = new(2, false, true);
+        FloatKeyframe key = new(0.5f, 1f, 0f,
+            EVectorInterpType.Hermite);
+        animation.Keyframes.Add(key);
+        List<float> observed = [];
+        animation.Keyframes.Changed += _ => observed.Add(key.OutWeight);
+        bool nested = false;
+        key.PropertyChanging += (_, change) =>
+        {
+            if (nested || change.PropertyName != nameof(key.OutWeight)) return;
+            nested = true;
+            key.OutWeight = 0.6f;
+        };
+        key.OutWeight = 0.8f;
+        Assert.That(observed, Is.EqualTo(new[] { 0.6f, 0.8f }));
+        Assert.That(key.OutWeight, Is.EqualTo(0.8f));
+    }
+
+    [Test]
+    public void NonFloatVectorRejectsWeightedState()
+    {
+        Vector2Keyframe key = new(0.5f, Vector2.One, Vector2.Zero,
+            EVectorInterpType.Linear);
+        Assert.That(key.TryCaptureAuthoredState(out var before), Is.True);
+        Assert.That((before.WeightedMode, before.InWeight, before.OutWeight),
+            Is.EqualTo((EKeyframeWeightedMode.None, 0f, 0f)));
+        var invalid = before with { WeightedMode = EKeyframeWeightedMode.Out,
+            OutWeight = 0.5f };
+        Assert.That(key.TryApplyAuthoredState(before, invalid, null), Is.False);
+        Assert.That(key.TryRestoreAuthoredWeights(invalid.WeightedMode,
+            invalid.InWeight, invalid.OutWeight), Is.False);
+        Assert.That(key.TryCaptureAuthoredState(out var unchanged), Is.True);
+        Assert.That(unchanged, Is.EqualTo(before));
+    }
+
+    [Test]
+    public void InvalidWeightedSnapshotCannotPartiallyCommit()
+    {
+        FloatKeyframe key = new(0.5f, 1f, 0f,
+            EVectorInterpType.Hermite);
+        Assert.That(key.TryCaptureAuthoredState(out var before), Is.True);
+        var invalid = before with { WeightedMode = (EKeyframeWeightedMode)8,
+            OutWeight = 0.5f };
+        Assert.That(key.TryApplyAuthoredState(before, invalid, null), Is.False);
+        invalid = before with { OutWeight = 1.1f };
+        Assert.That(key.TryApplyAuthoredState(before, invalid, null), Is.False);
+        Assert.That(key.TryCaptureAuthoredState(out var unchanged), Is.True);
+        Assert.That(unchanged, Is.EqualTo(before));
+        key.InWeight = float.NaN;
+        Assert.That(key.InWeight, Is.EqualTo(1f / 3f));
+        key.WeightedMode = (EKeyframeWeightedMode)8;
+        Assert.That(key.TryCaptureAuthoredState(out _), Is.False);
+    }
+
     [TestCase(0)]
     [TestCase(1)]
     [TestCase(2)]

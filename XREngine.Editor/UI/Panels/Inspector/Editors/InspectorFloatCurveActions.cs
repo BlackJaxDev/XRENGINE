@@ -127,6 +127,37 @@ internal static class InspectorFloatCurveActions
         => EditState(source, key, "Link Animation Tangent Magnitudes",
             staged => staged.SyncInOutTangentMagnitudes = enabled);
 
+    public static bool SetWeightedSide(InspectorFloatCurveSource source,
+        FloatKeyframe key, bool outgoing, bool enabled)
+    {
+        if ((outgoing ? key.InterpolationTypeOut : key.InterpolationTypeIn) !=
+            EVectorInterpType.Hermite)
+            return false;
+        return EditState(source, key, "Set Animation Weighted Tangent",
+            staged => staged.WeightedMode = enabled
+                ? staged.WeightedMode | (outgoing ? EKeyframeWeightedMode.Out :
+                    EKeyframeWeightedMode.In)
+                : staged.WeightedMode & ~(outgoing ? EKeyframeWeightedMode.Out :
+                    EKeyframeWeightedMode.In));
+    }
+
+    public static bool SetWeight(InspectorFloatCurveSource source,
+        FloatKeyframe key, bool outgoing, float weight)
+    {
+        EKeyframeWeightedMode side = outgoing ? EKeyframeWeightedMode.Out :
+            EKeyframeWeightedMode.In;
+        if (!float.IsFinite(weight) || weight < 0 || weight > 1 ||
+            (outgoing ? key.InterpolationTypeOut : key.InterpolationTypeIn) !=
+                EVectorInterpType.Hermite || (key.WeightedMode & side) == 0)
+            return false;
+        return EditState(source, key, outgoing ? "Edit Animation Out Weight" :
+            "Edit Animation In Weight", staged =>
+            {
+                if (outgoing) staged.OutWeight = weight;
+                else staged.InWeight = weight;
+            });
+    }
+
     public static bool SetInterpolation(InspectorFloatCurveSource source,
         FloatKeyframe key, bool outgoing, EVectorInterpType mode)
     {
@@ -155,6 +186,9 @@ internal static class InspectorFloatCurveActions
             before.InTangent, before.OutTangent,
             before.InterpolationIn, before.InterpolationOut,
             before.SyncValues, before.SyncDirections, before.SyncMagnitudes);
+        if (!staged.TryRestoreAuthoredWeights(before.WeightedMode,
+                before.InWeight, before.OutWeight))
+            return false;
         edit(staged);
         if (!staged.TryCaptureAuthoredState(out var after) || after == before ||
             !float.IsFinite(after.InValue) || !float.IsFinite(after.OutValue) ||
