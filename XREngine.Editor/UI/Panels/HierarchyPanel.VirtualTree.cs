@@ -212,6 +212,7 @@ public partial class HierarchyPanel
     {
         if (!CanUseHierarchy || _virtualTree is null)
             return;
+        RestoreHierarchyRowFocus();
         long now = Engine.ElapsedTicks;
         if (now < _nextSourcePollTicks)
             return;
@@ -789,7 +790,7 @@ public partial class HierarchyPanel
         => CanUseHierarchy && !state.Released &&
             _hierarchyRows.TryGetValue(state.Transform, out HierarchyRow? current) && ReferenceEquals(current, state);
 
-    private void ReleaseVirtualTree(IUICanvasInputSource? input)
+    private void ReleaseVirtualTree(IUICanvasInputSource? input, UIInteractableComponent? capturedFocusTarget)
     {
         UIListTransform? list = _treeListTransform;
         UIVirtualTreeProvider? provider = _virtualTree;
@@ -835,7 +836,7 @@ public partial class HierarchyPanel
                 if (list?.TryGetVirtualRowLease(row.Transform, out _) != true)
                     AttemptHierarchyRelease(() => row.Transform.Visibility = EVisibility.Hidden, ref failure);
                 if (input is not null && list?.TryGetVirtualRowLease(row.Transform, out _) != true)
-                    AttemptHierarchyRelease(() => ClearHierarchyRowFocus(input, row), ref failure);
+                    AttemptHierarchyRelease(() => ClearHierarchyRowFocus(input, row, capturedFocusTarget), ref failure);
             }
         }
         if (rootDrop is not null)
@@ -872,8 +873,11 @@ public partial class HierarchyPanel
         state.ItemId = 0;
     }
 
-    private static void ClearHierarchyRowFocus(IUICanvasInputSource input, HierarchyRow row)
+    private static void ClearHierarchyRowFocus(IUICanvasInputSource input, HierarchyRow row,
+        UIInteractableComponent? capturedFocusTarget)
     {
+        if (ReferenceEquals(capturedFocusTarget, row.Button))
+            return;
         if (input.FocusedComponent is { SceneNode: { } focused } &&
             (ReferenceEquals(focused, row.Transform.SceneNode) || IsDescendantOf(focused, row.Transform.SceneNode!)))
             input.FocusedComponent = null;

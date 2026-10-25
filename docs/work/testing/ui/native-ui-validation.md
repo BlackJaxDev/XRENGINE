@@ -790,3 +790,36 @@ source inputs stayed unchanged through focused/full portable execution and
 compilation. The next Windows filter should cover hierarchy menus, hierarchy
 workflow, Animation view transfer, and owner-subscription teardown, then the
 broader combination if capacity permits. Do not lower the disk or timeout guards.
+
+### Windows repair acceptance at 33340544
+
+The parent executed exact `33340544b25e5a5fb66dbd2c6ce1f9bcdf95d88f` on Windows.
+All 17 earlier failures now pass. The build reports zero warnings/errors. Focused
+runs pass menus 17/17, workflow 9/9, Animation view transfer 33/33, owner teardown
+3/3, and real-host transfer 4/4. The broad run completes 400 cases: 398 passed,
+2 failed, no skips or incomplete cases. Both failures are asset-spawn teardown
+at the structural-list ownership guard; the same fixture passes 2/2 alone.
+Do not mark the broad run accepted. The continuation investigation records the
+queue diagnostic and dock-fixture bisection. The unpublished focus-restoration
+candidate has separate validation; these Windows results do not cover it.
+
+
+### Same-panel hierarchy focus candidate
+
+The candidate captures ordinary row focus before the panel stops, clears only
+that exact input intent, and waits for the replacement row presentation before
+restoring focus. Newer focus, changed owners, callback vetoes, and destruction
+cancel the continuation. Selection is not changed. This does not cover cross-host
+focus, draft/search state, or full play-mode parity.
+
+Headless build 252 passes with zero warnings/errors. Run 207 passes 152/152
+focused cases, and full run 208 passes 1,508/1,508 with no failures or skips.
+The 23 new portable focus cases execute here. The 16 new hierarchy lifecycle
+cases remain compile-only until a Windows run. The text-cache fixture now tests
+its actual direct-mapped eviction contract; production cache behavior is unchanged.
+The separate combined Windows asset-spawn teardown defect remains open.
+
+Editor/test build 84 passes with zero warnings/errors (1m34.34s). All 10,905
+source inputs stayed unchanged from headless build 252 through runs 207/208 and
+this editor/test build. The 16 new editor focus cases compile; they have not run
+on Windows. No GPU, native input, IME, or performance acceptance is claimed.

@@ -13,6 +13,10 @@ public partial class UICanvasInputComponent
     private ulong _pendingVirtualFocusLifetime;
     private ulong _pendingVirtualFocusProviderIncarnation;
     private UIElementIdentity _pendingVirtualFocusScopeIdentity;
+    private Func<bool>? _pendingVirtualFocusProof;
+    private UIInteractableComponent? _pendingVirtualFocusExpectedTarget;
+    private ulong _pendingVirtualFocusIntentRevision;
+    private UICanvasFocusOwnerProof? _pendingVirtualFocusOwner;
     private bool _resolvingVirtualFocus;
     private UIListTransform? _acceptingVirtualFocusList;
     private UIInteractableComponent? _acceptingVirtualFocusTarget;
@@ -23,19 +27,61 @@ public partial class UICanvasInputComponent
     private ulong _acceptingVirtualFocusProviderIncarnation;
     private ulong _acceptingVirtualFocusCanvasLifetime;
     private ulong _acceptingVirtualFocusEpoch;
+    private Func<bool>? _acceptingVirtualFocusProof;
+    private UIInteractableComponent? _acceptingVirtualFocusExpectedTarget;
+    private ulong _acceptingVirtualFocusIntentRevision;
+    private UICanvasFocusOwnerProof? _acceptingVirtualFocusOwner;
     private ulong _virtualFocusRequestEpoch;
 
     /// <summary>Scrolls to a virtual item and focuses it only after a matching row is presented.</summary>
     public bool RequestVirtualItemFocus(UIListTransform list, ulong itemId, bool center = false)
+        => RequestVirtualItemFocusCore(list, itemId, null, null, null, center);
+
+    public bool RequestVirtualItemFocus(UIListTransform list, ulong itemId,
+        Func<bool> isCurrent, bool center = false)
+        => RequestVirtualItemFocusCore(list, itemId, null,
+            isCurrent ?? throw new ArgumentNullException(nameof(isCurrent)), null, center);
+
+    public bool RequestVirtualItemFocus(UIListTransform list, ulong itemId,
+        UIInteractableComponent expectedTarget, Func<bool> isCurrent, bool center = false)
+        => RequestVirtualItemFocusCore(list, itemId,
+            expectedTarget ?? throw new ArgumentNullException(nameof(expectedTarget)),
+            isCurrent ?? throw new ArgumentNullException(nameof(isCurrent)), null, center);
+
+    public bool RequestVirtualItemFocus(UIListTransform list, ulong itemId,
+        UIInteractableComponent expectedTarget, ulong expectedFocusIntentRevision,
+        Func<bool> isCurrent, bool center = false)
+        => RequestVirtualItemFocusCore(list, itemId,
+            expectedTarget ?? throw new ArgumentNullException(nameof(expectedTarget)),
+            isCurrent ?? throw new ArgumentNullException(nameof(isCurrent)),
+            expectedFocusIntentRevision, center);
+
+    private bool RequestVirtualItemFocusCore(UIListTransform list, ulong itemId,
+        UIInteractableComponent? expectedTarget, Func<bool>? proof,
+        ulong? expectedFocusIntentRevision, bool center)
     {
         ArgumentNullException.ThrowIfNull(list);
-        if (_inputTerminal || _inputDeactivating)
+        if (_inputTerminal || _inputDeactivating ||
+            proof is not null && (!ProofCurrent(proof) ||
+                expectedFocusIntentRevision is { } expected &&
+                _focusIntentRevision != expected))
             return false;
         AdvanceFocusIntent();
         ClearPendingVirtualFocus();
         ulong requestEpoch = _virtualFocusRequestEpoch;
-        UICanvasComponent? canvas = GetCameraCanvas();
+        ulong focusIntent = _focusIntentRevision;
+        bool Current() => requestEpoch == _virtualFocusRequestEpoch &&
+            (proof is null || _focusIntentRevision == focusIntent && ProofCurrent(proof) &&
+                requestEpoch == _virtualFocusRequestEpoch && _focusIntentRevision == focusIntent);
+        if (!Current()) return false;
+        UICanvasComponent? canvas = proof is null ? GetCameraCanvas() :
+            GetCameraCanvasNonCreating();
+        if (!Current()) return false;
+        UICanvasFocusOwnerProof? owner = proof is null || canvas is null ? null :
+            UICanvasFocusOwnerProof.Capture(this, list, canvas, expectedTarget);
+        if (proof is not null && (owner is null || !owner.Value.IsCurrent)) return false;
         IVirtualListProvider? provider = list.VirtualProvider;
+        if (!Current()) return false;
         UIElementIdentity listIdentity = list.ElementIdentity;
         ulong providerIncarnation = list.VirtualProviderIncarnation;
         ulong canvasLifetime = canvas?.PublicationLifetime ?? 0;
@@ -45,23 +91,28 @@ public partial class UICanvasInputComponent
             ? presented.ActiveFocusScopeIdentity : canvas?.CanvasTransform.ElementIdentity ?? default;
         if (_inputTerminal || _inputDeactivating || !IsActiveInHierarchy || canvas is null ||
             !ReferenceEquals(list.ParentCanvas, canvas.CanvasTransform) ||
-            provider is null || !list.TryScrollToVirtualItem(itemId, center) ||
+            provider is null || !Current() || !list.TryScrollToVirtualItem(itemId, center) ||
+            !Current() ||
             requestEpoch != _virtualFocusRequestEpoch || _inputTerminal || _inputDeactivating ||
             !IsActiveInHierarchy ||
-            !ReferenceEquals(GetCameraCanvas(), canvas) || canvas.PublicationLifetime != canvasLifetime ||
+            !ReferenceEquals(proof is null ? GetCameraCanvas() :
+                GetCameraCanvasNonCreating(), canvas) ||
+            canvas.PublicationLifetime != canvasLifetime ||
             list.IsDestroyed || list.IsDestroyQueued || list.ElementIdentity != listIdentity ||
             !ReferenceEquals(list.ParentCanvas, canvas.CanvasTransform) ||
             !ReferenceEquals(list.VirtualProvider, provider) ||
             list.VirtualProviderIncarnation != providerIncarnation ||
-            !ProviderStillContainsItem(provider, itemId) ||
+            !Current() || !ProviderStillContainsItem(provider, itemId) || !Current() ||
             requestEpoch != _virtualFocusRequestEpoch ||
             _inputTerminal || _inputDeactivating || !IsActiveInHierarchy ||
-            !ReferenceEquals(GetCameraCanvas(), canvas) ||
+            !ReferenceEquals(proof is null ? GetCameraCanvas() :
+                GetCameraCanvasNonCreating(), canvas) ||
             canvas.PublicationLifetime != canvasLifetime || list.IsDestroyed || list.IsDestroyQueued ||
             list.ElementIdentity != listIdentity ||
             !ReferenceEquals(list.ParentCanvas, canvas.CanvasTransform) ||
             !ReferenceEquals(list.VirtualProvider, provider) ||
-            list.VirtualProviderIncarnation != providerIncarnation)
+            list.VirtualProviderIncarnation != providerIncarnation || !Current() ||
+            owner is { IsCurrent: false })
             return false;
 
         _pendingVirtualFocusCanvas = canvas;
@@ -72,23 +123,48 @@ public partial class UICanvasInputComponent
         _pendingVirtualFocusLifetime = canvasLifetime;
         _pendingVirtualFocusProviderIncarnation = providerIncarnation;
         _pendingVirtualFocusScopeIdentity = focusScope;
+        _pendingVirtualFocusProof = proof;
+        _pendingVirtualFocusExpectedTarget = expectedTarget;
+        _pendingVirtualFocusIntentRevision = focusIntent;
+        _pendingVirtualFocusOwner = owner;
         return true;
     }
+
+    private static bool ProofCurrent(Func<bool> proof)
+    {
+        try { return proof(); }
+        catch { return false; }
+    }
+
+    private bool PendingVirtualFocusCurrent(ulong requestEpoch)
+        => requestEpoch == _virtualFocusRequestEpoch &&
+            (_pendingVirtualFocusOwner is null || _pendingVirtualFocusOwner.Value.IsCurrent) &&
+            (_pendingVirtualFocusProof is not { } proof ||
+                _focusIntentRevision == _pendingVirtualFocusIntentRevision &&
+                ProofCurrent(proof) && requestEpoch == _virtualFocusRequestEpoch &&
+                _focusIntentRevision == _pendingVirtualFocusIntentRevision);
 
     private void ResolvePresentedVirtualFocus(UIPublication? publication)
     {
         if (_resolvingVirtualFocus || publication is null || _pendingVirtualFocusItemId == 0)
             return;
         ulong requestEpoch = _virtualFocusRequestEpoch;
-        if (publication.ActiveFocusScopeIdentity != _pendingVirtualFocusScopeIdentity)
+        if (!PendingVirtualFocusCurrent(requestEpoch))
         {
-            ClearPendingVirtualFocus();
+            if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
             return;
         }
-        if (!ReferenceEquals(_pendingVirtualFocusCanvas, GetCameraCanvas()) ||
+        if (publication.ActiveFocusScopeIdentity != _pendingVirtualFocusScopeIdentity)
+        {
+            if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
+            return;
+        }
+        if (!ReferenceEquals(_pendingVirtualFocusCanvas,
+                _pendingVirtualFocusProof is null ? GetCameraCanvas() :
+                    GetCameraCanvasNonCreating()) ||
             publication.CanvasLifetime != _pendingVirtualFocusLifetime)
         {
-            ClearPendingVirtualFocus();
+            if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
             return;
         }
         if (_pendingVirtualFocusList is not { } list || list.IsDestroyed || list.IsDestroyQueued ||
@@ -97,23 +173,29 @@ public partial class UICanvasInputComponent
             list.VirtualProviderIncarnation != _pendingVirtualFocusProviderIncarnation ||
             list.VirtualProvider is not { } provider)
         {
-            ClearPendingVirtualFocus();
+            if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
             return;
         }
         bool itemStillExists = ProviderStillContainsItem(provider, _pendingVirtualFocusItemId);
-        if (requestEpoch != _virtualFocusRequestEpoch)
+        if (!PendingVirtualFocusCurrent(requestEpoch))
+        {
+            if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
             return;
+        }
         if (!itemStillExists || list.IsDestroyed || list.IsDestroyQueued ||
             list.ElementIdentity != _pendingVirtualFocusListIdentity ||
             !ReferenceEquals(list.ParentCanvas, _pendingVirtualFocusCanvas?.CanvasTransform) ||
             !ReferenceEquals(list.VirtualProvider, provider))
         {
-            ClearPendingVirtualFocus();
+            if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
             return;
         }
-        if (requestEpoch != _virtualFocusRequestEpoch ||
+        if (!PendingVirtualFocusCurrent(requestEpoch) ||
             list.VirtualProviderIncarnation != _pendingVirtualFocusProviderIncarnation)
+        {
+            if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
             return;
+        }
         if (publication.ChangeRevision < _pendingVirtualFocusRevision)
             return;
 
@@ -126,7 +208,7 @@ public partial class UICanvasInputComponent
             }
         if (publication.Identities.Length > 0 && !listStillPresented)
         {
-            ClearPendingVirtualFocus();
+            if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
             return;
         }
 
@@ -138,14 +220,32 @@ public partial class UICanvasInputComponent
                     record.VirtualRowLease.ItemId != _pendingVirtualFocusItemId ||
                     record.VirtualRowLease.Incarnation == 0 ||
                     record.VirtualProviderIncarnation != _pendingVirtualFocusProviderIncarnation ||
-                    requestEpoch != _virtualFocusRequestEpoch ||
+                    !PendingVirtualFocusCurrent(requestEpoch) ||
                     record.FocusScopeIdentity != publication.ActiveFocusScopeIdentity || !record.IsTabStop ||
                     !IsCurrentHitRecord(record) || record.RenderInfo.Owner is not UIInteractableComponent target)
+                    continue;
+
+                if (!PendingVirtualFocusCurrent(requestEpoch))
+                {
+                    if (requestEpoch == _virtualFocusRequestEpoch) ClearPendingVirtualFocus();
+                    return;
+                }
+                if (_pendingVirtualFocusExpectedTarget is { } expected &&
+                    !ReferenceEquals(expected, target))
                     continue;
 
                 UIListTransform acceptedList = list;
                 ulong acceptedProviderIncarnation = _pendingVirtualFocusProviderIncarnation;
                 ulong acceptedLifetime = _pendingVirtualFocusLifetime;
+                Func<bool>? acceptedProof = _pendingVirtualFocusProof;
+                UIInteractableComponent? acceptedExpectedTarget = _pendingVirtualFocusExpectedTarget;
+                ulong acceptedIntent = _pendingVirtualFocusIntentRevision;
+                UICanvasFocusOwnerProof? acceptedOwner = _pendingVirtualFocusOwner;
+                if (acceptedProof is not null && acceptedExpectedTarget is null)
+                    acceptedOwner = UICanvasFocusOwnerProof.Capture(this, list,
+                        _pendingVirtualFocusCanvas, target);
+                if (acceptedProof is not null && acceptedOwner is not { IsCurrent: true })
+                    return;
                 ClearPendingVirtualFocus();
                 _acceptingVirtualFocusList = acceptedList;
                 _acceptingVirtualFocusTarget = target;
@@ -156,8 +256,16 @@ public partial class UICanvasInputComponent
                 _acceptingVirtualFocusProviderIncarnation = acceptedProviderIncarnation;
                 _acceptingVirtualFocusCanvasLifetime = acceptedLifetime;
                 _acceptingVirtualFocusEpoch = _virtualFocusRequestEpoch;
+                _acceptingVirtualFocusProof = acceptedProof;
+                _acceptingVirtualFocusExpectedTarget = acceptedExpectedTarget;
+                _acceptingVirtualFocusIntentRevision = acceptedIntent;
+                _acceptingVirtualFocusOwner = acceptedOwner;
                 _resolvingVirtualFocus = true;
-                try { FocusMouseTarget(target); }
+                try
+                {
+                    if (acceptedProof is null) FocusMouseTarget(target);
+                    else FocusMouseTargetGuarded(target);
+                }
                 finally
                 {
                     _resolvingVirtualFocus = false;
@@ -170,6 +278,10 @@ public partial class UICanvasInputComponent
                     _acceptingVirtualFocusProviderIncarnation = 0;
                     _acceptingVirtualFocusCanvasLifetime = 0;
                     _acceptingVirtualFocusEpoch = 0;
+                    _acceptingVirtualFocusProof = null;
+                    _acceptingVirtualFocusExpectedTarget = null;
+                    _acceptingVirtualFocusIntentRevision = 0;
+                    _acceptingVirtualFocusOwner = null;
                 }
                 return;
             }
@@ -177,22 +289,65 @@ public partial class UICanvasInputComponent
 
     public bool IsDispatchingVirtualItemFocus(UIListTransform list, ulong itemId,
         UIInteractableComponent target)
-        => _resolvingVirtualFocus && !_inputTerminal && !_inputDeactivating &&
+    {
+        ulong epoch = _acceptingVirtualFocusEpoch;
+        ulong intent = _acceptingVirtualFocusIntentRevision;
+        IVirtualListProvider? provider = list.VirtualProvider;
+        ulong providerIncarnation = list.VirtualProviderIncarnation;
+        if (!(_resolvingVirtualFocus && !_inputTerminal && !_inputDeactivating &&
             !list.IsDestroyed && !list.IsDestroyQueued &&
             !target.IsDestroyed && !target.IsDestroyQueued &&
-            _acceptingVirtualFocusEpoch == _virtualFocusRequestEpoch &&
+            epoch == _virtualFocusRequestEpoch &&
+            (_acceptingVirtualFocusProof is not { } proof ||
+                intent == _focusIntentRevision &&
+                ProofCurrent(proof) &&
+                epoch == _virtualFocusRequestEpoch && intent == _focusIntentRevision) &&
+            (_acceptingVirtualFocusOwner is null ||
+                _acceptingVirtualFocusOwner.Value.IsCurrent) &&
+            (_acceptingVirtualFocusExpectedTarget is null ||
+                ReferenceEquals(_acceptingVirtualFocusExpectedTarget, target)) &&
             ReferenceEquals(_acceptingVirtualFocusList, list) &&
             ReferenceEquals(_acceptingVirtualFocusTarget, target) &&
             _acceptingVirtualFocusLease.ItemId == itemId &&
             list.ElementIdentity == _acceptingVirtualFocusListIdentity &&
             target.UITransform.ElementIdentity == _acceptingVirtualFocusTargetIdentity &&
-            ReferenceEquals(list.ParentCanvas, GetCameraCanvas()?.CanvasTransform) &&
-            GetCameraCanvas()?.PublicationLifetime == _acceptingVirtualFocusCanvasLifetime &&
-            list.VirtualProviderIncarnation == _acceptingVirtualFocusProviderIncarnation &&
-            list.TryGetRealizedVirtualRow(itemId, out UIBoundableTransform? row,
-                out UIVirtualRowLease lease) &&
+            ReferenceEquals(list.ParentCanvas,
+                (_acceptingVirtualFocusProof is null ? GetCameraCanvas() :
+                    GetCameraCanvasNonCreating())?.CanvasTransform) &&
+            (_acceptingVirtualFocusProof is null ? GetCameraCanvas() :
+                GetCameraCanvasNonCreating())?.PublicationLifetime ==
+                _acceptingVirtualFocusCanvasLifetime &&
+            providerIncarnation == _acceptingVirtualFocusProviderIncarnation &&
+            provider is not null))
+            return false;
+        if (!list.TryGetRealizedVirtualRow(itemId, out UIBoundableTransform? row,
+                out UIVirtualRowLease lease))
+            return false;
+        // A pure caller proof can change during provider callbacks without changing focus intent.
+        if (_acceptingVirtualFocusProof is { } postQueryProof &&
+            !ProofCurrent(postQueryProof))
+            return false;
+        // Provider lookups can run user code. Recheck the exact admitted dispatch afterward.
+        return _resolvingVirtualFocus && !_inputTerminal && !_inputDeactivating &&
+            epoch == _virtualFocusRequestEpoch &&
+            (_acceptingVirtualFocusProof is null || intent == _focusIntentRevision) &&
+            _acceptingVirtualFocusEpoch == epoch &&
+            _acceptingVirtualFocusIntentRevision == intent &&
+            ReferenceEquals(_acceptingVirtualFocusList, list) &&
+            ReferenceEquals(_acceptingVirtualFocusTarget, target) &&
+            (_acceptingVirtualFocusExpectedTarget is null ||
+                ReferenceEquals(_acceptingVirtualFocusExpectedTarget, target)) &&
+            (_acceptingVirtualFocusOwner is null ||
+                _acceptingVirtualFocusOwner.Value.IsCurrent) &&
+            !list.IsDestroyed && !list.IsDestroyQueued &&
+            !target.IsDestroyed && !target.IsDestroyQueued &&
+            ReferenceEquals(list.VirtualProvider, provider) &&
+            list.VirtualProviderIncarnation == providerIncarnation &&
+            list.ElementIdentity == _acceptingVirtualFocusListIdentity &&
+            target.UITransform.ElementIdentity == _acceptingVirtualFocusTargetIdentity &&
             row?.ElementIdentity == _acceptingVirtualFocusRowIdentity &&
             lease == _acceptingVirtualFocusLease;
+    }
 
     private void ClearPendingVirtualFocus()
     {
@@ -203,6 +358,10 @@ public partial class UICanvasInputComponent
         _pendingVirtualFocusItemId = 0;
         _pendingVirtualFocusProviderIncarnation = 0;
         _pendingVirtualFocusScopeIdentity = default;
+        _pendingVirtualFocusProof = null;
+        _pendingVirtualFocusExpectedTarget = null;
+        _pendingVirtualFocusIntentRevision = 0;
+        _pendingVirtualFocusOwner = null;
     }
 
     private static bool ProviderStillContainsItem(IVirtualListProvider provider, ulong itemId)
@@ -227,9 +386,4 @@ public partial class UICanvasInputComponent
         ThrowInputCleanupFailures(failures);
     }
 
-    private void CancelVirtualFocusAfterExternalFocusChange()
-    {
-        if (!_resolvingVirtualFocus && FocusedComponent is not null)
-            ClearPendingVirtualFocus();
-    }
 }

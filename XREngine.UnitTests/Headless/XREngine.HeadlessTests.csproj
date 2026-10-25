@@ -207,6 +207,8 @@
     <Compile Include="../Rendering/UIPublicationHitTests.cs" Link="Rendering/UIPublicationHitTests.cs" />
     <Compile Include="../Physics/TestWorldContext.cs" Link="Physics/TestWorldContext.cs" />
     <Compile Include="../Rendering/UIPresentedInputTests.cs" Link="Rendering/UIPresentedInputTests.cs" />
+    <Compile Include="../Rendering/UIVirtualFocusCallbackProvider.cs" Link="Rendering/UIVirtualFocusCallbackProvider.cs" />
+    <Compile Include="../Rendering/UIGuardedVirtualFocusTests.cs" Link="Rendering/UIGuardedVirtualFocusTests.cs" />
     <Compile Include="../Rendering/UIVirtualFocusProviderRevisionTests.cs" Link="Rendering/UIVirtualFocusProviderRevisionTests.cs" />
     <Compile Include="../Rendering/PointerReentryProbe.cs" Link="Rendering/PointerReentryProbe.cs" />
     <Compile Include="../Rendering/UIImePresentedCaretTests.cs" Link="Rendering/UIImePresentedCaretTests.cs" />

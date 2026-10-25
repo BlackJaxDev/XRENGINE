@@ -18,7 +18,7 @@ using XREngine.UnitTests.Rendering;
 namespace XREngine.UnitTests.Editor;
 
 [TestFixture, NonParallelizable]
-public sealed class NativeHierarchyWorkflowTests
+public sealed partial class NativeHierarchyWorkflowTests
 {
     private UITestShaderScope _shaders = null!;
     private SceneNode[] _previousSelection = [];

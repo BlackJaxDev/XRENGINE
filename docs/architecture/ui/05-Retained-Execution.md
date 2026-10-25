@@ -2131,3 +2131,24 @@ A terminal native text panel ignores public scroll assignments. Retirement keeps
 the last stored offset and does not start another state intent or touch retained
 rows. Internal owned restores still reject a retired owner; this is not a general
 exception suppression path.
+
+
+### Transient hierarchy row focus
+
+`HierarchyPanel` retains ordinary row focus across a stop and reactivation of the
+same panel. It captures the source node, input, canvas, window, document, owner
+identities, and focus intent before teardown callbacks. It clears only that exact
+focus intent before releasing rows. A newer focus intent, failed cleanup, changed
+owner, changed source lifetime, or rename operation cancels restoration.
+
+The panel waits for the replacement row to be realized, then requests its exact
+button through guarded virtual focus. The input checks the caller proof through
+scroll/provider callbacks, pending publication, focus assignment, and focus
+registration. An explicit null or equal-target focus request also cancels older
+pending work. Unsupported input sources reject guarded operations. The request
+never changes selection. Receipt storage is transient and bounded to one owner;
+no saved layout or asset format changes.
+
+This contract checks exact current ownership and object lifetimes. It is not a
+history of every intermediate parent assignment. Cross-window focus transfer,
+rename/search drafts, and complete play-mode restoration need separate work.

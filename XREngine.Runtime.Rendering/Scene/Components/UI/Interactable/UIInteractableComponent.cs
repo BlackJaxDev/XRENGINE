@@ -14,7 +14,7 @@ namespace XREngine.Rendering.UI
     /// Bounded UI component that can be interacted with by the player.
     /// </summary>
     [RequiresTransform(typeof(UIBoundableTransform))]
-    public abstract class UIInteractableComponent : UIComponent, IRenderable, IRuntimeFocusedInteractable
+    public abstract partial class UIInteractableComponent : UIComponent, IRenderable, IRuntimeFocusedInteractable
     {
         public UIInteractableComponent()
         {
@@ -193,7 +193,17 @@ namespace XREngine.Rendering.UI
         public bool IsFocused
         {
             get => _isFocused;
-            set => SetField(ref _isFocused, value);
+            set
+            {
+                Func<bool>? previousAdmission = _activeFocusWriteAdmission;
+                _activeFocusWriteAdmission = null;
+                try { SetField(ref _isFocused, value); }
+                finally
+                {
+                    if (_activeFocusWriteAdmission is null)
+                        _activeFocusWriteAdmission = previousAdmission;
+                }
+            }
         }
 
         private bool _isMouseOver = false;
@@ -331,6 +341,9 @@ namespace XREngine.Rendering.UI
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            if (propName == nameof(IsFocused) &&
+                _activeFocusWriteAdmission is { } admission && !admission())
+                return;
             switch (propName)
             {
                 case nameof(IsMouseOver):

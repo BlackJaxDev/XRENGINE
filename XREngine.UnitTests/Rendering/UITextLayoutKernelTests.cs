@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
@@ -263,9 +264,64 @@ public sealed class UITextLayoutKernelTests
             baseline with { TrimFirstBearing = false },
         ];
         foreach (UITextLayoutInput variant in variants)
-            UITextLayoutKernel.Measure(variant, size).Glyphs.Equals(reference.Glyphs).ShouldBeFalse();
-        UITextLayoutKernel.Measure(baseline, new(61, 200)).Glyphs.Equals(reference.Glyphs).ShouldBeFalse();
-        UITextLayoutKernel.Measure(baseline, size).Glyphs.Equals(reference.Glyphs).ShouldBeTrue();
+        {
+            // Seed the baseline slot before each key check. A previous variant may evict it.
+            UITextLayoutResult seeded = UITextLayoutKernel.Measure(baseline, size);
+            UITextLayoutResult distinct = UITextLayoutKernel.Measure(variant, size);
+            distinct.Glyphs.Equals(seeded.Glyphs).ShouldBeFalse();
+            distinct.Carets.Equals(seeded.Carets).ShouldBeFalse();
+        }
+        UITextLayoutResult beforeSize = UITextLayoutKernel.Measure(baseline, size);
+        UITextLayoutResult otherSize = UITextLayoutKernel.Measure(baseline, new(61, 200));
+        otherSize.Glyphs.Equals(beforeSize.Glyphs).ShouldBeFalse();
+        otherSize.Carets.Equals(beforeSize.Carets).ShouldBeFalse();
+        UITextLayoutResult restored = UITextLayoutKernel.Measure(baseline, size);
+        AssertEquivalentPlacement(restored, reference);
+        UITextLayoutKernel.Measure(baseline, size).ShouldBeSameAs(restored);
+    }
+
+    [Test]
+    public void EvictedLayoutRecomputesIdenticalPlacementAndCanBeReused()
+    {
+        int slots = (int)typeof(UITextLayoutCache).GetField("SlotCount",
+            BindingFlags.Static | BindingFlags.NonPublic)!.GetRawConstantValue()!;
+        Dictionary<int, UITextLayoutInput> inputsBySlot = [];
+        UITextLayoutInput? first = null, second = null;
+        Vector2 size = new(600);
+        // One more distinct key than slots guarantees a collision for every hash seed.
+        for (int i = 0; i <= slots; i++)
+        {
+            UITextLayoutInput input = Input("cache collision AB") with { FontSize = 16 + i };
+            UITextLayoutCache.TryGet(input, size, out int hash, out _);
+            int slot = hash & (slots - 1);
+            if (inputsBySlot.TryGetValue(slot, out first))
+            {
+                second = input;
+                break;
+            }
+            inputsBySlot.Add(slot, input);
+        }
+        first.ShouldNotBeNull();
+        second.ShouldNotBeNull();
+        UITextLayoutResult original = UITextLayoutKernel.Measure(first, size);
+        UITextLayoutResult collision = UITextLayoutKernel.Measure(second, size);
+        collision.Glyphs.Equals(original.Glyphs).ShouldBeFalse();
+        UITextLayoutResult restored = UITextLayoutKernel.Measure(first, size);
+        restored.Glyphs.Equals(original.Glyphs).ShouldBeFalse();
+        restored.Carets.Equals(original.Carets).ShouldBeFalse();
+        AssertEquivalentPlacement(restored, original);
+        UITextLayoutKernel.Measure(first, size).ShouldBeSameAs(restored);
+    }
+
+    private static void AssertEquivalentPlacement(UITextLayoutResult actual, UITextLayoutResult expected)
+    {
+        actual.Glyphs.Span.SequenceEqual(expected.Glyphs.Span).ShouldBeTrue();
+        actual.Carets.Span.SequenceEqual(expected.Carets.Span).ShouldBeTrue();
+        actual.IntrinsicSize.ShouldBe(expected.IntrinsicSize);
+        actual.TextRevision.ShouldBe(expected.TextRevision);
+        actual.FontRevision.ShouldBe(expected.FontRevision);
+        actual.HasVisualCarets.ShouldBe(expected.HasVisualCarets);
+        actual.UsesShapedGlyphs.ShouldBe(expected.UsesShapedGlyphs);
     }
 
     [Test]

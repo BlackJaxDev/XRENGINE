@@ -26,6 +26,27 @@ public interface IUICanvasInputSource
     /// <summary>Requests focus for a stable virtual item after its matching row is presented.</summary>
     bool RequestVirtualItemFocus(UIListTransform list, ulong itemId, bool center = false);
 
+    /// <summary>Requests virtual focus only while the caller's pure ownership proof remains current.</summary>
+    bool RequestVirtualItemFocus(UIListTransform list, ulong itemId, Func<bool> isCurrent,
+        bool center = false) => false;
+
+    /// <summary>Restricts an owned virtual focus request to one exact presented control.</summary>
+    bool RequestVirtualItemFocus(UIListTransform list, ulong itemId,
+        UIInteractableComponent expectedTarget, Func<bool> isCurrent, bool center = false) => false;
+
+    /// <summary>Rejects an exact-target request if another focus intent won before admission.</summary>
+    bool RequestVirtualItemFocus(UIListTransform list, ulong itemId,
+        UIInteractableComponent expectedTarget, ulong expectedFocusIntentRevision,
+        Func<bool> isCurrent, bool center = false) => false;
+
+    /// <summary>Clears only the exact focused target and intent retained by a caller.</summary>
+    bool TryClearFocus(UIInteractableComponent expectedTarget, ulong expectedIntent,
+        out ulong clearedIntent)
+    {
+        clearedIntent = 0;
+        return false;
+    }
+
     /// <summary>Reports the exact accepted virtual focus dispatch in progress.</summary>
     bool IsDispatchingVirtualItemFocus(UIListTransform list, ulong itemId, UIInteractableComponent target)
         => false;

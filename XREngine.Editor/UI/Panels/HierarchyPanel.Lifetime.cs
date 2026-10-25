@@ -68,7 +68,10 @@ public partial class HierarchyPanel
         RegisterTick(ETickGroup.Late, ETickOrder.Scene, PollVirtualTreeSources);
         RemakeChildren();
         if (CanUseHierarchy && revision == _hierarchyRevision)
+        {
             RestoreRenameFocus();
+            RestoreHierarchyRowFocus();
+        }
     }
 
     protected override void OnComponentDeactivated()
@@ -79,6 +82,7 @@ public partial class HierarchyPanel
 
     private void StopHierarchy(bool destroying)
     {
+        CaptureHierarchyRowFocus(destroying);
         bool wasDestroying = _hierarchyDestroying;
         _hierarchyDestroying |= destroying;
         _hierarchyStopped = true;
@@ -95,9 +99,11 @@ public partial class HierarchyPanel
             return;
         }
 
+        UIInteractableComponent? capturedFocusTarget = _rowFocusReceipt?.Target;
         _releasingHierarchy = true;
         try
         {
+            AttemptHierarchyRelease(ClearCapturedHierarchyRowFocus, ref failure);
             AttemptHierarchyRelease(CancelHierarchyWork, ref failure);
             AttemptHierarchyRelease(SaveHierarchyState, ref failure);
             // Stop the old tick owner before callbacks can request activation.
@@ -113,7 +119,7 @@ public partial class HierarchyPanel
             IUICanvasInputSource? input = _rightClickInput;
             AttemptHierarchyRelease(UnsubscribeRightClick, ref failure);
             AttemptHierarchyRelease(() => UnregisterTick(ETickGroup.Late, ETickOrder.Scene, PollVirtualTreeSources), ref failure);
-            AttemptHierarchyRelease(() => ReleaseVirtualTree(input), ref failure);
+            AttemptHierarchyRelease(() => ReleaseVirtualTree(input, capturedFocusTarget), ref failure);
             AttemptHierarchyRelease(ReleaseHierarchyMenu, ref failure);
             _pendingDragStarts.Clear();
             _lastClickedNode = null;
@@ -129,6 +135,8 @@ public partial class HierarchyPanel
             if (!_hierarchyDestroying && _activationPending)
                 AttemptHierarchyRelease(ScheduleHierarchyWork, ref failure);
         }
+        if (failure is not null)
+            _rowFocusReceipt = null;
         ThrowHierarchyFailure(failure);
     }
 
@@ -164,6 +172,7 @@ public partial class HierarchyPanel
         {
             ReconcileRenameSource();
             CompleteRenameFocus();
+            RestoreHierarchyRowFocus();
             CompleteHierarchyMenuRequest();
         }
     }

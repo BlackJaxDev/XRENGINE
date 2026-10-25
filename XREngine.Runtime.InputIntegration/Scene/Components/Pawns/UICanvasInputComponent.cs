@@ -93,8 +93,19 @@ namespace XREngine.Components
             get => _focusedComponent;
             set
             {
+                bool acceptedVirtualDispatch = _internalVirtualFocusSetterPermit;
+                _internalVirtualFocusSetterPermit = false;
+                Func<bool>? previousAdmission = _activeGuardedFocusAdmission;
+                _activeGuardedFocusAdmission = null;
                 AdvanceFocusIntent();
-                SetField(ref _focusedComponent, _inputDeactivating ? null : value);
+                if (!acceptedVirtualDispatch)
+                    ClearPendingVirtualFocus();
+                try { SetField(ref _focusedComponent, _inputDeactivating ? null : value); }
+                finally
+                {
+                    if (_activeGuardedFocusAdmission is null)
+                        _activeGuardedFocusAdmission = previousAdmission;
+                }
             }
         }
 
@@ -184,7 +195,8 @@ namespace XREngine.Components
                     LinkOwningPawn();
                     break;
                 case nameof(FocusedComponent):
-                    CancelVirtualFocusAfterExternalFocusChange();
+                    if (_activeGuardedFocusAdmission is { } admission && !admission())
+                        return;
                     ReconcileFocusedComponent();
                     break;
             }
@@ -1061,8 +1073,8 @@ namespace XREngine.Components
                 return;
             if (target is not null && ReferenceEquals(FocusedComponent, target) &&
                 !ReferenceEquals(controller?.FocusedInteractable, target))
-                FocusedComponent = null;
-            FocusedComponent = target;
+                SetMouseFocusedComponent(null);
+            SetMouseFocusedComponent(target);
         }
 
         private bool IsPointerTargetEligible(UIInteractableComponent target)

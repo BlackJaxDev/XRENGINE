@@ -1776,3 +1776,29 @@ The original implementation reconciliation remains **51/60**.
 The matching editor/test build 82 passes with zero warnings/errors. All 10,897
 source inputs stayed fixed through validation. The working candidate has no
 Windows execution result yet; the 17 failures remain acceptance checks.
+
+
+## Same-panel hierarchy focus checkpoint
+
+Ordinary hierarchy rows retain transient focus across stop/reactivation of the
+same panel. Exact input intent, source and owner lifetimes, row lease, and row
+presentation must remain current. Newer focus and callback vetoes stop the old
+request. A vetoed exact clear keeps the prior keyboard registration. Selection
+is unchanged. Cross-host focus, draft/search state, and full play-mode parity
+remain open, so the code reconciliation stays **51/60**.
+
+Headless build 252 and editor/test build 84 pass with zero warnings/errors.
+Targeted run 207 passes 152/152; full run 208 passes **1,508/1,508**, with no
+failures, warnings, or skips. All 10,905 source inputs remained fixed through
+those checks. Twenty-three new portable guarded-focus cases execute; sixteen
+new editor lifecycle cases remain compile-only. The text-layout cache fixture
+now verifies deterministic direct-mapped eviction without requiring storage
+retention across competing keys. Production cache code is unchanged.
+
+Parent-reported Windows validation at `33340544` passes all 17 earlier failures,
+but its broader run passes only 398/400. Two combined-only asset-spawn teardown
+failures remain at the exact structural-list guard. A three-test selection
+reproduces one failure twice. The finalizer-order hypothesis needs a throw-site
+diagnostic; this checkpoint contains no cleanup production repair. The focus
+candidate has not had Windows execution. Owner decisions and live acceptance
+remain open; ImGui stays the default editor.

@@ -24,6 +24,7 @@ public partial class UICanvasInputComponent
         {
             while (true)
             {
+                if (!GuardedFocusAdmissionCurrent()) return;
                 UIInteractableComponent? desired = FocusedComponent;
                 if (!ReferenceEquals(_linkedFocusedComponent, desired))
                 {
@@ -32,8 +33,25 @@ public partial class UICanvasInputComponent
                     if (previous is not null)
                     {
                         previous.PropertyChanged -= FocusedComponentPropertyChanged;
-                        while (RemoveStaleFocusInput(null)) { }
-                        previous.IsFocused = false;
+                        if (_activeGuardedFocusAdmission is { } previousAdmission)
+                        {
+                            if (!previous.SetFocusGuarded(false, previousAdmission))
+                            {
+                                _guardedFocusOperationFailed = true;
+                                _linkedFocusedComponent = previous;
+                                previous.PropertyChanged += FocusedComponentPropertyChanged;
+                                return;
+                            }
+                            if (!GuardedFocusAdmissionCurrent()) return;
+                            while (RemoveStaleFocusInput(null))
+                                if (!GuardedFocusAdmissionCurrent()) return;
+                        }
+                        else
+                        {
+                            while (RemoveStaleFocusInput(null)) { }
+                            previous.IsFocused = false;
+                        }
+                        if (!GuardedFocusAdmissionCurrent()) return;
                     }
                     if (!ReferenceEquals(FocusedComponent, desired))
                         continue;
@@ -41,7 +59,17 @@ public partial class UICanvasInputComponent
                     if (desired is not null)
                     {
                         desired.PropertyChanged += FocusedComponentPropertyChanged;
-                        desired.IsFocused = true;
+                        if (_activeGuardedFocusAdmission is { } desiredAdmission)
+                        {
+                            if (!desired.SetFocusGuarded(true, desiredAdmission))
+                            {
+                                _guardedFocusOperationFailed = true;
+                                return;
+                            }
+                        }
+                        else
+                            desired.IsFocused = true;
+                        if (!GuardedFocusAdmissionCurrent()) return;
                         continue;
                     }
                 }
@@ -49,12 +77,16 @@ public partial class UICanvasInputComponent
                 UIInteractableComponent? inputTarget = desired is { RegisterInputsOnFocus: true }
                     ? desired : null;
                 if (RemoveStaleFocusInput(inputTarget) || AddMissingFocusInput(inputTarget))
+                {
+                    if (!GuardedFocusAdmissionCurrent()) return;
                     continue;
+                }
 
                 var controller = _owningPawn?.Controller;
                 if (controller is not null && !ReferenceEquals(controller.FocusedInteractable, desired) &&
                     (desired is not null || ReferenceEquals(controller.FocusedInteractable, _controllerFocusedTarget)))
                     controller.FocusedInteractable = desired;
+                if (!GuardedFocusAdmissionCurrent()) return;
                 _controllerFocusedTarget = desired;
                 if (ReferenceEquals(FocusedComponent, desired))
                     break;

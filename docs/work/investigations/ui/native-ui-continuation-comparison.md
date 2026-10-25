@@ -1611,3 +1611,140 @@ in the five UI documents resolve 42/42, and diff whitespace checks pass. These a
 Linux compilation and portable execution results. The corrected editor cases
 still require a frozen Windows run; none of the 17 failures is marked accepted
 from these checks alone.
+
+
+## Ordinary hierarchy focus across panel reactivation
+
+At the start of this slice, the repair at
+`33340544b25e5a5fb66dbd2c6ce1f9bcdf95d88f` awaited Windows validation.
+Capacity preflight reported only 18,313,216 bytes above its existing
+2 GiB start threshold, below the previous incremental interval's 52,531,200-byte
+use. That preflight performed no fetch, build, test, or cleanup. The later Windows
+result below supersedes this initial capacity block.
+
+The bounded focus contract retains an ordinary source row across a stop and
+reactivation of the same panel. It does not persist focus or change document,
+layout, or asset formats. Review required an early exact-intent clear, identity
+checks for the source and owner graph, a per-stop skip target that prevents
+cleanup from retrying a rejected clear, and removal of the receipt after completed
+or canceled input work. A cleanup failure cancels the receipt. Row focus waits for
+the replacement's realized binding and presented packet. Selection is unchanged.
+
+Shared guarded virtual focus carries a pure caller proof and exact target through
+request callbacks, deferred resolution, the focus field write, and registration.
+Newer null, equal, or away-and-back focus intents cancel older work. It preserves
+callback-created requests and rejects lifetime changes. The resolver uses an
+instance predicate; it does not allocate a closure on each presentation poll.
+The panel creates its request closure only when a realized row is ready.
+
+Initial validation: headless build 247 passed with zero warnings/errors (2m33.69s).
+The first 16 portable cases passed in run 201 (1.298s). Review then found that the
+new reconciliation path ignored a control's focus veto and did not finish a newer
+focus chosen during clear callbacks. Test-only build 248 passed with zero
+warnings/errors (14.13s). Run 202 reproduced all three added cases: 16 passed and
+3 failed (1.387s). The failures left a vetoed target accepted, activated a new
+target after a vetoed old-target release, or left the newer target unfocused.
+The candidate was not published with these failures.
+
+
+Build 249 passed with zero warnings/errors (1m55.09s). Run 203 covered the new
+fixture and five existing focus/input/menu fixtures: 128/129 passed (4.429s).
+The existing fresh-row dispatch control exposed a regression: the new final
+intent check also applied to ordinary accepted focus, whose setter advances its
+intent. The check is now conditional on a guarded request. The other epoch and
+identity checks still apply to both routes. A provider-callback case also checks
+caller proof immediately after the final row lookup.
+
+### Windows repair result and remaining combined cleanup failure
+
+The parent later completed Windows validation at exact `33340544b`. All 17 prior
+failures passed. Focused results: hierarchy menus 17/17, workflow 9/9, Animation
+view transfer 33/33, owner teardown 3/3, and separate real-host transfer 4/4.
+The build had zero warnings/errors. The broad run completed 400 cases: 398 passed,
+2 failed, with no skips or incomplete cases. Both asset-spawn cases failed only
+in teardown at the exact structural-list removal guard. They passed 2/2 when
+run separately afterward. Authorized cleanup restored disk capacity; this cloud
+task did not perform laptop operations.
+
+The failed guard rejects list/authority mismatch, inactive or replaced authority,
+a destroyed owner, or a destroyed list. Queued flags alone are admitted. A drain
+stops at the first failure after clearing that request's token, so two successive
+teardown failures can consume two older invalid targets. Test order does not
+identify their producer. Partial transform cleanup that destroys its child list
+before a later callback fails is a hypothesis, not an established cause.
+
+The next diagnostic snapshots the raw destruction queues in asset fixture setup
+and before its existing drain. A first-chance handler, limited to the exact guard
+message and that drain, identifies the current dispatch target and logs the
+specific owner/list/authority predicate. It preserves queue order, exceptions,
+timeouts, and assertions, with no preflush or retry. No ownership guard is relaxed.
+
+Windows bisection at the same repair commit found that lifecycle plus asset-spawn
+fixtures pass 13/13. Dock fixtures plus asset spawning reproduce the two teardown
+failures. One six-fixture dock half reproduces; the other six-fixture half passes.
+The exact producer and failed guard predicate are still pending. This rules out
+the immediate lifecycle predecessor as a sufficient reproducer; it does not
+attribute the failure to a specific dock implementation.
+
+The focus repair built in headless build 250 with zero warnings/errors (1m30.41s).
+Run 204 passed all 130 focused input/menu/focus cases (4.999s), including 22 new
+cases. Full run 205 passed 1,505/1,506 (28.292s). Its single failure was the final
+storage-identity assertion in `EachGlyphPlacementInputSelectsItsOwnLayout`.
+The cache is explicitly direct-mapped: a competing key can evict the baseline.
+The test had assumed storage retention across 15 competing keys. The exact failed
+run did not record hashes, so eviction in that run is not proven. The assertion
+nevertheless demands a guarantee absent from the cache contract.
+
+The fixture correction seeds the baseline before each key-separation check,
+retains all placement-key variants, also checks caret-storage separation, and
+compares complete placement output after the intervening keys. Immediate repeated
+lookup still requires reuse. A deterministic collision case finds two keys in one slot
+among one more key than the cache capacity, then checks eviction, equal recomputed
+placement, and immediate reuse. Production cache behavior is unchanged.
+
+Editor/test build 83 passed with zero warnings/errors (4m47.69s), including the
+16 new hierarchy lifecycle cases. This is compile-only evidence for those cases.
+All 10,905 source inputs remained fixed through builds 250/83 and runs 204/205.
+A final focus review also found that a vetoed exact clear could unregister the
+old keyboard target before discovering the veto. A focused registration test is
+added before changing that order; it does not relax the veto or lifetime checks.
+
+
+### Focus validation and exact cleanup reproducer
+
+The registration test first failed in run 206: 43/44 selected cases passed, but
+`VetoedExactClearRetainsThePreviousKeyboardRegistration` observed one removal.
+The guarded path now waits for accepted focus loss before it removes the prior
+keyboard registration. Headless build 252 passed with zero warnings/errors
+(25.09s). Run 207 passed 152/152 targeted cases (4.873s). Full run 208 passed
+1,508/1,508 (42.672s), with no failures, warnings, or skips. These include 23 new
+portable guarded-focus cases and the deterministic text-cache collision case.
+The editor lifecycle cases still require Windows execution.
+
+The Windows validator reproduced one failure twice at unmodified `33340544`
+with this exact selection: `NativeDockAnimationTransferTests.InactiveDestinationReceivesSourceClipWithoutChangingGlobalSelection`,
+`NativeDockAnimationTransferTests.SaveCallbackTextMutationInvalidatesAppliedReceiptAndKeepsSourceOpen`,
+and `NativeHierarchyAssetSpawnTests.PrefabSpawnsUnderAHiddenSceneParentWithoutJoiningTheWorld`.
+The two dock cases pass; the prefab case fails teardown. Either dock case paired
+alone with the prefab case passes. Both dock cases followed by the other asset
+spawn case also pass. This is a sufficient selection, not a causal attribution.
+Exception-time queue/cache diagnostics reproduce the failure but find no active
+cached target: 1,155 saved queue entries, three pending requests, zero matching
+active cached targets. Formatting saved objects before the drain masks the
+reproduction. No guard, assertion, or timeout was relaxed.
+
+Source review found an unconfirmed finalizer-order hypothesis. `CloneHierarchy`
+suppresses cache registration during YAML construction. Transform replacement
+can leave the constructor-created transform unreachable from the final clone.
+That transform and its private `EventList` both inherit `XRObjectBase` finalization,
+which independently queues destruction. A list finalized before its owner could
+leave an exact installed authority with a destroyed list. No executed diagnostic
+yet proves this path. The next bounded diagnostic records the exact failed
+owner/list predicates at `HierarchyListAuthority.RequireRemovalCurrent`, then
+executes the unchanged throw. No cleanup production patch is part of the focus
+checkpoint.
+
+Editor/test build 84 passes with zero warnings/errors (1m34.34s). All 10,905
+source inputs stayed unchanged from headless build 252 through runs 207/208 and
+this editor/test build. The 16 new editor focus cases compile; they have not run
+on Windows. No GPU, native input, IME, or performance acceptance is claimed.
