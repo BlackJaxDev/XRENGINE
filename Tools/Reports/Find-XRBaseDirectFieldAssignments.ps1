@@ -4,7 +4,7 @@ param(
     [string]$RepoRoot = (Resolve-Path ".").Path,
 
     [Parameter(Mandatory = $false)]
-    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "docs\work\audit\xrbase-direct-field-assignments.md")
+    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "Build\Reports\xrbase-direct-field-assignments.md")
 )
 
 $ErrorActionPreference = "Stop"

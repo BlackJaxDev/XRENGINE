@@ -10,7 +10,6 @@ on:
       - '.github/diagnostic-activations/network-walkthrough-20261005.json'
       - '.github/diagnostic-activations/ui-frame-trace-20261006.json'
       - '.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json'
-      - 'docs/work/**/*.md'
   pull_request:
   workflow_dispatch:
 

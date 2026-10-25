@@ -154,4 +154,4 @@ and per-system over-budget counters in the steady-state pass. Keep validation
 logs or profiler captures under `Build/_AgentValidation/<run>/`.
 
 Open live editor and VR profiler checks are in
-[Runtime And AOT Validation](../../work/testing/runtime/runtime-and-aot-validation.md).
+[Runtime And AOT Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/runtime/runtime-and-aot-validation.md).

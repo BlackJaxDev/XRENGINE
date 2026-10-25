@@ -2,7 +2,7 @@
 
 XREngine uses OpenAL as the streaming audio backend for media playback paths such as `UIVideoComponent`. The implemented model is a manually paced streaming queue: decoded PCM frames are converted or submitted to OpenAL buffers, queued to a source, and synchronized against the OpenAL sample clock.
 
-This feature doc replaces the active-design role of `docs/work/design/audio/OPENAL_STREAMING_NOTES.md`. That older document remains useful as debugging history.
+This feature doc replaces the active-design role of `<work-docs-repo>/design/audio/OPENAL_STREAMING_NOTES.md`. That older document remains useful as debugging history.
 
 ## Runtime Model
 

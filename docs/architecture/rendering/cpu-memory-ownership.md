@@ -7,7 +7,7 @@ This document describes CPU-side ownership for renderer memory that can dominate
 - [Mesh Submission Strategies](mesh-submission-strategies.md)
 - [Texture Streaming](texture-streaming.md)
 - [Vulkan Memory Allocation](vulkan-memory-allocation.md)
-- [Runtime And AOT Validation](../../work/testing/runtime/runtime-and-aot-validation.md)
+- [Runtime And AOT Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/runtime/runtime-and-aot-validation.md)
 
 ## Ownership Rules
 
@@ -102,4 +102,4 @@ Use these budget lines in memory reports:
 
 ## Validation
 
-Manual and runtime checks live in [Runtime And AOT Validation](../../work/testing/runtime/runtime-and-aot-validation.md). Use that doc for profiler captures, screenshots, hardware rows, and editor runs.
+Manual and runtime checks live in [Runtime And AOT Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/runtime/runtime-and-aot-validation.md). Use that doc for profiler captures, screenshots, hardware rows, and editor runs.

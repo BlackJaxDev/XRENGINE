@@ -158,7 +158,7 @@ pipeline factory. Every request carries an explicit output purpose:
   `RvcRenderPipeline`. The desktop Advanced policy does not affect eyes. An
   unsupported view mode and family pair submits no XR projection layer; no
   other family runs (see the
-  [VR pipeline selection design](../../work/design/rendering/vr-pipeline-selection-design.md));
+  [VR pipeline selection design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/vr-pipeline-selection-design.md));
 - offscreen-capture requests use the standard capability policy and are not
   redirected by desktop debug or RVC settings.
 
@@ -176,12 +176,12 @@ operation must satisfy its concrete program, resource and deformation contract;
 exact generated local material vertex functions have retained current/previous
 geometry and matching raster auxiliary companions. Unknown displacement and
 other unavailable profiles retain named failures; the
-[material vertex contract](../../work/progress/rendering/browser-native-material-vertices-2026-10-03.md)
+[material vertex contract](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-native-material-vertices-2026-10-03.md)
 records the admitted inputs and the generic deformation source-equivalence limit.
 Physical browser evidence currently covers bounded static materials
 and directional shadows; deformation and MSAA still need their own rendered
-acceptance. See [native-family admission](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
-and [the recovered integration](../../work/progress/rendering/browser-advanced-static-integration-2026-10-03.md)
+acceptance. See [native-family admission](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-advanced-admission-2026-10-02.md)
+and [the recovered integration](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-advanced-static-integration-2026-10-03.md)
 for implementation and runtime evidence boundaries.
 Explicit game calls to `RuntimeEngine.Rendering.NewRenderPipeline(...)` must
 therefore resolve the same host recipe as an unconfigured camera. Browser hosts
@@ -190,7 +190,7 @@ contracts. The default-source factory rejects stereo and XR requests explicitly,
 while mono offscreen capture uses the same authored operation admission and
 Required Advanced requests preserve the Advanced source. Browser scene capture
 owns a private output/scene publication and accepted asynchronous texture-layer
-readback; its [capture ownership contract](../../work/progress/platform/browser-hlod-impostor-capture-boundary-2026-10-03.md)
+readback; its [capture ownership contract](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/platform/browser-hlod-impostor-capture-boundary-2026-10-03.md)
 records the memory and physical-validation boundaries. Scoped
 recipes see every request before desktop offscreen selection. Teardown and
 startup rollback skip disposed installations, including out-of-order scopes,
@@ -240,7 +240,7 @@ decal flag remains bit 16. Native and surface-export mono and x4 recipes declare
 `XR_ADV_WORLD_AMBIENT_SCHEMA_VERSION=1`; reject older cooked programs and recook
 them before use. This adds no binding or table layout.
 
-The September 4–8 [Advanced acceptance records](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md)
+The September 4–8 [Advanced acceptance records](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md)
 include bounded shaded-output, AO/IBL, temporal, post-processing, and OpenGL
 stereo cohorts. These establish implemented and exercised paths, not universal
 backend/material/output-profile certification. Consult the individual runtime
@@ -1256,4 +1256,4 @@ Desktop frame data is owned by the logical frame-in-flight slot, independently o
 
 Retired render-resource generations require a Signaled completion fence before disposal. Missing fences remain pending; failed fences may be replaced but cannot authorize disposal. A request to wait for GPU progress is not itself a completion proof.
 
-A minimized desktop window is not a new 1x1 render profile. Suspend managed resource preparation and preserve the last complete generation until restoration; externally owned swapchain outputs remain independent. See the [Vulkan resize investigation](../../work/investigations/rendering/vulkan-default-world-resize-2026-09-14.md) for the reproduction, exact validation and missing-texture diagnosis.
+A minimized desktop window is not a new 1x1 render profile. Suspend managed resource preparation and preserve the last complete generation until restoration; externally owned swapchain outputs remain independent. See the [Vulkan resize investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/vulkan-default-world-resize-2026-09-14.md) for the reproduction, exact validation and missing-texture diagnosis.

@@ -54,7 +54,7 @@ reported zero native creates, pending jobs, foreground waits, and render-thread
 shader compiles. The warm children loaded persisted native cache bytes.
 
 This closes the Phase 5.3 pipeline acceptance alongside its material and
-streaming integration. See [the headless closeout](../../work/progress/rendering/vulkan-phase53-headless-completion.md).
+streaming integration. See [the headless closeout](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/vulkan-phase53-headless-completion.md).
 It does not establish live desktop/OpenXR behavior or cross-vendor performance.
 
 ## Pending-propagation contract

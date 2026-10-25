@@ -44,8 +44,7 @@
           "architecture/**/*.md",
           "architecture/toc.yml",
           "developer-guides/**/*.md",
-          "developer-guides/toc.yml",
-            "work/**/*.md"
+          "developer-guides/toc.yml"
         ]
       },
       {

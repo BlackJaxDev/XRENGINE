@@ -16,8 +16,8 @@ sharing opt-in.
 
 Related docs:
 
-- [RVC validation plan](../../work/testing/rendering/retinal-visibility-cache-validation.md)
-- [RVC design source](../../work/design/rendering/retinal-visibility-cache-rendering-design.md)
+- [RVC validation plan](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/retinal-visibility-cache-validation.md)
+- [RVC design source](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/retinal-visibility-cache-rendering-design.md)
 - [OpenXR VR rendering](openxr-vr-rendering.md)
 - [Material binding policy](material-binding-policy.md)
 - [Render pipeline resource lifecycle](render-pipeline-resource-lifecycle.md)

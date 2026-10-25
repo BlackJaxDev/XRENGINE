@@ -111,7 +111,7 @@ not implement the leased overload rejects a non-null owner as `Unsupported`.
 record layouts and source contracts. `PhysicsChainGpuDependencyOrderingTests`
 and `PhysicsChainGpuBranchedDependencyOrderingTests` provide GPU ordering
 checks. The source audit on 2026-10-06 did not run these tests. See the
-[validation plan](../../work/testing/physics/physics-validation.md#physics-chain-scale)
+[validation plan](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/physics/physics-validation.md#physics-chain-scale)
 for runtime and hardware acceptance.
 
 ## Required capabilities and failure behavior

@@ -310,7 +310,7 @@ one-second fallback interval, and attempts a final flush during shutdown.
 Persistent write denial can leave history stale; `get_agent_run` still retains
 the original status, final text, usage, and provider diagnostics. A refresh may
 omit a record during replacement and retry it on the next pass.
-The [history persistence investigation](../../work/investigations/ai/local-agent-broker-history-2026-10-07.md)
+The [history persistence investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/ai/local-agent-broker-history-2026-10-07.md)
 records the reproduced Windows failure and validation.
 
 The tray's `settings.json` supports a
@@ -569,7 +569,7 @@ workflow uses loopback and no bearer token.
 
 ## Tests And Validation
 
-The [broker validation matrix](../../work/testing/ai/local-agent-broker.md)
+The [broker validation matrix](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/ai/local-agent-broker.md)
 records live provider and tool-continuation checks.
 
 Tests under `XREngine.UnitTests/AgentOrchestration` use scripted model clients

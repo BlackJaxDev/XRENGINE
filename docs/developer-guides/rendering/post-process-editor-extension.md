@@ -103,4 +103,4 @@ The camera editor lists the active viewport pipeline first, then the other candi
 
 ## Validation
 
-Runtime checks for this feature are in the [Default and Advanced pipeline validation doc](../../work/testing/rendering/default-and-advanced-pipeline-validation.md#post-process-editor).
+Runtime checks for this feature are in the [Default and Advanced pipeline validation doc](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/default-and-advanced-pipeline-validation.md#post-process-editor).

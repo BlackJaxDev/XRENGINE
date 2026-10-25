@@ -6,9 +6,9 @@ is to reduce memory, upload bandwidth, and shader work while preserving authored
 facial identity, visemes, expression controls, and corrective shapes.
 
 Open implementation work is tracked in
-[Blendshape Compression And GPU Efficiency TODO](../../work/todo/rendering/gpu/blendshape-compression-and-gpu-efficiency-todo.md).
+[Blendshape Compression And GPU Efficiency TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/gpu/blendshape-compression-and-gpu-efficiency-todo.md).
 Longer-horizon ideas live in
-[Blendshape Deferred GPU Efficiency Design](../../work/design/rendering/gpu/blendshape-deferred-gpu-efficiency-design.md).
+[Blendshape Deferred GPU Efficiency Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/gpu/blendshape-deferred-gpu-efficiency-design.md).
 
 ## Runtime Contract
 

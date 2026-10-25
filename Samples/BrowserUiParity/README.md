@@ -36,7 +36,7 @@ This deliberately uses the currently admitted Mobius output route.
 
 Use the repository's pinned SDK in `global.json`, its `wasm-tools` workload,
 PowerShell, existing pinned Slang setup and reviewed browser Jolt staging.
-Follow [browser publishing](../../docs/work/progress/rendering/browser-project-publishing.md)
+Follow [browser publishing](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-project-publishing.md)
 for those existing prerequisites. Run from the repository root:
 
 ```powershell

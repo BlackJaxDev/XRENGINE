@@ -215,7 +215,7 @@ process-lifetime Streamline broker (or a pre-teardown rejection that visibly
 requires an editor restart). Shader reload and same-generation Vulkan restart
 do not unload the collectible module and are the supported fast iteration paths.
 See the
-[2026-07-27 investigation](../../work/investigations/rendering/archive/vulkan-uber-pipeline-stall-black-recovery-2026-07-27.md)
+[2026-07-27 investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/archive/vulkan-uber-pipeline-stall-black-recovery-2026-07-27.md)
 for the crash evidence and validation captures.
 
 ## Reload limitations
@@ -238,5 +238,5 @@ for the crash evidence and validation captures.
   reload failure switches graphics API or CPU fallback.
 
 See the
-[implementation closeout](../../work/progress/rendering/rendering-backend-hot-reload-closeout-2026-07-25.md)
+[implementation closeout](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/rendering-backend-hot-reload-closeout-2026-07-25.md)
 for inventory, timings, stress results, and validation evidence.

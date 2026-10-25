@@ -1,6 +1,6 @@
 # GPU Softbody
 
-This guide describes the GPU softbody runtime and the mesh-to-mesh deformation path. Design: [GPU Softbody Mesh Rigging Plan](../../work/design/rendering/gpu/gpu-softbody-mesh-rigging-plan.md). Open work: [GPU Softbody Mesh Rigging TODO](../../work/todo/rendering/gpu/gpu-softbody-mesh-rigging-todo.md).
+This guide describes the GPU softbody runtime and the mesh-to-mesh deformation path. Design: [GPU Softbody Mesh Rigging Plan](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/gpu/gpu-softbody-mesh-rigging-plan.md). Open work: [GPU Softbody Mesh Rigging TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/gpu/gpu-softbody-mesh-rigging-todo.md).
 
 ## Mesh-To-Mesh Deformation
 

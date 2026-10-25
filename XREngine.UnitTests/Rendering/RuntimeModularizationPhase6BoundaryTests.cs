@@ -8,9 +8,9 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class RuntimeModularizationPhase6BoundaryTests
 {
     private const string OwnershipManifestPath =
-        "docs/work/progress/runtime/runtime-modularization-phase6-source-ownership.tsv";
+        "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-source-ownership.tsv";
     private const string ConsumerManifestPath =
-        "docs/work/progress/runtime/runtime-modularization-phase6-consumer-api-baseline.tsv";
+        "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-consumer-api-baseline.tsv";
 
     private static readonly HashSet<string> ApprovedOwners = new(StringComparer.Ordinal)
     {

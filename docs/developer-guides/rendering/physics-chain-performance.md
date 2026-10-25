@@ -12,9 +12,9 @@ mapped input pages, world-owned clocks, and reused rest-input ranges.
 Covered untextured identity-world draws retain static plans. Strict canonical
 submission uses GPU collection and indexed instance groups in the main view.
 Directional shadows and the remaining world input work are tracked in the
-[implementation todo](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md).
+[implementation todo](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/physics/physics-chain-thousands-scale-optimization-todo.md).
 Runtime evidence and acceptance checks remain in
-[Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md).
+[Physics Chain Performance Testing](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/physics/physics-validation.md).
 
 ## GPU skinned scale measurement
 
@@ -241,7 +241,7 @@ dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -c Release -- `
 
 Work index `0` is the first CPU-strict, no-rendering steady-state point. The
 environment file is a serialized `PhysicsChainBenchmarkEnvironment` with the
-named-hardware metadata. The [validation plan](../../work/testing/physics/physics-validation.md#physics-chain-scale)
+named-hardware metadata. The [validation plan](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/physics/physics-validation.md#physics-chain-scale)
 lists the required matrix.
 
 ## Rigid rest input cache
@@ -292,7 +292,7 @@ three-row layout, with independent current/previous history for motion vectors.
 
 The compute dispatcher talks through `IPhysicsChainComputeBackend`. The Math
 Intersections skinned dispatcher scenario has live Vulkan Advanced-pipeline
-evidence. See the [skinned chain investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+evidence. See the [skinned chain investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
 for scope, repairs, and current scale limits. Unsupported backend capabilities
 fail explicitly instead of switching to CPU. Templates and collider shape
 topology upload once, dynamic headers and poses upload by dirty range, and
@@ -355,7 +355,7 @@ zero-readback forbids solved physics-data readback; it does not forbid these
 timing queries. The approximately 20 Hz full-grid result warrants further CPU
 analysis, but does not by itself identify an exclusive CPU or GPU bottleneck.
 Keep diagnostic runs separate from unobserved acceptance windows. The
-[async experiment checks](../../work/testing/physics/physics-validation.md#vulkan-asynchronous-physics-experiment)
+[async experiment checks](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/physics/physics-validation.md#vulkan-asynchronous-physics-experiment)
 define the comparison and correctness evidence.
 
 ## Shared collision data
@@ -424,7 +424,7 @@ Physics-chain per-tree parameter updates no longer allocate through `ToArray()`,
 
 ### Transfer Bandwidth
 
-The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is an open [code item](../../work/todo/physics/physics-chain-thousands-scale-optimization-todo.md#physics-inputs-at-the-render-rate).
+The GPU path separates static particle metadata from dynamic state. Stable scenes avoid static-data uploads. The direct upload path skips unchanged colliders by version. The mapped input-page path does not: it writes every collider and the full transform catalog into each page. A per-bank version record is an open [code item](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/physics/physics-chain-thousands-scale-optimization-todo.md#physics-inputs-at-the-render-rate).
 
 Batched mode has been reevaluated around resident-buffer copy churn so combined-buffer work can be measured separately from upload and readback bandwidth.
 
@@ -470,9 +470,9 @@ counted. In a steady-state window the miss counters should not change.
 ### Frame-loop profiling method
 
 Use these tools in this order. The 2026-10-12 work in the
-[investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+[investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
 used them, and the
-[critical-path mapping](../../work/investigations/physics/physics-chain-critical-path-mapping-2026-10-12.md)
+[critical-path mapping](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/physics/physics-chain-critical-path-mapping-2026-10-12.md)
 records the code paths they point to.
 
 1. **Phase timings and stage differences.** Every harness summary has
@@ -653,7 +653,7 @@ is off. Read `GPUPhysicsChainDispatcher.GetGpuDebugDiagnosticsSnapshot()` for
 selected counts, the limit flag, dispatches, draw submissions, and readback
 use. A foreign renderer, a busy retained batch, or a retired native source
 rejects work with a diagnostic. Native debug and teardown checks remain in the
-[validation plan](../../work/testing/physics/physics-validation.md#gpu-skinned-chain-scale).
+[validation plan](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/physics/physics-validation.md#gpu-skinned-chain-scale).
 
 `GPUPhysicsChainDispatcher.Instance.GpuBoundsDiagnostics` reports GPU bounds
 slots, dispatches, copied commands, material-contract rejections, and
@@ -742,10 +742,10 @@ the flag for final performance acceptance.
 
 ## Related Documentation
 
-- [Physics Chain Performance Testing](../../work/testing/physics/physics-validation.md)
-- [Physics Chain Steady-State CPU Design](../../work/design/physics/physics-chain-steady-state-cpu-design.md)
-- [Skinned GPU Chain Benchmark Investigation](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
-- [Distance Cadence and GPU Pose Presentation](../../work/design/physics/distance-cadence-gpu-presentation.md)
+- [Physics Chain Performance Testing](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/physics/physics-validation.md)
+- [Physics Chain Steady-State CPU Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/physics/physics-chain-steady-state-cpu-design.md)
+- [Skinned GPU Chain Benchmark Investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md)
+- [Distance Cadence and GPU Pose Presentation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/physics/distance-cadence-gpu-presentation.md)
 - [Physics-chain output and readback](../../architecture/physics/physics-chain-output-and-readback.md)
 - [Skinning](skinning.md)
 - [Physics](../../user-guide/physics.md)

@@ -85,6 +85,6 @@ boundaries. Standard/synchronization validation report zero errors; two loader
 warnings per child are recorded separately. The earlier content-only run with
 55 single-child submissions is not the coalescing acceptance result.
 
-See [the Phase 5.3 closeout](../../work/progress/rendering/vulkan-phase53-headless-completion.md)
+See [the Phase 5.3 closeout](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/vulkan-phase53-headless-completion.md)
 for the complementary material and pipeline evidence. No desktop, Advanced
 shaded-output, cross-vendor, or OpenXR promotion is implied.

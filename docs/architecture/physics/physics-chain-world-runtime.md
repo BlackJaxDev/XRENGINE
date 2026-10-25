@@ -215,5 +215,5 @@ Complete palette mappings share one atlas slice and one palette dispatch when re
 ## Related Documentation
 
 - [Physics Architecture](overview.md)
-- [Physics Validation](../../work/testing/physics/physics-validation.md)
-- [Physics-chain correctness contract](../../work/testing/physics/physics-chain-correctness-contract.md)
+- [Physics Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/physics/physics-validation.md)
+- [Physics-chain correctness contract](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/physics/physics-chain-correctness-contract.md)

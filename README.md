@@ -311,7 +311,7 @@ Good starting points:
 - `docs/developer-guides/testing/unit-testing-world.md` - local validation world and pose/network test setups
 - `docs/user-guide/setup/bootstrap.md` - first-time setup and bootstrap scope
 - `docs/developer-guides/runtime/native-dependencies.md` - native and external setup reference
-- `docs/work/README.md` - active TODOs and design docs
+- `<work-docs-repo>/README.md` - active TODOs and design docs
 
 ## Project Links
 

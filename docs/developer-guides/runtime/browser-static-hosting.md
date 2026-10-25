@@ -5,8 +5,8 @@ This guide covers HTTP delivery for the static site emitted by the
 not configure a server, certify a hosting provider, or claim that production
 headers or physical browsers/devices were tested. Browser/device support and
 the remaining validation limits are tracked separately in the
-[active browser runtime plan](../../work/todo/platform/unified-desktop-browser-runtime-todo.md)
-and [publishing record](../../work/progress/rendering/browser-project-publishing.md).
+[active browser runtime plan](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/platform/unified-desktop-browser-runtime-todo.md)
+and [publishing record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-project-publishing.md).
 
 ## Publish the whole site over HTTPS
 

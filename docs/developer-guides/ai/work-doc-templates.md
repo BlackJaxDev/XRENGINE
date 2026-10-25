@@ -1,16 +1,16 @@
 # Work Doc Templates
 
-Use these templates for work docs under `docs/work/`. Each document kind holds one kind of information.
+Use these templates for work docs in the private `BlackJaxDev/XRENGINE-WORK-DOCS` repository. `<work-docs-repo>` is its local checkout, normally a sibling of the XRENGINE checkout. Each document kind holds one kind of information.
 
-[Work docs index](../../work/README.md) · [Testing docs index](../../work/testing/README.md)
+[Work docs index](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/README.md) · [Testing docs index](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/README.md)
 
 ## Document Kinds
 
 | Document kind | Location | Holds | Does not hold |
 |---|---|---|---|
-| Code todo | `docs/work/todo/<subsystem>/` | Open implementation, refactor, and test-code items. Each item names files, types, or behavior. | Manual runtime checks, screenshots, profiler captures, hardware rows, build logs, completed-work history. |
-| Validation doc | `docs/work/testing/<subsystem>/` | Manual, runtime, visual, hardware, profiler, benchmark, and soak checks. Acceptance matrices. Reproduction steps and evidence links. | Code changes. A failed check creates a code item or an investigation instead. |
-| Investigation | `docs/work/investigations/<subsystem>/` | Debug history, hypotheses, ruled-out causes, build-by-build logs. | Open backlog. |
+| Code todo | `<work-docs-repo>/todo/<subsystem>/` | Open implementation, refactor, and test-code items. Each item names files, types, or behavior. | Manual runtime checks, screenshots, profiler captures, hardware rows, build logs, completed-work history. |
+| Validation doc | `<work-docs-repo>/testing/<subsystem>/` | Manual, runtime, visual, hardware, profiler, benchmark, and soak checks. Acceptance matrices. Reproduction steps and evidence links. | Code changes. A failed check creates a code item or an investigation instead. |
+| Investigation | `<work-docs-repo>/investigations/<subsystem>/` | Debug history, hypotheses, ruled-out causes, build-by-build logs. | Open backlog. |
 | Architecture or guide | `docs/architecture/`, `docs/developer-guides/`, `docs/user-guide/` | Finished design: ownership, invariants, data layouts, flags, environment variables, type and file map, known limits. | Checkboxes and status. |
 
 ## Code Todo

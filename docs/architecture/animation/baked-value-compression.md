@@ -83,4 +83,4 @@ The baked compression behavior is covered by animation unit tests:
 
 ## Future Work
 
-- Cooked encoded payloads, delta seek checkpoints, editor estimates, type-specific lossless stores, and opt-in lossy float-family codecs are tracked in the [baked value compression TODO](../../work/todo/animation/baked-value-compression-todo.md). Lossy formats land only after a per-type error-budget contract and clear reconstruction rules exist.
+- Cooked encoded payloads, delta seek checkpoints, editor estimates, type-specific lossless stores, and opt-in lossy float-family codecs are tracked in the [baked value compression TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/animation/baked-value-compression-todo.md). Lossy formats land only after a per-type error-budget contract and clear reconstruction rules exist.

@@ -83,7 +83,7 @@ The unit-testing world exposes the same high-level policy per startup import thr
 
 For a Unity `.prefab` startup import, `ImporterBackend` selects the FBX backend for referenced model prefabs. Direct converter calls and asset loads without backend options continue to use Assimp. Editor asset loading passes an explicit `ModelImportOptions.FbxBackend` through to the Unity converter. `Auto` permits fallback during model parsing; `Native` does not.
 
-Native FBX model bases currently stop before Unity prefab publication with an explicit normalization diagnostic. Their content basis, handedness, and mesh-local cluster binds do not yet satisfy the Unity composition contract. A successful standalone native FBX import does not establish prefab support. Track both routes in [Unity Prefab Parity Import TODO](../../work/todo/assets/unity-prefab-parity-import-todo.md).
+Native FBX model bases currently stop before Unity prefab publication with an explicit normalization diagnostic. Their content basis, handedness, and mesh-local cluster binds do not yet satisfy the Unity composition contract. A successful standalone native FBX import does not establish prefab support. Track both routes in [Unity Prefab Parity Import TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/assets/unity-prefab-parity-import-todo.md).
 
 Unity model metadata reads scale, unit, axis, hierarchy, and name-sorting settings from the `meshes` mapping, with root-level fields retained as compatibility fallbacks. Assimp synthetic roots can distribute their basis into direct children when the wrapper is identity and all child transforms preserve their full matrix under TRS decomposition. Roots used by a skin palette or explicit culling bound remain guarded.
 

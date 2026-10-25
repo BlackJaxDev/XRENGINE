@@ -5,9 +5,9 @@ This document describes cooked texture payloads for imported `XRTexture2D` conte
 Related:
 
 - [Texture Streaming](../rendering/texture-streaming.md)
-- [Texture Validation](../../work/testing/texturing/texture-validation.md)
-- [Texture Compression And Cooked Texture Cache Design](../../work/design/texturing/texture-compression-and-cooked-cache-design.md)
-- [Texture Runtime, Streaming, And Virtual Texturing Design](../../work/design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
+- [Texture Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/texturing/texture-validation.md)
+- [Texture Compression And Cooked Texture Cache Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/texturing/texture-compression-and-cooked-cache-design.md)
+- [Texture Runtime, Streaming, And Virtual Texturing Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/texturing/texture-runtime-streaming-virtual-texturing-design.md)
 
 ## Scope
 

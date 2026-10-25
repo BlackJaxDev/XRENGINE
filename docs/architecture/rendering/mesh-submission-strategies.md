@@ -36,7 +36,7 @@ copies. Explicit CPU-owned V2 color/coverage sources retain direct draws through
 verified vertex rank gates in the same ordered replay. Unproven raster programs,
 non-mesh commands and other unavailable selected profiles report specific
 diagnostics. The [authored meshlet lowering
-record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
+record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
 describes ownership, conservative bounds, capacities, and pending runtime
 acceptance.
 
@@ -152,7 +152,7 @@ Default derivation:
 
 `GpuIndirectZeroReadback` material scatter uses `DrawMetadata.MaterialID` as the bucket key. `StateClassID` remains the coarse pipeline-state key; it must not substitute for material identity. Material-table draw paths use the stable `DrawID` to fetch the material row and preserve per-material constants such as base color, opacity, roughness, metallic, specular, and emission.
 
-Dynamic material-table layouts for additional deferred, forward+, Uber, and annotated custom shader paths are proposed in [Dynamic Indirect Material Bindings](../../work/design/rendering/dynamic-indirect-material-bindings.md).
+Dynamic material-table layouts for additional deferred, forward+, Uber, and annotated custom shader paths are proposed in [Dynamic Indirect Material Bindings](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/dynamic-indirect-material-bindings.md).
 
 ## Vulkan Command-Chain Volatility
 
@@ -278,7 +278,7 @@ renderer does not.
   eligibility are separate facts with separate diagnostics.
 
 Broad model and prefab binary-cache hydration is owned by the
-[Model Import Binary Cache TODO](../../work/todo/assets/model-import-binary-cache-todo.md).
+[Model Import Binary Cache TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/assets/model-import-binary-cache-todo.md).
 
 ## Production Closeout Status
 
@@ -290,7 +290,7 @@ replacement/unload lifetime, parallel command-worker ownership, uncapped
 ShippingFast characterization, 86 focused Release regression tests, and a final
 uncapped Vulkan smoke with zero readback, maps, CPU/forbidden fallback, or
 VUIDs. See the
-[meshlet production closeout evidence](../../work/investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
+[meshlet production closeout evidence](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/meshlet-import-production-closeout-2026-08-20.md).
 
 Broad model/prefab binary-cache hydration remains a separately owned
 conditional dependency; it is not required to reinterpret or reopen this

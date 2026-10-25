@@ -94,7 +94,7 @@ fields and opaque packed CRC bindings fail with an explicit capability or
 adapter diagnostic; they are never guessed or silently treated as floats.
 
 - [Component API](../components/component-api.md)
-- [Phase 9A Body-frame investigation](../../work/investigations/avatar/humanoid-body-frame-compensation-2026-08-31.md)
+- [Phase 9A Body-frame investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/avatar/humanoid-body-frame-compensation-2026-08-31.md)
 - [Scene Architecture](../../architecture/scene/overview.md)
 - [Rendering Runtime Overview](../../architecture/rendering/runtime-overview.md)
 - [Physics Architecture](../../architecture/physics/overview.md)

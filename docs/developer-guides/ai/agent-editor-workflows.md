@@ -103,7 +103,7 @@ Tool categories include Setup, Build, Editor, Repo, Docs, Reports, and Deps. `Ex
 
 "Iterate on the editor" (a.k.a. "iterate on the editor") means driving a tight, evidence-based debug loop against a live editor process using the MCP server and the per-run logs, instead of guessing from source alone. Use it for rendering, scene, transform, and other visually observable issues. Each iteration is one full pass through the loop below.
 
-When iterating on the editor to debug one or more issues, create or update an investigation doc under `docs/work/investigations/<subsystem>/` for the issue, for example `docs/work/investigations/rendering/` for rendering/editor-viewport work. Use it as the durable progress tracker until the issue is solved. It should record the problem statement, issues found, suggested solutions, attempted solutions, validation evidence, and whether the user reported each attempted solution worked or did not work.
+When iterating on the editor to debug one or more issues, create or update an investigation doc under `<work-docs-repo>/investigations/<subsystem>/` for the issue, for example `<work-docs-repo>/investigations/rendering/` for rendering/editor-viewport work. Use it as the durable progress tracker until the issue is solved. It should record the problem statement, issues found, suggested solutions, attempted solutions, validation evidence, and whether the user reported each attempted solution worked or did not work.
 
 The loop:
 
@@ -147,7 +147,7 @@ on the app/update thread, so those calls can change capture state during native
 command recording. Use explicit start/end only when the capture owner controls
 the recording boundary. A Vulkan chain-scale run reproduced a native
 `renderdoc.dll` fault with explicit start/end; presented-frame trigger captures
-passed. See the [capture faults](../../work/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#open-faults).
+passed. See the [capture faults](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/physics/skinned-gpu-chain-benchmark-2026-10-06.md#open-faults).
 
 1. Verify capture tooling first:
 

@@ -117,4 +117,4 @@ Primary implementation:
 Related docs:
 
 - [Vulkan Renderer](../../architecture/rendering/vulkan-renderer.md)
-- [Vulkan Core Validation](../../work/testing/rendering/vulkan-core-validation.md)
+- [Vulkan Core Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/vulkan-core-validation.md)

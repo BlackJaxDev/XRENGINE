@@ -43,7 +43,7 @@ dotnet run --no-build --project XREngine.Editor/XREngine.Editor.csproj -c Releas
 
 This requires the existing browser SDK/workload and reviewed browser Jolt
 source setup described in
-[browser publishing](../../docs/work/progress/rendering/browser-project-publishing.md).
+[browser publishing](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-project-publishing.md).
 The publisher loads the saved XRWorld, builds the game assembly, projects only
 the canonical desktop material stages into their cooked semantic companions,
 cooks the ordinary runtime-binary object graph and packages a complete player.

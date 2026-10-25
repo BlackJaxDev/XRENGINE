@@ -117,4 +117,4 @@ Local transfer limits: 4 MiB baseline, 5 KiB snapshot bytes per chunk, 4,096 ent
 
 Each admitted player owns one humanoid avatar. The runtime assigns its inner avatar ID from the server player index and initializes remote pawns from the roster. Richer game pawn composition must retain that identity binding. Gameplay physics authority remains Phase 7.
 
-See [Phase 5–6 runtime evidence](../../work/progress/networking/managed-transport-and-replication.md).
+See [Phase 5–6 runtime evidence](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/networking/managed-transport-and-replication.md).

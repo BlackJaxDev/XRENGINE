@@ -1,6 +1,6 @@
 # Model Import Binary Cache
 
-This page describes the finished parts of the model import binary cache: codec ownership, backend selection, cache identity, the binary container, and the optional meshlet section. For the user-facing cache layout and legacy transition, see [Model Import](../../developer-guides/assets/model-import.md#model-cache-identity-and-legacy-transition). The full format proposal is in the [Model Import Binary Cache Design](../../work/design/assets/model-import-binary-cache-design.md). Open work is in the [Model Import Binary Cache TODO](../../work/todo/assets/model-import-binary-cache-todo.md).
+This page describes the finished parts of the model import binary cache: codec ownership, backend selection, cache identity, the binary container, and the optional meshlet section. For the user-facing cache layout and legacy transition, see [Model Import](../../developer-guides/assets/model-import.md#model-cache-identity-and-legacy-transition). The full format proposal is in the [Model Import Binary Cache Design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/assets/model-import-binary-cache-design.md). Open work is in the [Model Import Binary Cache TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/assets/model-import-binary-cache-todo.md).
 
 ## Status
 

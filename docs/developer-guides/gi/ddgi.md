@@ -1,6 +1,6 @@
 # Dynamic Diffuse Global Illumination (DDGI)
 
-Dynamic Diffuse Global Illumination (DDGI) is an experimental probe-based diffuse lighting system based on Majercik et al. (2019). Open code work is in the [DDGI TODO](../../work/todo/rendering/global-illumination/ddgi-implementation-todo.md). Runtime checks are in [Global Illumination Validation](../../work/testing/rendering/global-illumination-validation.md#ddgi).
+Dynamic Diffuse Global Illumination (DDGI) is an experimental probe-based diffuse lighting system based on Majercik et al. (2019). Open code work is in the [DDGI TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/global-illumination/ddgi-implementation-todo.md). Runtime checks are in [Global Illumination Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/rendering/global-illumination-validation.md#ddgi).
 
 ## Overview
 

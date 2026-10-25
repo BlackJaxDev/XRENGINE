@@ -7,7 +7,7 @@ This directory contains comprehensive documentation for the XREngine UI layout s
 | [01-Architecture.md](01-Architecture.md) | Core architecture: two-phase measure/arrange, dual execution paths, canvas entry points, invalidation/dirty tracking |
 | [02-Transform-Types.md](02-Transform-Types.md) | Reference for every UI transform type: properties, overrides, and child arrangement behavior |
 | [03-Rendering-Pipeline.md](03-Rendering-Pipeline.md) | How laid-out UI reaches the screen: UICanvasComponent → VisualScene2D → Quadtree → RenderInfo2D |
-| [Native UI Layout Known Issues](../../work/audit/COMPLETED/native-ui-layout-known-issues.md) | Audit record for architectural conflicts, performance traps, and outstanding bugs with analysis and suggested fixes |
+| [Native UI Layout Known Issues](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/audit/COMPLETED/native-ui-layout-known-issues.md) | Audit record for architectural conflicts, performance traps, and outstanding bugs with analysis and suggested fixes |
 
 ## Progress Update (2026-02-06)
 
@@ -56,4 +56,4 @@ The layout system has **two competing execution paths** that both run:
 
 Both paths currently execute. The NEW path runs first (during `CollectVisibleItems`), then the OLD path triggers whenever `MarkLocalModified()` causes deferred matrix recalculation and `OnLocalMatrixChanged` fires.
 
-See [Native UI Layout Known Issues](../../work/audit/COMPLETED/native-ui-layout-known-issues.md) for the historical audit notes and remaining cleanup items.
+See [Native UI Layout Known Issues](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/audit/COMPLETED/native-ui-layout-known-issues.md) for the historical audit notes and remaining cleanup items.

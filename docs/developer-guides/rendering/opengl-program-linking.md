@@ -324,7 +324,7 @@ program remains renderable. Old handles are deferred for deletion for at least
 two render frames so queued draws and program pipelines cannot reference a
 destroyed handle.
 
-The [2026-09-14 runtime qualification](../../work/investigations/rendering/vulkan14-final-validation-2026-09-14.md)
+The [2026-09-14 runtime qualification](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/vulkan14-final-validation-2026-09-14.md)
 exercises a visible water-shader edit, a syntax error retaining the last valid
 output, and restoration of the authored shader.
 

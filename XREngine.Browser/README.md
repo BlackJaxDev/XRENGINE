@@ -16,10 +16,10 @@ assembly through the shared runtime. Its bounded `DefaultRenderPipeline` WebGPU
 profile supports lit output; unsupported authored features fail with a named
 capability diagnostic. Full application and device parity remain under
 qualification. See the
-[current checkpoint](../docs/work/progress/platform/unified-browser-checkpoint-2026-10-01.md)
+[current checkpoint](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/platform/unified-browser-checkpoint-2026-10-01.md)
 for exact build/runtime evidence and remaining work.
 
-The [authored asset delivery contract](../docs/work/progress/platform/browser-authored-asset-delivery-2026-10-02.md)
+The [authored asset delivery contract](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/platform/browser-authored-asset-delivery-2026-10-02.md)
 describes essential/streamed catalog roots, shared hydration admission, lifetime
 accounting and on-demand progress/memory estimates. Native package preflight
 still authenticates all files; its transfer cost is reported separately from
@@ -127,7 +127,7 @@ the player's **Retry** action explicitly reloads it. There is no WebGL or CPU
 rendering fallback. A stopped caller-thread lifecycle cannot be revived by
 device replacement. These paths have source/build and controlled host-boundary
 evidence, with live GPU/mobile qualification still open; see the
-[device recovery record](../docs/work/progress/platform/browser-webgpu-device-recovery-2026-10-02.md).
+[device recovery record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/platform/browser-webgpu-device-recovery-2026-10-02.md).
 
 The authored engine output reads `RuntimeEngine.Rendering.Settings.BrowserWebGpuQuality`.
 Its default preserves the currently admitted WebGPU light, shadow, texture, and
@@ -156,7 +156,7 @@ Skinned, mesh-deformed, textured, coverage, and multi-instance casters refresh
 every frame; cadence reuse is reserved for unchanged static opaque color casters
 and unchanged empty caster sets.
 Only a shadow image produced by an accepted WebGPU frame can be reused. See
-[browser shadow quality](../docs/work/progress/platform/browser-webgpu-shadow-quality-2026-10-02.md)
+[browser shadow quality](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/platform/browser-webgpu-shadow-quality-2026-10-02.md)
 for the exact reuse and validation boundary.
 
 The production canvas host and `BrowserCanvasRenderTarget` belong to
@@ -204,7 +204,7 @@ versioned binary packet bridge with one managed-to-JavaScript submission per fra
 The focused CPU-direct pipeline adds unlit/flat Lambert shading, directional
 shadows, sky/ambient lighting, HDR tonemapping and GPU-composed UI rectangles.
 
-**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, cooked-shader loading and focused forward-pipeline code are implemented. The host compiles and publishes as of 2026-09-30 ([build record](../docs/work/progress/platform/unified-runtime-build-stabilization.md)). Local browser smokes render the reference fixture and an editor-published minimal authored world; captures and limitations are recorded in the [harness investigation](../docs/work/investigations/rendering/desktop-browser-reference-harness.md). Physical-device, recovery and performance qualification remain open.
+**Status:** Canvas, registered WebGPU module, static engine snapshot bridge, frame-output/pass contracts, culling, live resource updates, batched uploads, cooked-shader loading and focused forward-pipeline code are implemented. The host compiles and publishes as of 2026-09-30 ([build record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/platform/unified-runtime-build-stabilization.md)). Local browser smokes render the reference fixture and an editor-published minimal authored world; captures and limitations are recorded in the [harness investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/desktop-browser-reference-harness.md). Physical-device, recovery and performance qualification remain open.
 
 ## Build and run
 
@@ -255,7 +255,7 @@ real-server qualification. A local published game does not become a networked
 game merely because the transport leaf is installed.
 The separate browser scene, animation, collision and focused pipeline are a
 frozen reference harness. Changes may fix harness defects; new engine features
-follow the [unified runtime design](../docs/work/design/platform/unified-desktop-browser-runtime-design.md).
+follow the [unified runtime design](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/platform/unified-desktop-browser-runtime-design.md).
 Publish the entire `wwwroot/webgpu` directory with the application. Revalidate
 `webgpu/shaders/manifest.json`; hash-named `.shader.json` and `.wgsl` files may be cached
 immutably. The loader rejects missing, stale, oversized or incompatible artifacts
@@ -347,7 +347,7 @@ The fixed material sampler is linear with clamp-to-edge addressing. Payloads use
 immutable hash URLs; the bootstrap is revalidated. Persistent browser storage is
 not required.
 
-See [cooked content delivery](../docs/work/progress/rendering/browser-cooked-content.md)
+See [cooked content delivery](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-cooked-content.md)
 and the [cooker README](../Tools/BrowserContentCooker/README.md) for contracts,
 limits, deployment, memory accounting and remaining acceptance work. Runtime and
 cache qualification remain deferred.
@@ -360,7 +360,7 @@ payloads. Animated instances share immutable inputs but own separate output mesh
 and playback state. The player uses engine transforms and authored cadence; CPU
 and compute deformation consume the same packed skin/morph records. Collision uses
 the existing fixed-step character and explicit cooked boxes. Unsupported required services fail, and required audio
-waits for a running user-activated context. See [interaction and runtime services](../docs/work/progress/rendering/browser-interactive-services.md)
+waits for a running user-activated context. See [interaction and runtime services](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-interactive-services.md)
 for selected profiles, limits, source inventory and remaining acceptance.
 
 `BrowserRendererComposition` registers `WebGpuRendererBackendModule` in the existing
@@ -416,18 +416,18 @@ browser publish uses the SDK's normal output directories. Desktop bootstrap/nati
 integrations remain outside this graph. The existing portability guard continues
 to check project/package/native-asset boundaries; it is not a forbidden-API proof.
 
-See [mesh and packet implementation notes](../docs/work/progress/rendering/browser-mesh-packet-bridge.md)
+See [mesh and packet implementation notes](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-mesh-packet-bridge.md)
 for remaining work and the explicit validation deferral.
 
-See [batched upload bridge](../docs/work/progress/rendering/browser-upload-bridge.md)
+See [batched upload bridge](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-upload-bridge.md)
 for `BrowserUploadBatch`, texture-region integration, vertex/index/tint commands,
 bounded arenas, ownership, copy accounting and deferred acceptance evidence.
 
-See [cooked shader artifact notes](../docs/work/progress/rendering/browser-shader-artifacts.md)
+See [cooked shader artifact notes](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-shader-artifacts.md)
 for recipe limits, identities, compiler-contract compatibility and deferred validation.
 
 Use the [C# shader cooker](../Tools/ShaderCooker/README.md) for new shader packages;
-no Python is required. [Shader cooking and material generation](../docs/work/progress/rendering/browser-shader-cooking.md)
+no Python is required. [Shader cooking and material generation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-shader-cooking.md)
 documents the typed unlit generator, optional Slang 2026.8 route and schema 2
 contracts. After cooking and publishing a named variant, `?shader=<artifact-name>`
 selects it; only that pipeline is compiled. The existing checked-in default remains
@@ -435,18 +435,18 @@ schema 1. Shader compilation and pipeline creation have separate cancellable
 45-second deadlines, with startup timings included in counter snapshots. The new
 cooker and shader routes have not been executed or qualified for this delivery.
 
-See [module and snapshot integration](../docs/work/progress/rendering/browser-webgpu-module-assets.md)
+See [module and snapshot integration](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-webgpu-module-assets.md)
 for the export API, supported subset, ownership and remaining integration work.
 
-See [canvas output and live updates](../docs/work/progress/rendering/browser-webgpu-frame-output.md) for the output/pass ABI and remaining integration work.
+See [canvas output and live updates](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-webgpu-frame-output.md) for the output/pass ABI and remaining integration work.
 
-See [GPU resources and ordered submission](../docs/work/progress/rendering/browser-gpu-resources-submission.md)
+See [GPU resources and ordered submission](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-gpu-resources-submission.md)
 for the buffer/texture/view/sampler API, immutable selected-device capabilities,
 framebuffer attachment lowering, bounded pipeline cache, reusable render/compute/copy
 commands and cancellable asynchronous readback. Builds and browser/GPU acceptance
 remain deferred; this core resource profile is not full baseline qualification.
 
-See [compute and indirect commands](../docs/work/progress/rendering/browser-compute-indirect.md)
+See [compute and indirect commands](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-compute-indirect.md)
 for storage-to-render ordering, device-limited compute, indirect draw argument and
 usage rules, and the opt-in **Renderer counters → Run GPU reference cases** action.
 The action pauses scene frames, performs bounded offscreen work and asynchronous
@@ -454,7 +454,7 @@ readback, and displays session-specific results. It has not been run for this
 delivery. `?strategy=Auto` permits only `CpuDirect`; unsupported scene strategies
 fail with a reason. No source addition establishes baseline qualification.
 
-The [compute reuse audit and integration](../docs/work/progress/rendering/browser-compute-reuse-audit.md)
+The [compute reuse audit and integration](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-compute-reuse-audit.md)
 records reuse of existing palette/bounds contracts and canonical skinning/Hi-Z
 algorithms. **Renderer counters** now offers explicit experimental `GpuIndirect`,
 `ComputeCulling`, `HiZ`, `BvhCulling` and `BvhHiZ` submission plus `Compute` deformation, with a restart
@@ -465,7 +465,7 @@ compute deformation on a scene without admitted animation data fails visibly.
 Automatic choices remain CPU-direct and CPU deformation. Hi-Z accepts only
 explicitly designated opaque occluders; uncertain deformation bounds stay visible.
 
-See [focused browser forward pipeline](../docs/work/progress/rendering/browser-focused-pipeline.md)
+See [focused browser forward pipeline](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-focused-pipeline.md)
 for material sorting, directional shadows, linear/HDR composition, binding/packet
 contracts, UI atlas constraints and mobile quality presets. The module-owned forward
 shaders are compiled during bounded startup; `?shader=` still selects the earlier
@@ -474,7 +474,7 @@ node layout with WebGPU construction/refit/traversal passes. PBR, full desktop G
 outside this profile. Compute deformation and bounded indirect visibility are
 explicit experimental backend paths described by the audit above.
 
-See [portable host completion](../docs/work/progress/rendering/browser-portable-host-completion.md)
+See [portable host completion](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-portable-host-completion.md)
 for generated registrations, source/API guards, frame publication and the remaining
 acceptance work. Builds regenerate the browser registry under intermediate output
 from `browser-registration-manifest.json` using the shared PowerShell factory

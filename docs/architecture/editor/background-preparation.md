@@ -40,9 +40,9 @@ threshold. This contract does not imply that such a cache was added.
 
 ## Validation References
 
-The [toolbar investigation](../../work/investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md)
+The [toolbar investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md)
 records Vulkan/OpenGL output, upload and restart checks. The
-[camera discovery investigation](../../work/investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md)
+[camera discovery investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/2026-09-22-s11-camera-inspector-discovery.md)
 records picker, mutation, reload and unload checks. The
-[result record](../../work/progress/rendering/vulkan-stall-remediation-results.md)
+[result record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/vulkan-stall-remediation-results.md)
 keeps measurements and remaining validation limits separate from these contracts.

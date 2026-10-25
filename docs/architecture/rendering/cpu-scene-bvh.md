@@ -95,7 +95,7 @@ including managed allocation and GC counts.
 The implementation was promoted after randomized brute-force mutation/query
 parity, concurrent reader/writer generation tests, degenerate-input coverage,
 and allocation tests passed. The durable completion and benchmark record is
-[CPU BVH Scene-Tree Improvements](../../work/progress/rendering/cpu-bvh-scene-tree-improvements.md).
+[CPU BVH Scene-Tree Improvements](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/cpu-bvh-scene-tree-improvements.md).
 
 ## Legacy per-mesh BVH boundary
 

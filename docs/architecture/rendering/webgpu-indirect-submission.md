@@ -182,9 +182,9 @@ conventions, differing LOD primitive membership and view-dependent transparent
 ordering still require their own producers. Distinct submeshes retain their
 own exact deformation inputs. Strict and instrumented strategy identities remain
 distinct even when no instrumentation is enabled. See the
-[authored meshlet record](../../work/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
+[authored meshlet record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-authored-meshlet-indexed-2026-10-03.md)
 and the
-[native-family admission record](../../work/progress/rendering/browser-advanced-admission-2026-10-02.md)
+[native-family admission record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/rendering/browser-advanced-admission-2026-10-02.md)
 for exact output reservation, program, and device-limit checks.
 
 The October 3 reconstructed source passed fresh combined builds before its

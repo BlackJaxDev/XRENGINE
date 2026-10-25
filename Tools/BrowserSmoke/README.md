@@ -583,7 +583,7 @@ The single attempt on October 5 is complete. Run
 reported `NativeCommandUnavailable` before collector launch and produced no
 samples. Its authorization marker was consumed and raw deletion was verified.
 The request, activation and one-shot workflow are removed. The
-[investigation record](../../docs/work/investigations/rendering/browser-native-compiler-stall-2026-10-05.md)
+[investigation record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/browser-native-compiler-stall-2026-10-05.md)
 preserves the exact provenance and limits; this result does not diagnose a
 compiler region or qualify Advanced rendering.
 
@@ -624,7 +624,7 @@ the request is not an automatic retry.
 ## Work-note-only pushes
 
 The portable browser workflow skips a push when its only changes are Markdown
-work notes under `docs/work/` or the existing diagnostic request/activation
+work notes under `<work-docs-repo>/` or the existing diagnostic request/activation
 records. Pull-request and manual triggers remain unfiltered. A mixed push with
 source, helper, project or workflow changes still runs within
 [GitHub's path-filter evaluation rules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#git-diff-comparisons).

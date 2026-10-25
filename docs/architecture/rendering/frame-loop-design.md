@@ -304,7 +304,7 @@ pauses turn into hitches.
 
 Remaining measured owners, chiefly sealed binding snapshots at about 1 MB per
 present, are tracked in the
-[modular GI architecture TODO](../../work/todo/rendering/global-illumination/modular-gi-architecture-todo.md).
+[modular GI architecture TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/global-illumination/modular-gi-architecture-todo.md).
 
 ## Invalidation Is Scoped And Retirement Waits For The GPU
 
@@ -441,7 +441,7 @@ atlas page:
   counters and the last decline reason.
 
 The measurements and gate record are in the
-[S15b record](../../work/investigations/rendering/2026-10-03-s15b-directional-shadow-lane.md).
+[S15b record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/rendering/2026-10-03-s15b-directional-shadow-lane.md).
 
 ## Play-Mode Restores Must Rebuild The Same Derived State
 
@@ -527,8 +527,8 @@ previous restore's copy (`SnapshotRestoredContent`).
 ## Known Limits
 
 Open work that affects this design is tracked in the
-[Vulkan core frame loop TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md)
-and the [Vulkan stall separate findings backlog](../../work/todo/rendering/vulkan-stall-separate-findings-todo.md):
+[Vulkan core frame loop TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md)
+and the [Vulkan stall separate findings backlog](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/vulkan-stall-separate-findings-todo.md):
 
 - the directional caster lane is limited to desktop depth pages and CpuDirect;
   other shadow sources and submission strategies retain generic recording;

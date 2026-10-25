@@ -985,10 +985,10 @@ The architecture depends on these invariants:
 
 Proposed changes, their Vulkan specification review, implementation phases, and
 acceptance gates live in the
-[Vulkan Command Recording Architecture Optimization TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership).
+[Vulkan Command Recording Architecture Optimization TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership).
 The target command owner and its place in the complete frame lifecycle are
 defined by the
-[Vulkan Render Loop Target Architecture](../../work/design/rendering/vulkan-render-loop-target-architecture.md).
+[Vulkan Render Loop Target Architecture](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/design/rendering/vulkan-render-loop-target-architecture.md).
 
 ## Source Map
 

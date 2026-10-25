@@ -95,6 +95,6 @@ projected-root calculation.
 ## Deeper Docs
 
 - [Animation API](../developer-guides/animation/animation-api.md)
-- [Phase 9A Body-frame investigation](../work/investigations/avatar/humanoid-body-frame-compensation-2026-08-31.md)
+- [Phase 9A Body-frame investigation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/investigations/avatar/humanoid-body-frame-compensation-2026-08-31.md)
 - [VR Development](vr-development.md)
 - [Component System](components.md)

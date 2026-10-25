@@ -8,8 +8,8 @@ Related docs:
 
 - [OpenVR Rendering](openvr-rendering.md)
 - [Vulkan Upscale Bridge](../../developer-guides/rendering/vulkan-upscale-bridge.md)
-- [OpenVR VRClient GPU Handoff Validation](../../work/testing/xr/openvr-vrclient-gpu-handoff-validation.md)
-- [OpenVR VRClient GPU Handoff TODO](../../work/todo/rendering/gpu/openvr-vrclient-gpu-handoff-todo.md)
+- [OpenVR VRClient GPU Handoff Validation](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/xr/openvr-vrclient-gpu-handoff-validation.md)
+- [OpenVR VRClient GPU Handoff TODO](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/gpu/openvr-vrclient-gpu-handoff-todo.md)
 
 ## Current Runtime Ownership
 

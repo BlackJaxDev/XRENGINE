@@ -176,7 +176,7 @@ installed.
 
 ## Validation Scope
 
-The [local gateway validation record](../../work/progress/networking/browser-realtime-validation.md)
+The [local gateway validation record](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/progress/networking/browser-realtime-validation.md)
 documents successful server/service/leaf builds, a real managed
 Hello/Challenge/Commit walkthrough, negative upgrade checks, corrected
 absolute-transform quaternion roundtrip, and rejection of recognized older

@@ -1,6 +1,6 @@
 param(
     [string]$RepoRoot = (Resolve-Path ".").Path,
-    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "docs\work\audit\static-classes.md")
+    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "Build\Reports\static-classes.md")
 )
 
 $ErrorActionPreference = "Stop"

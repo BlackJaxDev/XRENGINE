@@ -88,6 +88,6 @@ For scale investigations record:
 - dirty upload, GPU copy, selective readback, dispatch, and barrier counts;
 - requested/effective quality and compatibility output age/cost.
 
-Use the named-hardware and matrix contract under `docs/work/testing/` for
+Use the named-hardware and matrix contract under `<work-docs-repo>/testing/` for
 performance acceptance. Debug drawing, validation layers, verbose per-chain
 logging, and editor-only inspection must be disabled during timing runs.

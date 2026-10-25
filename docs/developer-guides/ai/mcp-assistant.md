@@ -2,7 +2,7 @@
 
 The MCP Assistant is the in-editor chat surface for AI-assisted scene and asset authoring. It builds provider-specific instructions, optionally attaches the editor MCP server, and guides the model toward schema-first, verifiable editor mutations.
 
-This feature doc promotes the implemented behavior described by `docs/work/design/UI/mcp-assistant-system-prompt.md`.
+This feature doc promotes the implemented behavior described by `<work-docs-repo>/design/UI/mcp-assistant-system-prompt.md`.
 
 ## Purpose
 

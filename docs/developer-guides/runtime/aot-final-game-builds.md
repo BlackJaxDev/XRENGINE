@@ -113,7 +113,7 @@ Rolling Ball rules that the gate enforces:
   late update from the presented ball pose.
 
 Manual release sign-off uses the
-[Rolling Ball Release Matrix](../../work/testing/xr/rolling-ball-release-matrix.md).
+[Rolling Ball Release Matrix](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/testing/xr/rolling-ball-release-matrix.md).
 
 ## Build Settings
 

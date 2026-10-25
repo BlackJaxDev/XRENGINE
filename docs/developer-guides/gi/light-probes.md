@@ -21,7 +21,7 @@ are rejected when the profile is created.
 DDGI supplies diffuse indirect light independently of these reflection captures.
 Specular coexistence and capture/cache recovery are still undergoing acceptance
 across the four backend/pipeline combinations; see the
-[DDGI progress matrix](../../work/todo/rendering/global-illumination/ddgi-implementation-todo.md).
+[DDGI progress matrix](https://github.com/BlackJaxDev/XRENGINE-WORK-DOCS/blob/main/todo/rendering/global-illumination/ddgi-implementation-todo.md).
 
 ## Components
 
