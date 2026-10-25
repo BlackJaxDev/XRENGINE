@@ -830,8 +830,13 @@ internal sealed class NativeDockTreeHost
                 !ReferenceEquals(binding.Slot, slot) || !binding.IsCurrent)
                 return null;
             NativeDockPanelStateReceipt receipt = binding.CaptureReceipt();
-            return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent);
+            if (panel == NativeDockPanel.Animation && receipt.AnimationView is null)
+                return null;
+            return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent,
+                receipt.AnimationView?.Values);
         }
+        if (panel == NativeDockPanel.Animation)
+            return null;
         NativeDockPanelStateValues values = NativeDockPanelStateValues.Capture(_layout, panel);
         return new(values, () => HostCurrent() && !_panelSlots.ContainsKey(panel) &&
             values.Matches(_layout));
@@ -864,7 +869,10 @@ internal sealed class NativeDockTreeHost
             !NativeDockPanel.All.Contains(panel))
             return false;
         if (transferState is { } incoming &&
-            (incoming.Values.Panel != panel || !incoming.IsCurrent ||
+            (incoming.Values.Panel != panel ||
+             incoming.AnimationView is not null && panel != NativeDockPanel.Animation ||
+             panel == NativeDockPanel.Animation && incoming.AnimationView is null ||
+             !incoming.IsCurrent ||
              _disposed || !_root.IsActiveInHierarchy ||
              _root.IsDestroyed || _root.IsDestroyQueued ||
              !rootIdentity.IsCurrent || !rootTransformIdentity.IsCurrent ||
@@ -882,6 +890,7 @@ internal sealed class NativeDockTreeHost
         NativeDockPanelStateValues destinationBefore =
             NativeDockPanelStateValues.Capture(_layout, panel);
         NativeDockPanelStateReceipt? destinationReceipt = null;
+        NativeAnimationPanelViewValues? destinationBeforeView = null;
         if (transferState is not null && _panelSlots.TryGetValue(panel, out SceneNode? priorSlot))
         {
             if (NativeDockPanelStateValues.ScrollIndex(panel) >= 0)
@@ -891,6 +900,8 @@ internal sealed class NativeDockTreeHost
                     return false;
                 destinationReceipt = priorBinding.CaptureReceipt();
                 destinationBefore = destinationReceipt.Value.Values;
+                if (priorBinding.Panel is AnimationPanel animation)
+                    destinationBeforeView = animation.CapturePriorView();
             }
         }
         bool stateMutationStarted = false;
@@ -964,7 +975,7 @@ internal sealed class NativeDockTreeHost
                 }
                 stateMutationStarted = true;
                 NativeDockPanelStateReceipt applied = binding.Restore(
-                    state.Values, ForwardCurrent);
+                    state.Values, ForwardCurrent, state.AnimationView);
                 appliedState = applied;
                 if (!applied.IsCurrent || !ForwardCurrent())
                     return false;
@@ -989,12 +1000,17 @@ internal sealed class NativeDockTreeHost
         catch (Exception exception)
         {
             if (appliedState is { IsCurrent: true } applied && DestinationCurrent() &&
+                (panel != NativeDockPanel.Animation ||
+                 destinationBeforeView is { } priorView &&
+                 applied.Binding.Panel is AnimationPanel animation &&
+                 animation.CanRestorePriorView(priorView)) &&
                 applied.Binding.IsCurrent)
             {
                 try
                 {
                     NativeDockPanelStateReceipt restored =
-                        applied.Binding.Restore(destinationBefore, DestinationCurrent);
+                        applied.Binding.Restore(destinationBefore, DestinationCurrent,
+                            destinationBeforeView);
                     if (restored.IsCurrent && DestinationCurrent())
                     {
                         restored.Values.WriteTo(_layout);

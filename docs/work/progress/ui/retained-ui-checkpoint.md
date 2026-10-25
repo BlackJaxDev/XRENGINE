@@ -1724,3 +1724,27 @@ Animation toolbar adoption and actual host compensation remain the next separate
 slice. The unsafe draft stays preserved; it is not included in this checkpoint.
 Windows execution remains blocked by validation-disk capacity and pending cleanup
 approval. No platform acceptance is closed, and the reconciliation remains **51/60**.
+
+## Animation view transfer and guarded toolbar
+
+Both native hosts now transfer clip member/key selection, pages, graph mode, zoom
+and window, stretch choice, and value channel. The same fixed receipt guards row
+scroll/bounds, both text writes, final scroll, and host saving. Different-clip
+compensation is rejected without changing global selection. Deferred ordinary
+refresh restores scene-path candidate rows after transfer. Search, draft text,
+focus, expansion, and broader play transitions remain open. All stashes are preserved.
+
+Targeted portable tests pass **47/47**; the full portable suite passes
+**1,480/1,480**, with no failures, warnings, or skips. Production editor compilation
+passes. Two compiler errors in the new host fixture were corrected; test-assembly
+compilation then passed with zero warnings/errors. The 33 panel and 4 real-host cases
+are **compile-only here**. The final manifest has 10,896 source inputs; only that
+editor fixture changed after the portable run, and production inputs stayed fixed.
+
+Windows revalidation at exact `68ab6d167` passed 71 original focused cases. It still
+has combined-only asset teardown failures, six canvas-less tool-panel setup
+failures, and three incomplete stall cases. That snapshot predates the explicit
+fixture-font input. Remaining failures take priority over new focus implementation.
+See the investigation for per-run counts; this is not one passing Windows suite.
+No GPU, live UI, IME, or performance acceptance is closed. Reconciliation remains
+**51/60**, with nine broad code items and four original decisions open.

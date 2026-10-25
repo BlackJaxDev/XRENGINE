@@ -38,25 +38,26 @@ public sealed class NativeDockPanelStateRoutingTests
         _destinationNode.Destroy(true);
     }
 
-    private NativeDockTransferResult Transfer(bool pointed)
+    private NativeDockTransferResult Transfer(bool pointed, string panel = NativeDockPanel.Console)
         => pointed
             ? NativeDockWindowRegistry.TransferToWindow(_source, _destination,
-                NativeDockPanel.Console, "target-stack")
-            : NativeDockWindowRegistry.TransferToAnotherWindow(_source, NativeDockPanel.Console);
+                panel, "target-stack")
+            : NativeDockWindowRegistry.TransferToAnotherWindow(_source, panel);
 
-    private void ConfigureDestination(Func<NativeDockPanelTransferState, bool> receive)
+    private void ConfigureDestination(Func<NativeDockPanelTransferState, bool> receive,
+        string expectedPanel = NativeDockPanel.Console)
         => _destination.Configure(_destinationKey,
             _ => throw new AssertionException("The stateless receiver must not run."), _context,
             receivePanelAtStack: (_, _) =>
                 throw new AssertionException("The stateless pointed receiver must not run."),
             receivePanelState: (panel, state) =>
             {
-                Assert.That(panel, Is.EqualTo(NativeDockPanel.Console));
+                Assert.That(panel, Is.EqualTo(expectedPanel));
                 return receive(state);
             },
             receivePanelStateAtStack: (panel, stack, state) =>
             {
-                Assert.That(panel, Is.EqualTo(NativeDockPanel.Console));
+                Assert.That(panel, Is.EqualTo(expectedPanel));
                 Assert.That(stack, Is.EqualTo("target-stack"));
                 return receive(state);
             });
@@ -80,6 +81,31 @@ public sealed class NativeDockPanelStateRoutingTests
         });
 
         Assert.That(Transfer(pointed), Is.EqualTo(NativeDockTransferResult.Committed));
+        Assert.That(delivered, Is.EqualTo(1));
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void AnimationEditingViewReachesTheMatchingReceiver(bool pointed)
+    {
+        NativeDockPanelStateValues values = NativeDockPanelStateValues.Capture(new(),
+            NativeDockPanel.Animation);
+        NativeAnimationPanelViewValues view = new(null, null, 0, 0, null, null, null,
+            null, null, null, 0, 0, false, 1, 0, true, -1);
+        Assert.That(view.HasValidScalars, Is.True);
+        _source.Configure(_sourceKey, _ => true, _context,
+            capturePanelState: _ => new NativeDockPanelTransferState(values, () => true, view));
+        int delivered = 0;
+        ConfigureDestination(state =>
+        {
+            delivered++;
+            Assert.That(state.Values.Panel, Is.EqualTo(NativeDockPanel.Animation));
+            Assert.That(state.AnimationView, Is.EqualTo(view));
+            return true;
+        }, NativeDockPanel.Animation);
+
+        Assert.That(Transfer(pointed, NativeDockPanel.Animation),
+            Is.EqualTo(NativeDockTransferResult.Committed));
         Assert.That(delivered, Is.EqualTo(1));
     }
 

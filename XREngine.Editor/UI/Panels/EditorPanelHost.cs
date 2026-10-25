@@ -162,8 +162,11 @@ public static class EditorPanelHost
                 layout.SelectedTab == index && (layout.OpenMask & (1 << index)) != 0 &&
                 ReferenceEquals(stateBindings[index], binding) && binding.IsCurrent;
             NativeDockPanelStateReceipt receipt = binding.CaptureReceipt();
+            if (panel == NativeDockPanel.Animation && receipt.AnimationView is null)
+                return null;
             if (!HostCurrent()) return null;
-            return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent);
+            return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent,
+                receipt.AnimationView?.Values);
         }
 
         bool ReceivePanelWithState(string panel, NativeDockPanelTransferState state)
@@ -177,6 +180,8 @@ public static class EditorPanelHost
             int index = Array.IndexOf(NativeDockPanel.LegacyTools, panel);
             if ((uint)index >= (uint)stateBindings.Length ||
                 state.Values.Panel != panel ||
+                state.AnimationView is not null && panel != NativeDockPanel.Animation ||
+                panel == NativeDockPanel.Animation && state.AnimationView is null ||
                 stateBindings[index] is not { IsCurrent: true } binding)
                 return false;
             bool BeforeCurrent() => toolsIdentity.IsCurrent &&
@@ -213,7 +218,7 @@ public static class EditorPanelHost
                 DestinationCurrent();
             if (!ForwardCurrent()) return false;
             NativeDockPanelStateReceipt applied = binding.Restore(
-                state.Values, ForwardCurrent);
+                state.Values, ForwardCurrent, state.AnimationView);
             if (!applied.IsCurrent || !ForwardCurrent())
                 return false;
             if (!DestinationCurrent() || !applied.IsCurrent) return false;

@@ -106,6 +106,8 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockLayout.cs" Link="Editor/NativeDockLayout.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanelStateValues.cs" Link="Editor/NativeDockPanelStateValues.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanelTransferState.cs" Link="Editor/NativeDockPanelTransferState.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeAnimationPanelViewValues.cs" Link="Editor/NativeAnimationPanelViewValues.cs" />
+    <Compile Include="../Editor/NativeAnimationPanelViewValuesTests.cs" Link="Editor/NativeAnimationPanelViewValuesTests.cs" />
     <Compile Include="../Editor/NativeDockPanelStateValuesTests.cs" Link="Editor/NativeDockPanelStateValuesTests.cs" />
     <Compile Include="../Editor/NativeDockPanelStateRoutingTests.cs" Link="Editor/NativeDockPanelStateRoutingTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativePanelScrollOwnerReceipt.cs" Link="Editor/NativePanelScrollOwnerReceipt.cs" />

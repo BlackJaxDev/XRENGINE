@@ -309,7 +309,7 @@ in 20.46s. Final headless build179 passed with zero warnings/errors in 11.40s.
 Run117 passed **1,148/1,148** in 22.473s. Desktop build44 passed with zero
 warnings/errors in 1m20.51s. Final review synchronized the selected row for menu
 actions, rejected a selection changed by a callback, and tied dismissal callbacks
-to their exact popup. Desktop builds45 and46 passed those intermediate snapshots.
+to their exact popup. Desktop builds45 and 46 passed those intermediate snapshots.
 
 Final desktop build47 compiled the editor and tests with zero warnings/errors in
 1m16.22s. Final headless run118 passed **1,148/1,148** in 34.467s, without failures,
@@ -1486,3 +1486,52 @@ Desktop build77 compiled the editor and tests with zero warnings/errors (2m59.97
 All **10,890 source inputs** remained unchanged through build244, runs195/196, and
 desktop build77. Source review and `git diff --check` passed. No Windows test,
 graphics, IME, or performance acceptance is implied by this compilation.
+
+## Guarded Animation transfer implementation
+
+The reviewed values and routing pieces were rebuilt selectively from the preserved
+draft. No stash was applied or removed. The unsafe ordinary toolbar writes were
+replaced with two fixed shared guarded calls. Source review found two later gaps:
+the applied toolbar proof was discarded before host save, and early row scroll
+callbacks ran before the binding held that proof. One fixed receipt now covers both
+boundaries and remains attached to the returned destination receipt.
+
+Owned row projection also omitted destination scene-path candidate rows without
+scheduling their return. A transient deferred flag now schedules ordinary refresh
+after transfer. A fixture checks that the candidate section returns on the next
+tick without changing restored member/key selection. This does not add saved state.
+
+Headless build 245 passed with zero warnings/errors (2m32.46s). Targeted run 197
+passed **47/47** value, routing, and shared text cases (0.849s). Full run 198 passed
+**1,480/1,480** portable cases (22.009s), with no failures, warnings, or skips.
+Editor build 78 compiled production code, then found two fixture-only compiler
+errors: a missing component namespace and a target-typed constructor before a
+method call. Only `NativeDockAnimationTransferTests.cs` changed to fix them.
+Test-assembly build 79 with `BuildProjectReferences=false` passed with zero
+warnings/errors (40.63s). All **10,896 final source inputs** then stayed unchanged.
+Portable and production compilation inputs did not change after their checks.
+
+There are **33 Animation panel cases** and **four real dock-host cases** in the
+editor assembly. They cover accepted text, nested writes, reparenting, caret and
+display callbacks, no-key time checks, row/scroll admission, candidate refresh,
+inactive destination clips, save failure compensation, and edits during save.
+These cases are compile-only here. The real-host fixture uses isolated in-memory
+preferences and an empty platform-path provider. It injects its save callback at
+the second path lookup; it does not depend on duplicate JSON setters raising events.
+
+The separate Windows task completed the approved one-file cleanup and reran exact
+`68ab6d1675622df30bfef6c26861900a12adb76f`. Its clean build passed with zero
+warnings/errors. Seven original focused fixtures passed **71/71** cases, including
+clone cleanup, enum and float inspectors, string sizing, and animation admission.
+The broader run passed 224, failed 2 in asset-spawn teardown, and left 129 incomplete.
+Those two asset cases passed in isolation. Six of 12 tool-panel cases failed during
+console activation because their fixture had no attached canvas. Menu, lifetime,
+and workflow runs still hit the unchanged 30-second inactivity limit. These are
+separate runs: 238 distinct completed cases comprise 230 consistent passes, 6 failures,
+and 2 mixed outcomes. No skipped cases or GPU/live-UI checks were reported.
+
+That Windows snapshot predates the explicit test icon-font commit `c1bbb973d`.
+Use the later fixture inputs for a bounded stall rerun after checking disk space;
+do not infer that normal production font import is fixed. Triage the canvas setup
+and combined teardown separately. No laptop operation ran in this cloud task.
+Analyzer, recovery-journal, and window-key decisions remain held.

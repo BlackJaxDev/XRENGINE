@@ -17,6 +17,7 @@ internal sealed class NativeToolPanelStateBinding
     private bool _callbacksAttached;
     private bool _initializing;
     private Func<bool>? _sourceCurrent;
+    private NativeAnimationPanelViewReceipt? _restoreAnimationView;
 
     internal NativeToolPanelStateBinding(NativeVirtualTextPanel panel, SceneNode slot,
         NativeDockLayout layout, string panelName, Action save, Action requestSave,
@@ -60,6 +61,8 @@ internal sealed class NativeToolPanelStateBinding
 
     internal void RequireOwnedState(ulong intent)
     {
+        if (_restoreAnimationView is { } beforeView && !beforeView.IsCurrent)
+            throw new InvalidOperationException("The Animation view changed during restore.");
         if (!(_initializing ? IsAttached : IsCurrent) || RestoreIntent != intent ||
             !Panel.IsCurrentStateIntent(intent))
             throw new InvalidOperationException("The panel state owner changed during restore.");
@@ -72,6 +75,8 @@ internal sealed class NativeToolPanelStateBinding
             throw new InvalidOperationException("The panel state owner changed during source validation.");
         if (_initializing && _initialAdmission is { } finalAdmission && !finalAdmission())
             throw new InvalidOperationException("The initial panel owner changed during validation.");
+        if (_restoreAnimationView is { } afterView && !afterView.IsCurrent)
+            throw new InvalidOperationException("The Animation view changed during validation.");
     }
 
     internal ulong BeginRestore()
@@ -91,6 +96,16 @@ internal sealed class NativeToolPanelStateBinding
             RestoreIntent = 0;
             Panel.SetActiveRestore(null);
         }
+    }
+
+    internal void RetainAnimationRestoreView(NativeAnimationPanelViewReceipt view,
+        ulong intent)
+    {
+        RequireOwnedState(intent);
+        if (!ReferenceEquals(Panel, view.Panel) || !view.IsCurrent)
+            throw new InvalidOperationException("The Animation restore view is unavailable.");
+        _restoreAnimationView = view;
+        RequireOwnedState(intent);
     }
 
     internal NativeDockPanelStateValues CaptureLiveValues()
@@ -123,15 +138,23 @@ internal sealed class NativeToolPanelStateBinding
         NativeDockPanelStateValues values = CaptureLiveValues();
         if (!Panel.TryCaptureScrollOwner(out NativePanelScrollOwnerReceipt? scrollOwner))
             throw new InvalidOperationException("The panel Rows list lost its owner.");
+        NativeAnimationPanelViewReceipt? animationView =
+            Panel is AnimationPanel animation &&
+            animation.TryCaptureViewReceipt(out NativeAnimationPanelViewReceipt currentView)
+                ? currentView : null;
         return new(this, values, Panel.StateIntentRevision, Panel.StateRevision,
-            Panel.ScrollIntentRevision, scrollOwner);
+            Panel.ScrollIntentRevision, scrollOwner, animationView);
     }
 
     internal NativeDockPanelStateReceipt Restore(NativeDockPanelStateValues values,
-        Func<bool>? sourceCurrent = null)
+        Func<bool>? sourceCurrent = null,
+        NativeAnimationPanelViewValues? animationView = null)
     {
         if (values.Panel != PanelName)
             throw new InvalidOperationException("The requested panel state is for another panel.");
+        if (animationView is not null &&
+            (PanelName != NativeDockPanel.Animation || Panel is not AnimationPanel))
+            throw new InvalidOperationException("Animation view state was sent to another panel.");
         if (RestoreIntent != 0)
             throw new InvalidOperationException("A panel state restore is already active.");
         _sourceCurrent = sourceCurrent;
@@ -139,6 +162,7 @@ internal sealed class NativeToolPanelStateBinding
         try
         {
             intent = BeginRestore();
+            NativeAnimationPanelViewReceipt? appliedView = null;
             switch (Panel)
             {
                 case AssetsPanel assets:
@@ -158,11 +182,26 @@ internal sealed class NativeToolPanelStateBinding
                 case ProfilerPanel profiler:
                     profiler.SetViewOwned((ENativeProfilerView)values.ProfilerView, intent, this);
                     break;
+                case AnimationPanel animation when animationView is { } requestedView:
+                    appliedView = animation.RestoreViewOwned(requestedView, this, intent);
+                    _restoreAnimationView = appliedView;
+                    break;
             }
             RequireOwnedState(intent);
+            if (appliedView is { } view && !view.IsCurrent)
+                throw new InvalidOperationException("The Animation view changed before scroll restore.");
             Panel.SetScrollOffsetOwned(values.ScrollOffset, intent, this);
             RequireOwnedState(intent);
+            if (appliedView is { } afterScroll && !afterScroll.IsCurrent)
+                throw new InvalidOperationException("The Animation view changed during scroll restore.");
             NativeDockPanelStateReceipt applied = CaptureReceipt();
+            if (appliedView is { } retainedView)
+            {
+                if (!retainedView.IsCurrent || applied.AnimationView is not { IsCurrent: true })
+                    throw new InvalidOperationException("The Animation view was not retained.");
+                // Keep the accepted toolbar proof through the host's later callbacks.
+                applied = applied with { AnimationView = retainedView };
+            }
             if (!(values with { ScrollOffset = applied.Values.ScrollOffset })
                     .Matches(applied.Values))
                 throw new InvalidOperationException("The panel did not accept the transferred state.");
@@ -172,6 +211,7 @@ internal sealed class NativeToolPanelStateBinding
         {
             EndRestore(RestoreIntent);
             _sourceCurrent = null;
+            _restoreAnimationView = null;
         }
     }
 

@@ -2069,10 +2069,9 @@ receipt to remain current.
 Transfer remains receive-first. A complete destination receipt permits guarded
 compensation only while that exact result is still current. Partial setter failure
 or foreign callback changes can leave both hosts open; cleanup must preserve that
-state. This does not provide atomic rollback across hosts. Animation member/key
-selection, view ranges, general focus and expansion, and full play-transition state
-remain separate work. Windows interaction and live viewport behavior need runtime
-validation.
+state. This does not provide atomic rollback across hosts. General focus and
+expansion and full play-transition state remain separate work. Windows interaction
+and live viewport behavior need runtime validation.
 
 ## Activation and owned helper storage
 
@@ -2103,3 +2102,27 @@ Enum inspector retirement clears only its exact pending binding after the combo
 commits that field. The combo's revision check then rejects its stale continuation
 before it can read the disposed binding. The retirement callback is released on
 normal and exceptional cleanup. New binding owners remain independent.
+
+## Animation view transfer
+
+Both native hosts carry an optional `NativeAnimationPanelViewValues` payload for
+the Animation panel. The payload retains the clip, root, selected member and key,
+exact animation and track, pages, graph mode, zoom/window, stretch choice, and value
+channel. The receipt rejects changed identities, source epochs, track membership,
+and view intent. It does not change global asset selection or playback to make a
+transfer succeed. A previous destination view can compensate only for the same
+current clip; a different-clip failure keeps the source panel open.
+
+`AnimationPanel.RestoreViewOwned` captures both input controls and display siblings
+before row callbacks. It installs one fixed view receipt before row projection,
+then calls shared `SetTextGuarded` once for time and once for value. The proof pins
+the unwritten peer, then the accepted first field while the second field publishes.
+It also pins sampled playback time when no key is selected. The same receipt checks
+accepted text and revisions through later scroll, bounds, and host-save callbacks.
+A callback-owned edit stops the old continuation; earlier accepted fields are not
+rolled back over newer edits.
+
+Transfer defers ordinary candidate scanning and plot rebuild to a later refresh.
+General focus, draft text, search state, and expansion are not part of this payload.
+These cold transfer checks allocate captured receipts and traversal storage. They
+do not add a per-frame transfer loop or establish a performance result.

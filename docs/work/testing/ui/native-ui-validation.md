@@ -725,3 +725,28 @@ acceptance require separate checks. The original Windows stalls remain open.
 Headless build244 and editor/test build77 both passed with zero warnings/errors.
 All **10,890 source inputs** stayed unchanged through the focused/full portable
 runs and editor/test compilation. The editor test assembly was not executed here.
+
+### Animation toolbar and host transfer
+
+Headless build 245 passes with zero warnings/errors. Run 197 passes 47 focused cases;
+run 198 passes **1,480/1,480** portable cases, with zero failures, warnings, or skips.
+Editor build 78 compiled production code but found two errors in the new real-host
+fixture. The fixture-only import and constructor corrections compile in test-only
+build 79 with zero warnings/errors. Production and portable inputs were unchanged.
+The final 10,896-source manifest is stable.
+
+`NativeAnimationPanelViewTransferTests` contains 33 panel cases and
+`NativeDockAnimationTransferTests` contains 4 real-host cases. They are compile-only
+on this Linux executor. Run them on Windows before claiming transfer acceptance.
+Keep callback, compensation, caret/display, no-key time, early-row, final-scroll,
+and deferred-candidate assertions unchanged. The host fixture does not save files
+or create native windows.
+
+The separate Windows rerun at exact `68ab6d167` passes 71 cases across the seven
+completed original focused fixtures. It still has two combined-only asset-spawn
+teardown failures, six tool-panel cases that lack an attached canvas, and incomplete
+menu/lifetime/workflow cases. It predates explicit test icon fonts. After checking
+disk capacity, rerun those bounded stall fixtures with the later font input and
+the original 30-second inactivity/180-second session bounds. Keep production
+font-import diagnosis separate. See the continuation investigation for exact run
+counts and unresolved failures.

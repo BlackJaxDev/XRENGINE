@@ -49,6 +49,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private int _keyCount;
     private int _statusRowIndex = -1;
     private bool _projectionDirty = true;
+    private bool _deferredCandidateRefresh;
     private bool _sourceTopologyDirty = true;
     private ulong _sourceRevision;
     private ulong _authoringEpoch;
@@ -472,7 +473,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             return;
         _lastRefresh = now;
         AnimationClip? clip = CurrentClip();
-        if (_projectionDirty || !ReferenceEquals(clip, _displayedClip) ||
+        if (_deferredCandidateRefresh || _projectionDirty ||
+            !ReferenceEquals(clip, _displayedClip) ||
             !ReferenceEquals(_candidateRoot, Selection.SceneNode))
         {
             RefreshRows();
@@ -499,12 +501,13 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     protected override void OnRowActivated(ulong id)
     {
-        _authoringEpoch++;
         if (_destroying || !IsActiveInHierarchy ||
             !ReferenceEquals(CurrentClip(), _displayedClip))
             return;
         if (id is >= 8 and <= 21 or >= 24 and <= LastCommandRowId)
         {
+            BeginStateIntent();
+            _authoringEpoch++;
             ulong epoch = _authoringEpoch;
             ActivateCommand(id);
             if (_authoringEpoch == epoch && !_destroying && IsActiveInHierarchy)
@@ -515,15 +518,25 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             _displayedClip is { } clip &&
             AnimationClipAuthoringActions.ContainsMember(clip, member))
         {
+            BeginStateIntent();
+            _authoringEpoch++;
             _selectedMember = member;
             _selectedKey = null;
             _keyPage = 0;
         }
         else if (_keyRows.TryGetValue(id, out Keyframe? key) &&
             _selectedMember is { } selected && MemberContainsKey(selected, key))
+        {
+            BeginStateIntent();
+            _authoringEpoch++;
             _selectedKey = key;
+        }
         else if (_pathRows.TryGetValue(id, out EditorImGuiUI.AnimationClipPathCandidate? candidate))
+        {
+            BeginStateIntent();
+            _authoringEpoch++;
             _selectedCandidate = candidate;
+        }
         else
             return;
         RefreshTimeInput();
@@ -531,9 +544,19 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         RefreshRows();
     }
 
-    protected override void RefreshRows()
+    protected override void RefreshRows() => RefreshRowsCore(null, false);
+
+    private void RefreshRowsOwned(Action requireCurrent)
+        => RefreshRowsCore(requireCurrent, true);
+
+    private void RefreshRowsCore(Action? requireCurrent, bool owned)
     {
-        _authoringEpoch++;
+        if (owned) requireCurrent!();
+        else
+        {
+            _authoringEpoch++;
+            _deferredCandidateRefresh = false;
+        }
         if (_destroying)
             return;
         if (_ids.Count >= MaxRetainedRowIds)
@@ -549,6 +572,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         AnimationClip? clip = CurrentClip();
         if (!ReferenceEquals(clip, _displayedClip))
         {
+            if (owned)
+                throw new InvalidOperationException("The displayed clip changed during restore.");
             ReleaseProjectionSources();
             _plotSnapshot = null;
             _plotViewRevision++;
@@ -565,21 +590,29 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         {
             _rows.Add((1, "Select an AnimationClip asset or a scene node with an AnimationClipComponent."));
             SetProjectedRows();
+            requireCurrent?.Invoke();
             return;
         }
         if (_selectedMember is { } selectedMember &&
             !AnimationClipAuthoringActions.ContainsMember(clip, selectedMember))
         {
+            if (owned)
+                throw new InvalidOperationException("The selected member changed during restore.");
             _selectedMember = null;
             _selectedKey = null;
         }
         if (_selectedKey is { } selectedKey &&
             (_selectedMember is not { } owner ||
              !MemberContainsKey(owner, selectedKey)))
+        {
+            if (owned)
+                throw new InvalidOperationException("The selected key changed during restore.");
             _selectedKey = null;
+        }
         if (_ownerSubscriptionsActive && IsActiveInHierarchy)
             ObserveProjectionSources(clip);
-        if (!ReferenceEquals(_candidateRoot, Selection.SceneNode))
+        requireCurrent?.Invoke();
+        if (!owned && !ReferenceEquals(_candidateRoot, Selection.SceneNode))
             RebuildCandidates();
 
         _rows.Add((1, "Clip: " + (clip.Name ?? "<unnamed>")));
@@ -629,7 +662,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
         _rows.Add((5, "Members (select a row to edit its keys)"));
         if (clip.RootMember is { } root)
-            AddMemberRows(root);
+            AddMemberRows(root, requireCurrent, owned);
         else
             _rows.Add((0, "This clip has no animation members."));
 
@@ -655,6 +688,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         if (_selectedMember is { Animation: { } animation } selected)
         {
             AddSelectedMemberDetails(selected);
+            requireCurrent?.Invoke();
             _rows.Add((59, $"Value field channel: {ChannelLabel(_selectedKey)} (click to cycle)"));
             _rows.Add((7, "Keys for " + (selected.MemberName ?? "<unnamed>")));
             _rows.Add((40, "Cycle incoming interpolation"));
@@ -704,14 +738,19 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             int keyPages = Math.Max(1, (_keyCount + RowPageSize - 1) / RowPageSize);
             if (_keyPage >= keyPages)
             {
+                if (owned)
+                    throw new InvalidOperationException("The key page changed during restore.");
                 _keyPage = keyPages - 1;
                 RefreshRows();
                 return;
             }
         }
         else if (_selectedMember is { } selectedWithoutAnimation)
+        {
             AddSelectedMemberDetails(selectedWithoutAnimation);
-        if (_candidateRoot is not null)
+            requireCurrent?.Invoke();
+        }
+        if (!owned && _candidateRoot is not null)
         {
             _candidateMatchCount = 0;
             foreach (EditorImGuiUI.AnimationClipPathCandidate candidate in _candidates)
@@ -737,10 +776,17 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             }
         }
         SetProjectedRows();
-        RefreshPlot(clip);
+        requireCurrent?.Invoke();
+        if (owned)
+        {
+            _plotRefreshPending = true;
+            _deferredCandidateRefresh = _candidateRoot is not null || Selection.SceneNode is not null;
+        }
+        else RefreshPlot(clip);
     }
 
-    private void AddMemberRows(AnimationMember root)
+    private void AddMemberRows(AnimationMember root, Action? requireCurrent = null,
+        bool owned = false)
     {
         int firstRow = _rows.Count;
         Stack<(AnimationMember Member, int Depth)> pending = new();
@@ -749,6 +795,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         _memberCount = 0;
         while (pending.Count > 0)
         {
+            requireCurrent?.Invoke();
             (AnimationMember member, int depth) = pending.Pop();
             if (!visited.Add(member))
                 continue;
@@ -769,6 +816,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         int pages = Math.Max(1, (_memberCount + RowPageSize - 1) / RowPageSize);
         if (_memberPage >= pages)
         {
+            if (owned)
+                throw new InvalidOperationException("The member page changed during restore.");
             _memberPage = pages - 1;
             _rows.RemoveRange(firstRow, _rows.Count - firstRow);
             _memberRows.Clear();
@@ -907,6 +956,10 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             PropAnimVector4 value => value.Keyframes,
             PropAnimQuaternion value => value.Keyframes,
             PropAnimBool value => value.Keyframes,
+            PropAnimInt value => value.Keyframes,
+            PropAnimString value => value.Keyframes,
+            PropAnimObject value => value.Keyframes,
+            PropAnimMatrix value => value.Keyframes,
             _ => null,
         };
 

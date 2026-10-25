@@ -158,6 +158,7 @@ public partial class AnimationPanel
         if (!CanCommitPlotSelection(snapshot, member, key, inputGeneration,
                 viewRevision, buildRevision, sourceRevision))
             return;
+        BeginStateIntent();
         _selectedMember = member;
         _selectedKey = key;
         _authoringEpoch++;
@@ -227,6 +228,7 @@ public partial class AnimationPanel
             snapshot.Duration, 0, MathF.Max(0, snapshot.ClipLength - snapshot.Duration));
         if (MathF.Abs(nextStart - _plotWindowStart) < 0.0001f)
             return;
+        BeginStateIntent();
         _plotWindowStart = nextStart;
         _plotViewRevision++;
         _dragViewRevision = _plotViewRevision;
@@ -253,6 +255,7 @@ public partial class AnimationPanel
             return false;
         if (zoom == _plotZoom && start == _plotWindowStart)
             return true;
+        BeginStateIntent();
         _plotZoom = zoom;
         _plotWindowStart = start;
         _plotViewRevision++;
