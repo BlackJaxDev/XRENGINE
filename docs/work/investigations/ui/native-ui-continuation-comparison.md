@@ -1535,3 +1535,28 @@ Use the later fixture inputs for a bounded stall rerun after checking disk space
 do not infer that normal production font import is fixed. Triage the canvas setup
 and combined teardown separately. No laptop operation ran in this cloud task.
 Analyzer, recovery-journal, and window-key decisions remain held.
+
+## Tool-state fixture canvas setup
+
+Windows at `68ab6d167` showed six tool-state failures before their intended
+assertions: active console commands construct a popup, which requires an attached
+canvas. The fixture provided a plain boundable root. Production dock hosts already
+provide canvases. All 11 console/profiler fixture roots now use `UICanvasTransform`
+with `UICanvasComponent`; detached foreign targets and mutation assertions are
+unchanged. No production code changed.
+
+Test-only build 80 found one missing component namespace in the helper. After that
+import correction, wrapper build 81 with `BuildProjectReferences=false` passed
+with zero warnings/errors (38.84s). All 10,896 source inputs stayed unchanged during
+that final check. Portable inputs and production assemblies remain those of the
+previous Animation checkpoint; no new portable result is claimed. Windows execution
+of the corrected setup is pending.
+
+The combined asset teardown failure remains unattributed. The global destruction
+drain stops at its first failed entry, so the next fixture can encounter a later
+entry from an earlier producer. Do not assign cause from test order. A bounded
+diagnostic should record the failing target's type/construction identity and
+destroyed/queued flags, its queue token, its exact child-list identity/flags/count,
+and the authority's exact owner/collection matches and current flag. Compare the
+list reference before dispatch and at failure. Keep the original exception and
+guards; exclude names, paths, and object-cache dumps.

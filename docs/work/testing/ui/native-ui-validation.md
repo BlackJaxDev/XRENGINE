@@ -750,3 +750,15 @@ disk capacity, rerun those bounded stall fixtures with the later font input and
 the original 30-second inactivity/180-second session bounds. Keep production
 font-import diagnosis separate. See the continuation investigation for exact run
 counts and unresolved failures.
+
+### Canvas-backed tool-state fixture candidate
+
+All 11 console/profiler setup roots in `NativeToolPanelStateTests` now have an
+attached canvas, matching the popup host requirement. Assertions and production
+behavior are unchanged. Wrapper test-assembly build 81 passes with zero warnings
+or errors after one missing-import correction. This is compile-only evidence.
+Rerun the 12 tool-state cases and the three incomplete hierarchy fixtures on this
+frozen candidate, which includes explicit fixture icon fonts. Keep the original
+inactivity/session bounds. Check validation-disk headroom before producing outputs.
+Combined asset-spawn teardown still needs exact queued-target evidence; no guard
+was relaxed and no production cause is claimed.

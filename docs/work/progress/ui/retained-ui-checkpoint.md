@@ -1748,3 +1748,13 @@ fixture-font input. Remaining failures take priority over new focus implementati
 See the investigation for per-run counts; this is not one passing Windows suite.
 No GPU, live UI, IME, or performance acceptance is closed. Reconciliation remains
 **51/60**, with nine broad code items and four original decisions open.
+
+## Canvas-backed tool-state fixtures
+
+`NativeToolPanelStateTests` now attaches a canvas before constructing console and
+profiler panels. This corrects setup for the popup-host contract without changing
+assertions or production behavior. Test-assembly build 81 passes with zero warnings
+or errors. Windows rerun is pending. The source includes the explicit test-font
+input; production font import and combined asset teardown remain unresolved.
+The full portable result remains 1,480/1,480 from the preceding source checkpoint.
+No broader TODO or platform acceptance is closed.

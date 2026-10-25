@@ -1,5 +1,6 @@
 using System.Reflection;
 using NUnit.Framework;
+using XREngine.Components;
 using Shouldly;
 using XREngine.Editor;
 using XREngine.Editor.UI.Components;
@@ -20,7 +21,7 @@ public sealed class NativeToolPanelStateTests
     {
         using UITestShaderScope shaders = new();
         TestWorldContext world = new();
-        SceneNode root = new("Tools", new UIBoundableTransform());
+        SceneNode root = CreateCanvasRoot("Tools");
         SceneNode foreign = new("Foreign", new UIBoundableTransform());
         root.SetWorldContext(world);
         foreign.SetWorldContext(world);
@@ -60,7 +61,7 @@ public sealed class NativeToolPanelStateTests
     {
         using UITestShaderScope shaders = new();
         TestWorldContext world = new();
-        SceneNode root = new("Tools", new UIBoundableTransform());
+        SceneNode root = CreateCanvasRoot("Tools");
         SceneNode foreign = new("Foreign", new UIBoundableTransform());
         root.SetWorldContext(world);
         foreign.SetWorldContext(world);
@@ -127,7 +128,7 @@ public sealed class NativeToolPanelStateTests
     public void DestinationRegistrationReplacementStopsFirstFilterWriteAndAllowsFreshRestore()
     {
         using UITestShaderScope shaders = new();
-        SceneNode host = new("Host", new UIBoundableTransform());
+        SceneNode host = CreateCanvasRoot("Host");
         SceneNode slot = host.NewChildWithTransform<UIBoundableTransform>(out _, "Console slot");
         slot.NewChild<ConsolePanel>(out var console);
         NativeDockWindowRegistration registration = host.AddComponent<NativeDockWindowRegistration>()!;
@@ -167,7 +168,7 @@ public sealed class NativeToolPanelStateTests
     public void OwnedScrollRestoreRejectsVetoBeforeViewportClamp()
     {
         using UITestShaderScope shaders = new();
-        SceneNode root = new("Tools", new UIBoundableTransform());
+        SceneNode root = CreateCanvasRoot("Tools");
         root.SetWorldContext(new TestWorldContext());
         SceneNode slot = root.NewChildWithTransform<UIBoundableTransform>(out _, "Console slot");
         slot.NewChild<ConsolePanel>(out var console);
@@ -199,7 +200,7 @@ public sealed class NativeToolPanelStateTests
     public void ActiveConsoleAndProfilerAcceptInitialRestoreWithWidgetFeedback()
     {
         using UITestShaderScope shaders = new();
-        SceneNode root = new("Tools", new UIBoundableTransform());
+        SceneNode root = CreateCanvasRoot("Tools");
         root.SetWorldContext(new TestWorldContext());
         SceneNode consoleSlot = root.NewChildWithTransform<UIBoundableTransform>(out _, "Console slot");
         SceneNode profilerSlot = root.NewChildWithTransform<UIBoundableTransform>(out _, "Profiler slot");
@@ -228,7 +229,7 @@ public sealed class NativeToolPanelStateTests
     public void ActiveConsoleForeignCategoryEditPersistsBeforeStaleFilterRestoreStops()
     {
         using UITestShaderScope shaders = new();
-        SceneNode root = new("Tools", new UIBoundableTransform());
+        SceneNode root = CreateCanvasRoot("Tools");
         root.SetWorldContext(new TestWorldContext());
         SceneNode slot = root.NewChildWithTransform<UIBoundableTransform>(out _, "Console slot");
         slot.NewChild<ConsolePanel>(out var console);
@@ -256,7 +257,7 @@ public sealed class NativeToolPanelStateTests
     public void FirstDestinationSetterRejectsSourceAwayAndBackBeforeWriting()
     {
         using UITestShaderScope shaders = new();
-        SceneNode root = new("Tools", new UIBoundableTransform());
+        SceneNode root = CreateCanvasRoot("Tools");
         root.SetWorldContext(new TestWorldContext());
         SceneNode sourceSlot = root.NewChildWithTransform<UIBoundableTransform>(out _, "Source slot");
         SceneNode destinationSlot = root.NewChildWithTransform<UIBoundableTransform>(out _, "Destination slot");
@@ -292,7 +293,7 @@ public sealed class NativeToolPanelStateTests
     public void RetainedConsoleBindingRestoresLiveFieldsAndKeepsUnrelatedLayout()
     {
         using UITestShaderScope shaders = new();
-        SceneNode slot = new("Console slot", new UIBoundableTransform());
+        SceneNode slot = CreateCanvasRoot("Console slot");
         slot.NewChild<ConsolePanel>(out var console);
         NativeDockLayout layout = new()
         {
@@ -328,7 +329,7 @@ public sealed class NativeToolPanelStateTests
     public void ConsoleCallbackEditStopsRestoreBeforeItsFilterWrite()
     {
         using UITestShaderScope shaders = new();
-        SceneNode slot = new("Console slot", new UIBoundableTransform());
+        SceneNode slot = CreateCanvasRoot("Console slot");
         slot.NewChild<ConsolePanel>(out var console);
         NativeDockLayout layout = new() { ConsoleFilter = "old" };
         try
@@ -356,7 +357,7 @@ public sealed class NativeToolPanelStateTests
     public void ConsoleRestoresAllFieldsAndQueuesScrollWithoutAnImmediateSave()
     {
         using UITestShaderScope shaders = new();
-        SceneNode slot = new("Console slot", new UIBoundableTransform());
+        SceneNode slot = CreateCanvasRoot("Console slot");
         slot.NewChild<ConsolePanel>(out var console);
         NativeDockLayout layout = new()
         {
@@ -412,7 +413,7 @@ public sealed class NativeToolPanelStateTests
     public void ProfilerRestoresAndSavesViewButDetachedComponentCannotSave()
     {
         using UITestShaderScope shaders = new();
-        SceneNode slot = new("Profiler slot", new UIBoundableTransform());
+        SceneNode slot = CreateCanvasRoot("Profiler slot");
         SceneNode panelNode = slot.NewChild<ProfilerPanel>(out var profiler);
         NativeDockLayout layout = new() { ProfilerView = (int)ENativeProfilerView.FrameOutputs };
         int saves = 0;
@@ -435,5 +436,12 @@ public sealed class NativeToolPanelStateTests
             panelNode.Destroy(true);
             slot.Destroy(true);
         }
+    }
+
+    private static SceneNode CreateCanvasRoot(string name)
+    {
+        SceneNode root = new(name, new UICanvasTransform());
+        root.AddComponent<UICanvasComponent>();
+        return root;
     }
 }
