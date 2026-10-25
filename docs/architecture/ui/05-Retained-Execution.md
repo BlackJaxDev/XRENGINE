@@ -16,6 +16,16 @@ profiler view use the existing layout fields. Scroll events request the existing
 The bindings retain object-lifetime receipts and reject detached or replaced
 components. The dock host additionally checks its current slot ownership.
 
+Dock rebuilds detach retained slots through `NativeDockSlotDetachment`. This
+structural operation captures node, transform, parent, and world identity before
+deactivation. It rechecks ownership after deactivation and parent notifications.
+A newer reparent or transform replacement is preserved. The normal unchanged
+detach clears the retained world context. Canonical hierarchy errors propagate;
+the helper does not suppress an interrupted parent edit.
+The registered route removes an exact old slot mapping after a transfer, so a
+later stack build cannot take the panel back. A changed slot that remains under
+the same host stops rebuild before chrome teardown with an explicit error.
+
 Wheel dispatch holds the presented publication and checks the output's current
 publication after callback-bearing receivers. A callback that publishes a new
 packet stops propagation through the old ancestry even when the input cache has

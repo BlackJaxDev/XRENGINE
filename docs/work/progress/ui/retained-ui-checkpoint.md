@@ -1192,3 +1192,20 @@ The recorded reconciliation remains **50 of 60**, with 10 open code items.
 Dock ownership work and the other open editor contracts remain unfinished.
 Windows, native GPU, IME, visual, and performance acceptance remain open. The
 three pending proposals and four original owner decisions remain pending.
+
+
+## Dock Slot Detachment Ownership
+
+The active rebuild route now pins the slot's node, transform, parent, world,
+and dictionary ownership across deactivation and parent callbacks. It preserves
+callback transfers and removes the old mapping so a later stack build cannot
+reclaim the panel. A changed slot still inside the same host stops rebuild before
+chrome teardown. Canonical hierarchy errors remain visible.
+
+The original callback regression failed before the repair. The final six cases
+cover registered transfer and retry, transform replacement, destroyed/lost slots,
+and normal detachment. Headless build156 and full run101 pass: **1,060/1,060**,
+zero warnings/failures/skips. Desktop build38 compiles the editor and tests with
+zero warnings/errors. All 10,795 source inputs stayed unchanged. This establishes
+the helper used by the active host, not live Windows, multi-window, or GPU behavior.
+The recorded count remains **50/60**; broader host and transfer lifetime work is open.

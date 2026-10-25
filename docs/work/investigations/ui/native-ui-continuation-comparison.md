@@ -91,3 +91,42 @@ Callback-safe dock detachment, broader editor parity, world rendering, owner
 decisions, and platform acceptance remain open. The previous quota error did
 not recur in this continuation. No model, account, credential, or dependency
 configuration was changed.
+
+## Dock detach callback reproduction
+
+The active host's detach operation was extracted without a behavior change into
+`NativeDockSlotDetachment`, then exercised with real scene nodes and parent
+callbacks. Build151 passed with zero warnings/errors. Targeted run97 passed the
+unchanged-slot case and failed the deactivation-callback case: the callback's new
+parent was replaced by null. This confirms the source-review finding for that
+callback boundary.
+
+The repair captures the node, transform, parent, and world before deactivation.
+It checks the slot mapping before mutation and checks captured identities after
+deactivation and parent notification before clearing the world. A callback's
+new parent, new transform, or restored active state stops the old continuation.
+The helper remains on the actual `NativeDockTreeHost.RenderPass` route.
+
+Run98 passed 1,058/1,059. The extra parent-notification case correctly triggered
+the canonical hierarchy error, which the first fixture did not expect. The
+fixture now asserts that error and verifies that the new parent and world remain.
+No exception bypass was added. Build153 passed with zero warnings/errors in
+17.77s; run99 passed **1,059/1,059** in 19.680s, without failures, warnings, or
+skips. The 10,795 source inputs remained unchanged through this build and run.
+These tests cover the detach helper used by the host, not a live window rebuild.
+
+Final source review extended the check to the host's slot map. A transferred slot
+must not be reused by a later stack build. `DetachRegistered` now removes only
+the exact old mapping for transferred or destroyed slots. A changed slot that
+still belongs under the same host stops rebuild with an error before chrome
+teardown. The tests exercise that registered route and a subsequent rebuild
+attempt. This also keeps an old host's state bindings from saving after transfer.
+
+Build156 passed with zero warnings/errors in 17.42s. Run101 passed **1,060/1,060**
+tests in 19.570s, without failures, warnings, or skips. It includes six dock-slot
+cases. The 10,795-file source snapshot stayed unchanged. Broader host rebuild,
+cross-window transfer, play-mode, and native-window acceptance remain open.
+
+Desktop test build38 passed with zero warnings/errors in 1m32.21s. It compiled
+the editor and desktop tests against the unchanged 10,795-file source snapshot.
+No Windows or GPU execution is implied. No broad TODO item was closed.

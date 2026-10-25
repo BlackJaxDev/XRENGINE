@@ -82,18 +82,10 @@ internal sealed class NativeDockTreeHost
         KeyValuePair<string, SceneNode>[] slots = [.. _panelSlots];
         foreach ((string panel, SceneNode slot) in slots)
         {
-            if (slot.IsDestroyed || slot.Transform.Parent is null)
-                continue;
-            slot.IsActiveSelf = false;
+            NativeDockSlotDetachment.DetachRegistered(panel, slot, _root, _panelSlots,
+                () => !_disposed);
             if (_disposed)
                 return;
-            if (slot.IsDestroyed || !_panelSlots.TryGetValue(panel, out SceneNode? current) ||
-                !ReferenceEquals(current, slot) || slot.Transform.Parent is null)
-                continue;
-            slot.Transform.SetParent(null, false, EParentAssignmentMode.Immediate);
-            // Clearing Parent alone retains Transform.World and can turn a detached
-            // editor panel into a live world root until it is reattached.
-            slot.Transform.SetWorldContext(null);
         }
         foreach (var child in _root.Transform.Children.ToArray())
             if (child.SceneNode is { } structural)

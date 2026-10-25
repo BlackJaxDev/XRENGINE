@@ -255,5 +255,7 @@
     <Compile Include="../Editor/AnimationKeyChannelsTests.cs" Link="Editor/AnimationKeyChannelsTests.cs" />
     <Compile Include="../Rendering/UIPresentedScrollGeometryTests.cs" Link="Rendering/UIPresentedScrollGeometryTests.cs" />
     <Compile Include="../Rendering/UIPresentedScrollProbe.cs" Link="Rendering/UIPresentedScrollProbe.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockSlotDetachment.cs" Link="Editor/NativeDockSlotDetachment.cs" />
+    <Compile Include="../Editor/NativeDockSlotDetachmentTests.cs" Link="Editor/NativeDockSlotDetachmentTests.cs" />
   </ItemGroup>
 </Project>
