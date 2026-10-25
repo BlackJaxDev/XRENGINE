@@ -1107,6 +1107,12 @@ notification. `UIVirtualTableRowComponent` also rejects a pending IsSelected wri
 if a changing callback replaces its binding, so a recycled row keeps its own
 selection visual.
 
+A table row also records the source revision of its completed binding. Bind,
+refresh, and unbind clear that record before source or cell callbacks run. Only
+a successful cell, accessibility, selection-visual, and navigation update sets
+it again. Activation rejects a partial binding and a changed source that has not
+yet refreshed. These checks apply before and after selection callbacks.
+
 ## Hover callbacks and displayed pointer geometry
 
 Hit collection records the accepted input revision. Before hover dispatch, a

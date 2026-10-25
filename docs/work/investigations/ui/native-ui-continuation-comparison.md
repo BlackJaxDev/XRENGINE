@@ -375,3 +375,23 @@ or skips. It used the unchanged portable inputs built by headless build183.
 All 10,808 source inputs stayed unchanged through final desktop build50 and
 run124. This is compilation plus portable regression evidence, not execution of
 the new editor cases or native keyboard acceptance.
+
+## Actions During Table Binding
+
+Five new cases called OnInteract from initial cell or accessibility-label binding,
+and from cell, label, or source-read callbacks during refresh. Headless build184
+passed with zero warnings/errors in 2m31.26s. Baseline run125 passed **12/17** in
+0.989s. All five new cases activated item11 before the binding operation finished.
+
+The row now records the source revision only after binding completes. Bind and
+unbind invalidate that record before callbacks. Actions require the completed
+revision to match the current source. A sixth case changes the source before
+refresh and checks that the old row cannot activate until refresh completes.
+Build185 passed with zero warnings/errors in 1m38.42s; run126 passed **18/18** in
+1.529s. Final review checks the completed revision after the source getter in the
+binding-admission check, so a callback cannot clear the record after its last read.
+Final headless build186 passed with zero warnings/errors in 1m35.41s. Full run127
+passed **1,166/1,166** in 23.189s, without failures, warnings, or skips. Desktop
+build51 compiled the editor and tests with zero warnings/errors in 3m35.64s. All
+10,808 source inputs stayed unchanged through these final checks. Native input
+acceptance remains pending; the broad shared-control item stays open.

@@ -147,4 +147,69 @@ public sealed class UIVirtualTableActivationTests
         }
         finally { root.Destroy(true); }
     }
+    [TestCase("initial-cell")]
+    [TestCase("initial-label")]
+    [TestCase("refresh-cell")]
+    [TestCase("refresh-label")]
+    [TestCase("refresh-get")]
+    [TestCase("stale-source")]
+    public void BindingCallbacksCannotActivatePartiallyUpdatedRows(string stage)
+    {
+        using UITestShaderScope shaders = new();
+        SceneNode root = new("Table binding action", new UICanvasTransform());
+        root.SetWorldContext(new TestWorldContext());
+        root.AddComponent<UICanvasComponent>();
+        UIVirtualTableRefreshSource source = new();
+        UIVirtualTableRowComponent? row = null;
+        bool refresh = stage.StartsWith("refresh-", StringComparison.Ordinal);
+        bool armed = !refresh;
+        int attempts = 0;
+        void Attempt(string location)
+        {
+            if (!armed || !stage.EndsWith("-" + location, StringComparison.Ordinal)) return;
+            attempts++;
+            row!.OnInteract();
+        }
+        source.OnGetItem = () => Attempt("get");
+        UIVirtualTableProvider<string> table = new(source,
+            new UIVirtualTableColumn<string>("value", "Value", 100,
+                parent => new SceneNode(parent).SetTransform<UIBoundableTransform>(),
+                (cell, _, _) =>
+                {
+                    row = cell.SceneNode!.Parent!.GetComponent<UIVirtualTableRowComponent>()!;
+                    Attempt("cell");
+                }, _ => { }));
+        table.AccessibleRowName = _ => { Attempt("label"); return "Row"; };
+        List<ulong> activated = [];
+        table.Activated += activated.Add;
+        UIListTransform list = new() { ItemSize = 20, VirtualOverscan = 0 };
+        _ = new SceneNode(root, "Rows", list);
+        list.VirtualProvider = table;
+        try
+        {
+            list.SynchronizeVirtualRows(20);
+            if (refresh)
+            {
+                armed = true;
+                source.AdvanceRevision();
+                list.SynchronizeVirtualRows(20);
+            }
+            if (stage == "stale-source")
+            {
+                source.AdvanceRevision();
+                attempts++;
+                row!.OnInteract();
+            }
+            attempts.ShouldBe(1);
+            activated.ShouldBeEmpty();
+            table.SelectedId.ShouldBeNull();
+
+            armed = false;
+            if (stage == "stale-source") list.SynchronizeVirtualRows(20);
+            row!.OnInteract();
+            activated.ShouldBe([11UL]);
+        }
+        finally { root.Destroy(true); }
+    }
+
 }

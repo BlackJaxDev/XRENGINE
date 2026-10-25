@@ -16,6 +16,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
         public ulong BoundIncarnation;
         public ulong ProviderIncarnation;
         public ulong BindingEpoch;
+        public ulong? CompletedSourceRevision;
         public UIListTransform? BoundList;
         public required bool[] CellBound;
         public int TransitionDepth;
@@ -154,7 +155,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
     private void ActivateRow(UIBoundableTransform row, RowState state)
     {
         UIVirtualTableRowComponent interaction = state.Interaction;
-        if (state.BoundId == 0 || interaction.IsDestroyed || interaction.IsDestroyQueued ||
+        if (state.CompletedSourceRevision is null || state.BoundId == 0 || interaction.IsDestroyed || interaction.IsDestroyQueued ||
             !interaction.CanInteract || state.BoundList is not { } list ||
             interaction.UserInterfaceCanvas is not { } canvas)
             return;
@@ -180,6 +181,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
         static bool Live(ObjectConstructionIdentity identity)
             => identity.IsCurrent && !identity.Target.IsDestroyed && !identity.Target.IsDestroyQueued;
         bool Current() => IsCurrentBinding(row, state, itemId, incarnation, list, providerIncarnation, sourceRevision, epoch) &&
+            state.CompletedSourceRevision == sourceRevision &&
             Live(componentIdentity) && Live(nodeIdentity) && Live(rowIdentity) && Live(listIdentity) &&
             Live(listNodeIdentity) && Live(canvasIdentity) && Live(canvasNodeIdentity) && Live(canvasTransformIdentity) &&
             (parentIdentity is not { } capturedParent || Live(capturedParent)) &&
@@ -204,6 +206,8 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
     {
         if (itemId == 0 || incarnation == 0 || !_rows.TryGetValue(row, out RowState? state))
             throw new InvalidOperationException("The virtual table row lease does not match its source.");
+        // Source, cell, and accessibility callbacks cannot act on a partial binding.
+        state.CompletedSourceRevision = null;
         ulong admissionEpoch = state.BindingEpoch;
         int count = _source.Count;
         if (state.BindingEpoch != admissionEpoch)
@@ -294,6 +298,9 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
             if (list is not null && IsCurrentBinding(row, state, itemId, incarnation, list,
                     providerIncarnation, sourceRevision, epoch))
                 state.Interaction.BindNavigation(this, list, itemId, incarnation);
+            if (state.Interaction.BoundItemId == itemId && IsCurrentBinding(row, state, itemId,
+                    incarnation, list, providerIncarnation, sourceRevision, epoch))
+                state.CompletedSourceRevision = sourceRevision;
         }
         catch
         {
@@ -377,6 +384,9 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
                 return;
             }
             state.Interaction.IsSelected = itemId == _selectedId;
+            if (state.Interaction.BoundItemId == itemId && IsCurrentBinding(row, state, itemId,
+                    incarnation, list, providerIncarnation, sourceRevision, epoch))
+                state.CompletedSourceRevision = sourceRevision;
         }
         catch
         {
@@ -445,6 +455,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
         if (!_rows.TryGetValue(row, out RowState? state) || state.BoundId != itemId ||
             state.BoundIncarnation != incarnation)
             return;
+        state.CompletedSourceRevision = null;
         if (state.TransitionDepth != 0)
         {
             state.HasPendingUnbind = true;

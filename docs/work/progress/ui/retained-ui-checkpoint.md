@@ -1315,3 +1315,17 @@ Six editor cases compiled; they did not execute on this Linux host. The desktop
 test probe executed zero tests and reported `Only supported on Windows7.0`.
 The portable suite excludes AssetsPanel. Windows keyboard, inspector, and owner
 lifecycle acceptance remain pending. The broader reconciliation remains **50/60**.
+
+## Completed Table Bindings
+
+Table actions require the source revision of a completed row binding. Initial
+bind, refresh, and unbind invalidate this record before callbacks. Cells,
+accessibility data, selection visuals, and navigation must finish before actions
+are admitted again. A source change also rejects an old row until it refreshes.
+
+Five baseline cases reproduced activation during unfinished binding. Six new
+cases now pass, including source changes before refresh. Headless build186 passed
+with zero warnings/errors; full run127 passed **1,166/1,166**, without failures,
+warnings, or skips. Desktop build51 compiled the editor and tests with zero
+warnings/errors. All 10,808 source inputs stayed unchanged. Windows input and
+broader controls acceptance remain pending. The reconciliation remains **50/60**.
