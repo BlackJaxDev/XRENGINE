@@ -25,10 +25,17 @@ Check that newer focus intent is preserved. Repeat with a large virtual list and
 with a filesystem watcher change. These live checks remain pending; portable
 admission tests and managed compilation do not replace them.
 
+Use Up, Down, Home, and End in the asset table. The presented row must update the
+selected path and file inspector. Selecting a folder must not open it; Enter or
+the existing activation command opens it. Select a scene object, then activate
+the previously selected file and check that asset inspection returns. Check that
+one click does not start two asset loads. Repeat after panel deactivate/reactivate,
+rebuild, and transfer. These native interaction checks remain pending.
+
 ### Managed integration evidence
 
 Latest continuation check (2026-10-25): headless build183 passed with zero
-warnings/errors, and run122 passed **1,160/1,160** tests with no failures or skips.
+warnings/errors, and run124 passed **1,160/1,160** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
@@ -40,9 +47,12 @@ Show/Hide requests, stale owners, builder failures, and content ownership.
 Asset menu and rename-draft admission add 22 cases, including unchanged refresh,
 changed selection, retired fields, and replaced paths. Table activation adds 12
 cases for selection reentry, recycled rows, stale actions, and highlight writes.
-Desktop test build48
-compiled the final editor and test assembly with zero warnings/errors. All 10,805
-source inputs stayed unchanged through the headless and desktop checks.
+Desktop test build50
+compiled the final editor and test assembly with zero warnings/errors. All 10,808
+source inputs stayed unchanged through the final desktop build and portable run.
+Six new AssetsPanelSelectionTests cases compiled but did not execute. A desktop
+test probe executed zero tests because NUnit reports `Only supported on Windows7.0`.
+The portable suite excludes AssetsPanel and does not validate these editor cases.
 The new `NativeToolPanelStateTests` compiled but did not execute
 on this Linux host. Check console category/auto-scroll, profiler view, and settled
 scroll saves through the active dock-tree host on Windows. See the

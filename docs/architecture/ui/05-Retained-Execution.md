@@ -807,6 +807,17 @@ This contract does not establish native keyboard or IME acceptance.
 
 ## Native asset row actions
 
+`AssetsPanel.Selection` listens to the shared table's SelectionChanged event.
+Presented keyboard navigation updates the selected path and inspects a file.
+Selecting a folder clears the asset inspector but does not open that folder;
+activation opens it. Activating the same selected file does not start another
+load. A scene selection clears the shared asset path, so later file activation
+can restore asset inspection. Clearing the selected row clears the inspector only when it still owns that path.
+Owner retirement detaches the selection callback.
+After inspector callbacks, the panel checks its intent, lifetime, transform,
+source revision, selected item, and path mapping before publishing AssetSelected.
+This prevents an obsolete notification after a newer selection or owner change.
+
 `AssetsPanel.Menu` uses the shared context menu for Open Folder or Inspect,
 Rename, and Reimport. `NativeAssetMenuRequest` captures a virtual row lease and
 its provider/source revision, owner, canvas, input, and object lifetimes.

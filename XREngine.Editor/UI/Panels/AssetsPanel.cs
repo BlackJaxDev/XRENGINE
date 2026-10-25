@@ -30,6 +30,7 @@ public partial class AssetsPanel : NativeVirtualTextPanel
     private bool _tableCallbacksAttached;
     private bool _deactivating;
     private bool _reactivationRequested;
+    private ulong _selectionIntent;
     private bool AcceptsActiveInput => !_destroying && _ownerSubscriptionsActive && IsActiveInHierarchy;
 
     public string? SelectedPath { get; private set; }
@@ -43,6 +44,7 @@ public partial class AssetsPanel : NativeVirtualTextPanel
             if (_destroying) return;
             _folder = string.IsNullOrWhiteSpace(value) ? null : value;
             _renameMenuDraft = null;
+            _selectionIntent++;
             SelectedPath = null;
             if (!AcceptsActiveInput) return;
             RefreshRows();
@@ -58,6 +60,7 @@ public partial class AssetsPanel : NativeVirtualTextPanel
             _engineFiles = value;
             _renameMenuDraft = null;
             _folder = null;
+            _selectionIntent++;
             SelectedPath = null;
             if (!AcceptsActiveInput) return;
             RefreshRows();
@@ -70,6 +73,7 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         set
         {
             if (_destroying) return;
+            _selectionIntent++;
             _search = value ?? string.Empty;
             _renameMenuDraft = null;
             if (!AcceptsActiveInput) return;
@@ -203,6 +207,7 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         if (_tableCallbacksAttached)
             return;
         _tableCallbacksAttached = true;
+        _table.SelectionChanged += SelectAssetRow;
         _table.Activated += ActivateAssetRow;
         _table.RowPointerMoved += DragPointerMoved;
         _table.RowPointerLeft += DragPointerLeft;
@@ -213,6 +218,7 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         if (!_tableCallbacksAttached)
             return;
         _tableCallbacksAttached = false;
+        _table.SelectionChanged -= SelectAssetRow;
         _table.Activated -= ActivateAssetRow;
         _table.RowPointerMoved -= DragPointerMoved;
         _table.RowPointerLeft -= DragPointerLeft;
@@ -223,6 +229,7 @@ public partial class AssetsPanel : NativeVirtualTextPanel
 
     private void ReleaseOwnerSubscriptions()
     {
+        _selectionIntent++;
         try { ReleaseAssetMenu(); }
         finally { ReleaseFileSubscriptions(); }
     }
@@ -399,23 +406,6 @@ public partial class AssetsPanel : NativeVirtualTextPanel
             hash = unchecked(hash * prime);
         }
         return hash == 0 ? 1 : hash;
-    }
-
-    private void ActivateAssetRow(ulong id)
-    {
-        if (!AcceptsActiveInput)
-            return;
-        if (!_paths.TryGetValue(id, out string? path))
-            return;
-        _renameMenuDraft = null;
-        if (Directory.Exists(path))
-        {
-            Folder = path;
-            return;
-        }
-        SelectedPath = path;
-        NativeAssetSelection.Select(path);
-        if (AcceptsActiveInput) AssetSelected?.Invoke(path);
     }
 
     private void DragPointerMoved(ulong id, UIVirtualTableRowComponent source, Vector2 localPoint)

@@ -1298,3 +1298,20 @@ the editor and tests with zero warnings/errors. All 10,805 source inputs stayed
 unchanged. Twelve cases cover these contracts, including failures reproduced
 before repair. Native input and broader editor acceptance remain pending.
 The broader reconciliation remains **50/60**.
+
+## Asset Keyboard Selection
+
+The asset panel now follows the table's presented keyboard selection. File
+selection updates its path and inspector; folder selection stays in the current
+folder until activation. One click does not inspect the same file twice. A later
+activation restores asset inspection after scene selection. Callback reentry
+cannot publish an obsolete AssetSelected event. Deselecting clears only the
+inspector path owned by that selection. Lifecycle cleanup removes the subscription.
+
+Desktop build50 compiled the editor and tests with zero warnings/errors. Final
+run124 passed the existing **1,160/1,160** portable tests with no failures, warnings,
+or skips. All 10,808 source inputs stayed unchanged through these final checks.
+Six editor cases compiled; they did not execute on this Linux host. The desktop
+test probe executed zero tests and reported `Only supported on Windows7.0`.
+The portable suite excludes AssetsPanel. Windows keyboard, inspector, and owner
+lifecycle acceptance remain pending. The broader reconciliation remains **50/60**.

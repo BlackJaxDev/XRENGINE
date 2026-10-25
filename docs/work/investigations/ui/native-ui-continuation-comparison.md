@@ -344,3 +344,34 @@ passed **1,160/1,160** in 22.148s, with no failures, warnings, or skips. The mat
 desktop build48 compiled the editor and tests with zero warnings/errors in
 3m01.39s. All 10,805 source inputs stayed unchanged. Native window input and broader table/editor acceptance
 remain in the validation plan; no broad TODO item closes.
+
+## Asset Selection And Activation
+
+The asset panel subscribed to table activation but not selection changes. Shared
+keyboard navigation changed SelectedId after presented focus, while SelectedPath
+and the asset inspector still referred to the old file. The panel now subscribes
+to selection, keeps folder opening on activation, and avoids duplicate inspection
+when one click first selects and then activates the same file. It reuses existing
+object/transform admission and rejects obsolete notifications after callbacks.
+
+A wrapper-routed desktop test probe ran on Linux against the existing
+NativePanelDirectDestroyTests.AssetsPanel_DirectDestroy filter. It executed zero
+tests. NUnit reported `Only supported on Windows7.0`; the outer log also reported
+no matching tests. This is not a passing test result. No platform attribute was
+removed. Six new editor cases cover file selection, repeated activation, restoring
+asset inspection, callback changes, and folder selection versus activation.
+Their Windows execution remains pending. Existing teardown cases now also check
+that SelectionChanged handlers detach.
+
+Desktop build49 compiled the editor and tests with zero warnings/errors in
+5m09.59s. Run123 passed the existing **1,160/1,160** portable tests in 23.404s.
+Final review also made deselection clear the inspector only when it still owns
+the prior path. Desktop build50 compiled that final change and its test assertion
+with zero warnings/errors in 1m17.88s. The new editor fixture remains unexecuted on
+this host; the portable suite does not contain AssetsPanel or these six cases.
+
+Final portable run124 passed **1,160/1,160** in 23.307s with no failures, warnings,
+or skips. It used the unchanged portable inputs built by headless build183.
+All 10,808 source inputs stayed unchanged through final desktop build50 and
+run124. This is compilation plus portable regression evidence, not execution of
+the new editor cases or native keyboard acceptance.

@@ -64,6 +64,7 @@ public class NativePanelDirectDestroyTests
         try
         {
             Assert.That(HasHandler(table.GetType(), "Activated", panel, table), Is.True);
+            Assert.That(HasHandler(table.GetType(), "SelectionChanged", panel, table), Is.True);
             panel.Destroy(true);
             panel.UseEngineAssets = false;
             panel.Folder = "late-folder";
@@ -75,6 +76,7 @@ public class NativePanelDirectDestroyTests
             {
                 Assert.That(drop.CanRead, Is.False);
                 Assert.That(HasHandler(table.GetType(), "Activated", panel, table), Is.False);
+                Assert.That(HasHandler(table.GetType(), "SelectionChanged", panel, table), Is.False);
                 Assert.That(HasHandler(table.GetType(), "RowPointerMoved", panel, table), Is.False);
                 Assert.That(child.IsDestroyed, Is.False);
                 Assert.That(panel.UseEngineAssets, Is.True);
@@ -114,6 +116,7 @@ public class NativePanelDirectDestroyTests
             {
                 Assert.That(drop.WasDisposed, Is.True);
                 Assert.That(HasHandler(table.GetType(), "Activated", panel, table), Is.False);
+                Assert.That(HasHandler(table.GetType(), "SelectionChanged", panel, table), Is.False);
                 Assert.That(HasHandler(table.GetType(), "RowPointerMoved", panel, table), Is.False);
                 Assert.That(GetPrivateField(panel, "ViewStateChanged"), Is.Null);
                 Assert.That(panel.Search, Is.Empty);
