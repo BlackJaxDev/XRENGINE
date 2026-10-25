@@ -8,7 +8,7 @@ using XREngine.Scene;
 namespace XREngine.Editor;
 
 /// <summary>Browses the game or engine asset directory with recycled rows.</summary>
-public class AssetsPanel : NativeVirtualTextPanel
+public partial class AssetsPanel : NativeVirtualTextPanel
 {
     private sealed record AssetRow(string Path, string Name, bool IsDirectory);
 
@@ -42,6 +42,7 @@ public class AssetsPanel : NativeVirtualTextPanel
         {
             if (_destroying) return;
             _folder = string.IsNullOrWhiteSpace(value) ? null : value;
+            _renameMenuDraft = null;
             SelectedPath = null;
             if (!AcceptsActiveInput) return;
             RefreshRows();
@@ -55,6 +56,7 @@ public class AssetsPanel : NativeVirtualTextPanel
         {
             if (_destroying) return;
             _engineFiles = value;
+            _renameMenuDraft = null;
             _folder = null;
             SelectedPath = null;
             if (!AcceptsActiveInput) return;
@@ -69,6 +71,7 @@ public class AssetsPanel : NativeVirtualTextPanel
         {
             if (_destroying) return;
             _search = value ?? string.Empty;
+            _renameMenuDraft = null;
             if (!AcceptsActiveInput) return;
             if (_searchInput is not null)
                 _searchInput.Text = _search;
@@ -183,6 +186,11 @@ public class AssetsPanel : NativeVirtualTextPanel
                         search.Cancelled -= CancelSearch;
                     }
                     _searchInput = null;
+                    if (_nameInput is { } name)
+                    {
+                        name.Submitted -= SubmitMenuRename;
+                        name.Cancelled -= CancelMenuRename;
+                    }
                     _nameInput = null;
                 }
                 finally { base.OnDestroying(); }
@@ -214,6 +222,12 @@ public class AssetsPanel : NativeVirtualTextPanel
     private void DragPointerLeft(UIVirtualTableRowComponent source) => _dragStarts.Remove(source);
 
     private void ReleaseOwnerSubscriptions()
+    {
+        try { ReleaseAssetMenu(); }
+        finally { ReleaseFileSubscriptions(); }
+    }
+
+    private void ReleaseFileSubscriptions()
     {
         IDisposable? dropTarget = _folderDropTarget;
         _folderDropTarget = null;
@@ -255,6 +269,8 @@ public class AssetsPanel : NativeVirtualTextPanel
         var (nameInput, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(nameNode);
         _nameInput = nameInput;
         nameInput.SingleLineMode = true;
+        nameInput.Submitted += SubmitMenuRename;
+        nameInput.Cancelled += CancelMenuRename;
         SceneNode searchNode = commands.NewChild();
         searchNode.SetTransform<UIBoundableTransform>().Width = 144;
         var (input, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(searchNode);
@@ -298,6 +314,9 @@ public class AssetsPanel : NativeVirtualTextPanel
     {
         if (!AcceptsActiveInput)
             return;
+        UpdateAssetMenu();
+        if (!AcceptsActiveInput)
+            return;
         DateTime now = DateTime.UtcNow;
         if (Interlocked.Exchange(ref _pendingRefresh, 0) == 0 && now - _lastRefresh < TimeSpan.FromSeconds(10))
             return;
@@ -318,6 +337,9 @@ public class AssetsPanel : NativeVirtualTextPanel
 
     protected override void RefreshRows()
     {
+        if (_destroying)
+            return;
+        DismissAssetMenu();
         if (_destroying)
             return;
         _rows.Clear();
@@ -385,6 +407,7 @@ public class AssetsPanel : NativeVirtualTextPanel
             return;
         if (!_paths.TryGetValue(id, out string? path))
             return;
+        _renameMenuDraft = null;
         if (Directory.Exists(path))
         {
             Folder = path;

@@ -101,6 +101,9 @@
     <Compile Include="../Scene/HierarchyTestPhysicsScene.cs" Link="Scene/HierarchyTestPhysicsScene.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeAssetPathPolicy.cs" Link="Editor/NativeAssetPathPolicy.cs" />
     <Compile Include="../Editor/NativeAssetPathPolicyTests.cs" Link="Editor/NativeAssetPathPolicyTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeAssetMenuRequest.cs" Link="Editor/NativeAssetMenuRequest.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeAssetRenameDraft.cs" Link="Editor/NativeAssetRenameDraft.cs" />
+    <Compile Include="../Editor/NativeAssetMenuRequestTests.cs" Link="Editor/NativeAssetMenuRequestTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorPropertyDelegates.cs" Link="Editor/EditorPropertyDelegates.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeHierarchySelection.cs" Link="Editor/NativeHierarchySelection.cs" />
     <Compile Include="../Editor/NativeHierarchySelectionTests.cs" Link="Editor/NativeHierarchySelectionTests.cs" />

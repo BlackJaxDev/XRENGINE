@@ -1267,3 +1267,20 @@ desktop tests with zero warnings/errors. All 10,800 source inputs stayed unchang
 Individual child callback failure/ownership paths remain open, as do native
 keyboard, IME, GPU, and editor acceptance. The count remains **50/60**. The asset
 browser audit did not add a row menu, permanent deletion, or ImGui-only actions.
+
+## Native Asset Row Actions
+
+The native asset browser now uses the shared context menu for Open Folder or
+Inspect, Rename, and Reimport. The request retains the clicked row lease and
+owner/input lifetimes. It opens after right-click dispatch finishes and rejects
+recycled or refreshed rows. Actions synchronize the selected row and recheck
+callbacks before acting. Rename uses the existing name field and mutation path;
+its draft survives an unchanged refresh and rejects a changed field or target.
+
+Headless build179 passed with zero warnings/errors. Final run118 passed
+**1,148/1,148**, without failures, warnings, or skips. The 22 new cases exercise
+request and draft admission. Final desktop build47 compiled the editor and tests
+with zero warnings/errors. All 10,804 source inputs stayed unchanged through that
+build and the final test run. Live context dispatch, rename focus, filesystem
+actions, and Windows/GPU acceptance remain pending. Delete, asset creation, and
+ImGui-only tool actions were not added. The broader count remains **50/60**.

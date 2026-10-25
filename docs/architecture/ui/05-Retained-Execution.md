@@ -805,6 +805,27 @@ Full callback-safe construction/teardown, including failures and ownership
 changes inside individual child construction/destruction callbacks, remains open.
 This contract does not establish native keyboard or IME acceptance.
 
+## Native asset row actions
+
+`AssetsPanel.Menu` uses the shared context menu for Open Folder or Inspect,
+Rename, and Reimport. `NativeAssetMenuRequest` captures a virtual row lease and
+its provider/source revision, owner, canvas, input, and object lifetimes.
+The panel opens the menu on its next owner tick, after the right-click event has
+finished. An old dismissal handler therefore cannot dismiss the new menu during
+the same dispatch. Row recycling, refresh, lost ownership, and input replacement
+cancel the request. Actions recheck it before calling the existing panel paths.
+
+Rename fills the existing name field and requests presented focus. Enter uses
+`RenameSelection`; Escape cancels the draft. `NativeAssetRenameDraft` preserves an
+unchanged path across row refresh. Submission checks its field and owner lifetimes,
+current input owner, selected path, and current path mapping. Selecting another
+asset, folder, source, or search clears the draft. A newer focus intent prevents
+rename preparation from taking focus. Reimport retains the existing asynchronous import
+behavior. Menu creation allocates only on user interaction or input-owner change;
+the per-frame admission path does not create callback closures. Deactivation
+retires menu input and defers canvas-child removal through the existing scene
+destruction queue. Delete and type-specific ImGui window actions are not exposed.
+
 ## Composition boundaries and split handles
 
 `UICompositionLayerComponent` assigns an explicit owner and kind to its subtree.

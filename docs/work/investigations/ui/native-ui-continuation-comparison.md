@@ -273,3 +273,48 @@ and bounded reopen loops. All 10,800 source inputs stayed unchanged through the
 headless checks and matching desktop build42. That build compiled the editor and
 desktop tests with zero warnings/errors in 3m40.47s. Individual child callback
 failure/ownership paths and native acceptance remain open; no broad item closes.
+
+## Native Asset Row Menu
+
+`AssetsPanel.Menu` adds Open Folder or Inspect, Rename, and Reimport through the
+existing panel paths. It does not expose the ImGui deletion fallback or actions
+that only open ImGui windows. Asset creation and the recovery proposal remain held.
+Right-click captures `NativeAssetMenuRequest` and opens the shared menu on the next
+owner tick. The request checks the exact row lease, provider/source revision,
+component/node/transform lifetimes, canvas, input, and current path mapping.
+Refresh, recycling, and owner retirement cancel it. Rename prepares the existing
+name field; Enter uses the existing rename helper, and Escape cancels the draft.
+
+Input callback registration and menu action creation use separate methods, so
+the idle per-frame update does not allocate captured closures. Popup release
+retires input first and queues node removal after transfer callbacks. Other file
+watcher and drop-target cleanup still runs if popup release throws.
+
+Build175 failed with two missing namespace imports for `UICanvasComponent`.
+Build176 passed with zero warnings/errors in 21.58s after the imports were added.
+Targeted run115 passed **15/15** in 0.899s. Build177 passed with zero warnings/errors
+in 20.77s after the per-frame callback extraction and an allocation check were
+added. Full run116 passed **1,141/1,141** in 23.089s. Desktop build43 then failed
+with one owner-type error: `AssetsPanel` derives from `XRComponent`, not
+`UIComponent`. The request now accepts that actual base type and checks its UI
+transform explicitly.
+
+Review found that periodic refresh would cancel an unchanged rename draft.
+`NativeAssetRenameDraft` now keeps the field and owner identities independently
+of row recycling. Submission still requires the selected path and current path
+mapping. Source/search/folder changes and owner retirement cancel the draft.
+Rename focus also yields to newer focus intent. Seven more cases cover changed
+fields, selection, and path mappings. Build178 passed with zero warnings/errors
+in 20.46s. Final headless build179 passed with zero warnings/errors in 11.40s.
+Run117 passed **1,148/1,148** in 22.473s. Desktop build44 passed with zero
+warnings/errors in 1m20.51s. Final review synchronized the selected row for menu
+actions, rejected a selection changed by a callback, and tied dismissal callbacks
+to their exact popup. Desktop builds45 and46 passed those intermediate snapshots.
+
+Final desktop build47 compiled the editor and tests with zero warnings/errors in
+1m16.22s. Final headless run118 passed **1,148/1,148** in 34.467s, without failures,
+warnings, or skips. All 10,804 source inputs stayed unchanged through the final
+desktop build and headless run. One hundred request-admission checks allocated
+zero managed bytes in the harness. This is not an editor performance benchmark.
+The 22 portable cases exercise request and draft admission, not live right-click
+dispatch, rename focus, or file mutations. The Windows procedures remain pending.

@@ -7,8 +7,28 @@ Design: [Native UI retained rendering](../../design/ui/native-ui-retained-render
 
 ## Retained UI Integration (2026-10-23)
 
-Latest continuation check (2026-10-25): headless build174 passed with zero
-warnings/errors, and run114 passed **1,126/1,126** tests with no failures or skips.
+### Native asset row menu acceptance
+
+On Windows, use the active native dock host with both game and engine assets.
+Right-click file and folder rows. Check Open Folder, Inspect, Rename, and Reimport
+against the clicked path, including when another asset is selected. Reimport must
+be disabled for folders and native asset files. Delete and ImGui-only tool actions
+must not appear.
+
+Scroll or refresh between right-click and the next owner tick. The stale request
+must close without acting on a recycled row. Close, transfer, or rebuild the panel
+with a menu open and check that old input callbacks cannot reopen or act on it.
+For rename, enter a new name, wait through an unchanged periodic refresh, and press
+Enter. Check the canonical rename and Undo path. Escape, a changed selection,
+folder/source/search change, removed path, or retired field must cancel the draft.
+Check that newer focus intent is preserved. Repeat with a large virtual list and
+with a filesystem watcher change. These live checks remain pending; portable
+admission tests and managed compilation do not replace them.
+
+### Managed integration evidence
+
+Latest continuation check (2026-10-25): headless build179 passed with zero
+warnings/errors, and run118 passed **1,148/1,148** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
@@ -17,8 +37,10 @@ before the repair. Menu lifetime and scroll-navigation regressions also failed
 before repair. Initial submenu-focus regressions also failed before the shared
 request replaced its old retry. Menu transition tests also cover coalesced
 Show/Hide requests, stale owners, builder failures, and content ownership.
-Desktop test build42 compiled the editor and test assembly with zero warnings/errors.
-All 10,800 source inputs stayed unchanged through these checks.
+Asset menu and rename-draft admission add 22 cases, including unchanged refresh,
+changed selection, retired fields, and replaced paths. Desktop test build47
+compiled the final editor and test assembly with zero warnings/errors. All 10,804
+source inputs stayed unchanged through that build and the final headless run.
 The new `NativeToolPanelStateTests` compiled but did not execute
 on this Linux host. Check console category/auto-scroll, profiler view, and settled
 scroll saves through the active dock-tree host on Windows. See the
