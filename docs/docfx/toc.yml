@@ -8,8 +8,6 @@
   href: ../developer-guides/README.md
 - name: Architecture
   href: ../architecture/README.md
-- name: Work Docs
-  href: ../work/README.md
 - name: Dependencies
   href: ../DEPENDENCIES.md
 - name: API Reference
