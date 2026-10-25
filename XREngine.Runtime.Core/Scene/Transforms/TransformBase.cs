@@ -1619,9 +1619,14 @@ namespace XREngine.Scene.Transforms
             // World observers can activate components and mark this transform dirty.
             // Bind its matrix storage before those observers run.
             if (propName == nameof(World))
+            {
                 UpdateHierarchyStore();
+                ActiveWorldRemovalPermit?.MarkStoreDetached(this);
+            }
 
             base.OnPropertyChanged(propName, prev, field);
+            if (propName == nameof(World))
+                ActiveWorldRemovalPermit?.Validate();
             switch (propName)
             {
                 case nameof(Parent):
@@ -1652,6 +1657,11 @@ namespace XREngine.Scene.Transforms
                 case nameof(World):
                     _debugHandle?.UpdateWorld(World);
                     MarkWorldModified();
+                    if (ActiveWorldRemovalPermit is { } worldRemoval)
+                    {
+                        worldRemoval.Validate();
+                        break;
+                    }
                     if (SceneNode is not null)
                         SceneNode.World = World;
                     lock (_children)

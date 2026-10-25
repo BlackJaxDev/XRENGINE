@@ -16,6 +16,7 @@ internal sealed class OwnedHierarchyRetirementEntry
         Value = value;
         Id = identity.Id;
         LifetimeRevision = identity.LifetimeRevision;
+        ExpectedWorld = value.World;
         switch (value)
         {
             case SceneNode node:
@@ -27,6 +28,8 @@ internal sealed class OwnedHierarchyRetirementEntry
                 ComponentListDestroyed = ComponentList.IsDestroyed;
                 break;
             case TransformBase transform:
+                ExpectedStore = transform.HierarchyStore;
+                ExpectedHandle = transform.HierarchyHandle;
                 Parent = transform.OwnedRetirementParent;
                 Node = transform.OwnedRetirementNode;
                 ChildList = transform.OwnedRetirementChildren;
@@ -44,6 +47,12 @@ internal sealed class OwnedHierarchyRetirementEntry
     internal XRWorldObjectBase Value { get; }
     internal Guid Id { get; }
     internal long LifetimeRevision { get; set; }
+    internal IRuntimeWorldContext? ExpectedWorld { get; set; }
+    internal TransformHierarchyStore? ExpectedStore { get; set; }
+    internal TransformHandle ExpectedHandle { get; set; }
+    internal EOwnedHierarchyStepState DeactivationState { get; set; }
+    internal EOwnedHierarchyStepState EndPlayState { get; set; }
+    internal EOwnedHierarchyStepState WorldRemovalState { get; set; }
     internal bool Destroyed { get; set; }
     internal bool CleanupComplete { get; set; }
     internal TransformBase? Parent { get; set; }
@@ -63,7 +72,8 @@ internal sealed class OwnedHierarchyRetirementEntry
     internal void Validate()
     {
         ObjectConstructionIdentity expected = new(Value, Id, LifetimeRevision);
-        if (!expected.IsCurrent || Value.IsDestroyed != Destroyed || Value.IsDestroyQueued || Value.World is not null)
+        if (!expected.IsCurrent || Value.IsDestroyed != Destroyed || Value.IsDestroyQueued ||
+            !ReferenceEquals(Value.World, ExpectedWorld))
             throw new InvalidOperationException("An owned structural object's identity or lifetime changed during cleanup.");
         HierarchyListMembership[] memberships = Value.CaptureHierarchyListMemberships();
         if (ListSlot is null ? memberships.Length != 0 : memberships.Length != 1 ||
@@ -82,7 +92,9 @@ internal sealed class OwnedHierarchyRetirementEntry
             case TransformBase transform:
                 if (!ReferenceEquals(transform.OwnedRetirementParent, Parent) ||
                     !ReferenceEquals(transform.OwnedRetirementNode, Node) ||
-                    !ReferenceEquals(transform.OwnedRetirementChildren, ChildList) || transform.HierarchyStore is not null)
+                    !ReferenceEquals(transform.OwnedRetirementChildren, ChildList) ||
+                    !ReferenceEquals(transform.HierarchyStore, ExpectedStore) ||
+                    transform.HierarchyHandle != ExpectedHandle)
                     throw new InvalidOperationException("An owned transform changed its exact structural owner.");
                 ValidateList(ChildList!, Children!, ChildListDestroyed, ChildAuthorityRetired);
                 break;

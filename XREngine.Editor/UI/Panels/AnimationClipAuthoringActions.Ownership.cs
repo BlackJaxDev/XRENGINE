@@ -115,7 +115,7 @@ internal static partial class AnimationClipAuthoringActions
         return false;
     }
 
-    private static Keyframe[]? CaptureOrder(BaseKeyframeTrack track)
+    internal static Keyframe[]? CaptureOrder(BaseKeyframeTrack track)
     {
         if (track.Count is < 0 or > 1_000_000)
             return null;
@@ -137,7 +137,7 @@ internal static partial class AnimationClipAuthoringActions
             ? order : null;
     }
 
-    private static bool MatchesOrder(BaseKeyframeTrack track,
+    internal static bool MatchesOrder(BaseKeyframeTrack track,
         IReadOnlyList<Keyframe> expected)
     {
         if (track.Count != expected.Count ||
@@ -162,7 +162,7 @@ internal static partial class AnimationClipAuthoringActions
         return current is null;
     }
 
-    private static Func<bool>? CaptureKeyPayload(Keyframe key)
+    internal static Func<bool>? CaptureKeyPayload(Keyframe key)
     {
         switch (key)
         {
@@ -203,7 +203,7 @@ internal static partial class AnimationClipAuthoringActions
         }
     }
 
-    private static Keyframe[] OrderWithInsertedKey(
+    internal static Keyframe[] OrderWithInsertedKey(
         IReadOnlyList<Keyframe> before, Keyframe key, float second)
     {
         List<Keyframe> result = new(before.Count + 1);
@@ -216,7 +216,7 @@ internal static partial class AnimationClipAuthoringActions
         return [.. result];
     }
 
-    private static Keyframe[] OrderWithMovedKey(
+    internal static Keyframe[] OrderWithMovedKey(
         IReadOnlyList<Keyframe> before, Keyframe key, float second)
         => OrderWithInsertedKey([.. before.Where(candidate =>
             !ReferenceEquals(candidate, key))], key, second);

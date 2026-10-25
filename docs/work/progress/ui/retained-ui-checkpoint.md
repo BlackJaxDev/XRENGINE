@@ -1381,3 +1381,31 @@ warnings, or skips. Desktop build54 compiled the editor and tests with zero
 warnings/errors. All 10,812 source inputs stayed unchanged through these checks.
 This closes bounded contracts inside the open shared-control item; the broader count remains
 **50/60**. Windows, graphics, and native input acceptance remain pending.
+
+
+## Retained Float Curve Details And Exact World Removal
+
+The native inspector now provides a PropAnimFloat detail with a 97-sample retained
+plot, a virtual key table, key time/value edits, insertion/removal, and length or
+stretch commands. It shares exact animation transactions with clip authoring.
+Shared selected references edit once; distinct curves remain unavailable. Attached
+transition curves retain their exact state/layer/machine membership and dirty the
+state-machine source document. Incomplete and AnyState ownership remain unavailable.
+Idle refresh uses a nonallocating identity check; authored changes coalesce on the
+owner thread. Playback sampling does not seek the animation.
+
+Registered, never-adopted leaves can now retire from an exact source world. The
+same executor retains lifecycle, world-write, and transform-store progress before
+canonical destruction. Nested rejected writes cannot dispose the outer permit.
+Clone and original null-world admission remain strict. Parent/root detachment,
+permitted ownership transitions, and live menu integration remain open.
+
+Headless build201 passed with zero warnings/errors in 21.91s. Run141 passed all
+59 targeted cases in 0.411s. Full run142 passed **1,239/1,239** tests in 30.355s,
+with no failures, warnings, or skips. Desktop build57 compiled the editor and
+Windows-targeted tests with zero warnings/errors in 1m20.67s. All **10,823** source
+inputs stayed unchanged through final validation. The four transition ownership
+cases executed portably; nine new inspector action/history cases only compiled.
+No Windows execution, native visual, GPU, IME, or performance-comparison result is
+claimed. The original reconciliation remains **50/60**, with 10 broad code items
+and four original decisions open. The three pending proposals are unchanged.

@@ -108,6 +108,11 @@ public abstract partial class XRWorldObjectBase : XRObjectBase
     /// <summary>Rechecks an exact structural owner after callbacks before a world write.</summary>
     private protected void SetWorldValue(IRuntimeWorldContext? value, Action? validate = null)
     {
+        if (_ownedWorldRemovalPermit is { } permit)
+        {
+            SetOwnedWorldValue(value, permit);
+            return;
+        }
         using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
         validate?.Invoke();
         XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(this, value);
@@ -126,6 +131,49 @@ public abstract partial class XRWorldObjectBase : XRObjectBase
             SetField(ref _world, value, publishNotifications: false, propertyName: nameof(World));
         }
         if (notify) OnPropertyChanged(nameof(World), previous, value);
+    }
+
+    private XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit? _ownedWorldRemovalPermit;
+
+    internal XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit? ActiveWorldRemovalPermit
+        => _ownedWorldRemovalPermit is { Active: true } permit ? permit : null;
+
+    internal void SetOwnedWorldRemovalPermit(XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit permit)
+    {
+        if (_ownedWorldRemovalPermit is not null || !ReferenceEquals(permit.Target, this))
+            throw new InvalidOperationException("World removal already has an exact target.");
+        _ownedWorldRemovalPermit = permit;
+    }
+
+    internal void ClearOwnedWorldRemovalPermit(XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit permit)
+    {
+        if (ReferenceEquals(_ownedWorldRemovalPermit, permit))
+            _ownedWorldRemovalPermit = null;
+    }
+
+    private void SetOwnedWorldValue(IRuntimeWorldContext? value,
+        XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit permit)
+    {
+        permit.Enter(this, value);
+        using (permit)
+        {
+            using var mutation = PhysicsChainWorld.BeginWorldObjectMutation(this, _world, value);
+            if (ArePropertyNotificationsSuppressed)
+                throw new InvalidOperationException("Owned world removal requires lifecycle notifications.");
+            if (!OnPropertyChanging(nameof(World), _world, value))
+                throw new InvalidOperationException("The owned world removal was vetoed.");
+            IRuntimeWorldContext? previous;
+            lock (SceneRootCollection.MutationGate)
+            {
+                permit.RequireCommit(this, value);
+                previous = _world;
+                ValidateWorldValueWrite(value);
+                SetField(ref _world, value, publishNotifications: false, propertyName: nameof(World));
+                permit.Commit();
+            }
+            OnPropertyChanged(nameof(World), previous, value);
+            permit.Complete();
+        }
     }
 
     /// <summary>Checks an opt-in owner immediately before a world field write.</summary>

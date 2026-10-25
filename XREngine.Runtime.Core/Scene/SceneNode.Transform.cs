@@ -96,6 +96,13 @@ namespace XREngine.Scene
                     OnParentChanged();
                     break;
                 case nameof(TransformBase.World):
+                    if (sender is TransformBase changedTransform &&
+                        changedTransform.ActiveWorldRemovalPermit is { } worldRemoval &&
+                        ReferenceEquals(changedTransform, _transform))
+                    {
+                        worldRemoval.Validate();
+                        break;
+                    }
                     World = Transform.World;
                     break;
             }

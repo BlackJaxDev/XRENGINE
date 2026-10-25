@@ -441,7 +441,10 @@ namespace XREngine.Components
                         if (field is IRuntimeWorldContext previousWorld &&
                             !ReferenceEquals(previousWorld, @new))
                         {
-                            TryDeactivateComponent();
+                            if (ActiveWorldRemovalPermit is { } worldRemoval)
+                                worldRemoval.Retirement.StopLifecycle(this, EOwnedHierarchyLifecycle.Deactivate);
+                            else
+                                TryDeactivateComponent();
                         }
                         break;
                     case nameof(SceneNode):
@@ -469,10 +472,12 @@ namespace XREngine.Components
             switch (propName)
             {
                 case nameof(World):
+                    ActiveWorldRemovalPermit?.Validate();
                     RuntimeWorldObjectServices.Current?.OnRuntimeObjectWorldChanged(
                         this,
                         ((RuntimeWorldObjectBase)this).World,
                         IsActiveInHierarchy);
+                    ActiveWorldRemovalPermit?.Validate();
                     if (this is PhysicsChainComponent
                         && PhysicsChainWorld.IsWorldMutationActive
                         && World is not null

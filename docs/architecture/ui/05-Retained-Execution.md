@@ -1686,7 +1686,8 @@ DetachedLeafRetirementReceipt records a node, transform, and their exact storage
 before guarded component creation starts. Each component attempt must register
 before its factory runs. Retirement uses the original claims and a frozen object
 set. It accepts only a leaf that was never structurally adopted, has no current
-world context or hierarchy store, and contains only registered components. Prior
+world context or hierarchy store in its original null-world mode, and contains
+only registered components. Prior
 parent, scene-root, or runtime-root adoption permanently rejects this initial-leaf
 path, including after detach. A direct world-context change is not itself proof
 of structural adoption; all current detached-state checks still apply.
@@ -1705,11 +1706,58 @@ Guarded creation holds a node and transform mutation lease before factory code
 runs. Reserved retirement therefore rejects a new factory before it allocates.
 Guarded abort prepares subscriptions only after lifetime admission succeeds.
 This adapter is not yet the live-menu retirement path. Parent detachment, permitted
-ownership transitions, runtime lifecycle/world removal, early owner-node teardown,
-and arbitrary custom content registration remain separate integration work.
+ownership transitions, early owner-node teardown, and arbitrary custom content
+registration remain separate integration work.
 
 Menu setup checks for newer queued Show/Hide requests at construction boundaries.
 An obsolete setup returns to the existing transition loop before invoking its old
 content builder. Ownership errors and builder exceptions still propagate; a queued
 request does not hide them. These cancellation checks do not replace individual
 child ownership checks or guarded retirement.
+
+
+### Exact Source-World Removal
+
+The explicit world-bound receipt captures its source world and transform store
+before guarded component factories run. It accepts the same never-adopted leaf
+shape. The original null-world receipt and clone cleanup still require null worlds
+and detached transform storage.
+
+The executor retains one reservation across lifecycle stop, world removal, and
+canonical destruction. It stops lifecycle callbacks while the old world remains
+available. Each callback step records entry and completion; an interrupted step
+cannot replay. Inactive uninserted component claims can be retained, but active
+uninserted components cannot enter this path.
+
+A one-use permit admits only the captured world-to-null write. It preserves
+changing/changed notifications, physics mutation scopes, tick cleanup, and actual
+transform-store removal. Only engine-owned recursive propagation is suppressed
+for that exact permit. The executor advances expected state at each field/store
+commit and retains partial failures. A rejected nested setter cannot dispose the
+outer permit. No parent or root removal is implied by world removal.
+
+## Float Animation Inspector Details
+
+The retained PropAnimFloat property detail uses the shared virtual table and a
+97-sample retained plot. It exposes key selection, time/value editing, insertion,
+removal, length changes, and stretch. Sampling does not seek playback. Rows show
+at most 8,192 keys and report that limit. The plot and row data refresh on authored
+changes; playback clock notifications do not rebuild them.
+
+InspectorFloatCurveSource retains each outer owner, the exact curve and track,
+and source documents. Compiler-owned properties and the explicit transition blend
+curve accessor provide callback-free reference checks. Idle refresh checks do not
+resolve scene documents. Commands and history validate complete document ownership.
+Attached transition curves also retain the exact state, layer, machine, and
+container membership, plus the state-machine source document. Detached transitions
+remain valid only while detached. Incomplete attached chains and AnyState ownership
+are unavailable in this adapter. Selected targets that share the same curve edit
+it once. Distinct curves and unsupported getter ownership report an unavailable
+editor rather than partially mutating a selection.
+
+AnimationAuthoringTransaction supplies the existing clip and new property paths
+with the same reservation, exact Undo/Redo, rollback, conflict, and dirty-document
+behavior. Exact key edits preserve frame indices and handles on reversal. Length
+changes reuse AnimationLengthEdit. UI retirement rejects new commands; it does not
+invalidate a still-owned history operation. Source replacement detaches authored
+change subscriptions and rejects stale commands and history.

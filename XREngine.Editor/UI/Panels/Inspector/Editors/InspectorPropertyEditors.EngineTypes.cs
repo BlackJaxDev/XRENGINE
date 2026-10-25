@@ -8,7 +8,7 @@ namespace XREngine.Editor;
 
 public static partial class InspectorPropertyEditors
 {
-    public static class EngineTypes
+    public static partial class EngineTypes
     {
         public static void CreateQuaternionEditor(SceneNode node, PropertyInfo info, object?[]? objects)
         {
@@ -77,8 +77,7 @@ public static partial class InspectorPropertyEditors
 
         public static void CreatePropAnimFloatEditor(SceneNode node, PropertyInfo info, object?[]? objects)
         {
-            //Render a box with the spline curve.
-            //On click, open a spline editor dialog.
+            CreateFloatAnimationDetail(node, info, objects);
         }
     }
 }

@@ -11,6 +11,9 @@ internal sealed class DetachedLeafRetirementReceipt
     private readonly TransformBase _transform;
     private readonly EventList<XRComponent> _componentList;
     private readonly EventList<TransformBase> _childList;
+    private readonly IRuntimeWorldContext? _sourceWorld;
+    private readonly TransformHierarchyStore? _sourceStore;
+    private readonly TransformHandle _sourceHandle;
     private readonly ObjectConstructionIdentity[] _baseIdentities;
     private readonly List<RuntimeComponentCreationReceipt> _attempts = [];
     private readonly Lock _sync = new();
@@ -19,9 +22,16 @@ internal sealed class DetachedLeafRetirementReceipt
     private OwnedHierarchyRetirement? _retirement;
     private HashSet<XRObjectBase>? _retainedObjects;
 
-    internal DetachedLeafRetirementReceipt(SceneNode node)
+    internal DetachedLeafRetirementReceipt(SceneNode node) : this(node, null, false) { }
+
+    /// <summary>Captures an already world-bound leaf before its guarded component factories run.</summary>
+    internal DetachedLeafRetirementReceipt(SceneNode node, IRuntimeWorldContext sourceWorld)
+        : this(node, sourceWorld, true) { }
+
+    private DetachedLeafRetirementReceipt(SceneNode node, IRuntimeWorldContext? sourceWorld, bool requireWorld)
     {
         ArgumentNullException.ThrowIfNull(node);
+        if (requireWorld) ArgumentNullException.ThrowIfNull(sourceWorld);
         _node = node;
         _transform = node.OwnedRetirementTransform ??
             throw new InvalidOperationException("A detached leaf requires a transform.");
@@ -29,6 +39,9 @@ internal sealed class DetachedLeafRetirementReceipt
             throw new InvalidOperationException("A detached leaf requires component storage.");
         _childList = _transform.OwnedRetirementChildren ??
             throw new InvalidOperationException("A detached leaf requires child storage.");
+        _sourceWorld = sourceWorld;
+        _sourceStore = _transform.HierarchyStore;
+        _sourceHandle = _transform.HierarchyHandle;
         _baseIdentities =
         [
             ObjectConstructionIdentity.Capture(node),
@@ -44,6 +57,10 @@ internal sealed class DetachedLeafRetirementReceipt
     internal EOwnedHierarchyLifetimeState State { get { lock (_sync) return _state; } }
     internal Exception? Failure { get { lock (_sync) return _failure; } }
     internal OwnedHierarchyRetirement? RetainedRetirement { get { lock (_sync) return _retirement; } }
+    internal IRuntimeWorldContext? SourceWorld => _sourceWorld;
+    internal SceneNode Node => _node;
+    internal TransformHierarchyStore? SourceStore => _sourceStore;
+    internal TransformHandle SourceHandle => _sourceHandle;
 
     internal void Register(RuntimeComponentCreationReceipt attempt)
     {
@@ -60,9 +77,20 @@ internal sealed class DetachedLeafRetirementReceipt
     }
 
     internal bool TryRetire()
+        => TryRetireCore(null);
+
+    internal bool TryRetireFromWorld(IRuntimeWorldContext sourceWorld)
+    {
+        ArgumentNullException.ThrowIfNull(sourceWorld);
+        return TryRetireCore(sourceWorld);
+    }
+
+    private bool TryRetireCore(IRuntimeWorldContext? sourceWorld)
     {
         lock (_sync)
         {
+            if (!ReferenceEquals(_sourceWorld, sourceWorld))
+                throw new InvalidOperationException("The retirement source world does not match its receipt.");
             if (_state != EOwnedHierarchyLifetimeState.Retained)
                 return _state == EOwnedHierarchyLifetimeState.Retired;
             _state = EOwnedHierarchyLifetimeState.Retiring;
@@ -71,7 +99,7 @@ internal sealed class DetachedLeafRetirementReceipt
         {
             (IReadOnlyList<XRObjectBase> objects, IReadOnlyList<ObjectConstructionIdentity> identities) = BuildInput();
             _retainedObjects = new(objects, ReferenceEqualityComparer.Instance);
-            _retirement = new OwnedHierarchyRetirement(this, objects, identities);
+            _retirement = new OwnedHierarchyRetirement(this, objects, identities, sourceWorld);
             _retirement.Execute();
             lock (_sync)
             {
@@ -115,17 +143,19 @@ internal sealed class DetachedLeafRetirementReceipt
                 continue;
             }
             if (!identity.IsCurrent || component.IsDestroyed || component.IsDestroyQueued ||
-                component.World is not null || !ReferenceEquals(component.OwnedRetirementNode, _node))
+                !ReferenceEquals(component.OwnedRetirementNode, _node))
                 throw new InvalidOperationException("A registered component changed owner or lifetime.");
             HierarchyListMembership[] memberships = component.CaptureHierarchyListMemberships();
             if (memberships.Length == 0)
             {
-                if (attempt.Failure is null || component.HasEnteredStructuralList)
+                if (attempt.Failure is null || component.HasEnteredStructuralList ||
+                    component.World is not null && !ReferenceEquals(component.World, _sourceWorld))
                     throw new InvalidOperationException("A registered component left its original list.");
             }
             else if (memberships.Length != 1 || memberships[0].Count != 1 || !memberships[0].IsCurrent ||
                 !ReferenceEquals(memberships[0].Owner, _node) ||
-                !ReferenceEquals(memberships[0].Collection, _componentList))
+                !ReferenceEquals(memberships[0].Collection, _componentList) ||
+                !ReferenceEquals(component.World, _sourceWorld))
                 throw new InvalidOperationException("A registered component has a foreign or duplicate list owner.");
             objects.Add(component);
             identities.Add(identity);
@@ -143,7 +173,10 @@ internal sealed class DetachedLeafRetirementReceipt
                 throw new InvalidOperationException("The detached leaf changed lifetime.");
         if (_node.HasEnteredRootCollection || _node.HasEnteredStructuralList ||
             _transform.HasEnteredStructuralList ||
-            _node.World is not null || _transform.World is not null ||
+            !ReferenceEquals(_node.World, _sourceWorld) ||
+            !ReferenceEquals(_transform.World, _sourceWorld) ||
+            !ReferenceEquals(_transform.HierarchyStore, _sourceStore) ||
+            _transform.HierarchyHandle != _sourceHandle ||
             !ReferenceEquals(_node.OwnedRetirementTransform, _transform) ||
             !ReferenceEquals(_transform.OwnedRetirementNode, _node) ||
             _transform.OwnedRetirementParent is not null ||
@@ -153,7 +186,7 @@ internal sealed class DetachedLeafRetirementReceipt
             _node.CaptureRuntimeRootMemberships().Length != 0 ||
             _node.CaptureHierarchyListMemberships().Length != 0 ||
             _transform.CaptureHierarchyListMemberships().Length != 0 ||
-            _transform.HierarchyStore is not null)
+            (_sourceWorld is null && _transform.HierarchyStore is not null))
             throw new InvalidOperationException("The retirement receipt requires an exact detached leaf.");
     }
 }

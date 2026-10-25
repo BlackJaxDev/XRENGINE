@@ -575,3 +575,74 @@ or skips. Desktop build54 compiled the editor and tests with zero warnings/error
 in 3m39.35s. All 10,812 source inputs stayed unchanged through final validation.
 The broader reconciliation remains 50/60. Live-world preparation, guarded parent
 removal, menu integration, and platform acceptance remain open.
+
+## Live Leaf Preparation And Inspector Float Curves
+
+The next candidate extends the same retirement executor with exact source-world
+removal for registered, never-adopted leaves. The old null-world receipt and clone
+admission remain strict. Lifecycle callbacks run while the source world is still
+available. World and store removal retain entered, committed, and completed
+progress; failures cannot replay notifications. Parent/root detachment and live
+menu integration remain outside this increment.
+
+Read-only review found two regressions before compilation: capturing the current
+world in each entry had weakened clone admission, and a rejected nested world
+setter could dispose the outer removal permit. Explicit null-world/store admission
+and disposal only after successful permit entry repair those paths. New cases
+cover strict clone admission, caught nested world writes, real transform-store
+detachment, and failures before or after world/store commits.
+
+The inspector candidate fills the empty PropAnimFloat detail route. It uses the
+existing retained plot, virtual table, and shared animation transaction. Shared
+references are edited once; distinct selected curves remain unavailable. Review
+removed idle document-resolution allocations and added exact time/frame checks
+for inserted keys after callbacks. The editor test cases require the existing
+Windows test target; portable results will not count those cases as executed.
+
+Headless build199 ran on 10,821 frozen source inputs and failed with zero warnings
+and one CS0234 error in 2m56.19s. The new test referenced the Jitter physics
+namespace, which the portable project does not include. The test now uses the
+existing HierarchyTestPhysicsScene to exercise the actual RuntimeWorld hierarchy
+store without a new project dependency. The broader reconciliation remains 50/60.
+
+The inspector review also added a refresh reentry guard, source revisions after
+UI writes, explicit plot-source release, visible field labels, and rejection of
+unavailable tracks. Build200 passed with zero warnings/errors in 22.89s. Run139
+passed all 53 targeted cases in 0.314s: 10 live-world leaf cases, 15 original
+leaf cases, and 28 guarded creation cases. Full run140 passed **1,233/1,233**
+portable tests in 23.586s, with no failures, warnings, or skips. Matching desktop
+build55 follows on the same frozen source. No new editor case has executed here.
+
+Desktop build55 failed with three warnings and 11 errors in 2m50.26s. The new
+inspector source used XRObjectBase lifetime members on XRBase and KeyframeTrack.
+The fix must check lifecycle identities only for objects that own them, keep
+exact non-null track/reference checks, and remove the invalid track destruction
+assumption. Portable tests do not compile this editor-only source.
+
+Desktop build56 compiled the editor and test project in 1m47.53s, with zero errors
+and three nullable warnings in the new inspector tests. The candidate remains
+unpublished while those warnings and an attached-transition ownership gap are
+fixed. Transition properties belong through a state/layer/machine chain; checking
+only the curve reference would miss transfer and state-machine dirty state. The
+new adapter must retain that chain and its source document, and reject incomplete
+attached ownership. Two additional live-leaf cases cover a World veto and a stop
+callback that throws after a side effect. They have not run at this point.
+
+The transition adapter now retains exact state/layer/machine lists, indexes,
+counts, identities, and the machine source document. Its fast check is bounded
+and nonallocating; command checks also verify unique membership. Detached owners
+must remain detached. Incomplete attached chains and AnyState ownership are
+unavailable. Four pure owner-chain cases are linked into the portable project.
+Test fixtures use the canonical Transitions setter to establish ownership; no
+unrelated animation constructor behavior was changed. Build201 starts on 10,823
+frozen inputs. The editor action/history cases remain Windows-targeted.
+
+Build201 passed with zero warnings/errors in 21.91s. Run141 passed all 59 targeted
+cases in 0.411s, including the 12 live-world cases and four portable transition
+ownership cases. Full run142 passed **1,239/1,239** in 30.355s, without failures,
+warnings, or skips. Desktop build57 passed with zero warnings/errors in 1m20.67s.
+All 10,823 source inputs stayed unchanged through final validation. Nine new
+inspector action/history cases compiled but did not execute on this Linux host.
+The five maintained documents have 39 resolving relative links; diff checks pass.
+The bounded contracts are ready for publication. Parent/root transitions, live
+menu integration, distinct-curve editing, and platform acceptance remain open.

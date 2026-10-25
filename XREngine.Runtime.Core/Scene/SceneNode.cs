@@ -600,6 +600,12 @@ namespace XREngine.Scene
                             return false;
                         break;
                     case nameof(World):
+                        if (ActiveWorldRemovalPermit is { } worldRemoval)
+                        {
+                            worldRemoval.Retirement.StopLifecycle(this, EOwnedHierarchyLifecycle.Deactivate);
+                            worldRemoval.Validate();
+                            break;
+                        }
                         if (field is IRuntimeWorldContext previousWorld &&
                             !previousWorld.IsPlaySessionActive &&
                             IsActiveInHierarchy)
@@ -630,6 +636,11 @@ namespace XREngine.Scene
                         OnDeactivated();
                     break;
                 case nameof(World):
+                    if (ActiveWorldRemovalPermit is { } worldRemoval)
+                    {
+                        worldRemoval.Validate();
+                        break;
+                    }
                     Transform.World = World;
                     if (World is not null)
                     {

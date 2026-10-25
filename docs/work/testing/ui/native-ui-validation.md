@@ -32,10 +32,25 @@ the previously selected file and check that asset inspection returns. Check that
 one click does not start two asset loads. Repeat after panel deactivate/reactivate,
 rebuild, and transfer. These native interaction checks remain pending.
 
+### Float animation inspector acceptance
+
+On Windows, open a getter-only transform animation curve and a transition custom
+blend curve in the native inspector detail view. Select a key and edit time/value.
+Add and remove keys, set length, and stretch length. Undo and Redo each operation,
+including consecutive edits. Verify frame indices, synchronized handles, source
+dirty state, and unchanged playback time. Repeat with shared selected references;
+distinct selected curves must report that editing is unavailable.
+
+Change keys and replace the curve or track externally. The detail must refresh,
+release old subscriptions, and reject stale commands/history. Close or rebuild
+the inspector during refresh and input callbacks. Check keyboard focus, labels,
+large-table scrolling, the displayed 8,192-key limit, and plot resize. These live
+checks remain pending. Compiling the editor cases does not execute them on Linux.
+
 ### Managed integration evidence
 
-Latest continuation check (2026-10-25): headless build198 passed with zero
-warnings/errors, and run138 passed **1,223/1,223** tests with no failures or skips.
+Latest continuation check (2026-10-25): headless build201 passed with zero
+warnings/errors, and run142 passed **1,239/1,239** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
@@ -54,9 +69,15 @@ exact list admission, world writes, publication history, and one-attempt cleanup
 These tests validate a prerequisite; menu child integration and full retirement
 remain open. Eight menu cases cover setup cancellation and exception preservation.
 Fifteen initial-leaf cases cover explicit retirement, adoption history, reserved
-factory admission, resources, and retained failures. Desktop test build54
-compiled the final editor and test assembly with zero warnings/errors. All 10,812
-source inputs stayed unchanged through the final desktop build and portable run.
+factory admission, resources, and retained failures. Twelve live-world leaf cases
+cover source visibility, exact world/store removal, vetoes, exceptions, nested
+writes, and strict clone admission. Four transition-owner cases check exact
+state-machine membership and source documents, including zero allocations in
+1,024 warmed fast checks. Desktop test build57 compiled the final editor and
+test assembly with zero warnings/errors. All 10,823 source inputs stayed unchanged
+through the final desktop build and portable run. Nine new float inspector action
+cases compiled but did not execute; their Undo and UI behavior still needs Windows
+validation.
 Six new AssetsPanelSelectionTests cases compiled but did not execute. A desktop
 test probe executed zero tests because NUnit reports `Only supported on Windows7.0`.
 The portable suite excludes AssetsPanel and does not validate these editor cases.
