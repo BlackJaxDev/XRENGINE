@@ -69,6 +69,29 @@ public class NativeDockLayoutTests
         });
     }
 
+    [TestCase(-1)]
+    [TestCase(10_000)]
+    public void Sanitize_RepairsAnUnknownProfilerView(int view)
+    {
+        NativeDockLayout layout = new() { ProfilerView = view };
+
+        layout.Sanitize();
+
+        Assert.That(layout.ProfilerView, Is.EqualTo((int)ENativeProfilerView.CpuTimings));
+    }
+
+    [Test]
+    public void ProfilerView_SurvivesSerializationAndSanitize()
+    {
+        NativeDockLayout layout = new() { ProfilerView = (int)ENativeProfilerView.FpsSpikes };
+
+        NativeDockLayout? restored = System.Text.Json.JsonSerializer.Deserialize<NativeDockLayout>(
+            System.Text.Json.JsonSerializer.Serialize(layout));
+
+        Assert.That(restored, Is.Not.Null);
+        Assert.That(restored!.Sanitize().ProfilerView, Is.EqualTo((int)ENativeProfilerView.FpsSpikes));
+    }
+
     [Test]
     public void LegacyLayout_MigratesToVersionedTreeWithoutLosingPanelState()
     {

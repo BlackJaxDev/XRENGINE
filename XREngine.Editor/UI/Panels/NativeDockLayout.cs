@@ -12,6 +12,8 @@ public sealed class NativeDockLayout
     public bool UseEngineAssets { get; set; }
     public string AssetSearch { get; set; } = string.Empty;
     public string ConsoleFilter { get; set; } = string.Empty;
+    /// <summary>Stores the selected native profiler view as its enum value.</summary>
+    public int ProfilerView { get; set; }
     public NativeDockTree? DockTree { get; set; }
 
     public NativeDockLayout Sanitize()
@@ -28,6 +30,8 @@ public sealed class NativeDockLayout
         AssetFolder ??= string.Empty;
         AssetSearch ??= string.Empty;
         ConsoleFilter ??= string.Empty;
+        if (!Enum.IsDefined((ENativeProfilerView)ProfilerView))
+            ProfilerView = (int)ENativeProfilerView.CpuTimings;
         SelectedTab = Math.Clamp(SelectedTab, 0, 3);
         if ((OpenMask & (1 << SelectedTab)) == 0)
         {

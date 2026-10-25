@@ -36,7 +36,7 @@ See the [investigation record](../../investigations/ui/retained-ui-integration.m
 for intermediate failures and repairs. Windows, OpenGL/Vulkan, visual, IME, native
 resource, benchmark, and equal-workload ImGui acceptance remain open.
 
-## Hierarchy Promotion And Spawn Validation (2026-10-25)
+## Hierarchy And Panel State Validation (2026-10-25)
 
 This run checks that moving the first editor-only child to the root allocates the
 editor scene, and that asset drops accept a parent in a hidden scene. These editor
@@ -46,6 +46,7 @@ changes have no headless test path.
 |---|---|---|
 | `TheFirstPromotedEditorChildAllocatesTheEditorScene` | Compiled with 0 warnings and 0 errors. Not executed. | On Linux, VSTest discovers no tests in the Windows desktop test assembly. Run the test on Windows. |
 | `NativeHierarchyAssetSpawnTests` | Compiled with 0 warnings and 0 errors. Not executed. The tests check that a prefab spawns under a hidden-scene parent, stays out of the world, and supports undo and redo. They also check that destroyed and foreign parents are rejected. | Same VSTest discovery limit. Run the tests on Windows. Model drops use the same target check but have no test. |
+| Profiler view persistence | Headless passed: `NativeDockLayoutTests` checks that unknown stored views fall back to CPU Timings and that a view survives JSON and sanitize. Full headless suite passed 1048/1048. The panel restore path compiled with 0 warnings and 0 errors. | The panel restore and save callbacks did not run. Check them in the editor on Windows. |
 | Hierarchy menu parity | Source review: the native node menu has Rename, Add Child, Focus Camera, Duplicate, Deep Duplicate, and Delete. The scene menu has the visibility toggle and Unload Scene. These match the ImGui menus. | No native interaction was run. |
 
 ## Text Pointer Caret Validation (2026-10-25)

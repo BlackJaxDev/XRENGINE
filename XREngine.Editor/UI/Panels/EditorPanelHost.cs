@@ -122,6 +122,7 @@ public static class EditorPanelHost
         assetsPanel.Folder = layout.AssetFolder;
         assetsPanel.Search = layout.AssetSearch;
         consolePanel.Filter = layout.ConsoleFilter;
+        profilerPanel.View = (ENativeProfilerView)layout.ProfilerView;
         for (int i = 0; i < panelComponents.Length; i++)
         {
             int panelIndex = i;
@@ -140,6 +141,7 @@ public static class EditorPanelHost
             Save();
         };
         consolePanel.FilterChanged += filter => { layout.ConsoleFilter = filter; Save(); };
+        profilerPanel.ViewChanged += view => { layout.ProfilerView = (int)view; Save(); };
 
         string[] titles = ["Assets", "Console", "Profiler", "Animation"];
         NativeDockWindowRegistration windowRegistration =

@@ -43,6 +43,23 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
     private string? _selectedCpuRootName;
     private ProfilerScopeKind _selectedCpuRootKind;
 
+    /// <summary>Raised after the selected profiler view changes.</summary>
+    internal event Action<ENativeProfilerView>? ViewChanged;
+
+    /// <summary>
+    /// Gets or sets the selected profiler view. A host can set it before the panel
+    /// activates to restore the view after a rebuild.
+    /// </summary>
+    internal ENativeProfilerView View
+    {
+        get => _rows.View;
+        set
+        {
+            if (!_terminal && Enum.IsDefined(value))
+                ApplyView(value);
+        }
+    }
+
     internal float RootMinimumMilliseconds => _rootMinimumMilliseconds;
     internal float RootMaximumMilliseconds => _rootMaximumMilliseconds;
     internal bool IsRootViewCurrent => IsProfilerOwnerCurrent && _rows.View == ENativeProfilerView.CpuRoots;
@@ -110,6 +127,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
     {
         _terminal = true;
         _ownerActive = false;
+        ViewChanged = null;
         _settingsOwner = null;
         _settingsOwnerRevision++;
         _diagnosticScratch.Clear();
@@ -309,7 +327,11 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         if (_terminal || !_ownerActive || !IsActiveInHierarchy || change.NewValue is not { } id ||
             id == 0 || id > (ulong)ViewOptions.Length)
             return;
-        ENativeProfilerView view = (ENativeProfilerView)(id - 1);
+        ApplyView((ENativeProfilerView)(id - 1));
+    }
+
+    private void ApplyView(ENativeProfilerView view)
+    {
         int previousCount = _rows.Count;
         if (!_rows.SelectView(view)) return;
         _rootViewRevision++;
@@ -321,7 +343,10 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         _invokesValid = false;
         _fpsViewInitialized = false;
         if (_viewLabel is not null) _viewLabel.Text = ViewLabel(view);
-        if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
+        // The combo callback re-enters here and stops at the unchanged row view.
+        _viewCombo?.Select((ulong)view + 1);
+        ViewChanged?.Invoke(view);
+        if (_terminal || !_ownerActive || !IsActiveInHierarchy || _rows.View != view) return;
         if (!_paused || view is ENativeProfilerView.Settings or ENativeProfilerView.FpsSpikes)
             CaptureSelectedView();
         SignalRowsChanged(previousCount);
