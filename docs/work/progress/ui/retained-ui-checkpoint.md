@@ -1705,3 +1705,22 @@ No CI checks or workflows are attached. The revised Animation draft remains stas
 and unpublished. Its toolbar source defects and bounded source/test plan are in the
 [continuation investigation](../../investigations/ui/native-ui-continuation-comparison.md#guarded-animation-toolbar-publication-plan).
 Its 17 portable value/routing cases do not establish actual panel or host acceptance.
+
+## Guarded shared text publication
+
+Shared input and display controls now provide opt-in guarded text writes. They
+retain exact component membership and caller admission through callbacks, stop
+stale caret/display writes, and preserve newer edits. Fresh unsuppressed no-op
+calls repair derived caret/selection/display state. Ordinary notification behavior
+and suppression remain intact. Caller parent/transform proof and renderer rollback
+remain outside this bounded API.
+
+The focused run passes **29/29**, and the full portable suite passes
+**1,474/1,474**, with no failures, warnings, or skips. Headless and editor/test
+builds have zero warnings/errors. All **10,890 source inputs** stayed unchanged.
+The no-op recovery case first failed, then passed after the shared-effects fix.
+
+Animation toolbar adoption and actual host compensation remain the next separate
+slice. The unsafe draft stays preserved; it is not included in this checkpoint.
+Windows execution remains blocked by validation-disk capacity and pending cleanup
+approval. No platform acceptance is closed, and the reconciliation remains **51/60**.

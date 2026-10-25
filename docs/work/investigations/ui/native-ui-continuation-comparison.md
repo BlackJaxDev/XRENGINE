@@ -1442,3 +1442,47 @@ from portable tests or managed compilation.
 Windows revalidation remains held by disk capacity and pending targeted cleanup
 approval. No additional laptop operation is part of this plan. The original
 implementation reconciliation remains 51/60; this plan closes no code item.
+
+## Guarded shared text writes
+
+The shared controls now provide opt-in `SetTextGuarded` methods. The input path
+retains the existing display sibling before callbacks, along with text, caret,
+focus, and formatting intent. It rejects detached components and retired nodes,
+including a node already queued at entry. Nested ordinary edits keep their normal
+behavior and invalidate the older guarded attempt. Equal-value attempts also
+invalidate it. The display component checks its own caller proof before its field
+write and after notifications. These changes reuse `XRBase.SetFieldValidated`;
+they do not replace the base event system.
+
+Review required explicit membership checks because `DetachComponent` can leave the
+component's `SceneNode` pointer intact. It also required distinguishing an actual
+reference no-op from a veto of an equal-content, distinct string. Suppressed calls
+retain normal notification suppression and do not update caret/display fields.
+
+Build242 compiled production code but found two errors in the new fixture: a
+conditional expression without a common target type and a missing transform
+namespace. After those test corrections, test-only build243 passed with zero
+warnings/errors (11.53s). Focused run194 passed 28/29 cases (0.834s). Its only
+failure reproduced a recovery gap: an earlier text change could commit while a
+caret callback rejected its clamp. A fresh guarded request for the same text then
+left cursor8 instead of clamping to5. The test retained its assertions.
+
+`PublishGuardedTextEffects` now provides one validated caret, selection, and display
+sequence for changed text and fresh unsuppressed no-op recovery. It raises no extra
+input Text notification, and a no-op still returns false. Build244 passed with zero
+warnings/errors (1m34.51s). Run195 passed **29/29** focused cases (0.822s); full run196
+passed **1,474/1,474** portable cases (22.388s), with zero failures, warnings, or skips.
+Read-only review found no remaining blocker in this bounded field-publication
+contract. Parent/transform ownership remains the caller's responsibility. Renderer
+allocation and rollback are not made transactional by this guard.
+
+The Animation integration remains separate from this shared-control checkpoint.
+Its preserved draft is not restored wholesale, and its ordinary toolbar refresh
+tail must be replaced before publication. Actual host compensation and Windows
+input execution remain pending. The shared-control tests are not evidence for
+those paths or for the original Windows row-realization stalls.
+
+Desktop build77 compiled the editor and tests with zero warnings/errors (2m59.97s).
+All **10,890 source inputs** remained unchanged through build244, runs195/196, and
+desktop build77. Source review and `git diff --check` passed. No Windows test,
+graphics, IME, or performance acceptance is implied by this compilation.

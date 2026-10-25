@@ -245,19 +245,38 @@ namespace XREngine.Rendering.UI
         public string Text
         {
             get => _text;
-            set => SetField(ref _text, value);
+            set
+            {
+                ++_textWriteIntentRevision;
+                Action? previousAdmission = _activeTextWriteAdmission;
+                _activeTextWriteAdmission = null;
+                try { SetField(ref _text, value); }
+                finally
+                {
+                    if (_activeTextWriteAdmission is null)
+                        _activeTextWriteAdmission = previousAdmission;
+                }
+            }
         }
         private string _preText = string.Empty;
         public string PreText
         {
             get => _preText;
-            set => SetField(ref _preText, value);
+            set
+            {
+                ++_displayFormattingRevision;
+                SetField(ref _preText, value);
+            }
         }
         private string _postText = string.Empty;
         public string PostText
         {
             get => _postText;
-            set => SetField(ref _postText, value);
+            set
+            {
+                ++_displayFormattingRevision;
+                SetField(ref _postText, value);
+            }
         }
 
         private bool _singleLineMode;
@@ -1273,15 +1292,26 @@ namespace XREngine.Rendering.UI
             get => _cursorPosition;
             set
             {
-                if (SetField(ref _cursorPosition, SnapGraphemeBoundary(value.Clamp(0, Text.Length))))
+                ++_caretWriteIntentRevision;
+                Action? previousAdmission = _activeTextWriteAdmission;
+                _activeTextWriteAdmission = null;
+                try
                 {
-                    _visualCaretLayout = null;
-                    _visualCaretAffinity = UITextCaretAffinity.Downstream;
-                    if (!_movingCaretVertically)
+                    if (SetField(ref _cursorPosition, SnapGraphemeBoundary(value.Clamp(0, Text.Length))))
                     {
-                        _preferredCaretX = null;
-                        _verticalVisualLine = null;
+                        _visualCaretLayout = null;
+                        _visualCaretAffinity = UITextCaretAffinity.Downstream;
+                        if (!_movingCaretVertically)
+                        {
+                            _preferredCaretX = null;
+                            _verticalVisualLine = null;
+                        }
                     }
+                }
+                finally
+                {
+                    if (_activeTextWriteAdmission is null)
+                        _activeTextWriteAdmission = previousAdmission;
                 }
             }
         }
@@ -1291,7 +1321,18 @@ namespace XREngine.Rendering.UI
         public int SelectionAnchor
         {
             get => _selectionAnchor;
-            set => SetField(ref _selectionAnchor, SnapGraphemeBoundary(value.Clamp(0, Text.Length)));
+            set
+            {
+                ++_caretWriteIntentRevision;
+                Action? previousAdmission = _activeTextWriteAdmission;
+                _activeTextWriteAdmission = null;
+                try { SetField(ref _selectionAnchor, SnapGraphemeBoundary(value.Clamp(0, Text.Length))); }
+                finally
+                {
+                    if (_activeTextWriteAdmission is null)
+                        _activeTextWriteAdmission = previousAdmission;
+                }
+            }
         }
 
         public int SelectionStart => Math.Min(SelectionAnchor, CursorPosition);
@@ -1390,6 +1431,8 @@ namespace XREngine.Rendering.UI
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            Action? textAdmission = propName == nameof(Text) ? _activeTextWriteAdmission : null;
+            Action? displayAdvance = propName == nameof(Text) ? _activeDisplayTextAdvance : null;
             // The base implementation raises PropertyChanged, so advance the IME token
             // before the input host observes this transition.
             if (!_terminal && !IsDestroyed && !IsDestroyQueued &&
@@ -1400,18 +1443,24 @@ namespace XREngine.Rendering.UI
                     CancelComposition();
             }
             base.OnPropertyChanged(propName, prev, field);
+            textAdmission?.Invoke();
             if (_terminal || IsDestroyed || IsDestroyQueued)
                 return;
             switch (propName)
             {
                 case nameof(Text):
-                    _preferredCaretX = null;
-                    _verticalVisualLine = null;
                     //Re-validate cursor position
-                    CursorPosition = _cursorPosition;
-                    SelectionAnchor = _selectionAnchor;
+                    if (textAdmission is null)
+                    {
+                        _preferredCaretX = null;
+                        _verticalVisualLine = null;
+                        CursorPosition = _cursorPosition;
+                        SelectionAnchor = _selectionAnchor;
+                    }
+                    else
+                        PublishGuardedTextEffects(textAdmission, displayAdvance!);
                     // YAML assigns input properties before the owning node is attached.
-                    if (SceneNode is not null)
+                    if (textAdmission is null && SceneNode is not null)
                         TextComponent.Text = IsFocused ? Text : FormatText(Text);
                     break;
                 case nameof(CursorPosition):

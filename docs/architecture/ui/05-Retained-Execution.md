@@ -97,6 +97,26 @@ override, icon lookup retains its Windows system-font path and bitmap fallback.
 `UITestShaderScope` supplies text and icon metrics explicitly, so retained-control
 fixtures do not need a cold system-font import to realize rows.
 
+`UITextInputComponent.SetTextGuarded` and `UITextComponent.SetTextGuarded` provide
+owner-thread text publication for callers that retain an explicit ownership proof.
+They reuse `XRBase.SetFieldValidated`. Every text-write attempt advances a
+nonserialized intent revision, including ordinary and equal-value attempts. A
+guard rejects newer callback writes, lost component membership, and retired owner
+nodes. The input guard also captures its existing display sibling, caret intent,
+focus epoch, and formatting inputs before callbacks can change them. Callers remain
+responsible for parent/transform and application-state ownership checks.
+
+Guarded input publication validates caret, selection, and display-text writes in
+order. A fresh unsuppressed call with unchanged text also repairs those derived
+values, without another input Text notification. Suppressed calls validate the
+input write but do not publish caret/display effects. Rejection stops later work;
+it does not roll back an earlier accepted field write or a callback's newer state.
+Ordinary setters keep their notification behavior and add no per-call allocation.
+Guarded calls allocate temporary closure state and are intended for bounded
+owner-driven transitions, not frame update loops. Renderer allocation and custom
+render callbacks retain their existing contracts; this API does not provide
+atomic renderer rollback.
+
 `FontGlyphSet.LayoutSnapshot` copies glyph metrics into numeric inputs.
 `UITextLayoutKernel` returns immutable glyph placements, intrinsic size, and
 UTF-16 caret stops. Caret stops follow grapheme boundaries and include whitespace

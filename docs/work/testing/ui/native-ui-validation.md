@@ -707,3 +707,21 @@ blocker is resolved, run the unchanged hierarchy tests on the scoped-font snapsh
 and retain their original limits and assertions. A separate system-font import
 diagnostic is still needed to attribute the original row-realization stalls.
 The explicit test input does not validate or repair that import path.
+
+### Guarded text publication
+
+The portable `UITextGuardedWriteTests` fixture has 29 passing cases. It exercises
+input and display writes, nested edits, same-value attempts, vetoes, component
+detachment, queued/destroyed owners, later caret/display callbacks, suppression,
+and recovery after a partial write. A recovery case first failed with cursor8
+instead of5, then passed after the shared guarded-effects repair. The full portable
+suite passes **1,474/1,474** with no failures, warnings, or skips.
+
+These tests establish the bounded text/caret/display-field contract. They do not
+establish atomic renderer rollback or supply the caller's parent/transform proof.
+Animation toolbar pairing, real-host transfer/compensation, and Windows input
+acceptance require separate checks. The original Windows stalls remain open.
+
+Headless build244 and editor/test build77 both passed with zero warnings/errors.
+All **10,890 source inputs** stayed unchanged through the focused/full portable
+runs and editor/test compilation. The editor test assembly was not executed here.

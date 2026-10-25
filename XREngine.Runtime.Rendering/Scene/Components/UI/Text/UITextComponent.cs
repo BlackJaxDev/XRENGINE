@@ -199,7 +199,18 @@ namespace XREngine.Rendering.UI
         public string? Text
         {
             get => _text;
-            set => SetField(ref _text, value);
+            set
+            {
+                ++_textWriteIntentRevision;
+                Action? previousAdmission = _activeTextWriteAdmission;
+                _activeTextWriteAdmission = null;
+                try { SetField(ref _text, value); }
+                finally
+                {
+                    if (_activeTextWriteAdmission is null)
+                        _activeTextWriteAdmission = previousAdmission;
+                }
+            }
         }
 
         private FontGlyphSet? _font;
@@ -665,7 +676,9 @@ namespace XREngine.Rendering.UI
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            Action? textAdmission = propName == nameof(Text) ? _activeTextWriteAdmission : null;
             base.OnPropertyChanged(propName, prev, field);
+            textAdmission?.Invoke();
             // YAML assigns properties before ComponentsSerialized gives the component an owner.
             // OnComponentActivated builds the authored text after its transform is wired.
             if (SceneNode is null)
@@ -766,6 +779,7 @@ namespace XREngine.Rendering.UI
                     }
                     break;
             }
+            textAdmission?.Invoke();
         }
 
         #endregion
