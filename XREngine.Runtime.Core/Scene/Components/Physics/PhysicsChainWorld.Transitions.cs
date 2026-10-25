@@ -38,6 +38,7 @@ public sealed partial class PhysicsChainWorld
         private readonly List<PhysicsChainComponent> _participants;
         private readonly HashSet<XRWorldObjectBase> _allowedObjects;
         private readonly Dictionary<TransformBase, HashSet<TransformBase>> _allowedChildLists;
+        private CanonicalTransformUnlinkPermit? _canonicalUnlink;
         private bool _allowChildDetach;
         private int _depth = 1;
 
@@ -76,7 +77,38 @@ public sealed partial class PhysicsChainWorld
             IRuntimeWorldContext? newWorld)
             => _allowedObjects.Contains(target)
                 && (ReferenceEquals(newWorld, TargetWorld)
-                    || (_allowChildDetach && newWorld is null));
+                    || (_allowChildDetach && newWorld is null)
+                    || _canonicalUnlink?.TryConsume(target, newWorld) == true);
+
+        internal CanonicalTransformUnlinkPermit BeginCanonicalUnlink(
+            SceneNode owner, TransformBase oldTransform, IRuntimeWorldContext oldWorld)
+        {
+            if (!RequiresCanonicalUnlink(owner, oldTransform, oldWorld) ||
+                _canonicalUnlink is not null ||
+                !ReferenceEquals(owner.OwnedRetirementTransform, oldTransform) ||
+                oldTransform.OwnedRetirementNode is not null ||
+                !ReferenceEquals(oldTransform.World, oldWorld) ||
+                oldTransform.OwnedRetirementChildren is not { Count: 0 })
+                throw new InvalidOperationException("The world transfer does not own this exact old transform unlink.");
+            return _canonicalUnlink = new(this, oldTransform);
+        }
+
+        internal bool RequiresCanonicalUnlink(
+            SceneNode owner, TransformBase oldTransform, IRuntimeWorldContext? oldWorld)
+        {
+            if (oldWorld is null || TargetWorld is null || _allowChildDetach)
+                return false;
+            if (!ReferenceEquals(oldWorld, TargetWorld) ||
+                !_allowedObjects.Contains(owner) || !_allowedObjects.Contains(oldTransform))
+                throw new InvalidOperationException("The active world transfer does not own this transform.");
+            return true;
+        }
+
+        internal void EndCanonicalUnlink(CanonicalTransformUnlinkPermit permit)
+        {
+            if (ReferenceEquals(_canonicalUnlink, permit))
+                _canonicalUnlink = null;
+        }
 
         public bool AllowsChildListChange(TransformBase parent, TransformBase child)
             => _allowedChildLists.TryGetValue(parent, out HashSet<TransformBase>? children)
@@ -223,6 +255,17 @@ public sealed partial class PhysicsChainWorld
         }
         return BeginMutation(target, oldWorld, newWorld, null);
     }
+
+    internal static CanonicalTransformUnlinkPermit? BeginCanonicalTransformUnlink(
+        SceneNode owner, TransformBase oldTransform, IRuntimeWorldContext? oldWorld)
+        => s_activeWorldMutation is { } active && oldWorld is not null &&
+            active.RequiresCanonicalUnlink(owner, oldTransform, oldWorld)
+            ? active.BeginCanonicalUnlink(owner, oldTransform, oldWorld)
+            : null;
+
+    internal static bool RequiresCanonicalTransformUnlink(
+        SceneNode owner, TransformBase oldTransform, IRuntimeWorldContext? oldWorld)
+        => s_activeWorldMutation?.RequiresCanonicalUnlink(owner, oldTransform, oldWorld) == true;
 
     /// <summary>
     /// Starts before Parent changes any child list or field.

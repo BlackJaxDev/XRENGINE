@@ -5,6 +5,9 @@ namespace XREngine.Scene.Transforms;
 
 public abstract partial class TransformBase
 {
+    internal void ClearWorldForCanonicalUnlink(Action? validate)
+        => SetWorldValue(null, validate);
+
     private void RequireChangedParent(TransformBase? expected)
     {
         if (!ReferenceEquals(_parent, expected))

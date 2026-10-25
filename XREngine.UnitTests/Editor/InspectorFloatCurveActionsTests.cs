@@ -642,7 +642,11 @@ public sealed class InspectorFloatCurveActionsTests
             PropAnimFloat curve = new(2, false, true);
             FloatKeyframe key = new(12, 24, 2, 4, 0, 0,
                 EVectorInterpType.Smooth);
+            key.SyncInOutValues = false;
+            key.InValue = 2;
             curve.Keyframes.Add(key);
+            Assert.That((key.Second, key.AuthoredFrameIndex, key.InValue,
+                key.OutValue), Is.EqualTo((0.5f, 12, 2f, 4f)));
             InspectorFloatCurveTestOwner owner = new() { Curve = curve };
             var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
                 nameof(InspectorFloatCurveTestOwner.Curve))!;

@@ -1197,3 +1197,105 @@ tests with zero warnings/errors in 2m52.89s. All 10,874 source inputs remained
 unchanged. Ten new real-panel/host cases compiled only. Source review found no
 remaining blocker in this bounded transfer contract. Relative-link and diff
 checks passed. Windows execution and live multi-window acceptance remain pending.
+
+## Windows fixture failures and local reproduction
+
+A separate Windows 11 run used .NET SDK 10.0.401 and frozen commit
+`63af584ce0e2e4278bd57b9efddad2ff259b6c77`. The managed build passed with zero
+warnings and errors. Across several runs, 301 distinct cases completed; their
+latest outcomes were 272 passed and 29 failed. Twelve cases did not complete.
+This was test-host execution, not editor, GPU, IME, or visual acceptance. It did
+not cover the ten newer tool-state cases at `8bde3d635`.
+
+The focused runs used the build wrapper, `--no-build --no-restore`, NUnit worker
+count zero, and a 180-second session limit. Isolated runs also used the 30-second
+blame-hang inactivity limit without dumps. No assertion, timeout, or platform
+check was changed. Tool-panel state (2/2) and asset selection (6/6) passed.
+
+| Failure group | Frozen-source evidence and next check |
+|---|---|
+| Hierarchy menus and animation admission | All 15 menu cases and the isolated animation admission case rejected `World = null` in `SceneNode.UnlinkTransform`, through `PhysicsChainWorld.BeginWorldObjectMutation`. Panel activation attaches a child before replacing its default transform. These shared methods are unchanged between the Windows snapshot and `8bde3d635`. Validate an exact old-transform unlink permission, with unrelated world mutations still rejected. |
+| Grouped clone retirement | Both isolated grouped cases completed clone, Undo, Redo, and Undo, then retained custody after `Undo.ClearHistory`. A second Windows run added only four diagnostic output statements. Both unchanged assertions failed with `Owned storage changed lifetime during cleanup`, at `OwnedHierarchyRetirement.Validate`, immediately after debug-handle disposal in `TransformBase.DestroyOwnedHierarchy`. Source review identifies the render-info command list captured in the hierarchy construction receipt. Validate separate debug-handle ownership with the real runtime service. |
+| Ordinary queued teardown | Some hidden-scene and clone cases failed teardown at `TransformBase.OnDestroying` calling `EventList.Clear`. The stack does not identify which exact-authority condition failed. A portable baseline separately reproduces rejection of removal from a queued owner. Use the existing removal admission for removal operations; keep add and replacement admission unchanged. Windows reruns must determine whether this also resolves the run-composition failure. It is not proof of the earlier custody cause. |
+| Private asset alias | Canonical clone deserialization skipped the private property that contained the first asset anchor. The writer included nonpublic properties, but the reader did not. Match reader discovery to the existing writer and check private-only and inherited/shared alias roundtrips without changing the format. |
+| Float key Undo fixture | The fixture's constructor synchronized incoming value 2 to outgoing value 4 before removal. Author distinct values explicitly and assert them before removal as well as after Undo. |
+| Detail retirement fixtures | The callback watched a child list that `EnsureVerticalLayout` replaced before the first card. Follow the current transform and retain the first-card retirement assertions. |
+| Enum binding retirement | A pre-change callback disposed the pending editor binding before the combo read it. Clear only the exact retired binding after its field commit so the combo's existing revision check rejects the stale continuation. Keep disposed-binding access invalid. |
+| String detail sizing | The original test also failed locally at line 67. A single request can reject a stale capture; the host must continue the request/pump loop. Driving that loop exposed a second failure on reactivation: fixed-size text rebuilt its local result without invalidating the canvas, leaving its accepted page stale. Preserve valid accepted text on activation and request measure after a necessary local rebuild. |
+| Hierarchy lifetime/navigation stalls | The active cases were `ActivationDuringStopWaitsUntilTheRowSubtreeCanBeRebuilt` and `CancelledNavigationDoesNotSelectOnLaterPointerFocus`. No hang stack was captured. Read-only review found no proven unbounded loop. These require isolated reruns with step diagnostics or thread stacks; do not increase timeouts to pass them. |
+
+Local diagnostic build230 compiled the existing string fixture and its production
+sizing component into the portable runner: zero warnings/errors, 2m56.83s.
+Run179 reproduced the line-67 timeout (0/1 passed, 5.781s). Test-only builds231
+and232 used the already built project references. Run180 recorded an invalidated
+canvas with no pending/running task and a required full capture. Run181 drove the
+normal host loop and reached the reactivation timeout at line 70 with an idle
+canvas. Build233 and run182 required a current accepted text result; the same
+reactivation failure remained. These are diagnostic snapshots, not validation of
+the later source fixes. The five-second bound remained unchanged.
+
+The unfinished animation view-transfer work remains separate in local stash
+`95deb905c50084b4618aa1fe0ef9f04c46e80607`, with an ignored patch/archive copy.
+It was not built or published and is not part of this repair checkpoint.
+
+Test-only build234 found two compiler errors in a new test's standalone null-forgiving
+expression. Assigning its result to a discard fixed that setup error. Build235
+passed with zero warnings/errors (11.87s), against the unchanged production
+references from build230. Separate fresh-process baseline runs produced:
+
+- Run183: world-unlink fixture 3/10 passed. All five positive creation cases
+  reproduced the reported world-transfer exception, including actual activation,
+  required transforms, and a registered physics scheduler.
+- Run184: queued-transform fixture 2/3 passed. Explicit removal from a queued
+  owner reproduced the exact-authority rejection. Ordinary queue draining passed.
+- Run185: private YAML roundtrip fixture 0/2 passed. Private-only data was lost;
+  the shared private/inherited case reproduced the missing `$xrasset0` anchor.
+- Run186: debug ownership fixture 1/3 passed. Failure-created storage entered the
+  outer receipt. The full debug-service test hit missing profiler-worker startup
+  before the cleanup assertion; isolate its real debug-handle factory from host
+  preferences before claiming a cleanup reproduction.
+
+These expected failing baselines did not replace production binaries or alter
+assertions. The source repair remained unbuilt during these runs. Review then
+required the unlink exception to apply only when ordinary null-world admission
+is absent; existing allowed subtree removals must retain their behavior.
+
+Build236 passed with zero warnings/errors (11.58s) using the old production
+references. Run187 used the real debug-handle factory with fixed test transform
+preferences, avoiding full engine startup. It passed 2/4 cases: the null-world
+subtree case and the unrelated-storage lifetime rejection. The debug tests
+confirmed captured render-command storage and failure-created storage in the
+outer receipt. A fixed allocation-count assertion was replaced with the actual
+ownership invariant: no captured `EventList<RenderCommand>` and successful
+canonical retirement.
+
+Build237 found a missing namespace import in the new unlink call (two compiler
+errors). After the import repair, full headless build238 passed with zero warnings
+and errors (1m51.45s). Run188 passed 19/20 focused cases. The remaining new test
+observed World after the outer transfer had resumed and republished it to the
+retained child. It now records the null-world state at the unlink rejection,
+proves the rebind callback ran, and still checks final parent and owner retention.
+No existing Windows assertion was removed or relaxed.
+
+Build239 passed with zero warnings/errors (19.92s). Run189 passed **20/20** focused
+cases (1.071s); run190 passed **1,440/1,440** full portable cases (21.781s), with
+zero failures, warnings, or skips. The frozen source manifest contains **10,885**
+inputs. Editor/test compilation and repaired Windows fixture runs remain separate.
+
+Later Windows step markers on the original frozen snapshot placed both incomplete
+hierarchy cases inside their row-realization helpers: after panel creation or
+activation, before `SynchronizeVirtualRows(400)` returned. Neither test reached its
+named navigation or teardown behavior. The realization loops are bounded in
+source. A candidate cold-path delay is `NativeUiIconFont` calling
+`FontGlyphSet.LoadDefaultUIIconFont`, which tries a synchronous `seguisym.ttf`
+import before the installed test-font fallback. An isolated font-load diagnostic
+is needed to establish that cause. No timeout or platform guard was changed, and
+no font-path change is included in this repair snapshot.
+
+Final desktop build75 compiled the editor and test assembly with zero warnings
+and errors (3m16.82s). The same 10,885 source inputs remained unchanged through
+headless build239, runs189/190, and desktop build75. Forty-one relative links in
+the five maintained UI documents resolve, and `git diff --check` passes. Updated
+Editor-only enum and float fixtures remain execution-pending on Windows; Linux
+compilation is not Windows acceptance. The ordinary queued-teardown interaction
+and the two row-realization stalls also require their Windows reruns.

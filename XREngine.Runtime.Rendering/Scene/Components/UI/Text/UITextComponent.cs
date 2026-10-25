@@ -80,8 +80,13 @@ namespace XREngine.Rendering.UI
             UITextShapingBackendRegistry.Changed += ShapingBackendChanged;
             // Cooked component hydration does not raise Text/Font property notifications.
             // Resolve the preloaded font and build glyph layout after transform wiring.
-            if (!string.IsNullOrEmpty(Text))
+            if (!string.IsNullOrEmpty(Text) && !TryGetAcceptedLayoutResult(out _, out _))
+            {
                 UpdateText(forceRemake: false);
+                // A local rebuild must return to the canvas publication path,
+                // including fixed-size text whose glyph count does not change.
+                BoundableTransform.InvalidateMeasure();
+            }
         }
 
         protected override void OnComponentDeactivated()

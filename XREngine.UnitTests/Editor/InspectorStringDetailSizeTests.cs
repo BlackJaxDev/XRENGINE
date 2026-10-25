@@ -80,8 +80,14 @@ public sealed class InspectorStringDetailSizeTests
             void Pump()
             {
                 canvas.UpdateLayoutAsync();
-                Assert.That(SpinWait.SpinUntil(() => canvas.PumpLayoutResults(),
-                    TimeSpan.FromSeconds(5)), Is.True);
+                Assert.That(SpinWait.SpinUntil(() =>
+                {
+                    canvas.PumpLayoutResults();
+                    canvas.UpdateLayoutAsync();
+                    return !canvas.IsLayoutInvalidated &&
+                        text.TryGetAcceptedLayoutResult(out _, out _);
+                }, TimeSpan.FromSeconds(5)), Is.True,
+                    "The canvas must publish layout for the current text and finish sizing callbacks.");
             }
         }
         finally

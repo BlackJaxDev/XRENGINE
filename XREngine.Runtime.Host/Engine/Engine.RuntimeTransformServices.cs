@@ -14,9 +14,32 @@ namespace XREngine;
 internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
 {
     public IRuntimeTransformDebugHandle? CreateDebugHandle(object transform, Action renderCallback)
-        => transform is TransformBase transformBase
-            ? new TransformDebugHandle(transformBase, renderCallback)
-            : null;
+    {
+        if (transform is not TransformBase transformBase)
+            return null;
+        // The render-info command list belongs to this handle, not to a scene
+        // hierarchy that happens to create the transform.
+        using ObjectCachePublicationScope publication =
+            XRObjectBase.BeginIndependentObjectCachePublication();
+        TransformDebugHandle? handle = null;
+        try
+        {
+            handle = new TransformDebugHandle(transformBase, renderCallback);
+            publication.Complete();
+            return handle;
+        }
+        catch (Exception failure)
+        {
+            try { handle?.Dispose(); }
+            catch (Exception cleanup)
+            {
+                throw new AggregateException(
+                    "The transform debug handle failed and could not release its render info.",
+                    failure, cleanup);
+            }
+            throw;
+        }
+    }
 
     public bool RenderTransformDebugInfo => Engine.EditorPreferences.Debug.RenderTransformDebugInfo;
     public bool RenderTransformLines => Engine.EditorPreferences.Debug.RenderTransformLines;
@@ -68,12 +91,28 @@ internal sealed class EngineRuntimeTransformServices : IRuntimeTransformServices
         public TransformDebugHandle(TransformBase transform, Action renderCallback)
         {
             _owner = new TransformDebugRenderable(transform);
-            RenderInfo3D renderInfo = RenderInfo3D.New(
-                _owner,
-                new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward, () => renderCallback()));
-            renderInfo.Layer = XREngine.Components.Scene.Transforms.DefaultLayers.GizmosIndex;
-            _owner.RenderInfo = renderInfo;
-            UpdateWorld(transform.World);
+            RenderInfo3D? renderInfo = null;
+            try
+            {
+                renderInfo = RenderInfo3D.New(
+                    _owner,
+                    new RenderCommandMethod3D((int)EDefaultRenderPass.OnTopForward,
+                        () => renderCallback()));
+                renderInfo.Layer = XREngine.Components.Scene.Transforms.DefaultLayers.GizmosIndex;
+                _owner.RenderInfo = renderInfo;
+                UpdateWorld(transform.World);
+            }
+            catch (Exception failure)
+            {
+                try { renderInfo?.Dispose(); }
+                catch (Exception cleanup)
+                {
+                    throw new AggregateException(
+                        "The transform debug render info failed during construction and cleanup.",
+                        failure, cleanup);
+                }
+                throw;
+            }
         }
 
         public bool IsVisible

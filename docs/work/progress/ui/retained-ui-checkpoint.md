@@ -1664,3 +1664,21 @@ and the existing owner decisions remain open. Windows interaction, native graphi
 IME, visual behavior, and equivalent-workload performance acceptance remain pending.
 A separate Windows validation task is not evidence until it reports executed results.
 ImGui remains the default editor.
+
+## Panel activation and cleanup repairs
+
+The repair snapshot passes **20/20** focused portable cases and **1,440/1,440**
+full portable cases, with no failures, warnings, or skips. Headless and editor/test builds have
+zero warnings/errors. All 10,885 source inputs remained unchanged. It repairs exact transform unlink during activation,
+independent debug-handle allocation ownership, queued structural-list removal,
+private YAML read/write discovery parity, enum binding retirement, and accepted
+text layout on reactivation. The float fixtures now author their expected values
+and observe the current child list. Existing behavior assertions remain intact.
+
+The original Windows snapshot exposed the failures; it does not validate this
+repaired snapshot. Windows reruns remain pending and are recorded in the
+[validation record](../../testing/ui/native-ui-validation.md#windows-fixture-repair-checks).
+The two hierarchy stalls are narrowed to row realization; their cause and runtime
+acceptance remain open. The separate animation view-transfer draft is preserved
+locally and is not included. The reconciliation remains **51/60**, with nine broad
+code items and four original owner decisions open. ImGui remains the default.

@@ -173,7 +173,7 @@ public partial class EventList<T>
     private bool GuardedRemove(T value, int? requestedIndex, bool reportRemoved, bool reportModified, bool nonVetoable = false)
     {
         EventListMutationAuthority<T> authority = _mutationAuthority!;
-        using EventListAuthorityLease<T> owner = new(authority, this, removal: nonVetoable);
+        using EventListAuthorityLease<T> owner = new(authority, this, removal: true);
         T item;
         int index;
         ulong revision;
@@ -194,7 +194,7 @@ public partial class EventList<T>
         }
         lock (authority.MutationGate)
         {
-            RequireMutationRevision(revision, removal: nonVetoable);
+            RequireMutationRevision(revision, removal: true);
             _lock!.EnterWriteLock();
             try
             {
@@ -304,14 +304,14 @@ public partial class EventList<T>
         bool reportRange, bool reportModified, ulong? expectedRevision = null)
     {
         EventListMutationAuthority<T> authority = _mutationAuthority!;
-        using EventListAuthorityLease<T> owner = new(authority, this);
+        using EventListAuthorityLease<T> owner = new(authority, this, removal: true);
         List<IndexedItem> candidates = [];
         List<T> reserved = [];
         ulong revision;
         lock (authority.MutationGate)
         {
             revision = expectedRevision ?? _mutationRevision;
-            RequireMutationRevision(revision);
+            RequireMutationRevision(revision, removal: true);
             int first = start ?? 0;
             int length = count ?? _list.Count;
             if (first < 0 || length < 0 || first > _list.Count - length)
@@ -342,7 +342,7 @@ public partial class EventList<T>
         ulong completedRevision;
         lock (authority.MutationGate)
         {
-            RequireMutationRevision(revision);
+            RequireMutationRevision(revision, removal: true);
             _lock!.EnterWriteLock();
             try
             {

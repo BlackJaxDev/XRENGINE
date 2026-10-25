@@ -133,6 +133,12 @@ public sealed class InspectorEnumEditorTests
             Assert.That(editor.IsDestroyed, Is.True);
             Assert.That(combo.Binding, Is.Null);
             Assert.That(combo.VirtualOptions, Is.Null);
+            EditorEnumPropertyBinding replacement = new(first, [target]);
+            combo.Binding = replacement;
+            Assert.That(combo.Binding, Is.SameAs(replacement),
+                "Retired editor callbacks must not clear a later binding owner.");
+            combo.Binding = null;
+            replacement.Dispose();
         }
         finally { canvas.Destroy(true); }
     }

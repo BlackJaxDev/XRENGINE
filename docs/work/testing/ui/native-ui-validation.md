@@ -665,3 +665,30 @@ Run these checks on Windows for both the dock-tree host and the four-panel host:
 These checks remain pending. The transfer covers existing layout-backed tool
 fields. It does not establish animation member/key selection, general focus or
 expansion transfer, or complete play-transition state.
+
+## Windows fixture repair checks
+
+The frozen Windows 11 snapshot `63af584ce0e2e4278bd57b9efddad2ff259b6c77`
+compiled with .NET SDK 10.0.401 and zero warnings/errors. Across separate runs,
+301 distinct cases completed: latest outcomes were 272 passed and 29 failed.
+Twelve cases remained incomplete. Tool-panel state passed 2/2 and asset selection
+passed 6/6. This is managed test-host evidence, not editor-window or GPU acceptance.
+The ten newer tool-panel cases at `8bde3d635` were not covered.
+
+The [continuation investigation](../../investigations/ui/native-ui-continuation-comparison.md#windows-fixture-failures-and-local-reproduction)
+records exact failure groups, local reproductions, and diagnostic limits. After a
+repair checkpoint, rerun the original menu, grouped-duplicate, asset-spawn, enum,
+float-detail, string-detail, and animation-admission fixtures on Windows. Keep the
+original assertions and inactivity/session limits. Run the two stalled hierarchy
+cases separately with step markers or thread evidence if they still do not finish.
+Repeat the broader combination to check teardown interactions. A portable success
+or managed compilation does not close those Windows checks.
+
+The repaired cloud snapshot passes **20/20** focused portable cases and
+**1,440/1,440** full portable cases, with zero failures, warnings, or skips.
+Headless and editor/test managed compilation both pass with zero warnings/errors.
+All **10,885 source inputs** remained unchanged through final validation. The
+portable tests execute the real debug-handle factory with fixed test preferences;
+they do not initialize the full desktop host. Updated enum and float editor
+fixtures compile here but still require their Windows execution. No repaired
+Windows, GPU, visual, IME, or performance acceptance is inferred from these checks.

@@ -19,6 +19,18 @@
     <ProjectReference Include="../../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/InspectorStringDetailSizeComponent.cs" Link="Editor/InspectorStringDetailSizeComponent.cs" />
+    <Compile Include="../Editor/InspectorStringDetailSizeTests.cs" Link="Editor/InspectorStringDetailSizeTests.cs" />
+    <Compile Include="../Scene/QueuedTransformDestructionTests.cs" Link="Scene/QueuedTransformDestructionTests.cs" />
+    <Compile Include="../Scene/ActivationChildProbe.cs" Link="Scene/ActivationChildProbe.cs" />
+    <Compile Include="../Scene/RequiredRectTransformProbe.cs" Link="Scene/RequiredRectTransformProbe.cs" />
+    <Compile Include="../Scene/CanonicalTransformUnlinkTests.cs" Link="Scene/CanonicalTransformUnlinkTests.cs" />
+    <Compile Include="../Core/PrivateMemberYamlRoundtripTests.cs" Link="Core/PrivateMemberYamlRoundtripTests.cs" />
+    <Compile Include="../Core/PrivateMemberYamlBaseTransformProbe.cs" Link="Core/PrivateMemberYamlBaseTransformProbe.cs" />
+    <Compile Include="../Core/PrivateMemberYamlTransformProbe.cs" Link="Core/PrivateMemberYamlTransformProbe.cs" />
+    <Compile Include="../Core/InlineYamlTestAssetServices.cs" Link="Core/InlineYamlTestAssetServices.cs" />
+    <Compile Include="../Prefabs/EngineTransformDebugServiceProbe.cs" Link="Prefabs/EngineTransformDebugServiceProbe.cs" />
+    <Compile Include="../Prefabs/EngineTransformDebugOwnershipTests.cs" Link="Prefabs/EngineTransformDebugOwnershipTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/HierarchyBatchLocalValues.cs" Link="Editor/HierarchyBatchLocalValues.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/HierarchyBatchReplayExpectation.cs" Link="Editor/HierarchyBatchReplayExpectation.cs" />
     <Compile Include="../Editor/HierarchyBatchReplayExpectationTests.cs" Link="Editor/HierarchyBatchReplayExpectationTests.cs" />

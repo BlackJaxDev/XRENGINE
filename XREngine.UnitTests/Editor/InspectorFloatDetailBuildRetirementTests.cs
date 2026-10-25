@@ -192,12 +192,23 @@ public sealed class InspectorFloatDetailBuildRetirementTests
         SceneNode node = new("Retiring inspector detail") { IsActiveSelf = false };
         node.SetTransform<UIBoundableTransform>();
         bool retiredDuringAttachment = false;
-        node.Transform.Children.PostAnythingAdded += child =>
+        HashSet<object> watchedTransforms = [];
+        void ObserveCurrentChildren()
         {
-            if (retiredDuringAttachment) return;
-            retiredDuringAttachment = true;
-            node.GetComponent<InspectorListDetailRefreshComponent>()!.Retire();
+            if (!watchedTransforms.Add(node.Transform)) return;
+            node.Transform.Children.PostAnythingAdded += _ =>
+            {
+                if (retiredDuringAttachment) return;
+                retiredDuringAttachment = true;
+                node.GetComponent<InspectorListDetailRefreshComponent>()!.Retire();
+            };
+        }
+        node.PropertyChanged += (_, change) =>
+        {
+            if (change.PropertyName == nameof(SceneNode.Transform))
+                ObserveCurrentChildren();
         };
+        ObserveCurrentChildren();
         try
         {
             create(node, property, owners);

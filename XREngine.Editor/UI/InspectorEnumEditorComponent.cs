@@ -1,5 +1,6 @@
 using System.Reflection;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Editor.UI;
@@ -31,6 +32,7 @@ public sealed class InspectorEnumEditorComponent : XRComponent
         SetField(ref _label, label, publishNotifications: false);
         SetField(ref _popup, combo.Popup, publishNotifications: false);
         combo.SelectionChanged += OnSelectionChanged;
+        combo.PropertyChanged += OnComboPropertyChanged;
         Bind(property, targets);
     }
 
@@ -162,6 +164,19 @@ public sealed class InspectorEnumEditorComponent : XRComponent
         DrainTransitions();
     }
 
+    private void OnComboPropertyChanged(object? sender, IXRPropertyChangedEventArgs change)
+    {
+        if (!_retired || change.PropertyName != nameof(UIComboBoxComponent.Binding) ||
+            _retiringCombo is not { } combo ||
+            _retiringBinding is not { } binding ||
+            !ReferenceEquals(sender, combo) ||
+            !ReferenceEquals(combo.Binding, binding))
+            return;
+        // A pre-change callback can retire this owner before the combo finishes
+        // assigning its binding. Clear only that binding before the combo reads it.
+        combo.Binding = null;
+    }
+
     protected override void OnDestroying()
     {
         SetField(ref _retired, true, publishNotifications: false);
@@ -205,17 +220,21 @@ public sealed class InspectorEnumEditorComponent : XRComponent
         EditorEnumPropertyBinding? owned = _retiringBinding;
         _retiringCombo = null;
         _retiringBinding = null;
-        if (combo is null || owned is null)
+        if (combo is null)
             return;
         try
         {
-            if (ReferenceEquals(combo.Binding, owned))
+            if (owned is not null && ReferenceEquals(combo.Binding, owned))
                 combo.Binding = null;
         }
         finally
         {
-            if (ReferenceEquals(combo.VirtualOptions, owned))
-                combo.VirtualOptions = null;
+            try
+            {
+                if (owned is not null && ReferenceEquals(combo.VirtualOptions, owned))
+                    combo.VirtualOptions = null;
+            }
+            finally { combo.PropertyChanged -= OnComboPropertyChanged; }
         }
     }
 }

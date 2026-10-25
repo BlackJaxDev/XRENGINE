@@ -2043,3 +2043,33 @@ state. This does not provide atomic rollback across hosts. Animation member/key
 selection, view ranges, general focus and expansion, and full play-transition state
 remain separate work. Windows interaction and live viewport behavior need runtime
 validation.
+
+## Activation and owned helper storage
+
+A scene-node transform replacement can run inside an admitted world activation.
+`PhysicsChainWorld` permits the retiring transform's world-to-null write through
+one scoped `CanonicalTransformUnlinkPermit`. The exception applies only when the
+ordinary lease does not already permit that write. It requires an admitted node
+and its exact, empty old transform. Node, transform, parent, child-list lifetime,
+and world checks surround lifecycle callbacks and the raw world write. A changed
+owner stops subsequent parent cleanup. Other objects and foreign worlds retain
+the ordinary rejection rules. Existing null-world subtree removal remains valid.
+
+`EngineRuntimeTransformServices` constructs debug handles in an independent
+publication scope. `RenderInfo` owns and disposes its command list; that list is
+not part of a surrounding scene clone's construction receipt. Hierarchy retirement
+still rejects unapproved storage lifetime changes and unknown allocations.
+Guarded structural-list removal uses removal admission, which permits exact
+cleanup for a queued owner. Add and replacement operations retain their stricter
+live-owner admission.
+
+Text activation preserves a current accepted canvas result. When activation
+must rebuild local glyph layout, it also invalidates measure, including fixed-size
+text. This returns the result to canvas publication. Hosts continue the request
+and pump loop after a rejected capture and can use an already current accepted
+result without waiting for a new worker completion.
+
+Enum inspector retirement clears only its exact pending binding after the combo
+commits that field. The combo's revision check then rejects its stale continuation
+before it can read the disposed binding. The retirement callback is released on
+normal and exceptional cleanup. New binding owners remain independent.
