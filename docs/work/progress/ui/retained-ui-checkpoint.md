@@ -1236,3 +1236,18 @@ managed bytes in the presentation-probe harness; this is not a native performanc
 benchmark. Windows keyboard/presentation, IME, GPU, and editor acceptance remain
 open. Initial submenu-focus cancellation and full menu construction/teardown
 ownership remain open code work. The broader reconciliation remains **50/60**.
+
+## Submenu Initial Focus Ownership
+
+Keyboard submenu opening now uses the same bounded request as ordinary menu
+navigation. It keeps the owner row's input intent and waits while the child is
+hidden. Newer focus intent, virtual focus, or input regeneration cancels it.
+Mouse opening cancels pending keyboard focus. The separate eight-frame retry
+was removed. The registered Right-arrow regression failed before this repair.
+
+Headless build169 passed with zero warnings/errors. Full run112 passed
+**1,112/1,112**, without failures, warnings, or skips. Desktop build41 compiled
+the editor and tests with zero warnings/errors. The 10,797-file source snapshot
+stayed unchanged. This closes initial submenu-focus cancellation in code and
+headless tests; construction/teardown and native acceptance remain open. The
+broader reconciliation remains **50/60**.

@@ -7,14 +7,15 @@ Design: [Native UI retained rendering](../../design/ui/native-ui-retained-render
 
 ## Retained UI Integration (2026-10-23)
 
-Latest continuation check (2026-10-25): headless build167 passed with zero
-warnings/errors, and run110 passed **1,107/1,107** tests with no failures or skips.
+Latest continuation check (2026-10-25): headless build169 passed with zero
+warnings/errors, and run112 passed **1,112/1,112** tests with no failures or skips.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
 Failed rebuilds also retire their partial controls; both new gate cases failed
 before the repair. Menu lifetime and scroll-navigation regressions also failed
-before repair. Desktop test build40 compiled the editor and test assembly with zero
+before repair. Initial submenu-focus regressions also failed before the shared
+request replaced its old retry. Desktop test build41 compiled the editor and test assembly with zero
 warnings/errors. The new `NativeToolPanelStateTests` compiled but did not execute
 on this Linux host. Check console category/auto-scroll, profiler view, and settled
 scroll saves through the active dock-tree host on Windows. See the
@@ -63,8 +64,10 @@ separator. Use arrows, Home, and End. Confirm that the intended row scrolls into
 view and gets focus only after it is presented. Repeat keys while layout is
 pending. Move focus to another control, hide/reopen the menu, and deactivate its
 owner while focus is pending. Confirm that the old request does not steal focus.
-Check focus outlines and both mouse and keyboard opening. Right/Left/Escape
-submenu behavior and initial submenu-focus cancellation require separate checks.
+Check focus outlines and both mouse and keyboard opening. Repeat focus-intent
+cancellation checks after Right opens a submenu, before its first row is
+presented. Mouse opening must cancel pending keyboard focus. Right/Left/Escape
+behavior still requires native-window acceptance.
 
 ## Hierarchy And Panel State Validation (2026-10-25)
 

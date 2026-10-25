@@ -213,3 +213,22 @@ build40 compiled the editor and desktop tests with zero warnings/errors in
 This completes ordinary-menu deferred arrow/Home/End focus in the headless
 harness. It does not establish native window presentation, hardware keyboard,
 IME, GPU, or end-to-end editor acceptance. The recorded TODO count stays 50/60.
+
+## Initial Submenu Focus Intent
+
+The separate eight-frame submenu retry did not retain the owner row's input
+intent. Build168 passed with zero warnings/errors in 2m58.68s. Targeted run111
+passed 55/58 in 2.789s. The registered Right-arrow path still attempted child
+focus after a newer focus intent, another virtual focus request, or input-source
+regeneration. Its unchanged-intent control passed.
+
+Submenu opening now uses the ordinary navigation request with the owner row as
+its focused source. The old retry and frame counter were removed. Hidden targets
+wait for placement and do not call presented focus. Mouse opening cancels a
+pending keyboard request. Build169 passed with zero warnings/errors in 1m48.57s.
+Full run112 passed **1,112/1,112** in 19.585s, without failures, warnings, or skips.
+
+Desktop build41 compiled the editor and desktop tests with zero warnings/errors
+in 3m40.59s. All 10,797 source inputs stayed unchanged through the final checks.
+The old retry is absent from source. Full construction/teardown, native window,
+keyboard/IME, and GPU acceptance remain open. No broad TODO item was closed.

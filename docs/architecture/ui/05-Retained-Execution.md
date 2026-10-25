@@ -761,8 +761,9 @@ the menu closes.
 its items. A click on the row, or Right on the focused row, opens the submenu as a
 sibling node of the menu, so the menu clip does not cut it. It opens beside the
 row, on the left when the right side has no room. Right also focuses the first
-enabled submenu row after the submenu is placed and presented; the request retries
-for at most eight frames. Left closes the submenu that contains the focused row and
+enabled submenu row after the submenu is placed and presented. It uses the same
+bounded focus request as ordinary navigation and retains the owner row's focus
+intent. Left closes the submenu that contains the focused row and
 returns focus to the row that opened it. Only the root menu subscribes to dismiss
 input. Escape and Back close the innermost submenu first. A click inside any open
 menu of the chain does not dismiss it. An action row in a submenu runs its action
@@ -782,9 +783,14 @@ same focused source, show, row bindings, canvas, input source, and scroll owner.
 Hide, replacement, deactivation, or ownership loss retires the request. A scroll
 callback can replace it without the old continuation clearing the newer request.
 The retry delegate is cached, and canvas input lookup uses indexed traversal.
+Keyboard-opened submenus use that same request with their owner row as the
+focused source. Hidden targets wait for placement without attempting focus.
+Newer focus intent, another virtual request, or a retired input source cancels
+the initial request. Mouse opening cancels a pending keyboard-focus request.
+Deferred focus requires a nonzero `FocusIntentRevision` from the input adapter.
 
-Full callback-safe construction/teardown and initial submenu-focus cancellation
-remain open. This contract does not establish native keyboard or IME acceptance.
+Full callback-safe construction/teardown remains open. This contract does not
+establish native keyboard or IME acceptance.
 
 ## Composition boundaries and split handles
 

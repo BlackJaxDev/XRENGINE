@@ -141,8 +141,6 @@ namespace XREngine.Rendering.UI
         private SceneNode? _submenuNode;
         private UIContextMenuItemComponent? _submenuRow;
         private bool _openingSubmenu;
-        private int _firstFocusFramesLeft;
-        private const int FirstFocusFrameLimit = 8;
 
         /// <summary>
         /// Whether the context menu is currently visible and accepting input.
@@ -348,8 +346,6 @@ namespace XREngine.Rendering.UI
             transform.Translation = ClampMenuPosition(_pendingPosition, PreferredWidth, boundedHeight);
             transform.Visibility = EVisibility.Visible;
             canvas.UpdateLayoutAsync();
-            if (_firstFocusFramesLeft > 0)
-                RegisterTick(ETickGroup.Late, ETickOrder.Scene, RetryFirstItemFocus);
         }
 
         private Vector2 ClampMenuPosition(Vector2 position, float width, float height)
@@ -386,7 +382,7 @@ namespace XREngine.Rendering.UI
                     return;
                 _awaitingPlacement = false;
                 UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
-                StopFirstItemFocus();
+                CancelNavigationFocus();
                 UnsubscribeForDismiss();
                 // Deactivation keeps nodes; destroying them can change a hierarchy in teardown.
                 CloseSubmenu(refocusRow: false, destroyNode: clearMenuItems);
@@ -681,7 +677,13 @@ namespace XREngine.Rendering.UI
                 row.Item is not { HasSubmenu: true, Enabled: true } item)
                 return false;
             if (_submenu is { _isOpen: true } current && ReferenceEquals(_submenuRow, row))
-                return (!focusFirstItem || current.FocusFirstItem()) && IsCurrentItem(row, showRevision);
+            {
+                if (focusFirstItem)
+                    current.RequestFirstItemFocus(row);
+                else
+                    current.CancelNavigationFocus();
+                return IsCurrentItem(row, showRevision) && current.IsCurrentShow(current._showRevision);
+            }
             CloseSubmenu(refocusRow: false);
             if (!IsCurrentItem(row, showRevision) ||
                 SceneNode.Parent is not { } host)
@@ -705,7 +707,6 @@ namespace XREngine.Rendering.UI
                 submenu.PreferredWidth = PreferredWidth;
                 submenu._ownerMenu = this;
                 submenu._ownerShowRevision = showRevision;
-                submenu._firstFocusFramesLeft = focusFirstItem ? FirstFocusFrameLimit : 0;
                 ContextMenuItem[] items = new ContextMenuItem[item.SubmenuItems.Count];
                 for (int index = 0; index < items.Length; index++)
                     items[index] = item.SubmenuItems[index];
@@ -720,8 +721,8 @@ namespace XREngine.Rendering.UI
                         CloseSubmenu(refocusRow: false);
                     return false;
                 }
-                if (focusFirstItem && submenu.FocusFirstItem())
-                    submenu.StopFirstItemFocus();
+                if (focusFirstItem)
+                    submenu.RequestFirstItemFocus(row);
                 return IsCurrentItem(row, showRevision) && ReferenceEquals(_submenu, submenu) &&
                     submenu.IsCurrentShow(submenu._showRevision);
             }
@@ -841,20 +842,6 @@ namespace XREngine.Rendering.UI
                     return false;
             }
             return false;
-        }
-
-        // Rows become presented one publication after placement. Keyboard-opened submenus
-        // retry first-row focus for a few frames and then stop.
-        private void RetryFirstItemFocus()
-        {
-            if (_firstFocusFramesLeft <= 0 || FocusFirstItem() || --_firstFocusFramesLeft <= 0)
-                StopFirstItemFocus();
-        }
-
-        private void StopFirstItemFocus()
-        {
-            _firstFocusFramesLeft = 0;
-            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RetryFirstItemFocus);
         }
 
         private void ReleaseItemButtons()
@@ -999,8 +986,7 @@ namespace XREngine.Rendering.UI
             _awaitingPlacement = false;
             _isOpen = false;
             UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
-            UnregisterTick(ETickGroup.Late, ETickOrder.Scene, RetryFirstItemFocus);
-            _firstFocusFramesLeft = 0;
+            CancelNavigationFocus();
             UnsubscribeForDismiss();
             UIContextMenuComponent? submenu = _submenu;
             SceneNode? submenuNode = _submenuNode;

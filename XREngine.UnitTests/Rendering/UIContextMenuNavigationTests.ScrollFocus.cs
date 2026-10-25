@@ -237,6 +237,75 @@ public sealed partial class UIContextMenuNavigationTests
         finally { root.Destroy(true); }
     }
 
+    [TestCase("none")]
+    [TestCase("focus-intent")]
+    [TestCase("virtual-focus")]
+    [TestCase("input")]
+    public void InitialSubmenuFocusRequiresTheOriginalOwnerIntent(string change)
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            menu.Show(Vector2.Zero,
+                ContextMenuItem.Submenu("More", [new ContextMenuItem("Child", () => { })]));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            UIContextMenuItemComponent ownerRow = Rows(menu)[0];
+            FocusSource(input, ownerRow);
+            input.PresentedFocusAccepted = true;
+            UITestTreeKeyRegistration keys = new();
+            ownerRow.RegisterInput(keys);
+            keys.Press(EKey.Right).ShouldBeTrue();
+            UIContextMenuComponent submenu = menu.OpenSubmenu.ShouldNotBeNull();
+            UIContextMenuItemComponent child = Rows(submenu)[0];
+            input.PresentedFocusAttempts.ShouldBe(0);
+            NavigationTick(submenu)();
+            input.PresentedFocusAttempts.ShouldBe(0);
+            switch (change)
+            {
+                case "focus-intent":
+                    input.FocusedComponent = null;
+                    input.FocusedComponent = ownerRow;
+                    break;
+                case "virtual-focus": input.HasPendingFocusRequest = true; break;
+                case "input": input.Generate(); break;
+            }
+            submenu.UITransform.Visibility = EVisibility.Visible;
+
+            NavigationTick(submenu)();
+
+            input.PresentedFocusAttempts.ShouldBe(change == "none" ? 1 : 0);
+            input.FocusedComponent.ShouldBeSameAs(change == "none" ? child : ownerRow);
+        }
+        finally { root.Destroy(true); }
+    }
+
+    [Test]
+    public void MouseOpenCancelsTheSubmenusPendingKeyboardFocus()
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            menu.Show(Vector2.Zero,
+                ContextMenuItem.Submenu("More", [new ContextMenuItem("Child", () => { })]));
+            menu.UITransform.Visibility = EVisibility.Visible;
+            UIContextMenuItemComponent ownerRow = Rows(menu)[0];
+            FocusSource(input, ownerRow);
+            menu.OpenItemSubmenu(ownerRow, ownerRow.ShowRevision, focusFirstItem: true).ShouldBeTrue();
+            UIContextMenuComponent submenu = menu.OpenSubmenu.ShouldNotBeNull();
+            menu.OpenItemSubmenu(ownerRow, ownerRow.ShowRevision, focusFirstItem: false).ShouldBeTrue();
+            submenu.UITransform.Visibility = EVisibility.Visible;
+            input.PresentedFocusAccepted = true;
+
+            NavigationTick(submenu)();
+
+            input.PresentedFocusAttempts.ShouldBe(0);
+            input.FocusedComponent.ShouldBeSameAs(ownerRow);
+        }
+        finally { root.Destroy(true); }
+    }
+
     private static void FocusSource(UITestCanvasInputProbe input, UIContextMenuItemComponent source)
     {
         input.FocusedComponent = source;

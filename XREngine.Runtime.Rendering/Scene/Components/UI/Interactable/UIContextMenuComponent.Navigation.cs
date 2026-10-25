@@ -9,6 +9,7 @@ public partial class UIContextMenuComponent
     private const int MaximumNavigationFocusTicks = 120;
     private readonly WorldTick _navigationFocusTick;
     private UIContextMenuItemComponent? _navigationSource;
+    private UIContextMenuComponent? _navigationSourceMenu;
     private UIContextMenuItemComponent? _navigationTarget;
     private UICanvasComponent? _navigationCanvas;
     private IUICanvasInputSource? _navigationInput;
@@ -20,6 +21,7 @@ public partial class UIContextMenuComponent
     private ObjectConstructionIdentity _navigationScrollIdentity;
     private ObjectConstructionIdentity _navigationScrollNodeIdentity;
     private ulong _navigationShowRevision;
+    private ulong _navigationSourceRevision;
     private ulong _navigationIntentRevision;
     private ulong _navigationSerial;
     private int _navigationTicks;
@@ -31,11 +33,15 @@ public partial class UIContextMenuComponent
         ulong showRevision, UICanvasComponent canvas, IUICanvasInputSource input)
     {
         CancelNavigationFocus();
-        if (!IsCurrentItem(source, showRevision) || !IsCurrentItem(target, showRevision) ||
+        if (source.Menu is not { } sourceMenu ||
+            !sourceMenu.IsCurrentItem(source, source.ShowRevision) || !IsCurrentItem(target, showRevision) ||
+            (!ReferenceEquals(sourceMenu, this) &&
+                (!ReferenceEquals(sourceMenu, _ownerMenu) || !ReferenceEquals(sourceMenu._submenuRow, source))) ||
             target.Transform.Parent?.Parent is not UIScrollableTransform scroll ||
             !ReferenceEquals(scroll.Parent, Transform) || input.HasPendingFocusRequest)
             return false;
         _navigationSource = source;
+        _navigationSourceMenu = sourceMenu;
         _navigationTarget = target;
         _navigationCanvas = canvas;
         _navigationInput = input;
@@ -48,18 +54,35 @@ public partial class UIContextMenuComponent
         _navigationScrollIdentity = ObjectConstructionIdentity.Capture(scroll);
         _navigationScrollNodeIdentity = ObjectConstructionIdentity.Capture(scroll.SceneNode!);
         _navigationShowRevision = showRevision;
+        _navigationSourceRevision = source.ShowRevision;
         _navigationIntentRevision = input.FocusIntentRevision;
         return TryNavigationFocus(_navigationSerial);
+    }
+
+    private bool RequestFirstItemFocus(UIContextMenuItemComponent ownerRow)
+    {
+        if (!IsCurrentShow(_showRevision) || !ReferenceEquals(ownerRow.Menu, _ownerMenu) ||
+            UITransform.GetCanvasComponent() is not { } canvas || canvas.GetInputComponent() is not { } input)
+            return false;
+        for (int index = 0; index < _itemButtons.Count; index++)
+        {
+            UIContextMenuItemComponent target = _itemButtons[index];
+            if (IsCurrentItem(target, _showRevision) && target.IsEnabled && target.IsActiveInHierarchy)
+                return RequestItemFocus(ownerRow, target, _showRevision, canvas, input);
+        }
+        return false;
     }
 
     private bool IsCurrentNavigationContext(ulong serial, bool checkIntent = true)
     {
         return serial == _navigationSerial &&
             _navigationSource is { } source && _navigationTarget is { } target &&
+            _navigationSourceMenu is { } sourceMenu &&
             _navigationCanvas is { } canvas && _navigationInput is { } input &&
             _navigationScroll is { } scroll &&
-            IsCurrentItem(source, _navigationShowRevision) && IsCurrentItem(target, _navigationShowRevision) &&
-            source.CanInteract && target.CanInteract &&
+            sourceMenu.IsCurrentItem(source, _navigationSourceRevision) && IsCurrentItem(target, _navigationShowRevision) &&
+            source.CanInteract && (target.CanInteract ||
+                (_awaitingPlacement && target.IsEnabled && target.IsActiveInHierarchy)) &&
             IsLiveNavigationIdentity(_navigationCanvasIdentity) &&
             IsLiveNavigationIdentity(_navigationCanvasNodeIdentity) &&
             IsLiveNavigationIdentity(_navigationCanvasTransformIdentity) &&
@@ -100,13 +123,14 @@ public partial class UIContextMenuComponent
                 CancelNavigationFocus();
             return false;
         }
-        bool accepted = input.TryFocusPresented(target);
+        // A submenu may still be hidden while placement waits for accepted layout.
+        bool accepted = target.CanInteract && input.TryFocusPresented(target);
         if (serial != _navigationSerial)
             return false;
         if (accepted)
         {
             // Accepted focus changes the intent revision. Check the resulting owner instead.
-            bool current = IsCurrentNavigationContext(serial, checkIntent: false) &&
+            bool current = target.CanInteract && IsCurrentNavigationContext(serial, checkIntent: false) &&
                 ReferenceEquals(input.FocusedComponent, target) && target.IsFocused;
             CancelNavigationFocus();
             return current;
@@ -146,6 +170,7 @@ public partial class UIContextMenuComponent
     {
         _navigationSerial++;
         _navigationSource = null;
+        _navigationSourceMenu = null;
         _navigationTarget = null;
         _navigationCanvas = null;
         _navigationInput = null;
@@ -157,6 +182,7 @@ public partial class UIContextMenuComponent
         _navigationScrollIdentity = default;
         _navigationScrollNodeIdentity = default;
         _navigationShowRevision = 0;
+        _navigationSourceRevision = 0;
         _navigationIntentRevision = 0;
         _navigationTicks = 0;
         if (!_navigationTickRegistered)
