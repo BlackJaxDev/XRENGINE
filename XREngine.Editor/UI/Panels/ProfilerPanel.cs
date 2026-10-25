@@ -56,8 +56,16 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         set
         {
             if (!_terminal && Enum.IsDefined(value))
-                ApplyView(value);
+                ApplyView(value, BeginStateIntent(), null);
         }
+    }
+
+    internal void SetViewOwned(ENativeProfilerView value, ulong intent,
+        NativeToolPanelStateBinding binding)
+    {
+        if (!Enum.IsDefined(value))
+            throw new ArgumentOutOfRangeException(nameof(value));
+        ApplyView(value, intent, binding);
     }
 
     internal float RootMinimumMilliseconds => _rootMinimumMilliseconds;
@@ -327,13 +335,22 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         if (_terminal || !_ownerActive || !IsActiveInHierarchy || change.NewValue is not { } id ||
             id == 0 || id > (ulong)ViewOptions.Length)
             return;
-        ApplyView((ENativeProfilerView)(id - 1));
+        ENativeProfilerView selected = (ENativeProfilerView)(id - 1);
+        if (_rows.View != selected)
+            View = selected;
     }
 
-    private void ApplyView(ENativeProfilerView view)
+    private void ApplyView(ENativeProfilerView view, ulong intent,
+        NativeToolPanelStateBinding? binding)
     {
         int previousCount = _rows.Count;
-        if (!_rows.SelectView(view)) return;
+        if (!_rows.SelectViewGuarded(view, (Owner: this, Intent: intent, Binding: binding),
+                static state =>
+                {
+                    state.Owner.RequireStateIntent(state.Intent);
+                    state.Binding?.RequireOwnedState(state.Intent);
+                })) return;
+        PublishStateWrite();
         _rootViewRevision++;
         if (view == ENativeProfilerView.CpuRoots)
             _rows.SetRootParameters(_rootMinimumMilliseconds, _rootMaximumMilliseconds, _sortRootsByTime);
@@ -343,13 +360,28 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         _invokesValid = false;
         _fpsViewInitialized = false;
         if (_viewLabel is not null) _viewLabel.Text = ViewLabel(view);
+        if (!ProfilerStateCurrent(intent, binding)) return;
         // The combo callback re-enters here and stops at the unchanged row view.
         _viewCombo?.Select((ulong)view + 1);
+        if (!ProfilerStateCurrent(intent, binding)) return;
         ViewChanged?.Invoke(view);
+        if (!ProfilerStateCurrent(intent, binding)) return;
         if (_terminal || !_ownerActive || !IsActiveInHierarchy || _rows.View != view) return;
         if (!_paused || view is ENativeProfilerView.Settings or ENativeProfilerView.FpsSpikes)
             CaptureSelectedView();
         SignalRowsChanged(previousCount);
+    }
+
+    private bool ProfilerStateCurrent(ulong intent, NativeToolPanelStateBinding? binding)
+    {
+        if (!IsCurrentStateIntent(intent) || _terminal)
+        {
+            if (binding is not null)
+                throw new InvalidOperationException("The profiler changed during restore.");
+            return false;
+        }
+        binding?.RequireOwnedState(intent);
+        return true;
     }
 
     private void OnPauseClicked(UIInteractableComponent _) => TogglePause();

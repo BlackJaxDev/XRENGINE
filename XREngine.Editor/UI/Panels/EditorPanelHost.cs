@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Data.Core;
 using XREngine.Editor.UI;
 using XREngine.Editor.UI.Components;
 using XREngine.Rendering;
@@ -109,13 +110,15 @@ public static class EditorPanelHost
         panels[2].NewChild<ProfilerPanel>(out var profilerPanel);
         panels[3].NewChild<AnimationPanel>(out var animationPanel);
         NativeVirtualTextPanel[] panelComponents = [assetsPanel, consolePanel, profilerPanel, animationPanel];
+        NativeToolPanelStateBinding?[] stateBindings = new NativeToolPanelStateBinding?[panelComponents.Length];
         for (int index = 0; index < panelComponents.Length; index++)
-            NativeToolPanelState.Bind(panelComponents[index], panels[index], layout,
+            stateBindings[index] = NativeToolPanelState.Bind(panelComponents[index], panels[index], layout,
                 index, Save, layoutSaves.Request);
 
         string[] titles = ["Assets", "Console", "Profiler", "Animation"];
         NativeDockWindowRegistration windowRegistration =
             toolsNode.AddComponent<NativeDockWindowRegistration>()!;
+        ulong panelSelectionRevision = 0;
         tabStrip.TabActivated += id => Select((int)id - 1);
         tabStrip.CloseRequested += _ => CloseSelected();
         tabStrip.MoveRequested += (_, direction) => MoveSelected(direction);
@@ -129,8 +132,97 @@ public static class EditorPanelHost
             NativeUIElements.CreateButton(actionsNode, "-", _ => Resize(-40), width: 64, height: 28);
             NativeUIElements.CreateButton(actionsNode, "+", _ => Resize(40), width: 64, height: 28);
         }
-        windowRegistration.Configure(windowKey, ReceivePanel, toolsNode.World as RuntimeWorld);
+        windowRegistration.Configure(windowKey, ReceivePanel, toolsNode.World as RuntimeWorld,
+            capturePanelState: CapturePanelState, receivePanelState: ReceivePanelWithState);
         Refresh();
+
+        NativeDockPanelTransferState? CapturePanelState(string panel)
+        {
+            int index = Array.IndexOf(NativeDockPanel.LegacyTools, panel);
+            if ((uint)index >= (uint)stateBindings.Length ||
+                layout.SelectedTab != index || (layout.OpenMask & (1 << index)) == 0 ||
+                stateBindings[index] is not { IsCurrent: true } binding)
+                return null;
+            ObjectConstructionIdentity toolsIdentity = ObjectConstructionIdentity.Capture(toolsNode);
+            ObjectConstructionIdentity registrationIdentity =
+                ObjectConstructionIdentity.Capture(windowRegistration);
+            ulong registrationRevision = windowRegistration.RegistrationRevision;
+            ulong selectionRevision = panelSelectionRevision;
+            object? ownerContext = toolsNode.World as RuntimeWorld;
+            bool HostCurrent() => toolsIdentity.IsCurrent && registrationIdentity.IsCurrent &&
+                !toolsNode.IsDestroyed && !toolsNode.IsDestroyQueued &&
+                toolsNode.IsActiveInHierarchy &&
+                ReferenceEquals(windowRegistration.SceneNode, toolsNode) &&
+                windowRegistration.RegistrationRevision == registrationRevision &&
+                windowRegistration.TryGetRegistration(out string currentKey,
+                    out object? currentContext) && currentKey == windowKey &&
+                ReferenceEquals(currentContext, ownerContext) &&
+                ReferenceEquals(toolsNode.World, ownerContext) &&
+                panelSelectionRevision == selectionRevision &&
+                layout.SelectedTab == index && (layout.OpenMask & (1 << index)) != 0 &&
+                ReferenceEquals(stateBindings[index], binding) && binding.IsCurrent;
+            NativeDockPanelStateReceipt receipt = binding.CaptureReceipt();
+            if (!HostCurrent()) return null;
+            return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent);
+        }
+
+        bool ReceivePanelWithState(string panel, NativeDockPanelTransferState state)
+        {
+            ObjectConstructionIdentity toolsIdentity = ObjectConstructionIdentity.Capture(toolsNode);
+            ObjectConstructionIdentity registrationIdentity =
+                ObjectConstructionIdentity.Capture(windowRegistration);
+            ulong registrationRevision = windowRegistration.RegistrationRevision;
+            ulong startingSelectionRevision = panelSelectionRevision;
+            object? ownerContext = toolsNode.World as RuntimeWorld;
+            int index = Array.IndexOf(NativeDockPanel.LegacyTools, panel);
+            if ((uint)index >= (uint)stateBindings.Length ||
+                state.Values.Panel != panel ||
+                stateBindings[index] is not { IsCurrent: true } binding)
+                return false;
+            bool BeforeCurrent() => toolsIdentity.IsCurrent &&
+                registrationIdentity.IsCurrent && !toolsNode.IsDestroyed &&
+                !toolsNode.IsDestroyQueued && toolsNode.IsActiveInHierarchy &&
+                ReferenceEquals(windowRegistration.SceneNode, toolsNode) &&
+                ReferenceEquals(toolsNode.World, ownerContext) &&
+                windowRegistration.RegistrationRevision == registrationRevision &&
+                windowRegistration.TryGetRegistration(out string currentKey,
+                    out object? currentContext) && currentKey == windowKey &&
+                ReferenceEquals(currentContext, ownerContext) &&
+                panelSelectionRevision == startingSelectionRevision &&
+                ReferenceEquals(stateBindings[index], binding) && binding.IsCurrent;
+            if (!BeforeCurrent() || !state.IsCurrent || !BeforeCurrent())
+                return false;
+            NativeDockPanelStateReceipt before = binding.CaptureReceipt();
+            bool DestinationCurrent() => toolsIdentity.IsCurrent &&
+                registrationIdentity.IsCurrent && !toolsNode.IsDestroyed &&
+                !toolsNode.IsDestroyQueued && toolsNode.IsActiveInHierarchy &&
+                ReferenceEquals(windowRegistration.SceneNode, toolsNode) &&
+                ReferenceEquals(toolsNode.World, ownerContext) &&
+                windowRegistration.RegistrationRevision == registrationRevision &&
+                windowRegistration.TryGetRegistration(out string currentKey,
+                    out object? currentContext) && currentKey == windowKey &&
+                ReferenceEquals(currentContext, ownerContext) &&
+                panelSelectionRevision == startingSelectionRevision + 1 &&
+                layout.SelectedTab == index && (layout.OpenMask & (1 << index)) != 0 &&
+                ReferenceEquals(stateBindings[index], binding) && binding.IsCurrent;
+            if (!ReceivePanel(panel) || !DestinationCurrent() || !state.IsCurrent ||
+                !DestinationCurrent() ||
+                binding.Panel.StateIntentRevision != before.IntentRevision)
+                return false;
+            bool ForwardCurrent() => DestinationCurrent() && state.IsCurrent &&
+                DestinationCurrent();
+            if (!ForwardCurrent()) return false;
+            NativeDockPanelStateReceipt applied = binding.Restore(
+                state.Values, ForwardCurrent);
+            if (!applied.IsCurrent || !ForwardCurrent())
+                return false;
+            if (!DestinationCurrent() || !applied.IsCurrent) return false;
+            applied.Values.WriteTo(layout);
+            if (!DestinationCurrent() || !applied.IsCurrent) return false;
+            Save();
+            return DestinationCurrent() && applied.IsCurrent && ForwardCurrent() &&
+                applied.Values.Matches(layout);
+        }
 
         bool ReceivePanel(string panel)
         {
@@ -144,6 +236,7 @@ public static class EditorPanelHost
 
         void Select(int index)
         {
+            panelSelectionRevision++;
             layout.OpenMask |= 1 << index;
             layout.SelectedTab = index;
             Refresh();
@@ -159,6 +252,7 @@ public static class EditorPanelHost
 
         void ClosePanel(int index)
         {
+            panelSelectionRevision++;
             layout.OpenMask &= ~(1 << index);
             layout.Sanitize();
             Refresh();
@@ -171,6 +265,7 @@ public static class EditorPanelHost
             int destination = slot + direction;
             if (slot < 0 || destination < 0 || destination >= layout.TabOrder.Length)
                 return;
+            panelSelectionRevision++;
             (layout.TabOrder[slot], layout.TabOrder[destination]) =
                 (layout.TabOrder[destination], layout.TabOrder[slot]);
             Refresh();

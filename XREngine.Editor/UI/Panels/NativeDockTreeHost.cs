@@ -24,6 +24,7 @@ internal sealed class NativeDockTreeHost
     private readonly NativeLayoutSaveDebouncer? _layoutSaves;
     private readonly List<IDisposable> _dropRegistrations = [];
     private readonly Dictionary<string, SceneNode> _panelSlots = [];
+    private readonly Dictionary<string, NativeToolPanelStateBinding> _toolStateBindings = [];
     private readonly NativeDockRenderGate _renderGate = new();
     private int _closedCursor;
     private ulong _dockMutationRevision;
@@ -49,7 +50,8 @@ internal sealed class NativeDockTreeHost
         _tree = _layout.DockTree!;
         _root.Destroyed += _ => Dispose();
         _registration = _root.AddComponent<NativeDockWindowRegistration>()!;
-        _registration.Configure(_windowKey, ReceivePanel, _world, _window, ReceivePanelAtStack);
+        _registration.Configure(_windowKey, ReceivePanel, _world, _window, ReceivePanelAtStack,
+            CapturePanelState, ReceivePanelWithState, ReceivePanelAtStackWithState);
         _layoutSaves = _root.AddComponent<NativeLayoutSaveDebouncer>()!;
         _layoutSaves.Configure(Save);
         Render();
@@ -652,11 +654,61 @@ internal sealed class NativeDockTreeHost
     private void BindToolState(NativeVirtualTextPanel component, SceneNode slot, string panel, int index)
     {
         var rootIdentity = XREngine.Data.Core.ObjectConstructionIdentity.Capture(_root);
-        NativeToolPanelState.Bind(component, slot, _layout, index, Save,
+        var rootTransformIdentity = ObjectConstructionIdentity.Capture(_root.Transform);
+        var registrationIdentity = ObjectConstructionIdentity.Capture(_registration);
+        _panelSlots.TryGetValue(panel, out SceneNode? predecessor);
+        ObjectConstructionIdentity? predecessorIdentity = predecessor is null ? null :
+            ObjectConstructionIdentity.Capture(predecessor);
+        var slotParent = slot.Transform.Parent;
+        ObjectConstructionIdentity? slotParentIdentity = slotParent is null ? null :
+            ObjectConstructionIdentity.Capture(slotParent);
+        ulong registrationRevision = _registration.RegistrationRevision;
+        ulong dockRevision = _dockMutationRevision;
+        ulong renderRevision = _renderGate.Revision;
+        bool InitialCurrent()
+        {
+            if (_disposed || !rootIdentity.IsCurrent || !rootTransformIdentity.IsCurrent ||
+                !registrationIdentity.IsCurrent || !_renderGate.IsRendering ||
+                _renderGate.Revision != renderRevision ||
+                _dockMutationRevision != dockRevision ||
+                _registration.RegistrationRevision != registrationRevision ||
+                !_root.IsActiveInHierarchy || _root.IsDestroyed || _root.IsDestroyQueued ||
+                !ReferenceEquals(_root.World, _world) ||
+                !ReferenceEquals(_registration.SceneNode, _root) ||
+                !_registration.TryGetRegistration(out string key, out object? world) ||
+                key != _windowKey || !ReferenceEquals(world, _world) ||
+                slotParentIdentity?.IsCurrent != true ||
+                !ReferenceEquals(slot.Transform.Parent, slotParent) ||
+                !IsExpectedInitialSlotMapping(_panelSlots, panel, slot,
+                    predecessor, predecessorIdentity))
+                return false;
+            for (TransformBase? ancestor = slotParent; ancestor is not null;
+                 ancestor = ancestor.Parent)
+                if (ReferenceEquals(ancestor, _root.Transform))
+                    return true;
+            return false;
+        }
+        NativeToolPanelStateBinding? binding = NativeToolPanelState.Bind(component, slot,
+            _layout, panel, Save,
             () => _layoutSaves?.Request(),
-            () => !_disposed && !_receivingPanel && !_renderGate.IsRendering &&
+            () => !_disposed &&
                 rootIdentity.IsCurrent && !_root.IsDestroyed && !_root.IsDestroyQueued &&
-                _panelSlots.TryGetValue(panel, out SceneNode? current) && ReferenceEquals(current, slot));
+                _panelSlots.TryGetValue(panel, out SceneNode? current) && ReferenceEquals(current, slot),
+            InitialCurrent);
+        if (binding is null)
+            throw new InvalidOperationException("The tool panel lost its owner during binding.");
+        _toolStateBindings[panel] = binding;
+    }
+
+    internal static bool IsExpectedInitialSlotMapping(
+        IReadOnlyDictionary<string, SceneNode> slots, string panel, SceneNode slot,
+        SceneNode? predecessor, ObjectConstructionIdentity? predecessorIdentity)
+    {
+        if (!slots.TryGetValue(panel, out SceneNode? mapped) ||
+            ReferenceEquals(mapped, slot))
+            return true;
+        return ReferenceEquals(mapped, predecessor) &&
+            predecessorIdentity?.IsCurrent == true && mapped.IsDestroyed;
     }
 
     private void MoveToNextStack(NativeDockNode source, ulong revision)
@@ -709,6 +761,9 @@ internal sealed class NativeDockTreeHost
         ulong sourceRevision = _dockMutationRevision;
         ulong registrationRevision = _registration.RegistrationRevision;
         ObjectConstructionIdentity rootIdentity = ObjectConstructionIdentity.Capture(_root);
+        TransformBase rootTransform = _root.Transform;
+        ObjectConstructionIdentity rootTransformIdentity =
+            ObjectConstructionIdentity.Capture(rootTransform);
         ObjectConstructionIdentity registrationIdentity = ObjectConstructionIdentity.Capture(_registration);
         NativeDockTransferResult result = NativeDockWindowRegistry.TransferToAnotherWindow(_registration, panel);
         if (result == NativeDockTransferResult.Rejected)
@@ -716,6 +771,7 @@ internal sealed class NativeDockTreeHost
         else if (result == NativeDockTransferResult.NoTarget)
             Debug.UI("[NativeDock] Open another native editor window in this world, then retry the panel transfer.");
         if (result == NativeDockTransferResult.Committed && rootIdentity.IsCurrent &&
+            rootTransformIdentity.IsCurrent && ReferenceEquals(_root.Transform, rootTransform) &&
             registrationIdentity.IsCurrent && !_disposed && !_root.IsDestroyed &&
             !_root.IsDestroyQueued && _root.IsActiveInHierarchy && ReferenceEquals(_root.World, _world) &&
             _registration.RegistrationRevision == registrationRevision &&
@@ -734,27 +790,135 @@ internal sealed class NativeDockTreeHost
 
     private bool ReceivePanel(string panel) => ReceivePanelCore(panel, null);
 
+    private NativeDockPanelTransferState? CapturePanelState(string panel)
+    {
+        if (_disposed || !NativeDockPanel.All.Contains(panel) ||
+            _root.IsDestroyed || _root.IsDestroyQueued || !_root.IsActiveInHierarchy ||
+            !_tree.Stacks().Any(stack => stack.Tabs.Contains(panel)))
+            return null;
+        ObjectConstructionIdentity rootIdentity = ObjectConstructionIdentity.Capture(_root);
+        TransformBase rootTransform = _root.Transform;
+        ObjectConstructionIdentity rootTransformIdentity =
+            ObjectConstructionIdentity.Capture(rootTransform);
+        ObjectConstructionIdentity registrationIdentity =
+            ObjectConstructionIdentity.Capture(_registration);
+        ulong registrationRevision = _registration.RegistrationRevision;
+        ulong dockRevision = _dockMutationRevision;
+        bool HostCurrent() => !_disposed && rootIdentity.IsCurrent &&
+            rootTransformIdentity.IsCurrent && ReferenceEquals(_root.Transform, rootTransform) &&
+            registrationIdentity.IsCurrent && !_root.IsDestroyed &&
+            !_root.IsDestroyQueued && _root.IsActiveInHierarchy &&
+            ReferenceEquals(_root.World, _world) &&
+            ReferenceEquals(_registration.SceneNode, _root) &&
+            _registration.TryGetRegistration(out string currentKey, out object? currentWorld) &&
+            currentKey == _windowKey && ReferenceEquals(currentWorld, _world) &&
+            _registration.RegistrationRevision == registrationRevision &&
+            _dockMutationRevision == dockRevision &&
+            _tree.Stacks().Any(stack => stack.Tabs.Contains(panel));
+        if (_panelSlots.TryGetValue(panel, out SceneNode? slot))
+        {
+            if (NativeDockPanelStateValues.ScrollIndex(panel) < 0)
+            {
+                ObjectConstructionIdentity slotIdentity = ObjectConstructionIdentity.Capture(slot);
+                NativeDockPanelStateValues untracked =
+                    NativeDockPanelStateValues.Capture(_layout, panel);
+                return new(untracked, () => HostCurrent() && slotIdentity.IsCurrent &&
+                    _panelSlots.TryGetValue(panel, out SceneNode? current) &&
+                    ReferenceEquals(current, slot));
+            }
+            if (!_toolStateBindings.TryGetValue(panel, out NativeToolPanelStateBinding? binding) ||
+                !ReferenceEquals(binding.Slot, slot) || !binding.IsCurrent)
+                return null;
+            NativeDockPanelStateReceipt receipt = binding.CaptureReceipt();
+            return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent);
+        }
+        NativeDockPanelStateValues values = NativeDockPanelStateValues.Capture(_layout, panel);
+        return new(values, () => HostCurrent() && !_panelSlots.ContainsKey(panel) &&
+            values.Matches(_layout));
+    }
+
+    private bool ReceivePanelWithState(string panel, NativeDockPanelTransferState state)
+        => ReceivePanelCore(panel, null, state);
+
+    private bool ReceivePanelAtStackWithState(string panel, string stackId,
+        NativeDockPanelTransferState state)
+        => ReceivePanelCore(panel, stackId, state);
+
     private bool ReceivePanelAtStack(string panel, string stackId)
         => ReceivePanelCore(panel, stackId);
 
-    private bool ReceivePanelCore(string panel, string? targetStackId)
+    private bool ReceivePanelCore(string panel, string? targetStackId,
+        NativeDockPanelTransferState? transferState = null)
     {
+        ObjectConstructionIdentity rootIdentity = ObjectConstructionIdentity.Capture(_root);
+        TransformBase rootTransform = _root.Transform;
+        ObjectConstructionIdentity rootTransformIdentity =
+            ObjectConstructionIdentity.Capture(rootTransform);
+        ObjectConstructionIdentity registrationIdentity = ObjectConstructionIdentity.Capture(_registration);
+        ulong registrationRevision = _registration.RegistrationRevision;
+        ulong priorRevision = _dockMutationRevision;
         if (_receivingPanel || _disposed || _world is null || !_root.IsActiveInHierarchy ||
             _root.IsDestroyed || _root.IsDestroyQueued || !ReferenceEquals(_root.World, _world) ||
             !_registration.TryGetRegistration(out string registeredKey, out object? registeredWorld) ||
             registeredKey != _windowKey || !ReferenceEquals(registeredWorld, _world) ||
             !NativeDockPanel.All.Contains(panel))
             return false;
+        if (transferState is { } incoming &&
+            (incoming.Values.Panel != panel || !incoming.IsCurrent ||
+             _disposed || !_root.IsActiveInHierarchy ||
+             _root.IsDestroyed || _root.IsDestroyQueued ||
+             !rootIdentity.IsCurrent || !rootTransformIdentity.IsCurrent ||
+             !ReferenceEquals(_root.Transform, rootTransform) ||
+             !registrationIdentity.IsCurrent ||
+             _dockMutationRevision != priorRevision ||
+             _registration.RegistrationRevision != registrationRevision ||
+             !ReferenceEquals(_registration.SceneNode, _root) ||
+             !ReferenceEquals(_root.World, _world) ||
+             !_registration.TryGetRegistration(out registeredKey, out registeredWorld) ||
+             registeredKey != _windowKey || !ReferenceEquals(registeredWorld, _world)))
+            return false;
         NativeDockNode priorRoot = CopyDockNode(_tree.Root);
         List<string> priorClosed = [.. _tree.ClosedPanels];
-        ulong priorRevision = _dockMutationRevision;
-        ulong registrationRevision = _registration.RegistrationRevision;
-        ObjectConstructionIdentity rootIdentity = ObjectConstructionIdentity.Capture(_root);
-        ObjectConstructionIdentity registrationIdentity = ObjectConstructionIdentity.Capture(_registration);
+        NativeDockPanelStateValues destinationBefore =
+            NativeDockPanelStateValues.Capture(_layout, panel);
+        NativeDockPanelStateReceipt? destinationReceipt = null;
+        if (transferState is not null && _panelSlots.TryGetValue(panel, out SceneNode? priorSlot))
+        {
+            if (NativeDockPanelStateValues.ScrollIndex(panel) >= 0)
+            {
+                if (!_toolStateBindings.TryGetValue(panel, out NativeToolPanelStateBinding? priorBinding) ||
+                    !ReferenceEquals(priorBinding.Slot, priorSlot) || !priorBinding.IsCurrent)
+                    return false;
+                destinationReceipt = priorBinding.CaptureReceipt();
+                destinationBefore = destinationReceipt.Value.Values;
+            }
+        }
+        bool stateMutationStarted = false;
+        NativeDockPanelStateReceipt? appliedState = null;
+        NativeDockNode? target = null;
+        SceneNode? receivedSlot = null;
+        NativeToolPanelStateBinding? receivedBinding = null;
+        bool DestinationCurrent() => !_disposed && rootIdentity.IsCurrent &&
+            rootTransformIdentity.IsCurrent && ReferenceEquals(_root.Transform, rootTransform) &&
+            registrationIdentity.IsCurrent && _root.IsActiveInHierarchy &&
+            !_root.IsDestroyed && !_root.IsDestroyQueued &&
+            ReferenceEquals(_registration.SceneNode, _root) &&
+            ReferenceEquals(_root.World, _world) &&
+            _registration.RegistrationRevision == registrationRevision &&
+            _registration.TryGetRegistration(out string currentKey, out object? currentWorld) &&
+            currentKey == _windowKey && ReferenceEquals(currentWorld, _world) &&
+            _dockMutationRevision == priorRevision + 1 && target is not null &&
+            _tree.Stacks().Any(stack => ReferenceEquals(stack, target) &&
+                stack.Tabs.Contains(panel)) &&
+            (receivedSlot is null || _panelSlots.TryGetValue(panel, out SceneNode? currentSlot) &&
+                ReferenceEquals(currentSlot, receivedSlot)) &&
+            (receivedBinding is null || _toolStateBindings.TryGetValue(panel,
+                out NativeToolPanelStateBinding? currentBinding) &&
+                ReferenceEquals(currentBinding, receivedBinding) && currentBinding.IsCurrent);
         _receivingPanel = true;
         try
         {
-            NativeDockNode? target = targetStackId is null
+            target = targetStackId is null
                 ? _tree.Stacks().FirstOrDefault(stack =>
                     stack.Tabs.Any(item => NativeDockPanel.LegacyTools.Contains(item))) ??
                     _tree.Stacks().FirstOrDefault()
@@ -764,26 +928,96 @@ internal sealed class NativeDockTreeHost
             if (!_tree.Move(panel, target.Id, int.MaxValue))
                 return false;
             CommitStructure();
-            if (!_disposed && rootIdentity.IsCurrent && registrationIdentity.IsCurrent &&
-                _root.IsActiveInHierarchy && !_root.IsDestroyed &&
-                !_root.IsDestroyQueued && ReferenceEquals(_root.World, _world) &&
-                _registration.TryGetRegistration(out registeredKey, out registeredWorld) &&
-                registeredKey == _windowKey && ReferenceEquals(registeredWorld, _world) &&
-                _registration.RegistrationRevision == registrationRevision &&
-                _dockMutationRevision == priorRevision + 1 &&
-                _tree.Stacks().Any(stack => stack.Tabs.Contains(panel) &&
-                    (targetStackId is null || stack.Id == targetStackId)))
+            if (transferState is { } state &&
+                NativeDockPanelStateValues.ScrollIndex(panel) >= 0)
+            {
+                if (!DestinationCurrent() || !state.IsCurrent || !DestinationCurrent() ||
+                    !_panelSlots.TryGetValue(panel, out SceneNode? slot) ||
+                    !_toolStateBindings.TryGetValue(panel, out NativeToolPanelStateBinding? binding) ||
+                    !ReferenceEquals(binding.Slot, slot) || !binding.IsCurrent)
+                {
+                    RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
+                        registrationRevision, rootIdentity, rootTransform,
+                        rootTransformIdentity, registrationIdentity);
+                    return false;
+                }
+                receivedSlot = slot;
+                receivedBinding = binding;
+                if (destinationReceipt is { } prior &&
+                    (!ReferenceEquals(prior.Binding, binding) ||
+                     binding.Panel.StateIntentRevision != prior.IntentRevision))
+                {
+                    RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
+                        registrationRevision, rootIdentity, rootTransform,
+                        rootTransformIdentity, registrationIdentity);
+                    return false;
+                }
+                bool ForwardCurrent() => DestinationCurrent() && state.IsCurrent &&
+                    DestinationCurrent();
+                if (!ForwardCurrent())
+                {
+                    if (DestinationCurrent())
+                        RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
+                            registrationRevision, rootIdentity, rootTransform,
+                            rootTransformIdentity, registrationIdentity);
+                    return false;
+                }
+                stateMutationStarted = true;
+                NativeDockPanelStateReceipt applied = binding.Restore(
+                    state.Values, ForwardCurrent);
+                appliedState = applied;
+                if (!applied.IsCurrent || !ForwardCurrent())
+                    return false;
+                if (!DestinationCurrent() || !applied.IsCurrent)
+                    return false;
+                applied.Values.WriteTo(_layout);
+                if (!DestinationCurrent() || !applied.IsCurrent)
+                    return false;
+                Save();
+                if (!DestinationCurrent() || !applied.IsCurrent || !ForwardCurrent() ||
+                    !applied.Values.Matches(_layout))
+                    return false;
+            }
+            if (DestinationCurrent())
                 return true;
-            RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
-                registrationRevision, rootIdentity, registrationIdentity);
+            if (!stateMutationStarted)
+                RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
+                    registrationRevision, rootIdentity, rootTransform,
+                    rootTransformIdentity, registrationIdentity);
             return false;
         }
         catch (Exception exception)
         {
+            if (appliedState is { IsCurrent: true } applied && DestinationCurrent() &&
+                applied.Binding.IsCurrent)
+            {
+                try
+                {
+                    NativeDockPanelStateReceipt restored =
+                        applied.Binding.Restore(destinationBefore, DestinationCurrent);
+                    if (restored.IsCurrent && DestinationCurrent())
+                    {
+                        restored.Values.WriteTo(_layout);
+                        if (!DestinationCurrent() || !restored.IsCurrent)
+                            throw new InvalidOperationException("The destination changed during compensation.");
+                        Save();
+                        if (DestinationCurrent() && restored.IsCurrent &&
+                            restored.Values.Matches(_layout))
+                            stateMutationStarted = false;
+                    }
+                }
+                catch (Exception compensationFailure)
+                {
+                    Debug.LogException(compensationFailure,
+                        "[NativeDock] Destination panel state could not be restored.");
+                }
+            }
             ulong admittedRevision = _dockMutationRevision == priorRevision
                 ? priorRevision : priorRevision + 1;
-            RestoreReceiveSnapshot(priorRoot, priorClosed, admittedRevision,
-                registrationRevision, rootIdentity, registrationIdentity);
+            if (!stateMutationStarted)
+                RestoreReceiveSnapshot(priorRoot, priorClosed, admittedRevision,
+                    registrationRevision, rootIdentity, rootTransform,
+                    rootTransformIdentity, registrationIdentity);
             Debug.LogException(exception, "[NativeDock] Destination panel commit failed.");
             return false;
         }
@@ -793,9 +1027,13 @@ internal sealed class NativeDockTreeHost
     private void RestoreReceiveSnapshot(NativeDockNode root, List<string> closedPanels,
         ulong admittedRevision, ulong registrationRevision,
         ObjectConstructionIdentity rootIdentity,
+        TransformBase rootTransform,
+        ObjectConstructionIdentity rootTransformIdentity,
         ObjectConstructionIdentity registrationIdentity)
     {
-        if (_disposed || !rootIdentity.IsCurrent || !registrationIdentity.IsCurrent ||
+        if (_disposed || !rootIdentity.IsCurrent || !rootTransformIdentity.IsCurrent ||
+            !ReferenceEquals(_root.Transform, rootTransform) ||
+            !registrationIdentity.IsCurrent ||
             _root.IsDestroyed || _root.IsDestroyQueued || !_root.IsActiveInHierarchy ||
             _world is null || !ReferenceEquals(_root.World, _world) ||
             _registration.RegistrationRevision != registrationRevision ||

@@ -64,7 +64,11 @@ namespace XREngine.Rendering.UI
         public float UpperVirtualBound
         {
             get => _upperVirtualBound;
-            set => SetField(ref _upperVirtualBound, value);
+            set
+            {
+                checked { _virtualBoundsIntentRevision++; }
+                SetField(ref _upperVirtualBound, value);
+            }
         }
         /// <summary>
         /// The lower bound of the virtual region.
@@ -72,7 +76,11 @@ namespace XREngine.Rendering.UI
         public float LowerVirtualBound
         {
             get => _lowerVirtualBound;
-            set => SetField(ref _lowerVirtualBound, value);
+            set
+            {
+                checked { _virtualBoundsIntentRevision++; }
+                SetField(ref _lowerVirtualBound, value);
+            }
         }
         public float VirtualRegionSize => UpperVirtualBound - LowerVirtualBound;
         public void SetVirtualBounds(float upper, float lower)
@@ -92,7 +100,7 @@ namespace XREngine.Rendering.UI
         public float ContentScrollOffset
         {
             get => _contentScrollOffset;
-            set => SetField(ref _contentScrollOffset, value);
+            set => SetContentScrollOffsetCore(value, 0, static _ => { }, false);
         }
         public void SetVirtualBoundsRelativeToTop(float size)
         {

@@ -42,14 +42,29 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         set
         {
             if (_destroying) return;
-            _folder = string.IsNullOrWhiteSpace(value) ? null : value;
+            string? next = string.IsNullOrWhiteSpace(value) ? null : value;
+            SetFolderCore(next, BeginStateIntent(), null);
+        }
+    }
+
+    internal void SetFolderOwned(string value, ulong intent,
+        NativeToolPanelStateBinding binding)
+        => SetFolderCore(string.IsNullOrWhiteSpace(value) ? null : value, intent, binding);
+
+    private void SetFolderCore(string? next, ulong intent,
+        NativeToolPanelStateBinding? binding)
+    {
+            RequireAssetStateIntent(intent, binding);
+            if (_folder == next) return;
+            _folder = next;
+            PublishStateWrite();
             _renameMenuDraft = null;
             _selectionIntent++;
             SelectedPath = null;
             if (!AcceptsActiveInput) return;
             RefreshRows();
-            if (AcceptsActiveInput) ViewStateChanged?.Invoke();
-        }
+            if (AssetStateCurrent(intent, binding) && AcceptsActiveInput)
+                ViewStateChanged?.Invoke();
     }
     public bool UseEngineAssets
     {
@@ -57,15 +72,28 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         set
         {
             if (_destroying) return;
+            SetScopeCore(value, BeginStateIntent(), null);
+        }
+    }
+
+    internal void SetScopeOwned(bool value, ulong intent,
+        NativeToolPanelStateBinding binding) => SetScopeCore(value, intent, binding);
+
+    private void SetScopeCore(bool value, ulong intent,
+        NativeToolPanelStateBinding? binding)
+    {
+            RequireAssetStateIntent(intent, binding);
+            if (_engineFiles == value && _folder is null) return;
             _engineFiles = value;
             _renameMenuDraft = null;
             _folder = null;
+            PublishStateWrite();
             _selectionIntent++;
             SelectedPath = null;
             if (!AcceptsActiveInput) return;
             RefreshRows();
-            if (AcceptsActiveInput) ViewStateChanged?.Invoke();
-        }
+            if (AssetStateCurrent(intent, binding) && AcceptsActiveInput)
+                ViewStateChanged?.Invoke();
     }
     public string Search
     {
@@ -73,16 +101,51 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         set
         {
             if (_destroying) return;
+            value ??= string.Empty;
+            SetSearchCore(value, BeginStateIntent(), null);
+        }
+    }
+
+    internal void SetSearchOwned(string value, ulong intent,
+        NativeToolPanelStateBinding binding) => SetSearchCore(value, intent, binding);
+
+    private void SetSearchCore(string value, ulong intent,
+        NativeToolPanelStateBinding? binding)
+    {
+            RequireAssetStateIntent(intent, binding);
+            if (_search == value) return;
             _selectionIntent++;
-            _search = value ?? string.Empty;
+            _search = value;
+            PublishStateWrite();
             _renameMenuDraft = null;
             if (!AcceptsActiveInput) return;
             if (_searchInput is not null)
                 _searchInput.Text = _search;
+            if (!AssetStateCurrent(intent, binding)) return;
             if (!AcceptsActiveInput) return;
             RefreshRows();
-            if (AcceptsActiveInput) ViewStateChanged?.Invoke();
+            if (AssetStateCurrent(intent, binding) && AcceptsActiveInput)
+                ViewStateChanged?.Invoke();
+    }
+
+    private void RequireAssetStateIntent(ulong intent, NativeToolPanelStateBinding? binding)
+    {
+        RequireStateIntent(intent);
+        binding?.RequireOwnedState(intent);
+        if (_destroying)
+            throw new InvalidOperationException("The asset panel was retired during this edit.");
+    }
+
+    private bool AssetStateCurrent(ulong intent, NativeToolPanelStateBinding? binding)
+    {
+        if (!IsCurrentStateIntent(intent) || _destroying)
+        {
+            if (binding is not null)
+                throw new InvalidOperationException("The asset panel changed during restore.");
+            return false;
         }
+        binding?.RequireOwnedState(intent);
+        return true;
     }
 
     public AssetsPanel()
@@ -291,7 +354,10 @@ public partial class AssetsPanel : NativeVirtualTextPanel
     private void SubmitSearch(UITextInputComponent field)
     {
         if (AcceptsActiveInput)
-            Search = field.Text.Trim();
+        {
+            string submitted = field.Text.Trim();
+            if (_search != submitted) Search = submitted;
+        }
     }
 
     private void CancelSearch(UITextInputComponent field)

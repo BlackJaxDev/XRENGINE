@@ -55,15 +55,40 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         get => _category;
         set
         {
-            if (_terminal || _category == value) return;
-            if (!SetField(ref _category, value) || _terminal || _category != value) return;
+            if (_terminal) return;
+            SetCategoryCore(value, BeginStateIntent(), null);
+        }
+    }
+
+    internal void SetCategoryOwned(ELogCategory? value, ulong intent,
+        NativeToolPanelStateBinding binding) => SetCategoryCore(value, intent, binding);
+
+    private void SetCategoryCore(ELogCategory? value, ulong intent,
+        NativeToolPanelStateBinding? binding)
+    {
+            ELogCategory? before = _category;
+            bool changed;
+            try
+            {
+                changed = SetFieldValidated(ref _category, value, (Owner: this, Intent: intent, Binding: binding),
+                    static (state, original, current, _) =>
+                    {
+                        state.Owner.RequireStateIntent(state.Intent);
+                        state.Binding?.RequireOwnedState(state.Intent);
+                        if (original != current)
+                            throw new InvalidOperationException("The category changed during this edit.");
+                    }, propertyName: nameof(Category));
+            }
+            finally { if (before != _category) PublishStateWrite(); }
+            if (!changed || !StateEditCurrent(intent, binding) || _category != value) return;
             _actionsMenuRevision++;
             _categoryCombo?.Select(CategoryId(value));
+            if (!StateEditCurrent(intent, binding)) return;
             if (_categoryLabel is not null)
                 _categoryLabel.Text = value?.ToString() ?? "All";
+            if (!StateEditCurrent(intent, binding)) return;
             RefreshRows();
-            CategoryChanged?.Invoke(_category);
-        }
+            if (StateEditCurrent(intent, binding)) CategoryChanged?.Invoke(_category);
     }
 
     public bool AutoScroll
@@ -71,12 +96,36 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         get => _autoScroll;
         set
         {
-            if (_terminal || _autoScroll == value) return;
-            if (!SetField(ref _autoScroll, value) || _terminal || _autoScroll != value) return;
+            if (_terminal) return;
+            SetAutoScrollCore(value, BeginStateIntent(), null);
+        }
+    }
+
+    internal void SetAutoScrollOwned(bool value, ulong intent,
+        NativeToolPanelStateBinding binding) => SetAutoScrollCore(value, intent, binding);
+
+    private void SetAutoScrollCore(bool value, ulong intent,
+        NativeToolPanelStateBinding? binding)
+    {
+            bool before = _autoScroll;
+            bool changed;
+            try
+            {
+                changed = SetFieldValidated(ref _autoScroll, value,
+                    (Owner: this, Intent: intent, Binding: binding),
+                    static (state, original, current, _) =>
+                    {
+                        state.Owner.RequireStateIntent(state.Intent);
+                        state.Binding?.RequireOwnedState(state.Intent);
+                        if (original != current)
+                            throw new InvalidOperationException("Automatic scroll changed during this edit.");
+                    }, propertyName: nameof(AutoScroll));
+            }
+            finally { if (before != _autoScroll) PublishStateWrite(); }
+            if (!changed || !StateEditCurrent(intent, binding) || _autoScroll != value) return;
             _actionsMenuRevision++;
             UpdateStatus();
-            AutoScrollChanged?.Invoke(_autoScroll);
-        }
+            if (StateEditCurrent(intent, binding)) AutoScrollChanged?.Invoke(_autoScroll);
     }
 
     public int TotalEntryCount => _cache.TotalCount;
@@ -89,13 +138,50 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         {
             if (_terminal) return;
             value ??= string.Empty;
-            if (!SetField(ref _filter, value) || _terminal || _filter != value) return;
+            SetFilterCore(value, BeginStateIntent(), null);
+        }
+    }
+
+    internal void SetFilterOwned(string value, ulong intent,
+        NativeToolPanelStateBinding binding) => SetFilterCore(value, intent, binding);
+
+    private void SetFilterCore(string value, ulong intent,
+        NativeToolPanelStateBinding? binding)
+    {
+            string before = _filter;
+            bool changed;
+            try
+            {
+                changed = SetFieldValidated(ref _filter, value,
+                    (Owner: this, Intent: intent, Binding: binding),
+                    static (state, original, current, _) =>
+                    {
+                        state.Owner.RequireStateIntent(state.Intent);
+                        state.Binding?.RequireOwnedState(state.Intent);
+                        if (original != current)
+                            throw new InvalidOperationException("The console filter changed during this edit.");
+                    }, propertyName: nameof(Filter));
+            }
+            finally { if (before != _filter) PublishStateWrite(); }
+            if (!changed || !StateEditCurrent(intent, binding) || _filter != value) return;
             _actionsMenuRevision++;
             if (_filterInput is not null)
                 _filterInput.Text = _filter;
+            if (!StateEditCurrent(intent, binding)) return;
             RefreshRows();
-            FilterChanged?.Invoke(_filter);
+            if (StateEditCurrent(intent, binding)) FilterChanged?.Invoke(_filter);
+    }
+
+    private bool StateEditCurrent(ulong intent, NativeToolPanelStateBinding? binding)
+    {
+        if (!IsCurrentStateIntent(intent) || _terminal)
+        {
+            if (binding is not null)
+                throw new InvalidOperationException("The console changed during restore.");
+            return false;
         }
+        binding?.RequireOwnedState(intent);
+        return true;
     }
 
     protected override void OnComponentActivated()
@@ -343,9 +429,14 @@ public partial class ConsolePanel : NativeVirtualTextPanel
     {
         if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
         if (change.NewValue is not { } id || id == 1)
-            Category = null;
+        {
+            if (_category is not null) Category = null;
+        }
         else if (id - 2 < (ulong)CategoryOptions.Length)
-            Category = (ELogCategory)(id - 2);
+        {
+            ELogCategory selected = (ELogCategory)(id - 2);
+            if (_category != selected) Category = selected;
+        }
     }
 
     protected override float FooterHeight => 24;
@@ -361,7 +452,8 @@ public partial class ConsolePanel : NativeVirtualTextPanel
     private void FilterSubmitted(UITextInputComponent field)
     {
         if (_terminal || !_ownerActive || !IsActiveInHierarchy) return;
-        Filter = field.Text.Trim();
+        string submitted = field.Text.Trim();
+        if (_filter != submitted) Filter = submitted;
     }
 
     private void FilterCancelled(UITextInputComponent field)
@@ -408,7 +500,7 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         if (rowsChanged)
             SetRows(_cache.VisibleRows);
         if (stayAtEnd)
-            ScrollOffset = MaximumScrollOffset(_cache.FilteredCount);
+            SetDerivedScrollOffset(MaximumScrollOffset(_cache.FilteredCount));
         UpdateStatus();
     }
 

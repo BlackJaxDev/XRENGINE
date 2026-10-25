@@ -90,6 +90,12 @@
     <Compile Include="../Rendering/UITestShaderScope.cs" Link="Rendering/UITestShaderScope.cs" />
     <Compile Include="../Rendering/UITestRenderingHost.cs" Link="Rendering/UITestRenderingHost.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockLayout.cs" Link="Editor/NativeDockLayout.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanelStateValues.cs" Link="Editor/NativeDockPanelStateValues.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanelTransferState.cs" Link="Editor/NativeDockPanelTransferState.cs" />
+    <Compile Include="../Editor/NativeDockPanelStateValuesTests.cs" Link="Editor/NativeDockPanelStateValuesTests.cs" />
+    <Compile Include="../Editor/NativeDockPanelStateRoutingTests.cs" Link="Editor/NativeDockPanelStateRoutingTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativePanelScrollOwnerReceipt.cs" Link="Editor/NativePanelScrollOwnerReceipt.cs" />
+    <Compile Include="../Editor/NativePanelScrollOwnerReceiptTests.cs" Link="Editor/NativePanelScrollOwnerReceiptTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockNode.cs" Link="Editor/NativeDockNode.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanel.cs" Link="Editor/NativeDockPanel.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockTree.cs" Link="Editor/NativeDockTree.cs" />
@@ -215,6 +221,8 @@
     <Compile Include="../Rendering/UIBatchCohortReuseTests.cs" Link="Rendering/UIBatchCohortReuseTests.cs" />
     <Compile Include="../Rendering/CountingVirtualListProvider.cs" Link="Rendering/CountingVirtualListProvider.cs" />
     <Compile Include="../Rendering/UIVirtualCollectionTests.cs" Link="Rendering/UIVirtualCollectionTests.cs" />
+    <Compile Include="../Rendering/UIListScrollWriteTests.cs" Link="Rendering/UIListScrollWriteTests.cs" />
+    <Compile Include="../Rendering/UIListVirtualBoundsWriteTests.cs" Link="Rendering/UIListVirtualBoundsWriteTests.cs" />
     <Compile Include="../Rendering/UIVirtualTreeNavigationTests.cs" Link="Rendering/UIVirtualTreeNavigationTests.cs" />
     <Compile Include="../Rendering/UITestTreeKeyRegistration.cs" Link="Rendering/UITestTreeKeyRegistration.cs" />
     <Compile Include="../Rendering/UIVirtualScaleTests.cs" Link="Rendering/UIVirtualScaleTests.cs" />

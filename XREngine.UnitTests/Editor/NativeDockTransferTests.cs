@@ -10,6 +10,101 @@ namespace XREngine.UnitTests.Editor;
 public sealed class NativeDockTransferTests
 {
     [Test]
+    public void CapturedToolStateRequiresAStateAwareDestination()
+    {
+        object context = new();
+        TestWorldContext world = new();
+        SceneNode sourceNode = new("Dock source");
+        SceneNode destinationNode = new("Dock destination");
+        sourceNode.SetWorldContext(world);
+        destinationNode.SetWorldContext(world);
+        NativeDockWindowRegistration source = sourceNode.AddComponent<NativeDockWindowRegistration>()!;
+        NativeDockWindowRegistration destination = destinationNode.AddComponent<NativeDockWindowRegistration>()!;
+        string sourceKey = Guid.NewGuid().ToString("N");
+        string destinationKey = Guid.NewGuid().ToString("N");
+        int deliveries = 0;
+        try
+        {
+            NativeDockPanelStateValues values = NativeDockPanelStateValues.Capture(
+                new NativeDockLayout(), NativeDockPanel.Console);
+            source.Configure(sourceKey, _ => true, context,
+                capturePanelState: _ => new NativeDockPanelTransferState(values, () => true));
+            destination.Configure(destinationKey, _ => { deliveries++; return true; }, context,
+                receivePanelAtStack: (_, _) => { deliveries++; return true; });
+            NativeDockWindowRegistry.TransferToAnotherWindow(source, NativeDockPanel.Console)
+                .ShouldBe(NativeDockTransferResult.NoTarget);
+            NativeDockWindowRegistry.TransferToWindow(source, destination,
+                NativeDockPanel.Console, "target").ShouldBe(NativeDockTransferResult.Rejected);
+            deliveries.ShouldBe(0);
+
+            NativeDockPanelStateValues scene = NativeDockPanelStateValues.Capture(
+                new NativeDockLayout(), NativeDockPanel.Scene);
+            source.Configure(sourceKey, _ => true, context,
+                capturePanelState: _ => new NativeDockPanelTransferState(scene, () => true));
+            NativeDockWindowRegistry.TransferToAnotherWindow(source, NativeDockPanel.Scene)
+                .ShouldBe(NativeDockTransferResult.Committed);
+            NativeDockWindowRegistry.TransferToWindow(source, destination,
+                NativeDockPanel.Scene, "target").ShouldBe(NativeDockTransferResult.Committed);
+            deliveries.ShouldBe(2);
+        }
+        finally
+        {
+            sourceNode.Destroy(true);
+            destinationNode.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void SourceCaptureReentryCannotMutateDestinationBeforeRegistryRejects()
+    {
+        object context = new();
+        TestWorldContext world = new();
+        SceneNode sourceNode = new("Dock source");
+        SceneNode destinationNode = new("Dock destination");
+        sourceNode.SetWorldContext(world);
+        destinationNode.SetWorldContext(world);
+        NativeDockWindowRegistration source = sourceNode.AddComponent<NativeDockWindowRegistration>()!;
+        NativeDockWindowRegistration destination = destinationNode.AddComponent<NativeDockWindowRegistration>()!;
+        string sourceKey = Guid.NewGuid().ToString("N");
+        string destinationKey = Guid.NewGuid().ToString("N");
+        int deliveries = 0;
+        try
+        {
+            NativeDockPanelStateValues values = NativeDockPanelStateValues.Capture(
+                new NativeDockLayout(), NativeDockPanel.Console);
+            source.Configure(sourceKey, _ => true, context,
+                capturePanelState: _ =>
+                {
+                    source.Configure(sourceKey, _ => true, context);
+                    return new NativeDockPanelTransferState(values, () => true);
+                });
+            destination.Configure(destinationKey, _ => true, context,
+                receivePanelAtStack: (_, _) => true,
+                receivePanelState: (_, _) => { deliveries++; return true; },
+                receivePanelStateAtStack: (_, _, _) => { deliveries++; return true; });
+            NativeDockWindowRegistry.TransferToAnotherWindow(source, NativeDockPanel.Console)
+                .ShouldBe(NativeDockTransferResult.Rejected);
+            deliveries.ShouldBe(0);
+
+            source.Configure(sourceKey, _ => true, context,
+                capturePanelState: _ =>
+                {
+                    destination.Configure(destinationKey, _ => true, context,
+                        receivePanelAtStack: (_, _) => true);
+                    return new NativeDockPanelTransferState(values, () => true);
+                });
+            NativeDockWindowRegistry.TransferToWindow(source, destination,
+                NativeDockPanel.Console, "target").ShouldBe(NativeDockTransferResult.Rejected);
+            deliveries.ShouldBe(0);
+        }
+        finally
+        {
+            sourceNode.Destroy(true);
+            destinationNode.Destroy(true);
+        }
+    }
+
+    [Test]
     public void DestinationMustConfirmCommitBeforeSourceCloses()
     {
         object context = new();

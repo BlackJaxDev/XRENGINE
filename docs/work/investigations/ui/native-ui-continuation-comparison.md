@@ -1137,3 +1137,63 @@ outside-window release, observer failure, and live teardown have not run here.
 The route is receive-first; it does not roll both windows back atomically.
 The next confirmed state gap is that a receiver binds its own saved panel view
 state instead of the moved panel's source filter, view, and scroll state.
+
+
+## Live Tool State Transfer
+
+Source review confirmed that the active dock-tree receiver used its own saved
+settings after moving a panel. Reused destination slots also skipped new binding.
+The candidate retains one binding per slot and captures effective live values
+before dispatch. The older four-panel host uses the same registry and now has
+a state adapter. Registrations without a state adapter cannot receive tool state.
+
+Review exposed active-path issues in the candidate before publication:
+
+- Derived automatic scrolling could start a public edit before initial binding.
+- Combo feedback could invalidate its own restore and skip the final save event.
+- A foreign edit could inherit the stale outer restore's scroll intent.
+- Source changes between individual destination setters needed pre-write checks.
+- Source capture could replace a registration or root before destination delivery.
+- Receiver host identity and revision needed checks around source-validation
+  callbacks, throughout restore, and before compensation.
+
+The first narrow renderer build passed with zero warnings/errors in 1m47.60s.
+Portable build224 passed with zero warnings/errors in 2m16.83s; run172 passed
+19/19 scroll and value-copy cases in 0.340s. Build225 passed in 19.80s; run173
+passed 26/26 cases in 0.460s. Build226 passed in 20.59s; run174 passed 38/38
+cases in 0.289s. Both later builds also had zero warnings/errors. Desktop build73
+compiled the editor and tests with zero warnings/errors in 3m11.75s. All 10,870
+source inputs stayed unchanged during those final targeted and desktop checks.
+Receiver host-proof corrections remained pending at that snapshot, so these
+results are interim evidence. Real-panel tests compiled but did not execute here.
+
+
+Further review repaired normal scroll-veto behavior and initial binding of a
+replacement for an already destroyed slot. A Rows list could also move during
+`PropertyChanging` while its old panel retained the list field. A focused receipt
+now checks the exact list/node/parent lifetimes and ancestry for owned writes and
+source-state validity. Tree compensation uses the same captured root-transform
+proof as forward admission.
+
+Build227 found three CS0103 errors because a new editor-host test was placed in
+a Headless-linked fixture. The test moved to the editor-only fixture; existing
+portable detachment tests remain unchanged. No dependency or target change was
+needed.
+
+
+Build228 passed with zero warnings/errors in 18.46s. Run175 passed 48/48
+targeted cases in 0.486s, and run176 passed 1,411/1,411 portable cases in 24.611s,
+with no failures, warnings, or skips. Final review then found an unguarded
+`SetVirtualBounds` call inside owned scroll restore. Each virtual-bound write
+now uses pre-write and post-callback admission. New portable cases cover veto,
+value round trips, and reparenting at either bound. Ordinary setter notification
+and veto behavior remains unchanged. The following final checks use this repair.
+
+
+Final build229 passed with zero warnings/errors in 1m35.70s. Run177 passed 57/57
+targeted cases in 0.379s. Full run178 passed 1,420/1,420 in 22.233s, with no
+failures, warnings, or skips. Desktop build74 compiled the matching editor and
+tests with zero warnings/errors in 2m52.89s. All 10,874 source inputs remained
+unchanged. Ten new real-panel/host cases compiled only. Source review found no
+remaining blocker in this bounded transfer contract. Relative-link and diff
+checks passed. Windows execution and live multi-window acceptance remain pending.

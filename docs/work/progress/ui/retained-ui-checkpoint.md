@@ -1637,3 +1637,30 @@ compatibility, complete panel-state transfer, broad menu ownership, and other
 remaining code items stay open. Windows capture, overlap, mixed DPI, outside-window
 release, native teardown, visual/GPU acceptance, and equivalent ImGui benchmarks
 remain in the validation plan. ImGui remains the default editor.
+
+
+## Live Tool State Across Dock Transfers
+
+Both native hosts now transfer live asset navigation, console settings, profiler
+view, and effective tool scroll through one retained binding per slot. Existing
+destination slots restore without duplicate subscriptions. Guarded setters preserve
+callback edits, reject replaced owners, and distinguish accepted viewport clamping
+from a veto. Rows ownership includes its node, parent, and panel ancestry. Both
+virtual-bound writes use the same admission. Source closure requires a current
+source receipt. Partial failure can leave both hosts open; the transfer does not
+provide atomic rollback across windows. Existing saved fields and keys are unchanged.
+
+Final headless build229 passed with zero warnings/errors in 1m35.70s. Targeted
+run177 passed **57/57** in 0.379s. Full run178 passed **1,420/1,420** portable tests
+in 22.233s, with no failures, warnings, or skips. Desktop build74 compiled the
+editor and tests with zero warnings/errors in 2m52.89s. All **10,874 source inputs**
+stayed unchanged. Ten new real-panel/host test cases compiled only; they did not
+execute in this environment. Final source review, relative-link checks, and
+`git diff --check` passed.
+
+The original code reconciliation remains **51/60**. Animation member/key and view
+transfer, focus, expansion, complete play-transition state, other open code items,
+and the existing owner decisions remain open. Windows interaction, native graphics,
+IME, visual behavior, and equivalent-workload performance acceptance remain pending.
+A separate Windows validation task is not evidence until it reports executed results.
+ImGui remains the default editor.

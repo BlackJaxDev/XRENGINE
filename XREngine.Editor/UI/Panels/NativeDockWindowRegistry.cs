@@ -64,6 +64,9 @@ internal static class NativeDockWindowRegistry
             !ReferenceEquals(registeredSource, source))
             return NativeDockTransferResult.Rejected;
         ulong sourceRevision = source.RegistrationRevision;
+        ObjectConstructionIdentity sourceIdentity = ObjectConstructionIdentity.Capture(source);
+        ObjectConstructionIdentity sourceRootIdentity =
+            ObjectConstructionIdentity.Capture(source.SceneNode);
         foreach (var (key, host) in Hosts.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
             if (key == sourceKey || !host.TryGetRegistration(out string destinationKey,
@@ -72,12 +75,53 @@ internal static class NativeDockWindowRegistry
                 host.ReceivePanel is not { } receive)
                 continue;
             ulong destinationRevision = host.RegistrationRevision;
+            ObjectConstructionIdentity destinationIdentity = ObjectConstructionIdentity.Capture(host);
+            ObjectConstructionIdentity destinationRootIdentity =
+                ObjectConstructionIdentity.Capture(host.SceneNode);
+            Func<string, NativeDockPanelTransferState?>? capture = source.CapturePanelState;
+            Func<string, NativeDockPanelTransferState, bool>? receiveState = host.ReceivePanelState;
             try
             {
-                if (!receive(panel))
+                NativeDockPanelTransferState? state = capture?.Invoke(panel);
+                if (capture is not null &&
+                    (state is null || !state.Value.IsCurrent))
+                    return NativeDockTransferResult.Rejected;
+                if (state is { } stateForPanel &&
+                    NativeDockPanelStateValues.ScrollIndex(stateForPanel.Values.Panel) >= 0 &&
+                    receiveState is null)
+                    continue;
+                if (source.RegistrationRevision != sourceRevision ||
+                    host.RegistrationRevision != destinationRevision ||
+                    !sourceIdentity.IsCurrent || !sourceRootIdentity.IsCurrent ||
+                    !destinationIdentity.IsCurrent || !destinationRootIdentity.IsCurrent ||
+                    !ReferenceEquals(source.SceneNode, sourceRootIdentity.Target) ||
+                    !ReferenceEquals(host.SceneNode, destinationRootIdentity.Target) ||
+                    !ReferenceEquals(source.CapturePanelState, capture) ||
+                    !ReferenceEquals(host.ReceivePanelState, receiveState) ||
+                    !ReferenceEquals(host.ReceivePanel, receive) ||
+                    !source.TryGetRegistration(out string verifiedSourceKey,
+                        out object? verifiedSourceContext) ||
+                    verifiedSourceKey != sourceKey ||
+                    !ReferenceEquals(verifiedSourceContext, context) ||
+                    !IsCurrentHost(sourceKey, source) ||
+                    !host.TryGetRegistration(out string verifiedDestinationKey,
+                        out object? verifiedDestinationContext) ||
+                    verifiedDestinationKey != key ||
+                    !ReferenceEquals(verifiedDestinationContext, context) ||
+                    !IsCurrentHost(key, host))
+                    return NativeDockTransferResult.Rejected;
+                bool received = state is { } captured && receiveState is not null
+                    ? receiveState(panel, captured) : receive(panel);
+                if (!received || state is { } receivedState && !receivedState.IsCurrent)
                     return NativeDockTransferResult.Rejected;
                 bool committed = source.RegistrationRevision == sourceRevision &&
                     host.RegistrationRevision == destinationRevision &&
+                    sourceIdentity.IsCurrent && sourceRootIdentity.IsCurrent &&
+                    destinationIdentity.IsCurrent && destinationRootIdentity.IsCurrent &&
+                    ReferenceEquals(source.SceneNode, sourceRootIdentity.Target) &&
+                    ReferenceEquals(host.SceneNode, destinationRootIdentity.Target) &&
+                    ReferenceEquals(source.CapturePanelState, capture) &&
+                    ReferenceEquals(host.ReceivePanelState, receiveState) &&
                     source.TryGetRegistration(out string currentSourceKey, out object? currentContext) &&
                     currentSourceKey == sourceKey && ReferenceEquals(currentContext, context) &&
                     Hosts.TryGetValue(sourceKey, out registeredSource) &&
@@ -125,12 +169,57 @@ internal static class NativeDockWindowRegistry
             return NativeDockTransferResult.Rejected;
         ulong sourceRevision = source.RegistrationRevision;
         ulong destinationRevision = destination.RegistrationRevision;
+        ObjectConstructionIdentity sourceIdentity = ObjectConstructionIdentity.Capture(source);
+        ObjectConstructionIdentity sourceRootIdentity =
+            ObjectConstructionIdentity.Capture(source.SceneNode);
+        ObjectConstructionIdentity destinationIdentity = ObjectConstructionIdentity.Capture(destination);
+        ObjectConstructionIdentity destinationRootIdentity =
+            ObjectConstructionIdentity.Capture(destination.SceneNode);
+        Func<string, NativeDockPanelTransferState?>? capture = source.CapturePanelState;
+        Func<string, string, NativeDockPanelTransferState, bool>? receiveState =
+            destination.ReceivePanelStateAtStack;
         try
         {
-            if (!receive(panel, stackId))
+            NativeDockPanelTransferState? state = capture?.Invoke(panel);
+            if (capture is not null &&
+                (state is null || !state.Value.IsCurrent))
+                return NativeDockTransferResult.Rejected;
+            if (state is { } stateForPanel &&
+                NativeDockPanelStateValues.ScrollIndex(stateForPanel.Values.Panel) >= 0 &&
+                receiveState is null)
+                return NativeDockTransferResult.Rejected;
+            if (source.RegistrationRevision != sourceRevision ||
+                destination.RegistrationRevision != destinationRevision ||
+                !sourceIdentity.IsCurrent || !sourceRootIdentity.IsCurrent ||
+                !destinationIdentity.IsCurrent || !destinationRootIdentity.IsCurrent ||
+                !ReferenceEquals(source.SceneNode, sourceRootIdentity.Target) ||
+                !ReferenceEquals(destination.SceneNode, destinationRootIdentity.Target) ||
+                !ReferenceEquals(source.CapturePanelState, capture) ||
+                !ReferenceEquals(destination.ReceivePanelStateAtStack, receiveState) ||
+                !ReferenceEquals(destination.ReceivePanelAtStack, receive) ||
+                !source.TryGetRegistration(out string verifiedSourceKey,
+                    out object? verifiedSourceContext) ||
+                verifiedSourceKey != sourceKey ||
+                !ReferenceEquals(verifiedSourceContext, context) ||
+                !IsCurrentHost(sourceKey, source) ||
+                !destination.TryGetRegistration(out string verifiedDestinationKey,
+                    out object? verifiedDestinationContext) ||
+                verifiedDestinationKey != destinationKey ||
+                !ReferenceEquals(verifiedDestinationContext, context) ||
+                !IsCurrentHost(destinationKey, destination))
+                return NativeDockTransferResult.Rejected;
+            bool received = state is { } captured && receiveState is not null
+                    ? receiveState(panel, stackId, captured) : receive(panel, stackId);
+            if (!received || state is { } receivedState && !receivedState.IsCurrent)
                 return NativeDockTransferResult.Rejected;
             return source.RegistrationRevision == sourceRevision &&
                 destination.RegistrationRevision == destinationRevision &&
+                sourceIdentity.IsCurrent && sourceRootIdentity.IsCurrent &&
+                destinationIdentity.IsCurrent && destinationRootIdentity.IsCurrent &&
+                ReferenceEquals(source.SceneNode, sourceRootIdentity.Target) &&
+                ReferenceEquals(destination.SceneNode, destinationRootIdentity.Target) &&
+                ReferenceEquals(source.CapturePanelState, capture) &&
+                ReferenceEquals(destination.ReceivePanelStateAtStack, receiveState) &&
                 source.TryGetRegistration(out string currentSourceKey, out object? currentContext) &&
                 currentSourceKey == sourceKey && ReferenceEquals(currentContext, context) &&
                 IsCurrentHost(sourceKey, source) &&

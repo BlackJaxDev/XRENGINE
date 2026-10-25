@@ -633,3 +633,35 @@ Transfer remains receive-first. A changed source can retain its panel after the
 destination accepts delivery. This is not atomic rollback across both hosts.
 Primary-window key compatibility, full panel-state transfer, and broader editor
 parity remain in the active TODO. ImGui remains the default editor.
+
+
+## Native Tool State Transfer Acceptance
+
+The final portable snapshot passes **57/57** targeted cases and **1,420/1,420**
+full-suite cases, with no failures, warnings, or skips. Headless and editor/test
+builds both have zero warnings/errors. All **10,874 source inputs** remained
+unchanged. Ten new real-panel/host cases compile only in this cloud environment.
+Portable tests execute registry delivery, value copying, exact Rows ownership,
+scroll/bounds vetoes, and callback reparenting. They do not run editor windows.
+
+Run these checks on Windows for both the dock-tree host and the four-panel host:
+
+- Move an existing console panel with a category, text filter, automatic-scroll
+  setting, and nonzero offset. Check the destination's live controls and saved
+  values. Repeat with an existing inactive destination slot.
+- Move an asset panel with a selected scope, folder, search, and offset. Confirm
+  that changing scope during restore does not discard the captured folder.
+- Move each profiler view and an animation panel with a scroll offset. Use a
+  smaller destination viewport and confirm that accepted clamping is saved.
+- Repeat transfers and then edit one field. Confirm one save request and one
+  subscription response per edit. Confirm other panels retain their settings.
+- Edit the source or destination from property and widget callbacks. Test changes
+  away from and back to an earlier value. Confirm that stale later writes stop,
+  callback edits remain, and source closure requires a current receipt.
+- Replace a root, registration, slot, or list during capture, restore, and save.
+  Confirm that old callbacks cannot write to the new owner. Exercise partial
+  failure: both hosts may remain open, and foreign changes must survive.
+
+These checks remain pending. The transfer covers existing layout-backed tool
+fields. It does not establish animation member/key selection, general focus or
+expansion transfer, or complete play-transition state.

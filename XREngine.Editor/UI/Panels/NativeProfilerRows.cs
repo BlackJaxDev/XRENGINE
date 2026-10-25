@@ -131,10 +131,17 @@ internal sealed class NativeProfilerRows : IUIVirtualTableSource<NativeProfilerD
     }
 
     public bool SelectView(ENativeProfilerView view)
+        => SelectViewGuarded(view, false, static _ => { });
+
+    /// <summary>Checks the owner again before changing the selected view.</summary>
+    internal bool SelectViewGuarded<TState>(ENativeProfilerView view, TState state,
+        Action<TState> requireCurrent)
     {
+        requireCurrent(state);
         if (_view == view)
             return false;
         CancelPending();
+        requireCurrent(state);
         _view = view;
         _componentFrame = null;
         _diagnostics.Clear();

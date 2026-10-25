@@ -13,6 +13,9 @@ internal sealed class NativeDockWindowRegistration : XRComponent
     private ulong _registrationRevision;
     internal Func<string, bool>? ReceivePanel { get; private set; }
     internal Func<string, string, bool>? ReceivePanelAtStack { get; private set; }
+    internal Func<string, NativeDockPanelTransferState?>? CapturePanelState { get; private set; }
+    internal Func<string, NativeDockPanelTransferState, bool>? ReceivePanelState { get; private set; }
+    internal Func<string, string, NativeDockPanelTransferState, bool>? ReceivePanelStateAtStack { get; private set; }
     internal XRWindow? Window { get; private set; }
     private object? _ownerContext;
     internal ulong RegistrationRevision => _registrationRevision;
@@ -42,7 +45,10 @@ internal sealed class NativeDockWindowRegistration : XRComponent
     }
 
     public void Configure(string key, Func<string, bool> receivePanel, object? ownerContext,
-        XRWindow? window = null, Func<string, string, bool>? receivePanelAtStack = null)
+        XRWindow? window = null, Func<string, string, bool>? receivePanelAtStack = null,
+        Func<string, NativeDockPanelTransferState?>? capturePanelState = null,
+        Func<string, NativeDockPanelTransferState, bool>? receivePanelState = null,
+        Func<string, string, NativeDockPanelTransferState, bool>? receivePanelStateAtStack = null)
     {
         if (_terminal) return;
         _registrationRevision++;
@@ -54,6 +60,9 @@ internal sealed class NativeDockWindowRegistration : XRComponent
         _supportsAllPanels = true;
         ReceivePanel = receivePanel;
         ReceivePanelAtStack = receivePanelAtStack;
+        CapturePanelState = capturePanelState;
+        ReceivePanelState = receivePanelState;
+        ReceivePanelStateAtStack = receivePanelStateAtStack;
         if (IsActiveInHierarchy)
             NativeDockWindowRegistry.Register(key, this);
     }
@@ -85,6 +94,9 @@ internal sealed class NativeDockWindowRegistration : XRComponent
         Window = null;
         ReceivePanel = null;
         ReceivePanelAtStack = null;
+        CapturePanelState = null;
+        ReceivePanelState = null;
+        ReceivePanelStateAtStack = null;
         base.OnDestroying();
     }
 }

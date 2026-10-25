@@ -2005,3 +2005,41 @@ source remains unchanged. Rollback never overwrites a replaced root or registrat
 lifetime.
 Unsupported desktop backends retain same-canvas tab movement. Saved window-key
 migration and live multi-window acceptance remain separate requirements.
+
+
+## Native Tool State Transfer
+
+Both native dock hosts retain one `NativeToolPanelStateBinding` per tool slot.
+A transfer captures the live asset scope, folder and search; console filter,
+category and automatic-scroll option; profiler view; and effective tool scroll
+offset. `NativeDockPanelStateValues` copies these existing fields. It does not
+add saved fields or change window keys. An existing destination slot uses its
+retained binding instead of adding another set of event subscriptions.
+
+Panel setters distinguish a public edit from an owned restore and derived scroll
+work. Restore guards check source state and destination ownership before field
+writes and after callbacks. Same-value widget feedback does not start another
+edit. A foreign callback edit keeps its own intent and saves its current value.
+The list offset and virtual-bound setters supply separate lifetime and write-intent
+guards, including changes away from and back to an earlier value. Each bound
+write validates ownership before assignment and after callbacks. A veto stops
+later owned writes; an earlier accepted bound remains. Ordinary setters retain
+their notification and veto behavior. The Rows receipt also
+checks its exact node, parent, and ancestry under the panel. A callback that moves
+the list revokes both the pending write and the captured source state. Runtime
+revisions are not serialized. Destination scroll can clamp to its current content and viewport;
+the accepted effective offset is the value saved there.
+
+Both registry routes check captured registration and root lifetimes after source
+capture and before delivery. Tool transfers require a state-aware receiver.
+Untracked panels retain their existing route. Forward restores also check the
+source receipt between individual setters. Source closure requires the source
+receipt to remain current.
+
+Transfer remains receive-first. A complete destination receipt permits guarded
+compensation only while that exact result is still current. Partial setter failure
+or foreign callback changes can leave both hosts open; cleanup must preserve that
+state. This does not provide atomic rollback across hosts. Animation member/key
+selection, view ranges, general focus and expansion, and full play-transition state
+remain separate work. Windows interaction and live viewport behavior need runtime
+validation.
