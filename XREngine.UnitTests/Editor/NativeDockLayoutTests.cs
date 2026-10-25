@@ -81,15 +81,44 @@ public class NativeDockLayoutTests
     }
 
     [Test]
-    public void ProfilerView_SurvivesSerializationAndSanitize()
+    public void PanelViewState_SurvivesSerializationAndSanitize()
     {
-        NativeDockLayout layout = new() { ProfilerView = (int)ENativeProfilerView.FpsSpikes };
+        NativeDockLayout layout = new()
+        {
+            ProfilerView = (int)ENativeProfilerView.FpsSpikes,
+            ConsoleCategory = ELogCategory.Rendering,
+            ConsoleAutoScroll = false,
+        };
 
         NativeDockLayout? restored = System.Text.Json.JsonSerializer.Deserialize<NativeDockLayout>(
-            System.Text.Json.JsonSerializer.Serialize(layout));
+            System.Text.Json.JsonSerializer.Serialize(layout))?.Sanitize();
 
         Assert.That(restored, Is.Not.Null);
-        Assert.That(restored!.Sanitize().ProfilerView, Is.EqualTo((int)ENativeProfilerView.FpsSpikes));
+        Assert.Multiple(() =>
+        {
+            Assert.That(restored!.ProfilerView, Is.EqualTo((int)ENativeProfilerView.FpsSpikes));
+            Assert.That(restored.ConsoleCategory, Is.EqualTo(ELogCategory.Rendering));
+            Assert.That(restored.ConsoleAutoScroll, Is.False);
+        });
+    }
+
+    [Test]
+    public void Sanitize_ShowsAllCategoriesForAnUnknownConsoleCategory()
+    {
+        NativeDockLayout layout = new() { ConsoleCategory = (ELogCategory)10_000 };
+
+        layout.Sanitize();
+
+        Assert.That(layout.ConsoleCategory, Is.Null);
+    }
+
+    [Test]
+    public void FreshLayout_FollowsNewConsoleEntriesAndShowsAllCategories()
+    {
+        NativeDockLayout layout = new NativeDockLayout().Sanitize();
+
+        Assert.That(layout.ConsoleAutoScroll, Is.True);
+        Assert.That(layout.ConsoleCategory, Is.Null);
     }
 
     [Test]

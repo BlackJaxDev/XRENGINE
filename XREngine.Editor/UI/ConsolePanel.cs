@@ -45,6 +45,10 @@ public partial class ConsolePanel : NativeVirtualTextPanel
     private bool _listening;
     private bool _tickRegistered;
     public event Action<string>? FilterChanged;
+    /// <summary>Raised after the category filter changes.</summary>
+    public event Action<ELogCategory?>? CategoryChanged;
+    /// <summary>Raised after automatic scrolling is turned on or off.</summary>
+    public event Action<bool>? AutoScrollChanged;
 
     public ELogCategory? Category
     {
@@ -58,6 +62,7 @@ public partial class ConsolePanel : NativeVirtualTextPanel
             if (_categoryLabel is not null)
                 _categoryLabel.Text = value?.ToString() ?? "All";
             RefreshRows();
+            CategoryChanged?.Invoke(_category);
         }
     }
 
@@ -70,6 +75,7 @@ public partial class ConsolePanel : NativeVirtualTextPanel
             if (!SetField(ref _autoScroll, value) || _terminal || _autoScroll != value) return;
             _actionsMenuRevision++;
             UpdateStatus();
+            AutoScrollChanged?.Invoke(_autoScroll);
         }
     }
 
@@ -148,6 +154,8 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         _ownerActive = false;
         _actionsMenuRevision++;
         FilterChanged = null;
+        CategoryChanged = null;
+        AutoScrollChanged = null;
         List<Exception>? failures = null;
         AttemptRelease(DetachRightClick, ref failures);
         SceneNode? menuNode = _entryMenuNode;

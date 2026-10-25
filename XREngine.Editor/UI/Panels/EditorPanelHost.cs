@@ -122,6 +122,8 @@ public static class EditorPanelHost
         assetsPanel.Folder = layout.AssetFolder;
         assetsPanel.Search = layout.AssetSearch;
         consolePanel.Filter = layout.ConsoleFilter;
+        consolePanel.Category = layout.ConsoleCategory;
+        consolePanel.AutoScroll = layout.ConsoleAutoScroll;
         profilerPanel.View = (ENativeProfilerView)layout.ProfilerView;
         for (int i = 0; i < panelComponents.Length; i++)
         {
@@ -141,6 +143,8 @@ public static class EditorPanelHost
             Save();
         };
         consolePanel.FilterChanged += filter => { layout.ConsoleFilter = filter; Save(); };
+        consolePanel.CategoryChanged += category => { layout.ConsoleCategory = category; Save(); };
+        consolePanel.AutoScrollChanged += autoScroll => { layout.ConsoleAutoScroll = autoScroll; Save(); };
         profilerPanel.ViewChanged += view => { layout.ProfilerView = (int)view; Save(); };
 
         string[] titles = ["Assets", "Console", "Profiler", "Animation"];
