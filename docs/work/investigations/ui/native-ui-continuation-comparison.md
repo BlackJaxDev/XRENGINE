@@ -744,3 +744,48 @@ Desktop build61 passed with zero warnings/errors in 49.90s. All 10,827 source
 inputs stayed unchanged after the assertion correction. The portable source and
 its run146 result remain valid. Nine action/history tests and five new detail
 construction tests compiled only; no Windows execution is claimed.
+
+## Child Destruction Snapshot Ownership
+
+The ordinary SceneNode teardown path snapshots child nodes and then calls
+Destroy(true) on each reference. It does not recheck the child's transform,
+identity, or attachment after an earlier child's callback. The native menu Hide
+path reaches this code through its owned content root.
+
+Headless build204 passed with zero warnings/errors in 2m51.43s. Tests-first run147
+executed seven cases in 0.921s: two passed and five failed. The actual menu Hide
+case destroyed a later row after an earlier row moved it to the canvas. The core
+transfer case also destroyed that child's descendant. Node regeneration,
+transform regeneration, and transform replacement each still dispatched the old
+child destruction. Normal canonical destruction and exception propagation passed.
+NUnit classified the menu's Shouldly assertion as an error; it was the expected
+IsDestroyed mismatch, not an unrelated runtime exception.
+
+The bounded repair checks each captured child immediately before dispatch. It
+must retain exact parent transform/list and child node/transform identities,
+reciprocal references, and current list membership. This does not establish
+protection against mutation inside that selected child's own Destroying callback,
+concurrent mutation, transfer-away-and-back history, or general menu retirement.
+
+Build205 passed with zero warnings/errors in 1m50.65s. Intermediate run148 passed
+five of 12 cases in 0.976s, including actual menu Hide, core transfer, unchanged
+children, queued children, and exception propagation. Seven cases reported errors
+from their final cleanup: the parent schedules transform destruction, and the
+fixture tried to remove a preserved child while that transform was still queued.
+The next fixture revision must let scheduled transform cleanup finish before
+it destroys a survivor. It must not bypass structural-list authority.
+
+Review also found that the candidate required one occurrence in the child list.
+The existing list contract permits duplicate references in one exact owner/list.
+The dispatch de-duplication must preserve one canonical destruction for that case;
+a separate regression covers this compatibility requirement.
+
+Build206 passed with zero warnings/errors in 37.75s. Run149 passed all 13 targeted
+cases in 1.269s. Full run150 passed 1,261/1,261 in 29.820s with no failures,
+warnings, or skips. Read-only review found no further blocker in the bounded
+before-dispatch contract. The source snapshot holds 10,829 inputs.
+
+Desktop build62 passed with zero warnings/errors in 3m42.70s. All 10,829 source
+inputs stayed unchanged through final validation. The 39 relative links in the
+five maintained UI documents resolve, and diff checks pass. No platform
+acceptance or broader menu-retirement completion is inferred.

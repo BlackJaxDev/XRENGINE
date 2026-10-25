@@ -1450,3 +1450,26 @@ portable input changed. Nine action/history cases and five new construction
 retirement cases compiled only. Windows interaction, GPU, IME, visual acceptance,
 and performance comparisons remain pending. The original reconciliation remains
 **50/60**. Owner decisions and ImGui default are unchanged.
+
+
+## Preserve Children Transferred During Cleanup
+
+Ordinary SceneNode child destruction now checks captured lifetime and exact
+attachment before each dispatch. The native menu Hide regression confirms that
+a row moved by an earlier row's callback survives with its label and releases its
+old menu binding. Changed lifetimes or source storage stop stale dispatch.
+Duplicate references still destroy once; queued children, vetoes, and exceptions
+retain canonical behavior. Reserved owned-hierarchy retirement is unchanged.
+
+The tests-first baseline failed five of seven cases. Final headless build206
+passed with zero warnings/errors in 37.75s. Targeted run149 passed 13/13 in 1.269s.
+Full run150 passed **1,261/1,261** in 29.820s, with no failures, warnings, or skips.
+Desktop build62 compiled editor and tests with zero warnings/errors in 3m42.70s.
+All **10,829** source inputs stayed unchanged through final validation. The 39
+relative links across the maintained UI records resolve; diff checks pass.
+
+This closes one synchronous dispatch contract. Transfer inside the selected
+child's own callback, concurrent mutation, away-and-back history, the transform
+detach loop, and full menu construction/retirement remain open. The original
+reconciliation remains **50/60**. No Windows, graphics, IME, visual, or benchmark
+acceptance is claimed. Pending owner decisions and ImGui default are unchanged.

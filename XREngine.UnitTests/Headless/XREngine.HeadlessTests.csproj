@@ -18,6 +18,7 @@
   <ItemGroup>
     <Compile Include="../Scene/GuardedComponentCreationTests.cs" Link="Scene/GuardedComponentCreationTests.cs" />
     <Compile Include="../Scene/DetachedLeafRetirementTests.cs" Link="Scene/DetachedLeafRetirementTests.cs" />
+    <Compile Include="../Scene/SceneNodeChildDestructionTests.cs" Link="Scene/SceneNodeChildDestructionTests.cs" />
     <Compile Include="../Scene/DetachedLeafLiveWorldRetirementTests.cs" Link="Scene/DetachedLeafLiveWorldRetirementTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatTransitionOwnership.cs" Link="Editor/InspectorFloatTransitionOwnership.cs" />
     <Compile Include="../Editor/InspectorFloatCurveTransitionOwnerTests.cs" Link="Editor/InspectorFloatCurveTransitionOwnerTests.cs" />

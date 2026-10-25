@@ -11,6 +11,44 @@ namespace XREngine.UnitTests.Rendering;
 
 public sealed partial class UIContextMenuNavigationTests
 {
+    [Test]
+    public void HideKeepsLaterRowAndLabelMovedByEarlierRowDestruction()
+    {
+        SceneNode root = CreateCanvas(out UITestCanvasInputProbe input);
+        try
+        {
+            UIContextMenuComponent menu = CreateMenu(root);
+            menu.Show(Vector2.Zero, new ContextMenuItem("First", null),
+                new ContextMenuItem("Second", null));
+            List<UIContextMenuItemComponent> rows = Rows(menu);
+            SceneNode first = rows[0].SceneNode;
+            SceneNode later = rows[1].SceneNode;
+            ulong laterRevision = rows[1].ShowRevision;
+            SceneNode label = later.Transform.Children.Single().SceneNode!;
+            int laterDestroying = 0;
+            later.Destroying += _ => { laterDestroying++; return true; };
+            first.Destroying += _ =>
+            {
+                later.Parent = root;
+                return true;
+            };
+
+            menu.Hide();
+
+            first.IsDestroyed.ShouldBeTrue();
+            later.IsDestroyed.ShouldBeFalse();
+            label.IsDestroyed.ShouldBeFalse();
+            later.Parent.ShouldBeSameAs(root);
+            label.Parent.ShouldBeSameAs(later);
+            laterDestroying.ShouldBe(0);
+            rows[1].HasCurrentBinding(menu, laterRevision).ShouldBeFalse();
+            rows[1].Menu.ShouldBeNull();
+            Rows(menu).ShouldBeEmpty();
+            input.SubscriberCount.ShouldBe(0);
+        }
+        finally { root.Destroy(true); }
+    }
+
     [TestCase("row", 0, 0)]
     [TestCase("label", 1, 0)]
     [TestCase("separator", 0, 2)]

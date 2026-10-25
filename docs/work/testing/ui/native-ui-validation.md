@@ -35,6 +35,16 @@ the previously selected file and check that asset inspection returns. Check that
 one click does not start two asset loads. Repeat after panel deactivate/reactivate,
 rebuild, and transfer. These native interaction checks remain pending.
 
+### Menu cleanup acceptance
+
+On Windows, open ordinary and nested native context menus. Close them, change
+selection, and destroy their owning panel. Check that old rows cannot activate
+actions or reopen menus. The portable Hide test covers one earlier row callback
+that moves a later row to another owner; the transferred row and label survive
+with the old menu binding released. This does not establish general callback-time
+transfer safety, custom-content ownership, or concurrent destruction. Live input
+and visual acceptance remain pending.
+
 ### Float animation inspector acceptance
 
 On Windows, open a getter-only transform animation curve and a transition custom
@@ -58,9 +68,11 @@ checks remain pending. Compiling the editor cases does not execute them on Linux
 
 ### Managed integration evidence
 
-Latest full portable check (2026-10-25): headless build203 passed with zero
-warnings/errors, and run146 passed **1,248/1,248** tests with no failures or skips.
+Latest full portable check (2026-10-25): headless build206 passed with zero
+warnings/errors, and run150 passed **1,261/1,261** tests with no failures or skips.
 Run145 passed all 100 targeted transition-ownership and menu-navigation cases.
+Run149 passed 13 child-destruction cases, including the actual menu Hide path.
+The tests-first baseline failed five of seven cases before the repair.
 The output-swap wheel regression failed before the repair and passed afterward.
 The dock detach regression also failed before repair; six cases now cover
 reparenting, transform replacement, lost/destroyed slots, and normal detachment.
@@ -105,6 +117,11 @@ The later Explorer action passed editor/test build58 with zero warnings/errors.
 Run143 passed the 22 unchanged portable menu-request cases using build201. Those
 cases do not launch Explorer or execute the editor-only action. Actual Windows
 folder/file reveal remains pending.
+
+The child-dispatch update passed desktop build62 with zero warnings/errors.
+All 10,829 source inputs stayed unchanged through headless206, run149, run150,
+and desktop62. Its 13 new cases execute portably, including the menu Hide
+callback route. The prior editor-only action and UI tests remain compile-only.
 
 The expanded implementation is under integration. The user explicitly approved
 new headless regression tests before Windows and graphics validation on

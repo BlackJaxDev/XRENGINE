@@ -1782,3 +1782,23 @@ and virtual-scroll helper calls. A queued replacement prevents later helper call
 and event wiring. Exceptions from the current callback retain their original
 identity. Property commits inside those helpers and full owned-child retirement
 remain separate open work.
+
+
+## Child Destruction Dispatch
+
+Ordinary SceneNode teardown snapshots each child node and transform with their
+construction identities. Before each Destroy(true), it checks the original
+parent transform and child-list identities, reciprocal node/transform links, and
+exact current list membership. It stops consuming the snapshot if source storage
+changes. A moved, regenerated, or replaced child is skipped. Duplicate snapshot
+references do not cause repeated dispatch. Queued children still use immediate
+canonical destruction. Vetoes and exceptions retain their existing behavior.
+
+This check protects later children from earlier child callbacks. Native menu
+Hide reaches it through content-root destruction; released transferred rows keep
+their descendants and no active binding to the old menu. The reserved
+OwnedHierarchyRetirement route is unchanged. Snapshot allocations occur only
+during destruction. This is not concurrent mutation admission and does not guard
+transfer inside the selected child's own Destroying callback, away-and-back
+history, or TransformBase's separate detach loop. Full menu ownership remains
+open.
