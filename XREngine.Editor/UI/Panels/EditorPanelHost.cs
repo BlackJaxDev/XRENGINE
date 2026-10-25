@@ -33,6 +33,7 @@ public static class EditorPanelHost
             layout.SelectedTab = initialPanel.Value;
         }
         UIDualSplitTransform? split = null;
+        NativeLayoutSaveDebouncer? saveDebouncer = null;
         SceneNode toolsParent = middleNode;
         if (!toolsOnly)
         {
@@ -83,6 +84,9 @@ public static class EditorPanelHost
         }
 
         SceneNode toolsNode = toolsParent.NewChildWithTransform(out UIDualSplitTransform toolsSplit, "ToolPanels");
+        NativeLayoutSaveDebouncer layoutSaves = toolsNode.AddComponent<NativeLayoutSaveDebouncer>()!;
+        saveDebouncer = layoutSaves;
+        layoutSaves.Configure(Save);
         toolsSplit.VerticalSplit = true;
         toolsSplit.FirstFixedSize = true;
         toolsSplit.FixedSize = 60;
@@ -132,7 +136,8 @@ public static class EditorPanelHost
             panelComponents[i].ScrollOffsetChanged += offset =>
             {
                 layout.PanelScrollOffsets[panelIndex] = offset;
-                Save();
+                // Wheel input changes the offset often. Write it once after scrolling settles.
+                layoutSaves.Request();
             };
         }
         assetsPanel.ViewStateChanged += () =>
@@ -271,7 +276,11 @@ public static class EditorPanelHost
             }
         }
 
-        void Save() => NativeDockLayoutStore.Save(windowKey, layout);
+        void Save()
+        {
+            saveDebouncer?.MarkSaved();
+            NativeDockLayoutStore.Save(windowKey, layout);
+        }
     }
 
     internal static XRWindow? ResolveWindow(SceneNode node)

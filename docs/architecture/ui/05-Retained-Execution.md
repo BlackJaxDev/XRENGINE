@@ -519,7 +519,11 @@ empty stack with its Actions menu, so the panel can be reopened.
 Existing tool search and scroll state survive. The window layout also stores the
 selected profiler view and the console category and auto-scroll setting. The host
 restores them before the panels activate. An unknown profiler view falls back to
-CPU Timings, and an unknown console category shows all categories. All seven primary panel types use the detached-window path. Legacy numeric
+CPU Timings, and an unknown console category shows all categories. Wheel scrolling
+updates the stored offset in memory. `NativeLayoutSaveDebouncer` writes the layout
+once after scrolling stops for 500 ms, or when the tool host leaves the scene. A
+discrete layout change writes the complete layout immediately and clears the
+pending scroll save. All seven primary panel types use the detached-window path. Legacy numeric
 window records migrate an existing saved layout; absent records seed the requested
 panel. Detached windows use their own camera, pawn, controller, and input dispatch
 in the source runtime world. They clone camera projection and pose. The main pawn

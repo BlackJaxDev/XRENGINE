@@ -78,6 +78,8 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanel.cs" Link="Editor/NativeDockPanel.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockTree.cs" Link="Editor/NativeDockTree.cs" />
     <Compile Include="../Editor/NativeDockLayoutTests.cs" Link="Editor/NativeDockLayoutTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeSaveCoalescer.cs" Link="Editor/NativeSaveCoalescer.cs" />
+    <Compile Include="../Editor/NativeSaveCoalescerTests.cs" Link="Editor/NativeSaveCoalescerTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockRenderGate.cs" Link="Editor/NativeDockRenderGate.cs" />
     <Compile Include="../Editor/NativeDockRenderGateTests.cs" Link="Editor/NativeDockRenderGateTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockWindowRegistry.cs" Link="Editor/NativeDockWindowRegistry.cs" />
