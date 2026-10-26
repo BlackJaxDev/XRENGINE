@@ -1191,3 +1191,31 @@ with `--no-restore` and `-p:BuildProjectReferences=false`. Only Editor and
 Editor-test code changed; unchanged dependency assemblies were reused. The
 10,937 source inputs were identical across both final builds. All 25 new cases
 compile; none ran on Windows. No live/GPU/IME/performance result is claimed.
+
+
+## Ordinary menu construction checks
+
+The built-in leaf builders have 19 portable regressions in
+`UIContextMenuNavigationTests.Construction.cs`. They cover factory exceptions at
+all six component boundaries, cancellation during text configuration, foreign
+adoption before insertion, transfer during attachment, changed row lifetime,
+and changed or queued content-root lifetime. Assertions keep original callback
+errors, preserve foreign content, reject later writes, and check canonical
+retirement or retained failure evidence.
+
+Headless build 115 passed with zero warnings/errors (1m28.14s), through the build
+wrapper with project references and `--no-restore`. The 10,939 source inputs
+stayed fixed. The new-case run passed 19/19 (1.659s). The affected run then passed
+187/187 (4.675s), including those 19 cases, with no skipped/incomplete cases.
+NUnitLite used zero workers and this filter:
+
+```text
+class =~ 'UIContextMenuNavigationTests|UIControlTeardownTests|GuardedComponentCreationTests|DetachedLeafRetirementTests|DetachedLeafLiveWorldRetirementTests'
+```
+
+These are Linux portable results. Windows menu input, GPU rendering, and live
+focus acceptance remain not run. No laptop worker or full portable suite was
+started. The 25 new Animation search Editor cases and the earlier 11 grouped-key,
+7 linked-list, and 4 dictionary Editor cases remain unrun; this portable result
+does not cover them. The shared-control code item stays open for remaining menu
+factories, adopted content, text, and host contracts.

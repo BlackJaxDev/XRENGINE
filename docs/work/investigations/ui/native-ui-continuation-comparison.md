@@ -2242,3 +2242,35 @@ with `--no-restore` and `-p:BuildProjectReferences=false`. Only Editor and
 Editor-test code changed; unchanged dependency assemblies were reused. The
 10,937 source inputs were identical across both final builds. All 25 new cases
 compile; none ran on Windows. No live/GPU/IME/performance result is claimed.
+
+
+## Ordinary menu factory receipt integration
+
+The prior built-in row, label, arrow, separator, and line builders used ordinary
+`NewChild` component factories. Checks after a factory returned could not stop
+later work inside a factory callback or retain an uninserted failed component.
+The bounded repair uses `RuntimeComponentCreationReceipt` and
+`DetachedLeafRetirementReceipt` through a menu-specific leaf builder. It completes
+configuration before attachment and keeps foreign adoption intact.
+
+Read-only review identified two missing source checks in the first draft: label
+and arrow factories needed the exact row binding, and every leaf needed the exact
+content root. Both checks and regressions were added. The content-root transform
+also rejects queued destruction. A leaf that entered a root collection cannot
+return to detached construction. No ownership guards or existing assertions were
+weakened. The reviewer found no remaining blocker in the final bounded diff.
+
+Build 113 passed with zero warnings/errors (3m10.46s). Build 114 passed after the
+first review changes (1m47.53s, zero warnings/errors). Final headless build 115
+passed after the remaining lifetime checks (1m28.14s, zero warnings/errors).
+All builds used the repository wrapper with project references and no restore.
+The final 10,939-input source manifest stayed fixed through validation.
+
+The 19 new portable cases passed in 1.659s. The five affected fixtures then passed
+187/187 in 4.675s, including those cases; no failures, skips, or incomplete cases.
+No unchanged full suite was run. Evidence is under the existing task run in
+`Build/_AgentValidation/`, with logs `menu-headless-build113.log` through
+`menu-headless-build115.log`, `menu-new-cases-run1.log`, `menu-affected-run1.log`,
+and corresponding NUnit XML reports. Windows and live acceptance remain not run.
+This does not close custom content, root/scroll factories, adopted-subtree cleanup,
+or the broad shared-control item.

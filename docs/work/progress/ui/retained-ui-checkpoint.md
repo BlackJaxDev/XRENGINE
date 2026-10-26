@@ -2095,3 +2095,28 @@ with `--no-restore` and `-p:BuildProjectReferences=false`. Only Editor and
 Editor-test code changed; unchanged dependency assemblies were reused. The
 10,937 source inputs were identical across both final builds. All 25 new cases
 compile; none ran on Windows. No live/GPU/IME/performance result is claimed.
+
+
+## Guarded ordinary menu construction checkpoint
+
+Built-in menu rows, labels, submenu arrows, separators, and separator lines now
+use the existing guarded component and detached-leaf retirement receipts.
+Configuration completes before attachment. Callback checks retain the exact
+show, content root, parent, component, and row source. Only completed rows join
+navigation and click handling. Cancellation retires an unchanged detached leaf;
+foreign adoption stays intact and keeps failure evidence.
+
+This closes the ordinary row/decoration construction subtask. Content-root and
+scroll helper factories, arbitrary custom builders, and adopted-subtree retirement
+remain open. The original reconciliation stays **51/60**; shared-control parity
+is not complete. No owner-held proposal, saved format, editor default, or private
+documentation destination changed.
+
+Final headless build 115 passed with zero warnings/errors (1m28.14s), through
+`Tools/Invoke-AgentBuild.ps1` with `--no-restore` and project references enabled.
+All 10,939 source inputs stayed unchanged through the build and tests. The 19 new
+cases passed first. Then the five affected fixtures passed **187/187**, including
+those 19 cases (4.675s; no failures, skips, or incomplete cases). Review found no
+remaining blocker in this scope. No full suite was repeated. Windows/live/GPU
+acceptance remains not run. The 25 Animation search cases and prior grouped-key
+11, linked-list 7, and dictionary 4 Editor cases remain separate and unrun.

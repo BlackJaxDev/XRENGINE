@@ -528,106 +528,140 @@ namespace XREngine.Rendering.UI
             }
         }
 
+        private readonly List<XREngine.Scene.Prefabs.DetachedLeafRetirementReceipt> _failedConstructionLeaves = [];
+
+        internal IReadOnlyList<XREngine.Scene.Prefabs.DetachedLeafRetirementReceipt> FailedConstructionLeaves
+            => _failedConstructionLeaves;
+
+        private SceneNode? BuildMenuLeaf(SceneNode parent, ulong showRevision,
+            Action<UIContextMenuLeafConstruction> configure, Func<bool>? ownsSource = null)
+        {
+            InvalidOperationException? cancellation = null;
+            void RequireShow()
+            {
+                if (!IsCurrentShow(showRevision) || !OwnsConstructionParent(parent) ||
+                    ownsSource is not null && !ownsSource())
+                    throw new InvalidOperationException("The menu construction owner changed.");
+                if (_pendingTransition is not null)
+                    throw cancellation ??= new InvalidOperationException("Menu construction was superseded.");
+            }
+            RequireShow();
+            UIContextMenuLeafConstruction leaf = new(parent, RequireShow);
+            try
+            {
+                configure(leaf);
+                leaf.Attach();
+                return leaf.Node;
+            }
+            catch (Exception failure)
+            {
+                if (!leaf.RetireFailedLeaf())
+                {
+                    _failedConstructionLeaves.Add(leaf.Retirement);
+                    if (ReferenceEquals(failure, cancellation))
+                        throw new InvalidOperationException("Cancelled menu content could not be retired.",
+                            leaf.Retirement.Failure);
+                }
+                if (ReferenceEquals(failure, cancellation))
+                    return null;
+                throw;
+            }
+        }
+
+        private bool OwnsConstructionParent(SceneNode parent)
+        {
+            if (_contentRoot is not { } root || !OwnsContentRoot(root) ||
+                root.IsDestroyed || root.IsDestroyQueued ||
+                root.Transform.IsDestroyed || root.Transform.IsDestroyQueued)
+                return false;
+            for (SceneNode? node = parent; node is not null; node = node.Parent)
+                if (ReferenceEquals(node, root)) return true;
+            return false;
+        }
+
         private void BuildMenuItem(SceneNode parent, ContextMenuItem item, ulong showRevision, float contentTop)
         {
-            var buttonNode = parent.NewChild<UIContextMenuItemComponent, UIMaterialComponent>(out var button, out var background);
-            if (!CanContinueConstruction(showRevision) || !ReferenceEquals(buttonNode.Parent, parent))
-                return;
+            UIContextMenuItemComponent button = null!;
+            SceneNode? buttonNode = BuildMenuLeaf(parent, showRevision, leaf =>
+            {
+                button = leaf.Add(() => new UIContextMenuItemComponent());
+                UIMaterialComponent background = leaf.Add(() => new UIMaterialComponent());
+                leaf.Write(() => background.SetBatchSolidColor(ColorF4.Transparent));
+                leaf.Write(() => background.RenderCommand2D.ZIndex = ItemBackgroundZIndex);
+                leaf.Write(() => leaf.Transform.MinAnchor = Vector2.Zero);
+                leaf.Write(() => leaf.Transform.MaxAnchor = new Vector2(1, 0));
+                leaf.Write(() => leaf.Transform.Height = _itemHeight);
+                leaf.Write(() => leaf.Transform.Margins = Vector4.Zero);
+                leaf.Write(() => button.IsEnabled = item.Enabled);
+                leaf.Write(() => button.IsTabStop = item.Enabled);
+                leaf.Write(() => button.DefaultBackgroundColor = ColorF4.Transparent);
+                leaf.Write(() => button.HighlightBackgroundColor = item.Enabled ? ItemHighlightBackground : ColorF4.Transparent);
+                leaf.Write(() => button.DefaultTextColor = item.Enabled ? ItemDefaultTextColor : ItemDisabledTextColor);
+                leaf.Write(() => button.HighlightTextColor = item.Enabled ? ItemDefaultTextColor : ItemDisabledTextColor);
+            });
+            if (buttonNode is null) return;
             button.Bind(this, showRevision, item, contentTop, contentTop + _itemHeight);
-
-            background.SetBatchSolidColor(ColorF4.Transparent);
-            background.RenderCommand2D.ZIndex = ItemBackgroundZIndex;
-
-            var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
-            buttonTfm.MinAnchor = new Vector2(0.0f, 0.0f);
-            buttonTfm.MaxAnchor = new Vector2(1.0f, 0.0f);
-            buttonTfm.Height = _itemHeight;
-            buttonTfm.Margins = new Vector4(0.0f);
-
-            if (!CanContinueConstruction(showRevision) || !IsCurrentItem(button, showRevision))
+            if (!IsCurrentItem(button, showRevision)) return;
+            ColorF4 textColor = item.Enabled ? ItemDefaultTextColor : ItemDisabledTextColor;
+            if (BuildMenuText(buttonNode, item.Label, EHorizontalAlignment.Left, textColor, showRevision, () => IsCurrentItem(button, showRevision)) is null)
                 return;
+            if (!IsCurrentItem(button, showRevision) || !CanContinueConstruction(showRevision)) return;
+            if (item.HasSubmenu &&
+                BuildMenuText(buttonNode, ">", EHorizontalAlignment.Right, textColor, showRevision, () => IsCurrentItem(button, showRevision)) is null)
+                return;
+            if (!IsCurrentItem(button, showRevision) || !CanContinueConstruction(showRevision)) return;
             if (item.Enabled)
             {
                 _itemButtons.Add(button);
-                button.DefaultBackgroundColor = ColorF4.Transparent;
-                button.HighlightBackgroundColor = ItemHighlightBackground;
-                button.DefaultTextColor = ItemDefaultTextColor;
-                button.HighlightTextColor = ItemDefaultTextColor;
                 button.RegisterClickActions(_ =>
                 {
-                    if (!IsCurrentItem(button, showRevision) || !button.CanInteract)
-                        return;
+                    if (!IsCurrentItem(button, showRevision) || !button.CanInteract) return;
                     if (item.HasSubmenu)
                     {
                         OpenItemSubmenu(button, showRevision, focusFirstItem: false);
                         return;
                     }
                     item.Action?.Invoke();
-                    if (IsCurrentShow(showRevision))
-                        HideMenuChain();
+                    if (IsCurrentShow(showRevision)) HideMenuChain();
                 });
             }
-            else
-            {
-                button.IsEnabled = false;
-                button.IsTabStop = false;
-                button.DefaultBackgroundColor = ColorF4.Transparent;
-                button.HighlightBackgroundColor = ColorF4.Transparent;
-                button.DefaultTextColor = ItemDisabledTextColor;
-                button.HighlightTextColor = ItemDisabledTextColor;
-            }
-
-            if (!CanContinueConstruction(showRevision))
-                return;
-            buttonNode.NewChild<UITextComponent>(out var label);
-            if (!CanContinueConstruction(showRevision))
-                return;
-            label.Text = item.Label;
-            label.FontSize = FontSize;
-            label.Color = item.Enabled ? ItemDefaultTextColor : ItemDisabledTextColor;
-            label.HorizontalAlignment = EHorizontalAlignment.Left;
-            label.VerticalAlignment = EVerticalAlignment.Center;
-            label.BoundableTransform.Margins = new Vector4(ItemPadding, 0.0f, ItemPadding, 0.0f);
-            label.RenderCommand2D.ZIndex = LabelZIndex;
-
-            if (!item.HasSubmenu || !CanContinueConstruction(showRevision))
-                return;
-            buttonNode.NewChild<UITextComponent>(out var arrow);
-            if (!CanContinueConstruction(showRevision))
-                return;
-            arrow.Text = ">";
-            arrow.FontSize = FontSize;
-            arrow.Color = label.Color;
-            arrow.HorizontalAlignment = EHorizontalAlignment.Right;
-            arrow.VerticalAlignment = EVerticalAlignment.Center;
-            arrow.BoundableTransform.Margins = new Vector4(ItemPadding, 0.0f, ItemPadding, 0.0f);
-            arrow.RenderCommand2D.ZIndex = LabelZIndex;
         }
+
+        private SceneNode? BuildMenuText(SceneNode parent, string text, EHorizontalAlignment alignment,
+            ColorF4 color, ulong showRevision, Func<bool> ownsSource)
+            => BuildMenuLeaf(parent, showRevision, leaf =>
+            {
+                UITextComponent label = leaf.Add(() => new UITextComponent());
+                leaf.Write(() => label.Text = text);
+                leaf.Write(() => label.FontSize = FontSize);
+                leaf.Write(() => label.Color = color);
+                leaf.Write(() => label.HorizontalAlignment = alignment);
+                leaf.Write(() => label.VerticalAlignment = EVerticalAlignment.Center);
+                leaf.Write(() => leaf.Transform.Margins = new Vector4(ItemPadding, 0, ItemPadding, 0));
+                leaf.Write(() => label.RenderCommand2D.ZIndex = LabelZIndex);
+            }, ownsSource);
 
         private void BuildSeparator(SceneNode parent, ulong showRevision)
         {
-            var sepNode = parent.NewChild<UIMaterialComponent>(out var background);
-            if (!CanContinueConstruction(showRevision))
-                return;
-            var sepTfm = sepNode.GetTransformAs<UIBoundableTransform>(true)!;
-            sepTfm.MinAnchor = new Vector2(0.0f, 0.0f);
-            sepTfm.MaxAnchor = new Vector2(1.0f, 0.0f);
-            sepTfm.Height = _separatorHeight;
-            sepTfm.Margins = new Vector4(0.0f);
-
-            // Draw a thin horizontal line in the middle
-            if (!CanContinueConstruction(showRevision))
-                return;
-            var lineNode = sepNode.NewChild<UIMaterialComponent>(out var line);
-            if (!CanContinueConstruction(showRevision))
-                return;
-            var lineTfm = lineNode.GetTransformAs<UIBoundableTransform>(true)!;
-            lineTfm.MinAnchor = new Vector2(0.0f, 0.5f);
-            lineTfm.MaxAnchor = new Vector2(1.0f, 0.5f);
-            lineTfm.Height = 1.0f;
-            lineTfm.Margins = new Vector4(ItemPadding, 0.0f, ItemPadding, 0.0f);
-            line.SetBatchSolidColor(SeparatorColor);
-            line.RenderCommand2D.ZIndex = SeparatorZIndex;
+            SceneNode? separator = BuildMenuLeaf(parent, showRevision, leaf =>
+            {
+                leaf.Add(() => new UIMaterialComponent());
+                leaf.Write(() => leaf.Transform.MinAnchor = Vector2.Zero);
+                leaf.Write(() => leaf.Transform.MaxAnchor = new Vector2(1, 0));
+                leaf.Write(() => leaf.Transform.Height = _separatorHeight);
+                leaf.Write(() => leaf.Transform.Margins = Vector4.Zero);
+            });
+            if (separator is null || !CanContinueConstruction(showRevision)) return;
+            BuildMenuLeaf(separator, showRevision, leaf =>
+            {
+                UIMaterialComponent line = leaf.Add(() => new UIMaterialComponent());
+                leaf.Write(() => leaf.Transform.MinAnchor = new Vector2(0, 0.5f));
+                leaf.Write(() => leaf.Transform.MaxAnchor = new Vector2(1, 0.5f));
+                leaf.Write(() => leaf.Transform.Height = 1);
+                leaf.Write(() => leaf.Transform.Margins = new Vector4(ItemPadding, 0, ItemPadding, 0));
+                leaf.Write(() => line.SetBatchSolidColor(SeparatorColor));
+                leaf.Write(() => line.RenderCommand2D.ZIndex = SeparatorZIndex);
+            });
         }
 
         private void ClearMenuItems()

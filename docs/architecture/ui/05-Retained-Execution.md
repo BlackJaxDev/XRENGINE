@@ -1707,10 +1707,10 @@ It retains cleanup failure. Once cleanup starts, the receipt prevents a second
 attempt. An admission failure before cleanup starts can retry only while the
 same intrinsic ownership remains valid.
 
-This is a construction prerequisite. Context-menu child construction and full
-content retirement do not yet use it. It does not authorize arbitrary callback
-statements, destruction of borrowed objects, or rollback of inserted partials.
-Those paths need explicit content ownership and canonical retirement.
+Context-menu row, label, arrow, and separator factories use this receipt through
+`UIContextMenuLeafConstruction`. Full adopted-content retirement remains separate.
+The receipt does not authorize arbitrary callback statements, destruction of
+borrowed objects, or rollback of inserted partials.
 
 ## Initial Detached Leaf Retirement
 
@@ -1737,9 +1737,9 @@ proof. Incomplete guarded aborts prevent another cleanup attempt.
 Guarded creation holds a node and transform mutation lease before factory code
 runs. Reserved retirement therefore rejects a new factory before it allocates.
 Guarded abort prepares subscriptions only after lifetime admission succeeds.
-This adapter is not yet the live-menu retirement path. Parent detachment, permitted
-ownership transitions, early owner-node teardown, and arbitrary custom content
-registration remain separate integration work.
+Menu child factories use this adapter for failed never-adopted leaves. Parent
+detachment, permitted ownership transitions, early owner-node teardown, and
+arbitrary custom content registration remain separate integration work.
 
 Menu setup checks for newer queued Show/Hide requests at construction boundaries.
 An obsolete setup returns to the existing transition loop before invoking its old
@@ -2417,3 +2417,31 @@ input activation and display formatting remain unchanged.
 This is transient in-memory state. It changes no saved format, does not transfer
 an unsubmitted query between hosts, and does not establish native IME or live
 focus acceptance.
+
+
+## Guarded ordinary menu leaves
+
+`UIContextMenuLeafConstruction` builds each ordinary row, label, submenu arrow,
+separator, and separator line as a detached leaf with its final UI transform.
+It captures `DetachedLeafRetirementReceipt` before component construction and
+registers each `RuntimeComponentCreationReceipt` before its factory starts.
+A world-bound menu uses the receipt's explicit source-world mode.
+
+Configuration checks the exact show, content root, intended parent, leaf, and
+component receipts before and after each setter. Text leaves also require the
+exact bound row component. The builder attaches only a completed leaf, then
+checks its identities and parent again. It binds a row after attachment and
+publishes its navigation/click entry only after its label and arrow complete.
+
+A queued Show/Hide cancels the old builder through its own cancellation signal.
+A callback exception keeps its original identity. Failed detached leaves use
+canonical receipt retirement. Adopted leaves stay with their content owner;
+the builder does not detach them to force cleanup. A transferred or otherwise
+unretirable leaf remains intact, and the menu retains its failed receipt for
+diagnosis. It does not retry cleanup or fall back to ordinary destruction.
+
+This contract covers the built-in row and decoration builders. The menu content
+root, scroll/list helpers, arbitrary custom builders, and retirement of adopted
+subtrees keep their existing contracts. Their broader ownership work remains
+open. Construction allocates receipts and setter delegates when a menu opens;
+it adds no per-frame loop or cache invalidation path.

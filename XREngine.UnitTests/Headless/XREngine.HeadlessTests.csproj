@@ -182,6 +182,7 @@
     <Compile Include="../Rendering/UIControlTeardownTests.cs" Link="Rendering/UIControlTeardownTests.cs" />
     <Compile Include="../Rendering/UIContextMenuNavigationTests.cs" Link="Rendering/UIContextMenuNavigationTests.cs" />
     <Compile Include="../Rendering/UIContextMenuNavigationTests.ScrollFocus.cs" Link="Rendering/UIContextMenuNavigationTests.ScrollFocus.cs" />
+    <Compile Include="../Rendering/UIContextMenuNavigationTests.Construction.cs" Link="Rendering/UIContextMenuNavigationTests.Construction.cs" />
     <Compile Include="../Rendering/UIContextMenuNavigationTests.Transitions.cs" Link="Rendering/UIContextMenuNavigationTests.Transitions.cs" />
     <Compile Include="../Rendering/UIGridSubscriptionTeardownTests.cs" Link="Rendering/UIGridSubscriptionTeardownTests.cs" />
     <Compile Include="../Rendering/UIVirtualTableRefreshTests.cs" Link="Rendering/UIVirtualTableRefreshTests.cs" />
