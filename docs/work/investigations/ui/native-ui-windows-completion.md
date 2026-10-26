@@ -99,3 +99,105 @@ The DirectWrite adapter and asset recovery policy are not implemented. Denied
 edits were not retried. Incomplete asset work was preserved outside active
 compilation. Saved-window migration and the other open implementation contracts
 also remain open. No checklist completion follows from these partial results.
+
+## Unlocked desktop: layout and font failures
+
+The owner unlocked the desktop on 2026-10-26. A live run of `418767e6` showed
+the scene but no native panels. The canvas had no accepted layout. A bounded
+diagnostic located the first text mismatch at identity 53, beneath collapsed
+menu-list identity 50. Measurement skipped that subtree, while arrangement
+created text results for its descendants. The convergence check compared those
+results with unmeasured raw sizes. The repair excludes collapsed ancestry from
+the convergence check and rejects prior collapsed measurements when a subtree
+opens. Hidden nodes still participate in layout. The three-pass guard remains.
+
+The next run stalled inside owner-thread snapshot capture. The font log showed
+repeated optional `seguisym.ttf` import failures with ImageMagick
+`cache resources exhausted`. The cached PNG measured 21,190 by 18,850 pixels,
+or about 1.60 GB as RGBA8. Failed direct imports were removed from the cache, so
+each new hierarchy icon retried the import. Optional Windows font lookups now
+retain failure for the process and log the existing fallback. The next live run
+made one system-symbol import attempt. This does not establish successful
+system-font import or correct rendering of every icon.
+
+Once capture could finish, the 32 MiB snapshot guard rejected the editor. It
+charged the same immutable 893-glyph metrics dictionary for every label,
+228,608 bytes per label. The repair charges each metrics dictionary once by
+reference, with copied reference counts for dirty incremental snapshots. It
+retains per-node text preflight and the 32 MiB limit. A live run accepted 629
+nodes with one metrics dictionary and an estimated 1,955,712 bytes. Layout
+generation reached 314 without the earlier convergence or budget exception.
+
+That run still showed a black window. Its logs showed repeated canvas sizes
+such as 508 by 360 and 208 by 26. The scene viewport has UI rendering disabled
+but shared the camera overlay and resized it. The sizing repair excludes
+UI-disabled viewports and refreshes size when UI rendering is enabled.
+
+A repository-supported RenderDoc trigger returned no response or capture.
+The process exited with `0xC0000005` at `GlfwContext.SwapBuffers`. The trigger
+outcome is uncertain; it was not retried. The earlier black window preceded
+that request. RenderDoc tooling is installed; its Vulkan layer check failed.
+No layer registration, tool installation, or system setting change was made.
+
+Temporary capture diagnostics were preserved and removed from active source.
+Evidence for these steps is in the existing run root under `scratch/`:
+`text-convergence-07`, `collapsed-layout-08`, `capture-admission-09`,
+`font-retry-10`, `shared-font-budget-11`, and `viewport-size-12`.
+That source passed 115 layout/font/publication cases and 12 viewport-ownership
+cases, with no failed, skipped, or incomplete case. The editor and test builds
+had zero warnings and errors. New focused regression-test clearance is pending.
+Existing fixtures and their assertions remain unchanged.
+
+The next live run found a false callback rejection. Activation recreates the
+viewport mesh, removing the constructor's uniform bridge. Publication required
+that bridge even when its public event was empty. Capture now accepts an absent
+handler or the exact built-in bridge. Authored callbacks and render preparation
+remain rejected. The next run reached publication generation 118 with no capture
+failure. The canvas still measured 508 by 96: the camera's separate viewport
+resize listener also resized the shared overlay. That listener now checks UI
+rendering and the selected overlay. The next run kept a 1920 by 1080 canvas and
+reached publication generation 88.
+
+Rendering then failed when the viewport recycled its initial half-float CPU
+placeholder. `Mipmap2D.Resize` attempted an unsupported image resample. The pool
+now drops those pixels only when the surface is unpublished and has no external
+lease, before resizing it as a GPU target. The viewport also sets its internal
+extent explicitly; it previously stayed at 1 by 1 with automatic sizing disabled.
+The surface repair passed editor and test compilation with zero warnings and
+errors. Runtime diagnostics reported matching 1320 by 746 display, internal,
+and texture sizes. A saved framebuffer screenshot showed the native panels.
+The scene area was black, and the enabled control gallery overlapped editor
+content. This is not visual or input acceptance.
+
+The final focused selection executed 57 cases: 54 passed and three failed.
+Camera ownership, camera initialization, mipmaps, canvas initialization, canvas
+publication, painter capture, and viewport binding all passed. The three failures
+were in `UIDrawPayloadTests`: `SourceObserversNotifyChangesAndDetachAfterReplacementAndDispose`
+and `PixelInvalidationCreatesNewTextureSnapshotAndPreservesOldPixels` observed
+zero notifications; `DisabledCommandEligibilityStillInvalidatesItsCanvas`
+observed revision 12 instead of a later revision. The fixture alone reproduced
+the same failures, with 15 of 18 passing. A separate existing
+`UIMediaTeardownTests.BlankUrlClosesPendingSessionAndRejectsDelayedOpenFailure`
+failed its initial `FrameTiming.IsAppThread` assertion: false instead of true.
+These results support a Windows test-host timing issue because the notification
+paths queue work off the app thread. No fixture or dispatch guard was changed.
+There was no skipped or incomplete case. This selection does not replace the
+earlier 127-case result, and no unchanged full suite was repeated.
+
+The first surface sample reported 55 completed frames and 2,763 incomplete-target
+skips. A separate diagnostic run later showed a complete target with 242 completed
+frames and 2,475 earlier skips. The first failing backend status was not captured;
+the evidence does not establish a permanent framebuffer failure. A bounded
+bound-versus-named status probe was preserved, then removed with matching original
+and restored file hashes. No completeness guard was weakened. The diagnostic run
+is separate from the clean-source tests. Its evidence is in `fbo-status-16`.
+
+Windows Security displayed a network-access prompt over the editor. The UI tool
+rejected a Cancel click before dispatch because the dialog belongs to a separate
+unavailable window. No network permission was granted. The framebuffer request
+timed out after 15 seconds. No screenshot or input acceptance follows from that
+request. A later capture in `viewport-surface-15` succeeded and was viewed; it
+does not remove the native input blocker. The publication and size evidence above
+comes from runtime properties.
+The runs and stop receipts are preserved in `viewport-callback-13` and
+`camera-overlay-14`; the surface repair is tracked in `viewport-surface-15`.

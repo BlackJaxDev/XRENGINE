@@ -642,9 +642,11 @@ namespace XREngine.Components
 
         private void ViewportResized(XRViewport viewport)
         {
-            if (UserInterface is not null)
+            if (viewport.AllowUIRender && UserInterface is { } ui &&
+                (viewport.ScreenSpaceUserInterfaceOverride is null ||
+                 ReferenceEquals(viewport.ScreenSpaceUserInterfaceOverride, ui)))
             {
-                UserInterface.ResizeScreenSpace(viewport.Region.Size);
+                ui.ResizeScreenSpace(viewport.Region.Size);
             }
 
             // Reapply internal resolution settings after viewport resize

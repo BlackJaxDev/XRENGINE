@@ -283,8 +283,11 @@ namespace XREngine.Rendering.UI
 
             _pendingResize = false;
 
-            if ((uint)Viewport.Width != _requestedWidth || (uint)Viewport.Height != _requestedHeight)
-                Viewport.Resize(_requestedWidth, _requestedHeight);
+            if ((uint)Viewport.Width != _requestedWidth || (uint)Viewport.Height != _requestedHeight ||
+                (uint)Viewport.InternalWidth != _requestedWidth || (uint)Viewport.InternalHeight != _requestedHeight)
+                Viewport.Resize(_requestedWidth, _requestedHeight,
+                    internalResolutionWidth: checked((int)_requestedWidth),
+                    internalResolutionHeight: checked((int)_requestedHeight));
         }
 
         private ViewportSurface? AcquireProducedSurface()
@@ -295,7 +298,12 @@ namespace XREngine.Rendering.UI
                 if (ReferenceEquals(surface, published) || !surface.IsPoolOnly)
                     continue;
                 if (surface.Fbo.Width != _requestedWidth || surface.Fbo.Height != _requestedHeight)
+                {
+                    // The unleased placeholder becomes a GPU target. Do not resample its CPU pixels.
+                    foreach (Mipmap2D mip in surface.Texture.Mipmaps)
+                        mip.Data = null;
                     surface.Fbo.Resize(_requestedWidth, _requestedHeight);
+                }
                 return surface;
             }
             if (_surfaces.Count >= MaxProducedSurfaces)
@@ -484,8 +492,9 @@ namespace XREngine.Rendering.UI
                 failure = "UI.Viewport.ProducerStopped: the viewport producer is closing.";
                 return false;
             }
+            // Activation can replace the mesh. With no public callback, the built-in bridge is optional.
             if (SettingUniforms is not null || Mesh is not { } sourceMesh ||
-                !sourceMesh.HasOnlySettingUniformsHandler(SetUniforms) ||
+                (sourceMesh.HasSettingUniformsHandlers && !sourceMesh.HasOnlySettingUniformsHandler(SetUniforms)) ||
                 sourceMesh.HasRenderDataPreparation)
             {
                 failure = "UI.Viewport.CallbackAdapterRequired: authored viewport callbacks need a value capture adapter.";

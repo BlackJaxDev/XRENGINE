@@ -130,7 +130,8 @@ internal static class UILayoutValueKernel
             for (int i = page * UILayoutOutputPageView.PageSize; i < end; i++)
             {
                 ref readonly UILayoutNodeInput node = ref nodes[i];
-                if (node.Collapsed || node.TextInput is null || outputs[i].TextResult is not { } text)
+                if (node.TextInput is null || outputs[i].TextResult is not { } text ||
+                    IsInCollapsedSubtree(nodes, i))
                     continue;
                 if (node.Width is null && node.CapturedAutoWidth is null &&
                     MathF.Abs(outputs[i].RawSize.X - text.IntrinsicSize.X) > 0.01f)
@@ -140,6 +141,14 @@ internal static class UILayoutValueKernel
                     return true;
             }
         }
+        return false;
+    }
+
+    private static bool IsInCollapsedSubtree(UILayoutValuePageView<UILayoutNodeInput> nodes, int index)
+    {
+        for (; index >= 0; index = nodes[index].Parent)
+            if (nodes[index].Collapsed)
+                return true;
         return false;
     }
 
@@ -172,7 +181,8 @@ internal static class UILayoutValueKernel
             current.Revisions[index].Text == previous.Revisions[index].Text &&
             previous.Nodes[index].Operator == node.Operator &&
             Equals(previous.Nodes[index].TextInput, node.TextInput) &&
-            previousOutputs[index].MeasureConstraint == constraint)
+            previousOutputs[index].MeasureConstraint == constraint &&
+            !IsInCollapsedSubtree(previous.Nodes, index))
         {
             return outputs[index].DesiredSize;
         }
@@ -201,7 +211,8 @@ internal static class UILayoutValueKernel
                 childConstraint = arranged[childIndex].ActualSize;
             if (current is not null && previous is not null && previousOutputs is not null &&
                 !current.IsDirtySince(previous, childIndex) && childIndex < previousOutputs.Length &&
-                previousOutputs[childIndex].MeasureConstraint == childConstraint)
+                previousOutputs[childIndex].MeasureConstraint == childConstraint &&
+                !IsInCollapsedSubtree(previous.Nodes, childIndex))
                 continue;
             Measure(childIndex, childConstraint, nodes, children, outputs,
                 current, previous, previousOutputs, cancellation, arranged);

@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Numerics;
 using System.Threading;
 using XREngine.Data.Geometry;
@@ -27,6 +28,7 @@ internal sealed class UILayoutSnapshot
     private readonly int[] _ownerSyncIndices;
     internal int[] ValidationIndices { get; }
     private readonly HashSet<int> _dirtyIndices;
+    private readonly Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> _fontMetricReferences;
     internal bool IsDirty(int index) => _dirtyIndices.Contains(index);
     internal bool IsDirtySince(UILayoutSnapshot previous, int index)
         => index >= previous.Nodes.Length ||
@@ -96,7 +98,7 @@ internal sealed class UILayoutSnapshot
         return new UILayoutSnapshot(changed.Freeze(), Children, Identities,
             Revisions, MeasureVersions, ArrangeVersions, RootBounds,
             this, EstimatedWorkingBytes, ValidationIndices, FontGeneration,
-            ShapingBackendGeneration);
+            ShapingBackendGeneration, _fontMetricReferences);
     }
 
     internal bool SharesTopologyMetadataWith(UILayoutSnapshot other)
@@ -110,7 +112,8 @@ internal sealed class UILayoutSnapshot
         UILayoutValuePageView<uint> measureVersions, UILayoutValuePageView<uint> arrangeVersions,
         BoundingRectangleF rootBounds, UILayoutSnapshot? stableTopology = null,
         long? workingBytes = null, int[]? validationIndices = null,
-        long? fontGeneration = null, long? shapingBackendGeneration = null)
+        long? fontGeneration = null, long? shapingBackendGeneration = null,
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int>? fontMetricReferences = null)
     {
         Nodes = nodes;
         Children = children;
@@ -145,7 +148,8 @@ internal sealed class UILayoutSnapshot
             _textIndices = [.. textIndices];
             _ownerSyncIndices = [.. syncIndices];
         }
-        EstimatedWorkingBytes = workingBytes ?? EstimateWorkingBytes(nodes, children);
+        _fontMetricReferences = fontMetricReferences ?? new(ReferenceEqualityComparer.Instance);
+        EstimatedWorkingBytes = workingBytes ?? EstimateWorkingBytes(nodes, children, _fontMetricReferences);
         if (EstimatedWorkingBytes > MaxWorkingBytes)
             throw new InvalidOperationException("Canvas layout exceeds the 32 MiB working-page budget.");
     }
@@ -162,7 +166,8 @@ internal sealed class UILayoutSnapshot
         return indices;
     }
 
-    private static long EstimateWorkingBytes(UILayoutValuePageView<UILayoutNodeInput> nodes, UILayoutChildInput[] children)
+    private static long EstimateWorkingBytes(UILayoutValuePageView<UILayoutNodeInput> nodes, UILayoutChildInput[] children,
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> fontMetricReferences)
     {
         // Includes descriptor and version arrays, owner target references, output scratch,
         // and conservative per-glyph text result storage. Accepted packets own their pages.
@@ -170,6 +175,7 @@ internal sealed class UILayoutSnapshot
         for (int i = 0; i < nodes.Length; i++)
         {
             bytes += PayloadBytes(nodes[i]);
+            AddFontMetrics(nodes[i].TextInput, fontMetricReferences, ref bytes);
             if (bytes > MaxWorkingBytes)
                 return bytes;
         }
@@ -181,9 +187,35 @@ internal sealed class UILayoutSnapshot
         long bytes = ((long)node.GridRows.Length + node.GridColumns.Length) * 48;
         if (node.TextInput is { } text)
             bytes += (long)text.Text.Length * (text.ShapingRequest is not null ? ShapedTextBytesPerUtf16 : 512) +
-                (long)text.Runes.Count * 256 + (long)(text.ShapingFeatureSource?.Length ?? 0) * 4 +
+                (long)(text.ShapingFeatureSource?.Length ?? 0) * 4 +
                 (long)(text.ShapingRequest?.Language.Length ?? 0) * 4;
         return bytes;
+    }
+
+    private static void AddFontMetrics(UITextLayoutInput? text,
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> references, ref long bytes)
+    {
+        if (text is null)
+            return;
+        references.TryGetValue(text.Runes, out int count);
+        if (count == 0)
+            Reserve(ref bytes, (long)text.Runes.Count * 256);
+        references[text.Runes] = count + 1;
+    }
+
+    private static void RemoveFontMetrics(UITextLayoutInput? text,
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> references, ref long bytes)
+    {
+        if (text is null)
+            return;
+        int count = references[text.Runes];
+        if (count == 1)
+        {
+            references.Remove(text.Runes);
+            bytes -= (long)text.Runes.Count * 256;
+        }
+        else
+            references[text.Runes] = count - 1;
     }
 
     private static void Reserve(ref long estimatedBytes, long bytes)
@@ -215,8 +247,9 @@ internal sealed class UILayoutSnapshot
         List<uint> measureVersions = [];
         List<uint> arrangeVersions = [];
         long estimatedBytes = 0;
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> fontMetricReferences = new(ReferenceEqualityComparer.Instance);
         CaptureNode(root, -1, targets, nodes, children, identities, revisions,
-            measureVersions, arrangeVersions, ref estimatedBytes);
+            measureVersions, arrangeVersions, ref estimatedBytes, fontMetricReferences);
         BoundingRectangleF rootConstraint = new(Vector2.Zero, availableSize);
         return new UILayoutSnapshot(UILayoutValuePageView<UILayoutNodeInput>.CopyFrom(nodes.ToArray()),
             children.ToArray(), identities.ToArray(),
@@ -224,7 +257,7 @@ internal sealed class UILayoutSnapshot
             UILayoutValuePageView<uint>.CopyFrom(measureVersions.ToArray()),
             UILayoutValuePageView<uint>.CopyFrom(arrangeVersions.ToArray()), rootConstraint,
             workingBytes: estimatedBytes, fontGeneration: fontGeneration,
-            shapingBackendGeneration: shapingBackendGeneration);
+            shapingBackendGeneration: shapingBackendGeneration, fontMetricReferences: fontMetricReferences);
     }
 
     /// <summary>Reuse frozen topology and unchanged value pages when the owner tree is stable.</summary>
@@ -272,6 +305,8 @@ internal sealed class UILayoutSnapshot
             {
                 int index = previous._textIndices[i];
                 UITextLayoutInput? oldText = previous.Nodes[index].TextInput;
+                PreflightTextCapture(previousTargets[index], previous.EstimatedWorkingBytes - PayloadBytes(previous.Nodes[index]),
+                    oldText, previous._fontMetricReferences);
                 if (!Equals(previousTargets[index].SceneNode?.GetComponent<UITextComponent>()?.CaptureLayoutInput(), oldText))
                     MarkAncestors(index);
             }
@@ -285,7 +320,7 @@ internal sealed class UILayoutSnapshot
             return new UILayoutSnapshot(previous.Nodes, previous.Children, previous.Identities,
                 previous.Revisions, previous.MeasureVersions, previous.ArrangeVersions,
                 unchangedRoot, previous, previous.EstimatedWorkingBytes, [0], fontGeneration,
-                shapingBackendGeneration);
+                shapingBackendGeneration, previous._fontMetricReferences);
         }
 
         UILayoutChildInput[] changedEdges = previous.Children;
@@ -294,6 +329,7 @@ internal sealed class UILayoutSnapshot
         UILayoutValuePageBuilder<uint> changedMeasureVersions = new(previous.MeasureVersions);
         UILayoutValuePageBuilder<uint> changedArrangeVersions = new(previous.ArrangeVersions);
         long workingBytes = previous.EstimatedWorkingBytes;
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> fontMetricReferences = new(previous._fontMetricReferences, ReferenceEqualityComparer.Instance);
         bool stableMetadata = true;
         foreach (int index in dirty)
         {
@@ -327,16 +363,17 @@ internal sealed class UILayoutSnapshot
             UIChangeRevisions revision = target.ChangeRevisions;
             uint measure = target.LayoutMeasureVersion;
             uint arrange = target.LayoutArrangeVersion;
+            PreflightTextCapture(target, workingBytes - PayloadBytes(old), old.TextInput, fontMetricReferences);
             bool textChanged = old.TextInput is { } oldText &&
                 !Equals(target.SceneNode?.GetComponent<UITextComponent>()?.CaptureLayoutInput(), oldText);
             if (revision != previous.Revisions[index] || measure != previous.MeasureVersions[index] ||
                 arrange != previous.ArrangeVersions[index] || textChanged ||
                 EdgesChanged(old, previous.Children, changedEdges))
             {
-                PreflightTextCapture(target, workingBytes, old);
                 workingBytes -= PayloadBytes(old);
+                RemoveFontMetrics(old.TextInput, fontMetricReferences, ref workingBytes);
                 changedNodes.Edit(index) = CaptureValues(target, ResolveOperator(target), old.Parent,
-                    old.FirstChild, old.ChildCount, ref workingBytes);
+                    old.FirstChild, old.ChildCount, ref workingBytes, fontMetricReferences);
                 if ((old.TextInput is null) != (changedNodes.Edit(index).TextInput is null) ||
                     NeedsOwnerSynchronization(old) != NeedsOwnerSynchronization(changedNodes.Edit(index)))
                     stableMetadata = false;
@@ -355,7 +392,7 @@ internal sealed class UILayoutSnapshot
         return new UILayoutSnapshot(changedNodes.Freeze(), changedEdges, previous.Identities,
             changedRevisions.Freeze(), changedMeasureVersions.Freeze(), changedArrangeVersions.Freeze(),
             changedRoot, stableMetadata ? previous : null, workingBytes, [.. dirty], fontGeneration,
-            shapingBackendGeneration);
+            shapingBackendGeneration, fontMetricReferences);
 
         void MarkAncestors(int index)
         {
@@ -372,20 +409,19 @@ internal sealed class UILayoutSnapshot
         return Capture(canvas, targets);
     }
 
-    private static void PreflightTextCapture(UITransform target, long estimatedBytes, in UILayoutNodeInput old)
-    {
-        if (old.TextInput is null)
-            return;
-        UITextComponent? text = target.SceneNode?.GetComponent<UITextComponent>();
-        if (text is null)
-            return;
-        FontGlyphSet font = text.Font ?? FontGlyphSet.LoadDefaultUIFont();
-        long candidateBytes = estimatedBytes - PayloadBytes(old);
-        Reserve(ref candidateBytes, (long)(text.Text?.Length ?? 0) *
-            (text.UseShapedText ? ShapedTextBytesPerUtf16 : 512) +
-            (long)font.LayoutGlyphCount * 256 +
+    private static long TextPayloadBytes(UITextComponent text)
+        => (long)(text.Text?.Length ?? 0) * (text.UseShapedText ? ShapedTextBytesPerUtf16 : 512) +
             (long)(text.OpenTypeFeatures?.Length ?? 0) * 4 +
-            (text.UseShapedText ? (long)text.ShapeLanguage.Length * 4 : 0));
+            (text.UseShapedText ? (long)text.ShapeLanguage.Length * 4 : 0);
+
+    private static void PreflightTextCapture(UITransform target, long bytes, UITextLayoutInput? old,
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> references)
+    {
+        if (target.SceneNode?.GetComponent<UITextComponent>() is not { } text)
+            return;
+        if (old is not null && references[old.Runes] == 1)
+            bytes -= (long)old.Runes.Count * 256;
+        Reserve(ref bytes, TextPayloadBytes(text));
     }
 
     private static bool EdgesChanged(UILayoutNodeInput node, UILayoutChildInput[] before, UILayoutChildInput[] now)
@@ -416,7 +452,8 @@ internal sealed class UILayoutSnapshot
         UITransform transform, int parent, List<UITransform> targets,
         List<UILayoutNodeInput> nodes, List<UILayoutChildInput> children,
         List<UIElementIdentity> identities, List<UIChangeRevisions> revisions,
-        List<uint> measureVersions, List<uint> arrangeVersions, ref long estimatedBytes)
+        List<uint> measureVersions, List<uint> arrangeVersions, ref long estimatedBytes,
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> fontMetricReferences)
     {
         if (nodes.Count >= MaxLayoutNodes)
             throw new InvalidOperationException("Canvas layout exceeds the 65536-node snapshot limit.");
@@ -446,11 +483,11 @@ internal sealed class UILayoutSnapshot
             if (transform.Children[i] is not UITransform child)
                 continue;
             int childIndex = CaptureNode(child, index, targets, nodes, children, identities, revisions,
-                measureVersions, arrangeVersions, ref estimatedBytes);
+                measureVersions, arrangeVersions, ref estimatedBytes, fontMetricReferences);
             children[firstChild + ordinal++] = CaptureEdge(transform, child, childIndex);
         }
 
-        nodes[index] = CaptureValues(transform, op, parent, firstChild, count, ref estimatedBytes);
+        nodes[index] = CaptureValues(transform, op, parent, firstChild, count, ref estimatedBytes, fontMetricReferences);
         return index;
     }
 
@@ -489,7 +526,8 @@ internal sealed class UILayoutSnapshot
 
     private static UILayoutNodeInput CaptureValues(
         UITransform transform, UILayoutOperator op, int parent, int firstChild, int count,
-        ref long estimatedBytes)
+        ref long estimatedBytes,
+        Dictionary<FrozenDictionary<int, UIRuneMetrics>, int> fontMetricReferences)
     {
         float? width = null, height = null, minWidth = null, minHeight = null, maxWidth = null, maxHeight = null;
         float? autoWidth = null, autoHeight = null;
@@ -500,16 +538,19 @@ internal sealed class UILayoutSnapshot
         bool excludedWidth = false, excludedHeight = false;
         ReadOnlyMemory<UILayoutGridTrack> rows = default, columns = default;
         UITextComponent? textComponent = transform.SceneNode?.GetComponent<UITextComponent>();
+        long textBytes = 0;
         if (textComponent is not null)
         {
+            textBytes = TextPayloadBytes(textComponent);
+            Reserve(ref estimatedBytes, textBytes);
             FontGlyphSet font = textComponent.Font ?? FontGlyphSet.LoadDefaultUIFont();
-            Reserve(ref estimatedBytes, (long)(textComponent.Text?.Length ?? 0) *
-                (textComponent.UseShapedText ? ShapedTextBytesPerUtf16 : 512) +
-                (long)font.LayoutGlyphCount * 256 +
-                (long)(textComponent.OpenTypeFeatures?.Length ?? 0) * 4 +
-                (textComponent.UseShapedText ? (long)textComponent.ShapeLanguage.Length * 4 : 0));
+            long fontBytes = 0;
+            Reserve(ref fontBytes, (long)font.LayoutGlyphCount * 256);
         }
         UITextLayoutInput? textInput = textComponent?.CaptureLayoutInput();
+        if (textInput is null)
+            estimatedBytes -= textBytes;
+        AddFontMetrics(textInput, fontMetricReferences, ref estimatedBytes);
         if (transform is UIBoundableTransform bounded)
         {
             width = bounded.Width;

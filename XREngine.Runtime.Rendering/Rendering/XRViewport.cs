@@ -1366,6 +1366,7 @@ namespace XREngine.Rendering
                     Debug.Rendering($"[XRViewport] After EnsureViewportBoundToCamera: VP[{Index}] Camera.Viewports.Count={ActiveCamera?.Viewports.Count ?? -1}");
                     break;
                 case nameof(ScreenSpaceUserInterfaceOverride):
+                case nameof(AllowUIRender):
                     ResizeCameraComponentUI();
                     break;
                 case nameof(SetRenderPipelineFromCamera):
@@ -3667,6 +3668,8 @@ namespace XREngine.Rendering
         /// </summary>
         private void ResizeCameraComponentUI()
         {
+            if (!AllowUIRender)
+                return;
             var overlay = ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay();
             if (overlay is null)
                 return;

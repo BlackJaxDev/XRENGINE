@@ -58,7 +58,10 @@ Detached arrange requires attaching a canvas first. Legacy child-resize override
 are no longer an alternate layout entry point.
 
 Measure reuse requires matching identity, aggregate measure revision, text
-inputs, and constraint. Arrange reuse also requires matching child edges,
+inputs, and constraint. Measurements from a collapsed subtree are not reused
+when that subtree opens. Text beneath a collapsed ancestor does not participate
+in convergence checks. Hidden nodes still participate in measurement.
+Arrange reuse also requires matching child edges,
 allocated slot, placement, visibility, and geometry. Topology-stable capture
 uses immutable pages of 256 nodes. A changed page is copied before writing;
 unchanged input and output pages remain shared. The worker skips cached subtrees,
@@ -68,6 +71,10 @@ constant-time work for every leaf edit.
 
 A font generation guard detects metric changes that precede queued owner
 notifications. Text dependencies are scanned when that generation changes.
+The working-page budget charges each shared immutable font-metrics dictionary
+once. Each text node still pays for its text and shaping data. Incremental
+capture keeps page reference counts and removes a metrics charge only when its
+last user leaves the snapshot. The 32 MiB limit does not change.
 The flat output accessor is a diagnostic compatibility path; normal publication
 uses the immutable indexed page view.
 
@@ -94,6 +101,10 @@ users finish. Both fonts are validated before installation. Nested scopes are
 rejected; disposal releases the exact installed references and does not destroy
 resources. The original text-only overload remains available. Without an icon
 override, icon lookup retains its Windows system-font path and bitmap fallback.
+An optional Windows font import that fails is retained as a failed lookup for
+the process. The failure is logged, and later icon requests use the existing
+fallback without repeating the import. A new process can retry. Required font
+imports retain their normal retry behavior.
 `UITestShaderScope` supplies text and icon metrics explicitly, so retained-control
 fixtures do not need a cold system-font import to realize rows.
 
@@ -637,6 +648,17 @@ runs on the render owner and retains the exact retired helper.
 
 Viewport teardown removes collection, swap, and mesh callbacks. Property-text
 drivers stop polling on deactivation and direct destruction.
+
+Viewport publication accepts no renderer uniform callback or only its built-in
+bridge when the public uniform event is empty. Mesh recreation can remove that
+bridge. Authored renderer callbacks, public uniform callbacks, and render-data
+preparation still require a value adapter. UI-disabled viewports cannot resize
+the camera overlay. The camera resize listener also checks that the viewport
+uses that overlay, so an offscreen scene view cannot resize the desktop canvas.
+The scene view sets its internal render extent explicitly at the frame boundary.
+When an unpublished surface has only its pool lease, resizing it releases any
+initial CPU placeholder pixels before the framebuffer extent changes. Published
+and externally leased surfaces are not resized.
 
 Web replacement detaches the exact backend and upload buffers. Retirement waits
 for producer callbacks to unwind, blocks reuse while native disposal is active,

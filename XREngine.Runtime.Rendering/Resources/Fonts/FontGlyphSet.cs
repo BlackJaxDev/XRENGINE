@@ -46,6 +46,7 @@ namespace XREngine.Rendering
         private static readonly ConcurrentDictionary<string, byte> ForcedReloadAttemptedPaths = new(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, byte> MissingAtlasRecoveryAttemptedKeys = new(StringComparer.OrdinalIgnoreCase);
         private static readonly ConcurrentDictionary<string, Lazy<FontGlyphSet>> DirectEngineFontCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, Lazy<FontGlyphSet?>> WindowsUiFontCache = new(StringComparer.OrdinalIgnoreCase);
 
         private List<string> _characters = [];
         public List<string> Characters
@@ -928,13 +929,22 @@ namespace XREngine.Rendering
             XRFontImportOptions options = CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize);
             string cacheKey = BuildDirectEngineFontCacheKey(path, options);
 
+            // Keep a failed optional import for this process. Row creation must not
+            // repeat an expensive failed import for every icon in a virtual list.
+            return WindowsUiFontCache.GetOrAdd(cacheKey, static (key, request) => new Lazy<FontGlyphSet?>(
+                () => LoadOptionalWindowsUIFont(key, request.Path, request.Options),
+                LazyThreadSafetyMode.ExecutionAndPublication), (Path: path, Options: options)).Value;
+        }
+
+        private static FontGlyphSet? LoadOptionalWindowsUIFont(string cacheKey, string path, XRFontImportOptions options)
+        {
             try
             {
                 return GetOrLoadDirectEngineFont(cacheKey, path, options);
             }
             catch (Exception ex)
             {
-                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadWindowsUIFont failed for '{path}': {ex.Message}");
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"LoadWindowsUIFont failed for '{path}': {ex.Message}. The configured fallback font will be used for this process.");
                 return null;
             }
         }
