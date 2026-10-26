@@ -1790,8 +1790,8 @@ and the state-machine source document. Commands also reject duplicate membership
 It does not depend on runtime owner back-references or initialization. Bare
 transition properties cannot establish document ownership and remain unavailable.
 Selected targets that share the same curve edit it once. Distinct curves support
-Set length and Stretch length as one transaction; their key controls remain
-unavailable. Unsupported getter ownership rejects the whole selection.
+Set length, Stretch length, and Add at a common time as one transaction. Existing
+key editing and removal remain unavailable for distinct curves. Unsupported getter ownership rejects the whole selection.
 
 AnimationAuthoringTransaction supplies the existing clip and new property paths
 with the same reservation, exact Undo/Redo, rollback, conflict, and dirty-document
@@ -1980,8 +1980,8 @@ preventing dirty marks for other valid originals. These checks do not acquire
 concurrent lifetime admission.
 
 The retained detail enables length input and length actions for a distinct-curve
-selection. Mixed lengths display an empty input. Key and plot editing stay
-unavailable. The length control retains the displayed selection and revision;
+selection. Mixed lengths display an empty input. Common-time Add is described
+below; existing key and plot editing stay unavailable. The length control retains the displayed selection and revision;
 replacement, invalidated presentation, or retirement rejects stale submissions.
 Subscriptions attach once per distinct curve and track and detach on rebind.
 This does not establish live multi-selection or Windows Undo acceptance.
@@ -2281,3 +2281,40 @@ The snapshot still costs O(total items) references and enumeration when opened.
 Text formatting and guarded-write allocations occur for changed visible bindings,
 not every item or an unchanged frame. This route does not add mutation, Undo,
 generic-interface adapters, live snapshot refresh, or variable-height rows.
+
+
+## Add Keys To Selected Float Curves
+
+The retained float detail enables a common key time and Add for two through 64
+unique selected curves. Shared curve references insert once. The action permits
+at most 100,000 total keys after insertion. The displayed limit and action
+preflight use the same count check. Existing-key editing and removal remain
+unavailable for distinct curves.
+
+`InspectorFloatCurveAddEdit` uses the existing selected-owner capture and
+`AnimationAuthoringTransaction`. It retains every owner and document, rejects a
+shared track across distinct curves, and captures each track's exact key order
+and authored payloads. `InspectorFloatCurveAddMember` inserts at the same finite,
+nonnegative time in each curve. The time must fit every curve and track length;
+it is not clamped separately. Each new key uses that curve's `DefaultValue`,
+zero tangent, Linear interpolation, and an unset authored frame index. It does
+not sample playback or change playback time.
+
+One history action contains all insertions. Each forward or reverse operation
+captures fresh exact-edit generations for all members, then validates every
+member before and after each write and callback. Durable history checks authored
+content, so consecutive accepted operations can undo and redo in order. A
+callback's intervening exact edit still rejects the active operation even if it
+restores the previous values.
+
+Compensation reverses only writes that remain exactly owned. If the starting
+state cannot be restored, a retained failure blocks outer rollback from treating
+matching values as fresh authority. Partial work and foreign edits remain in
+place with guarded history; the action does not report success. Validation costs
+scale with selected curves and captured keys within the explicit limits. No
+latency or faster-than-ImGui claim follows from these bounds.
+
+The control publishes its selection/revision token only after presentation
+callbacks settle. Rebind, source replacement, retirement, or a newer refresh
+rejects stale submissions. Enter in the group time field invokes the same Add
+action as the button. Existing single-curve editing remains unchanged.

@@ -56,8 +56,10 @@ public static partial class InspectorPropertyEditors
             private InspectorFloatCurveSource? _source;
             private InspectorFloatCurveLengthSelection? _lengthSelection;
             private InspectorFloatCurveLengthSelection? _presentedLengthSelection;
+            private InspectorFloatCurveLengthSelection? _presentedAddSelection;
             private InspectorFloatCurveSource? _presentedLengthSource;
             private ulong _presentedLengthRevision;
+            private ulong _presentedAddRevision;
             private UIRetainedPlot? _plot;
             private UIListTransform? _list;
             private UIVirtualTableProvider<FloatKeyframe>? _table;
@@ -386,6 +388,7 @@ public static partial class InspectorPropertyEditors
                 _revision++;
                 _dirty = true;
                 _presentedLengthSelection = null;
+                _presentedAddSelection = null;
                 _presentedLengthSource = null;
             }
 
@@ -449,8 +452,11 @@ public static partial class InspectorPropertyEditors
                 ulong revision = _revision;
                 if (_status is not null)
                     _status.Text = found ? "Select a key to edit its time and value." :
-                        _lengthSelection is not null
-                            ? "Multiple curves selected. Length edits apply to all; key editing is unavailable."
+                        _lengthSelection is { } limited &&
+                            !InspectorFloatCurveAddEdit.CanAddWithinLimits(limited)
+                            ? "Multiple curves selected. Add supports up to 64 curves and 100000 keys after insertion; length edits still apply to all."
+                            : _lengthSelection is not null
+                            ? "Multiple curves selected. Add at a common time or edit all lengths; existing keys remain read-only."
                             : reason;
                 if (!IsCurrent(_source, revision)) return;
                 if (!found || _source is null)
@@ -477,6 +483,7 @@ public static partial class InspectorPropertyEditors
                 _source = null;
                 _lengthSelection = null;
                 _presentedLengthSelection = null;
+                _presentedAddSelection = null;
                 _presentedLengthSource = null;
             }
 
@@ -553,7 +560,11 @@ public static partial class InspectorPropertyEditors
                     _table!.SelectedId = null;
                     if (!IsCurrent(source, revision)) return;
                     _selected = null;
-                    if (_time is not null) _time.IsEnabled = false;
+                    bool canAdd = _lengthSelection is { } addSelection &&
+                        InspectorFloatCurveAddEdit.CanAddWithinLimits(addSelection);
+                    if (_time is not null) _time.Text = canAdd ? "0" : "";
+                    if (!IsCurrent(source, revision)) return;
+                    if (_time is not null) _time.IsEnabled = canAdd;
                     if (!IsCurrent(source, revision)) return;
                     if (_value is not null) _value.IsEnabled = false;
                     if (!IsCurrent(source, revision)) return;
@@ -573,6 +584,9 @@ public static partial class InspectorPropertyEditors
                     RefreshModeControls(source, revision);
                     if (!IsCurrent(source, revision)) return;
                     _list?.InvalidateMeasure();
+                    if (!IsCurrent(source, revision)) return;
+                    _presentedAddSelection = canAdd ? _lengthSelection : null;
+                    _presentedAddRevision = revision;
                     return;
                 }
                 List<(ulong Id, FloatKeyframe Item)> snapshot = [];
@@ -705,6 +719,7 @@ public static partial class InspectorPropertyEditors
                 if (_length is not null) _length.IsEnabled = true;
                 if (!IsCurrent(source, revision)) return;
                 _presentedLengthSelection = null;
+                _presentedAddSelection = null;
                 _presentedLengthSource = source;
                 _presentedLengthRevision = revision;
                 RefreshActionButtons(source, revision);
@@ -718,7 +733,10 @@ public static partial class InspectorPropertyEditors
                 if (!IsCurrent(source, revision)) return;
                 bool keys = source is not null;
                 bool length = keys || _lengthSelection is not null;
-                if (_addKeyButton is not null) _addKeyButton.IsEnabled = keys;
+                if (_addKeyButton is not null)
+                    _addKeyButton.IsEnabled = keys ||
+                        _lengthSelection is { } selection &&
+                        InspectorFloatCurveAddEdit.CanAddWithinLimits(selection);
                 if (!IsCurrent(source, revision)) return;
                 if (_removeKeyButton is not null)
                     _removeKeyButton.IsEnabled = keys && _selected is { } selected &&
@@ -855,6 +873,18 @@ public static partial class InspectorPropertyEditors
                     _presentedLengthRevision == _revision && selection.IsCurrent();
             }
 
+            private bool CanAddToLengthSelection(
+                out InspectorFloatCurveLengthSelection selection)
+            {
+                selection = _lengthSelection!;
+                return !_retired && _rootIdentity.IsCurrent &&
+                    !_root.IsDestroyed && !_root.IsDestroyQueued &&
+                    _root.IsActiveInHierarchy && selection is not null &&
+                    InspectorFloatCurveAddEdit.CanAddWithinLimits(selection) &&
+                    ReferenceEquals(selection, _presentedAddSelection) &&
+                    _presentedAddRevision == _revision && selection.IsCurrent();
+            }
+
             private bool CanEditLengthSource(out InspectorFloatCurveSource source)
             {
                 if (!CanEdit(out source)) return false;
@@ -868,6 +898,11 @@ public static partial class InspectorPropertyEditors
 
             private void SubmitTime(UITextInputComponent input)
             {
+                if (CanAddToLengthSelection(out _))
+                {
+                    AddKey();
+                    return;
+                }
                 if (CanEdit(out var source) && _selected is { } key &&
                     Parse(input, out float value))
                     InspectorFloatCurveActions.SetTime(source, key, value);
@@ -998,6 +1033,9 @@ public static partial class InspectorPropertyEditors
                 if (CanEdit(out var source) && Parse(_time, out float second) &&
                     InspectorFloatCurveActions.Add(source, second, out FloatKeyframe? key))
                     _selected = key;
+                else if (CanAddToLengthSelection(out var selection) &&
+                    Parse(_time, out float groupedSecond))
+                    InspectorFloatCurveActions.Add(selection, groupedSecond);
                 RequestRefresh();
             }
 

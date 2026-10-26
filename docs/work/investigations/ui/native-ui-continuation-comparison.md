@@ -2097,3 +2097,37 @@ The focused builds reuse unchanged project dependencies; no full portable suite
 was repeated. The four new preview cases and six affected retirement cases
 compile. Their Windows execution and the live preview check remain pending.
 All six stashes remain preserved.
+
+
+### Grouped float-key insertion review
+
+The next inspector gap was common-time key insertion for distinct selected
+curves. The retained detail previously enabled only length/stretch for this
+selection. The new action reuses selected-owner capture, exact track insertion,
+and the shared authoring transaction. It preserves each curve's default value
+and rejects time outside any curve or track. It deduplicates shared references,
+limits a command to 64 curves and 100,000 keys after insertion, and retains one
+Undo action. Existing-key editing and removal remain outside this slice.
+
+Review found two history issues in the candidate before publication. Persistent
+exact-edit generations rejected valid consecutive Undo operations; durable
+history now checks authored content while each operation captures fresh peer
+generations. A second issue allowed outer transaction rollback to recapture
+foreign generations after incomplete compensation. A retained recovery latch
+now rejects that reverse operation. The regression preserves both inserted keys
+when the last callback edits both tracks away and back. Other cases cover peer
+changes before later insertion, source replacement, and Undo/Redo callbacks.
+
+Editor build 99 passed with zero warnings/errors in 44.24s. Test-project build
+100 passed with zero warnings/errors in 48.63s. Both used the repository wrapper,
+`--no-restore`, and `-p:BuildProjectReferences=false`; unchanged dependency
+assemblies came from the prior matching build. All 10,927 source inputs stayed
+unchanged. Eleven new editor cases compile but have not executed here. No shared
+runtime or portable test source changed, so the 1,579-case portable suite was not
+repeated. The next Windows selection is the two affected float-curve fixtures.
+
+The parent also supplied clean Windows evidence at exact `ecaecde29`: 11/11
+selected cases passed (one empty-clip correction, four preview cases, six
+retirement cases), with no skipped or incomplete cases and a zero-warning/error
+build. This closes those fixture checks only; live preview and performance
+acceptance remain open.

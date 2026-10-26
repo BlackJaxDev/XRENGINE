@@ -1982,3 +1982,26 @@ The focused builds reuse unchanged project dependencies; no full portable suite
 was repeated. The four new preview cases and six affected retirement cases
 compile. Their Windows execution and the live preview check remain pending.
 All six stashes remain preserved.
+
+
+## Selected float-curve Add checkpoint
+
+Distinct selected curves now accept Add at one common time through one guarded
+history action. Each unique curve receives its own default value. The retained
+control rejects stale presentation and owner changes. The action limits the
+selection to 64 curves and the resulting total to 100,000 keys. Existing-key
+editing and removal across distinct curves remain open. The original code
+reconciliation stays **51/60**; this is a bounded part of inspector parity.
+
+Editor build 99 and test build 100 pass with zero warnings/errors (44.24s and
+48.63s). All 10,927 source inputs stayed unchanged. Eleven new editor cases
+compile; Windows execution of the two affected float-curve fixtures is pending.
+No unchanged full portable suite was repeated. The existing platform guard
+remains in place.
+
+Windows checks at exact `ecaecde29` pass **11/11**, including the empty-clip
+fixture correction and collection-preview retirement checks. No case was
+skipped or incomplete. These results do not establish live editor, GPU, IME,
+cross-host focus, or performance acceptance. The seven owner decisions remain
+held; ImGui remains the default. The same five documentation paths changed after
+the private-doc snapshot `24621256`. All six stashes remain preserved.

@@ -15,7 +15,7 @@ namespace XREngine.UnitTests.Editor;
 public sealed class InspectorFloatCurveLengthDetailTests
 {
     [Test]
-    public void DistinctSelectionPresentsLengthOnlyAndRejectsStaleInput()
+    public void DistinctSelectionPresentsLengthAndCommonTimeAndRejectsStaleInput()
     {
         using UITestShaderScope shaders = new();
         Undo.ClearHistory();
@@ -41,7 +41,8 @@ public sealed class InspectorFloatCurveLengthDetailTests
             root.GetComponent<InspectorFloatCurveTickComponent>()!.Refresh?.Invoke();
             Assert.That(length.IsEnabled, Is.True);
             Assert.That(length.Text, Is.Empty);
-            Assert.That(time.IsEnabled, Is.False);
+            Assert.That(time.IsEnabled, Is.True);
+            Assert.That(time.Text, Is.EqualTo("0"));
             Assert.That(value.IsEnabled, Is.False);
 
             length.Text = "5";
@@ -89,6 +90,76 @@ public sealed class InspectorFloatCurveLengthDetailTests
             length.UserSubmit();
             Assert.That((first.LengthInSeconds, replacement.LengthInSeconds),
                 Is.EqualTo((8f, 6f)));
+        }
+        finally { root.Destroy(true); Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void DistinctSelectionAddsAtSubmittedTimeOnlyForPresentedOwners()
+    {
+        using UITestShaderScope shaders = new();
+        Undo.ClearHistory();
+        PropAnimFloat first = new(2, false, true) { DefaultValue = 3f };
+        PropAnimFloat second = new(3, false, true) { DefaultValue = 7f };
+        InspectorFloatCurveTestOwner a = new() { Curve = first };
+        InspectorFloatCurveTestOwner b = new() { Curve = second };
+        PropertyInfo property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+            nameof(InspectorFloatCurveTestOwner.Curve))!;
+        SceneNode root = new("Selected float curves") { IsActiveSelf = false };
+        root.SetTransform<UIBoundableTransform>();
+        root.SetWorldContext(new TestWorldContext());
+        try
+        {
+            InspectorPropertyEditors.EngineTypes.CreatePropAnimFloatEditor(root,
+                property, [a, b]);
+            UITextInputComponent time = Inputs(root).Single(input =>
+                input.AccessibilityLabel == "Key time");
+            UITextInputComponent value = Inputs(root).Single(input =>
+                input.AccessibilityLabel == "Out value");
+            time.Text = "1";
+            bool submittedDuringPresentation = false;
+            time.PropertyChanging += (_, change) =>
+            {
+                if (submittedDuringPresentation || change.PropertyName != nameof(time.Text))
+                    return;
+                submittedDuringPresentation = true;
+                time.UserSubmit();
+            };
+            root.GetComponent<InspectorListDetailRefreshComponent>()!.Refresh?.Invoke();
+            root.IsActiveSelf = true;
+            InspectorFloatCurveTickComponent tick =
+                root.GetComponent<InspectorFloatCurveTickComponent>()!;
+            tick.Refresh?.Invoke();
+            Assert.That(submittedDuringPresentation, Is.True);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((0, 0)));
+            tick.Refresh?.Invoke();
+            Assert.That((time.IsEnabled, value.IsEnabled), Is.EqualTo((true, false)));
+
+            time.Text = "1";
+            time.UserSubmit();
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((1, 1)));
+            Assert.That((first.Keyframes.First!.OutValue, second.Keyframes.First!.OutValue),
+                Is.EqualTo((3f, 7f)));
+            Assert.That(Undo.PendingUndo, Has.Count.EqualTo(1));
+
+            tick.Refresh?.Invoke();
+            PropAnimFloat replacement = new(4, false, true);
+            b.Curve = replacement;
+            time.Text = "1.5";
+            time.UserSubmit();
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count,
+                replacement.Keyframes.Count), Is.EqualTo((1, 1, 0)));
+            tick.Refresh?.Invoke();
+            time.Text = "1.5";
+            time.UserSubmit();
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count,
+                replacement.Keyframes.Count), Is.EqualTo((2, 1, 1)));
+
+            root.Generate();
+            time.Text = "1.75";
+            time.UserSubmit();
+            Assert.That((first.Keyframes.Count, replacement.Keyframes.Count),
+                Is.EqualTo((2, 1)));
         }
         finally { root.Destroy(true); Undo.ClearHistory(); }
     }

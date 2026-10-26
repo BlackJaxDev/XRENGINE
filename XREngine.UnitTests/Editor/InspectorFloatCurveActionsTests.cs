@@ -412,6 +412,302 @@ public sealed class InspectorFloatCurveActionsTests
     }
 
     [Test]
+    public void DistinctSelectedCurvesAddTheirOwnDefaultsInOneHistoryAction()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat first = new(2, false, true) { DefaultValue = 3f };
+            PropAnimFloat second = new(3, false, true) { DefaultValue = 7f };
+            first.Seek(0.25f, false);
+            second.Seek(0.75f, false);
+            InspectorFloatCurveTestOwner a = new() { Curve = first };
+            InspectorFloatCurveTestOwner b = new() { Curve = first };
+            InspectorFloatCurveTestOwner c = new() { Curve = second };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveLengthSelection.TryCapture(property,
+                [a, b, c, a], out var group, out string reason), Is.True, reason);
+            Assert.That(group!.Curves, Has.Length.EqualTo(2));
+            Assert.That(InspectorFloatCurveActions.Add(group, 1.5f), Is.True);
+            FloatKeyframe firstKey = first.Keyframes.First!;
+            FloatKeyframe secondKey = second.Keyframes.First!;
+            Assert.That((firstKey.Second, secondKey.Second, firstKey.OutValue,
+                secondKey.OutValue, firstKey.AuthoredFrameIndex, secondKey.AuthoredFrameIndex),
+                Is.EqualTo((1.5f, 1.5f, 3f, 7f, -1, -1)));
+            Assert.That((firstKey.InterpolationTypeOut, secondKey.InterpolationTypeOut),
+                Is.EqualTo((EVectorInterpType.Linear, EVectorInterpType.Linear)));
+            Assert.That((first.CurrentTime, second.CurrentTime), Is.EqualTo((0.25f, 0.75f)));
+            Assert.That(Undo.PendingUndo, Has.Count.EqualTo(1));
+
+            Assert.That(InspectorFloatCurveActions.Add(group, 0.5f), Is.True);
+            Assert.That(Undo.PendingUndo, Has.Count.EqualTo(2));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((1, 1)));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((0, 0)));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((2, 2)));
+            Assert.That((first.CurrentTime, second.CurrentTime), Is.EqualTo((0.25f, 0.75f)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void InvalidCommonTimeDoesNotMutateAnySelectedCurve()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat first = new(2, false, true), second = new(3, false, true);
+            InspectorFloatCurveTestOwner a = new() { Curve = first };
+            InspectorFloatCurveTestOwner b = new() { Curve = second };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveLengthSelection.TryCapture(property,
+                [a, b], out var group, out string reason), Is.True, reason);
+            Assert.That(InspectorFloatCurveActions.Add(group!, 2.5f), Is.False);
+            Assert.That(InspectorFloatCurveActions.Add(group!, float.NaN), Is.False);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((0, 0)));
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void GroupedAddRejectsMoreThanSixtyFourDistinctCurvesBeforeHistory()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            InspectorFloatCurveTestOwner[] owners = Enumerable.Range(0, 65)
+                .Select(_ => new InspectorFloatCurveTestOwner
+                {
+                    Curve = new PropAnimFloat(2, false, true)
+                }).ToArray();
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            object?[] targets = [.. owners.Cast<object?>(), owners[0]];
+            Assert.That(InspectorFloatCurveLengthSelection.TryCapture(property,
+                targets, out var group, out string reason), Is.True, reason);
+            Assert.That(group!.Curves, Has.Length.EqualTo(65));
+            Assert.That(InspectorFloatCurveActions.Add(group, 1f), Is.False);
+            Assert.That(owners.All(owner => owner.Curve!.Keyframes.Count == 0), Is.True);
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void GroupedAddCountBudgetIncludesEveryNewKey()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            Assert.That(InspectorFloatCurveAddEdit.FitsCounts(2, 99_998), Is.True);
+            Assert.That(InspectorFloatCurveAddEdit.FitsCounts(2, 99_999), Is.False);
+            Assert.That(InspectorFloatCurveAddEdit.FitsCounts(64, 99_936), Is.True);
+            Assert.That(InspectorFloatCurveAddEdit.FitsCounts(64, 99_937), Is.False);
+            Assert.That(InspectorFloatCurveAddEdit.FitsCounts(65, 0), Is.False);
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void AddCallbackChangingPeerStopsLaterWriteAndGuardsHistory()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat first = new(2, false, true), second = new(3, false, true);
+            FloatKeyframe peer = new(0.25f, 2f, 0, EVectorInterpType.Linear);
+            second.Keyframes.Add(peer);
+            InspectorFloatCurveTestOwner a = new() { Curve = first };
+            InspectorFloatCurveTestOwner b = new() { Curve = second };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveLengthSelection.TryCapture(property,
+                [a, b], out var group, out string reason), Is.True, reason);
+            bool changed = false;
+            first.Keyframes.Changed += _ =>
+            {
+                if (changed) return;
+                changed = true;
+                peer.OutValue = 99f;
+            };
+            Assert.That(InspectorFloatCurveActions.Add(group!, 1f), Is.False);
+            Assert.That(changed, Is.True);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count, peer.OutValue),
+                Is.EqualTo((0, 1, 99f)));
+            Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
+            Assert.That(peer.OutValue, Is.EqualTo(99f));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void AddCallbackReplacingPeerRetainsOnlyGuardedRecovery()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat first = new(2, false, true), second = new(3, false, true);
+            PropAnimFloat replacement = new(3, false, true);
+            InspectorFloatCurveTestOwner a = new() { Curve = first };
+            InspectorFloatCurveTestOwner b = new() { Curve = second };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveLengthSelection.TryCapture(property,
+                [a, b], out var group, out string reason), Is.True, reason);
+            bool changed = false;
+            first.Keyframes.Changed += _ =>
+            {
+                if (changed) return;
+                changed = true;
+                b.Curve = replacement;
+            };
+            Assert.That(InspectorFloatCurveActions.Add(group!, 1f), Is.False);
+            Assert.That(changed, Is.True);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count,
+                replacement.Keyframes.Count), Is.EqualTo((1, 0, 0)));
+            Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
+            Assert.That(first.Keyframes.Count, Is.EqualTo(1));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void ExactPeerEditAwayAndBackRejectsTheNextGroupedInsert()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat first = new(2, false, true), second = new(3, false, true);
+            FloatKeyframe peer = new(0.25f, 2f, 0, EVectorInterpType.Linear);
+            second.Keyframes.Add(peer);
+            InspectorFloatCurveTestOwner a = new() { Curve = first };
+            InspectorFloatCurveTestOwner b = new() { Curve = second };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveLengthSelection.TryCapture(property,
+                [a, b], out var group, out string reason), Is.True, reason);
+            bool changed = false;
+            first.Keyframes.Changed += _ =>
+            {
+                if (changed) return;
+                changed = true;
+                FloatKeyframe transient = new(0.5f, 4f, 0, EVectorInterpType.Linear);
+                Keyframe[] before = [peer];
+                Keyframe[] during = [peer, transient];
+                Assert.That(second.Keyframes.TryApplyExactKeyEdit(before, during,
+                    transient, 0.5f, -1, 0.5f, -1), Is.True);
+                Assert.That(second.Keyframes.TryApplyExactKeyEdit(during, before,
+                    transient, 0.5f, -1, 0.5f, -1), Is.True);
+            };
+            Assert.That(InspectorFloatCurveActions.Add(group!, 1f), Is.False);
+            Assert.That(changed, Is.True);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((0, 1)));
+            Assert.That(second.Keyframes.First, Is.SameAs(peer));
+            Assert.That(Undo.CanUndo, Is.False);
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
+    public void LastInsertionCallbackCannotRearmConflictedBatchFromMatchingValues()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat first = new(2, false, true), second = new(3, false, true);
+            InspectorFloatCurveTestOwner a = new() { Curve = first };
+            InspectorFloatCurveTestOwner b = new() { Curve = second };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveLengthSelection.TryCapture(property,
+                [a, b], out var group, out string reason), Is.True, reason);
+            bool changed = false;
+            second.Keyframes.Changed += _ =>
+            {
+                if (changed) return;
+                changed = true;
+                FloatKeyframe firstOwned = first.Keyframes.First!;
+                FloatKeyframe secondOwned = second.Keyframes.First!;
+                FloatKeyframe firstTransient = new(0.5f, 4f, 0,
+                    EVectorInterpType.Linear);
+                FloatKeyframe secondTransient = new(0.5f, 5f, 0,
+                    EVectorInterpType.Linear);
+                Keyframe[] firstAfter = [firstOwned];
+                Keyframe[] secondAfter = [secondOwned];
+                Assert.That(first.Keyframes.TryApplyExactKeyEdit(firstAfter,
+                    [firstTransient, firstOwned], firstTransient,
+                    0.5f, -1, 0.5f, -1), Is.True);
+                Assert.That(first.Keyframes.TryApplyExactKeyEdit(
+                    [firstTransient, firstOwned], firstAfter, firstTransient,
+                    0.5f, -1, 0.5f, -1), Is.True);
+                Assert.That(second.Keyframes.TryApplyExactKeyEdit(secondAfter,
+                    [secondTransient, secondOwned], secondTransient,
+                    0.5f, -1, 0.5f, -1), Is.True);
+                Assert.That(second.Keyframes.TryApplyExactKeyEdit(
+                    [secondTransient, secondOwned], secondAfter, secondTransient,
+                    0.5f, -1, 0.5f, -1), Is.True);
+            };
+
+            Assert.That(InspectorFloatCurveActions.Add(group!, 1f), Is.False);
+            Assert.That(changed, Is.True);
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((1, 1)));
+            Assert.That((first.Keyframes.First!.Second, second.Keyframes.First!.Second),
+                Is.EqualTo((1f, 1f)));
+            Assert.Throws<InvalidOperationException>(() => Undo.TryUndo());
+            Assert.That((first.Keyframes.Count, second.Keyframes.Count), Is.EqualTo((1, 1)));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void AddReplayCallbackChangingPeerRejectsLaterWrite(bool duringRedo)
+    {
+        Undo.ClearHistory();
+        try
+        {
+            PropAnimFloat first = new(2, false, true), second = new(3, false, true);
+            FloatKeyframe peer = new(0.25f, 2f, 0, EVectorInterpType.Linear);
+            second.Keyframes.Add(peer);
+            InspectorFloatCurveTestOwner a = new() { Curve = first };
+            InspectorFloatCurveTestOwner b = new() { Curve = second };
+            var property = typeof(InspectorFloatCurveTestOwner).GetProperty(
+                nameof(InspectorFloatCurveTestOwner.Curve))!;
+            Assert.That(InspectorFloatCurveLengthSelection.TryCapture(property,
+                [a, b], out var group, out string reason), Is.True, reason);
+            Assert.That(InspectorFloatCurveActions.Add(group!, 1f), Is.True);
+            if (duringRedo) Assert.That(Undo.TryUndo(), Is.True);
+            bool changed = false;
+            (duringRedo ? first : second).Keyframes.Changed += _ =>
+            {
+                if (changed) return;
+                changed = true;
+                peer.OutValue = 77f;
+            };
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                if (duringRedo) Undo.TryRedo();
+                else Undo.TryUndo();
+            });
+            Assert.That(changed, Is.True);
+            Assert.That(peer.OutValue, Is.EqualTo(77f));
+            Assert.Throws<InvalidOperationException>(() =>
+            {
+                if (duringRedo) Undo.TryRedo();
+                else Undo.TryUndo();
+            });
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void SharedAndNoopMembersStillRetainEverySelectedOwner()
     {
         Undo.ClearHistory();

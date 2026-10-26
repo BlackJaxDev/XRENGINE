@@ -98,7 +98,8 @@ indices, synchronized handles, source
 dirty state, and unchanged playback time. Mode edits must preserve key time, frame,
 values, tangents, and synchronization flags. Retiming or changing the frame from
 a callback must reject stale edit history and preserve that newer edit. Repeat with shared selected references;
-distinct selected curves must enable only length/stretch editing. Give them
+distinct selected curves must enable length/stretch and common-time Add, while
+existing-key editing and removal stay disabled. Give them
 different initial lengths and keys. Set a common length, stretch, then Undo/Redo
 each action once. Verify per-curve restoration, frame indices, dirty documents,
 and unchanged playback time. Include shared references and an unchanged member.
@@ -1057,3 +1058,34 @@ The focused builds reuse unchanged project dependencies; no full portable suite
 was repeated. The four new preview cases and six affected retirement cases
 compile. Their Windows execution and the live preview check remain pending.
 All six stashes remain preserved.
+
+
+### Focused Windows result at `ecaecde29`
+
+The parent supplied execution evidence for exact
+`ecaecde29f919f742d1eee4f2cb86257e1283475`: **11/11 passed**, with no skipped
+or incomplete cases. This includes the corrected empty-clip case from
+`44d60fb72`, four new collection-preview cases, and six affected retirement
+cases. The wrapper build reported zero warnings/errors. The 30-second inactivity
+and 180-second session limits stayed unchanged. The checkout was clean; 10,416
+source hashes and 35 earlier evidence files stayed unchanged. The earlier
+74/75 animation result remains historical evidence for `e4a1d9a7`; its sole
+failed case now passes at this later snapshot. No unchanged broad suite or live
+editor, GPU, native IME, or performance checks were repeated.
+
+### Selected-curve Add validation
+
+Run only `InspectorFloatCurveActionsTests` and
+`InspectorFloatCurveLengthDetailTests` for the next Windows checkpoint. Eleven
+new cases cover per-curve defaults, deduplication, consecutive history, invalid
+common time, count limits, callback peer changes, source replacement, exact
+edit-away-and-back, replay conflicts, and stale retained-control submissions.
+The existing length-detail assertion now expects an enabled common-time field;
+its original length and stale-owner checks remain. Compilation is not execution.
+
+Live acceptance remains open: select distinct float curves, enter a common time,
+add, then undo and redo. Check each curve's own default value, unchanged playback,
+frame indices, and dirty documents. Reject time beyond any selected length.
+Check the disabled Add state above the count limits. Existing-key editing and
+removal must remain disabled for this selection. A callback conflict must retain
+newer state and report guarded history instead of success.

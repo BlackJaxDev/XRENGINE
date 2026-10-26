@@ -2,7 +2,7 @@ using XREngine.Animation;
 
 namespace XREngine.Editor;
 
-/// <summary>Edits one retained inspector curve through exact animation transactions.</summary>
+/// <summary>Edits retained inspector curves through exact animation transactions.</summary>
 internal static class InspectorFloatCurveActions
 {
     public static bool Add(InspectorFloatCurveSource source, float second,
@@ -33,6 +33,18 @@ internal static class InspectorFloatCurveActions
             key);
         if (result) added = key;
         return result;
+    }
+
+    public static bool Add(InspectorFloatCurveLengthSelection selection, float second)
+    {
+        if (!InspectorFloatCurveAddEdit.TryCapture(selection, second,
+                out InspectorFloatCurveAddEdit? edit) || edit is null)
+            return false;
+        return AnimationAuthoringTransaction.Apply(selection.Curves[0].Curve,
+            selection.Documents, "Add Selected Animation Keys",
+            () => edit.Apply(true), () => edit.Apply(false),
+            () => edit.Matches(true), () => edit.Matches(false), selection.IsCurrent,
+            null, edit.ReservationOwners);
     }
 
     public static bool Remove(InspectorFloatCurveSource source, FloatKeyframe key)
