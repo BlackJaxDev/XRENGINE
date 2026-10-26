@@ -8,7 +8,7 @@ Welcome to the XRENGINE documentation site. This site contains handwritten user 
 - [Developer Guides](../developer-guides/README.md): code-facing feature integration, diagnostics, and implementation references.
 - [Architecture](../architecture/README.md): engine internals, design tradeoffs, lifecycle, threading, and data flow.
 - [Dependencies](../DEPENDENCIES.md): third-party dependency and license inventory.
-- [API Reference](apiref/index.md): generated reference from C# XML documentation.
+- [API Reference](api/index.md): generated reference from C# XML documentation.
 
 ## Tips
 

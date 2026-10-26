@@ -56,6 +56,8 @@ Because the GPU workflow only runs for pushes to the trusted `deploy` branch, un
 
 Every update to `release` builds and archives the DocFX site. Promotions use `workflow_dispatch` after pushing because GitHub intentionally does not start another push-triggered workflow for commits pushed with the repository `GITHUB_TOKEN`.
 
+DocFX evaluates managed projects in design-time mode. The glTF and Vulkan native bridge targets do not compile C++ in this mode; normal builds still prepare the native bridges. Before local metadata generation, build `XREngine.SourceGenerators/XREngine.SourceGenerators.csproj` in `Release` so DocFX can load the source generator.
+
 Tags are deliberate rather than generated automatically. Push a semantic-version tag that points to a commit reachable from `release`, for example:
 
 ```powershell

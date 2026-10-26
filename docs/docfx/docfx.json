@@ -50,12 +50,17 @@
       {
         "files": [
           "apiref/**.yml",
-          "apiref/index.md",
           "apiref/toc.yml"
         ]
       }
     ],
     "resource": [
+      {
+        "src": "..",
+        "files": [
+          "developer-guides/rendering/render-pipelines/*.xrs"
+        ]
+      },
       {
         "files": [
           "styles/**"
