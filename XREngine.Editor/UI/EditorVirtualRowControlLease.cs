@@ -6,7 +6,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Editor.UI;
 
 /// <summary>Captures one editor control and its exact path under a recycled row editor.</summary>
-internal sealed class EditorLinkedListControlLease
+internal sealed class EditorVirtualRowControlLease
 {
     private readonly XRComponent _component;
     private readonly ObjectConstructionIdentity _componentIdentity;
@@ -15,7 +15,7 @@ internal sealed class EditorLinkedListControlLease
     private readonly TransformBase[] _transforms;
     private readonly ObjectConstructionIdentity[] _transformIdentities;
 
-    private EditorLinkedListControlLease(XRComponent component, SceneNode[] path)
+    private EditorVirtualRowControlLease(XRComponent component, SceneNode[] path)
     {
         _component = component;
         _componentIdentity = ObjectConstructionIdentity.Capture(component);
@@ -25,7 +25,7 @@ internal sealed class EditorLinkedListControlLease
         _transformIdentities = _transforms.Select(transform => ObjectConstructionIdentity.Capture(transform)).ToArray();
     }
 
-    public static EditorLinkedListControlLease Capture(XRComponent component, SceneNode editor)
+    public static EditorVirtualRowControlLease Capture(XRComponent component, SceneNode editor)
     {
         SceneNode? node = component.SceneNode;
         List<SceneNode> reversePath = [];
@@ -51,12 +51,12 @@ internal sealed class EditorLinkedListControlLease
         for (int index = 0; index < _path.Length; index++)
         {
             SceneNode node = _path[index];
+            TransformBase transform = _transforms[index];
             if (!_pathIdentities[index].IsCurrent || node.IsDestroyed || node.IsDestroyQueued ||
-                !ReferenceEquals(node.Transform, _transforms[index]) ||
-                !_transformIdentities[index].IsCurrent ||
-                _transforms[index].IsDestroyed || _transforms[index].IsDestroyQueued)
+                !ReferenceEquals(node.Transform, transform) || !_transformIdentities[index].IsCurrent ||
+                transform.IsDestroyed || transform.IsDestroyQueued)
                 return false;
-            if (index > 0 && !ReferenceEquals(_transforms[index].Parent, _transforms[index - 1]))
+            if (index > 0 && !ReferenceEquals(transform.Parent, _transforms[index - 1]))
                 return false;
         }
         return true;

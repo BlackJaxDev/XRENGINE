@@ -118,7 +118,7 @@ public sealed class EditorLinkedListVirtualizationTests
         {
             InspectorListDetailRefreshComponent lifetime = detail.GetComponent<InspectorListDetailRefreshComponent>()!;
             object context = lifetime.Release!.Target!;
-            var cells = (System.Collections.IDictionary)context.GetType().GetField("_linkedListCells",
+            var cells = (System.Collections.IDictionary)context.GetType().GetField("_virtualCells",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(context)!;
             Assert.That(cells.Count, Is.Zero, "The variable-height animation editor must stay on its eager route.");
             Assert.That(Nodes(detail).Select(node => node.Transform).OfType<UIScrollableTransform>()
@@ -316,7 +316,7 @@ public sealed class EditorLinkedListVirtualizationTests
     {
         InspectorListDetailRefreshComponent lifetime = detail.GetComponent<InspectorListDetailRefreshComponent>()!;
         object context = lifetime.Release!.Target!;
-        FieldInfo cellsField = context.GetType().GetField("_linkedListCells",
+        FieldInfo cellsField = context.GetType().GetField("_virtualCells",
             BindingFlags.Instance | BindingFlags.NonPublic)!;
         System.Collections.IDictionary cells = (System.Collections.IDictionary)cellsField.GetValue(context)!;
         foreach (System.Collections.DictionaryEntry entry in cells)

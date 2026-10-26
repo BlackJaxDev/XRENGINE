@@ -84,7 +84,7 @@ public static partial class InspectorPropertyEditors
             private readonly EditorListMutationContext _listContext = new();
             private EditorListRowSource _listRows => _listContext.Rows;
             private readonly Dictionary<UIBoundableTransform, EditorListRowCellState> _listCells = [];
-            private readonly Dictionary<UIBoundableTransform, EditorLinkedListRowCellState> _linkedListCells = [];
+            private readonly Dictionary<UIBoundableTransform, EditorVirtualCollectionRowCellState> _virtualCells = [];
             private UIListTransform? _virtualList;
             private UITextComponent? _listCountLabel;
             private Type? _listElementType;
@@ -130,7 +130,7 @@ public static partial class InspectorPropertyEditors
                     if (detached)
                     {
                         _listCells.Clear();
-                        _linkedListCells.Clear();
+                        _virtualCells.Clear();
                         _previewCells.Clear();
                         _virtualList = null;
                     }
@@ -149,7 +149,7 @@ public static partial class InspectorPropertyEditors
                 _virtualList = null;
                 _listCountLabel = null;
                 _listCells.Clear();
-                _linkedListCells.Clear();
+                _virtualCells.Clear();
                 _previewCells.Clear();
                 foreach (var child in _container.Transform.Children.ToArray())
                 {
@@ -247,6 +247,20 @@ public static partial class InspectorPropertyEditors
                     sources.All(source => source.Adapter.KeyType == keyType &&
                         source.Adapter.ValueType == valueType);
                 if (!IsCurrentBuild(generation)) return;
+                // Partial-key rows and multiline key labels keep the eager view so their readonly/wrapped presentation is unchanged.
+                if (canMutate && CanUseFixedHeightCollectionEditor(valueType))
+                {
+                    EditorDictionarySnapshot primary = sources[0].Displayed;
+                    bool allKeysPresent = primary.Keys.All(key => sources.All(source =>
+                        source.Adapter.IndexOf(source.Displayed, key) >= 0));
+                    bool singleLineKeys = primary.Keys.All(key => key is not string text ||
+                        !text.Any(character => character is '\r' or '\n' or '\u0085' or '\u2028' or '\u2029'));
+                    if (allKeysPresent && singleLineKeys)
+                    {
+                        RenderVirtualDictionary(keyType, valueType, sources, primary, generation);
+                        return;
+                    }
+                }
                 List<object?> keys = template.Keys.Cast<object?>().ToList();
                 if (!IsCurrentBuild(generation)) return;
                 SceneNode branch = _container.NewChild();
@@ -356,7 +370,8 @@ public static partial class InspectorPropertyEditors
             }
 
             private object[] CreateDictionaryBindings(Type bindingType, object key,
-                ulong generation, EditorDictionarySourceLease[] sources)
+                ulong generation, EditorDictionarySourceLease[] sources,
+                Func<bool>? rowReadIsCurrent = null, Func<bool>? rowWriteIsCurrent = null)
             {
                 List<object> bindings = new();
                 foreach (EditorDictionarySourceLease source in sources)
@@ -365,7 +380,8 @@ public static partial class InspectorPropertyEditors
                     int index = source.Adapter.IndexOf(source.Displayed, key);
                     if (index < 0) return [];
                     var instance = Activator.CreateInstance(bindingType, source,
-                        source.Displayed.Keys[index], (Action)Rebuild);
+                        source.Displayed.Keys[index], (Action)Rebuild,
+                        rowReadIsCurrent, rowWriteIsCurrent);
                     if (!IsCurrentBuild(generation)) break;
                     if (instance is not null)
                         bindings.Add(instance);
@@ -911,7 +927,7 @@ public static partial class InspectorPropertyEditors
                 if (!IsCurrentBuild(generation)) return;
                 List<object?> values = EnumerateLinkedListValues(sample).ToList();
                 if (!IsCurrentBuild(generation)) return;
-                if (canMutate && CanUseFixedHeightLinkedListEditor(elementType))
+                if (canMutate && CanUseFixedHeightCollectionEditor(elementType))
                 {
                     RenderVirtualLinkedList(elementType, sources, values, generation);
                     return;
@@ -1344,20 +1360,37 @@ public static partial class InspectorPropertyEditors
             private readonly object _key;
             private readonly Action _refresh;
             private object? _displayedValue;
+            private readonly Func<bool>? _rowReadIsCurrent;
+            private readonly Func<bool>? _rowWriteIsCurrent;
 
             public DictionaryValueBinding(EditorDictionarySourceLease source, object key, Action refresh)
+                : this(source, key, refresh, null, null)
+            {
+            }
+
+            public DictionaryValueBinding(EditorDictionarySourceLease source, object key, Action refresh,
+                Func<bool>? rowIsCurrent)
+                : this(source, key, refresh, rowIsCurrent, rowIsCurrent)
+            {
+            }
+
+            public DictionaryValueBinding(EditorDictionarySourceLease source, object key, Action refresh,
+                Func<bool>? rowReadIsCurrent, Func<bool>? rowWriteIsCurrent)
             {
                 _source = source;
                 _key = key;
                 _refresh = refresh;
                 int index = source.Adapter.IndexOf(source.Displayed, key);
                 _displayedValue = source.Displayed.Values[index];
+                _rowReadIsCurrent = rowReadIsCurrent;
+                _rowWriteIsCurrent = rowWriteIsCurrent;
             }
 
             EditorDictionarySourceLease IEditorDictionaryElementBinding.Source => _source;
             object IEditorDictionaryElementBinding.Key => _key;
             object? IEditorDictionaryElementBinding.DisplayedValue => _displayedValue;
-            bool IEditorDictionaryElementBinding.IsCurrent => _source.IsCurrent() &&
+            bool IEditorDictionaryElementBinding.IsCurrent => (_rowWriteIsCurrent?.Invoke() ?? true) &&
+                _source.IsCurrent() &&
                 _source.Adapter.IndexOf(_source.Displayed, _key) >= 0;
             Action IEditorDictionaryElementBinding.Refresh => _refresh;
             void IEditorDictionaryElementBinding.AcceptCommitted(object? value, object state)
@@ -1365,7 +1398,8 @@ public static partial class InspectorPropertyEditors
 
             public TValue? Value
             {
-                get => _source.IsViewCurrent() ? (TValue?)_displayedValue : default;
+                get => (_rowReadIsCurrent?.Invoke() ?? true) && _source.IsViewCurrent()
+                    ? (TValue?)_displayedValue : default;
                 set => EditorDictionaryMutation.Set([this], _ => value, _refresh);
             }
         }

@@ -3,8 +3,8 @@ using XREngine.Scene;
 
 namespace XREngine.Editor.UI;
 
-/// <summary>Stores one recycled linked-list row and its active source lease.</summary>
-internal sealed class EditorLinkedListRowCellState
+/// <summary>Stores one recycled fixed-height collection row and its current controls.</summary>
+internal sealed class EditorVirtualCollectionRowCellState
 {
     public required UITextComponent Label { get; init; }
     public required SceneNode RemoveHost { get; init; }
@@ -18,6 +18,6 @@ internal sealed class EditorLinkedListRowCellState
     public UIVirtualRowLease Lease { get; set; }
     public ulong Intent { get; set; }
     public bool IsPublished { get; set; }
-    public IEditorLinkedElementBinding[]? Bindings { get; set; }
-    public EditorLinkedListControlLease[] EditorControls { get; set; } = [];
+    public object[]? Bindings { get; set; }
+    public EditorVirtualRowControlLease[] EditorControls { get; set; } = [];
 }

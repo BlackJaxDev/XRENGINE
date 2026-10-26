@@ -2168,3 +2168,34 @@ Before this slice, the branch was resynced to signed tip
 `83a017c9822827955202a41128f0a317b36e7e29` and
 `21d7f284e6ed087d880aa1df7c7e2c9b39ab4df6` tips. The soft resets preserved the
 index, dirty files, and six stashes. No old ancestry was merged.
+
+
+## Fixed-height dictionary presenter review
+
+The dictionary path previously created all editable row nodes eagerly. Eligible
+int/default-comparer and string/default-or-ordinal dictionaries now use the
+existing linked-list presenter through `EditorFixedHeightRowContract`. The shared
+presenter owns row/control lifetimes. Dictionary mutation code remains unchanged.
+Each binding resolves its owner's captured key object. Shared source leases
+advance on Set, and Remove copies the latest leases at click time. This preserves
+exact keys and existing history behavior without a second row lifecycle.
+
+Review kept partial-key selections eager because their missing-key labels wrap.
+Multiline keys and custom/tall value editors also stay eager. This preserves the
+existing layout without choosing a variable-height policy. Initial snapshot and
+key admission remain O(N); no measured performance improvement is claimed.
+
+The finite source review found no production blocker. It found a fixture lookup
+that required `IsActiveInHierarchy` even though the scalar test root has no world.
+The lookup now skips destroyed, queued, and inactive-self branches instead. This
+also excludes old queued branches after a history-driven rebuild. Assertions and
+production ownership guards remain intact.
+
+Editor build 105 passed with zero warnings/errors (42.02s). Test-project build
+106 passed with zero warnings/errors (47.34s). Both use the repository wrapper,
+`--no-restore`, and `-p:BuildProjectReferences=false`; only Editor and Editor-test
+sources changed, so existing dependency assemblies remain applicable. Each source
+manifest contained 10,934 inputs, unchanged during its build. Between the two
+builds, only the fixture lookup changed. Four new Editor cases compile but were
+not run. The user stopped laptop work; no Windows/live acceptance is claimed.
+No full portable suite was repeated for this Editor-only slice.

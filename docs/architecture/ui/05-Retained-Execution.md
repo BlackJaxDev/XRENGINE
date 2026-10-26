@@ -2351,3 +2351,34 @@ so that their owned binding, popup, and label stay coherent. Retired row command
 reject old sources; cleanup must preserve controls transferred by callbacks.
 Row rebinding allocates bounded binding and admission state for the visible
 working set. This is not a zero-allocation or measured latency claim.
+
+
+## Fixed-Height Dictionary Inspector Rows
+
+Supported dictionaries now share the retained fixed-height row presenter with
+linked lists. `EditorFixedHeightRowContract` supplies the value type, binding
+property, count, labels, and existing Add/Remove actions. Both routes use one
+`UIVirtualTableProvider`, cell reuse path, and control-lifetime admission path.
+There is no second dictionary-specific row lifecycle.
+
+The virtual route accepts the existing exact int/default-comparer and
+string/default-or-ordinal dictionary adapters. Each displayed primary key must
+exist in every selected owner's captured snapshot. Values must use a known
+fixed-height editor, and string keys must not contain line breaks. Partial-key
+selections retain their existing eager layout: common keys remain editable and
+missing keys retain wrapped read-only labels. Multiline keys, custom/tall editors,
+and unsupported dictionary sources also keep their prior layout and behavior.
+This does not decide variable-height virtualization.
+
+`RenderVirtualDictionary` uses the primary captured snapshot for row keys and
+count. Binding creation resolves each owner's actual key object from that
+owner's snapshot. The existing source leases remain shared so Set advances their
+snapshot and state token. Remove creates row-bound lease copies only when clicked,
+using the current committed snapshots. Existing mutation receipts preserve exact
+key identity, alias handling, Undo/Redo, and dirty tracking. Row recycling stops
+old binding and Remove callbacks from acquiring a later key.
+
+Opening/rebuilding still captures O(N) source state. Admission uses the existing
+snapshot key indexes and scans key text for line breaks. Realization builds only
+the viewport plus overscan. This is a bounded UI-node contract, not a measured
+frame-time or allocation-performance claim.

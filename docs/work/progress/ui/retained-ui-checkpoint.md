@@ -2034,3 +2034,34 @@ focus and lifecycle state, and mutation routes held by the asset-recovery decisi
 The seven owner dependencies remain open. Live Windows input, GPU/visual checks,
 IME/accessibility, cross-window behavior, and equal-workload performance acceptance
 remain separate from code and compilation. ImGui remains the default.
+
+
+## Fixed-height dictionary checkpoint
+
+Eligible editable dictionaries now share the fixed-height row presenter with
+linked lists. The route uses captured keys, existing dictionary bindings, and the
+existing mutation/Undo contracts. Row reuse rejects stale edits and Remove
+callbacks. Partial-key selections and multiline key labels keep their eager
+presentation. Custom and taller editors remain outside this fixed-height route.
+The original reconciliation remains **51/60**; this closes a bounded dictionary
+subtask, not the broader inspector item.
+
+Four new Editor cases cover bounded 10,000-entry realization, Set/Remove replay
+with exact key identity, stale recycled callbacks, and both eager fallbacks.
+They are compile-only here. Laptop work remains stopped, and no Windows, live UI,
+GPU, or performance result is claimed. The full portable suite was not repeated
+for this Editor-only change. Opening still captures O(N) source state.
+
+Remaining independent code includes broader property-row virtualization, panel
+and animation parity, and retained cross-host state. Variable-height/custom
+editor policy and the other six owner dependencies remain open. World rendering,
+live input, IME/accessibility, docking, and equal-workload performance acceptance
+still need their recorded platform checks. ImGui remains the default. Six stashes
+remain preserved; no private documentation or migration branch is changed.
+
+Editor build 105 and test-project build 106 pass with zero warnings/errors
+(42.02s and 47.34s). Both use `Tools/Invoke-AgentBuild.ps1`, `--no-restore`, and
+`-p:BuildProjectReferences=false`. Each manifest covers 10,934 source inputs,
+unchanged during its build. Only the fixture lookup changed between builds;
+production sources stayed fixed. Existing unchanged dependency assemblies were
+reused. These are compilation results, not Windows test execution.

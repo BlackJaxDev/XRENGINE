@@ -1121,3 +1121,35 @@ The user stopped laptop work. No Windows process or live editor was started for
 this slice. Live acceptance still needs scrolling, mixed-value edits, enum/color
 popups, focus during row recycling, exact-node replay, custom/variable-height
 fallback, and measured frame/allocation costs. No faster-than-ImGui claim is made.
+
+
+### Fixed-height dictionary validation scope
+
+`EditorDictionaryVirtualizationTests` adds four cases: bounded 10,000-entry
+realization with Set/Remove and exact-key Undo/Redo; rejection of recycled binding
+and Remove callbacks; existing partial-key read-only presentation; and multiline
+key fallback. Several assertions share each case. These cases are compile-only,
+not runtime passes. The existing Windows platform guard remains unchanged.
+The test label traversal excludes retired and inactive-self branches without
+requiring a world for these direct scalar binding/action checks.
+
+When Windows work is authorized again, run `EditorDictionaryVirtualizationTests`,
+`EditorDictionaryMutationTests`, `EditorLinkedListVirtualizationTests`, and
+`EditorListMutationTests.RetiredNonListElementEditorCannotWriteItsOldCollection`.
+The linked-list cases cover the shared presenter extraction. Use the existing
+bounded settings and assertions. Do not repeat the unchanged broad suite solely
+for this isolated Editor path. The preceding linked-list and grouped-key cases
+still have no Windows execution result.
+
+The user stopped laptop work. Live checks remain pending for dictionary scrolling,
+row recycling with focus/popups, multi-owner edits, exact-key history, and eager
+fallback layout. Measure opening cost separately from row realization and steady
+scrolling. Snapshot capture and admission still visit the source; bounded UI-node
+creation does not establish a frame-time or allocation-performance win.
+
+Editor build 105 and test-project build 106 pass with zero warnings/errors
+(42.02s and 47.34s). Both use `Tools/Invoke-AgentBuild.ps1`, `--no-restore`, and
+`-p:BuildProjectReferences=false`. Each manifest covers 10,934 source inputs,
+unchanged during its build. Only the fixture lookup changed between builds;
+production sources stayed fixed. Existing unchanged dependency assemblies were
+reused. These are compilation results, not Windows test execution.

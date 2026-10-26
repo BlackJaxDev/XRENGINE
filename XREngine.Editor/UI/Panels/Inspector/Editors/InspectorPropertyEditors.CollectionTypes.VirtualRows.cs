@@ -19,23 +19,42 @@ public static partial class InspectorPropertyEditors
             private void RenderVirtualLinkedList(Type elementType,
                 EditorLinkedSourceLease[] sources, List<object?> values, ulong generation)
             {
+                Type bindingType = typeof(LinkedListElementBinding<>).MakeGenericType(elementType);
+                PropertyInfo bindingProperty = bindingType.GetProperty(nameof(LinkedListElementBinding<object>.Value))!;
+                EditorFixedHeightRowContract contract = new(
+                    elementType,
+                    bindingProperty,
+                    values.Count,
+                    "Add",
+                    index => $"Node {index}",
+                    (index, rowRead, rowWrite) => CreateLinkedListBindings(bindingType, index,
+                        generation, sources, rowRead, rowWrite),
+                    (index, rowWrite) => RemoveLinkedListElement(
+                        CreateLinkedRowSources(sources, rowWrite), index, generation),
+                    () => AddLinkedListElement(sources, generation));
+                RenderVirtualFixedHeightRows(contract, generation);
+            }
+
+            private void RenderVirtualFixedHeightRows(EditorFixedHeightRowContract contract,
+                ulong generation)
+            {
                 SceneNode branch = _container.NewChild();
                 try
                 {
                     EnsureVerticalLayout(branch);
                     if (!KeepRenderedBranch(branch, generation)) return;
-                    AddInfoLabel(branch, $"Count: {values.Count}");
+                    AddInfoLabel(branch, $"Count: {contract.Count}");
                     if (!KeepRenderedBranch(branch, generation)) return;
                     SceneNode header = branch.NewChild();
                     UIListTransform headerLayout = header.SetTransform<UIListTransform>();
                     headerLayout.DisplayHorizontal = true;
                     headerLayout.ItemSpacing = 6.0f;
-                    CreateInlineButton(header, "Add", () =>
+                    CreateInlineButton(header, contract.AddLabel, () =>
                     {
-                        if (IsCurrentBuild(generation)) AddLinkedListElement(sources, generation);
+                        if (IsCurrentBuild(generation)) contract.Add();
                     });
                     if (!KeepRenderedBranch(branch, generation)) return;
-                    if (values.Count == 0)
+                    if (contract.Count == 0)
                     {
                         AddInfoLabel(branch, "<empty>");
                         return;
@@ -55,16 +74,16 @@ public static partial class InspectorPropertyEditors
                     list.ItemSize = 28;
                     list.VirtualOverscan = 2;
                     list.ItemAlignment = EListAlignment.TopOrLeft;
-                    _listRows.Reset(values.Count);
+                    _listRows.Reset(contract.Count);
                     if (!KeepRenderedBranch(branch, generation)) return;
                     _virtualList = list;
 
                     UIVirtualTableProvider<int> provider = new(_listRows,
-                        new UIVirtualTableColumn<int>("linked", "Linked node", RowHeaderWidth + ButtonWidth + 300,
-                            parent => CreateLinkedListVirtualCell(parent, generation),
-                            (cell, index, id) => BindLinkedListVirtualCell(cell, index, id,
-                                elementType, sources, generation, branch),
-                            UnbindLinkedListVirtualCell));
+                        new UIVirtualTableColumn<int>("collection", "Entry", RowHeaderWidth + ButtonWidth + 300,
+                            parent => CreateVirtualCollectionCell(parent, generation),
+                            (cell, index, id) => BindVirtualCollectionCell(cell, index, id,
+                                contract, generation, branch),
+                            UnbindVirtualCollectionCell));
                     list.VirtualProvider = provider;
                     if (!IsCurrentBuild(generation) && ReferenceEquals(list.VirtualProvider, provider))
                         list.DetachVirtualProviderForOwnerTeardown();
@@ -72,11 +91,11 @@ public static partial class InspectorPropertyEditors
                 finally { if (!IsCurrentBuild(generation)) KeepRenderedBranch(branch, generation); }
             }
 
-            private UIBoundableTransform CreateLinkedListVirtualCell(SceneNode tableRow,
+            private UIBoundableTransform CreateVirtualCollectionCell(SceneNode tableRow,
                 ulong generation)
             {
                 if (!IsCurrentBuild(generation))
-                    throw new InvalidOperationException("The linked-list detail was retired.");
+                    throw new InvalidOperationException("The collection detail was retired.");
                 SceneNode cellNode = new(tableRow);
                 UIListTransform layout = cellNode.SetTransform<UIListTransform>();
                 layout.DisplayHorizontal = true;
@@ -99,25 +118,24 @@ public static partial class InspectorPropertyEditors
 
                 SceneNode valueNode = cellNode.NewChild();
                 valueNode.SetTransform<UIBoundableTransform>().Width = 300;
-                EditorLinkedListRowCellState state = new()
+                EditorVirtualCollectionRowCellState state = new()
                 {
                     Label = label,
                     RemoveHost = removeHost,
                     ValueNode = valueNode,
                     RemoveButton = removeButton,
                 };
-                _linkedListCells.Add(layout, state);
+                _virtualCells.Add(layout, state);
                 if (!IsCurrentBuild(generation))
-                    throw new InvalidOperationException("The linked-list detail was retired during row creation.");
+                    throw new InvalidOperationException("The collection detail was retired during row creation.");
                 return layout;
             }
 
-            private void BindLinkedListVirtualCell(UIBoundableTransform cell, int index, ulong rowId,
-                Type elementType, EditorLinkedSourceLease[] sources, ulong generation,
-                SceneNode branch)
+            private void BindVirtualCollectionCell(UIBoundableTransform cell, int index, ulong rowId,
+                EditorFixedHeightRowContract contract, ulong generation, SceneNode branch)
             {
                 if (!IsCurrentBuild(generation) ||
-                    !_linkedListCells.TryGetValue(cell, out EditorLinkedListRowCellState? state))
+                    !_virtualCells.TryGetValue(cell, out EditorVirtualCollectionRowCellState? state))
                     return;
                 if (cell.Parent is not UIBoundableTransform row || _virtualList is not { } list ||
                     !ReferenceEquals(row.Parent, list) || !list.TryGetVirtualRowLease(row, out UIVirtualRowLease lease) ||
@@ -152,8 +170,8 @@ public static partial class InspectorPropertyEditors
                 ObjectConstructionIdentity branchIdentity = ObjectConstructionIdentity.Capture(branch);
                 ObjectConstructionIdentity containerIdentity = ObjectConstructionIdentity.Capture(_container);
                 SceneNode? editorNode = state.EditorNode;
-                if (editorNode is not null && !state.ReusableEditor)
-                    throw new InvalidOperationException("An incomplete linked-list editor cannot be reused.");
+                if (editorNode is not null && (!state.ReusableEditor || state.EditorControls.Length == 0))
+                    throw new InvalidOperationException("An incomplete fixed-height collection editor cannot be reused.");
                 ObjectConstructionIdentity? editorIdentity = editorNode is null ? null :
                     ObjectConstructionIdentity.Capture(editorNode);
 
@@ -161,7 +179,7 @@ public static partial class InspectorPropertyEditors
                 {
                     if (!IsCurrentBuild(generation) || state.Intent != intent || state.Index != index ||
                         state.RowId != rowId || state.Lease != lease ||
-                        !_linkedListCells.TryGetValue(cell, out EditorLinkedListRowCellState? current) ||
+                        !_virtualCells.TryGetValue(cell, out EditorVirtualCollectionRowCellState? current) ||
                         !ReferenceEquals(current, state) || !cellIdentity.IsCurrent ||
                         !IsLive(cellNode, cellNodeIdentity) || !IsLive(row, rowIdentity) ||
                         !IsLive(rowNode, rowNodeIdentity) || !IsLive(list, listIdentity) ||
@@ -199,32 +217,29 @@ public static partial class InspectorPropertyEditors
                 try
                 {
                     if (!RowCurrent()) return;
-                    state.Label.SetTextGuarded($"Node {index}", RowCurrent, static current =>
+                    state.Label.SetTextGuarded(contract.RowLabel(index), RowCurrent, static current =>
                     {
-                        if (!current()) throw new InvalidOperationException("The linked-list row changed during binding.");
+                        if (!current()) throw new InvalidOperationException("The collection row changed during binding.");
                     });
                     if (!RowCurrent()) return;
 
-                    Action<UIInteractableComponent> removeAction = _ =>
+                    if (state.RemoveAction is { } oldAction)
                     {
-                        if (!WriteCurrent()) return;
-                        EditorLinkedSourceLease[] removeSources = CreateLinkedRowSources(sources, WriteCurrent);
-                        RemoveLinkedListElement(removeSources, index, generation);
-                    };
-                    state.RemoveAction = removeAction;
-                    state.RemoveButton!.RegisterClickActions(removeAction);
+                        removeButton.UnregisterClickActions(oldAction);
+                        state.RemoveAction = null;
+                    }
                     if (!RowCurrent()) return;
-                    state.RemoveButton.IsEnabled = true;
+                    removeButton.IsEnabled = false;
                     if (!RowCurrent()) return;
-                    state.RemoveButton.SceneNode.IsActiveSelf = true;
+                    removeButton.SceneNode.IsActiveSelf = false;
                     if (!RowCurrent()) return;
 
-                    PropertyInfo bindingProperty = typeof(LinkedListElementBinding<>).MakeGenericType(elementType)
-                        .GetProperty(nameof(LinkedListElementBinding<object>.Value))!;
-                    object[] targets = CreateLinkedListBindings(bindingProperty.DeclaringType!, index,
-                        generation, sources, RowCurrent, WriteCurrent);
+                    if (editorNode is not null && (!state.ReusableEditor || state.EditorControls.Length == 0))
+                        throw new InvalidOperationException("An incomplete fixed-height collection editor cannot be reused.");
+                    object[] targets = contract.CreateBindings(index, RowCurrent, WriteCurrent);
                     if (!RowCurrent()) return;
-                    state.Bindings = targets.Cast<IEditorLinkedElementBinding>().ToArray();
+                    if (targets.Length == 0) return;
+                    state.Bindings = targets;
 
                     if (editorNode is null)
                     {
@@ -247,19 +262,30 @@ public static partial class InspectorPropertyEditors
                     bool needsBuild = editorNode.Components.Count == 0 && editorNode.Transform.Children.Count == 0;
                     if (needsBuild)
                     {
-                        BuildValueEditor(editorNode, elementType, bindingProperty, targets);
+                        BuildValueEditor(editorNode, contract.ValueType, contract.BindingProperty, targets);
                         if (!RowCurrent()) return;
-                        state.EditorControls = CaptureLinkedListEditorControls(editorNode, elementType);
+                        state.EditorControls = CaptureFixedEditorControls(editorNode, contract.ValueType);
                         if (!RowCurrent()) return;
                         state.ReusableEditor = true;
                     }
-                    else if (!TryRebindListEditor(editorNode, elementType, bindingProperty,
+                    else if (!TryRebindListEditor(editorNode, contract.ValueType, contract.BindingProperty,
                         targets.Cast<object?>().ToArray()))
                     {
-                        throw new InvalidOperationException("The linked-list row editor cannot be rebound.");
+                        throw new InvalidOperationException("The collection row editor cannot be rebound.");
                     }
                     if (!RowCurrent()) return;
                     editorNode.IsActiveSelf = true;
+                    if (!RowCurrent()) return;
+                    Action<UIInteractableComponent> removeAction = _ =>
+                    {
+                        if (WriteCurrent()) contract.Remove(index, WriteCurrent);
+                    };
+                    state.RemoveAction = removeAction;
+                    removeButton.RegisterClickActions(removeAction);
+                    if (!RowCurrent()) return;
+                    removeButton.IsEnabled = true;
+                    if (!RowCurrent()) return;
+                    removeButton.SceneNode.IsActiveSelf = true;
                     if (!RowCurrent()) return;
                     state.IsPublished = true;
                     if (!WriteCurrent()) state.IsPublished = false;
@@ -296,14 +322,14 @@ public static partial class InspectorPropertyEditors
                 return rows;
             }
 
-            private static EditorLinkedListControlLease[] CaptureLinkedListEditorControls(SceneNode editor, Type elementType)
+            private static EditorVirtualRowControlLease[] CaptureFixedEditorControls(SceneNode editor, Type elementType)
             {
-                List<EditorLinkedListControlLease> controls = [];
+                List<EditorVirtualRowControlLease> controls = [];
                 void Visit(SceneNode node)
                 {
                     foreach (XRComponent component in node.Components)
                         if (component is UIInteractableComponent or DataTransformerBase or InspectorEnumEditorComponent)
-                            controls.Add(EditorLinkedListControlLease.Capture(component, editor));
+                            controls.Add(EditorVirtualRowControlLease.Capture(component, editor));
                     foreach (var child in node.Transform.Children)
                         if (child.SceneNode is { } childNode)
                             Visit(childNode);
@@ -315,16 +341,16 @@ public static partial class InspectorPropertyEditors
                     elementType == typeof(LayerMask) || elementType.IsEnum &&
                         !elementType.IsDefined(typeof(FlagsAttribute), inherit: false) ? 2 : 1;
                 if (controls.Count != expected)
-                    throw new InvalidOperationException("The linked-list editor lost a control during creation.");
+                    throw new InvalidOperationException("The fixed-height collection editor lost a control during creation.");
                 return controls.ToArray();
             }
 
             private static bool IsLive(XRObjectBase value, ObjectConstructionIdentity identity)
                 => identity.IsCurrent && !value.IsDestroyed && !value.IsDestroyQueued;
 
-            private void UnbindLinkedListVirtualCell(UIBoundableTransform cell)
+            private void UnbindVirtualCollectionCell(UIBoundableTransform cell)
             {
-                if (!_linkedListCells.TryGetValue(cell, out EditorLinkedListRowCellState? state)) return;
+                if (!_virtualCells.TryGetValue(cell, out EditorVirtualCollectionRowCellState? state)) return;
                 UIBoundableTransform? row = cell.Parent as UIBoundableTransform;
                 UIListTransform? list = row?.Parent as UIListTransform;
                 SceneNode? cellNode = cell.SceneNode;
@@ -346,7 +372,7 @@ public static partial class InspectorPropertyEditors
                 state.Lease = default;
                 state.Bindings = null;
                 bool CleanupCurrent() => state.Intent == cleanupIntent &&
-                    _linkedListCells.TryGetValue(cell, out EditorLinkedListRowCellState? current) &&
+                    _virtualCells.TryGetValue(cell, out EditorVirtualCollectionRowCellState? current) &&
                     ReferenceEquals(current, state) && cellIdentity.IsCurrent &&
                     !cell.IsDestroyed && !cell.IsDestroyQueued && ReferenceEquals(cell.SceneNode, cellNode) &&
                     (row is not null && list is not null && rowIdentity?.IsCurrent == true && rowNodeIdentity?.IsCurrent == true &&
@@ -374,13 +400,13 @@ public static partial class InspectorPropertyEditors
                 }
                 if (editor is not null)
                 {
-                    ResetLinkedListEditor(editor, CleanupCurrent);
+                    ResetFixedValueEditor(editor, CleanupCurrent);
                     if (!CleanupCurrent()) return;
                     editor.IsActiveSelf = false;
                 }
             }
 
-            private static void ResetLinkedListEditor(SceneNode editor, Func<bool> isCurrent)
+            private static void ResetFixedValueEditor(SceneNode editor, Func<bool> isCurrent)
             {
                 if (editor.Components.OfType<DataTransformerBase>().FirstOrDefault() is { } transformer)
                 {
@@ -394,10 +420,10 @@ public static partial class InspectorPropertyEditors
                     color.Binding = null;
                     return;
                 }
-                ResetLinkedListEditorNode(editor, isCurrent);
+                ResetFixedValueEditorNode(editor, isCurrent);
             }
 
-            private static void ResetLinkedListEditorNode(SceneNode node, Func<bool> isCurrent)
+            private static void ResetFixedValueEditorNode(SceneNode node, Func<bool> isCurrent)
             {
                 if (!isCurrent()) return;
                 foreach (XRComponent component in node.Components.ToArray())
@@ -438,11 +464,11 @@ public static partial class InspectorPropertyEditors
                 foreach (var child in node.Transform.Children.ToArray())
                 {
                     if (!isCurrent() || child.SceneNode is not { } childNode) return;
-                    ResetLinkedListEditorNode(childNode, isCurrent);
+                    ResetFixedValueEditorNode(childNode, isCurrent);
                 }
             }
 
-            private static bool CanUseFixedHeightLinkedListEditor(Type valueType)
+            private static bool CanUseFixedHeightCollectionEditor(Type valueType)
             {
                 if (valueType.GetCustomAttribute<EditorComponentAttribute>() is not null)
                     return false;
