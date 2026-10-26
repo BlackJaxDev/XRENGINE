@@ -67,7 +67,7 @@ public partial class HierarchyPanel
             return;
         RegisterTick(ETickGroup.Late, ETickOrder.Scene, PollVirtualTreeSources);
         RemakeChildren();
-        if (CanUseHierarchy && revision == _hierarchyRevision)
+        if (CanUseHierarchy && revision == _hierarchyRevision && !_remakePending)
         {
             RestoreRenameFocus();
             RestoreHierarchyRowFocus();
@@ -162,6 +162,8 @@ public partial class HierarchyPanel
 
     private void CompleteDeferredHierarchyWork()
     {
+        if (PhysicsChainWorld.IsWorldMutationActive)
+            return;
         CancelHierarchyWork();
         if (_hierarchyDestroying || IsDestroyed || IsDestroyQueued)
             return;
@@ -173,7 +175,7 @@ public partial class HierarchyPanel
         if (_activationPending)
             OnComponentActivated();
         else if (_remakePending && CanUseHierarchy)
-            RemakeChildren();
+            CompletePendingHierarchyRemake();
         if (CanUseHierarchy)
         {
             ReconcileRenameSource();

@@ -980,6 +980,13 @@ internal sealed class NativeDockTreeHost
             CommitStructure();
             if (transferState is { HierarchyView: { } hierarchyValues } hierarchyState)
             {
+                if (DestinationCurrent() && hierarchyState.IsCurrent &&
+                    _panelSlots.TryGetValue(panel, out SceneNode? pendingSlot) &&
+                    FindHierarchyPanel(pendingSlot) is { } pendingHierarchy &&
+                    (destinationHierarchy is null ||
+                     ReferenceEquals(destinationHierarchy.Panel, pendingHierarchy) &&
+                     destinationHierarchy.HasSamePanelIntent))
+                    pendingHierarchy.CompletePendingHierarchyRemake();
                 if (!DestinationCurrent() || !hierarchyState.IsCurrent || !DestinationCurrent() ||
                     !_panelSlots.TryGetValue(panel, out SceneNode? slot) ||
                     FindHierarchyPanel(slot) is not { } hierarchy ||

@@ -17,7 +17,10 @@
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
+    <XREngineRuntimeContractMode>Editor</XREngineRuntimeContractMode>
   </PropertyGroup>
+
+  <Import Project="../Build/Registration/RuntimeContracts.props" />
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <DebugType>embedded</DebugType>

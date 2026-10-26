@@ -140,36 +140,48 @@ public sealed class NativeDockHierarchyTransferTests
         SetView(panel, false, 30);
         Deactivate(destination.Host);
         bool threw = false;
-        panel.SceneNode.Activated += _ =>
+        UIListTransform? observedList = null;
+        void OnScrollChanged(object? _, XREngine.Data.Core.IXRPropertyChangedEventArgs change)
         {
-            UIListTransform list = List(panel);
-            list.PropertyChanged += (_, change) =>
-            {
-                if (threw || change.PropertyName != nameof(UIListTransform.ContentScrollOffset) ||
-                    Get<Action?>(panel, "_requireHierarchyViewRestore") is null) return;
-                threw = true;
-                Assert.That(list.ContentScrollOffset, Is.EqualTo(120));
-                if (newerScroll) list.ContentScrollOffset = 180;
-                throw new ApplicationException("After the hierarchy scroll committed.");
-            };
-        };
-
-        Assert.That(Transfer(source, destination), Is.EqualTo(NativeDockTransferResult.Rejected));
-        Assert.That(threw, Is.True);
-        Assert.That(IsOpen(source.Host), Is.True);
-        if (newerScroll)
-        {
-            Assert.That(List(panel).ContentScrollOffset, Is.EqualTo(180));
-            Assert.That(panel.IsCollapsed(_authored[0]), Is.True);
-            Assert.That(Get<bool>(panel, "_showEditorScene"), Is.True);
+            if (threw || change.PropertyName != nameof(UIListTransform.ContentScrollOffset) ||
+                Get<Action?>(panel, "_requireHierarchyViewRestore") is null) return;
+            threw = true;
+            Assert.That(observedList!.ContentScrollOffset, Is.EqualTo(120));
+            if (newerScroll) observedList.ContentScrollOffset = 180;
+            throw new ApplicationException("After the hierarchy scroll committed.");
         }
-        else
+        void OnPanelActivated(SceneNode _)
         {
-            Assert.That(Get<float>(panel, "_scrollOffset"), Is.EqualTo(30));
-            Assert.That(panel.IsCollapsed(_authored[0]), Is.False);
-            Assert.That(Get<bool>(panel, "_showEditorScene"), Is.False);
-            Assert.That(panel.IsActiveInHierarchy, Is.False,
-                "Successful view compensation permits the prior dock selection to return.");
+            observedList = List(panel);
+            observedList.PropertyChanged += OnScrollChanged;
+        }
+        panel.SceneNode.Activated += OnPanelActivated;
+
+        try
+        {
+            Assert.That(Transfer(source, destination), Is.EqualTo(NativeDockTransferResult.Rejected));
+            Assert.That(threw, Is.True);
+            Assert.That(IsOpen(source.Host), Is.True);
+            if (newerScroll)
+            {
+                Assert.That(List(panel).ContentScrollOffset, Is.EqualTo(180));
+                Assert.That(panel.IsCollapsed(_authored[0]), Is.True);
+                Assert.That(Get<bool>(panel, "_showEditorScene"), Is.True);
+            }
+            else
+            {
+                Assert.That(Get<float>(panel, "_scrollOffset"), Is.EqualTo(30));
+                Assert.That(panel.IsCollapsed(_authored[0]), Is.False);
+                Assert.That(Get<bool>(panel, "_showEditorScene"), Is.False);
+                Assert.That(panel.IsActiveInHierarchy, Is.False,
+                    "Successful view compensation permits the prior dock selection to return.");
+            }
+        }
+        finally
+        {
+            panel.SceneNode.Activated -= OnPanelActivated;
+            if (observedList is not null)
+                observedList.PropertyChanged -= OnScrollChanged;
         }
     }
 

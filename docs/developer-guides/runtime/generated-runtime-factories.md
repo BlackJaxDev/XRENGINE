@@ -1,5 +1,12 @@
 # Generated Runtime Factories
 
+The Editor uses `XREngineRuntimeContractMode=Editor` with the same analyzer
+import. This mode generates component and transform factories from the Editor
+assembly only. It does not scan referenced runtime assemblies or install player
+controller defaults. Native editor startup can therefore use generic component
+construction with unit-world AOT parity enforcement enabled. Player contract
+generation continues to exclude Editor types.
+
 `XREngine.SourceGenerators` uses Roslyn symbols to discover concrete runtime factory types and their accessible constructors. It targets `netstandard2.0` so the .NET 10 compiler can load it as an analyzer. The `Microsoft.CodeAnalysis.CSharp` and `Microsoft.CodeAnalysis.Analyzers` references are private build dependencies; they do not flow into the runtime application. Version 4.14.0 of Roslyn is used because it is already present in the repository's .NET 10 SDK environment and supports incremental generators.
 
 `Build/Registration/RuntimeContracts.props` attaches the analyzer to the rendering, host, and bootstrap projects. `CommandsOnly` generates built-in render-command registrations in Rendering, `Portable` generates factories for the portable runtime closure in Host, and `Desktop` generates factories from the desktop integration closure in Bootstrap. The generator resolves inheritance and constructor signatures from compilation symbols, including referenced assemblies, and sorts registrations by fully qualified type name for deterministic output. Each destination assembly installs its generated factories through a module initializer, matching the existing registration lifetime.

@@ -18,6 +18,7 @@ internal sealed class EditorListRowCellState
     public int LastIndex { get; set; } = -1;
     public ulong RowId { get; set; }
     public ulong BoundRevision { get; set; }
+    public ulong CleanupIntent { get; set; }
     public IEditorListElementBinding[]? Bindings { get; set; }
     public IEditorListElementBinding[]? LastBindings { get; set; }
 }

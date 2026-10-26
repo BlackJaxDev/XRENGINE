@@ -912,6 +912,7 @@ public static partial class InspectorPropertyEditors
             {
                 if (!_listContext.IsActive) return;
                 if (!_listCells.TryGetValue(cell, out EditorListRowCellState? state)) return;
+                state.CleanupIntent++;
                 ulong generation = _headerGeneration;
                 try { BindVirtualListCellCore(cell, state, index, rowId, generation); }
                 finally
@@ -1293,10 +1294,39 @@ public static partial class InspectorPropertyEditors
                 {
                     DataTransformerBase? transformer = editor.Components.OfType<DataTransformerBase>().FirstOrDefault();
                     if (transformer is null) return false;
+                    ObjectConstructionIdentity editorIdentity = ObjectConstructionIdentity.Capture(editor);
+                    TransformBase editorTransform = editor.Transform;
+                    ObjectConstructionIdentity transformIdentity = ObjectConstructionIdentity.Capture(editorTransform);
+                    TransformBase? parent = editorTransform.Parent;
+                    bool Current() => ownerIsCurrent?.Invoke() != false && editorIdentity.IsCurrent &&
+                        transformIdentity.IsCurrent && !editor.IsDestroyed && !editor.IsDestroyQueued &&
+                        ReferenceEquals(editor.Transform, editorTransform) &&
+                        ReferenceEquals(editorTransform.Parent, parent) &&
+                        editor.Components.Contains(transformer);
+                    if (!Current()) return false;
                     transformer.Property = property;
-                    if (ownerIsCurrent?.Invoke() == false) return false;
+                    if (!Current()) return false;
                     transformer.Targets = targets;
-                    return ownerIsCurrent?.Invoke() != false;
+                    if (!Current()) return false;
+                    object?[] transformerTargets = [transformer];
+                    for (int index = 0; index < editorTransform.Children.Count; index++)
+                    {
+                        if (!Current()) return false;
+                        TransformBase childTransform = editorTransform.Children[index];
+                        SceneNode? child = childTransform.SceneNode;
+                        if (child is null || !ReferenceEquals(childTransform.Parent, editorTransform)) return false;
+                        ObjectConstructionIdentity childIdentity = ObjectConstructionIdentity.Capture(child);
+                        bool ChildCurrent() => Current() && childIdentity.IsCurrent &&
+                            !child.IsDestroyed && !child.IsDestroyQueued &&
+                            ReferenceEquals(child.Transform, childTransform) &&
+                            ReferenceEquals(childTransform.Parent, editorTransform);
+                        if (!ChildCurrent()) return false;
+                        PropertyInfo transformedProperty = transformer.GetTransformedProperty(child.Name!);
+                        NativeUIElements.RebindPropertyEditor(child, transformedProperty,
+                            transformerTargets, ChildCurrent);
+                        if (!ChildCurrent()) return false;
+                    }
+                    return Current();
                 }
                 if (valueType == typeof(ColorF3) || valueType == typeof(ColorF4) ||
                     valueType == typeof(System.Drawing.Color))
@@ -1327,30 +1357,86 @@ public static partial class InspectorPropertyEditors
             private void UnbindVirtualListCell(UIBoundableTransform cell)
             {
                 if (!_listCells.TryGetValue(cell, out EditorListRowCellState? state)) return;
+                ulong cleanupIntent = ++state.CleanupIntent;
+                ObjectConstructionIdentity cellIdentity = ObjectConstructionIdentity.Capture(cell);
+                SceneNode? cellNode = cell.SceneNode;
+                SceneNode valueNode = state.ValueNode;
+                ObjectConstructionIdentity valueNodeIdentity = ObjectConstructionIdentity.Capture(valueNode);
+                TransformBase valueTransform = valueNode.Transform;
+                ObjectConstructionIdentity valueTransformIdentity = ObjectConstructionIdentity.Capture(valueTransform);
+                SceneNode? editor = state.EditorNode;
+                ObjectConstructionIdentity? editorIdentity = editor is null
+                    ? null : ObjectConstructionIdentity.Capture(editor);
+                TransformBase? editorTransform = editor?.Transform;
+                ObjectConstructionIdentity? editorTransformIdentity = editorTransform is null
+                    ? null : ObjectConstructionIdentity.Capture(editorTransform);
+                bool CleanupCurrent() => state.CleanupIntent == cleanupIntent &&
+                    _listCells.TryGetValue(cell, out EditorListRowCellState? current) &&
+                    ReferenceEquals(current, state) && cellIdentity.IsCurrent &&
+                    !cell.IsDestroyed && !cell.IsDestroyQueued &&
+                    ReferenceEquals(cell.SceneNode, cellNode) && valueNodeIdentity.IsCurrent &&
+                    valueTransformIdentity.IsCurrent && !valueNode.IsDestroyed &&
+                    !valueNode.IsDestroyQueued && ReferenceEquals(valueNode.Transform, valueTransform) &&
+                    ReferenceEquals(valueNode.Parent, cellNode);
+                bool EditorOwned() => editor is not null && editorTransform is not null &&
+                    editorIdentity?.IsCurrent == true && editorTransformIdentity?.IsCurrent == true &&
+                    !editor.IsDestroyed && !editor.IsDestroyQueued &&
+                    ReferenceEquals(state.EditorNode, editor) &&
+                    ReferenceEquals(editor.Transform, editorTransform) &&
+                    ReferenceEquals(editorTransform.Parent, valueTransform);
                 state.LastIndex = state.Index;
                 state.Index = -1;
                 state.LastBindings = state.Bindings;
                 state.Bindings = null;
+                if (state.LastBindings is { } oldBindings)
+                    foreach (IEditorListElementBinding binding in oldBindings) binding.ReleaseLease();
+                if (!CleanupCurrent()) return;
                 if (state.NestedAction is { } nestedAction && state.NestedButton is { } nestedButton)
                 {
                     state.NestedButton.UnregisterClickActions(nestedAction);
+                    if (!CleanupCurrent()) return;
                     state.NestedAction = null;
                     nestedButton.IsEnabled = false;
+                    if (!CleanupCurrent()) return;
                     nestedButton.SceneNode.IsActiveSelf = false;
+                    if (!CleanupCurrent()) return;
                 }
-                if (state.LastBindings is not null)
-                    foreach (IEditorListElementBinding binding in state.LastBindings) binding.ReleaseLease();
                 if (state.RemoveButton is { } button)
-                    button.SceneNode.IsActiveSelf = false;
-                if (state.EditorNode is not null)
                 {
+                    button.SceneNode.IsActiveSelf = false;
+                    if (!CleanupCurrent()) return;
+                }
+                if (editor is not null)
+                {
+                    if (!EditorOwned())
+                    {
+                        if (ReferenceEquals(state.EditorNode, editor)) state.EditorNode = null;
+                        state.ReusableEditor = false;
+                        return;
+                    }
                     if (state.ReusableEditor)
-                        state.EditorNode.IsActiveSelf = false;
+                    {
+                        editor.IsActiveSelf = false;
+                        if (!CleanupCurrent()) return;
+                        if (!EditorOwned() && ReferenceEquals(state.EditorNode, editor))
+                        {
+                            state.EditorNode = null;
+                            state.ReusableEditor = false;
+                        }
+                    }
                     else
                     {
-                        state.EditorNode.IsActiveSelf = false;
-                        state.EditorNode.Destroy(false);
-                        state.EditorNode = null;
+                        editor.IsActiveSelf = false;
+                        if (!CleanupCurrent()) return;
+                        if (!EditorOwned())
+                        {
+                            if (ReferenceEquals(state.EditorNode, editor)) state.EditorNode = null;
+                            state.ReusableEditor = false;
+                            return;
+                        }
+                        editor.Destroy(false);
+                        if (!CleanupCurrent()) return;
+                        if (ReferenceEquals(state.EditorNode, editor)) state.EditorNode = null;
                     }
                 }
             }

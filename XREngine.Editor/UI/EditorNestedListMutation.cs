@@ -94,7 +94,7 @@ internal static class EditorNestedListMutation
         EEditorListMutation operation, int index, Func<object?, object?>? valueFactory)
     {
         List<EditorNestedListMutationEntry> entries = [];
-        foreach (IGrouping<IList, EditorNestedListSourceLease> group in paths.GroupBy(
+        foreach (IGrouping<IList, EditorNestedListSourceLease> group in paths.GroupBy<EditorNestedListSourceLease, IList>(
             path => path.Inner, ReferenceEqualityComparer.Instance))
         {
             EditorNestedListSourceLease first = group.First();

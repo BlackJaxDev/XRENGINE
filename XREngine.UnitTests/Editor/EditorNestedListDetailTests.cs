@@ -225,7 +225,8 @@ public sealed partial class EditorNestedListDetailTests
         {
             UIListTransform list = VirtualList(detail, 80);
             list.SynchronizeVirtualRows(280);
-            UITextInputComponent input = InputForRow(list, 0);
+            // Row reuse follows the list's LIFO recycle order: old row 9 becomes row 40 here.
+            UITextInputComponent input = InputForRow(list, 9);
             list.ContentScrollOffset = 28 * 40;
             list.SynchronizeVirtualRows(280);
             UITextInputComponent recycledInput = InputForRow(list, 40);
@@ -261,8 +262,9 @@ public sealed partial class EditorNestedListDetailTests
             SceneNode nested = OpenNestedDetail(detail, outer, 0);
             UIListTransform inner = VirtualList(nested, 80);
             inner.SynchronizeVirtualRows(280);
-            object firstState = RowStateForIndex(nested, 0);
-            SceneNode editorNode = (SceneNode)firstState.GetType().GetProperty("EditorNode")!.GetValue(firstState)!;
+            // Row reuse follows the list's LIFO recycle order: old row 9 becomes row 40 here.
+            object reusedState = RowStateForIndex(nested, 9);
+            SceneNode editorNode = (SceneNode)reusedState.GetType().GetProperty("EditorNode")!.GetValue(reusedState)!;
             UIComboBoxComponent combo = Nodes(editorNode).SelectMany(node => node.Components.OfType<UIComboBoxComponent>()).Single();
             NativePropertyPopupHost popupHost = Nodes(editorNode)
                 .SelectMany(node => node.Components.OfType<NativePropertyPopupHost>()).Single();
@@ -449,7 +451,8 @@ public sealed partial class EditorNestedListDetailTests
             {
                 release?.Invoke();
                 InvokeNestedAction(detail, 1);
-                reentrantPane = CurrentNestedRoot(detail);
+                reentrantPane = Nodes(detail).Single(node => node.Name == "NestedListDetail" &&
+                    !ReferenceEquals(node, firstPane) && !node.IsDestroyed && !node.IsDestroyQueued);
                 reentrantParent = reentrantPane.Transform.Parent;
             };
 
@@ -568,19 +571,23 @@ public sealed partial class EditorNestedListDetailTests
                             if (componentPair.comp is not InspectorListDetailRefreshComponent) return;
                             SceneNode innerContainer = child.Transform.Children
                                 .Select(item => item.SceneNode).Single(item => item is not null)!;
-                            innerContainer.ComponentAdded += labelPair =>
+                            innerContainer.Transform.Children.PostAnythingAdded += labelTransform =>
                             {
-                                if (labelPair.comp is not UITextComponent label) return;
-                                countLabel = label;
-                                label.PropertyChanging += (_, textChange) =>
+                                if (labelTransform.SceneNode is not { } labelNode) return;
+                                labelNode.ComponentAdded += labelPair =>
                                 {
-                                    if (wroteNewerText || textChange.PropertyName != nameof(UITextComponent.Text) ||
-                                        textChange.NewValue is not string incoming || !incoming.StartsWith("Count:", StringComparison.Ordinal))
-                                        return;
-                                    wroteNewerText = true;
-                                    label.SetTextGuarded("callback-owned text", true, static _ => { });
-                                    candidate.Transform.SetParent(foreign.Transform, false,
-                                        EParentAssignmentMode.Immediate);
+                                    if (labelPair.comp is not UITextComponent label) return;
+                                    countLabel = label;
+                                    label.PropertyChanging += (_, textChange) =>
+                                    {
+                                        if (wroteNewerText || textChange.PropertyName != nameof(UITextComponent.Text) ||
+                                            textChange.NewValue is not string incoming || !incoming.StartsWith("Count:", StringComparison.Ordinal))
+                                            return;
+                                        wroteNewerText = true;
+                                        label.SetTextGuarded("callback-owned text", true, static _ => { });
+                                        candidate.Transform.SetParent(foreign.Transform, false,
+                                            EParentAssignmentMode.Immediate);
+                                    };
                                 };
                             };
                         };

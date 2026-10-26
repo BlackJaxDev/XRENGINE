@@ -50,12 +50,22 @@ internal static class UILayoutValueKernel
 
     internal static void ValidateOutput(int index, in UILayoutNodeOutput output)
     {
-            if (!Finite(output.RawSize) || !Finite(output.DesiredSize) ||
-                !Finite(output.ActualSize) || !Finite(output.LocalTranslation) ||
-                !Finite(output.PlacementTranslation) || !Finite(output.AllocatedBounds.Translation) ||
-                !Finite(output.AllocatedBounds.Extents) || output.ActualSize.X < 0 ||
-                output.ActualSize.Y < 0)
-                throw new InvalidOperationException($"Layout produced invalid geometry at node {index}.");
+        ValidateGeometry(index, nameof(output.RawSize), output.RawSize);
+        ValidateGeometry(index, nameof(output.DesiredSize), output.DesiredSize);
+        ValidateGeometry(index, nameof(output.ActualSize), output.ActualSize, nonnegative: true);
+        ValidateGeometry(index, nameof(output.LocalTranslation), output.LocalTranslation);
+        ValidateGeometry(index, nameof(output.PlacementTranslation), output.PlacementTranslation);
+        ValidateGeometry(index, "AllocatedBounds.Translation", output.AllocatedBounds.Translation);
+        ValidateGeometry(index, "AllocatedBounds.Extents", output.AllocatedBounds.Extents);
+    }
+
+    private static void ValidateGeometry(int index, string field, Vector2 value, bool nonnegative = false)
+    {
+        if (Finite(value) && (!nonnegative || value.X >= 0 && value.Y >= 0)) return;
+        InvalidOperationException failure = new(FormattableString.Invariant(
+            $"Layout produced invalid geometry at node {index}: {field}=({value.X:R}, {value.Y:R})."));
+        failure.Data["UI.Layout.NodeIndex"] = index;
+        throw failure;
     }
 
     private static bool Finite(Vector2 value)
@@ -350,8 +360,7 @@ internal static class UILayoutValueKernel
             output.TextResult = UITextLayoutKernel.Measure(node.TextInput, output.ActualSize);
 
         Vector2 padding = new(node.Padding.X, node.Padding.Y);
-        BoundingRectangleF region = new(padding, output.ActualSize -
-            new Vector2(node.Padding.X + node.Padding.Z, node.Padding.Y + node.Padding.W));
+        BoundingRectangleF region = new(padding, UILayoutSizeRules.InsetSize(output.ActualSize, node.Padding));
         switch (node.Operator)
         {
             case UILayoutOperator.List:
@@ -415,6 +424,8 @@ internal static class UILayoutValueKernel
         size = new Vector2(
             pointX ? rawSize.X : max.X + (node.Width ?? 0) - min.X - node.Translation.X - node.Margins.X - node.Margins.Z,
             pointY ? rawSize.Y : max.Y + (node.Height ?? 0) - min.Y - node.Translation.Y - node.Margins.Y - node.Margins.W);
+        if (!pointX) size.X = UILayoutSizeRules.NonnegativeFiniteExtent(size.X);
+        if (!pointY) size.Y = UILayoutSizeRules.NonnegativeFiniteExtent(size.Y);
         size.X = Clamp(size.X, node.MinWidth, node.MaxWidth);
         size.Y = Clamp(size.Y, node.MinHeight, node.MaxHeight);
         translation = min - node.Pivot * size;

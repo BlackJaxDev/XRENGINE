@@ -235,7 +235,7 @@ namespace XREngine.Rendering.UI
                 // Translation is used as the translation from the min anchor, and width is used as the translation from the max anchor.
                 float rawWidth = (maxX + (transform.Width ?? 0)) - (minX + transform.Translation.X);
                 // Subtract both left and right margins for stretched anchors
-                size.X = rawWidth - transform.Margins.X - transform.Margins.Z;
+                size.X = UILayoutSizeRules.NonnegativeFiniteExtent(rawWidth - transform.Margins.X - transform.Margins.Z);
             }
             if (sameY)
             {
@@ -248,7 +248,7 @@ namespace XREngine.Rendering.UI
                 // Translation is used as the translation from the min anchor, and height is used as the translation from the max anchor.
                 float rawHeight = (maxY + (transform.Height ?? 0)) - (minY + transform.Translation.Y);
                 // Subtract both bottom and top margins for stretched anchors
-                size.Y = rawHeight - transform.Margins.Y - transform.Margins.W;
+                size.Y = UILayoutSizeRules.NonnegativeFiniteExtent(rawHeight - transform.Margins.Y - transform.Margins.W);
             }
 
             // Clamp the size to the min and max size.
@@ -346,18 +346,9 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static BoundingRectangleF ApplyPadding(UIBoundableTransform transform, BoundingRectangleF bounds)
         {
-            var padding = transform.Padding;
-            float left = padding.X;
-            float bottom = padding.Y;
-            float right = padding.Z;
-            float top = padding.W;
-
-            Vector2 size = bounds.Extents;
-            Vector2 pos = bounds.Translation;
-
-            pos += new Vector2(left, bottom);
-            size -= new Vector2(left + right, bottom + top);
-            return new BoundingRectangleF(pos, size);
+            Vector4 padding = transform.Padding;
+            return new BoundingRectangleF(bounds.Translation + new Vector2(padding.X, padding.Y),
+                UILayoutSizeRules.InsetSize(bounds.Extents, padding));
         }
 
         /// <summary>

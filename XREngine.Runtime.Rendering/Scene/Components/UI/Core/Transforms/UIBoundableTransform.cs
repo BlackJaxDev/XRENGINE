@@ -556,21 +556,7 @@ namespace XREngine.Rendering.UI
         /// Applies padding to the bounds, reducing the available area for children.
         /// </summary>
         public BoundingRectangleF ApplyPadding(BoundingRectangleF bounds)
-        {
-            var padding = Padding;
-            float left = padding.X;
-            float bottom = padding.Y;
-            float right = padding.Z;
-            float top = padding.W;
-
-            Vector2 size = bounds.Extents;
-            Vector2 pos = bounds.Translation;
-
-            pos += new Vector2(left, bottom);
-            size -= new Vector2(left + right, bottom + top);
-            bounds = new BoundingRectangleF(pos, size);
-            return bounds;
-        }
+            => UILayoutSystem.ApplyPadding(this, bounds);
 
         /// <summary>
         /// Applies margins to the bounds, reducing the available area.

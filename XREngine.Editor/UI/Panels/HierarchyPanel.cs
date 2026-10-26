@@ -101,6 +101,12 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             _remakePending = true;
             return;
         }
+        if (PhysicsChainWorld.IsWorldMutationActive)
+        {
+            _remakePending = true;
+            ScheduleHierarchyWork();
+            return;
+        }
         _remakingHierarchy = true;
         _remakePending = false;
         uint revision = _hierarchyRevision;
@@ -113,6 +119,22 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
             _remakingHierarchy = false;
             if (_remakePending && CanUseHierarchy)
                 ScheduleHierarchyWork();
+        }
+    }
+
+    /// <summary>Completes an owned view rebuild after slot activation releases its world mutation.</summary>
+    internal void CompletePendingHierarchyRemake()
+    {
+        if (_remakePending && CanUseHierarchy && IsActiveInHierarchy &&
+            !_remakingHierarchy && !_releasingHierarchy &&
+            !PhysicsChainWorld.IsWorldMutationActive)
+        {
+            RemakeChildren();
+            if (CanUseHierarchy && !_remakePending && _virtualTree is not null)
+            {
+                RestoreRenameFocus();
+                RestoreHierarchyRowFocus();
+            }
         }
     }
 

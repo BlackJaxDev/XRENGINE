@@ -126,7 +126,7 @@ public sealed class InspectorFloatCurveTimeTests
             Assert.That((a.Second, a.AuthoredFrameIndex), Is.EqualTo((2f, -1)));
             throw new InvalidOperationException("After the exact move committed.");
         };
-        Assert.Throws<InvalidOperationException>(() => InspectorFloatCurveActions.SetTime(group, [a, b], 2));
+        Assert.That(InspectorFloatCurveActions.SetTime(group, [a, b], 2), Is.False);
         Assert.That((a.Second, b.Second, a.AuthoredFrameIndex), Is.EqualTo((1f, 1f, 30)));
         Assert.That(Undo.PendingUndo, Is.Empty);
     }
@@ -151,7 +151,7 @@ public sealed class InspectorFloatCurveTimeTests
             }
             else { b.OutValue = 7; b.OutValue = 2; }
         };
-        Assert.Throws<InvalidOperationException>(() => InspectorFloatCurveActions.SetTime(group, [a, b], 2));
+        Assert.That(InspectorFloatCurveActions.SetTime(group, [a, b], 2), Is.False);
         Assert.That(changed, Is.True);
         Assert.That(b.Second, Is.EqualTo(1));
         Assert.That(Undo.PendingUndo, Is.Empty);

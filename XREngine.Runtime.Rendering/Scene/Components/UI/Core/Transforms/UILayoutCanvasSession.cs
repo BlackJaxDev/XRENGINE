@@ -233,7 +233,17 @@ internal sealed class UILayoutCanvasSession
                 {
                     if (epoch == _epoch && !_canvas.IsLayoutInvalidated &&
                         DependenciesMatch(_canvas, input, targets))
-                        Block(task.Exception!.GetBaseException());
+                    {
+                        Exception failure = task.Exception!.GetBaseException();
+                        if (failure.Data["UI.Layout.NodeIndex"] is int index &&
+                            (uint)index < (uint)targets.Count && (uint)index < (uint)input.Nodes.Length)
+                        {
+                            UILayoutNodeInput node = input.Nodes[index];
+                            Debug.UI(FormattableString.Invariant(
+                                $"[LayoutFailure] index={index} identity={input.Identities[index]} node='{targets[index].SceneNode?.Name}' transform={targets[index].GetType().Name} operator={node.Operator} width={node.Width} height={node.Height} autoWidth={node.CapturedAutoWidth} autoHeight={node.CapturedAutoHeight} minAnchor={node.MinAnchor} maxAnchor={node.MaxAnchor} operatorValues={node.OperatorValues}"));
+                        }
+                        Block(failure);
+                    }
                     else
                         _ = task.Exception;
                 }

@@ -2,12 +2,14 @@ using System;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Core.Attributes;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Editor.UI.Toolbar;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor.UI.Components;
 
@@ -24,6 +26,15 @@ public partial class UIEditorComponent : UIComponent
     private bool _retiringOwnedRoot;
     private bool _deactivatingEditor;
     private bool _activationPending;
+    private bool _deferredRemakePending;
+    private long _editorLifecycleIntent;
+    private long _deferredLifecycleIntent;
+    private ObjectConstructionIdentity _deferredComponentIdentity;
+    private ObjectConstructionIdentity _deferredNodeIdentity;
+    private ObjectConstructionIdentity _deferredTransformIdentity;
+    private SceneNode? _deferredNode;
+    private TransformBase? _deferredTransform;
+    private IRuntimeWorldContext? _deferredWorld;
     public UIToolbarComponent? Toolbar => _toolbar;
 
     private List<ToolbarItemBase> _rootMenuOptions = [];
@@ -64,6 +75,7 @@ public partial class UIEditorComponent : UIComponent
             _activationPending = true;
             return;
         }
+        _editorLifecycleIntent++;
         base.OnComponentActivated();
         if (!_editorTerminal && !IsDestroyed && !IsDestroyQueued && IsActiveInHierarchy)
             RemakeChildren();
@@ -72,6 +84,8 @@ public partial class UIEditorComponent : UIComponent
     protected override void OnComponentDeactivated()
     {
         if (_deactivatingEditor) return;
+        _editorLifecycleIntent++;
+        CancelDeferredRemake();
         _deactivatingEditor = true;
         try { RetireOwnedRoot(); }
         finally
@@ -90,6 +104,8 @@ public partial class UIEditorComponent : UIComponent
 
     protected override void OnDestroying()
     {
+        _editorLifecycleIntent++;
+        CancelDeferredRemake();
         _editorTerminal = true;
         _activationPending = false;
         try { RetireOwnedRoot(); }
@@ -147,6 +163,12 @@ public partial class UIEditorComponent : UIComponent
     public void RemakeChildren()
     {
         if (_editorTerminal || _deactivatingEditor || !IsActive || _remakingEditor) return;
+        if (PhysicsChainWorld.IsWorldMutationActive)
+        {
+            ScheduleDeferredRemake();
+            return;
+        }
+        CancelDeferredRemake();
         _remakingEditor = true;
         try
         {
@@ -280,6 +302,59 @@ public partial class UIEditorComponent : UIComponent
             //}
         }
         finally { _remakingEditor = false; }
+    }
+
+    private void ScheduleDeferredRemake()
+    {
+        if (_deferredRemakePending || SceneNode is not { } node ||
+            node.Transform is not { } transform || World is not { } world)
+            return;
+        _deferredRemakePending = true;
+        _deferredLifecycleIntent = _editorLifecycleIntent;
+        _deferredComponentIdentity = ObjectConstructionIdentity.Capture(this);
+        _deferredNodeIdentity = ObjectConstructionIdentity.Capture(node);
+        _deferredTransformIdentity = ObjectConstructionIdentity.Capture(transform);
+        _deferredNode = node;
+        _deferredTransform = transform;
+        _deferredWorld = world;
+        RegisterTick(ETickGroup.Late, ETickOrder.Scene, CompleteDeferredRemake);
+    }
+
+    private void CompleteDeferredRemake()
+    {
+        if (!_deferredRemakePending) return;
+        if (_editorTerminal || _deactivatingEditor || IsDestroyed || IsDestroyQueued ||
+            !IsActiveInHierarchy || _deferredNode?.IsDestroyed == true ||
+            _deferredNode?.IsDestroyQueued == true ||
+            _deferredWorld is RuntimeWorld { IsDisposing: true } ||
+            _deferredLifecycleIntent != _editorLifecycleIntent ||
+            !_deferredComponentIdentity.IsCurrent || !_deferredNodeIdentity.IsCurrent ||
+            !_deferredTransformIdentity.IsCurrent ||
+            !ReferenceEquals(SceneNode, _deferredNode) ||
+            !ReferenceEquals(SceneNode.Transform, _deferredTransform) ||
+            !ReferenceEquals(World, _deferredWorld) ||
+            !ReferenceEquals(SceneNode.World, _deferredWorld) ||
+            !ReferenceEquals(_deferredTransform?.World, _deferredWorld))
+        {
+            CancelDeferredRemake();
+            return;
+        }
+        if (PhysicsChainWorld.IsWorldMutationActive) return;
+        CancelDeferredRemake();
+        RemakeChildren();
+    }
+
+    private void CancelDeferredRemake()
+    {
+        if (!_deferredRemakePending) return;
+        _deferredRemakePending = false;
+        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompleteDeferredRemake);
+        _deferredComponentIdentity = default;
+        _deferredNodeIdentity = default;
+        _deferredTransformIdentity = default;
+        _deferredNode = null;
+        _deferredTransform = null;
+        _deferredWorld = null;
     }
 
     /// <summary>

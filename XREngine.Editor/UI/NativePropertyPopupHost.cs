@@ -96,6 +96,7 @@ internal sealed class NativePropertyPopupHost : UIComponent
         }
         catch (Exception failure)
         {
+            bool ownerWasCurrent = Current();
             receipt.RecordFailure(failure);
             bool aborted = receipt.Component is null || receipt.TryAbortUnchangedComponent();
             if (!aborted)
@@ -106,7 +107,7 @@ internal sealed class NativePropertyPopupHost : UIComponent
                     "Could not abort a failed inspector popup creation.");
             }
             RetireIfOwned();
-            if (failure is InvalidOperationException && !Current()) return false;
+            if (failure is InvalidOperationException && !ownerWasCurrent) return false;
             throw;
         }
         if (!Current() || created is null || created.IsDestroyed || created.IsDestroyQueued ||

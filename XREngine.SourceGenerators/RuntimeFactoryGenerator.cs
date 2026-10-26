@@ -24,21 +24,22 @@ public sealed class RuntimeFactoryGenerator : IIncrementalGenerator
 
     private static void Generate(SourceProductionContext context, Compilation compilation, string mode)
     {
-        if (mode != "Portable" && mode != "Desktop" && mode != "CommandsOnly")
+        if (mode != "Portable" && mode != "Desktop" && mode != "CommandsOnly" && mode != "Editor")
             return;
 
         var assemblies = new List<IAssemblySymbol> { compilation.Assembly };
-        foreach (var reference in compilation.References)
-            if (compilation.GetAssemblyOrModuleSymbol(reference) is IAssemblySymbol assembly)
-                assemblies.Add(assembly);
+        if (mode != "Editor")
+            foreach (var reference in compilation.References)
+                if (compilation.GetAssemblyOrModuleSymbol(reference) is IAssemblySymbol assembly)
+                    assemblies.Add(assembly);
 
         var types = new List<INamedTypeSymbol>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var assembly in assemblies)
         {
             var name = assembly.Identity.Name;
-            if (mode == "CommandsOnly" ? name != "XREngine.Runtime.Rendering" :
-                mode == "Portable" ? !PortableAssemblies.Contains(";" + name + ";") : !DesktopAssemblies.Contains(";" + name + ";"))
+            if (mode != "Editor" && (mode == "CommandsOnly" ? name != "XREngine.Runtime.Rendering" :
+                mode == "Portable" ? !PortableAssemblies.Contains(";" + name + ";") : !DesktopAssemblies.Contains(";" + name + ";")))
                 continue;
             Collect(assembly.GlobalNamespace, types, seen, compilation);
         }
@@ -56,6 +57,8 @@ public sealed class RuntimeFactoryGenerator : IIncrementalGenerator
                 Line(source, "global::XREngine.Scene.Transforms.TransformFactoryRegistry.Register(typeof(" + fullName + "), static () => " + create + ");");
             if (mode != "CommandsOnly" && Inherits(type, "XREngine.Components.XRComponent") && parameterless)
                 Line(source, "global::XREngine.Components.RuntimeComponentFactoryRegistry.Register(typeof(" + fullName + "), static () => " + create + ");");
+            if (mode == "Editor")
+                continue;
             if (Inherits(type, "XREngine.Rendering.Pipelines.Commands.ViewportRenderCommand") && parameterless &&
                 (mode == "CommandsOnly" || type.ContainingAssembly.Identity.Name != "XREngine.Runtime.Rendering"))
             {
