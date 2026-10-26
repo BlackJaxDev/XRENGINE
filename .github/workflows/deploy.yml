@@ -49,6 +49,10 @@ jobs:
         shell: cmd
         run: Tools\Build-Submodules.bat Release AnyCPU
 
+      - name: Build native meshoptimizer
+        shell: pwsh
+        run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
+
       - name: Generate unit-testing settings
         shell: pwsh
         run: ./Tools/Generate-UnitTestingWorldSettings.ps1 -Configuration Release
@@ -114,6 +118,10 @@ jobs:
       - name: Build managed and native submodules
         shell: cmd
         run: Tools\Build-Submodules.bat Release AnyCPU
+
+      - name: Build native meshoptimizer
+        shell: pwsh
+        run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
 
       - name: Generate unit-testing settings
         shell: pwsh

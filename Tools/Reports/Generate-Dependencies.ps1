@@ -1282,6 +1282,20 @@ try {
         }
     }
 
+    $meshoptLockPath = Join-Path $root 'Tools\Dependencies\Meshoptimizer.lock.json'
+    if (Test-Path -LiteralPath $meshoptLockPath) {
+        $meshoptLock = Get-Content -Raw -LiteralPath $meshoptLockPath | ConvertFrom-Json
+        $meshoptLicensePath = Join-Path $root 'Build\Dependencies\Meshoptimizer\source\LICENSE.md'
+        $nested.Add([pscustomobject]@{
+            Name = "meshoptimizer $($meshoptLock.tag)"
+            UsedBy = 'XREngine.Runtime.MeshProcessing.Meshoptimizer'
+            Owner = 'Arseny Kapoulkine'
+            Url = "$($meshoptLock.repository)/tree/$($meshoptLock.tag)"
+            License = $meshoptLock.license
+            LicenseSourcePath = if (Test-Path -LiteralPath $meshoptLicensePath) { $meshoptLicensePath } else { $null }
+        })
+    }
+
     $fastGltfVendorDir = Join-Path $root 'Build\Native\FastGltfBridge\vendor\fastgltf'
     if (Test-Path $fastGltfVendorDir) {
         $fastGltfLicenseInfo = Get-SubmoduleLicenseInfo -fullPath $fastGltfVendorDir
