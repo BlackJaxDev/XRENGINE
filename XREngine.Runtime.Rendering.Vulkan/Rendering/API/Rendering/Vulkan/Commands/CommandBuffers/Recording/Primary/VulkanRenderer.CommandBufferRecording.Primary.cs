@@ -121,6 +121,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (!EndPrimaryCommandBuffer(ref recordingState))
                         return false;
+                    RecordVisibleMeshDrawCohort(in recordingState.Ops);
                     if (recordingState.AdvancedQueueOverlap is { } overlap)
                     {
                         ConsolidateAdvancedQueueOverlapSubmissionMarkers(overlap);
@@ -145,6 +146,26 @@ namespace XREngine.Rendering.Vulkan
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// Publishes the count of visible mesh draws and unique materials for
+        /// a primary that recorded successfully. This does nothing when
+        /// rendering statistics are off.
+        /// </summary>
+        private static void RecordVisibleMeshDrawCohort(
+            in FrameOperationSequence ops)
+        {
+            if (!RuntimeEngine.Rendering.Stats.EnableTracking)
+                return;
+
+            VulkanVisibleMeshDrawCohortCounter.Count(
+                in ops,
+                out int visibleDrawCount,
+                out int uniqueMaterialCount);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanVisibleMeshDrawCohort(
+                visibleDrawCount,
+                uniqueMaterialCount);
         }
 
         internal static bool ShouldRefreshUnwrittenSwapchainForPresent(
