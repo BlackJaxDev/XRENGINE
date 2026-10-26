@@ -112,8 +112,16 @@ namespace XREngine.Data.Core
         }
         ~XRObjectBase()
         {
-            Destroy();
+            if (ShouldQueueFinalizerDestruction())
+                Destroy();
         }
+
+        /// <summary>
+        /// Determines whether automatic finalization requests deferred destruction.
+        /// Overrides must be nonblocking and must not call application callbacks.
+        /// Explicit destruction does not use this hook.
+        /// </summary>
+        protected virtual bool ShouldQueueFinalizerDestruction() => true;
 
         public virtual void Generate()
         {

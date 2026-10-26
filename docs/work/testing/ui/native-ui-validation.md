@@ -823,3 +823,37 @@ Editor/test build 84 passes with zero warnings/errors (1m34.34s). All 10,905
 source inputs stayed unchanged from headless build 252 through runs 207/208 and
 this editor/test build. The 16 new editor focus cases compile; they have not run
 on Windows. No GPU, native input, IME, or performance acceptance is claimed.
+
+
+### Structural-list finalizer ordering repair
+
+At clean Windows `2dc5df71`, the parent reports 16/16 new editor focus cases,
+40/40 hierarchy/lifecycle cases, and 32/32 input-focus cases passing. The broad
+run completes 416 cases with 415 passes and one prefab teardown failure. Its
+separate diagnostic variant confirms an alive transform owns its exact active
+list, but that list is destroyed. The first destroyer's provenance is still not
+captured. This is not Windows acceptance of the later cleanup repair.
+
+The portable baseline invokes the real base finalizer in controlled orders and
+uses the normal destruction drain. Build 256 passes; run 211 passes 5/7 and fails
+list-first transform and component-owner cleanup at the exact structural guard.
+After finalizer-only deferral, build 257 passes with zero warnings/errors and
+run 212 passes 56/56, including all eight finalizer cases and nearby lifetime
+checks. Explicit list destruction remains rejected by owner cleanup. The added
+owner-veto case retains the live list until a later permitted owner destruction.
+
+Revalidate the published repair on Windows with the same minimal three-test
+selection, then the broad combination. Keep assertions, execution order, and
+time limits unchanged. The rename candidate is separate and unpublished; this
+repair does not establish rename, GPU, IME, or performance acceptance.
+
+Full portable run 213 passes **1,516/1,516** (37.584s), with no failures or skips.
+All 10,906 source inputs stayed fixed through build 257 and runs 212/213. Include
+`StructuralListFinalizerTests` in the next Windows run, alongside the unchanged
+minimal dock/prefab selection and broad combination. No Windows result covers
+this repair yet.
+
+Matching editor/test build 85 passes with zero warnings/errors (4m47.57s).
+All 10,906 source inputs stayed unchanged through build 257, runs 212/213, and
+build 85. This is managed compilation on Linux; Windows execution of this repair
+is still pending. The separate rename draft is not part of the tested snapshot.

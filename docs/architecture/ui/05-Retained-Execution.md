@@ -2152,3 +2152,25 @@ no saved layout or asset format changes.
 This contract checks exact current ownership and object lifetimes. It is not a
 history of every intermediate parent assignment. Cross-window focus transfer,
 rename/search drafts, and complete play-mode restoration need separate work.
+
+
+### Private structural-list finalization
+
+Private child and component lists defer independent finalizer destruction while
+their exact active owner is alive. The owner retains canonical cleanup: remove
+structural links, clear the private list, then destroy it. A queued or vetoed owner
+still owns that list. Replaced, retired, uninstalled, and ordinary lists keep their
+own finalizer path. Explicit `Destroy` and `Dispose` do not use this deferral.
+The exact-owner mutation and lifetime guards remain unchanged.
+
+`XRObjectBase.ShouldQueueFinalizerDestruction` defaults to the previous behavior.
+`EventList` delegates this finalizer-only decision to its immutable authority.
+`HierarchyListAuthority` uses current raw ownership and destroyed-state checks;
+the hook takes no locks, allocates nothing, and calls no application callback.
+It does not grant mutation admission or guarantee safe arbitrary resurrection.
+
+This removes an ordering dependency between an owner and its private list.
+.NET does not guarantee finalizer order even when one object refers to another;
+see [Object.Finalize remarks](https://learn.microsoft.com/en-us/dotnet/api/system.object.finalize?view=net-10.0#remarks).
+The regression invokes the real base finalizer body in controlled orders and then
+uses the normal queue. It does not depend on GC timing.

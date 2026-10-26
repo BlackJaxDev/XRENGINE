@@ -4,6 +4,9 @@ namespace System.Collections.Generic;
 
 public partial class EventList<T>
 {
+    protected sealed override bool ShouldQueueFinalizerDestruction()
+        => _mutationAuthority?.ShouldQueueFinalizerDestruction(this) ?? true;
+
     protected sealed override void OnLifetimeMutationBeginning(EObjectLifetimeMutation kind)
         => _mutationAuthority?.EnterLifetimeMutation(this);
 

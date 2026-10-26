@@ -27,6 +27,13 @@ public abstract class EventListMutationAuthority<T>
     protected internal abstract void PrepareAdd(T item);
     protected internal abstract void Added(T item);
     protected internal abstract void Removed(T item);
+    /// <summary>
+    /// Determines whether this list queues its own finalizer cleanup.
+    /// An exact private owner can retain responsibility for canonical list cleanup.
+    /// This check must be nonblocking and must not call application callbacks.
+    /// </summary>
+    protected internal virtual bool ShouldQueueFinalizerDestruction(EventList<T> list) => true;
+
     protected internal virtual void EnterLifetimeMutation(EventList<T> list) { }
     protected internal virtual void ExitLifetimeMutation(EventList<T> list) { }
 }

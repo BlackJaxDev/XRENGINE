@@ -1748,3 +1748,67 @@ Editor/test build 84 passes with zero warnings/errors (1m34.34s). All 10,905
 source inputs stayed unchanged from headless build 252 through runs 207/208 and
 this editor/test build. The 16 new editor focus cases compile; they have not run
 on Windows. No GPU, native input, IME, or performance acceptance is claimed.
+
+
+### Structural-list lifetime ordering
+
+The parent reports clean Windows execution at `2dc5df71`: the 16 new focus cases,
+40 hierarchy/lifecycle cases, and 32 input-focus cases pass. Its broad run passes
+415/416, with one hidden-scene prefab teardown failure and no skips or incomplete
+cases. The separate diagnostic variant reproduces the minimal three-test sequence
+with two passes and one failure. Owner and dispatch target are the same transform;
+the supplied list is the exact authority list. Active/current/list-match are true,
+the owner is alive, and the list is destroyed (dispatch token 1158, lifetime 4).
+This proves the failed predicate, but not the origin of the earlier list destruction.
+
+The independent rename draft candidate is preserved locally and is not part of
+this repair. Its shared-control build 254 passed with zero warnings/errors;
+focused run 209 passed 86/86 (5.142s). Full run 210 passed 1,535/1,536 (38.582s).
+`UITextLazyStandaloneTests.DestroyingCallbackReattachmentDoesNotQueueAnUnguardedDestroy`
+failed at a destruction drain with the structural-list ownership exception. Its
+producer is not established. Review also found that a rejected text-focus gain can
+start a fresh focus-clear operation that overwrites a callback display edit.
+That rename continuation needs further work and must not be published as complete.
+
+The cleanup regression invokes the existing `XRObjectBase` finalizer body through
+reflection on a displaced uncached transform and its private list in both orders,
+then uses the normal destruction drain. Strong references and suppressed automatic
+finalization prevent a second CLR finalization of these test objects. It does not
+force GC, depend on timing, edit queues, or weaken the structural guard. Additional
+controls cover component lists, replaced lists, ordinary lists, and explicit list
+destruction. Test-only changes are built first against unmodified production.
+
+
+Baseline build 255 found one fixture compile error: `SceneNode.Transform` has a
+private setter. The fixture now uses public `SetTransform`; test-only build 256
+passes with zero warnings/errors (24.19s). Baseline run 211 passes 5/7 (0.217s).
+The two failures are list-first displaced-transform cleanup and list-first
+component-owner cleanup, both at the unchanged exact-owner guard. The reverse
+transform order, retired/ordinary lists, and explicit-destruction controls pass.
+This establishes a deterministic finalizer-order defect independently of the
+unproven first destroyer in the Windows trace.
+
+The repair adds finalizer-only deferral for exact installed private lists. It does
+not change explicit destruction, queue tokens, structural guards, or canonical
+owner cleanup. An added owner-veto control checks that a refused owner destruction
+leaves its list usable and that a later permitted cleanup destroys both. Production
+and all eight cases are now being rebuilt together.
+
+
+Repair build 257 passes with zero warnings/errors (4m20.55s). Focused run 212
+passes 56/56 (1.813s), including all eight finalizer cases, queued transform and
+component destruction, child cleanup, and standalone text lifetime checks. The
+two baseline failures now pass without changing their assertions. The added veto
+control passes; explicit immediate/deferred private-list destruction still causes
+the required canonical owner-cleanup rejection. Full-suite and editor compilation
+checks follow on the same frozen production snapshot.
+
+Full run 213 passes **1,516/1,516** (37.584s), with no failures or skips.
+All 10,906 source inputs stayed unchanged through build 257 and runs 212/213.
+The Windows minimal sequence and broad combination still require execution on
+the published repair. The diagnostic first-destroyer provenance remains unknown.
+
+Matching editor/test build 85 passes with zero warnings/errors (4m47.57s).
+All 10,906 source inputs stayed unchanged through build 257, runs 212/213, and
+build 85. This is managed compilation on Linux; Windows execution of this repair
+is still pending. The separate rename draft is not part of the tested snapshot.

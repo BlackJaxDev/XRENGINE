@@ -1802,3 +1802,30 @@ reproduces one failure twice. The finalizer-order hypothesis needs a throw-site
 diagnostic; this checkpoint contains no cleanup production repair. The focus
 candidate has not had Windows execution. Owner decisions and live acceptance
 remain open; ImGui stays the default editor.
+
+
+## Private structural-list finalization checkpoint
+
+Windows execution at `2dc5df71` passes all 16 new editor focus cases, 40
+hierarchy/lifecycle cases, and 32 input-focus cases. Its broad run passes
+415/416 with one hidden-scene prefab teardown failure. Separate throw-site
+evidence shows that the exact active private list is destroyed while its
+transform owner is alive. The first destroyer is not identified.
+
+A deterministic portable baseline reproduces the same ownership rejection when
+the private list finalizer runs before its owner finalizer. The repair defers
+independent finalizer cleanup of exact installed private lists to their owner.
+Explicit destruction, queue tokens, owner vetoes, and exact-owner guards retain
+their existing contracts. Replaced and ordinary lists still finalize themselves.
+
+Headless build 257 passes with zero warnings/errors. Targeted run 212 passes
+56/56, including eight finalizer regressions; full run 213 passes **1,516/1,516**.
+The two baseline failures now pass under unchanged assertions. Windows
+revalidation of this repair remains pending. Rename restoration is preserved
+separately and is not published by this checkpoint. The implementation
+reconciliation stays **51/60**; owner decisions and live acceptance remain open.
+
+Matching editor/test build 85 passes with zero warnings/errors (4m47.57s).
+All 10,906 source inputs stayed unchanged through build 257, runs 212/213, and
+build 85. This is managed compilation on Linux; Windows execution of this repair
+is still pending. The separate rename draft is not part of the tested snapshot.

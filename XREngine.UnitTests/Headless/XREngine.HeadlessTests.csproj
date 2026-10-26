@@ -41,6 +41,7 @@
     <Compile Include="../Scene/DetachedLeafRetirementTests.cs" Link="Scene/DetachedLeafRetirementTests.cs" />
     <Compile Include="../Scene/SceneNodeChildDestructionTests.cs" Link="Scene/SceneNodeChildDestructionTests.cs" />
     <Compile Include="../Scene/ComponentDestructionQueueTests.cs" Link="Scene/ComponentDestructionQueueTests.cs" />
+    <Compile Include="../Scene/StructuralListFinalizerTests.cs" Link="Scene/StructuralListFinalizerTests.cs" />
     <Compile Include="../Scene/QueueObjectProbe.cs" Link="Scene/QueueObjectProbe.cs" />
     <Compile Include="../Scene/QueueComponentProbe.cs" Link="Scene/QueueComponentProbe.cs" />
     <Compile Include="../Scene/DetachedLeafLiveWorldRetirementTests.cs" Link="Scene/DetachedLeafLiveWorldRetirementTests.cs" />

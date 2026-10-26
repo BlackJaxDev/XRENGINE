@@ -18,6 +18,11 @@ internal sealed class HierarchyListAuthority<T>(XRWorldObjectBase owner) : Event
          Owner is TransformBase transform && transform.OwnsChildList(_list));
     protected override Lock MutationGate => SceneRootCollection.MutationGate;
 
+    protected override bool ShouldQueueFinalizerDestruction(EventList<T> list)
+        // The exact live owner clears and destroys its installed private list.
+        // Replaced or uninstalled lists still own their automatic cleanup.
+        => !ReferenceEquals(_list, list) || !IsCurrent || Owner.IsDestroyed;
+
     protected override void Initialize(EventList<T> list, IReadOnlyList<T> values)
     {
         if (_list is not null)
