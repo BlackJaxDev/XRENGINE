@@ -38,6 +38,12 @@ public sealed partial class NativeAnimationPanelViewTransferTests
         {
             Selection.SceneNode = root;
             SelectClip(null);
+            // The fixture setter bypasses the asset selection event. Reject the old
+            // presentation before refreshing both panels to the new empty view.
+            Assert.That(Get<object?>(_source, "_displayedClip"), Is.SameAs(_clip));
+            Assert.That(_source.TryCaptureViewReceipt(out _), Is.False);
+            InvokePanel(_source, "RefreshRows");
+            InvokePanel(_target, "RefreshRows");
             NativeAnimationPanelViewReceipt captured = Capture();
             Assert.That(captured.Values.Clip, Is.Null);
             Assert.That(captured.Values.Candidates.Root, Is.SameAs(root));

@@ -983,3 +983,32 @@ through full run 232 and editor/test build 90. The portable result is
 compile but have not run on Windows. The published rename repair at `fdf190c3`
 also awaits its Windows rerun. These checks do not establish live editor, GPU,
 native IME, or performance acceptance.
+
+
+### Focused Windows results and empty-clip fixture correction
+
+The parent reports exact `fdf190c3b8be3016811541131662a2e4727e6454` passing
+rename 41/41, shared 119/119, and combined **584/584**, with zero failures,
+skips, or incomplete cases. Both former rename failures and the single-display
+check pass. The build had zero warnings/errors; the source stayed clean and
+the existing 30-second inactivity / 180-second session bounds were unchanged.
+
+At exact `e4a1d9a7c099589792a12b9835dce3de7e78e30d`, the focused animation
+selection passed **74/75**: view transfer 46/47, values 9/9, real-host transfer
+5/5, routing 14/14. All 15 new editor cases ran, with 14 passes and one failure.
+No cases were skipped or incomplete. The prior broad suite was not repeated.
+
+The failed `EmptyClipStillCapturesItsCurrentSceneCandidateContext` fixture
+changed the asset by reflection without the production selection event. The
+fixture now checks stale-capture rejection, refreshes both panels, and then
+runs its unchanged positive assertions. Run this exact case on the published
+repair. Do not repeat unchanged unrelated fixtures for this test-only correction.
+The original 74 passes remain evidence for `e4a1d9a7`, not an executed result
+for the new commit. Live editor, GPU, IME, and performance acceptance remain open.
+
+
+The isolated fixture correction passes focused editor build 95 (43.66s) and
+test build 96 (43.72s), each with zero warnings/errors. All 10,922 source inputs
+stayed unchanged through these checks. No portable suite was repeated: this
+change modifies one Windows fixture and documentation only. The corrected case
+still requires its focused Windows execution; compilation is not that result.

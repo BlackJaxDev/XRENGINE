@@ -2013,3 +2013,38 @@ through full run 232 and editor/test build 90. The portable result is
 compile but have not run on Windows. The published rename repair at `fdf190c3`
 also awaits its Windows rerun. These checks do not establish live editor, GPU,
 native IME, or performance acceptance.
+
+
+### Animation empty-clip fixture transition
+
+Windows execution at exact `e4a1d9a7c099589792a12b9835dce3de7e78e30d` passed
+74 of 75 selected cases. The view-transfer fixture passed 46/47; value-model
+cases passed 9/9, real-host animation transfer 5/5, and dock routing 14/14.
+All 15 new editor cases ran: 14 passed and
+`EmptyClipStillCapturesItsCurrentSceneCandidateContext` failed in `Capture()`.
+The failure reproduced alone. No case was skipped or incomplete.
+
+Source inspection identifies a fixture transition that bypasses production
+notification: `SelectClip(null)` invokes the private auto-property setter by
+reflection. It does not call `NativeAssetSelection.Publish`, so neither panel
+receives `SelectionChanged` and `_displayedClip` still holds the fixture clip.
+`TryCaptureViewReceipt` requires that displayed clip to match `CurrentClip()`.
+Rejecting that stale presentation is correct.
+
+The fixture now asserts that the old displayed clip remains and capture rejects
+it, then calls each panel's existing `RefreshRows` path before the original
+empty-clip capture, candidate-root, and restore assertions. No production guard
+or assertion was removed. This is a test setup correction, not a production
+selection or transfer change. Its Windows rerun is pending.
+
+The independent read-only collection preview passed editor build 92 and test
+build 94 with zero warnings/errors, but its four new cases remain unexecuted.
+That source, its tests, and its documents are preserved in stash
+`53c888c50f36c8367c8d8d475566cd498a528f5b`; none is part of this repair.
+
+
+The isolated fixture correction passes focused editor build 95 (43.66s) and
+test build 96 (43.72s), each with zero warnings/errors. All 10,922 source inputs
+stayed unchanged through these checks. No portable suite was repeated: this
+change modifies one Windows fixture and documentation only. The corrected case
+still requires its focused Windows execution; compilation is not that result.

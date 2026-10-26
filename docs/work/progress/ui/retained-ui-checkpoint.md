@@ -1920,3 +1920,25 @@ through full run 232 and editor/test build 90. The portable result is
 compile but have not run on Windows. The published rename repair at `fdf190c3`
 also awaits its Windows rerun. These checks do not establish live editor, GPU,
 native IME, or performance acceptance.
+
+
+## Animation empty-clip fixture correction
+
+Windows validates the published rename repair `fdf190c3`: **584/584** combined
+cases pass. The affected animation checks at `e4a1d9a7` pass **74/75**. The one
+failed fixture bypassed the production asset event with a reflected private
+setter, leaving the old clip displayed. Its capture guard correctly rejects
+that mismatch. The test now proves this rejection, refreshes both panels, and
+then runs the original positive empty-clip assertions. Production is unchanged.
+The exact repaired case still needs Windows execution.
+
+Read-only collection preview work is preserved separately in stash `53c888c5`.
+It is not included in this repair. The code reconciliation remains **51/60**;
+all existing owner decisions and live acceptance checks remain open.
+
+
+The isolated fixture correction passes focused editor build 95 (43.66s) and
+test build 96 (43.72s), each with zero warnings/errors. All 10,922 source inputs
+stayed unchanged through these checks. No portable suite was repeated: this
+change modifies one Windows fixture and documentation only. The corrected case
+still requires its focused Windows execution; compilation is not that result.
