@@ -330,6 +330,36 @@ internal unsafe sealed class VulkanMappedFrameArena
         return true;
     }
 
+    /// <summary>Reads one current writable slot without marking its bytes dirty.</summary>
+    internal bool TryBeginRead(VulkanMappedFrameSlice slice, out VulkanMappedFrameReadScope scope)
+    {
+        scope = default;
+        int currentThreadId = Environment.CurrentManagedThreadId;
+        if (Interlocked.CompareExchange(ref _writerDepth, 1, 0) != 0)
+            return false;
+
+        Volatile.Write(ref _writerThreadId, currentThreadId);
+        if (!TryValidateWritableSlice(slice, out Chunk? chunk) || chunk is null)
+        {
+            ReleaseHostAccessGate();
+            return false;
+        }
+
+        try
+        {
+            scope = new VulkanMappedFrameReadScope(this, slice,
+                new ReadOnlySpan<byte>(
+                    (byte*)chunk.MappedPtr + checked((nint)slice.Offset),
+                    checked((int)slice.Length)));
+            return true;
+        }
+        catch
+        {
+            ReleaseHostAccessGate();
+            throw;
+        }
+    }
+
     internal bool TryWriteIfChanged<T>(in VulkanMappedFrameSlice slice, in T value) where T : unmanaged
     {
         if (slice.Length < sizeof(T) || !TryBeginWrite(slice, out VulkanMappedFrameWriteScope scope))
@@ -573,6 +603,15 @@ internal unsafe sealed class VulkanMappedFrameArena
             Volatile.Read(ref _writerThreadId) != Environment.CurrentManagedThreadId)
             throw new InvalidOperationException("Mapped-frame arena permits exactly one active host writer.");
         MarkDirty(slice);
+        ReleaseHostAccessGate();
+    }
+
+    internal void EndRead(in VulkanMappedFrameSlice slice)
+    {
+        if ((uint)slice.FrameSlot >= (uint)_chunks.Length ||
+            Volatile.Read(ref _writerDepth) != 1 ||
+            Volatile.Read(ref _writerThreadId) != Environment.CurrentManagedThreadId)
+            throw new InvalidOperationException("Mapped-frame read scope lost its host access owner.");
         ReleaseHostAccessGate();
     }
 

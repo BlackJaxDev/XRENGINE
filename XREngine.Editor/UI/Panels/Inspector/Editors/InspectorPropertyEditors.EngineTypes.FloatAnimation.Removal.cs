@@ -4,6 +4,7 @@ using XREngine.Data.Core;
 using XREngine.Components;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
+using XREngine.Editor.UI;
 
 namespace XREngine.Editor;
 
@@ -19,7 +20,7 @@ public static partial class InspectorPropertyEditors
             private UIButtonComponent? _nextRemovalCurve;
             private UIButtonComponent? _markRemovalKey;
             private UIButtonComponent? _removeMarkedKeys;
-            private InspectorFloatCurveRemovalMarks? _removalMarks;
+            private InspectorFloatCurveKeyMarks? _removalMarks;
             private InspectorFloatCurveLengthSelection? _presentedRemovalSelection;
             private ulong _presentedRemovalRevision;
             private ulong _presentedRemovalRows;
@@ -30,6 +31,8 @@ public static partial class InspectorPropertyEditors
             private Func<bool>? _ownsRemovalTable;
             private Func<bool>? _ownsRemovalTablePath;
             private Func<bool>? _ownsRemovalControls;
+            private UITextInputComponent? _markedValue;
+            private UIButtonComponent? _setMarkedValue;
 
             private void BuildGroupedRemovalControls(SceneNode card)
             {
@@ -37,20 +40,31 @@ public static partial class InspectorPropertyEditors
                 if (!ContinueBuild()) return;
                 EnsureVerticalLayout(_groupRemovalControls);
                 if (!ContinueBuild()) return;
-                _groupRemovalStatus = AddInfoLabel(_groupRemovalControls, "Grouped key removal");
+                _groupRemovalStatus = AddInfoLabel(_groupRemovalControls, "Explicit grouped key targets");
                 if (!ContinueBuild()) return;
                 _previousRemovalCurve = CreateInspectorButton(_groupRemovalControls,
-                    "Previous removal curve", () => ChangeRemovalCurve(-1));
+                    "Previous target curve", () => ChangeRemovalCurve(-1));
                 if (!ContinueBuild()) return;
                 _nextRemovalCurve = CreateInspectorButton(_groupRemovalControls,
-                    "Next removal curve", () => ChangeRemovalCurve(1));
+                    "Next target curve", () => ChangeRemovalCurve(1));
                 if (!ContinueBuild()) return;
                 _markRemovalKey = CreateInspectorButton(_groupRemovalControls,
-                    "Mark / Unmark key for removal", ToggleRemovalMark);
+                    "Mark / Unmark target key", ToggleRemovalMark);
                 if (!ContinueBuild()) return;
                 _removeMarkedKeys = CreateInspectorButton(_groupRemovalControls,
                     "Remove marked keys", RemoveMarkedKeys);
                 if (!ContinueBuild()) return;
+                _markedValue = AddInput(_groupRemovalControls, "Marked outgoing value", 150, SubmitMarkedValue);
+                if (!ContinueBuild()) return;
+                _setMarkedValue = CreateInspectorButton(_groupRemovalControls,
+                    "Set marked outgoing values", SetMarkedValue);
+                if (!ContinueBuild()) return;
+                if (_markedValue is null || _markedValue.IsDestroyed || _markedValue.IsDestroyQueued ||
+                    _markedValue.SceneNode.GetComponent<UITextComponent>() is not { } markedDisplay)
+                {
+                    Retire();
+                    return;
+                }
                 SceneNode controls = _groupRemovalControls;
                 var controlsTransform = controls.Transform;
                 var cardTransform = card.Transform;
@@ -58,7 +72,8 @@ public static partial class InspectorPropertyEditors
                 ObjectConstructionIdentity controlsTransformId = ObjectConstructionIdentity.Capture(controlsTransform);
                 ObjectConstructionIdentity cardId = ObjectConstructionIdentity.Capture(card);
                 ObjectConstructionIdentity cardTransformId = ObjectConstructionIdentity.Capture(cardTransform);
-                XRComponent?[] builtControls = [_previousRemovalCurve, _nextRemovalCurve, _markRemovalKey, _removeMarkedKeys, _groupRemovalStatus];
+                XRComponent?[] builtControls = [_previousRemovalCurve, _nextRemovalCurve, _markRemovalKey,
+                    _removeMarkedKeys, _groupRemovalStatus, _markedValue, markedDisplay, _setMarkedValue];
                 Func<bool>[] controlsCurrent = builtControls.Select(control => CaptureRemovalControl(control!, controls)).ToArray();
                 _ownsRemovalControls = () => LiveRemovalIdentity(_rootIdentity) &&
                     LiveRemovalIdentity(_removalRootTransformIdentity) &&
@@ -78,17 +93,8 @@ public static partial class InspectorPropertyEditors
 
             private static Func<bool> CaptureRemovalControl(XRComponent button, SceneNode parent)
             {
-                SceneNode node = button.SceneNode;
-                var transform = node.Transform;
-                ObjectConstructionIdentity componentId = ObjectConstructionIdentity.Capture(button);
-                ObjectConstructionIdentity nodeId = ObjectConstructionIdentity.Capture(node);
-                ObjectConstructionIdentity transformId = ObjectConstructionIdentity.Capture(transform);
-                return () => componentId.IsCurrent && nodeId.IsCurrent && transformId.IsCurrent &&
-                    !button.IsDestroyed && !button.IsDestroyQueued && !node.IsDestroyed && !node.IsDestroyQueued &&
-                    !transform.IsDestroyed && !transform.IsDestroyQueued &&
-                    ReferenceEquals(button.SceneNode, node) && node.Components.Contains(button) &&
-                    ReferenceEquals(node.Transform, transform) && ReferenceEquals(node.Parent, parent) &&
-                    ReferenceEquals(transform.Parent, parent.Transform);
+                EditorVirtualRowControlLease control = EditorVirtualRowControlLease.Capture(button, parent);
+                return () => control.IsCurrent(parent);
             }
 
             private bool RefreshGroupedRemovalVisibility(InspectorFloatCurveSource? source, ulong revision)
@@ -112,7 +118,7 @@ public static partial class InspectorPropertyEditors
             private bool RefreshGroupedRemovalRows(ulong revision)
             {
                 InspectorFloatCurveLengthSelection? group = _lengthSelection;
-                InspectorFloatCurveRemovalMarks? marks = _removalMarks;
+                InspectorFloatCurveKeyMarks? marks = _removalMarks;
                 marks?.PruneInvalid();
                 if (!IsRemovalViewCurrent(revision)) return false;
                 InspectorFloatCurveSource? curve = group is not null && marks is not null
@@ -146,13 +152,14 @@ public static partial class InspectorPropertyEditors
                 {
                     FloatKeyframe? marked = marks?.GetMarkedKey(_groupCurveIndex);
                     _groupRemovalStatus.Text = curve is null
-                        ? "Grouped removal supports up to 64 distinct curves and 100000 total keys."
+                        ? "Grouped key actions support up to 64 distinct curves and 100000 total keys."
                         : $"Curve {_groupCurveIndex + 1}/{group!.Curves.Length}: {curve.Curve.Name}. " +
                           $"Marked {marks!.MarkedCount}/{marks.Count}. " +
                           (marked is null ? "No key marked on this curve. " :
                               $"Marked key at {marked.Second.ToString("G9", CultureInfo.InvariantCulture)} seconds. ") +
-                          (curve.Track.Count == 0 ? "This curve has no key; removal is unavailable." :
-                              $"Select a row, then Mark / Unmark. Showing up to {MaximumKeys} keys.");
+                          (curve.Track.Count == 0 ? "This curve has no key; grouped actions are unavailable." :
+                              $"Select a row, then Mark / Unmark. Showing up to {MaximumKeys} keys. " +
+                              "Outgoing value assignment respects each key's linked-values setting.");
                 }
                 if (!IsRemovalViewCurrent(revision)) return false;
                 if (_previousRemovalCurve is not null) _previousRemovalCurve.IsEnabled = curve is not null && _groupCurveIndex > 0;
@@ -162,11 +169,15 @@ public static partial class InspectorPropertyEditors
                 if (_markRemovalKey is not null) _markRemovalKey.IsEnabled = curve is not null && _groupSelected is not null;
                 if (!IsRemovalViewCurrent(revision)) return false;
                 if (_removeMarkedKeys is not null) _removeMarkedKeys.IsEnabled = marks is not null && marks.MarkedCount == marks.Count;
+                if (!IsRemovalViewCurrent(revision)) return false;
+                if (_markedValue is not null) _markedValue.IsEnabled = marks is not null && marks.MarkedCount == marks.Count;
+                if (!IsRemovalViewCurrent(revision)) return false;
+                if (_setMarkedValue is not null) _setMarkedValue.IsEnabled = marks is not null && marks.MarkedCount == marks.Count;
                 return IsRemovalViewCurrent(revision);
             }
 
             private bool CanUseRemoval(out InspectorFloatCurveLengthSelection group,
-                out InspectorFloatCurveRemovalMarks marks)
+                out InspectorFloatCurveKeyMarks marks)
             {
                 group = _lengthSelection!;
                 marks = _removalMarks!;
@@ -205,6 +216,31 @@ public static partial class InspectorPropertyEditors
                     return;
                 if (InspectorFloatCurveActions.Remove(group, targets) && ReferenceEquals(_removalMarks, marks))
                     marks.ClearIfCurrent(intent);
+                RequestRefresh();
+            }
+
+            private void SubmitMarkedValue(UITextInputComponent input)
+            {
+                if (ReferenceEquals(input, _markedValue)) SetMarkedValue();
+            }
+
+            private void SetMarkedValue()
+            {
+                if (_markedValue is not { } input || _ownsRemovalControls?.Invoke() != true) return;
+                ulong textIntent = input.TextWriteIntentRevision;
+                string text = input.Text;
+                if (!CanUseRemoval(out var group, out var marks) ||
+                    !float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value) ||
+                    !float.IsFinite(value) ||
+                    !marks.TryCapture(out FloatKeyframe[] targets, out ulong markIntent) ||
+                    !ReferenceEquals(_removalMarks, marks) || marks.IntentRevision != markIntent ||
+                    input.TextWriteIntentRevision != textIntent || input.Text != text ||
+                    !IsRemovalViewCurrent(_presentedRemovalRevision))
+                    return;
+                if (InspectorFloatCurveActions.SetValue(group, targets, value) &&
+                    ReferenceEquals(_removalMarks, marks))
+                    marks.ClearIfCurrent(markIntent);
+                // Keep the submitted draft, including any newer callback edit.
                 RequestRefresh();
             }
         }

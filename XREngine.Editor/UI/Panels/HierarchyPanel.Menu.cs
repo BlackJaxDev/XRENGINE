@@ -376,6 +376,7 @@ public partial class HierarchyPanel
             case EHierarchyMenuAction.AddChild when node is not null:
                 QueueNativeHierarchyCreateChild(node, context.World, child =>
                 {
+                    BeginHierarchyViewEdit();
                     _collapsedNodes.Remove(node.ID);
                     BeginRename(child);
                 }, context.IsOwnerCurrent, context.CanStart);

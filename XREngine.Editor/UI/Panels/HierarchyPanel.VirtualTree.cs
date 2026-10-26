@@ -179,8 +179,11 @@ public partial class HierarchyPanel
                 if (root is not null)
                     AppendSourceNode(root, 0);
         _virtualTree.EndBulkLoad();
+        _requireHierarchyViewRestore?.Invoke();
         SynchronizeVirtualSelection(reset: true);
+        _requireHierarchyViewRestore?.Invoke();
         ReconcileRenameSource();
+        _requireHierarchyViewRestore?.Invoke();
         _sourceFingerprint = CaptureSourceFingerprint();
         NotifyVirtualTreeChanged();
     }
@@ -440,6 +443,7 @@ public partial class HierarchyPanel
         int index = _virtualTree.FindVisibleIndex(id);
         if (index >= 0)
         {
+            BeginHierarchyViewEdit();
             float top = index * ItemHeight;
             float bottom = top + ItemHeight;
             float viewport = GetViewportHeight();
@@ -561,6 +565,7 @@ public partial class HierarchyPanel
                 return;
             if (state.ItemId == EditorSceneToggleRowId)
             {
+                BeginHierarchyViewEdit();
                 _showEditorScene = !_showEditorScene;
                 RebuildVirtualTree();
                 SaveHierarchyState();
@@ -729,6 +734,7 @@ public partial class HierarchyPanel
     {
         if (!CanUseHierarchy)
             return;
+        BeginHierarchyViewEdit();
         if (!_collapsedSections.Remove(scene.ID))
             _collapsedSections.Add(scene.ID);
         if (_virtualTree is not null && _sceneIds.TryGetValue(scene.ID, out ulong id))

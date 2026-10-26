@@ -362,12 +362,16 @@ internal unsafe partial class VkMeshRenderer
 			try
 			{
 				if (state.Draw.WorldUiCommand is { } worldUiCommand &&
-					(!HasExactWorldUiCropProgram(state.Draw,
+					(!HasExactWorldUiProgram(state.Draw,
 						worldUiCommand, out retainedWorldInterface) ||
 					 !ForceWorldUiPipelineAtIssue(in state, topology, pipeline) ||
 					 !ForceWorldUiDescriptorSetsAtIssue(
 						 state.CommandBuffer, in worldDescriptorWitness,
-						 state.Material)))
+						 state.Material) ||
+					 !WorldUiUniformsMatch(worldUiCommand, in state.Draw,
+						 state.Material, retainedWorldInterface!,
+						 in worldDescriptorWitness,
+						 state.FrameDataImageIndex, state.DrawUniformSlot)))
 				{
 					state.FailureReason = "retained world UI compiled shader, pipeline or descriptor owner changed";
 					return false;

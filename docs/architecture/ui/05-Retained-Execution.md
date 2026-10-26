@@ -2557,13 +2557,13 @@ ownership contract before stronger retirement guarantees can be made.
 ## Explicit removal from selected float curves
 
 The grouped inspector keeps table focus separate from destructive targets. Use
-Previous/Next removal curve to choose a distinct curve. Select a key row, then
-use Mark / Unmark key for removal. One key can be marked per curve. Remove marked
+Previous/Next target curve to choose a distinct curve. Select a key row, then
+use Mark / Unmark target key. One key can be marked per curve. Remove marked
 keys is available only when every participating curve has a current mark. Empty
 curves cannot supply a target. Shared curve references appear once, while source
 validation retains every selected owner. The single-curve editing path is unchanged.
 
-`InspectorFloatCurveRemovalMarks` stores exact key references, authored payload,
+`InspectorFloatCurveKeyMarks` stores exact key references, authored payload,
 time/frame, track generation, and a marking intent revision. It does not match
 time values or row positions. The existing virtual table shows at most 8,192 keys
 of the currently chosen curve. Marks remain separate from recycled rows. A source
@@ -2586,4 +2586,35 @@ incarnation and exact live control paths. Retirement clears row data only after
 its provider detach has settled with the expected incarnation and owner. A callback
 that transfers the table or installs a provider cancels that cleanup authority.
 This does not add generic table multi-selection, approximate-time matching,
-multiple marked keys per curve, grouped value/time editing, or a new Undo framework.
+multiple marked keys per curve, grouped time editing, or a new Undo framework.
+
+
+## Grouped outgoing values and live hierarchy views
+
+The same explicit per-curve marks can set an outgoing value on two through 64
+distinct curves. Each target uses its own authored synchronization flags: the
+incoming value follows only when that target links incoming and outgoing values.
+Detached staging preserves all handle, weight, interpolation, time, frame, order,
+and peer state. One animation transaction reserves the owners and keys and owns
+Undo/Redo. A nonserialized track notification revision detects value changes that
+return to their original value during callbacks. Preflight reserves room for the
+write and compensation. Newer input drafts and marking intent survive completion.
+
+Native dock transfers now capture hierarchy collapsed-node/section IDs, effective
+scroll, and editor-scene visibility for the same live document. Exact slot paths,
+provider incarnation, source intent, and scrollbar owners gate restore. Guarded
+height and translation writes validate after prechange callbacks. An admitted
+partial restore retains a receipt so host rollback can compensate without changing
+a newer edit. Selection, rename drafts, and focus do not transfer through this
+receipt. Saved layout formats are unchanged.
+
+## Vulkan direct-world uniform proof
+
+The canonical canvas-local crop route validates compiled shader stages and exact
+reflected crop/model members before Vulkan indexed issue. Descriptor identity,
+dynamic offsets, mapped buffer lifetime, and actual uniform bytes must match the
+frozen command. An arena read lease protects the mapped view and does not mark it
+dirty. Unclipped commands have separate program admission; native model-matrix
+semantics still require exact bytes. Custom cropped fragments, cropped stereo text,
+and arbitrary 3D material/raster overrides remain outside this bounded profile.
+This source contract does not establish graphics or validation-layer acceptance.

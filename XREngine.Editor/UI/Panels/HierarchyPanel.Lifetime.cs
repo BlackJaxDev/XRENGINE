@@ -82,6 +82,7 @@ public partial class HierarchyPanel
 
     private void StopHierarchy(bool destroying)
     {
+        RetainHierarchyEffectiveScroll();
         CaptureHierarchyRowFocus(destroying);
         bool wasDestroying = _hierarchyDestroying;
         _hierarchyDestroying |= destroying;

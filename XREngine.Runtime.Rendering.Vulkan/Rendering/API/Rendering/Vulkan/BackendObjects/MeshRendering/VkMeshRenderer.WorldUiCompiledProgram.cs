@@ -9,16 +9,23 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkMeshRenderer
 {
-    /// <summary>Checks the linked native shader inputs for an owned crop draw.</summary>
-    private bool HasExactWorldUiCropProgram(in PendingMeshDraw draw,
+    /// <summary>Checks the linked native shaders for one frozen world draw.</summary>
+    private bool HasExactWorldUiProgram(in PendingMeshDraw draw,
         UIPublishedWorldMeshCommand command,
         out VulkanProgramInterfaceEntry? retainedInterface)
     {
         retainedInterface = null;
-        if (command.WorldCrop is null ||
-            command.WorldCropFragmentShader is not { } fragment ||
-            command.MaterialOverride is not { } material ||
-            !material.FragmentShaders.Contains(fragment) ||
+        if (command.MaterialOverride is not { } material ||
+            material.FragmentShaders.Count != 1 ||
+            material.Shaders.Count is not (1 or 2 or 3) ||
+            command.WorldCrop is not null &&
+                (material.Shaders.Count is not (1 or 3) ||
+                 command.WorldCropFragmentShader is not { } ||
+                 !command.WorldMatrixIsModelMatrix ||
+                 (int)material.BillboardMode != 0) ||
+            command.WorldCrop is null &&
+                (command.WorldCropFragmentShader is not null ||
+                 command.WorldCropVertexShader is not null) ||
             draw.PreparedProgram is not { } prepared ||
             !ReferenceEquals(prepared, _program) ||
             draw.PreparedProgramLinkGeneration == 0UL ||
@@ -35,29 +42,37 @@ internal unsafe partial class VkMeshRenderer
                     out VulkanProgramInterfaceStage vertexStage) ||
                 !entry.Key.TryGetStage(EProgramStageMask.FragmentShaderBit,
                     out VulkanProgramInterfaceStage fragmentStage) ||
-                !ReferenceEquals(fragmentStage.Shader, fragment) ||
-                fragmentStage.SourceRevision != command.WorldCropFragmentRevision ||
-                fragment.SourceRevision != fragmentStage.SourceRevision ||
+                !ReferenceEquals(fragmentStage.Shader, material.FragmentShaders[0]) ||
+                fragmentStage.Shader.SourceRevision != fragmentStage.SourceRevision ||
                 !StageCompiledCurrent(vertexStage,
                     entry.Key.ShaderConfigVersion) ||
                 !StageCompiledCurrent(fragmentStage,
                     entry.Key.ShaderConfigVersion) ||
-                !UIWorldCropShaderContract.IsCanonicalClippedFragment(fragment))
+                command.WorldCrop is not null &&
+                    (fragmentStage.SourceRevision != command.WorldCropFragmentRevision ||
+                     !ReferenceEquals(fragmentStage.Shader,
+                         command.WorldCropFragmentShader) ||
+                     !UIWorldCropShaderContract.IsCanonicalClippedFragment(
+                         fragmentStage.Shader)))
                 return false;
 
             XRShader compiledVertex = vertexStage.Shader;
             if (compiledVertex.SourceRevision != vertexStage.SourceRevision)
                 return false;
-            if (command.WorldCropVertexShader is { } explicitVertex)
+            if (material.VertexShaders.Count != 0)
             {
-                if (!ReferenceEquals(compiledVertex, explicitVertex) ||
-                    explicitVertex.SourceRevision !=
-                        command.WorldCropVertexRevision ||
-                    !material.VertexShaders.Contains(explicitVertex) ||
-                    !UIWorldCropShaderContract.IsCanonicalVertex(explicitVertex))
+                if (material.VertexShaders.Count != material.Shaders.Count - 1 ||
+                    !material.VertexShaders.Contains(compiledVertex) ||
+                    command.WorldCrop is not null &&
+                        (!ReferenceEquals(compiledVertex,
+                             command.WorldCropVertexShader) ||
+                         compiledVertex.SourceRevision !=
+                             command.WorldCropVertexRevision ||
+                         !UIWorldCropShaderContract.IsCanonicalVertex(
+                             compiledVertex)))
                     return false;
             }
-            else if (material.VertexShaders.Count != 0 ||
+            else if (command.WorldCropVertexShader is not null ||
                 Data is not XRMeshRenderer.Version<DefaultVertexShaderGenerator>
                     generated ||
                 !ReferenceEquals(generated.Parent, command.Mesh) ||

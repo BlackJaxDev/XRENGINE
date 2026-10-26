@@ -2,6 +2,7 @@
 using System.ComponentModel;
 using MemoryPack;
 using XREngine.Data.Core;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Animation
 {
@@ -11,7 +12,33 @@ namespace XREngine.Animation
         public event Action<BaseKeyframeTrack>? Changed;
         public event DelLengthChange? LengthChanged;
 
-        protected internal void OnChanged() => Changed?.Invoke(this);
+        [NonSerialized]
+        private ulong _changedNotificationRevision;
+        [NonSerialized]
+        private bool _changedNotificationRevisionExhausted;
+
+        [MemoryPackIgnore, YamlIgnore, Browsable(false)]
+        internal ulong ChangedNotificationRevision => _changedNotificationRevision;
+
+        [MemoryPackIgnore, YamlIgnore, Browsable(false)]
+        internal bool CanAdvanceChangedNotificationRevision =>
+            !_changedNotificationRevisionExhausted &&
+            _changedNotificationRevision < ulong.MaxValue;
+
+        internal bool CanReserveChangedNotifications(int advances)
+            => advances >= 0 && !_changedNotificationRevisionExhausted &&
+                _changedNotificationRevision < ulong.MaxValue - (ulong)advances;
+
+        protected internal void OnChanged()
+        {
+            if (!CanAdvanceChangedNotificationRevision)
+            {
+                _changedNotificationRevisionExhausted = true;
+                throw new InvalidOperationException("The animation track changed notification revision is exhausted.");
+            }
+            _changedNotificationRevision++;
+            Changed?.Invoke(this);
+        }
         [MemoryPackIgnore]
         internal object? ExactLengthNotificationOwner { get; private set; }
 

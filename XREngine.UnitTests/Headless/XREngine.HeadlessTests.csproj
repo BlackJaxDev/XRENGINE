@@ -24,6 +24,7 @@
     <Compile Include="../Rendering/UITextGuardedFocusTests.cs" Link="Rendering/UITextGuardedFocusTests.cs" />
     <Compile Include="../Rendering/UITextGuardedCanvasFocusTests.cs" Link="Rendering/UITextGuardedCanvasFocusTests.cs" />
     <Compile Include="../Rendering/UIVisibilityGuardedWriteTests.cs" Link="Rendering/UIVisibilityGuardedWriteTests.cs" />
+    <Compile Include="../Rendering/UIGeometryGuardedWriteTests.cs" Link="Rendering/UIGeometryGuardedWriteTests.cs" />
     <Compile Include="../Rendering/DefaultUiFontScopeTests.cs" Link="Rendering/DefaultUiFontScopeTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/InspectorStringDetailSizeComponent.cs" Link="Editor/InspectorStringDetailSizeComponent.cs" />
     <Compile Include="../Editor/InspectorStringDetailSizeTests.cs" Link="Editor/InspectorStringDetailSizeTests.cs" />
@@ -50,8 +51,16 @@
     <Compile Include="../Scene/QueueComponentProbe.cs" Link="Scene/QueueComponentProbe.cs" />
     <Compile Include="../Scene/DetachedLeafLiveWorldRetirementTests.cs" Link="Scene/DetachedLeafLiveWorldRetirementTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatTransitionOwnership.cs" Link="Editor/InspectorFloatTransitionOwnership.cs" />
-    <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatCurveRemovalMarks.cs" Link="Editor/InspectorFloatCurveRemovalMarks.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatCurveKeyMarks.cs" Link="Editor/InspectorFloatCurveKeyMarks.cs" />
     <Compile Include="../Editor/InspectorFloatCurveRemovalMarksTests.cs" Link="Editor/InspectorFloatCurveRemovalMarksTests.cs" />
+    <Compile Include="../Rendering/KeyframeTrackNotificationRevisionTests.cs" Link="Rendering/KeyframeTrackNotificationRevisionTests.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/AutoUniformDefaultValue.cs" Link="Rendering/AutoUniformDefaultValue.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/AutoUniformMember.cs" Link="Rendering/AutoUniformMember.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/AutoUniformBlockInfo.cs" Link="Rendering/AutoUniformBlockInfo.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/EVulkanBindingFrequency.cs" Link="Rendering/EVulkanBindingFrequency.cs" />
+    <Compile Include="../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanWorldUiUniformContract.cs" Link="Rendering/VulkanWorldUiUniformContract.cs" />
+    <Compile Include="../Rendering/VulkanWorldUiUniformProofTests.cs" Link="Rendering/VulkanWorldUiUniformProofTests.cs" />
+    <Compile Include="../Rendering/UIWorldMultiRecordPublicationTests.cs" Link="Rendering/UIWorldMultiRecordPublicationTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorDictionarySnapshot.cs" Link="Editor/EditorDictionarySnapshot.cs" />
     <Compile Include="../../XREngine.Editor/UI/EditorDictionaryRowPlan.cs" Link="Editor/EditorDictionaryRowPlan.cs" />
     <Compile Include="../Editor/EditorDictionaryRowPlanTests.cs" Link="Editor/EditorDictionaryRowPlanTests.cs" />
@@ -116,6 +125,7 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockLayout.cs" Link="Editor/NativeDockLayout.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanelStateValues.cs" Link="Editor/NativeDockPanelStateValues.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeDockPanelTransferState.cs" Link="Editor/NativeDockPanelTransferState.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeHierarchyPanelViewValues.cs" Link="Editor/NativeHierarchyPanelViewValues.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeAnimationCandidateView.cs" Link="Editor/NativeAnimationCandidateView.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeAnimationPanelViewValues.cs" Link="Editor/NativeAnimationPanelViewValues.cs" />
     <Compile Include="../Editor/NativeAnimationPanelViewValuesTests.cs" Link="Editor/NativeAnimationPanelViewValuesTests.cs" />

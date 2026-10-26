@@ -4,7 +4,8 @@ namespace XREngine.Editor;
 internal readonly record struct NativeDockPanelTransferState(
     NativeDockPanelStateValues Values,
     Func<bool> RequireSourceCurrent,
-    NativeAnimationPanelViewValues? AnimationView = null)
+    NativeAnimationPanelViewValues? AnimationView = null,
+    NativeHierarchyPanelViewValues? HierarchyView = null)
 {
     internal bool IsCurrent => RequireSourceCurrent();
 }

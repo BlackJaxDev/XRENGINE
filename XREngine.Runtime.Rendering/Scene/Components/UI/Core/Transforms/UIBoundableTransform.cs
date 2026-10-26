@@ -15,7 +15,7 @@ namespace XREngine.Rendering.UI
     /// Represents a UI component with area that can be aligned within its parent.
     /// </summary>
     [XRTransformEditor("XREngine.Editor.TransformEditors.UIBoundableTransformEditor")]
-    public class UIBoundableTransform : UITransform
+    public partial class UIBoundableTransform : UITransform
     {
         public UIBoundableTransform() : base(null)
         {
@@ -91,7 +91,11 @@ namespace XREngine.Rendering.UI
         public float? Height
         {
             get => _height;
-            set => SetField(ref _height, value);
+            set
+            {
+                AdvanceHeightWriteIntent();
+                SetField(ref _height, value);
+            }
         }
 
         private float? _minHeight, _minWidth, _maxHeight, _maxWidth;

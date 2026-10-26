@@ -44,6 +44,7 @@ public partial class HierarchyPanel
         uint revision = _hierarchyRevision;
         QueueNativeHierarchyCreateChild(parent, world, child =>
         {
+            BeginHierarchyViewEdit();
             _collapsedNodes.Remove(parent.ID);
             BeginRename(child);
         }, () => revision == _hierarchyRevision && IsCurrentHierarchyWorld(world));

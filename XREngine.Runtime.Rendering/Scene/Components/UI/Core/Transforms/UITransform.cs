@@ -77,7 +77,11 @@ namespace XREngine.Rendering.UI
         public virtual Vector2 Translation
         {
             get => _translation;
-            set => SetField(ref _translation, value);
+            set
+            {
+                AdvanceTranslationWriteIntent();
+                SetField(ref _translation, value);
+            }
         }
 
         protected Vector2 _actualLocalBottomLeftTranslation = new();

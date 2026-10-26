@@ -463,7 +463,7 @@ public static partial class InspectorPropertyEditors
                     if (grouped && selection is { HasDistinctCurves: true })
                     {
                         _lengthSelection = selection;
-                        if (selection.Curves.Length <= InspectorFloatCurveRemovalMarks.MaximumCurves)
+                        if (selection.Curves.Length <= InspectorFloatCurveKeyMarks.MaximumCurves)
                             _removalMarks = new(selection.Curves.Select(member => member.Curve).ToArray(),
                                 selection.IsCurrentFast);
                     }
@@ -1109,6 +1109,7 @@ public static partial class InspectorPropertyEditors
                 }
                 if (_time is not null) _time.Submitted -= SubmitTime;
                 if (_value is not null) _value.Submitted -= SubmitValue;
+                if (_markedValue is not null) _markedValue.Submitted -= SubmitMarkedValue;
                 if (_inValue is not null) _inValue.Submitted -= SubmitIncomingValue;
                 if (_inTangent is not null) _inTangent.Submitted -= SubmitIncomingTangent;
                 if (_outTangent is not null) _outTangent.Submitted -= SubmitOutgoingTangent;

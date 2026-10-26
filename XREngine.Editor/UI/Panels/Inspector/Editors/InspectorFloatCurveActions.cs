@@ -117,6 +117,19 @@ internal static class InspectorFloatCurveActions
             staged => staged.OutValue = value);
     }
 
+    public static bool SetValue(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, float value)
+    {
+        if (!InspectorFloatCurveValueEdit.TryCapture(selection, targets, value,
+                out InspectorFloatCurveValueEdit? edit) || edit is null)
+            return false;
+        return AnimationAuthoringTransaction.Apply(selection.Curves[0].Curve,
+            selection.Documents, "Set Selected Animation Key Values",
+            () => edit.Apply(true), () => edit.Apply(false),
+            () => edit.Matches(true), () => edit.Matches(false), selection.IsCurrent,
+            null, edit.ReservationOwners);
+    }
+
     public static bool SetIncomingValue(InspectorFloatCurveSource source,
         FloatKeyframe key, float value)
     {

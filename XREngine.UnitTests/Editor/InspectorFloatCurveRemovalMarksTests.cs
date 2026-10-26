@@ -22,7 +22,7 @@ public sealed class InspectorFloatCurveRemovalMarksTests
         var b = Curve(out var second);
         FloatKeyframe equalTime = new(1, 2, 0, EVectorInterpType.Hermite);
         a.Keyframes.Add(equalTime);
-        var marks = new InspectorFloatCurveRemovalMarks([a, b], () => true);
+        var marks = new InspectorFloatCurveKeyMarks([a, b], () => true);
         Assert.That(marks.TryCapture(out _, out _), Is.False);
         Assert.That(marks.Mark(0, second), Is.False);
         Assert.That(marks.Mark(0, equalTime), Is.True);
@@ -41,10 +41,26 @@ public sealed class InspectorFloatCurveRemovalMarksTests
     {
         var a = Curve(out var first);
         var b = Curve(out var second);
-        var marks = new InspectorFloatCurveRemovalMarks([a, b], () => true);
+        var marks = new InspectorFloatCurveKeyMarks([a, b], () => true);
         marks.Mark(0, first);
         marks.Mark(1, second);
         first.OutValue = 9;
+        Assert.That(marks.TryCapture(out _, out _), Is.False);
+        Assert.That(marks.GetMarkedKey(0), Is.Null);
+        Assert.That(marks.GetMarkedKey(1), Is.SameAs(second));
+    }
+
+    [Test]
+    public void ValueWriteAwayAndBackInvalidatesTheOldMark()
+    {
+        var a = Curve(out var first);
+        var b = Curve(out var second);
+        var marks = new InspectorFloatCurveKeyMarks([a, b], () => true);
+        marks.Mark(0, first);
+        marks.Mark(1, second);
+        float before = first.OutValue;
+        first.OutValue = 9;
+        first.OutValue = before;
         Assert.That(marks.TryCapture(out _, out _), Is.False);
         Assert.That(marks.GetMarkedKey(0), Is.Null);
         Assert.That(marks.GetMarkedKey(1), Is.SameAs(second));
@@ -55,7 +71,7 @@ public sealed class InspectorFloatCurveRemovalMarksTests
     {
         var a = Curve(out var first);
         var b = Curve(out var second);
-        var marks = new InspectorFloatCurveRemovalMarks([a, b], () => true);
+        var marks = new InspectorFloatCurveKeyMarks([a, b], () => true);
         marks.Mark(0, first);
         marks.Mark(1, second);
         Keyframe[] order = [first];
@@ -70,7 +86,7 @@ public sealed class InspectorFloatCurveRemovalMarksTests
     {
         var a = Curve(out var first);
         var b = Curve(out var second);
-        var marks = new InspectorFloatCurveRemovalMarks([a, b], () => true);
+        var marks = new InspectorFloatCurveKeyMarks([a, b], () => true);
         marks.Mark(0, first);
         marks.Mark(1, second);
         Assert.That(marks.TryCapture(out _, out ulong intent), Is.True);
@@ -89,7 +105,7 @@ public sealed class InspectorFloatCurveRemovalMarksTests
         var a = Curve(out var first);
         var b = Curve(out var second);
         bool current = true;
-        var marks = new InspectorFloatCurveRemovalMarks([a, b], () => current);
+        var marks = new InspectorFloatCurveKeyMarks([a, b], () => current);
         marks.Mark(0, first);
         marks.Mark(1, second);
         if (changeLifetime) a.Generate();
@@ -103,7 +119,7 @@ public sealed class InspectorFloatCurveRemovalMarksTests
     {
         var a = Curve(out var first);
         var b = Curve(out _);
-        InspectorFloatCurveRemovalMarks? marks = null;
+        InspectorFloatCurveKeyMarks? marks = null;
         bool change = false;
         marks = new([a, b], () =>
         {
@@ -121,7 +137,7 @@ public sealed class InspectorFloatCurveRemovalMarksTests
     {
         var a = Curve(out var first);
         var b = Curve(out var second);
-        InspectorFloatCurveRemovalMarks? marks = null;
+        InspectorFloatCurveKeyMarks? marks = null;
         bool change = false;
         marks = new([a, b], () =>
         {
@@ -145,9 +161,9 @@ public sealed class InspectorFloatCurveRemovalMarksTests
     public void UnsupportedCurveCountsAndDuplicateCurvesAreRejected()
     {
         var a = Curve(out _);
-        Assert.Throws<ArgumentException>(() => new InspectorFloatCurveRemovalMarks([a], () => true));
-        Assert.Throws<ArgumentException>(() => new InspectorFloatCurveRemovalMarks([a, a], () => true));
+        Assert.Throws<ArgumentException>(() => new InspectorFloatCurveKeyMarks([a], () => true));
+        Assert.Throws<ArgumentException>(() => new InspectorFloatCurveKeyMarks([a, a], () => true));
         var curves = Enumerable.Range(0, 65).Select(index => Curve(out _)).ToArray();
-        Assert.Throws<ArgumentException>(() => new InspectorFloatCurveRemovalMarks(curves, () => true));
+        Assert.Throws<ArgumentException>(() => new InspectorFloatCurveKeyMarks(curves, () => true));
     }
 }

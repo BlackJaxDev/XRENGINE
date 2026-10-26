@@ -788,6 +788,14 @@ internal sealed class NativeDockTreeHost
         }
     }
 
+    private static HierarchyPanel? FindHierarchyPanel(SceneNode slot)
+    {
+        foreach (var child in slot.Transform.Children)
+            if (child.SceneNode?.GetComponent<HierarchyPanel>() is { } hierarchy)
+                return hierarchy;
+        return null;
+    }
+
     private bool ReceivePanel(string panel) => ReceivePanelCore(panel, null);
 
     private NativeDockPanelTransferState? CapturePanelState(string panel)
@@ -817,6 +825,17 @@ internal sealed class NativeDockTreeHost
             _tree.Stacks().Any(stack => stack.Tabs.Contains(panel));
         if (_panelSlots.TryGetValue(panel, out SceneNode? slot))
         {
+            if (panel == NativeDockPanel.Hierarchy)
+            {
+                HierarchyPanel? hierarchy = FindHierarchyPanel(slot);
+                if (hierarchy is null || !hierarchy.TryCaptureHierarchyView(slot, _root,
+                    false, out var view) || view is null)
+                    return null;
+                NativeDockPanelStateValues hierarchyStateValues = NativeDockPanelStateValues.Capture(_layout, panel);
+                return new(hierarchyStateValues, () => HostCurrent() && view.IsCurrent &&
+                    _panelSlots.TryGetValue(panel, out SceneNode? current) && ReferenceEquals(current, slot),
+                    HierarchyView: view.Values);
+            }
             if (NativeDockPanelStateValues.ScrollIndex(panel) < 0)
             {
                 ObjectConstructionIdentity slotIdentity = ObjectConstructionIdentity.Capture(slot);
@@ -835,7 +854,7 @@ internal sealed class NativeDockTreeHost
             return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent,
                 receipt.AnimationView?.Values);
         }
-        if (panel == NativeDockPanel.Animation)
+        if (panel is NativeDockPanel.Animation or NativeDockPanel.Hierarchy)
             return null;
         NativeDockPanelStateValues values = NativeDockPanelStateValues.Capture(_layout, panel);
         return new(values, () => HostCurrent() && !_panelSlots.ContainsKey(panel) &&
@@ -872,6 +891,8 @@ internal sealed class NativeDockTreeHost
             (incoming.Values.Panel != panel ||
              incoming.AnimationView is not null && panel != NativeDockPanel.Animation ||
              panel == NativeDockPanel.Animation && incoming.AnimationView is null ||
+             incoming.HierarchyView is not null && panel != NativeDockPanel.Hierarchy ||
+             panel == NativeDockPanel.Hierarchy && incoming.HierarchyView is null ||
              !incoming.IsCurrent ||
              _disposed || !_root.IsActiveInHierarchy ||
              _root.IsDestroyed || _root.IsDestroyQueued ||
@@ -891,8 +912,17 @@ internal sealed class NativeDockTreeHost
             NativeDockPanelStateValues.Capture(_layout, panel);
         NativeDockPanelStateReceipt? destinationReceipt = null;
         NativeAnimationPanelViewValues? destinationBeforeView = null;
+        NativeHierarchyPanelViewReceipt? destinationHierarchy = null;
+        NativeHierarchyPanelViewReceipt? appliedHierarchy = null;
         if (transferState is not null && _panelSlots.TryGetValue(panel, out SceneNode? priorSlot))
         {
+            if (panel == NativeDockPanel.Hierarchy)
+            {
+                HierarchyPanel? hierarchy = FindHierarchyPanel(priorSlot);
+                if (hierarchy is null || !hierarchy.TryCaptureHierarchyView(priorSlot, _root,
+                    true, out destinationHierarchy) || destinationHierarchy is null)
+                    return false;
+            }
             if (NativeDockPanelStateValues.ScrollIndex(panel) >= 0)
             {
                 if (!_toolStateBindings.TryGetValue(panel, out NativeToolPanelStateBinding? priorBinding) ||
@@ -939,6 +969,41 @@ internal sealed class NativeDockTreeHost
             if (!_tree.Move(panel, target.Id, int.MaxValue))
                 return false;
             CommitStructure();
+            if (transferState is { HierarchyView: { } hierarchyValues } hierarchyState)
+            {
+                if (!DestinationCurrent() || !hierarchyState.IsCurrent || !DestinationCurrent() ||
+                    !_panelSlots.TryGetValue(panel, out SceneNode? slot) ||
+                    FindHierarchyPanel(slot) is not { } hierarchy ||
+                    destinationHierarchy is { } priorHierarchy &&
+                        (!ReferenceEquals(priorHierarchy.Panel, hierarchy) || !priorHierarchy.HasSamePanelIntent))
+                {
+                    if (DestinationCurrent())
+                        RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
+                            registrationRevision, rootIdentity, rootTransform,
+                            rootTransformIdentity, registrationIdentity);
+                    return false;
+                }
+                receivedSlot = slot;
+                bool HierarchyForwardCurrent() => DestinationCurrent() && hierarchyState.IsCurrent &&
+                    DestinationCurrent();
+                // A new slot has no prior local view. Retain its initial view for compensation.
+                if (destinationHierarchy is null &&
+                    (!hierarchy.TryCaptureHierarchyView(slot, _root, false, out destinationHierarchy) ||
+                        destinationHierarchy is null))
+                {
+                    if (DestinationCurrent())
+                        RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
+                            registrationRevision, rootIdentity, rootTransform,
+                            rootTransformIdentity, registrationIdentity);
+                    return false;
+                }
+                stateMutationStarted = true;
+                appliedHierarchy = hierarchy.RestoreHierarchyView(hierarchyValues, slot, _root,
+                    HierarchyForwardCurrent, partial => appliedHierarchy = partial);
+                if (!appliedHierarchy.IsCurrent || !HierarchyForwardCurrent()) return false;
+                Save();
+                if (!appliedHierarchy.IsCurrent || !HierarchyForwardCurrent()) return false;
+            }
             if (transferState is { } state &&
                 NativeDockPanelStateValues.ScrollIndex(panel) >= 0)
             {
@@ -999,6 +1064,26 @@ internal sealed class NativeDockTreeHost
         }
         catch (Exception exception)
         {
+            if (appliedHierarchy is { IsCurrent: true } hierarchyApplied &&
+                destinationHierarchy is { } hierarchyBefore && DestinationCurrent() &&
+                hierarchyApplied.Panel.HasHierarchyViewDocument(hierarchyBefore.Values))
+            {
+                try
+                {
+                    NativeHierarchyPanelViewReceipt restored = hierarchyApplied.Panel.RestoreHierarchyView(
+                        hierarchyBefore.Values, hierarchyApplied.Slot, _root, DestinationCurrent);
+                    if (restored.IsCurrent && DestinationCurrent())
+                    {
+                        Save();
+                        if (restored.IsCurrent && DestinationCurrent()) stateMutationStarted = false;
+                    }
+                }
+                catch (Exception compensationFailure)
+                {
+                    Debug.LogException(compensationFailure,
+                        "[NativeDock] Destination hierarchy view could not be restored.");
+                }
+            }
             if (appliedState is { IsCurrent: true } applied && DestinationCurrent() &&
                 (panel != NativeDockPanel.Animation ||
                  destinationBeforeView is { } priorView &&

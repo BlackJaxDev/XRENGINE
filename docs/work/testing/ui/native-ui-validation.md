@@ -1356,3 +1356,36 @@ fallback. All seven are compile-only here. The previous 67 unrun Editor cases
 include the original four dictionary cases; three additions bring the total to
 **70 unrun Editor cases**. Windows/live row presentation, input, Undo and scale
 acceptance remain open. The laptop stays stopped.
+
+
+## Grouped values, hierarchy transfer, and Vulkan proof checks
+
+The affected portable runs contain **138 distinct passing latest results**. The
+initial 102-case run had one notification-count fixture failure; the five-case
+notification rerun passed after the fixture accounted for the existing linked
+value notifications. The other 97 initial cases passed. Geometry/visibility passed
+35/35. World publication passed 35/35, including one new multi-record direct-world
+case; 34 cases overlap the initial run. No full suite ran.
+
+Runtime Rendering and Vulkan compile with zero warnings/errors. Portable tests
+exercise reflection/member admission and publication values, not Vulkan indexed
+issue or GPU output. Live checks must cover nested crops and painter order under
+canonical OpenGL/Vulkan draws, mapped-buffer retirement, and supported unclipped
+commands. Custom cropped shaders, cropped stereo text, arbitrary 3D overrides,
+shadow policy, and bindless policy are not accepted by these checks.
+
+The new Editor fixtures contain 13 grouped-value backend cases, seven UI cases,
+and 15 hierarchy-transfer cases. They cover payload/Undo, synchronization, exact
+marks, revisions, callbacks, live source/destination admission, scrollbar owner
+changes, and partial-restore compensation. **All 35 are compiled but unrun**,
+bringing the recorded Windows backlog from 70 to **105 cases**. Preserve that
+distinction when selecting the next Windows run. No laptop work was restarted.
+
+The unpublished nested-list tests are not included in this count. Their draft
+needs pane construction/retirement ownership repair before publication.
+
+The frozen checkpoint contains 10,975 source/project inputs. Headless wrapper 143
+passed in 15.31s, Editor wrapper 144 in 37.70s, and test-project wrapper 145 in
+49.24s, each with zero warnings/errors. Source hashes remained unchanged through
+those checks. Runtime Rendering wrapper 135 and Vulkan wrapper 133 also passed
+with zero warnings/errors; their touched production inputs did not change later.

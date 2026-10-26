@@ -3,8 +3,8 @@ using XREngine.Data.Core;
 
 namespace XREngine.Editor;
 
-/// <summary>Keeps explicit, exact removal targets separate from table focus.</summary>
-internal sealed class InspectorFloatCurveRemovalMarks
+/// <summary>Keeps explicit, exact key targets separate from table focus.</summary>
+internal sealed class InspectorFloatCurveKeyMarks
 {
     internal const int MaximumCurves = 64;
     private readonly PropAnimFloat[] _curves;
@@ -12,18 +12,18 @@ internal sealed class InspectorFloatCurveRemovalMarks
     private readonly KeyframeTrack<FloatKeyframe>[] _tracks;
     private readonly Func<bool> _ownsSources;
     private readonly (FloatKeyframe Key, float Second, int Frame,
-        VectorKeyframeAuthoredState<float> Payload, ulong Generation)?[] _marks;
+        VectorKeyframeAuthoredState<float> Payload, ulong Generation, ulong Notification)?[] _marks;
 
-    internal InspectorFloatCurveRemovalMarks(IReadOnlyList<PropAnimFloat> curves, Func<bool> ownsSources)
+    internal InspectorFloatCurveKeyMarks(IReadOnlyList<PropAnimFloat> curves, Func<bool> ownsSources)
     {
         if (curves.Count is < 2 or > MaximumCurves ||
             curves.Distinct(ReferenceEqualityComparer.Instance).Count() != curves.Count)
-            throw new ArgumentException("Removal requires two to sixty-four distinct curves.", nameof(curves));
+            throw new ArgumentException("Key marking requires two to sixty-four distinct curves.", nameof(curves));
         _curves = [.. curves];
         _identities = _curves.Select(ObjectConstructionIdentity.Capture).ToArray();
         _tracks = _curves.Select(curve => curve.Keyframes).ToArray();
         _ownsSources = ownsSources;
-        _marks = new (FloatKeyframe, float, int, VectorKeyframeAuthoredState<float>, ulong)?[curves.Count];
+        _marks = new (FloatKeyframe, float, int, VectorKeyframeAuthoredState<float>, ulong, ulong)?[curves.Count];
     }
 
     internal ulong IntentRevision { get; private set; }
@@ -37,6 +37,8 @@ internal sealed class InspectorFloatCurveRemovalMarks
             if (!_identities[index].IsCurrent || _curves[index].IsDestroyed ||
                 _curves[index].IsDestroyQueued || !ReferenceEquals(_curves[index].Keyframes, _tracks[index]))
                 return false;
+            else if (!_tracks[index].CanAdvanceChangedNotificationRevision)
+                return false;
         return true;
     }
 
@@ -49,7 +51,7 @@ internal sealed class InspectorFloatCurveRemovalMarks
             !key.TryCaptureAuthoredState(out var payload))
             return false;
         _marks[curveIndex] = (key, key.Second, key.AuthoredFrameIndex, payload,
-            _tracks[curveIndex].ExactEditGeneration);
+            _tracks[curveIndex].ExactEditGeneration, _tracks[curveIndex].ChangedNotificationRevision);
         IntentRevision++;
         return true;
     }
@@ -73,6 +75,7 @@ internal sealed class InspectorFloatCurveRemovalMarks
             if (_marks[index] is { } mark && (!sourcesCurrent ||
                 !ReferenceEquals(mark.Key.OwningTrack, _tracks[index]) ||
                 mark.Generation != _tracks[index].ExactEditGeneration ||
+                mark.Notification != _tracks[index].ChangedNotificationRevision ||
                 mark.Key.Second != mark.Second || mark.Key.AuthoredFrameIndex != mark.Frame ||
                 !mark.Key.TryCaptureAuthoredState(out var payload) || payload != mark.Payload))
                 Unmark(index);

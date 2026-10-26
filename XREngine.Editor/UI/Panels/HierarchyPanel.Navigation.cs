@@ -103,6 +103,7 @@ public partial class HierarchyPanel
 
     private void StoreHierarchyExpansion(ulong itemId, bool expanded)
     {
+        BeginHierarchyViewEdit();
         if (_hierarchyNodes.TryGetValue(itemId, out SceneNode? node))
         {
             if (expanded)

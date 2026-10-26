@@ -2462,3 +2462,28 @@ from 67 to 70. Evidence is under the existing native UI completion run in
 `logs/build-128-partial-dictionary-editor-tests.log`,
 `logs/partial-dictionary-affected.log` and
 `reports/partial-dictionary-affected.xml`. No full-suite or laptop run occurred.
+
+
+## Review of grouped values, hierarchy transfer, and world proof
+
+The grouped-value review found a notification-revision exhaustion boundary.
+Preflight now reserves the write plus compensation before any member commits.
+The initial portable notification fixture expected three callbacks; existing
+linked-value behavior emits four. Its focused rerun passed without changing
+production notification order or count.
+
+Hierarchy transfer review found prechange scrollbar ownership and post-commit
+exception compensation gaps. Guarded height/translation assignments and an
+admitted partial-restore receipt repair those paths. Vulkan compilation found
+a by-reference property argument; a local mapped-slice value fixes compilation
+without changing the proof.
+
+The first geometry headless build started before its runtime dependency completed
+and failed with four missing-member errors. After the runtime build completed,
+the sequential headless build and 35 affected cases passed. Editor compilation
+then found missing imports/nullability in the separate nested draft and a test
+calling SetParent on SceneNode instead of its transform. Those compiler issues
+were corrected; the nested draft remains unpublished for a separate ownership
+repair. Its review also fixed stale binding revision, unchanged refresh, empty
+first-item rendering, and document-authority admission. No unexecuted Editor
+fixture is reported as a runtime pass.

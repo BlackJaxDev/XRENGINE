@@ -142,6 +142,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         _scrollbarTrackTransform = null;
         _scrollbarThumbTransform = null;
         _renderedNodeCount = 0;
+        _requireHierarchyViewRestore?.Invoke();
         _scrollOffset = savedScroll;
         //Create the root menu transform - this is a horizontal list of buttons.
         CreateTree(SceneNode);
@@ -157,6 +158,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     {
         if (!CanUseHierarchy)
             return;
+        BeginHierarchyViewEdit();
         if (!_collapsedNodes.Remove(node.ID))
             _collapsedNodes.Add(node.ID);
         if (_virtualTree is not null && _hierarchyIds.TryGetValue(node.ID, out ulong id))
@@ -169,9 +171,12 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
     private void RestoreHierarchyState()
     {
-        Guid worldId = TryGetActiveWorld()?.TargetWorld?.ID ?? Guid.Empty;
+        ulong intent = _hierarchyViewIntent;
+        RuntimeWorld? world = TryGetActiveWorld();
+        Guid worldId = world?.TargetWorld?.ID ?? Guid.Empty;
         NativeHierarchyState? saved = NativeHierarchyStateStore.Load(worldId);
-        if (saved is null)
+        if (saved is null || intent != _hierarchyViewIntent ||
+            !ReferenceEquals(TryGetActiveWorld(), world))
             return;
         _collapsedNodes.Clear();
         _collapsedNodes.UnionWith(saved.CollapsedNodes ?? []);
@@ -229,6 +234,7 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
         if (!CanUseHierarchy || _treeListTransform is null)
             return true; // still consume to prevent camera zoom
 
+        BeginHierarchyViewEdit();
         float maxOffset = GetMaxScrollOffset();
         if (maxOffset > 0.0f)
         {
@@ -240,6 +246,11 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
     private void UpdateScrollMetrics()
     {
+        if (_requireHierarchyViewRestore is { } requireRestore)
+        {
+            requireRestore();
+            return;
+        }
         if (_treeListTransform is null)
             return;
 

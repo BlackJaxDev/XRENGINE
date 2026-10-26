@@ -2284,3 +2284,43 @@ remain open. Value-assignment planning adds no code in this checkpoint.
 
 Only the same five public documentation paths changed after the private migration
 snapshot `2462125639af4750609c88730e96866d547a1f86`. No private writes occurred.
+
+
+## Grouped values, hierarchy views, and Vulkan crop proof
+
+The grouped inspector now assigns an outgoing value to one explicitly marked key
+per distinct curve. It preserves each key's synchronization behavior, full authored
+payload, time/frame/order, and peer state in one Undo transaction. Notification
+revisions detect callback value changes that return to their old value. Marking
+labels now describe shared key targets rather than removal-only targets. Incoming
+values, other handles, and grouped time edits remain follow-up code.
+
+Native dock moves transfer hierarchy expansion, effective scroll, and editor-scene
+visibility for the same live document. Exact path, provider, intent, and scrollbar
+proofs protect restore and admitted partial-restore compensation. Selection, focus,
+and rename drafts are not part of this receipt. No saved format changed.
+
+The canonical Vulkan direct-world route checks compiled stages, reflected members,
+descriptor offsets, mapped allocation lifetime, and actual crop/model uniform bytes.
+A new multi-record publication test verifies painter order and frozen nested crops.
+Cropped custom/stereo shaders and arbitrary 3D overrides remain unsupported; graphics
+acceptance is separate. The broad reconciliation remains **51/60**.
+
+Focused portable runs now have **138 distinct passing latest results**. These are
+separate affected runs, not one full-suite pass: 102 cases with one corrected
+notification fixture rerun, 35 geometry/visibility cases, and 35 world-publication
+cases with 34 overlapping earlier cases. No full suite was repeated. The new
+**13 grouped-value backend, seven grouped-value UI, and 15 hierarchy-transfer
+Editor cases are compile-only**. With the previous 70, **105 Editor cases remain
+unrun**. Laptop, GPU, native input, IME, visual, and performance checks did not run.
+
+The one-level nested-list draft is not published in this checkpoint. Review found
+that callback-transferred or replaced detail panes need exact attempt ownership
+through construction and retirement. The draft is preserved in a separate local
+stash; all six earlier stashes remain unchanged. No owner-policy choice is implied.
+Only the same five public documentation paths changed after the frozen private
+migration snapshot. This task made no private writes.
+
+The frozen checkpoint passes Headless, Editor, and test-project compilation through
+wrapper builds 143–145 with zero warnings/errors. All 10,975 source/project hashes
+remained unchanged. Runtime Rendering and Vulkan also compile cleanly.

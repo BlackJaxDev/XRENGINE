@@ -81,7 +81,7 @@ public sealed class InspectorFloatCurveRemovalDetailTests
         try
         {
             Select(root, detail, first);
-            var marks = Field<InspectorFloatCurveRemovalMarks>(detail, "_removalMarks");
+            var marks = Field<InspectorFloatCurveKeyMarks>(detail, "_removalMarks");
             Assert.That(marks.MarkedCount, Is.Zero);
             Call(detail, "RemoveMarkedKeys");
             Assert.That((a.Keyframes.Count, b.Keyframes.Count), Is.EqualTo((2, 2)));
@@ -116,7 +116,7 @@ public sealed class InspectorFloatCurveRemovalDetailTests
             Assert.That((a.Keyframes.Count, b.Keyframes.Count), Is.EqualTo((2, 2)));
             Assert.That(Undo.CanUndo, Is.False);
             Refresh(root);
-            Assert.That(Field<InspectorFloatCurveRemovalMarks>(detail, "_removalMarks").MarkedCount, Is.Zero);
+            Assert.That(Field<InspectorFloatCurveKeyMarks>(detail, "_removalMarks").MarkedCount, Is.Zero);
         }
         finally { root.Destroy(true); Undo.ClearHistory(); }
     }
@@ -214,7 +214,7 @@ public sealed class InspectorFloatCurveRemovalDetailTests
             };
             Call(detail, "RemoveMarkedKeys");
             Assert.That(changed, Is.True);
-            Assert.That(Field<InspectorFloatCurveRemovalMarks>(detail, "_removalMarks").GetMarkedKey(0), Is.SameAs(remaining));
+            Assert.That(Field<InspectorFloatCurveKeyMarks>(detail, "_removalMarks").GetMarkedKey(0), Is.SameAs(remaining));
             Assert.That((a.Keyframes.Count, b.Keyframes.Count), Is.EqualTo((1, 1)));
         }
         finally { root.Destroy(true); Undo.ClearHistory(); }
