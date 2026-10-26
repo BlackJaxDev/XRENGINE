@@ -491,6 +491,13 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to fetch swapchain images ({result}).");
 
+        // A new generation can reuse a native image handle from a retired
+        // generation. Remove the submitted layout state for each handle, so
+        // that the first recording starts from an undefined layout.
+        Image[] generationImages = _output.Desktop.Images;
+        for (int index = 0; index < generationImages.Length; index++)
+            _resources.Images.ClearTrackedLayouts(generationImages[index]);
+
         _output.Desktop.PresentCompletion = new VulkanWsiPresentCompletion(
             _api, _device.Device, checked((int)imageCount), _output.Desktop.Maintenance1Enabled,
             _output.Desktop.StreamlineFrameGenerationActive);
