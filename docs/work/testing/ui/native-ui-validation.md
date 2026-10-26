@@ -912,3 +912,26 @@ Matching editor/test build 87 passes with zero warnings/errors (4m02.09s).
 All 10,918 source inputs stayed unchanged through headless build 262, runs
 227/228, and this build. All 40 new editor rename cases compile. They have not
 run on Windows. No live editor, GPU, native IME, or performance result is claimed.
+
+
+### Windows rename display repair
+
+At `2462125639af4750609c88730e96866d547a1f86`, the parent reports 38/40 rename
+cases, 119/119 shared cases, and 581/583 combined cases passing. All prior
+448 cases and private-list finalizer coverage remain passing. The two failures
+are documented in the continuation investigation: a creating lookup on a
+retired test control, and duplicate text construction in hierarchy rename rows.
+
+The repair retains the original replacement and ownership assertions. Run
+`NativeHierarchyWorkflowTests` on Windows at the new candidate, including
+`RenameRowUsesOneConfiguredDisplayBeforeAndAfterReactivation`, then repeat the
+broader selection. The new case requires exactly one display, the input's exact
+display identity, intended style, and retained draft text after reactivation.
+Do not treat managed compilation as Windows or live acceptance.
+
+For the isolated rename repair, headless build 264 passes with zero warnings/errors
+(15.60s), and full portable run 231 passes **1,574/1,574** (27.108s), with no
+failures or skips. Editor/test build 89 passes with zero warnings/errors (1m28.75s).
+All 10,918 source inputs stayed fixed through these checks. The 41 rename cases
+compile, including the new single-display case. Windows reruns are still pending;
+this is not live editor, GPU, native IME, or performance acceptance.

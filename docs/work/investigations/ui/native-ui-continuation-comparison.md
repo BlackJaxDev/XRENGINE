@@ -1913,3 +1913,44 @@ Matching editor/test build 87 passes with zero warnings/errors (4m02.09s).
 All 10,918 source inputs stayed unchanged through headless build 262, runs
 227/228, and this build. All 40 new editor rename cases compile. They have not
 run on Windows. No live editor, GPU, native IME, or performance result is claimed.
+
+
+### Windows rename display failures at 24621256
+
+The parent reports a clean Windows build at `2462125639af4750609c88730e96866d547a1f86`,
+with zero warnings/errors. Rename cases pass 38/40, shared cases pass 119/119,
+and the combined selection passes 581/583. No case is skipped or incomplete.
+All prior 448 cases, the eight finalizer cases, and the asset-spawn cases still
+pass. The published private-list finalizer repair at `a30061f4` remains accepted.
+
+`FocusClearRejectsChangedRenameRowOwnership("display")` uses the old rename
+input's creating `TextComponent` getter after its row has retired. The getter
+tries to insert into a destroyed component list. This is a test-body lookup,
+not the earlier teardown defect. The fixture now captures the original display
+before retirement, uses it for the callback edit, and reads that same display
+for the final assertion. It does not create another sibling to inspect retired
+state.
+
+`VisibilityCallbackCannotReplaceTheCapturedRenameDisplay(true)` exposes a real
+construction error. The hierarchy row creates `UITextInputComponent` before its
+explicit `UITextComponent`. The input's required-component attribute creates
+display A; the next explicit add creates display B. The fixture removes A and
+adds C, so the first-component lookup returns pre-existing B instead of C. The
+row also styles B while the input uses A. The repair creates text before input,
+as the shared native text-field factory already does. This makes the input use
+the intended single 14pt white display. The replacement `SameAs` assertion is
+unchanged. A new editor case checks count, identity, style, and retained text
+before and after panel reactivation.
+
+The animation candidate-view work is preserved in local stash
+`072cee153cbd89afdeb448afb0fddca31986222c`, without publication. Its portable
+suite passed 1,579/1,579 and editor/test build 88 passed with zero warnings/errors.
+The rename repair is validated and published separately; its Windows acceptance
+remains pending until the parent reruns the candidate.
+
+For the isolated rename repair, headless build 264 passes with zero warnings/errors
+(15.60s), and full portable run 231 passes **1,574/1,574** (27.108s), with no
+failures or skips. Editor/test build 89 passes with zero warnings/errors (1m28.75s).
+All 10,918 source inputs stayed fixed through these checks. The 41 rename cases
+compile, including the new single-display case. Windows reruns are still pending;
+this is not live editor, GPU, native IME, or performance acceptance.

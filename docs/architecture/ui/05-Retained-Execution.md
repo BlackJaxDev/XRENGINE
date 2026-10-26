@@ -2228,3 +2228,8 @@ without replaying focus gain. Newer focus requests retain ownership. A gain
 exception remains primary if cleanup also fails; loss callbacks are not retried
 under a fresh content snapshot. These are managed ownership contracts, not live
 native-window or IME acceptance.
+
+
+Hierarchy rename rows create their text component before the input. The input
+requires a text component and otherwise creates one itself. This order keeps
+one display and ensures the input uses the configured font size and color.

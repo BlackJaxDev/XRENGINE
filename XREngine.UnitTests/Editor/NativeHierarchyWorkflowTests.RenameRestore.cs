@@ -13,6 +13,33 @@ namespace XREngine.UnitTests.Editor;
 public sealed partial class NativeHierarchyWorkflowTests
 {
     [Test]
+    public void RenameRowUsesOneConfiguredDisplayBeforeAndAfterReactivation()
+    {
+        SceneNode source = new("Original");
+        var (root, panel, canvas, input, rename) = FocusRename(source);
+        try
+        {
+            CheckDisplay(rename);
+            rename.Text = "Draft title";
+            Invoke(panel, "OnComponentDeactivated");
+            UITextInputComponent replacement = ReactivateAndPresentRename(panel, canvas, input, source, 2);
+            CheckDisplay(replacement);
+            Assert.That(input.FocusedComponent, Is.SameAs(replacement));
+            Assert.That(replacement.TextComponent.Text, Is.EqualTo("Draft title"));
+        }
+        finally { root.Destroy(true); source.Destroy(true); }
+
+        static void CheckDisplay(UITextInputComponent field)
+        {
+            UITextComponent[] displays = field.SceneNode.GetComponents<UITextComponent>().ToArray();
+            Assert.That(displays, Has.Length.EqualTo(1));
+            Assert.That(field.TextComponent, Is.SameAs(displays[0]));
+            Assert.That(displays[0].FontSize, Is.EqualTo(14.0f));
+            Assert.That(displays[0].Color, Is.EqualTo(XREngine.Data.Colors.ColorF4.White));
+        }
+    }
+
+    [Test]
     public void ReplacedDisplayLifetimeWhileWaitingForPresentationCancelsRenameFocus()
     {
         SceneNode source = new("Original");

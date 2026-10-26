@@ -530,7 +530,7 @@ public partial class HierarchyPanel
         unloadGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
         unloadGlyph.VerticalAlignment = EVerticalAlignment.Center;
 
-        var renameNode = rowNode.NewChild<UITextInputComponent, UITextComponent>(out var renameInput, out var renameText);
+        var renameNode = rowNode.NewChild<UITextComponent, UITextInputComponent>(out var renameText, out var renameInput);
         UIBoundableTransform renameTransform = renameNode.GetTransformAs<UIBoundableTransform>(true)!;
         renameTransform.MaxAnchor = new Vector2(1, 1);
         renameTransform.Margins = new Vector4(26, Margin, 30, Margin);

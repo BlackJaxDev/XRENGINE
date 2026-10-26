@@ -202,6 +202,7 @@ public sealed partial class NativeHierarchyWorkflowTests
         try
         {
             rename.Text = "Old draft";
+            UITextComponent originalDisplay = rename.TextComponent;
             UIListTransform list = Field<UIListTransform>(panel, "_treeListTransform");
             bool callbackRan = false;
             input.PropertyChanged += (_, property) =>
@@ -212,7 +213,7 @@ public sealed partial class NativeHierarchyWorkflowTests
                 if (change == "provider")
                     list.DetachVirtualProviderForOwnerTeardown();
                 else if (change == "display")
-                    rename.TextComponent.Text = "Callback display";
+                    originalDisplay.Text = "Callback display";
                 else
                 {
                     SceneNode parent = new(root, "Transferred input");
@@ -228,7 +229,7 @@ public sealed partial class NativeHierarchyWorkflowTests
             Assert.That(replacement.Text, Is.Not.EqualTo("Old draft"));
             Assert.That(input.FocusedComponent, Is.Null);
             if (change == "display")
-                Assert.That(rename.TextComponent.Text, Is.EqualTo("Callback display"));
+                Assert.That(originalDisplay.Text, Is.EqualTo("Callback display"));
             if (change == "reparent")
             {
                 Assert.That(rename.Text, Is.EqualTo("Old draft"));

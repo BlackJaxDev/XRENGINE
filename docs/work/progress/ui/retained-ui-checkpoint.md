@@ -1862,3 +1862,25 @@ focus assertions and production ownership guards are unchanged. The matching
 editor/test build 87 passes with zero warnings/errors (4m02.09s). All 10,918
 source inputs stayed unchanged through build 262, runs 227/228, and build 87.
 The 40 new editor cases compile; their Windows execution remains pending.
+
+
+## Hierarchy rename display repair
+
+Windows `24621256` passes 581/583 combined cases; all prior 448 cases remain
+passing. One new fixture reads retired state through a creating getter. It now
+reads the captured original display. The other failure exposes duplicate text
+components in hierarchy rename rows. Creating text before input removes the
+duplicate and makes the input use the intended configured display. Original
+ownership and replacement assertions remain intact; a new editor case checks
+the single-display contract across reactivation. Windows revalidation is pending.
+
+The unrelated animation candidate-view implementation remains in local stash
+`072cee153cbd89afdeb448afb0fddca31986222c`; it is not part of this repair. Its
+portable tests and compilation do not establish Windows acceptance.
+
+For the isolated rename repair, headless build 264 passes with zero warnings/errors
+(15.60s), and full portable run 231 passes **1,574/1,574** (27.108s), with no
+failures or skips. Editor/test build 89 passes with zero warnings/errors (1m28.75s).
+All 10,918 source inputs stayed fixed through these checks. The 41 rename cases
+compile, including the new single-display case. Windows reruns are still pending;
+this is not live editor, GPU, native IME, or performance acceptance.
