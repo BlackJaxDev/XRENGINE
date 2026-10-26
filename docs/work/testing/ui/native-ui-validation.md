@@ -1292,3 +1292,39 @@ was repeated. These are Linux portable results, not Windows, native-window input
 GPU, IME, visual, or performance acceptance. The separate **47 unrun Editor
 cases** remain 25 Animation search, 11 grouped-key, 7 linked-list, and 4 dictionary
 cases. This run does not replace their Windows execution.
+
+
+## Explicit grouped-removal checks
+
+The portable runner links the production `InspectorFloatCurveRemovalMarks` model.
+Its nine new cases cover complete explicit targeting, equal-time identity,
+payload and exact-generation invalidation, lifetime/source changes, newer marking
+intent, reentrant admission, duplicate curves, and the curve-count bound.
+
+Run the affected portable filter:
+
+```text
+class =~ 'InspectorFloatCurveRemovalMarksTests|UIVirtualTable|VectorKeyframeAuthoredStateTests|AnimationLengthEditTests|InspectorFloatCurveTransitionOwnerTests'
+```
+
+The final run passed **77/77** in 1.514s, with no failures, skips, or incomplete
+cases. Wrapper build 124 compiled the matching production dependencies and editor.
+After a namespace-only fixture correction, test-project build 125 passed with
+`--no-restore -p:BuildProjectReferences=false` (43.34s, zero warnings/errors).
+Headless build 126 used the same flags and passed (12.73s, zero warnings/errors).
+All 10,953 final source inputs stayed unchanged through execution. No full suite ran.
+
+`InspectorFloatCurveRemoveTests` adds **nine Editor cases** for exact grouped
+mutation, payload/order and Undo/Redo, shared curves, invalid targets/bounds,
+callback conflicts/compensation, shortened curves, and malformed track order.
+`InspectorFloatCurveRemovalDetailTests` adds **eleven Editor cases** for explicit
+marking, focus separation, source replacement, transferred/queued views, provider
+recycling, newer callback intent, and the unchanged shared-single-curve route.
+These **20 cases are compile-only**. They need Windows execution before runtime
+acceptance. Together with the earlier 47 unrun Editor cases, **67 remain unrun**;
+portable marking tests do not replace their execution.
+
+Live acceptance must check the labelled Previous/Next removal curve and
+Mark / Unmark actions, mixed/equal-time keys, the displayed row limit, Undo/Redo,
+and source replacement in a real inspector. Windows/native input, GPU, IME,
+visual, and performance acceptance remain separate. The laptop remains stopped.

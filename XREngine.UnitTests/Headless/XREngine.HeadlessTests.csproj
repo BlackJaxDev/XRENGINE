@@ -50,6 +50,8 @@
     <Compile Include="../Scene/QueueComponentProbe.cs" Link="Scene/QueueComponentProbe.cs" />
     <Compile Include="../Scene/DetachedLeafLiveWorldRetirementTests.cs" Link="Scene/DetachedLeafLiveWorldRetirementTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatTransitionOwnership.cs" Link="Editor/InspectorFloatTransitionOwnership.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatCurveRemovalMarks.cs" Link="Editor/InspectorFloatCurveRemovalMarks.cs" />
+    <Compile Include="../Editor/InspectorFloatCurveRemovalMarksTests.cs" Link="Editor/InspectorFloatCurveRemovalMarksTests.cs" />
     <Compile Include="../Editor/InspectorFloatCurveTransitionOwnerTests.cs" Link="Editor/InspectorFloatCurveTransitionOwnerTests.cs" />
     <Compile Include="../Rendering/UITextMultilineSubmitTests.cs" Link="Rendering/UITextMultilineSubmitTests.cs" />
     <Compile Include="../Rendering/UITextPointerCaretTests.cs" Link="Rendering/UITextPointerCaretTests.cs" />

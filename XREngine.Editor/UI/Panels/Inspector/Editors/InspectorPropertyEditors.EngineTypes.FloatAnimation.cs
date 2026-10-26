@@ -38,7 +38,7 @@ public static partial class InspectorPropertyEditors
             context.Build();
         }
 
-        private sealed class FloatAnimationDetail
+        private sealed partial class FloatAnimationDetail
         {
             private const int MaximumKeys = 8192;
             private const int SampleCount = 97;
@@ -108,6 +108,7 @@ public static partial class InspectorPropertyEditors
             {
                 _root = root;
                 _rootIdentity = ObjectConstructionIdentity.Capture(root);
+                _removalRootTransformIdentity = ObjectConstructionIdentity.Capture(root.Transform);
                 _property = property;
                 _targets = targets?.ToArray();
                 _outerOwners = _targets?.OfType<XRBase>()
@@ -282,6 +283,8 @@ public static partial class InspectorPropertyEditors
                 _outWeightedButton.IsEnabled = false;
                 if (!ContinueBuild()) return;
 
+                BuildGroupedRemovalControls(card);
+                if (!ContinueBuild()) return;
                 _plot = new UIRetainedPlot(card, "FloatAnimationPlot");
                 if (!ContinueBuild()) return;
                 _plot.Root.GetTransformAs<UIBoundableTransform>(true)!.Height = 160;
@@ -328,9 +331,14 @@ public static partial class InspectorPropertyEditors
                     ObjectConstructionIdentity.Capture(scrollNode.Transform);
                 ObjectConstructionIdentity cardIdentity =
                     ObjectConstructionIdentity.Capture(card);
-                bool ListOwned() => listIdentity.IsCurrent && transformIdentity.IsCurrent &&
-                    scrollIdentity.IsCurrent && scrollTransformIdentity.IsCurrent &&
-                    cardIdentity.IsCurrent && _rootIdentity.IsCurrent &&
+                ObjectConstructionIdentity cardTransformIdentity =
+                    ObjectConstructionIdentity.Capture(card.Transform);
+                bool ListOwned() => LiveRemovalIdentity(listIdentity) && LiveRemovalIdentity(transformIdentity) &&
+                    LiveRemovalIdentity(scrollIdentity) && LiveRemovalIdentity(scrollTransformIdentity) &&
+                    LiveRemovalIdentity(cardIdentity) && LiveRemovalIdentity(cardTransformIdentity) &&
+                    ReferenceEquals(card.Transform, cardTransformIdentity.Target) && LiveRemovalIdentity(_rootIdentity) &&
+                    LiveRemovalIdentity(_removalRootTransformIdentity) &&
+                    ReferenceEquals(_root.Transform, _removalRootTransformIdentity.Target) &&
                     ReferenceEquals(_list, listNode.Transform) &&
                     ReferenceEquals(listNode.Parent, scrollNode) &&
                     ReferenceEquals(listNode.Transform.Parent, scrollNode.Transform) &&
@@ -339,6 +347,13 @@ public static partial class InspectorPropertyEditors
                     ReferenceEquals(card.Parent, _root);
                 if (!ListOwned()) { Retire(); return; }
                 _list.VirtualProvider = _table;
+                ulong providerIncarnation = _list.VirtualProviderIncarnation;
+                var removalWorld = _root.World;
+                _ownsRemovalTablePath = () => ListOwned() && ReferenceEquals(_root.World, removalWorld) &&
+                    ReferenceEquals(_list.World, removalWorld);
+                _ownsRemovalTable = () => _ownsRemovalTablePath() &&
+                    ReferenceEquals(_list.VirtualProvider, _table) &&
+                    _list.VirtualProviderIncarnation == providerIncarnation;
                 if (!CanBuild)
                 {
                     if (ListOwned()) _list.DetachVirtualProviderForOwnerTeardown();
@@ -390,6 +405,7 @@ public static partial class InspectorPropertyEditors
                 _presentedLengthSelection = null;
                 _presentedAddSelection = null;
                 _presentedLengthSource = null;
+                _presentedRemovalSelection = null;
             }
 
             private bool IsCurrent(InspectorFloatCurveSource? source, ulong revision)
@@ -445,7 +461,12 @@ public static partial class InspectorPropertyEditors
                         out InspectorFloatCurveLengthSelection? selection,
                         out string groupReason, _transitionPath);
                     if (grouped && selection is { HasDistinctCurves: true })
+                    {
                         _lengthSelection = selection;
+                        if (selection.Curves.Length <= InspectorFloatCurveRemovalMarks.MaximumCurves)
+                            _removalMarks = new(selection.Curves.Select(member => member.Curve).ToArray(),
+                                selection.IsCurrentFast);
+                    }
                     else if (!grouped)
                         reason = groupReason;
                 }
@@ -456,7 +477,7 @@ public static partial class InspectorPropertyEditors
                             !InspectorFloatCurveAddEdit.CanAddWithinLimits(limited)
                             ? "Multiple curves selected. Add supports up to 64 curves and 100000 keys after insertion; length edits still apply to all."
                             : _lengthSelection is not null
-                            ? "Multiple curves selected. Add at a common time or edit all lengths; existing keys remain read-only."
+                            ? "Multiple curves selected. Add at a common time, edit lengths, or explicitly mark one key per curve for removal."
                             : reason;
                 if (!IsCurrent(_source, revision)) return;
                 if (!found || _source is null)
@@ -482,6 +503,10 @@ public static partial class InspectorPropertyEditors
                         Unsubscribe(member);
                 _source = null;
                 _lengthSelection = null;
+                _removalMarks = null;
+                _groupSelected = null;
+                _groupCurveIndex = 0;
+                _presentedRemovalSelection = null;
                 _presentedLengthSelection = null;
                 _presentedAddSelection = null;
                 _presentedLengthSource = null;
@@ -543,7 +568,11 @@ public static partial class InspectorPropertyEditors
             private void BakedChanged(BasePropAnimBakeable animation)
                 => RequestRefresh();
 
-            private void TrackChanged(BaseKeyframeTrack track) => RequestRefresh();
+            private void TrackChanged(BaseKeyframeTrack track)
+            {
+                _removalMarks?.PruneInvalid();
+                RequestRefresh();
+            }
 
             private void TrackLengthChanged(float previous, BaseKeyframeTrack track)
                 => RequestRefresh();
@@ -553,12 +582,11 @@ public static partial class InspectorPropertyEditors
                 InspectorFloatCurveSource? source = _source;
                 ulong revision = _revision;
                 _keys.Clear();
+                _presentedRemovalSelection = null;
+                if (!RefreshGroupedRemovalVisibility(source, revision)) return;
                 if (source is null || !IsCurrent(source, revision))
                 {
-                    _rows.Replace([]);
-                    if (!IsCurrent(source, revision)) return;
-                    _table!.SelectedId = null;
-                    if (!IsCurrent(source, revision)) return;
+                    if (!RefreshGroupedRemovalRows(revision)) return;
                     _selected = null;
                     bool canAdd = _lengthSelection is { } addSelection &&
                         InspectorFloatCurveAddEdit.CanAddWithinLimits(addSelection);
@@ -587,6 +615,10 @@ public static partial class InspectorPropertyEditors
                     if (!IsCurrent(source, revision)) return;
                     _presentedAddSelection = canAdd ? _lengthSelection : null;
                     _presentedAddRevision = revision;
+                    _presentedRemovalSelection = _lengthSelection;
+                    _presentedRemovalRevision = revision;
+                    _presentedRemovalRows = _rows.Revision;
+                    _presentedRemovalIntent = _removalMarks?.IntentRevision ?? 0;
                     return;
                 }
                 List<(ulong Id, FloatKeyframe Item)> snapshot = [];
@@ -691,6 +723,15 @@ public static partial class InspectorPropertyEditors
 
             private void SelectKey(ulong? id)
             {
+                if (_lengthSelection is not null)
+                {
+                    FloatKeyframe? groupedKey = id is { } groupedId && _keys.TryGetValue(groupedId, out var groupedValue)
+                        ? groupedValue : null;
+                    if (ReferenceEquals(_groupSelected, groupedKey)) return;
+                    _groupSelected = groupedKey;
+                    RequestRefresh();
+                    return;
+                }
                 _selected = id is { } value && _keys.TryGetValue(value,
                     out FloatKeyframe? key) ? key : null;
                 RequestRefresh();
@@ -1057,7 +1098,9 @@ public static partial class InspectorPropertyEditors
                 Unsubscribe();
                 foreach (XRBase owner in _outerOwners)
                     owner.PropertyChanged -= OuterChanged;
-                if (_list is not null)
+                bool ownsTable = _ownsRemovalTable?.Invoke() == true;
+                ulong retiringIncarnation = _list?.VirtualProviderIncarnation ?? 0;
+                if (_list is not null && ownsTable)
                     _list.DetachVirtualProviderForOwnerTeardown();
                 if (_table is not null)
                 {
@@ -1072,7 +1115,9 @@ public static partial class InspectorPropertyEditors
                 if (_inWeight is not null) _inWeight.Submitted -= SubmitIncomingWeight;
                 if (_outWeight is not null) _outWeight.Submitted -= SubmitOutgoingWeight;
                 if (_length is not null) _length.Submitted -= SubmitLength;
-                _rows.Replace([]);
+                if (ownsTable && _ownsRemovalTablePath?.Invoke() == true && _list is not null &&
+                    _list.VirtualProvider is null && _list.VirtualProviderIncarnation == retiringIncarnation + 1)
+                    _rows.Replace([]);
                 _keys.Clear();
                 _ids.Clear();
             }

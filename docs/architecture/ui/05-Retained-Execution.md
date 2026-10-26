@@ -1790,8 +1790,9 @@ and the state-machine source document. Commands also reject duplicate membership
 It does not depend on runtime owner back-references or initialization. Bare
 transition properties cannot establish document ownership and remain unavailable.
 Selected targets that share the same curve edit it once. Distinct curves support
-Set length, Stretch length, and Add at a common time as one transaction. Existing
-key editing and removal remain unavailable for distinct curves. Unsupported getter ownership rejects the whole selection.
+Set length, Stretch length, and Add at a common time as one transaction. Explicit
+one-key-per-curve removal is described below. Existing-key time/value/handle edits
+remain unavailable for distinct curves. Unsupported getter ownership rejects the whole selection.
 
 AnimationAuthoringTransaction supplies the existing clip and new property paths
 with the same reservation, exact Undo/Redo, rollback, conflict, and dirty-document
@@ -1981,7 +1982,7 @@ concurrent lifetime admission.
 
 The retained detail enables length input and length actions for a distinct-curve
 selection. Mixed lengths display an empty input. Common-time Add is described
-below; existing key and plot editing stay unavailable. The length control retains the displayed selection and revision;
+below; existing-key value/time and plot editing stay unavailable. The length control retains the displayed selection and revision;
 replacement, invalidated presentation, or retirement rejects stale submissions.
 Subscriptions attach once per distinct curve and track and detach on rebind.
 This does not establish live multi-selection or Windows Undo acceptance.
@@ -2288,8 +2289,8 @@ generic-interface adapters, live snapshot refresh, or variable-height rows.
 The retained float detail enables a common key time and Add for two through 64
 unique selected curves. Shared curve references insert once. The action permits
 at most 100,000 total keys after insertion. The displayed limit and action
-preflight use the same count check. Existing-key editing and removal remain
-unavailable for distinct curves.
+preflight use the same count check. Existing-key time/value/handle editing remains
+unavailable for distinct curves. Explicit grouped removal is described below.
 
 `InspectorFloatCurveAddEdit` uses the existing selected-owner capture and
 `AnimationAuthoringTransaction`. It retains every owner and document, rejects a
@@ -2542,3 +2543,38 @@ custom/provider graphs eligible for reserved retirement. Existing adopted-child
 destruction remains the policy; no graph reservation or new ownership framework
 was added. Borrowed children and caller-created graphs require a separate explicit
 ownership contract before stronger retirement guarantees can be made.
+
+
+## Explicit removal from selected float curves
+
+The grouped inspector keeps table focus separate from destructive targets. Use
+Previous/Next removal curve to choose a distinct curve. Select a key row, then
+use Mark / Unmark key for removal. One key can be marked per curve. Remove marked
+keys is available only when every participating curve has a current mark. Empty
+curves cannot supply a target. Shared curve references appear once, while source
+validation retains every selected owner. The single-curve editing path is unchanged.
+
+`InspectorFloatCurveRemovalMarks` stores exact key references, authored payload,
+time/frame, track generation, and a marking intent revision. It does not match
+time values or row positions. The existing virtual table shows at most 8,192 keys
+of the currently chosen curve. Marks remain separate from recycled rows. A source
+replacement, changed target, or exact edit generation invalidates the affected
+marks. Old completion cannot clear newer marking intent.
+
+Grouped removal supports two through 64 distinct curves and at most 100,000
+captured keys. `InspectorFloatCurveRemoveEdit` and `InspectorFloatCurveRemoveMember`
+capture full before/after order and every key's authored payload, time, and frame.
+Preflight rejects unsorted tracks; equal-time keys remain distinct. Keys retained
+beyond a shortened curve end remain removable and restorable. The action uses
+`TryApplyExactKeyEdit` and one `AnimationAuthoringTransaction`, reserves all captured
+owners/keys, and validates peer generations around each notification. Compensation
+reverses only unchanged receipt-owned steps. Conflicting callback edits survive
+with guarded recovery history instead of being overwritten. Undo restores the
+original key objects, order, and payload; it does not reinstate stale UI marks.
+
+Grouped commands and refresh writes require the captured table/provider
+incarnation and exact live control paths. Retirement clears row data only after
+its provider detach has settled with the expected incarnation and owner. A callback
+that transfers the table or installs a provider cancels that cleanup authority.
+This does not add generic table multi-selection, approximate-time matching,
+multiple marked keys per curve, grouped value/time editing, or a new Undo framework.

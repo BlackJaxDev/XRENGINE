@@ -2179,7 +2179,7 @@ checklist or permission request.
 | Open area | Concrete code/contract remainder | Holds and acceptance |
 |---|---|---|
 | Direct-world clipping | Vulkan direct-world publication/clipping and unsupported world output profiles; bounded OpenGL canvas output already exists. | World-shadow and bindless-use choices remain open. OpenGL/Vulkan GPU and visual checks remain required. |
-| Inspector | Existing-key edit/remove across distinct selected curves; partial-key/multiline dictionary cases; tall/custom collection editors and remaining nested row coverage. Top-level property rows and supported fixed-height collections are already virtual. | Variable-height priority is an owner decision. Real-host multi-object Undo and scale checks remain. |
+| Inspector | Existing-key time/value/handle edits across distinct selected curves; explicit one-key-per-curve removal is implemented; partial-key/multiline dictionary cases; tall/custom collection editors and remaining nested row coverage. Top-level property rows and supported fixed-height collections are already virtual. | Variable-height priority is an owner decision. Real-host multi-object Undo and scale checks remain. |
 | Native panels | Remaining AnimationPanel authoring, broader hierarchy clone profiles, and document-end cleanup; full asset creation/recovery remains absent. Existing asset navigation, console, and bounded profiler views must not be reimplemented. | Persistent asset recovery proposal is held. Native panel workflow/visual acceptance remains. |
 | Shared controls | All ordinary menu factories now use existing guarded construction, including submenu host/component creation and matching close ownership. Custom-content ownership and reserved adopted-subtree retirement need a clear graph contract. Full paragraph/fallback/accessibility coverage remains. | Paragraph analyzer choice is held. Native input, IME, accessibility, and visual checks remain. No arbitrary adopted graph was admitted. |
 | Docking | Remaining cross-host focus/transfer-state parity. Existing dock tree mutation and tool-view transfer receipts are implemented. | Primary-window key migration is held. Mixed-DPI, pointer capture, overlap, and multi-window checks remain. |
@@ -2194,7 +2194,7 @@ variable-height priority, bindless image policy, world shadows, and stabilizatio
 None was resolved by the menu work. The adopted-graph issue is a missing contract,
 not a reported permission denial.
 
-The next product code work can focus on existing multi-curve key edits/removal
+The next product code work can focus on existing multi-curve key edits
 or a bounded remaining inspector collection case under the current fixed-height
 policy. Ordinary menu factory integration is complete; menu implementation stops
 at the custom/adopted ownership boundary. Do not replace these concrete gaps with
@@ -2229,3 +2229,34 @@ The broad implementation reconciliation remains **51/60**.
 This checkpoint changes only the same five public documentation paths listed
 for post-migration reconciliation. The private snapshot remains frozen at
 `2462125639af4750609c88730e96866d547a1f86`; this task makes no private writes.
+
+
+## Explicit grouped key removal checkpoint
+
+Distinct selected float curves now support an explicit removal target on each
+curve. Previous/Next removal curve chooses the displayed curve; Mark / Unmark
+key for removal records the exact selected key. Row focus alone does not mark.
+Remove marked keys requires every participating target. Shared curves mutate
+once while all selected owners remain validated. Limits remain 64 distinct
+curves and 100,000 captured keys, with the existing 8,192-row display limit per
+chosen curve. No time matching, grouped value/time edits, or general table
+multi-selection was added. The single-curve workflow remains in place.
+
+One existing animation transaction owns the removal and Undo/Redo. Full payload,
+frame, order, peer, and generation checks preserve callback edits; incomplete
+compensation retains guarded recovery. UI commands and refresh require exact live
+view ownership. Retirement preserves table data transferred during recycling.
+Newer marking intent survives an older completion.
+
+The matching editor and test source compiles. The final test-project and headless
+wrapper builds pass with zero warnings/errors. **77/77 affected portable tests**
+pass, including **nine new model cases**. The new **nine backend plus eleven UI
+Editor cases are compiled but unrun**. With the prior 47, **67 Editor cases now
+await Windows execution**. No laptop, full-suite, GPU, IME, visual, or performance
+run is implied. The investigation records the intermediate compiler corrections.
+
+This closes the bounded grouped-removal subtask and stops implementation for
+review. Existing-key time/value/handle editing and other inspector gaps remain;
+the broad reconciliation stays **51/60**. All owner-decision holds remain. Only
+the same five public documentation paths changed; private reconciliation remains
+with its owning task and the frozen `2462125639af4750609c88730e96866d547a1f86` snapshot.

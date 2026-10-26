@@ -69,6 +69,19 @@ internal static class InspectorFloatCurveActions
             key);
     }
 
+    public static bool Remove(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets)
+    {
+        if (!InspectorFloatCurveRemoveEdit.TryCapture(selection, targets,
+                out InspectorFloatCurveRemoveEdit? edit) || edit is null)
+            return false;
+        return AnimationAuthoringTransaction.Apply(selection.Curves[0].Curve,
+            selection.Documents, "Remove Selected Animation Keys",
+            () => edit.Apply(true), () => edit.Apply(false),
+            () => edit.Matches(true), () => edit.Matches(false), selection.IsCurrent,
+            null, edit.ReservationOwners);
+    }
+
     public static bool SetTime(InspectorFloatCurveSource source,
         FloatKeyframe key, float second)
     {

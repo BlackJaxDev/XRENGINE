@@ -2399,3 +2399,36 @@ components, and submenu host/component creation. `CreateContentRoot` for custom
 and provider content keeps its existing populated-graph contract. Stronger
 reserved retirement of arbitrary adopted graphs remains a separate contract
 question. This concludes ordinary menu factory implementation.
+
+
+## Explicit grouped key removal
+
+The source audit found no existing grouped key selection. The distinct-curve
+inspector cleared its key rows, and the shared virtual table retained one
+selected row. The approved bounded interaction adds a separate explicit mark per
+curve, requires all participating curves, and leaves ordinary table focus and the
+single-curve workflow intact. It does not infer targets from time or row position.
+
+`InspectorFloatCurveRemoveEdit` reuses the exact track edit and animation
+transaction contracts. Removal-specific review found two preflight differences
+from insertion: retained keys beyond a shortened end remain valid, and original
+key-time order must be checked before removal can hide a malformed key. Both
+conditions now have focused Editor regressions. UI review added exact live
+control/table/provider admission and post-detach ownership checks, so transfer
+or recycling cannot authorize stale removal or row-source clearing. Model intent
+checks reject newer marks created during admission.
+
+Build 123 reported a missing local identity declaration and two local-name
+conflicts (four compiler errors, zero warnings; 5m15.81s). Build 124 compiled the
+editor and production dependencies, then found two references lacking a namespace
+import in the new UI fixture (zero warnings; 1m24.68s). Only that import changed
+afterward. Wrapper build 125 reused the matching project references and compiled
+the test project with zero warnings/errors in 43.34s. Wrapper headless build 126
+also reused those references and passed with zero warnings/errors in 12.73s.
+
+The final 10,953 source inputs remained unchanged through the affected run.
+It passed **77/77** portable cases, including all **nine new marking-model cases**,
+in 1.514s. The new nine backend and eleven UI Editor cases compiled but did not
+run. No full suite, laptop work, or Windows execution occurred. Logs and source
+manifests remain under the existing ignored run: builds 123–126 and
+`grouped-removal-affected.log` / `grouped-removal-affected.xml`.
