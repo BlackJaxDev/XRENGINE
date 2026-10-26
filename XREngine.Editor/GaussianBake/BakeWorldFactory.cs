@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
@@ -23,6 +24,12 @@ public static class BakeWorldFactory
     public const string CameraRigSceneName = "GaussianBakeCameraRig";
 
     /// <summary>
+    /// Keeps the rest-pose content bounds of each input, so that the command and the render services
+    /// do not compute them two times. An input that is no longer used releases its entry.
+    /// </summary>
+    private static readonly ConditionalWeakTable<CookedBakeInput, StrongBox<AABB>> ContentBoundsByInput = new();
+
+    /// <summary>
     /// Returns the world to render. An avatar or an item gives a new world with the stage and the prefab instance,
     /// lit by the stage. A world gives the input world with its own lighting, plus the stage camera rig if the stage has one.
     /// </summary>
@@ -44,6 +51,7 @@ public static class BakeWorldFactory
     /// <summary>
     /// Joins the world bounds of every renderable mesh in the content. The stage is not part of the content.
     /// The method updates the transforms of the content first, so it can run before the content enters a world.
+    /// The first successful result for an input is kept, and later calls for that input return it again.
     /// </summary>
     /// <param name="input">The loaded bake input.</param>
     /// <param name="bounds">The joined bounds when the method returns true.</param>
@@ -52,6 +60,21 @@ public static class BakeWorldFactory
     {
         ArgumentNullException.ThrowIfNull(input);
 
+        if (ContentBoundsByInput.TryGetValue(input, out StrongBox<AABB>? known))
+        {
+            bounds = known.Value;
+            return true;
+        }
+
+        if (!ComputeContentBounds(input, out bounds))
+            return false;
+
+        ContentBoundsByInput.AddOrUpdate(input, new StrongBox<AABB>(bounds));
+        return true;
+    }
+
+    private static bool ComputeContentBounds(CookedBakeInput input, out AABB bounds)
+    {
         bool found = false;
         AABB total = default;
         foreach (SceneNode root in EnumerateContentRoots(input))

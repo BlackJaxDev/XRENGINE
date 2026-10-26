@@ -65,9 +65,21 @@ public static class BakeSplatPreviewCommand
         if (!options.DumpViewsOnly)
             return Fail(GaussianBakeFailureCodes.UnsupportedOption, "This engine version supports only --dump-views-only.");
 
+        // Load and check everything that can fail before the engine starts. A failure then exits with its
+        // failure code and never races engine shutdown.
+        CookedBakeInput input;
+        AABB bounds;
         SceneNode stage;
         try
         {
+            input = CookedBakeInputLoader.Load(options.InputPak, options.AssetPath, options.Kind);
+            if (!BakeWorldFactory.TryComputeContentBounds(input, out bounds))
+            {
+                throw new GaussianBakeException(
+                    GaussianBakeFailureCodes.ContentEmpty,
+                    $"The asset '{options.AssetPath}' has no renderable mesh with valid bounds.");
+            }
+
             stage = ResolveStage(options);
         }
         catch (GaussianBakeException ex)
@@ -75,9 +87,13 @@ public static class BakeSplatPreviewCommand
             return Fail(ex.FailureCode, ex.Message);
         }
 
+        Console.WriteLine($"Gaussian preview bake: content bounds min={bounds.Min}, max={bounds.Max}.");
         try
         {
-            return BakeRenderHost.Run(options, stage, (services, cancellationToken) => DumpViewsAsync(options, services, cancellationToken));
+            return BakeRenderHost.Run(
+                options,
+                stage,
+                (services, cancellationToken) => DumpViewsAsync(options, input, bounds, services, cancellationToken));
         }
         catch (Exception ex)
         {
@@ -100,19 +116,16 @@ public static class BakeSplatPreviewCommand
     }
 
     /// <summary>
-    /// Loads the input, renders <see cref="ViewCount"/> orbit views around the content bounds, and writes them as
-    /// <c>debug/views/view_NN.png</c> in the output folder.
+    /// Renders <see cref="ViewCount"/> orbit views around the content bounds of the loaded input, and writes them
+    /// as <c>debug/views/view_NN.png</c> in the output folder.
     /// </summary>
     private static async Task<int> DumpViewsAsync(
         BakeSplatPreviewOptions options,
+        CookedBakeInput input,
+        AABB bounds,
         IBakeRenderServices services,
         CancellationToken cancellationToken)
     {
-        CookedBakeInput input = CookedBakeInputLoader.Load(options.InputPak, options.AssetPath, options.Kind);
-        if (!BakeWorldFactory.TryComputeContentBounds(input, out AABB bounds))
-            throw new GaussianBakeException(GaussianBakeFailureCodes.ContentEmpty, $"The asset '{options.AssetPath}' has no renderable mesh with valid bounds.");
-
-        Debug.Out($"[GaussianBake] Content bounds: min={bounds.Min}, max={bounds.Max}.");
         IReadOnlyList<BakeCameraPose> poses = BakeViewPlanner.PlanOrbitViews(bounds, ViewCount);
         float[][] views = await services.CaptureViewsAsync(input, poses, ViewWidth, ViewHeight, cancellationToken).ConfigureAwait(false);
 
@@ -127,7 +140,25 @@ public static class BakeSplatPreviewCommand
         }
 
         Console.WriteLine($"Wrote {views.Length} capture views to {directory}");
+        Console.WriteLine($"Peak linear color channel in the captures (before the tonemap): {PeakColorChannel(views):F4}");
         return 0;
+    }
+
+    /// <summary>Returns the largest red, green, or blue value in the linear captures.</summary>
+    private static float PeakColorChannel(float[][] views)
+    {
+        float peak = 0.0f;
+        foreach (float[] view in views)
+        {
+            for (int i = 0; i < view.Length; i += 4)
+            {
+                float channel = MathF.Max(view[i], MathF.Max(view[i + 1], view[i + 2]));
+                if (channel > peak)
+                    peak = channel;
+            }
+        }
+
+        return peak;
     }
 
     private static void WriteViews(float[][] views, string directory, CancellationToken cancellationToken)

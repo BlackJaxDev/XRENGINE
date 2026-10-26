@@ -256,17 +256,21 @@ internal sealed class BakeViewCapture
         if (pipeline is not null)
             camera.RenderPipeline = pipeline;
 
-        // Fixed exposure keeps every view on the same scale, so that the views can be compared and averaged.
+        // The captures must be scene-referred linear values. HDR output skips the tonemap; a fixed exposure of 1
+        // keeps every view on the same scale. Contrast is a percent offset: the default 1 scales the color by
+        // 1.0201 around 0.5, so 0 makes the grade an identity. Tint, hue, saturation, and brightness default to identity.
         var colorStage = camera.GetPostProcessStageState<ColorGradingSettings>();
         if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
         {
             grading.AutoExposure = false;
             grading.Exposure = 1.0f;
+            grading.Contrast = 0.0f;
         }
         else
         {
             colorStage?.SetValue(nameof(ColorGradingSettings.AutoExposure), false);
             colorStage?.SetValue(nameof(ColorGradingSettings.Exposure), 1.0f);
+            colorStage?.SetValue(nameof(ColorGradingSettings.Contrast), 0.0f);
         }
 
         return camera;
