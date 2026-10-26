@@ -2005,3 +2005,32 @@ skipped or incomplete. These results do not establish live editor, GPU, IME,
 cross-host focus, or performance acceptance. The seven owner decisions remain
 held; ImGui remains the default. The same five documentation paths changed after
 the private-doc snapshot `24621256`. All six stashes remain preserved.
+
+
+## Fixed-height linked-list checkpoint
+
+Editable linked lists now create virtual rows for known fixed-height built-in
+editors. Shared source state preserves Set and Remove history; exact row/control
+admission rejects stale recycled bindings. Taller float-animation and custom
+editors keep their existing eager layout. Dictionary rows, variable-height
+virtualization, nested collection ownership, and broader inspector parity remain
+open. The original reconciliation remains **51/60**.
+
+Editor build 102 and test build 104 pass with zero warnings/errors (38.40s and
+46.93s). The final source manifests contain 10,931 inputs. Seven new Editor cases
+compile but are **not run on Windows**. The prior grouped-key cases also remain
+not run. No full portable suite was repeated. Laptop work remains stopped.
+
+The branch resumes from the signed, tree-equivalent tip `c5895511`; new work uses
+the configured `BlackJaxDev` identity and verified commit signing. Six stashes
+remain preserved. Documentation changes after the private migration snapshot
+remain limited to retained execution, this checkpoint, the continuation
+investigation, the validation plan, and the native UI TODO. No private repository
+or migration branch is changed.
+
+Remaining code includes broader world rendering/clipping, dictionary and tall
+inspector rows, panel/animation parity, shared-control integration, cross-host
+focus and lifecycle state, and mutation routes held by the asset-recovery decision.
+The seven owner dependencies remain open. Live Windows input, GPU/visual checks,
+IME/accessibility, cross-window behavior, and equal-workload performance acceptance
+remain separate from code and compilation. ImGui remains the default.

@@ -1,0 +1,455 @@
+using System.Numerics;
+using System.Reflection;
+using XREngine.Components;
+using XREngine;
+using XREngine.Data.Colors;
+using XREngine.Data.Core;
+using XREngine.Editor.UI;
+using XREngine.Rendering.UI;
+using XREngine.Scene;
+
+namespace XREngine.Editor;
+
+public static partial class InspectorPropertyEditors
+{
+    public static partial class CollectionTypes
+    {
+        private sealed partial class CollectionEditorContext
+        {
+            private void RenderVirtualLinkedList(Type elementType,
+                EditorLinkedSourceLease[] sources, List<object?> values, ulong generation)
+            {
+                SceneNode branch = _container.NewChild();
+                try
+                {
+                    EnsureVerticalLayout(branch);
+                    if (!KeepRenderedBranch(branch, generation)) return;
+                    AddInfoLabel(branch, $"Count: {values.Count}");
+                    if (!KeepRenderedBranch(branch, generation)) return;
+                    SceneNode header = branch.NewChild();
+                    UIListTransform headerLayout = header.SetTransform<UIListTransform>();
+                    headerLayout.DisplayHorizontal = true;
+                    headerLayout.ItemSpacing = 6.0f;
+                    CreateInlineButton(header, "Add", () =>
+                    {
+                        if (IsCurrentBuild(generation)) AddLinkedListElement(sources, generation);
+                    });
+                    if (!KeepRenderedBranch(branch, generation)) return;
+                    if (values.Count == 0)
+                    {
+                        AddInfoLabel(branch, "<empty>");
+                        return;
+                    }
+
+                    SceneNode scrollNode = branch.NewChild();
+                    UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+                    scroll.MinAnchor = Vector2.Zero;
+                    scroll.MaxAnchor = Vector2.One;
+                    scroll.Height = 300;
+                    scrollNode.AddComponent<UIScrollRegionComponent>();
+                    if (!KeepRenderedBranch(branch, generation)) return;
+
+                    UIListTransform list = scrollNode.NewChild().SetTransform<UIListTransform>();
+                    list.MinAnchor = Vector2.Zero;
+                    list.MaxAnchor = Vector2.One;
+                    list.ItemSize = 28;
+                    list.VirtualOverscan = 2;
+                    list.ItemAlignment = EListAlignment.TopOrLeft;
+                    _listRows.Reset(values.Count);
+                    if (!KeepRenderedBranch(branch, generation)) return;
+                    _virtualList = list;
+
+                    UIVirtualTableProvider<int> provider = new(_listRows,
+                        new UIVirtualTableColumn<int>("linked", "Linked node", RowHeaderWidth + ButtonWidth + 300,
+                            parent => CreateLinkedListVirtualCell(parent, generation),
+                            (cell, index, id) => BindLinkedListVirtualCell(cell, index, id,
+                                elementType, sources, generation, branch),
+                            UnbindLinkedListVirtualCell));
+                    list.VirtualProvider = provider;
+                    if (!IsCurrentBuild(generation) && ReferenceEquals(list.VirtualProvider, provider))
+                        list.DetachVirtualProviderForOwnerTeardown();
+                }
+                finally { if (!IsCurrentBuild(generation)) KeepRenderedBranch(branch, generation); }
+            }
+
+            private UIBoundableTransform CreateLinkedListVirtualCell(SceneNode tableRow,
+                ulong generation)
+            {
+                if (!IsCurrentBuild(generation))
+                    throw new InvalidOperationException("The linked-list detail was retired.");
+                SceneNode cellNode = new(tableRow);
+                UIListTransform layout = cellNode.SetTransform<UIListTransform>();
+                layout.DisplayHorizontal = true;
+                layout.ItemAlignment = EListAlignment.TopOrLeft;
+                layout.ItemSpacing = 4;
+
+                SceneNode labelNode = cellNode.NewChild<UITextComponent>(out UITextComponent label);
+                labelNode.GetTransformAs<UIBoundableTransform>(true)!.Width = RowHeaderWidth;
+                label.FontSize = EditorUI.Styles.PropertyNameFontSize;
+                label.HorizontalAlignment = EHorizontalAlignment.Left;
+                label.VerticalAlignment = EVerticalAlignment.Center;
+                label.Color = EditorUI.Styles.PropertyNameTextColor;
+                label.BoundableTransform.Margins = new Vector4(4, 2, 4, 2);
+
+                SceneNode removeHost = cellNode.NewChild();
+                removeHost.SetTransform<UIBoundableTransform>().Width = ButtonWidth;
+                var (_, removeButton, _, _) = NativeUIElements.CreateButton(
+                    removeHost, "Remove", width: ButtonWidth, height: 24);
+                removeButton.IsEnabled = false;
+
+                SceneNode valueNode = cellNode.NewChild();
+                valueNode.SetTransform<UIBoundableTransform>().Width = 300;
+                EditorLinkedListRowCellState state = new()
+                {
+                    Label = label,
+                    RemoveHost = removeHost,
+                    ValueNode = valueNode,
+                    RemoveButton = removeButton,
+                };
+                _linkedListCells.Add(layout, state);
+                if (!IsCurrentBuild(generation))
+                    throw new InvalidOperationException("The linked-list detail was retired during row creation.");
+                return layout;
+            }
+
+            private void BindLinkedListVirtualCell(UIBoundableTransform cell, int index, ulong rowId,
+                Type elementType, EditorLinkedSourceLease[] sources, ulong generation,
+                SceneNode branch)
+            {
+                if (!IsCurrentBuild(generation) ||
+                    !_linkedListCells.TryGetValue(cell, out EditorLinkedListRowCellState? state))
+                    return;
+                if (cell.Parent is not UIBoundableTransform row || _virtualList is not { } list ||
+                    !ReferenceEquals(row.Parent, list) || !list.TryGetVirtualRowLease(row, out UIVirtualRowLease lease) ||
+                    lease.ItemId != rowId || list.VirtualProvider is not { } provider)
+                    return;
+
+                ulong intent = ++state.Intent;
+                state.Index = index;
+                state.RowId = rowId;
+                state.Lease = lease;
+                state.IsPublished = false;
+                state.Bindings = null;
+                ulong providerIncarnation = list.VirtualProviderIncarnation;
+                ObjectConstructionIdentity cellIdentity = ObjectConstructionIdentity.Capture(cell);
+                SceneNode cellNode = cell.SceneNode!;
+                ObjectConstructionIdentity cellNodeIdentity = ObjectConstructionIdentity.Capture(cellNode);
+                ObjectConstructionIdentity rowIdentity = ObjectConstructionIdentity.Capture(row);
+                SceneNode rowNode = row.SceneNode!;
+                ObjectConstructionIdentity rowNodeIdentity = ObjectConstructionIdentity.Capture(rowNode);
+                ObjectConstructionIdentity listIdentity = ObjectConstructionIdentity.Capture(list);
+                SceneNode listNode = list.SceneNode!;
+                ObjectConstructionIdentity listNodeIdentity = ObjectConstructionIdentity.Capture(listNode);
+                ObjectConstructionIdentity labelIdentity = ObjectConstructionIdentity.Capture(state.Label);
+                SceneNode labelNode = state.Label.SceneNode!;
+                ObjectConstructionIdentity labelNodeIdentity = ObjectConstructionIdentity.Capture(labelNode);
+                ObjectConstructionIdentity removeHostIdentity = ObjectConstructionIdentity.Capture(state.RemoveHost);
+                ObjectConstructionIdentity valueNodeIdentity = ObjectConstructionIdentity.Capture(state.ValueNode);
+                UIButtonComponent removeButton = state.RemoveButton!;
+                ObjectConstructionIdentity removeButtonIdentity = ObjectConstructionIdentity.Capture(removeButton);
+                SceneNode removeButtonNode = removeButton.SceneNode;
+                ObjectConstructionIdentity removeButtonNodeIdentity = ObjectConstructionIdentity.Capture(removeButtonNode);
+                ObjectConstructionIdentity branchIdentity = ObjectConstructionIdentity.Capture(branch);
+                ObjectConstructionIdentity containerIdentity = ObjectConstructionIdentity.Capture(_container);
+                SceneNode? editorNode = state.EditorNode;
+                if (editorNode is not null && !state.ReusableEditor)
+                    throw new InvalidOperationException("An incomplete linked-list editor cannot be reused.");
+                ObjectConstructionIdentity? editorIdentity = editorNode is null ? null :
+                    ObjectConstructionIdentity.Capture(editorNode);
+
+                bool RowCurrent()
+                {
+                    if (!IsCurrentBuild(generation) || state.Intent != intent || state.Index != index ||
+                        state.RowId != rowId || state.Lease != lease ||
+                        !_linkedListCells.TryGetValue(cell, out EditorLinkedListRowCellState? current) ||
+                        !ReferenceEquals(current, state) || !cellIdentity.IsCurrent ||
+                        !IsLive(cellNode, cellNodeIdentity) || !IsLive(row, rowIdentity) ||
+                        !IsLive(rowNode, rowNodeIdentity) || !IsLive(list, listIdentity) ||
+                        !IsLive(listNode, listNodeIdentity) || !IsLive(state.Label, labelIdentity) ||
+                        !IsLive(labelNode, labelNodeIdentity) || !IsLive(state.RemoveHost, removeHostIdentity) ||
+                        !IsLive(state.ValueNode, valueNodeIdentity) ||
+                        !removeButtonIdentity.IsCurrent || !removeButtonNodeIdentity.IsCurrent ||
+                        !IsLive(removeButtonNode, removeButtonNodeIdentity) ||
+                        !IsLive(branch, branchIdentity) || !IsLive(_container, containerIdentity) ||
+                        !ReferenceEquals(state.RemoveButton, removeButton) ||
+                        cell.IsDestroyed || cell.IsDestroyQueued || row.IsDestroyed || row.IsDestroyQueued ||
+                        list.IsDestroyed || list.IsDestroyQueued || state.Label.IsDestroyed ||
+                        state.Label.IsDestroyQueued || removeButton.IsDestroyed || removeButton.IsDestroyQueued ||
+                        !ReferenceEquals(state.Label.SceneNode, labelNode) ||
+                        !ReferenceEquals(labelNode.Transform.Parent, cellNode.Transform) ||
+                        !ReferenceEquals(state.RemoveHost.Parent, cell.SceneNode) ||
+                        !ReferenceEquals(removeButtonNode.Transform.Parent, state.RemoveHost.Transform) ||
+                        !ReferenceEquals(state.ValueNode.Parent, cell.SceneNode) ||
+                        !ReferenceEquals(cell.Parent, row) ||
+                        !ReferenceEquals(row.Parent, list) || !ReferenceEquals(list.VirtualProvider, provider) ||
+                        list.VirtualProviderIncarnation != providerIncarnation ||
+                        !list.TryGetVirtualRowLease(row, out UIVirtualRowLease currentLease) ||
+                        currentLease != lease || !ReferenceEquals(list.Parent?.Parent, branch.Transform) ||
+                        !ReferenceEquals(branch.Parent, _container))
+                        return false;
+                    if (editorNode is null) return true;
+                    return editorIdentity is { } currentEditorIdentity &&
+                        IsLive(editorNode, currentEditorIdentity) && ReferenceEquals(state.EditorNode, editorNode) &&
+                        ReferenceEquals(editorNode.Parent, state.ValueNode) &&
+                        state.EditorControls.All(control => control.IsCurrent(editorNode));
+                }
+
+                bool WriteCurrent() => state.IsPublished && RowCurrent();
+
+                try
+                {
+                    if (!RowCurrent()) return;
+                    state.Label.SetTextGuarded($"Node {index}", RowCurrent, static current =>
+                    {
+                        if (!current()) throw new InvalidOperationException("The linked-list row changed during binding.");
+                    });
+                    if (!RowCurrent()) return;
+
+                    Action<UIInteractableComponent> removeAction = _ =>
+                    {
+                        if (!WriteCurrent()) return;
+                        EditorLinkedSourceLease[] removeSources = CreateLinkedRowSources(sources, WriteCurrent);
+                        RemoveLinkedListElement(removeSources, index, generation);
+                    };
+                    state.RemoveAction = removeAction;
+                    state.RemoveButton!.RegisterClickActions(removeAction);
+                    if (!RowCurrent()) return;
+                    state.RemoveButton.IsEnabled = true;
+                    if (!RowCurrent()) return;
+                    state.RemoveButton.SceneNode.IsActiveSelf = true;
+                    if (!RowCurrent()) return;
+
+                    PropertyInfo bindingProperty = typeof(LinkedListElementBinding<>).MakeGenericType(elementType)
+                        .GetProperty(nameof(LinkedListElementBinding<object>.Value))!;
+                    object[] targets = CreateLinkedListBindings(bindingProperty.DeclaringType!, index,
+                        generation, sources, RowCurrent, WriteCurrent);
+                    if (!RowCurrent()) return;
+                    state.Bindings = targets.Cast<IEditorLinkedElementBinding>().ToArray();
+
+                    if (editorNode is null)
+                    {
+                        SceneNode created = state.ValueNode.NewChild();
+                        ObjectConstructionIdentity createdIdentity = ObjectConstructionIdentity.Capture(created);
+                        if (!RowCurrent() || !IsLive(created, createdIdentity) ||
+                            !ReferenceEquals(created.Parent, state.ValueNode)) return;
+                        editorNode = state.EditorNode = created;
+                        editorIdentity = createdIdentity;
+                        if (!RowCurrent()) return;
+                    }
+                    if (editorNode.Transform is not UIBoundableTransform editorBounds)
+                    {
+                        if (!RowCurrent()) return;
+                        editorBounds = editorNode.SetTransform<UIBoundableTransform>();
+                        if (!RowCurrent()) return;
+                    }
+                    editorBounds.MaxAnchor = Vector2.One;
+                    if (!RowCurrent()) return;
+                    bool needsBuild = editorNode.Components.Count == 0 && editorNode.Transform.Children.Count == 0;
+                    if (needsBuild)
+                    {
+                        BuildValueEditor(editorNode, elementType, bindingProperty, targets);
+                        if (!RowCurrent()) return;
+                        state.EditorControls = CaptureLinkedListEditorControls(editorNode, elementType);
+                        if (!RowCurrent()) return;
+                        state.ReusableEditor = true;
+                    }
+                    else if (!TryRebindListEditor(editorNode, elementType, bindingProperty,
+                        targets.Cast<object?>().ToArray()))
+                    {
+                        throw new InvalidOperationException("The linked-list row editor cannot be rebound.");
+                    }
+                    if (!RowCurrent()) return;
+                    editorNode.IsActiveSelf = true;
+                    if (!RowCurrent()) return;
+                    state.IsPublished = true;
+                    if (!WriteCurrent()) state.IsPublished = false;
+                }
+                catch
+                {
+                    state.IsPublished = false;
+                    throw;
+                }
+            }
+
+            private static EditorLinkedSourceLease[] CreateLinkedRowSources(
+                EditorLinkedSourceLease[] sources, Func<bool> rowIsCurrent)
+            {
+                EditorLinkedSourceLease[] rows = new EditorLinkedSourceLease[sources.Length];
+                for (int index = 0; index < sources.Length; index++)
+                {
+                    EditorLinkedSourceLease source = sources[index];
+                    rows[index] = new()
+                    {
+                        Owner = source.Owner,
+                        Property = source.Property,
+                        List = source.List,
+                        Adapter = source.Adapter,
+                        Accessor = source.Accessor,
+                        Displayed = source.Displayed,
+                        State = source.State,
+                        World = source.World,
+                        Document = source.Document,
+                        SceneNode = source.SceneNode,
+                        IsViewCurrent = rowIsCurrent,
+                    };
+                }
+                return rows;
+            }
+
+            private static EditorLinkedListControlLease[] CaptureLinkedListEditorControls(SceneNode editor, Type elementType)
+            {
+                List<EditorLinkedListControlLease> controls = [];
+                void Visit(SceneNode node)
+                {
+                    foreach (XRComponent component in node.Components)
+                        if (component is UIInteractableComponent or DataTransformerBase or InspectorEnumEditorComponent)
+                            controls.Add(EditorLinkedListControlLease.Capture(component, editor));
+                    foreach (var child in node.Transform.Children)
+                        if (child.SceneNode is { } childNode)
+                            Visit(childNode);
+                }
+                Visit(editor);
+                int expected = elementType == typeof(Vector2) ? 3 :
+                    elementType == typeof(Vector3) || elementType == typeof(Quaternion) ? 4 :
+                    elementType == typeof(Vector4) ? 5 :
+                    elementType == typeof(LayerMask) || elementType.IsEnum &&
+                        !elementType.IsDefined(typeof(FlagsAttribute), inherit: false) ? 2 : 1;
+                if (controls.Count != expected)
+                    throw new InvalidOperationException("The linked-list editor lost a control during creation.");
+                return controls.ToArray();
+            }
+
+            private static bool IsLive(XRObjectBase value, ObjectConstructionIdentity identity)
+                => identity.IsCurrent && !value.IsDestroyed && !value.IsDestroyQueued;
+
+            private void UnbindLinkedListVirtualCell(UIBoundableTransform cell)
+            {
+                if (!_linkedListCells.TryGetValue(cell, out EditorLinkedListRowCellState? state)) return;
+                UIBoundableTransform? row = cell.Parent as UIBoundableTransform;
+                UIListTransform? list = row?.Parent as UIListTransform;
+                SceneNode? cellNode = cell.SceneNode;
+                SceneNode? rowNode = row?.SceneNode;
+                SceneNode? editor = state.EditorNode;
+                UIButtonComponent? button = state.RemoveButton;
+                ObjectConstructionIdentity cellIdentity = ObjectConstructionIdentity.Capture(cell);
+                ObjectConstructionIdentity? rowIdentity = row is null ? null : ObjectConstructionIdentity.Capture(row);
+                ObjectConstructionIdentity? rowNodeIdentity = rowNode is null ? null : ObjectConstructionIdentity.Capture(rowNode);
+                ObjectConstructionIdentity? listIdentity = list is null ? null : ObjectConstructionIdentity.Capture(list);
+                ObjectConstructionIdentity? editorIdentity = editor is null ? null : ObjectConstructionIdentity.Capture(editor);
+                ObjectConstructionIdentity? buttonIdentity = button is null ? null : ObjectConstructionIdentity.Capture(button);
+                ObjectConstructionIdentity? buttonNodeIdentity = button is null ? null : ObjectConstructionIdentity.Capture(button.SceneNode);
+                state.Intent++;
+                ulong cleanupIntent = state.Intent;
+                state.IsPublished = false;
+                state.Index = -1;
+                state.RowId = 0;
+                state.Lease = default;
+                state.Bindings = null;
+                bool CleanupCurrent() => state.Intent == cleanupIntent &&
+                    _linkedListCells.TryGetValue(cell, out EditorLinkedListRowCellState? current) &&
+                    ReferenceEquals(current, state) && cellIdentity.IsCurrent &&
+                    !cell.IsDestroyed && !cell.IsDestroyQueued && ReferenceEquals(cell.SceneNode, cellNode) &&
+                    (row is not null && list is not null && rowIdentity?.IsCurrent == true && rowNodeIdentity?.IsCurrent == true &&
+                        !row.IsDestroyed && !row.IsDestroyQueued && ReferenceEquals(cell.Parent, row) &&
+                        ReferenceEquals(row.SceneNode, rowNode) && ReferenceEquals(row.Parent, list) &&
+                        ReferenceEquals(_virtualList, list) && listIdentity?.IsCurrent == true) &&
+                    (editor is null || editorIdentity?.IsCurrent == true && ReferenceEquals(state.EditorNode, editor) &&
+                        ReferenceEquals(editor.Parent, state.ValueNode) && ReferenceEquals(state.ValueNode.Parent, cellNode)) &&
+                    (editor is null || state.EditorControls.All(control => control.IsCurrent(editor))) &&
+                    (button is null || buttonIdentity?.IsCurrent == true && buttonNodeIdentity?.IsCurrent == true &&
+                        ReferenceEquals(state.RemoveButton, button) &&
+                        ReferenceEquals(button.SceneNode.Transform.Parent, state.RemoveHost.Transform) &&
+                        ReferenceEquals(state.RemoveHost.Parent, cellNode));
+                if (button is not null)
+                {
+                    Action<UIInteractableComponent>? action = state.RemoveAction;
+                    state.RemoveAction = null;
+                    if (action is not null)
+                        button.UnregisterClickActions(action);
+                    if (!CleanupCurrent()) return;
+                    button.IsEnabled = false;
+                    if (!CleanupCurrent()) return;
+                    button.SceneNode.IsActiveSelf = false;
+                    if (!CleanupCurrent()) return;
+                }
+                if (editor is not null)
+                {
+                    ResetLinkedListEditor(editor, CleanupCurrent);
+                    if (!CleanupCurrent()) return;
+                    editor.IsActiveSelf = false;
+                }
+            }
+
+            private static void ResetLinkedListEditor(SceneNode editor, Func<bool> isCurrent)
+            {
+                if (editor.Components.OfType<DataTransformerBase>().FirstOrDefault() is { } transformer)
+                {
+                    transformer.Property = null;
+                    if (!isCurrent()) return;
+                    transformer.Targets = null;
+                    return;
+                }
+                if (editor.Components.OfType<UIColorSelectorComponent>().FirstOrDefault() is { } color)
+                {
+                    color.Binding = null;
+                    return;
+                }
+                ResetLinkedListEditorNode(editor, isCurrent);
+            }
+
+            private static void ResetLinkedListEditorNode(SceneNode node, Func<bool> isCurrent)
+            {
+                if (!isCurrent()) return;
+                foreach (XRComponent component in node.Components.ToArray())
+                {
+                    switch (component)
+                    {
+                        case InspectorEnumEditorComponent enumEditor:
+                            enumEditor.Bind(null, null);
+                            break;
+                        case UIToggleComponent toggle:
+                            toggle.Binding = null;
+                            if (!isCurrent()) return;
+                            toggle.Property = null;
+                            if (!isCurrent()) return;
+                            toggle.Targets = null;
+                            if (!isCurrent()) return;
+                            toggle.IsReadOnly = true;
+                            break;
+                        case UITextInputComponent text:
+                            text.Binding = null;
+                            if (!isCurrent()) return;
+                            text.Property = null;
+                            if (!isCurrent()) return;
+                            text.Targets = null;
+                            if (!isCurrent()) return;
+                            text.IsReadOnly = true;
+                            break;
+                        case UIPropertyTextDriverComponent driver:
+                            driver.Property = null;
+                            if (!isCurrent()) return;
+                            driver.Sources = null;
+                            if (!isCurrent()) return;
+                            driver.IsActive = false;
+                            break;
+                    }
+                    if (!isCurrent()) return;
+                }
+                foreach (var child in node.Transform.Children.ToArray())
+                {
+                    if (!isCurrent() || child.SceneNode is not { } childNode) return;
+                    ResetLinkedListEditorNode(childNode, isCurrent);
+                }
+            }
+
+            private static bool CanUseFixedHeightLinkedListEditor(Type valueType)
+            {
+                if (valueType.GetCustomAttribute<EditorComponentAttribute>() is not null)
+                    return false;
+                if (Nullable.GetUnderlyingType(valueType) is not null)
+                    return false;
+                return CanRebindListEditor(valueType);
+            }
+        }
+    }
+}

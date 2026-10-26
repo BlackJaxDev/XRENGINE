@@ -1089,3 +1089,35 @@ frame indices, and dirty documents. Reject time beyond any selected length.
 Check the disabled Add state above the count limits. Existing-key editing and
 removal must remain disabled for this selection. A callback conflict must retain
 newer state and report guarded history instead of success.
+
+
+### Fixed-height linked-list compilation and pending execution
+
+The fixed-height linked-list slice passes focused editor build 102 with zero
+warnings/errors (38.40s) and test-project build 104 with zero warnings/errors
+(46.93s). Both use `Tools/Invoke-AgentBuild.ps1`, `--no-restore`, and
+`-p:BuildProjectReferences=false`. Only Editor and Editor-test sources changed;
+unchanged dependency assemblies remain applicable. All 10,931 inputs stayed
+unchanged during each final build. Between the builds, only fixture setup/imports
+changed; production sources did not change.
+
+Seven new `EditorLinkedListVirtualizationTests` cases compile. They cover bounded
+10,000-item realization, recycled edits and stale Remove callbacks, exact-node
+Undo/Redo, value-host and nested-input transfer, vector reuse, variable-height
+fallback, control transform regeneration, and initial control loss. Several
+checks share one case. These are **not-run Windows tests**, not passing runtime
+results. The vector fixture supplies a world context so its DataTransformer is
+active. The existing Windows platform guard remains unchanged.
+
+When Windows work is authorized again, select
+`EditorLinkedListVirtualizationTests`, `EditorLinkedMutationTests`,
+`InspectorEnumEditorTests`, and
+`EditorListMutationTests.RetiredNonListElementEditorCannotWriteItsOldCollection`.
+The enum fixture covers the shared rebind helper now routing through its retained
+owner. Do not repeat the unchanged broad suite for this isolated Editor path.
+The grouped-key fixtures from the preceding tree also remain not run.
+
+The user stopped laptop work. No Windows process or live editor was started for
+this slice. Live acceptance still needs scrolling, mixed-value edits, enum/color
+popups, focus during row recycling, exact-node replay, custom/variable-height
+fallback, and measured frame/allocation costs. No faster-than-ImGui claim is made.

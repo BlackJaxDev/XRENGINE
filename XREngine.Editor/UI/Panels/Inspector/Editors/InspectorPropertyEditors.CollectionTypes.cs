@@ -84,6 +84,7 @@ public static partial class InspectorPropertyEditors
             private readonly EditorListMutationContext _listContext = new();
             private EditorListRowSource _listRows => _listContext.Rows;
             private readonly Dictionary<UIBoundableTransform, EditorListRowCellState> _listCells = [];
+            private readonly Dictionary<UIBoundableTransform, EditorLinkedListRowCellState> _linkedListCells = [];
             private UIListTransform? _virtualList;
             private UITextComponent? _listCountLabel;
             private Type? _listElementType;
@@ -129,6 +130,7 @@ public static partial class InspectorPropertyEditors
                     if (detached)
                     {
                         _listCells.Clear();
+                        _linkedListCells.Clear();
                         _previewCells.Clear();
                         _virtualList = null;
                     }
@@ -147,6 +149,7 @@ public static partial class InspectorPropertyEditors
                 _virtualList = null;
                 _listCountLabel = null;
                 _listCells.Clear();
+                _linkedListCells.Clear();
                 _previewCells.Clear();
                 foreach (var child in _container.Transform.Children.ToArray())
                 {
@@ -783,12 +786,10 @@ public static partial class InspectorPropertyEditors
                 }
                 if (valueType.IsEnum && !valueType.IsDefined(typeof(FlagsAttribute), inherit: false))
                 {
-                    UIComboBoxComponent? combo = editor.Components.OfType<UIComboBoxComponent>().FirstOrDefault();
-                    if (combo is null) return false;
-                    EditorEnumPropertyBinding binding = new(property, targets);
-                    combo.VirtualOptions = binding;
-                    combo.Binding = binding;
-                    combo.IsReadOnly = !property.CanWrite;
+                    InspectorEnumEditorComponent? enumEditor = editor.Components
+                        .OfType<InspectorEnumEditorComponent>().FirstOrDefault();
+                    if (enumEditor is null) return false;
+                    enumEditor.Bind(property, targets);
                     return true;
                 }
                 if (CanRebindListEditor(valueType))
@@ -910,6 +911,11 @@ public static partial class InspectorPropertyEditors
                 if (!IsCurrentBuild(generation)) return;
                 List<object?> values = EnumerateLinkedListValues(sample).ToList();
                 if (!IsCurrentBuild(generation)) return;
+                if (canMutate && CanUseFixedHeightLinkedListEditor(elementType))
+                {
+                    RenderVirtualLinkedList(elementType, sources, values, generation);
+                    return;
+                }
                 SceneNode branch = _container.NewChild();
                 try
                 {
@@ -1028,7 +1034,8 @@ public static partial class InspectorPropertyEditors
             }
 
             private object[] CreateLinkedListBindings(Type bindingType, int index, ulong generation,
-                EditorLinkedSourceLease[] sources)
+                EditorLinkedSourceLease[] sources, Func<bool>? rowReadIsCurrent = null,
+                Func<bool>? rowWriteIsCurrent = null)
             {
                 List<object> bindings = new();
                 foreach (EditorLinkedSourceLease source in sources)
@@ -1036,7 +1043,7 @@ public static partial class InspectorPropertyEditors
                     if (!IsCurrentBuild(generation)) break;
                     if (index >= source.Displayed.Nodes.Length) return [];
                     var instance = Activator.CreateInstance(bindingType, source, index,
-                        (Action)Rebuild);
+                        (Action)Rebuild, rowReadIsCurrent, rowWriteIsCurrent);
                     if (!IsCurrentBuild(generation)) break;
                     if (instance is not null)
                         bindings.Add(instance);
@@ -1369,19 +1376,35 @@ public static partial class InspectorPropertyEditors
             private readonly object _node;
             private object? _displayedValue;
             private readonly Action _refresh;
+            private readonly Func<bool>? _rowReadIsCurrent;
+            private readonly Func<bool>? _rowWriteIsCurrent;
 
             public LinkedListElementBinding(EditorLinkedSourceLease source, int index, Action refresh)
+                : this(source, index, refresh, null, null)
+            {
+            }
+
+            public LinkedListElementBinding(EditorLinkedSourceLease source, int index, Action refresh,
+                Func<bool>? rowIsCurrent)
+                : this(source, index, refresh, rowIsCurrent, rowIsCurrent)
+            {
+            }
+
+            public LinkedListElementBinding(EditorLinkedSourceLease source, int index, Action refresh,
+                Func<bool>? rowReadIsCurrent, Func<bool>? rowWriteIsCurrent)
             {
                 _source = source;
                 _node = source.Displayed.Nodes[index];
                 _displayedValue = source.Displayed.Values[index];
                 _refresh = refresh;
+                _rowReadIsCurrent = rowReadIsCurrent;
+                _rowWriteIsCurrent = rowWriteIsCurrent;
             }
 
             EditorLinkedSourceLease IEditorLinkedElementBinding.Source => _source;
             object IEditorLinkedElementBinding.Node => _node;
             object? IEditorLinkedElementBinding.DisplayedValue => _displayedValue;
-            bool IEditorLinkedElementBinding.IsCurrent => _source.IsCurrent() &&
+            bool IEditorLinkedElementBinding.IsCurrent => (_rowWriteIsCurrent?.Invoke() ?? true) && _source.IsCurrent() &&
                 Array.IndexOf(_source.Displayed.Nodes, _node) >= 0;
             Action IEditorLinkedElementBinding.Refresh => _refresh;
             void IEditorLinkedElementBinding.AcceptCommitted(object? value, object state)
@@ -1389,7 +1412,8 @@ public static partial class InspectorPropertyEditors
 
             public T? Value
             {
-                get => _source.IsViewCurrent() ? (T?)_displayedValue : default;
+                get => (_rowReadIsCurrent?.Invoke() ?? true) && _source.IsViewCurrent()
+                    ? (T?)_displayedValue : default;
                 set => EditorLinkedMutation.Set([this], _ => value, _refresh);
             }
         }

@@ -2131,3 +2131,40 @@ selected cases passed (one empty-clip correction, four preview cases, six
 retirement cases), with no skipped or incomplete cases and a zero-warning/error
 build. This closes those fixture checks only; live preview and performance
 acceptance remain open.
+
+
+### Fixed-height linked-list virtualization
+
+Source audit found that `RenderLinkedList` constructed every node editor eagerly.
+Known fixed-height editors now reuse the existing virtual table provider; custom
+and taller editors keep their old route. The first source capture and structural
+rebuild remain O(N). This bounds realized UI nodes without claiming that all
+linked-list work is constant time.
+
+Review corrected draft defects before publication. Separate row source snapshots
+would become stale after a value edit, so value rows retain shared authoritative
+leases and add row admission separately. Remove creates its row leases at click
+time. Vector cleanup preserves child bindings to the transformer. Enum reuse
+calls the existing retained enum owner. Row/control identities and exact paths
+reject transferred or regenerated controls. Initial creation rejects an incomplete
+built-in control set; later reuse does not recapture that incomplete editor.
+
+Build 101 failed on a missing Data.Core import in the new helper. The helper was
+split into its own matching file and its import was corrected. Editor build 102
+passed with zero warnings/errors (38.40s). Test build 103 found the fixture's
+missing transform namespace; adding the import fixed those errors. Test build
+104 passed with zero warnings/errors (46.93s). Final source checks covered 10,931
+inputs. A test-only world context activates vector transformers. No production
+source changed after the passing editor build.
+
+No portable fixture or runtime source changed, so the full portable suite was
+not repeated. Seven new Editor cases compile; Windows execution is not run
+because the user stopped laptop work. The preceding grouped-key cases also have
+no Windows execution result. Existing historical Windows results remain evidence
+for their exact tested snapshots only.
+
+Before this slice, the branch was resynced to signed tip
+`c589551143e8eb69c8fc3f9f1c2cb5dd2c47e3bd`. Its tree matches the earlier
+`83a017c9822827955202a41128f0a317b36e7e29` and
+`21d7f284e6ed087d880aa1df7c7e2c9b39ab4df6` tips. The soft resets preserved the
+index, dirty files, and six stashes. No old ancestry was merged.

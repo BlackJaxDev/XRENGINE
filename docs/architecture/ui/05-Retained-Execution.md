@@ -2318,3 +2318,36 @@ The control publishes its selection/revision token only after presentation
 callbacks settle. Rebind, source replacement, retirement, or a newer refresh
 rejects stale submissions. Enter in the group time field invokes the same Add
 action as the button. Existing single-curve editing remains unchanged.
+
+
+## Fixed-Height Linked-List Inspector Rows
+
+Editable linked lists with known single-row editors use the existing
+`UIVirtualTableProvider` and `UIListTransform`, with 28-pixel rows and two-row
+overscan. Scalar, enum, vector, quaternion, LayerMask, and color controls reuse
+their existing editor implementations. Custom and variable-height editors keep
+the existing eager route. In particular, a float-animation detail keeps its plot
+and taller scroll area. This does not decide variable-height virtualization.
+
+The detail captures linked-node identities and values once per source when it
+opens or rebuilds. That work remains O(N). Visible rows share those authoritative
+source leases. A value edit advances the shared snapshot and state token so
+other visible rows and header actions keep the correct source state. Row bindings
+add separate read and write admission: presentation can read while a row binds,
+but commands require the completed binding, exact row lease, provider
+incarnation, and current control ownership. Recycling invalidates that admission
+before cleanup callbacks.
+
+Remove creates row-bound source leases from the current committed snapshot at
+click time. It does not retain a stale snapshot from before a value edit. The
+existing linked-list mutation receipts preserve exact node identity through
+Undo/Redo and remain independent of the inspector view. No new mutation or
+history system is introduced. Structural changes and replay retain the existing
+detail rebuild behavior.
+
+Reusable vector controls keep their internal field bindings while detaching the
+old external source. Enum controls rebind through `InspectorEnumEditorComponent`
+so that their owned binding, popup, and label stay coherent. Retired row commands
+reject old sources; cleanup must preserve controls transferred by callbacks.
+Row rebinding allocates bounded binding and admission state for the visible
+working set. This is not a zero-allocation or measured latency claim.
