@@ -1836,3 +1836,29 @@ UI/focus cases pass, with no failures, skips, or incomplete cases. Both prior
 asset-spawn teardown cases pass. Build warnings/errors are zero; assertions and
 time limits are unchanged. This does not cover the separate rename candidate
 or live editor, GPU, native IME, and performance acceptance.
+
+
+## Same-panel hierarchy rename checkpoint
+
+Ordinary focused rename inputs retain transient draft text, caret, and selection
+across stop/reactivation of the same hierarchy panel. Source and destination
+ownership, row bindings, visibility intent, and newer text/focus intent bound
+the operation. The shared draft-preserving release ends the exact IME host
+registration and edit overlay without committing, canceling, or formatting the
+draft. Ordinary focus clear keeps its existing behavior. Rejected gains preserve
+callback edits; vetoed release retains keyboard registration.
+
+The implementation does not add saved fields or cross-window transfer. It does
+not restore an active IME composition or a CommitOnSubmit draft. Search, broader
+play-mode and cross-host state, paragraph analysis, asset recovery, window-key
+compatibility, and live acceptance remain open. The original reconciliation
+stays **51/60**. ImGui remains the default.
+
+The full portable suite passes **1,574/1,574** in run 228, with no failures,
+warnings, or skips. Targeted run 216 passes 122/122. Build 261 and test-only
+build 262 pass with zero warnings/errors. The exact cleanup reproducer passes
+2/2 after the fixture removes its test callback before destruction; the original
+focus assertions and production ownership guards are unchanged. The matching
+editor/test build 87 passes with zero warnings/errors (4m02.09s). All 10,918
+source inputs stayed unchanged through build 262, runs 227/228, and build 87.
+The 40 new editor cases compile; their Windows execution remains pending.

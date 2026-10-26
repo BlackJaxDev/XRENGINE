@@ -20,6 +20,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Rendering/UITextGuardedWriteTests.cs" Link="Rendering/UITextGuardedWriteTests.cs" />
+    <Compile Include="../Rendering/UITextGuardedSelectionTests.cs" Link="Rendering/UITextGuardedSelectionTests.cs" />
+    <Compile Include="../Rendering/UITextGuardedFocusTests.cs" Link="Rendering/UITextGuardedFocusTests.cs" />
+    <Compile Include="../Rendering/UITextGuardedCanvasFocusTests.cs" Link="Rendering/UITextGuardedCanvasFocusTests.cs" />
+    <Compile Include="../Rendering/UIVisibilityGuardedWriteTests.cs" Link="Rendering/UIVisibilityGuardedWriteTests.cs" />
     <Compile Include="../Rendering/DefaultUiFontScopeTests.cs" Link="Rendering/DefaultUiFontScopeTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/InspectorStringDetailSizeComponent.cs" Link="Editor/InspectorStringDetailSizeComponent.cs" />
     <Compile Include="../Editor/InspectorStringDetailSizeTests.cs" Link="Editor/InspectorStringDetailSizeTests.cs" />

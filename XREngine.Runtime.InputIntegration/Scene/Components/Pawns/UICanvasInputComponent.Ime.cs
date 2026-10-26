@@ -26,6 +26,21 @@ public partial class UICanvasInputComponent
         finally { target?.CancelComposition(); }
     }
 
+    private void RetireImeSessionForFocusAbort(UIFocusWriteReceipt receipt)
+    {
+        if (receipt.Target is not UITextInputComponent target ||
+            !ReferenceEquals(_imeTarget, target) || _imeIdentity != receipt.ImeIdentity ||
+            (_imeFocusEpoch != receipt.AcquiredTextFocusEpoch &&
+             _imeFocusEpoch != receipt.AbortedTextFocusEpoch))
+            return;
+        // The control already ended composition ownership without rewriting its draft.
+        _imeTarget = null;
+        _imeIdentity = default;
+        _imeInteractionRevision = 0;
+        _imeFocusEpoch = 0;
+        StopImeCandidateTick();
+    }
+
     private void UpdateImeFocusTarget()
     {
         UITextInputComponent? focused = FocusedComponent as UITextInputComponent;

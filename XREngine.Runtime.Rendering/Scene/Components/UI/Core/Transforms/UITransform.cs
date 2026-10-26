@@ -404,7 +404,11 @@ namespace XREngine.Rendering.UI
         public virtual EVisibility Visibility
         {
             get => _visibility;
-            set => SetField(ref _visibility, value);
+            set
+            {
+                AdvanceVisibilityWriteIntent();
+                SetField(ref _visibility, value);
+            }
         }
 
         public bool IsVisibleInHierarchy => IsVisible && (Parent is not UITransform tfm || tfm.IsVisibleInHierarchy);

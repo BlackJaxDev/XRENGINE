@@ -47,6 +47,17 @@ public interface IUICanvasInputSource
         return false;
     }
 
+    /// <summary>
+    /// Releases focus without committing, restoring, or formatting draft, caret, or display values.
+    /// Unsupported input sources reject the request before callbacks.
+    /// </summary>
+    bool TryReleaseFocusPreservingDraft(UIInteractableComponent expectedTarget, ulong expectedIntent,
+        Func<bool> isCurrent, out ulong clearedIntent)
+    {
+        clearedIntent = 0;
+        return false;
+    }
+
     /// <summary>Reports the exact accepted virtual focus dispatch in progress.</summary>
     bool IsDispatchingVirtualItemFocus(UIListTransform list, ulong itemId, UIInteractableComponent target)
         => false;

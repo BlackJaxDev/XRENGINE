@@ -195,13 +195,20 @@ namespace XREngine.Rendering.UI
             get => _isFocused;
             set
             {
+                AdvanceFocusWriteIntent();
                 Func<bool>? previousAdmission = _activeFocusWriteAdmission;
+                UIFocusWriteReceipt? previousAcquisition = _activeFocusAcquisition;
+                UIFocusWriteReceipt? previousAbort = _activeFocusAbort;
                 _activeFocusWriteAdmission = null;
+                _activeFocusAcquisition = null;
+                _activeFocusAbort = null;
                 try { SetField(ref _isFocused, value); }
                 finally
                 {
                     if (_activeFocusWriteAdmission is null)
                         _activeFocusWriteAdmission = previousAdmission;
+                    _activeFocusAcquisition = previousAcquisition;
+                    _activeFocusAbort = previousAbort;
                 }
             }
         }
@@ -340,9 +347,11 @@ namespace XREngine.Rendering.UI
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            Func<bool>? focusAdmission = propName == nameof(IsFocused) ? FocusWriteAdmission : null;
+            if (!IsFocusWriteCurrent(focusAdmission))
+                return;
             base.OnPropertyChanged(propName, prev, field);
-            if (propName == nameof(IsFocused) &&
-                _activeFocusWriteAdmission is { } admission && !admission())
+            if (!IsFocusWriteCurrent(focusAdmission))
                 return;
             switch (propName)
             {
@@ -395,7 +404,12 @@ namespace XREngine.Rendering.UI
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
+            Func<bool>? focusAdmission = propName == nameof(IsFocused) ? FocusWriteAdmission : null;
+            if (!IsFocusWriteCurrent(focusAdmission))
+                return false;
             bool change = base.OnPropertyChanging(propName, field, @new);
+            if (!IsFocusWriteCurrent(focusAdmission))
+                return false;
             if (change)
             {
                 switch (propName)
@@ -410,11 +424,20 @@ namespace XREngine.Rendering.UI
                         break;
                     case nameof(IsFocused):
                         if (IsFocused)
-                            OnLostFocus();
+                        {
+                            if (_activeFocusAbort is { } abort)
+                            {
+                                abort.AbortLossStarted = true;
+                                try { OnCapturedFocusReleased(abort); }
+                                catch (Exception exception) { abort.CleanupFailure ??= exception; }
+                            }
+                            else
+                                OnLostFocus();
+                        }
                         break;
                 }
             }
-            return change;
+            return change && IsFocusWriteCurrent(focusAdmission);
         }
 
         public virtual void MouseMoved(Vector2 lastPosLocal, Vector2 posLocal)

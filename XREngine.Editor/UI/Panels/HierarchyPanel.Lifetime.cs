@@ -119,6 +119,7 @@ public partial class HierarchyPanel
             IUICanvasInputSource? input = _rightClickInput;
             AttemptHierarchyRelease(UnsubscribeRightClick, ref failure);
             AttemptHierarchyRelease(() => UnregisterTick(ETickGroup.Late, ETickOrder.Scene, PollVirtualTreeSources), ref failure);
+            AttemptHierarchyRelease(BeginCapturedRenameRelease, ref failure);
             AttemptHierarchyRelease(() => ReleaseVirtualTree(input, capturedFocusTarget), ref failure);
             AttemptHierarchyRelease(ReleaseHierarchyMenu, ref failure);
             _pendingDragStarts.Clear();
@@ -131,6 +132,10 @@ public partial class HierarchyPanel
         }
         finally
         {
+            // Settle after old row, drag, drop-target, and menu callbacks have finished.
+            AttemptHierarchyRelease(SettleCapturedRenameDraft, ref failure);
+            if (failure is not null)
+                _rowFocusReceipt = null;
             _releasingHierarchy = false;
             if (!_hierarchyDestroying && _activationPending)
                 AttemptHierarchyRelease(ScheduleHierarchyWork, ref failure);

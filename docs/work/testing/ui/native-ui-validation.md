@@ -857,3 +857,58 @@ Matching editor/test build 85 passes with zero warnings/errors (4m47.57s).
 All 10,906 source inputs stayed unchanged through build 257, runs 212/213, and
 build 85. This is managed compilation on Linux; Windows execution of this repair
 is still pending. The separate rename draft is not part of the tested snapshot.
+
+
+### Rename continuation validation
+
+The restored rename candidate has no final validation result. The published
+cleanup snapshot above remains separate. Run the shared guarded text, selection,
+and real-canvas focus cases, the full portable suite, and editor/test compilation
+after the callback ownership repairs. Editor rename cases require Windows
+execution; compilation alone does not complete their acceptance.
+
+
+### Windows cleanup acceptance at a30061f4c
+
+The parent reports clean Windows execution at
+`a30061f4cff175dbcd8e1e3d7d63efa50c86e10f`: `StructuralListFinalizerTests`
+passes 8/8, the minimal dock/prefab sequence passes 3/3, and the combined native
+UI/focus selection passes **448/448**. It includes all original 416 broad cases,
+all 16 editor focus cases, and 32 additional input-focus cases. Both asset-spawn
+teardown cases pass. No case failed, skipped, or remained incomplete. Explicit
+private-list destruction still satisfies the expected rejection assertions.
+
+The wrapper build has zero warnings/errors. Assertions and the 30-second
+inactivity / 180-second session limits are unchanged. The source is clean,
+without diagnostic instrumentation; all 10,397 source/project hashes and 231
+prior evidence hashes stayed unchanged. No validation process remains. This
+closes the reported cleanup failure for this executed scope. It does not cover
+the later rename candidate, live editor, GPU, native IME, or performance acceptance.
+
+
+### Guarded rename continuation candidate
+
+The portable suite passes **1,574/1,574** in run 228, with zero failures or
+skips. Targeted run 216 passes 122/122, including the 22 real-canvas focus,
+15 guarded-selection, 13 direct-focus, and eight guarded-visibility cases.
+Five focus baseline failures now pass with the original assertions: callback
+display edits survive rejected focus gain, vetoed release retains input
+registration, and rejected gain retires its exact IME candidate tick. The full
+suite also exposed one new fixture's lingering rejection callback; its teardown
+now removes that callback before destruction, with an explicit drain check.
+Production cleanup guards remain unchanged.
+
+The matching editor/test build must compile the 40 new hierarchy rename cases.
+Run `NativeHierarchyWorkflowTests` on Windows at the published candidate, then
+run it with the existing hierarchy, docking, tool-state, input-focus, and finalizer
+fixtures. Keep the established assertions and timeout limits. Check both ordinary
+caret directions, edits during source release and row retirement, destination
+text/visibility callbacks, newer focus requests, source and owner replacement,
+and transferred controls. This candidate is limited to ordinary non-IME rename
+drafts in the same panel. Cross-host focus, native IME, live editor, GPU, and
+performance acceptance remain open.
+
+Matching editor/test build 87 passes with zero warnings/errors (4m02.09s).
+All 10,918 source inputs stayed unchanged through headless build 262, runs
+227/228, and this build. All 40 new editor rename cases compile. They have not
+run on Windows. No live editor, GPU, native IME, or performance result is claimed.

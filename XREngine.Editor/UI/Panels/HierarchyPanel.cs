@@ -184,6 +184,12 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
 
     private void RestoreRenameFocus()
     {
+        if (_suppressSavedRenameFocus)
+        {
+            _suppressSavedRenameFocus = false;
+            _renameFocusRestoreId = null;
+            return;
+        }
         if (_renameFocusRestoreId is not { } focusId)
             return;
         _renameFocusRestoreId = null;

@@ -2151,7 +2151,7 @@ no saved layout or asset format changes.
 
 This contract checks exact current ownership and object lifetimes. It is not a
 history of every intermediate parent assignment. Cross-window focus transfer,
-rename/search drafts, and complete play-mode restoration need separate work.
+search drafts and complete play-mode restoration need separate work.
 
 
 ### Private structural-list finalization
@@ -2174,3 +2174,57 @@ This removes an ordering dependency between an owner and its private list.
 see [Object.Finalize remarks](https://learn.microsoft.com/en-us/dotnet/api/system.object.finalize?view=net-10.0#remarks).
 The regression invokes the real base finalizer body in controlled orders and then
 uses the normal queue. It does not depend on GC timing.
+
+
+### Transient hierarchy rename state
+
+A focused ordinary hierarchy rename can retain its draft, caret, and selection
+across stop/reactivation of the same panel. The receipt captures the live input
+before teardown. It checks the original input until row release, then resolves a
+new exact row. Source name, current parent, construction identities, panel owner,
+and input intent must still match. A new rename request cancels the old receipt.
+A rejected transient receipt suppresses the saved rename-ID focus fallback for
+that same lifecycle. Existing saved formats remain unchanged.
+
+The source uses `TryReleaseFocusPreservingDraft` to end its exact focus without
+committing or formatting its draft, caret, or display. Ordinary `TryClearFocus`
+keeps its commit and formatting behavior. Source row ownership and caller intent
+must stay current. New callback edits cancel the restore request.
+
+Restoration publishes the draft with `SetTextGuarded`, then the caret/anchor pair
+with `SetSelectionGuarded`, then requests exact presented focus. A rejected write
+ends the receipt; it never retries over a callback edit. The selection writer
+uses one caret intent and validates both fields around callbacks. Completed early
+writes are not rolled back over newer values if a later field fails. The input
+focus path also guards its display-text publication. There is no caret replay
+after focus callbacks.
+
+This is transient state for an ordinary rename input. IME preedit/composition is
+not retained. Cross-window state, persisted drafts, and complete play-mode
+restoration remain separate contracts. Current-parent checks do not claim to
+record every intermediate parent assignment.
+
+The source receipt pins the original provider, row lease, input attachment, and
+construction lifetimes until release begins. It then permits only canonical
+provider retirement and the one anchor-collapse intent from inactive row cleanup.
+Additional text, caret, display, or ownership changes cancel restoration. Final
+settlement runs after row, drag, drop-target, and menu release callbacks. A failed
+destination preparation retires only its own rename session; a newer rename
+request survives.
+
+Rename binding uses `UITransform.SetVisibilityGuarded` for label and input
+visibility. The writer validates exact transform ownership before and after
+callbacks and before the field write. Each visibility request has a monotonic
+intent, including equal-value requests. Binding pins both controls before its
+first write so a label callback cannot replace the later input visibility intent.
+The visibility writer uses value state and a static validator, without a captured
+per-call closure. Transferred controls are not hidden by later row rebinds.
+
+Guarded focus returns an original `UIFocusWriteReceipt` for failed acquisition
+cleanup, including callback exceptions. Cleanup ends only the captured focus
+owner, overlay, input mappings, and exact host IME tuple. It preserves callback
+text, caret, and display edits. Release vetoes retain coherent input registration
+without replaying focus gain. Newer focus requests retain ownership. A gain
+exception remains primary if cleanup also fails; loss callbacks are not retried
+under a fresh content snapshot. These are managed ownership contracts, not live
+native-window or IME acceptance.

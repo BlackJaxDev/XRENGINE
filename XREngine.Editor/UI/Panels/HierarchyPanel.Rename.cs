@@ -1,3 +1,4 @@
+using XREngine.Data.Core;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 using static XREngine.Editor.EditorImGuiUI;
@@ -16,6 +17,7 @@ public partial class HierarchyPanel
             !_hierarchyIds.TryGetValue(node.ID, out ulong id) ||
             !_hierarchyNodes.TryGetValue(id, out SceneNode? current) || !ReferenceEquals(current, node))
             return;
+        _rowFocusReceipt = null;
         if (!ReferenceEquals(_nodePendingRename, node))
         {
             _nodePendingRename = node;
@@ -58,7 +60,7 @@ public partial class HierarchyPanel
         if (_nodePendingRename is null)
             return false;
         foreach (HierarchyRow row in _hierarchyRows.Values)
-            if (ReferenceEquals(row.RenameInput, input) && IsHierarchyRowCurrent(row) &&
+            if (ReferenceEquals(row.RenameInput, input) && IsHierarchyRenameRowCurrent(row) &&
                 row.RenameSession == _renameSession && ReferenceEquals(row.Node, _nodePendingRename))
                 return true;
         return false;
@@ -74,10 +76,13 @@ public partial class HierarchyPanel
     {
         if (_nodePendingRename is null)
             return;
+        if (_rowFocusReceipt?.Rename is not null)
+            _rowFocusReceipt = null;
         IUICanvasInputSource? input = GetCanvasInput();
         HierarchyRow? editingRow = null;
         foreach (HierarchyRow row in _hierarchyRows.Values)
-            if (row.RenameSession == _renameSession && ReferenceEquals(row.Node, _nodePendingRename))
+            if (IsHierarchyRenameRowCurrent(row) && row.RenameSession == _renameSession &&
+                ReferenceEquals(row.Node, _nodePendingRename))
             {
                 editingRow = row;
                 break;
@@ -89,43 +94,109 @@ public partial class HierarchyPanel
         RefreshVisibleRenameRows();
         if (!CanUseHierarchy || _renameSession != finishedSession)
             return;
-        if (input is not null && editingRow is not null &&
+        if (input is not null && editingRow is not null && IsHierarchyRenameRowCurrent(editingRow) &&
             ReferenceEquals(input.FocusedComponent, editingRow.RenameInput) &&
             (!restoreFocus || !input.TryFocusPresented(editingRow.Button)) &&
-            CanUseHierarchy && _renameSession == finishedSession &&
+            CanUseHierarchy && _renameSession == finishedSession && IsHierarchyRenameRowCurrent(editingRow) &&
             ReferenceEquals(input.FocusedComponent, editingRow.RenameInput))
             input.FocusedComponent = null;
         if (CanUseHierarchy && _renameSession == finishedSession)
             SaveHierarchyState();
     }
 
+    private bool IsHierarchyRenameRowCurrent(HierarchyRow row)
+        => IsHierarchyRowCurrent(row) && _treeListTransform is { } list &&
+            ReferenceEquals(row.Transform.Parent, list) &&
+            row.RenameInput is { IsDestroyed: false, IsDestroyQueued: false,
+                SceneNode: { IsDestroyed: false, IsDestroyQueued: false, IsTransformNull: false } node } &&
+            row.RenameTransform is { IsDestroyed: false, IsDestroyQueued: false } &&
+            row.Transform is { IsDestroyed: false, IsDestroyQueued: false,
+                SceneNode: { IsDestroyed: false, IsDestroyQueued: false, IsTransformNull: false } rowNode } &&
+            node.Components.Contains(row.RenameInput) &&
+            ReferenceEquals(node.Transform, row.RenameTransform) &&
+            ReferenceEquals(row.RenameTransform.SceneNode, node) &&
+            ReferenceEquals(row.RenameTransform.Parent, row.Transform) &&
+            ReferenceEquals(rowNode.Transform, row.Transform);
+
     private void BindRenameSession(HierarchyRow row, SceneNode? node)
     {
-        ulong session = _renameSession;
-        bool editing = node is not null && ReferenceEquals(_nodePendingRename, node);
-        row.LabelTransform.Visibility = editing ? EVisibility.Hidden : EVisibility.Visible;
-        if (!IsHierarchyRowCurrent(row) || _renameSession != session || !ReferenceEquals(row.Node, node))
+        if (!IsHierarchyRenameRowCurrent(row) ||
+            row.LabelTransform.SceneNode is not { IsDestroyed: false, IsDestroyQueued: false, IsTransformNull: false } labelNode)
             return;
-        row.RenameTransform.Visibility = editing ? EVisibility.Visible : EVisibility.Hidden;
-        if (!IsHierarchyRowCurrent(row) || _renameSession != session || !ReferenceEquals(row.Node, node))
+        var owner = (
+            Input: ObjectConstructionIdentity.Capture(row.RenameInput),
+            InputNode: ObjectConstructionIdentity.Capture(row.RenameInput.SceneNode),
+            Transform: ObjectConstructionIdentity.Capture(row.RenameTransform),
+            Row: ObjectConstructionIdentity.Capture(row.Transform),
+            RowNode: ObjectConstructionIdentity.Capture(row.Transform.SceneNode!),
+            Label: ObjectConstructionIdentity.Capture(row.LabelTransform),
+            LabelNode: ObjectConstructionIdentity.Capture(labelNode));
+        var state = (Panel: this, Row: row, Source: node, Session: _renameSession, Owner: owner,
+            LabelIntent: row.LabelTransform.VisibilityWriteIntentRevision,
+            RenameIntent: row.RenameTransform.VisibilityWriteIntentRevision);
+        static bool Current((HierarchyPanel Panel, HierarchyRow Row, SceneNode? Source, ulong Session,
+            (ObjectConstructionIdentity Input, ObjectConstructionIdentity InputNode,
+                ObjectConstructionIdentity Transform, ObjectConstructionIdentity Row,
+                ObjectConstructionIdentity RowNode, ObjectConstructionIdentity Label,
+                ObjectConstructionIdentity LabelNode) Owner, ulong LabelIntent, ulong RenameIntent) binding)
+            => binding.Panel.IsHierarchyRenameRowCurrent(binding.Row) &&
+                binding.Panel._renameSession == binding.Session && ReferenceEquals(binding.Row.Node, binding.Source) &&
+                binding.Owner.Input.IsCurrent && binding.Owner.InputNode.IsCurrent && binding.Owner.Transform.IsCurrent &&
+                binding.Owner.Row.IsCurrent && binding.Owner.RowNode.IsCurrent && binding.Owner.Label.IsCurrent &&
+                binding.Owner.LabelNode.IsCurrent &&
+                ReferenceEquals(binding.Row.RenameInput, binding.Owner.Input.Target) &&
+                ReferenceEquals(binding.Row.RenameInput.SceneNode, binding.Owner.InputNode.Target) &&
+                ReferenceEquals(binding.Row.RenameTransform, binding.Owner.Transform.Target) &&
+                ReferenceEquals(binding.Row.Transform, binding.Owner.Row.Target) &&
+                ReferenceEquals(binding.Row.Transform.SceneNode, binding.Owner.RowNode.Target) &&
+                binding.Row.LabelTransform is { IsDestroyed: false, IsDestroyQueued: false,
+                    SceneNode: { IsDestroyed: false, IsDestroyQueued: false, IsTransformNull: false } currentLabelNode } &&
+                ReferenceEquals(binding.Row.LabelTransform, binding.Owner.Label.Target) &&
+                ReferenceEquals(currentLabelNode, binding.Owner.LabelNode.Target) &&
+                ReferenceEquals(currentLabelNode.Transform, binding.Row.LabelTransform) &&
+                ReferenceEquals(binding.Row.LabelTransform.Parent, binding.Row.Transform) &&
+                binding.Row.LabelTransform.VisibilityWriteIntentRevision == binding.LabelIntent &&
+                binding.Row.RenameTransform.VisibilityWriteIntentRevision == binding.RenameIntent;
+        static void Require((HierarchyPanel Panel, HierarchyRow Row, SceneNode? Source, ulong Session,
+            (ObjectConstructionIdentity Input, ObjectConstructionIdentity InputNode,
+                ObjectConstructionIdentity Transform, ObjectConstructionIdentity Row,
+                ObjectConstructionIdentity RowNode, ObjectConstructionIdentity Label,
+                ObjectConstructionIdentity LabelNode) Owner, ulong LabelIntent, ulong RenameIntent) binding)
+        {
+            if (!Current(binding))
+                throw new InvalidOperationException("The hierarchy rename binding owner changed.");
+        }
+        if (!Current(state))
+            return;
+        if (_rowFocusReceipt is { Rename: { Prepared: false } draft } receipt &&
+            ReferenceEquals(node, receipt.Source))
+            draft.CaptureDestination(row.RenameInput);
+        bool editing = node is not null && ReferenceEquals(_nodePendingRename, node);
+        state.LabelIntent = checked(state.LabelIntent + 1);
+        row.LabelTransform.SetVisibilityGuarded(editing ? EVisibility.Hidden : EVisibility.Visible, state, Require);
+        if (!Current(state))
+            return;
+        state.RenameIntent = checked(state.RenameIntent + 1);
+        row.RenameTransform.SetVisibilityGuarded(editing ? EVisibility.Visible : EVisibility.Hidden, state, Require);
+        if (!Current(state))
             return;
         if (!editing)
         {
             row.RenameSession = 0;
             return;
         }
-        if (row.RenameSession != session)
+        if (row.RenameSession != state.Session)
         {
-            row.RenameSession = session;
-            row.RenameInput.Text = _renameDraft;
+            row.RenameSession = state.Session;
+            row.RenameInput.SetTextGuarded(_renameDraft, state, Require);
         }
-        if (IsHierarchyRowCurrent(row) && _renameSession == session && _renameFocusRequested)
+        if (Current(state) && _renameFocusRequested)
             ScheduleHierarchyWork();
     }
 
     private void UpdateRenameDraft(HierarchyRow row)
     {
-        if (IsHierarchyRowCurrent(row) && row.RenameSession == _renameSession &&
+        if (IsHierarchyRenameRowCurrent(row) && row.RenameSession == _renameSession &&
             ReferenceEquals(row.Node, _nodePendingRename))
             _renameDraft = row.RenameInput.Text;
     }
@@ -152,10 +223,11 @@ public partial class HierarchyPanel
         }
         foreach (HierarchyRow row in _hierarchyRows.Values)
         {
-            if (row.RenameSession != session || !ReferenceEquals(row.Node, _nodePendingRename))
+            if (!IsHierarchyRenameRowCurrent(row) || row.RenameSession != session ||
+                !ReferenceEquals(row.Node, _nodePendingRename))
                 continue;
             bool focused = input.TryFocusPresented(row.RenameInput);
-            if (!CanUseHierarchy || session != _renameSession)
+            if (!CanUseHierarchy || session != _renameSession || !IsHierarchyRenameRowCurrent(row))
                 return;
             if (focused)
                 _renameFocusRequested = false;

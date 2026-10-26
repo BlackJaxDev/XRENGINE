@@ -876,7 +876,8 @@ public partial class HierarchyPanel
     private static void ClearHierarchyRowFocus(IUICanvasInputSource input, HierarchyRow row,
         UIInteractableComponent? capturedFocusTarget)
     {
-        if (ReferenceEquals(capturedFocusTarget, row.Button))
+        if (ReferenceEquals(capturedFocusTarget, row.Button) ||
+            ReferenceEquals(capturedFocusTarget, row.RenameInput))
             return;
         if (input.FocusedComponent is { SceneNode: { } focused } &&
             (ReferenceEquals(focused, row.Transform.SceneNode) || IsDescendantOf(focused, row.Transform.SceneNode!)))

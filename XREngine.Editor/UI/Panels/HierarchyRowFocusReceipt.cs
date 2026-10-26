@@ -37,4 +37,5 @@ internal sealed class HierarchyRowFocusReceipt(
     public ulong CapturedIntent { get; } = input.FocusIntentRevision;
     public ulong ClearedIntent { get; set; }
     public bool Requested { get; set; }
+    public HierarchyRenameDraftReceipt? Rename { get; init; }
 }

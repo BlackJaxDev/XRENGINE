@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using XREngine.Input.Devices;
 using XREngine.Rendering.UI;
 
@@ -20,6 +21,7 @@ public partial class UICanvasInputComponent
         if (_reconcilingFocus || _inputCleanupActive)
             return;
         _reconcilingFocus = true;
+        Exception? cleanupFailure = null;
         try
         {
             while (true)
@@ -35,7 +37,38 @@ public partial class UICanvasInputComponent
                         previous.PropertyChanged -= FocusedComponentPropertyChanged;
                         if (_activeGuardedFocusAdmission is { } previousAdmission)
                         {
-                            if (!previous.SetFocusGuarded(false, previousAdmission))
+                            bool released;
+                            if (_releasingCapturedFocus)
+                            {
+                                UIFocusWriteReceipt? receipt = _capturedFocusRelease;
+                                try
+                                {
+                                    // A later focus attempt retains its control. A transferred owner is not ours to edit.
+                                    released = receipt is null || !ReferenceEquals(receipt.Target, previous) ||
+                                        (!receipt.HasNewerFocusIntent || !previous.IsFocused) &&
+                                        (!receipt.OwnsFocus || previous.TryReleaseCapturedFocus(receipt,
+                                            _capturedControlReleaseAdmission ?? previousAdmission,
+                                            () => RetireImeSessionForFocusAbort(receipt)));
+                                    if (!released && receipt is not null && !receipt.HasCurrentOwner &&
+                                        !receipt.HasNewerFocusIntent)
+                                        released = true;
+                                    if (released && receipt is not null && ReferenceEquals(receipt.Target, previous) &&
+                                        (_capturedControlReleaseAdmission ?? previousAdmission)())
+                                    {
+                                        // Retire the old host tuple even when the control moved to another owner.
+                                        try { RetireImeSessionForFocusAbort(receipt); }
+                                        catch (Exception exception) { cleanupFailure ??= exception; }
+                                    }
+                                }
+                                catch (Exception exception) when (receipt is { AbortCompleted: true })
+                                {
+                                    cleanupFailure ??= exception;
+                                    released = true;
+                                }
+                            }
+                            else
+                                released = previous.SetFocusGuarded(false, previousAdmission);
+                            if (!released)
                             {
                                 _guardedFocusOperationFailed = true;
                                 _linkedFocusedComponent = previous;
@@ -61,7 +94,7 @@ public partial class UICanvasInputComponent
                         desired.PropertyChanged += FocusedComponentPropertyChanged;
                         if (_activeGuardedFocusAdmission is { } desiredAdmission)
                         {
-                            if (!desired.SetFocusGuarded(true, desiredAdmission))
+                            if (!desired.SetFocusGuarded(true, desiredAdmission, out _focusAcquisitionReceipt))
                             {
                                 _guardedFocusOperationFailed = true;
                                 return;
@@ -95,6 +128,12 @@ public partial class UICanvasInputComponent
         finally
         {
             _reconcilingFocus = false;
+            if (cleanupFailure is not null)
+            {
+                try { UpdateImeFocusTarget(); }
+                catch { }
+                ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
+            }
             UpdateImeFocusTarget();
         }
     }

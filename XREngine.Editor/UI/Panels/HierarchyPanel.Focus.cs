@@ -8,6 +8,7 @@ namespace XREngine.Editor;
 public partial class HierarchyPanel
 {
     private HierarchyRowFocusReceipt? _rowFocusReceipt;
+    private bool _suppressSavedRenameFocus;
 
     private void CaptureHierarchyRowFocus(bool destroying)
     {
@@ -18,6 +19,7 @@ public partial class HierarchyPanel
         }
         if (_hierarchyStopped || _releasingHierarchy)
             return;
+        _suppressSavedRenameFocus = _nodePendingRename is not null;
         _rowFocusReceipt = null;
         if (SceneNode.IsTransformNull || SceneNode.Transform is not UIBoundableTransform panel ||
             GetCanvasInput() is not { FocusIntentRevision: not 0, HasPendingFocusRequest: false,
@@ -28,9 +30,13 @@ public partial class HierarchyPanel
             return;
         foreach (HierarchyRow row in _hierarchyRows.Values)
         {
-            if (!ReferenceEquals(row.Button, focused) || !IsHierarchyRowCurrent(row) ||
+            bool rename = IsHierarchyRenameRowCurrent(row) && ReferenceEquals(row.RenameInput, focused) &&
+                ReferenceEquals(row.Node, _nodePendingRename) && row.RenameSession == _renameSession &&
+                !row.RenameInput.IsComposing && !row.RenameInput.CommitOnSubmit && row.RenameInput.SceneNode is { IsTransformNull: false } renameNode &&
+                ReferenceEquals(renameNode.Transform, row.RenameTransform);
+            if ((!ReferenceEquals(row.Button, focused) && !rename) || !IsHierarchyRowCurrent(row) ||
                 row.Node is not { IsDestroyed: false, IsDestroyQueued: false, IsTransformNull: false } source ||
-                !list.TryGetRealizedVirtualRow(row.ItemId, out UIBoundableTransform? current, out _) ||
+                !list.TryGetRealizedVirtualRow(row.ItemId, out UIBoundableTransform? current, out UIVirtualRowLease lease) ||
                 !ReferenceEquals(current, row.Transform))
                 continue;
             List<ObjectConstructionIdentity> identities = [];
@@ -42,8 +48,18 @@ public partial class HierarchyPanel
                 identities.Add(ObjectConstructionIdentity.Capture(parent));
             if ((panel.World as RuntimeWorld)?.TargetWorld is { } document)
                 identities.Add(ObjectConstructionIdentity.Capture(document));
+            HierarchyRenameDraftReceipt? draft = null;
+            if (rename)
+            {
+                if (_virtualTree is not { } provider || !ReferenceEquals(list.VirtualProvider, provider))
+                    return;
+                draft = new(row.RenameInput, source, list, provider, row.Transform, lease, row.RenameSession);
+            }
             _rowFocusReceipt = new(input, focused, source, canvas, panel, Window,
-                unchecked(_hierarchyRevision + 1), identities.ToArray());
+                unchecked(_hierarchyRevision + 1), identities.ToArray())
+            {
+                Rename = draft,
+            };
             return;
         }
     }
@@ -66,8 +82,24 @@ public partial class HierarchyPanel
             !receipt.Source.IsDestroyed && !receipt.Source.IsDestroyQueued &&
             !receipt.Source.IsTransformNull && ReferenceEquals(receipt.Source.Transform, receipt.SourceTransform) &&
             ReferenceEquals(receipt.Source.World, receipt.SourceWorld) &&
+            (receipt.Rename is not { } rename ||
+                receipt.Source.Name == rename.SourceName &&
+                rename.ParentCurrent &&
+                ReferenceEquals(receipt.SourceTransform.Parent, rename.SourceParent) &&
+                (rename.CaptureSettled || (rename.ReleaseStarted
+                    ? rename.OriginalReleaseCurrent
+                    : rename.OriginalDraftCurrent && IsCapturedRenameRowCurrent(receipt, rename)))) &&
             (receipt.RuntimeWorld is null || !receipt.RuntimeWorld.IsDisposing &&
                 ReferenceEquals(receipt.RuntimeWorld.TargetWorld, receipt.Document));
+
+    private bool IsCapturedRenameRowCurrent(HierarchyRowFocusReceipt receipt, HierarchyRenameDraftReceipt rename)
+        => rename.OriginalBindingCurrent && ReferenceEquals(_treeListTransform, rename.OriginalList) &&
+            ReferenceEquals(_virtualTree, rename.OriginalProvider) &&
+            _hierarchyRows.TryGetValue(rename.OriginalRow, out HierarchyRow? row) && !row.Released &&
+            ReferenceEquals(row.Node, receipt.Source) && ReferenceEquals(row.RenameInput, rename.OriginalInput) &&
+            ReferenceEquals(row.RenameTransform, rename.OriginalTransform) &&
+            row.ItemId == rename.OriginalLease.ItemId && row.RenameSession == rename.OriginalSession &&
+            _renameSession == rename.OriginalSession && ReferenceEquals(_nodePendingRename, receipt.Source);
 
     private static bool IdentitiesCurrent(HierarchyRowFocusReceipt receipt)
     {
@@ -82,9 +114,13 @@ public partial class HierarchyPanel
         HierarchyRowFocusReceipt? receipt = _rowFocusReceipt;
         if (receipt is null)
             return;
-        if (IsHierarchyFocusOwnerCurrent(receipt) &&
-            receipt.Input.TryClearFocus(receipt.Target, receipt.CapturedIntent, out ulong clearedIntent) &&
-            IsHierarchyFocusOwnerCurrent(receipt))
+        bool Current() => IsHierarchyFocusOwnerCurrent(receipt);
+        ulong clearedIntent = 0;
+        bool cleared = Current() && (receipt.Rename is null
+            ? receipt.Input.TryClearFocus(receipt.Target, receipt.CapturedIntent, out clearedIntent)
+            : receipt.Input.TryReleaseFocusPreservingDraft(receipt.Target, receipt.CapturedIntent,
+                Current, out clearedIntent));
+        if (cleared && Current())
             receipt.ClearedIntent = clearedIntent;
         else if (ReferenceEquals(_rowFocusReceipt, receipt))
             _rowFocusReceipt = null;
@@ -94,7 +130,7 @@ public partial class HierarchyPanel
     {
         if (_rowFocusReceipt is not { } receipt)
             return;
-        if (!IsHierarchyFocusOwnerCurrent(receipt) || _nodePendingRename is not null ||
+        if (!IsHierarchyFocusOwnerCurrent(receipt) || !OwnsRestoredRenameSession(receipt) ||
             receipt.ClearedIntent == 0 || !CanUseHierarchy)
         {
             _rowFocusReceipt = null;
@@ -129,21 +165,71 @@ public partial class HierarchyPanel
         RequestHierarchyRowFocus(receipt, list, provider, id, transform, lease, row);
     }
 
+    private bool OwnsRestoredRenameSession(HierarchyRowFocusReceipt receipt)
+        => receipt.Rename is { Prepared: true } rename
+            ? ReferenceEquals(_nodePendingRename, receipt.Source) && _renameSession == rename.Session
+            : _nodePendingRename is null;
+
+    private void BeginCapturedRenameRelease()
+    {
+        if (_rowFocusReceipt is not { Rename: { } rename } receipt)
+            return;
+        if (!IsHierarchyFocusOwnerCurrent(receipt) || !rename.OriginalDraftCurrent ||
+            receipt.ClearedIntent == 0)
+            _rowFocusReceipt = null;
+        else
+            rename.ReleaseStarted = true;
+    }
+
+    private void SettleCapturedRenameDraft()
+    {
+        if (_rowFocusReceipt is not { Rename: { } rename } receipt)
+            return;
+        if (!IsHierarchyFocusOwnerCurrent(receipt) || !rename.OriginalReleaseComplete)
+            _rowFocusReceipt = null;
+        else
+            rename.CaptureSettled = true;
+    }
+
     private void RequestHierarchyRowFocus(HierarchyRowFocusReceipt receipt, UIListTransform list,
         UIVirtualTreeProvider provider, ulong id, UIBoundableTransform transform,
         UIVirtualRowLease lease, HierarchyRow row)
     {
         ulong incarnation = list.VirtualProviderIncarnation;
-        receipt.Requested = true;
         bool Current() => CanUseHierarchy && IsHierarchyFocusOwnerCurrent(receipt) &&
-            _nodePendingRename is null && ReferenceEquals(_treeListTransform, list) &&
+            OwnsRestoredRenameSession(receipt) && ReferenceEquals(_treeListTransform, list) &&
             ReferenceEquals(_virtualTree, provider) && ReferenceEquals(list.VirtualProvider, provider) &&
             list.VirtualProviderIncarnation == incarnation && IsHierarchyRowCurrent(row) &&
             ReferenceEquals(row.Node, receipt.Source) && row.ItemId == id &&
             ReferenceEquals(_hierarchyNodes.GetValueOrDefault(id), receipt.Source) &&
             list.TryGetRealizedVirtualRow(id, out UIBoundableTransform? current, out UIVirtualRowLease currentLease) &&
             ReferenceEquals(current, transform) && currentLease == lease;
-        if (!receipt.Input.RequestVirtualItemFocus(list, id, row.Button, receipt.ClearedIntent, Current) &&
+        UIInteractableComponent target = row.Button;
+        if (receipt.Rename is { } rename)
+        {
+            if (!PrepareHierarchyRenameDraft(receipt, row, Current))
+                return;
+            target = row.RenameInput;
+        }
+        bool FocusCurrent() => Current() && (receipt.Rename is not { } restored ||
+            restored.DestinationOwnerCurrent &&
+            ReferenceEquals(restored.ReplacementInput, row.RenameInput) &&
+            row.RenameSession == restored.Session &&
+            !row.RenameInput.SceneNode.IsTransformNull &&
+            ReferenceEquals(row.RenameInput.SceneNode.Transform, row.RenameTransform) &&
+            ReferenceEquals(row.RenameTransform.Parent, row.Transform) &&
+            row.RenameInput.TextWriteIntentRevision == restored.AcceptedTextIntent &&
+            row.RenameInput.CaretWriteIntentRevision == restored.AcceptedCaretIntent &&
+            row.RenameInput.Text == restored.Text && row.RenameInput.CursorPosition == restored.Cursor &&
+            row.RenameInput.SelectionAnchor == restored.Anchor &&
+            restored.AcceptedDisplay is { IsDestroyed: false, IsDestroyQueued: false } display &&
+            ReferenceEquals(display.SceneNode, row.RenameInput.SceneNode) &&
+            row.RenameInput.SceneNode.Components.Contains(display) &&
+            (row.RenameInput.IsFocused
+                ? ReferenceEquals(receipt.Input.FocusedComponent, row.RenameInput)
+                : display.TextWriteIntentRevision == restored.AcceptedDisplayIntent));
+        receipt.Requested = true;
+        if (!receipt.Input.RequestVirtualItemFocus(list, id, target, receipt.ClearedIntent, FocusCurrent) &&
             ReferenceEquals(_rowFocusReceipt, receipt))
             _rowFocusReceipt = null;
     }

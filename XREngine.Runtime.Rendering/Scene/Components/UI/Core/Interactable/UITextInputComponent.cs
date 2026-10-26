@@ -436,28 +436,115 @@ namespace XREngine.Rendering.UI
         /// <returns></returns>
         public virtual bool PostValidateInput(string input) => true;
 
+        protected override void CaptureFocusContent(UIFocusWriteReceipt receipt)
+        {
+            if (SceneNode is not { } node ||
+                !TryGetSiblingComponent<UITextComponent>(out var display) || display is null)
+            {
+                receipt.ContentAdmission = static () => false;
+                return;
+            }
+            ObjectConstructionIdentity displayIdentity = ObjectConstructionIdentity.Capture(display);
+            ulong textIntent = _textWriteIntentRevision;
+            ulong caretIntent = _caretWriteIntentRevision;
+            ulong displayIntent = display.TextWriteIntentRevision;
+            ulong formattingIntent = _displayFormattingRevision;
+            long epoch = _focusEpoch;
+            long binding = _bindingRevision;
+            bool commit = CommitOnSubmit;
+            receipt.ContentAdmission = () => !_terminal && ReferenceEquals(SceneNode, node) &&
+                displayIdentity.IsCurrent && !display.IsDestroyed && !display.IsDestroyQueued &&
+                ReferenceEquals(display.SceneNode, node) && UITextWriteOwner.Contains(node, display) &&
+                _textWriteIntentRevision == textIntent && _caretWriteIntentRevision == caretIntent &&
+                display.TextWriteIntentRevision == displayIntent && _displayFormattingRevision == formattingIntent &&
+                _focusEpoch == epoch && _bindingRevision == binding && CommitOnSubmit == commit;
+            // Advance only for this receipt's non-authoring focus release.
+            receipt.AdvanceContentEpoch = () => epoch++;
+        }
+
+        private Func<bool>? _enterFocusText;
+
+        /// <summary>Retains the input text owner before focus observers can change it.</summary>
+        public override bool SetFocusGuarded(bool value, Func<bool> isCurrent,
+            out UIFocusWriteReceipt? acquisition)
+        {
+            acquisition = null;
+            ArgumentNullException.ThrowIfNull(isCurrent);
+            if (SceneNode is not { } node ||
+                !TryGetSiblingComponent<UITextComponent>(out var display) || display is null)
+                return false;
+            ObjectConstructionIdentity displayIdentity = ObjectConstructionIdentity.Capture(display);
+            ulong textRevision = _textWriteIntentRevision;
+            ulong caretRevision = _caretWriteIntentRevision;
+            ulong displayRevision = display.TextWriteIntentRevision;
+            ulong formattingRevision = _displayFormattingRevision;
+            long focusEpoch = _focusEpoch;
+            long bindingRevision = _bindingRevision;
+            bool entered = false;
+            bool EntryCurrent() => !_terminal && ReferenceEquals(SceneNode, node) &&
+                displayIdentity.IsCurrent && !display.IsDestroyed && !display.IsDestroyQueued &&
+                ReferenceEquals(display.SceneNode, node) && UITextWriteOwner.Contains(node, display) &&
+                _textWriteIntentRevision == textRevision && _caretWriteIntentRevision == caretRevision &&
+                display.TextWriteIntentRevision == displayRevision &&
+                _displayFormattingRevision == formattingRevision &&
+                _focusEpoch == focusEpoch && _bindingRevision == bindingRevision;
+            bool Current() => (entered || EntryCurrent()) && isCurrent() &&
+                (entered || EntryCurrent());
+            bool Enter()
+            {
+                if (!EntryCurrent())
+                {
+                    RejectFocusWrite();
+                    return false;
+                }
+                entered = true;
+                return true;
+            }
+            Func<bool>? previousEntry = _enterFocusText;
+            _enterFocusText = Enter;
+            try { return base.SetFocusGuarded(value, Current, out acquisition); }
+            finally { _enterFocusText = previousEntry; }
+        }
+
         protected override void OnGotFocus()
         {
-            if (_terminal)
+            Func<bool>? focusAdmission = FocusWriteAdmission;
+            if (_terminal || !IsFocusWriteCurrent(focusAdmission) ||
+                focusAdmission is not null && _enterFocusText?.Invoke() == false)
                 return;
             _focusEpoch++;
+            if (FocusAcquisition is { } acquisition)
+                acquisition.AcquiredTextFocusEpoch = _focusEpoch;
             _editOriginalText = Text;
             _editBindingRevision = _bindingRevision;
             _editProperty = Property;
             _editTargets = Targets;
             _editTargetItems = Targets is { } targets ? (object?[])targets.Clone() : null;
-            if (SceneNode is not null)
-                TextComponent.Text = Text;
+            Func<bool>? textAdmission = SceneNode is null ? null :
+                PublishFocusText(focusAdmission, focused: true);
+            if (!IsTextFocusCurrent(focusAdmission, textAdmission))
+                return;
             base.OnGotFocus();
+            if (!IsTextFocusCurrent(focusAdmission, textAdmission))
+                return;
             StartEditOverlay();
+            IsTextFocusCurrent(focusAdmission, textAdmission);
         }
         protected override void OnLostFocus()
         {
+            Func<bool>? focusAdmission = FocusWriteAdmission;
+            if (!IsFocusWriteCurrent(focusAdmission) ||
+                focusAdmission is not null && _enterFocusText?.Invoke() == false)
+                return;
             _focusEpoch++;
             if (_terminal)
                 return;
             StopEditOverlay();
+            if (!IsFocusWriteCurrent(focusAdmission))
+                return;
             CancelComposition();
+            if (!IsFocusWriteCurrent(focusAdmission))
+                return;
             if (CommitOnSubmit && Text != _editOriginalText)
             {
                 // Focus has already been cleared by the base setter. The draft still belongs
@@ -466,11 +553,101 @@ namespace XREngine.Rendering.UI
                     !ReferenceEquals(_editProperty, Property) ||
                     !ReferenceEquals(_editTargets, Targets) ||
                     !TargetItemsMatch(Targets, _editTargetItems) || !CommitDraft())
+                {
+                    if (!IsFocusWriteCurrent(focusAdmission))
+                        return;
                     RestoreDraft();
+                }
             }
-            if (SceneNode is not null)
-                TextComponent.Text = FormatText(Text);
+            if (!IsFocusWriteCurrent(focusAdmission))
+                return;
+            Func<bool>? textAdmission = SceneNode is null ? null :
+                PublishFocusText(focusAdmission, focused: false);
+            if (!IsTextFocusCurrent(focusAdmission, textAdmission))
+                return;
             base.OnLostFocus();
+            IsTextFocusCurrent(focusAdmission, textAdmission);
+        }
+
+        protected override void OnCapturedFocusReleased(UIFocusWriteReceipt receipt)
+        {
+            Func<bool>? admission = FocusWriteAdmission;
+            if (!IsFocusWriteCurrent(admission)) return;
+            receipt.AbortedTextFocusEpoch = _focusEpoch;
+            receipt.AdvanceContentEpoch?.Invoke();
+            _focusEpoch++;
+            // Keep authored values. End the IME tuple and overlay before loss observers run.
+            SetField(ref _isComposing, false, publishNotifications: false);
+            try { receipt.RetireHostInput?.Invoke(); }
+            catch (Exception exception) { receipt.CleanupFailure ??= exception; }
+            if (!IsFocusWriteCurrent(admission)) return;
+            try { StopEditOverlay(); }
+            catch (Exception exception) { receipt.CleanupFailure ??= exception; }
+            if (!IsFocusWriteCurrent(admission)) return;
+            receipt.LostFocusRaised = true;
+            try { base.OnLostFocus(); }
+            finally
+            {
+                if (IsFocusWriteCurrent(admission))
+                    SetField(ref _isComposing, false, publishNotifications: false);
+                else
+                    RejectFocusWrite();
+            }
+        }
+
+        private bool IsTextFocusCurrent(Func<bool>? focusAdmission, Func<bool>? textAdmission)
+        {
+            if (IsFocusWriteCurrent(focusAdmission) && (textAdmission is null || textAdmission()))
+                return true;
+            RejectFocusWrite();
+            return false;
+        }
+
+        private Func<bool>? PublishFocusText(Func<bool>? focusAdmission, bool focused)
+        {
+            if (focusAdmission is null)
+            {
+                TextComponent.Text = focused ? Text : FormatText(Text);
+                return null;
+            }
+            if (SceneNode is not { } node ||
+                !TryGetSiblingComponent<UITextComponent>(out var display) || display is null)
+            {
+                RejectFocusWrite();
+                return static () => false;
+            }
+
+            ObjectConstructionIdentity displayIdentity = ObjectConstructionIdentity.Capture(display);
+            ulong textRevision = _textWriteIntentRevision;
+            ulong caretRevision = _caretWriteIntentRevision;
+            ulong formattingRevision = _displayFormattingRevision;
+            ulong displayRevision = display.TextWriteIntentRevision;
+            long focusEpoch = _focusEpoch;
+            long bindingRevision = _bindingRevision;
+            bool isFocused = IsFocused;
+            string text = Text;
+            string value = focused ? text : FormatText(text);
+            bool LocalCurrent() => !_terminal && ReferenceEquals(SceneNode, node) &&
+                displayIdentity.IsCurrent && !display.IsDestroyed && !display.IsDestroyQueued &&
+                ReferenceEquals(display.SceneNode, node) && UITextWriteOwner.Contains(node, display) &&
+                _textWriteIntentRevision == textRevision && _caretWriteIntentRevision == caretRevision &&
+                _displayFormattingRevision == formattingRevision &&
+                display.TextWriteIntentRevision == displayRevision &&
+                _focusEpoch == focusEpoch && _bindingRevision == bindingRevision &&
+                IsFocused == isFocused && ReferenceEquals(Text, text);
+            bool Current() => LocalCurrent() && IsFocusWriteCurrent(focusAdmission) && LocalCurrent();
+            void Require()
+            {
+                if (Current()) return;
+                RejectFocusWrite();
+                throw new InvalidOperationException("The input focus text owner changed.");
+            }
+
+            Require();
+            displayRevision = checked(displayRevision + 1);
+            display.SetTextGuarded(value, (Action)Require, static admission => admission());
+            Require();
+            return Current;
         }
         protected override void OnComponentActivated()
         {

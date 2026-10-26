@@ -1812,3 +1812,104 @@ Matching editor/test build 85 passes with zero warnings/errors (4m47.57s).
 All 10,906 source inputs stayed unchanged through build 257, runs 212/213, and
 build 85. This is managed compilation on Linux; Windows execution of this repair
 is still pending. The separate rename draft is not part of the tested snapshot.
+
+
+### Rename continuation after the cleanup checkpoint
+
+The independent rename candidate extends the existing transient focus receipt.
+It captures a focused ordinary draft and selection before stop, suppresses stale
+saved-ID focus fallback, resolves the replacement row, then uses guarded text,
+selection, and focus writes. Active IME composition is not restored. A shared
+selection-pair writer and guarded text-focus display publication are required to
+prevent callback edits from being overwritten. Existing saved formats and
+cross-window behavior remain unchanged. Validation follows below.
+
+The candidate is restored from its preserved stash after publishing `a30061f4c`.
+Review must repair failed-focus compensation and capture source display ownership
+before clear callbacks. No rename acceptance is claimed until those gaps and
+the matching full validation are complete.
+
+Review found two more bounded ownership gaps in the unpublished rename candidate.
+A failed destination write left its rename session active, so ordinary row
+rebind could replay the old draft. Source capture also lacked the original row
+lease and provider incarnation. Teardown must check newer draft intent through
+external recycling callbacks while permitting canonical row retirement. These
+are implementation blockers for the rename candidate, not failures attributed
+to the published cleanup repair.
+
+Editor/test build 86 passes with zero warnings/errors (8m42.43s) for the
+restored rename candidate, before the review repairs. Its 22 new editor cases
+compile but have not executed on Windows. The separate eight real-canvas
+regressions are now being built against the unfixed focus compensation path.
+
+
+### Windows cleanup acceptance at a30061f4c
+
+The parent reports clean Windows execution at
+`a30061f4cff175dbcd8e1e3d7d63efa50c86e10f`: `StructuralListFinalizerTests`
+passes 8/8, the minimal dock/prefab sequence passes 3/3, and the combined native
+UI/focus selection passes **448/448**. It includes all original 416 broad cases,
+all 16 editor focus cases, and 32 additional input-focus cases. Both asset-spawn
+teardown cases pass. No case failed, skipped, or remained incomplete. Explicit
+private-list destruction still satisfies the expected rejection assertions.
+
+The wrapper build has zero warnings/errors. Assertions and the 30-second
+inactivity / 180-second session limits are unchanged. The source is clean,
+without diagnostic instrumentation; all 10,397 source/project hashes and 231
+prior evidence hashes stayed unchanged. No validation process remains. This
+closes the reported cleanup failure for this executed scope. It does not cover
+the later rename candidate, live editor, GPU, native IME, or performance acceptance.
+
+Headless build 258 passes with zero warnings/errors (31.73s). Initial real-canvas
+run 214 passes 2/8 (1.155s). One failure is a fixture setup error: a virtual button
+disables focus input registration by default. The fixture now explicitly enables
+registration for its newer-focus mapping assertion. Test-only build 259 passes
+with zero warnings/errors (27.48s). Corrected baseline run 215 passes 3/8
+(1.747s), with no skips. The five failures reproduce callback display overwrite
+(two cases), missing input registration after release veto (two cases), and a
+retained IME candidate tick after rejected focus gain. Production remains unfixed
+for this baseline; normal gain/clear, gain veto, and newer-focus ownership pass.
+
+The source-clear repair uses an explicitly named draft-preserving release rather
+than changing ordinary focus-clear semantics. It retains the original owner and
+content proof before canvas callbacks. Cleanup may finish for that original owner
+without writing draft, caret, or display. Caller rejection must remain latched:
+ending a callback-started IME session must not make the old caller proof valid
+again. The real-canvas regression set will cover this boundary.
+
+Integrated build 260 passes with zero warnings/errors (3m09.25s). Targeted run
+216 passes **122/122** (2.844s), with no failures or skips. It includes all 22
+real-canvas focus cases, eight visibility cases, and existing guarded text,
+selection, focus, navigation, tab, provider, and presented-IME checks. The five
+corrected baseline failures now pass under unchanged assertions. All 10,918
+source inputs stayed fixed through this build and run.
+
+Finite review found no further ownership blocker. The new visibility intent
+property now has the same `YamlIgnore` and `Browsable(false)` metadata as other
+UI intent counters. Final full-suite and editor/test checks follow this metadata
+correction; no Windows execution of rename restoration is claimed.
+
+Final headless build 261 passes with zero warnings/errors. Full run 217 passes
+1,573/1,574; the failure occurs in the later standalone-text fixture's global
+destruction drain. Runs 218–226 isolate the producer to
+`LossPrechangeProofFailureStopsTheOldFocusEffects`. That test leaves its
+rejection callback attached. During deferred input destruction, the callback
+uses the creating `TextComponent` getter after the node has cleared and destroyed
+its component list. The exact-owner guard correctly rejects this new insertion.
+This is separate from the private-list finalizer failure repaired at `a30061f4`.
+
+The fixture now removes that exact callback before teardown and explicitly checks
+the normal deferred-destruction drain. Its original focus assertions are unchanged;
+no production guard or queue behavior changed for this fixture repair. Test-only
+build 262 passes with zero warnings/errors (15.49s), and the exact two-test
+reproducer passes 2/2 in run 227. Full-suite and editor/test checks follow.
+
+Full portable run 228 passes **1,574/1,574** (32.061s), with no failures,
+warnings, or skips. All 10,918 source inputs stayed unchanged after the fixture
+repair through build 262 and runs 227/228. The matching editor/test build is
+pending. The new editor rename cases still require Windows execution.
+
+Matching editor/test build 87 passes with zero warnings/errors (4m02.09s).
+All 10,918 source inputs stayed unchanged through headless build 262, runs
+227/228, and this build. All 40 new editor rename cases compile. They have not
+run on Windows. No live editor, GPU, native IME, or performance result is claimed.

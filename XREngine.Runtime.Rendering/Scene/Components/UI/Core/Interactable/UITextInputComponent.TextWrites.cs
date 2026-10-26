@@ -18,6 +18,10 @@ public partial class UITextInputComponent
     [YamlIgnore, Browsable(false)]
     public ulong TextWriteIntentRevision => _textWriteIntentRevision;
 
+    /// <summary>Identifies the latest caret or selection write attempt.</summary>
+    [YamlIgnore, Browsable(false)]
+    public ulong CaretWriteIntentRevision => _caretWriteIntentRevision;
+
     /// <summary>Writes text only while this input, its display, and the caller stay current.</summary>
     public bool SetTextGuarded<TState>(string value, TState state,
         Action<TState> requireCurrent)
