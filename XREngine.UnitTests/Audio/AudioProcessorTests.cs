@@ -230,6 +230,10 @@ namespace XREngine.UnitTests.Audio
                 listener.EffectsProcessor.ShouldNotBeNull();
                 listener.EffectsProcessor.ShouldBeOfType<PassthroughProcessor>();
             }
+            catch (Exception ex) when (ex.Message.Contains("OpenAL", StringComparison.OrdinalIgnoreCase))
+            {
+                Assert.Inconclusive($"OpenAL device unavailable — skipping: {ex.Message}");
+            }
             finally
             {
                 AudioSettings.AudioArchitectureV2 = prev;

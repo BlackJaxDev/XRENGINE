@@ -15,7 +15,8 @@ public sealed class GpuBvhSelectorIntegrationTests
 
         environment.ShouldContain("XRE_FORCE_GPU_BVH_CULLING");
         environment.ShouldContain("XRE_FORCE_GPU_BVH_REBUILD_EVERY_FRAME");
-        collection.ShouldContain("private static readonly bool ForceGpuBvhCulling");
+        collection.ShouldContain("private static bool ForceGpuBvhCulling");
+        collection.ShouldContain("=> XREnvironment.IsEnabled(XREngineEnvironmentVariables.ForceGpuBvhCulling);");
         collection.ShouldContain("if (!ForceGpuBvhCulling && !_gpuBvhSelectorCalibration.ShouldUseBvh");
         new GpuBvhSelectorCalibration().FallbackCommandThreshold
             .ShouldBe(GpuBvhSelectorCalibration.UncalibratedCommandThreshold);
