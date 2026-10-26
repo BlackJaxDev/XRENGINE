@@ -1389,3 +1389,32 @@ passed in 15.31s, Editor wrapper 144 in 37.70s, and test-project wrapper 145 in
 49.24s, each with zero warnings/errors. Source hashes remained unchanged through
 those checks. Runtime Rendering wrapper 135 and Vulkan wrapper 133 also passed
 with zero warnings/errors; their touched production inputs did not change later.
+
+
+## Exact editing and source-document action checks
+
+The affected portable runs pass 72 distinct cases across three selections:
+construction subset/retirement/finalizer (31), shared grouped-edit batch (10), and
+scene visibility/material setters plus existing scene root routes/collections
+(31). Core, Rendering, and Headless builds pass with zero warnings/errors. These
+runs establish managed lifetime, callback, and mutation contracts only.
+
+The new Editor cases comprise 21 handle-backend additions, 18 time moves, 13
+handle/time UI additions, 10 clone handoffs, 13 model-material actions, and 14 scene
+actions. All **89 cases remain unrun on Windows**, bringing the recorded new-case
+backlog to **194**. Changed earlier custody fixtures need targeted revalidation as
+well. The unpublished nested-list draft has 21 additional cases and is excluded.
+
+Next Windows selection must include these exact action fixtures, the changed
+custody/duplication cases, and affected native hierarchy menu routing. Check live
+material drops and scene hide/unload/Undo/Redo separately from headless tests.
+Verify embedded source-document dirty state, scene order, selected hidden roots,
+loaded-but-hidden versus authored-but-unloaded scenes, and callback conflicts.
+Do not infer native window, GPU, IME, multi-window focus, or performance acceptance.
+
+The final independent snapshot contains 10,998 source/project inputs. Editor
+wrapper 156 passed in 46.79s and test-project wrapper 157 in 46.44s, each with zero
+warnings/errors. The source manifest remained unchanged. Data subset build 146,
+Core 150, Rendering 151, and Headless 153 also pass. Only the two Editor dirty
+helpers and their fixtures changed after the earlier 154/155 compile; no portable
+production input changed, so the passing focused runs were not repeated.

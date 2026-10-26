@@ -1676,47 +1676,10 @@ public static partial class EditorImGuiUI
     }
 
     private static void ToggleSceneVisibility(XRScene scene, RuntimeWorld world, bool visible)
-    {
-        if (scene.IsVisible == visible)
-            return;
-
-        using var _ = Undo.TrackChange("Toggle Scene Visibility", scene);
-        scene.IsVisible = visible;
-        scene.MarkDirty();
-    }
+        => HierarchySceneActions.SetVisibility(scene, world, visible);
 
     private static void UnloadSceneFromWorld(XRScene scene, RuntimeWorld world)
-    {
-        var targetWorld = world.TargetWorld;
-        if (targetWorld is null)
-            return;
-
-        bool wasVisible = scene.IsVisible;
-
-        scene.IsVisible = false;
-        world.UnloadScene(scene);
-        targetWorld.Scenes.Remove(scene);
-        ClearSelectionForScene(scene, world);
-        scene.MarkDirty();
-
-        // Record structural undo
-        using var interaction = Undo.BeginUserInteraction();
-        using var scope = Undo.BeginChange("Unload Scene");
-        Undo.RecordStructuralChange("Unload Scene",
-            undoAction: () =>
-            {
-                targetWorld.Scenes.Add(scene);
-                world.LoadScene(scene);
-                scene.IsVisible = wasVisible;
-                Undo.TrackScene(scene);
-            },
-            redoAction: () =>
-            {
-                scene.IsVisible = false;
-                world.UnloadScene(scene);
-                targetWorld.Scenes.Remove(scene);
-            });
-    }
+        => HierarchySceneActions.Unload(scene, world);
 
     private static void ClearSelectionForScene(XRScene scene, RuntimeWorld world)
     {

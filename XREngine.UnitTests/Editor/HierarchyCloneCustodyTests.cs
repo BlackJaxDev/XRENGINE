@@ -62,7 +62,7 @@ public sealed class HierarchyCloneCustodyTests
     }
 
     [Test]
-    public void AppliedPruningRetainsCurrentSameDocumentPlacement()
+    public void AppliedPruningHandsOffCurrentSameDocumentPlacement()
     {
         SceneNode source = new("Source"), destination = new("Destination");
         XRScene scene = new("Hidden", source, destination) { IsVisible = false };
@@ -77,14 +77,14 @@ public sealed class HierarchyCloneCustodyTests
             clone.Name = "Later edit";
             Undo.ClearHistory();
             Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Document));
-            Assert.That(custody.RetainedOwnership, Is.Not.Null);
+            Assert.That(custody.RetainedOwnership, Is.Null);
             Assert.That(custody.Resource.IsReleased, Is.True);
             Assert.That(clone.Parent, Is.SameAs(destination));
             Assert.That(clone.Name, Is.EqualTo("Later edit"));
             Assert.That(clone.IsDestroyed, Is.False);
             HierarchyCloneCustody next = store.Reserve(world);
             next.CompleteCommand();
-            Assert.That(store.CaptureEntries(), Is.EqualTo(new[] { custody }));
+            Assert.That(store.CaptureEntries(), Is.Empty);
         }
         finally { Cleanup(custody); source.Destroy(true); destination.Destroy(true); }
     }
@@ -324,7 +324,7 @@ public sealed class HierarchyCloneCustodyTests
     }
 
     [Test]
-    public void EndedDocumentKeepsItsReceiptAndBlocksNewConstruction()
+    public void RuntimeDisposalAfterAuthoredHandoffDoesNotBlockNewConstruction()
     {
         SceneNode source = new("Source");
         XRScene scene = new("Hidden", source) { IsVisible = false };
@@ -335,17 +335,19 @@ public sealed class HierarchyCloneCustodyTests
         {
             Undo.ClearHistory();
             Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Document));
+            Assert.That(custody.RetainedOwnership, Is.Null);
             world.Dispose();
             using RuntimeWorld next = new(new HierarchyTestPhysicsScene(), new XRWorld("Next"));
-            Assert.Throws<InvalidOperationException>(() => store.Reserve(next));
-            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.RecoveryRequired));
-            Assert.That(custody.RetainedOwnership, Is.Not.Null);
+            store.Reserve(next).CompleteCommand();
+            Assert.That(store.CaptureEntries(), Is.Empty);
+            Assert.That(scene.SceneRoots, Does.Contain(custody.Node));
+            Assert.That(custody.Node!.IsDestroyed, Is.False);
         }
         finally { Cleanup(custody); source.Destroy(true); }
     }
 
     [Test]
-    public void AppliedCloneInAReadyExternalHiddenSceneKeepsDocumentCustody()
+    public void AppliedCloneInAReadyExternalHiddenSceneRetainsRecoveryCustody()
     {
         SceneNode source = new("External source");
         XRScene scene = new("External hidden scene", source) { IsVisible = false };
@@ -358,7 +360,8 @@ public sealed class HierarchyCloneCustodyTests
             Assert.That(world.IsSceneReady(scene), Is.True);
             Assert.That(custody.Node!.World, Is.Null);
             Undo.ClearHistory();
-            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Document));
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.RecoveryRequired));
+            Assert.That(custody.RetainedOwnership, Is.Not.Null);
             Assert.That(scene.SceneRoots, Does.Contain(custody.Node));
             Assert.That(custody.Node!.IsDestroyed, Is.False);
         }

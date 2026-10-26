@@ -2586,7 +2586,7 @@ incarnation and exact live control paths. Retirement clears row data only after
 its provider detach has settled with the expected incarnation and owner. A callback
 that transfers the table or installs a provider cancels that cleanup authority.
 This does not add generic table multi-selection, approximate-time matching,
-multiple marked keys per curve, grouped time editing, or a new Undo framework.
+multiple marked keys per curve, or a new Undo framework.
 
 
 ## Grouped outgoing values and live hierarchy views
@@ -2618,3 +2618,63 @@ dirty. Unclipped commands have separate program admission; native model-matrix
 semantics still require exact bytes. Custom cropped fragments, cropped stereo text,
 and arbitrary 3D material/raster overrides remain outside this bounded profile.
 This source contract does not establish graphics or validation-layer acceptance.
+
+
+## Grouped authored handles and exact key time
+
+The explicit marked-key controls also set incoming values, tangents, per-side
+interpolation, weights, weighted mode, and the three synchronization flags. The
+numeric draft supplies the value for each labelled numeric action; Enter keeps
+its outgoing-value meaning. Boolean and interpolation actions select an explicit
+state rather than inferring a toggle from mixed targets. Detached staging uses the
+same setters as single-curve editing, including their synchronization effects.
+Unsupported weighted/interpolation combinations reject the whole operation.
+
+`InspectorFloatCurveEditBatch` shares callback checks and guarded compensation
+between authored-payload changes and time moves. Time moves retain exact key
+objects, complete peer payloads, equal-time order, and authored frame indices.
+A changed time clears that key's authored frame index; Undo restores it. Unchanged
+members remain unchanged. The destination must fit every selected curve and track.
+Existing peers beyond a shortened end do not prevent an otherwise valid move.
+Neither operation changes playback clocks. The existing size limits, exact marks,
+source reservations, and one-Undo contract remain in force.
+
+## Applied structural clone handoff
+
+Clearing applied clone history can release construction custody to the exact live
+authored scene owners. `HierarchyCloneDocument` first classifies the complete
+sealed ledger. Installed node, transform, component, and list identities must still
+belong to the captured authored world and scenes. A subset receipt retains the
+original construction identities; it never recaptures a changed lifetime.
+
+Only private, detached built-in constructor transforms and their exact child lists
+enter canonical retirement. Adopted structure stays reserved during that cleanup
+and is checked again afterward. Uninstalled temporary structural lists must be
+empty both before cleanup and at settlement. Failure retains the complete ledger,
+private subset, and retirement result; it does not destroy borrowed content.
+Successful handoff releases the ledger without granting later destruction authority.
+Runtime-only roots, unsupported assets, custom private transforms, and foreign
+owners remain retained. This is not a new document-close or asset recovery policy.
+
+
+## Material drops and scene actions
+
+Model-submesh material drops use `ModelSubMeshMaterialAction`. The initial drop
+checks the captured component, model, world, source submesh, and lifetimes. The
+accepted history belongs to the captured model/submesh assets, so a later viewport
+change does not invalidate an otherwise current asset edit. Each LOD has an exact
+material write intent. One Undo action retains every prior material and validates
+the complete LOD set around callbacks. Apply and replay mark the explicit model and
+submesh source documents dirty. No global alias search is performed. The transient
+renderer fallback and file-import route keep their existing behavior.
+
+Native and ImGui scene commands share `HierarchySceneActions`. Unload retains the
+exact authored scene index, peer order, independent visible/loaded state, and source
+documents. Selection is captured before membership changes; redo captures its own
+current selection. Newer selection publications remain authoritative. Undo restores
+the original index and prior loaded state without destroying authored roots.
+Visibility and unload replay mark the captured source documents dirty, including
+embedded and shared source documents. Exact scene visibility intent rejects stale
+prechange writes. Canonical runtime load/unload operations remain responsible for
+their entered lifecycle work; editor checks run before and after those calls.
+Partial conflicts keep guarded history instead of overwriting callback edits.

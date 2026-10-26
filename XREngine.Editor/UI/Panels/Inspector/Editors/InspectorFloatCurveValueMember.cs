@@ -2,8 +2,8 @@ using XREngine.Animation;
 
 namespace XREngine.Editor;
 
-/// <summary>Retains one exact outgoing value and all authored track peers.</summary>
-internal sealed class InspectorFloatCurveValueMember
+/// <summary>Retains one exact authored handle state and all authored track peers.</summary>
+internal sealed class InspectorFloatCurveValueMember : IInspectorFloatCurveEditMember
 {
     private readonly InspectorFloatCurveSource _source;
     private readonly Keyframe[] _order;
@@ -39,16 +39,17 @@ internal sealed class InspectorFloatCurveValueMember
     }
 
     internal FloatKeyframe Key { get; }
-    internal bool HasChange => _before != _after;
+    public bool HasChange => _before != _after;
     internal IReadOnlyList<Keyframe> ExistingKeys => _order;
-    internal ulong ExactGeneration => _source.Track.ExactEditGeneration;
-    internal ulong NotificationRevision => _source.Track.ChangedNotificationRevision;
-    internal bool CanNotify => _source.Track.CanAdvanceChangedNotificationRevision;
-    internal bool CanStartOperation => !HasChange ||
-        _source.Track.CanReserveChangedNotifications(2);
+    public ulong ExactGeneration => _source.Track.ExactEditGeneration;
+    public ulong NotificationRevision => _source.Track.ChangedNotificationRevision;
+    public bool CanNotify => _source.Track.CanAdvanceChangedNotificationRevision;
+    public ulong ExactGenerationDelta => 0;
+    public bool CanReserveTransitions(int count) => !HasChange ||
+        _source.Track.CanReserveChangedNotifications(count);
 
     internal static bool TryCapture(InspectorFloatCurveSource source,
-        FloatKeyframe key, float value, int remainingKeys,
+        FloatKeyframe key, Func<FloatKeyframe, bool> stage, int remainingKeys,
         out InspectorFloatCurveValueMember? member)
     {
         member = null;
@@ -62,17 +63,8 @@ internal sealed class InspectorFloatCurveValueMember
             !key.TryCaptureAuthoredState(out var before))
             return false;
 
-        FloatKeyframe staged = new();
-        staged.RestorePublishedHandles(before.InValue, before.OutValue,
-            before.InTangent, before.OutTangent,
-            before.InterpolationIn, before.InterpolationOut,
-            before.SyncValues, before.SyncDirections, before.SyncMagnitudes);
-        if (!staged.TryRestoreAuthoredWeights(before.WeightedMode,
-                before.InWeight, before.OutWeight))
-            return false;
-        staged.OutValue = value;
-        if (!staged.TryCaptureAuthoredState(out var after) ||
-            !Finite(before) || !Finite(after))
+        if (!InspectorFloatCurveActions.TryStageAuthoredState(before, stage, out var after) ||
+            !Finite(before))
             return false;
 
         Func<bool>?[] payloads = new Func<bool>?[order.Length];
@@ -97,14 +89,14 @@ internal sealed class InspectorFloatCurveValueMember
         }
         if (!found) return false;
         member = new(source, order, payloads, seconds, frames, key, before, after);
-        return member.CanStartOperation && member.Matches(after: false);
+        return member.CanReserveTransitions(2) && member.Matches(after: false);
     }
 
     private static bool Finite(VectorKeyframeAuthoredState<float> state)
         => float.IsFinite(state.InValue) && float.IsFinite(state.OutValue) &&
             float.IsFinite(state.InTangent) && float.IsFinite(state.OutTangent);
 
-    internal bool Matches(bool after)
+    public bool Matches(bool after)
     {
         if (!_source.IsCurrent() ||
             _source.Curve.LengthInSeconds != _curveLength ||
@@ -124,7 +116,7 @@ internal sealed class InspectorFloatCurveValueMember
         return true;
     }
 
-    internal void Transition(bool forward, ulong expectedExactGeneration,
+    public void Transition(bool forward, ulong expectedExactGeneration,
         ulong expectedNotificationRevision)
     {
         if (!Matches(!forward) || ExactGeneration != expectedExactGeneration ||

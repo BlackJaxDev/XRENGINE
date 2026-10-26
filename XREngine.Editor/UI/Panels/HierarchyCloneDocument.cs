@@ -7,7 +7,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Editor;
 
 /// <summary>Proves current document custody without replaying a clone's old placement.</summary>
-internal sealed class HierarchyCloneDocument
+internal sealed partial class HierarchyCloneDocument
 {
     private readonly XRWorld? _asset;
     private readonly ObjectConstructionIdentity? _assetIdentity;

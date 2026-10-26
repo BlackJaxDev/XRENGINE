@@ -54,11 +54,12 @@ public static partial class InspectorPropertyEditors
                 _removeMarkedKeys = CreateInspectorButton(_groupRemovalControls,
                     "Remove marked keys", RemoveMarkedKeys);
                 if (!ContinueBuild()) return;
-                _markedValue = AddInput(_groupRemovalControls, "Marked outgoing value", 150, SubmitMarkedValue);
+                _markedValue = AddInput(_groupRemovalControls, "Marked numeric value (Enter: outgoing)", 210, SubmitMarkedValue);
                 if (!ContinueBuild()) return;
                 _setMarkedValue = CreateInspectorButton(_groupRemovalControls,
                     "Set marked outgoing values", SetMarkedValue);
                 if (!ContinueBuild()) return;
+                if (!BuildMarkedStateControls(_groupRemovalControls)) return;
                 if (_markedValue is null || _markedValue.IsDestroyed || _markedValue.IsDestroyQueued ||
                     _markedValue.SceneNode.GetComponent<UITextComponent>() is not { } markedDisplay)
                 {
@@ -74,7 +75,8 @@ public static partial class InspectorPropertyEditors
                 ObjectConstructionIdentity cardTransformId = ObjectConstructionIdentity.Capture(cardTransform);
                 XRComponent?[] builtControls = [_previousRemovalCurve, _nextRemovalCurve, _markRemovalKey,
                     _removeMarkedKeys, _groupRemovalStatus, _markedValue, markedDisplay, _setMarkedValue];
-                Func<bool>[] controlsCurrent = builtControls.Select(control => CaptureRemovalControl(control!, controls)).ToArray();
+                Func<bool>[] controlsCurrent = builtControls.Concat(_markedStateButtons)
+                    .Select(control => CaptureRemovalControl(control!, controls)).ToArray();
                 _ownsRemovalControls = () => LiveRemovalIdentity(_rootIdentity) &&
                     LiveRemovalIdentity(_removalRootTransformIdentity) &&
                     ReferenceEquals(_root.Transform, _removalRootTransformIdentity.Target) &&
@@ -173,6 +175,11 @@ public static partial class InspectorPropertyEditors
                 if (_markedValue is not null) _markedValue.IsEnabled = marks is not null && marks.MarkedCount == marks.Count;
                 if (!IsRemovalViewCurrent(revision)) return false;
                 if (_setMarkedValue is not null) _setMarkedValue.IsEnabled = marks is not null && marks.MarkedCount == marks.Count;
+                foreach (UIButtonComponent button in _markedStateButtons)
+                {
+                    if (!IsRemovalViewCurrent(revision)) return false;
+                    button.IsEnabled = marks is not null && marks.MarkedCount == marks.Count;
+                }
                 return IsRemovalViewCurrent(revision);
             }
 
@@ -225,6 +232,10 @@ public static partial class InspectorPropertyEditors
             }
 
             private void SetMarkedValue()
+                => SetMarkedNumeric(InspectorFloatCurveActions.SetValue);
+
+            private void SetMarkedNumeric(Func<InspectorFloatCurveLengthSelection,
+                IReadOnlyList<FloatKeyframe>, float, bool> apply)
             {
                 if (_markedValue is not { } input || _ownsRemovalControls?.Invoke() != true) return;
                 ulong textIntent = input.TextWriteIntentRevision;
@@ -237,7 +248,7 @@ public static partial class InspectorPropertyEditors
                     input.TextWriteIntentRevision != textIntent || input.Text != text ||
                     !IsRemovalViewCurrent(_presentedRemovalRevision))
                     return;
-                if (InspectorFloatCurveActions.SetValue(group, targets, value) &&
+                if (apply(group, targets, value) &&
                     ReferenceEquals(_removalMarks, marks))
                     marks.ClearIfCurrent(markIntent);
                 // Keep the submitted draft, including any newer callback edit.

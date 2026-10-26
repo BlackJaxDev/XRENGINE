@@ -2487,3 +2487,36 @@ were corrected; the nested draft remains unpublished for a separate ownership
 repair. Its review also fixed stale binding revision, unchanged refresh, empty
 first-item rendering, and document-authority admission. No unexecuted Editor
 fixture is reported as a runtime pass.
+
+
+## Exact edit and authoring-action integration review
+
+The nested-list diagnostic compile 149 failed with 18 integration errors: missing
+transform imports, incorrect parent transform types, helper visibility, and a
+required admission argument on ordinary calls. Source review also found ordinary
+layout/component construction invalidating its own receipts, ordinary editors
+entering a nested-only path, stale enum reuse admission, and transferred-control
+cleanup gaps. The 19-file candidate is preserved separately; it is not part of the
+independent authoring checkpoint and its 21 Editor cases have not run.
+
+Clone handoff review added empty-list admission before private retirement and
+again at settlement. A callback cannot add borrowed contents and then lose the
+construction receipt. Successful handoff clears completed retirement references;
+failed settlement keeps full provenance. Shared grouped-edit batch checks pass
+10/10, and subset plus affected retirement checks pass 31/31.
+
+Runtime visibility/material builds 150 and 151 pass. Headless build 152 found one
+fixture error: veto assignment used the event interface instead of the existing
+typed event args. The cast repair changed no production behavior; build 153 and
+31 affected scene/material/root cases pass. Editor build 154 and test-project
+build 155 pass with zero warnings/errors. Final review then found two independent
+dirty-authority gaps: material cleanup could mark a former source document, and
+a scene dirty callback could suppress a separate current world document. Their
+small Editor-only repairs add three cases; no portable production input changed.
+
+The final independent snapshot contains 10,998 source/project inputs. Editor
+wrapper 156 passed in 46.79s and test-project wrapper 157 in 46.44s, each with zero
+warnings/errors. The source manifest remained unchanged. Data subset build 146,
+Core 150, Rendering 151, and Headless 153 also pass. Only the two Editor dirty
+helpers and their fixtures changed after the earlier 154/155 compile; no portable
+production input changed, so the passing focused runs were not repeated.

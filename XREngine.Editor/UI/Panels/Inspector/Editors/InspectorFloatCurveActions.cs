@@ -109,6 +109,18 @@ internal static class InspectorFloatCurveActions
                 AnimationClipAuthoringActions.MatchesOrder(source.Track, before), key);
     }
 
+    public static bool SetTime(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, float second)
+    {
+        if (!InspectorFloatCurveTimeEdit.TryCapture(selection, targets, second, out var edit) || edit is null)
+            return false;
+        return AnimationAuthoringTransaction.Apply(selection.Curves[0].Curve,
+            selection.Documents, "Move Selected Animation Keys",
+            () => edit.Apply(true), () => edit.Apply(false),
+            () => edit.Matches(true), () => edit.Matches(false), selection.IsCurrent,
+            null, edit.ReservationOwners);
+    }
+
     public static bool SetValue(InspectorFloatCurveSource source,
         FloatKeyframe key, float value)
     {
@@ -219,18 +231,8 @@ internal static class InspectorFloatCurveActions
             return false;
         float second = key.Second;
         int frame = key.AuthoredFrameIndex;
-        FloatKeyframe staged = new();
-        staged.RestorePublishedHandles(before.InValue, before.OutValue,
-            before.InTangent, before.OutTangent,
-            before.InterpolationIn, before.InterpolationOut,
-            before.SyncValues, before.SyncDirections, before.SyncMagnitudes);
-        if (!staged.TryRestoreAuthoredWeights(before.WeightedMode,
-                before.InWeight, before.OutWeight))
-            return false;
-        edit(staged);
-        if (!staged.TryCaptureAuthoredState(out var after) || after == before ||
-            !float.IsFinite(after.InValue) || !float.IsFinite(after.OutValue) ||
-            !float.IsFinite(after.InTangent) || !float.IsFinite(after.OutTangent))
+        if (!TryStageAuthoredState(before, staged => { edit(staged); return true; }, out var after) ||
+            after == before)
             return false;
         bool Owns() => source.IsCurrent() &&
             ReferenceEquals(key.OwningTrack, source.Track) &&
@@ -246,6 +248,95 @@ internal static class InspectorFloatCurveActions
                 key.TryCaptureAuthoredState(out var state) && state == before,
             Owns, null, [.. source.ReservationOwners, key]);
     }
+
+    internal static bool TryStageAuthoredState(VectorKeyframeAuthoredState<float> before,
+        Func<FloatKeyframe, bool> edit, out VectorKeyframeAuthoredState<float> after)
+    {
+        after = default;
+        FloatKeyframe staged = new();
+        staged.RestorePublishedHandles(before.InValue, before.OutValue,
+            before.InTangent, before.OutTangent, before.InterpolationIn, before.InterpolationOut,
+            before.SyncValues, before.SyncDirections, before.SyncMagnitudes);
+        return staged.TryRestoreAuthoredWeights(before.WeightedMode, before.InWeight, before.OutWeight) &&
+            edit(staged) && staged.TryCaptureAuthoredState(out after) &&
+            float.IsFinite(after.InValue) && float.IsFinite(after.OutValue) &&
+            float.IsFinite(after.InTangent) && float.IsFinite(after.OutTangent);
+    }
+
+    private static bool EditState(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, string description, Func<FloatKeyframe, bool> stage)
+    {
+        if (!InspectorFloatCurveValueEdit.TryCapture(selection, targets, stage, out var edit) || edit is null)
+            return false;
+        return AnimationAuthoringTransaction.Apply(selection.Curves[0].Curve,
+            selection.Documents, description,
+            () => edit.Apply(true), () => edit.Apply(false),
+            () => edit.Matches(true), () => edit.Matches(false), selection.IsCurrent,
+            null, edit.ReservationOwners);
+    }
+
+    public static bool SetIncomingValue(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, float value)
+        => float.IsFinite(value) && EditState(selection, targets, "Set Selected Animation Incoming Values",
+            staged => { staged.InValue = value; return true; });
+
+    public static bool SetTangent(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, bool outgoing, float value)
+        => float.IsFinite(value) && EditState(selection, targets, "Set Selected Animation Tangents", staged =>
+        {
+            if (outgoing) staged.OutTangent = value;
+            else staged.InTangent = value;
+            return true;
+        });
+
+    public static bool SetInterpolation(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, bool outgoing, EVectorInterpType mode)
+        => Enum.IsDefined(mode) && EditState(selection, targets, "Set Selected Animation Interpolation", staged =>
+        {
+            if (outgoing) staged.InterpolationTypeOut = mode;
+            else staged.InterpolationTypeIn = mode;
+            return true;
+        });
+
+    public static bool SetSyncValues(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, bool enabled)
+        => EditState(selection, targets, "Link Selected Animation Values",
+            staged => { staged.SyncInOutValues = enabled; return true; });
+
+    public static bool SetSyncDirections(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, bool enabled)
+        => EditState(selection, targets, "Link Selected Animation Tangent Directions",
+            staged => { staged.SyncInOutTangentDirections = enabled; return true; });
+
+    public static bool SetSyncMagnitudes(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, bool enabled)
+        => EditState(selection, targets, "Link Selected Animation Tangent Magnitudes",
+            staged => { staged.SyncInOutTangentMagnitudes = enabled; return true; });
+
+    public static bool SetWeightedSide(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, bool outgoing, bool enabled)
+        => EditState(selection, targets, "Set Selected Animation Weighted Tangents", staged =>
+        {
+            if ((outgoing ? staged.InterpolationTypeOut : staged.InterpolationTypeIn) != EVectorInterpType.Hermite)
+                return false;
+            EKeyframeWeightedMode side = outgoing ? EKeyframeWeightedMode.Out : EKeyframeWeightedMode.In;
+            staged.WeightedMode = enabled ? staged.WeightedMode | side : staged.WeightedMode & ~side;
+            return true;
+        });
+
+    public static bool SetWeight(InspectorFloatCurveLengthSelection selection,
+        IReadOnlyList<FloatKeyframe> targets, bool outgoing, float weight)
+        => float.IsFinite(weight) && weight is >= 0 and <= 1 &&
+            EditState(selection, targets, "Set Selected Animation Weights", staged =>
+            {
+                EKeyframeWeightedMode side = outgoing ? EKeyframeWeightedMode.Out : EKeyframeWeightedMode.In;
+                if ((outgoing ? staged.InterpolationTypeOut : staged.InterpolationTypeIn) != EVectorInterpType.Hermite ||
+                    (staged.WeightedMode & side) == 0)
+                    return false;
+                if (outgoing) staged.OutWeight = weight;
+                else staged.InWeight = weight;
+                return true;
+            });
 
     public static bool SetLength(InspectorFloatCurveSource source, float seconds,
         bool stretch)

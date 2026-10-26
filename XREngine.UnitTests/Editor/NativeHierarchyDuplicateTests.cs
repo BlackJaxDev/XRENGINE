@@ -604,7 +604,8 @@ public sealed class NativeHierarchyDuplicateTests
 
     private static void Cleanup(HierarchyCloneCustody custody)
     {
-        XRObjectBase[] allocations = custody.RetainedOwnership?.Objects.ToArray() ?? [];
+        XRObjectBase[] allocations = custody.RetainedOwnership?.Objects.ToArray() ??
+            custody.Nodes?.Cast<XRObjectBase>().ToArray() ?? [];
         Selection.Clear();
         Undo.ClearHistory();
         foreach (SceneNode node in allocations.OfType<SceneNode>())

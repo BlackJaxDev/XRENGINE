@@ -27,7 +27,7 @@ namespace XREngine.Scene
         public bool IsVisible
         {
             get => _isVisible;
-            set => SetField(ref _isVisible, value);
+            set => SetVisibility(value);
         }
 
         private bool _isEditorOnly = false;

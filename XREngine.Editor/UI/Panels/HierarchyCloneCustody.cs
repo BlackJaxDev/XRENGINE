@@ -13,6 +13,8 @@ internal sealed class HierarchyCloneCustody
     private ObjectConstructionResult<IReadOnlyList<SceneNode>>? _forestConstruction;
     private IReadOnlyList<SceneNode>? _singleNodes;
     private OwnedHierarchyLifetime? _lifetime;
+    private OwnedHierarchyLifetime? _documentRetirement;
+    private ObjectConstructionOwnership? _documentRetirementOwnership;
     private IReadOnlyList<ObjectConstructionIdentity>? _identities;
     private HierarchyLifetimeAdmission? _initialAdmission;
     private bool _historyAttached;
@@ -33,7 +35,9 @@ internal sealed class HierarchyCloneCustody
     internal ObjectConstructionOwnership? RetainedOwnership =>
         _forestConstruction?.Ownership ?? _construction?.Ownership;
     internal OwnedHierarchyLifetime? Lifetime => _lifetime;
-    internal SceneNode? Node => _construction?.Value;
+    internal OwnedHierarchyLifetime? DocumentRetirement => _documentRetirement;
+    internal ObjectConstructionOwnership? DocumentRetirementOwnership => _documentRetirementOwnership;
+    internal SceneNode? Node => _construction?.Value ?? (_singleNodes is { Count: 1 } nodes ? nodes[0] : null);
     internal IReadOnlyList<SceneNode>? Nodes => _forestConstruction?.Value ?? _singleNodes;
     internal bool BlocksConstruction => State is EHierarchyCloneCustodyState.Reserved or
         EHierarchyCloneCustodyState.Undoing or EHierarchyCloneCustodyState.Redoing or
@@ -272,10 +276,26 @@ internal sealed class HierarchyCloneCustody
             RequireIdentity();
             if (State == EHierarchyCloneCustodyState.Applied)
             {
-                Document.RequireCustody(ownership);
-                // The store remains the strong owner. This does not discard the
-                // ledger or give document teardown permission to destroy assets.
+                State = EHierarchyCloneCustodyState.Retiring;
+                using HierarchyCloneDocumentHandoff handoff = Document.PrepareHandoff(ownership);
+                _documentRetirementOwnership = handoff.PrivateOwnership;
+                _documentRetirement = new(handoff.PrivateOwnership);
+                if (!_documentRetirement.TryRetire())
+                    throw new InvalidOperationException("Private constructor storage could not be retired before document handoff.", _documentRetirement.Failure);
+                handoff.RequireCurrent();
+                // Authored scene roots already retain the live hierarchy. Keep only
+                // its returned roots; no ledger or later document destruction authority remains.
+                _singleNodes = Nodes;
+                _construction = null;
+                _forestConstruction = null;
+                _identities = null;
+                _operationShapes = null;
+                _selection = null;
+                _lifetime = null;
+                _documentRetirementOwnership = null;
+                _documentRetirement = null;
                 State = EHierarchyCloneCustodyState.Document;
+                _store.Settle(this);
                 return;
             }
             if (State != EHierarchyCloneCustodyState.Detached)

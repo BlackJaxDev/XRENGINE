@@ -2324,3 +2324,50 @@ migration snapshot. This task made no private writes.
 The frozen checkpoint passes Headless, Editor, and test-project compilation through
 wrapper builds 143–145 with zero warnings/errors. All 10,975 source/project hashes
 remained unchanged. Runtime Rendering and Vulkan also compile cleanly.
+
+
+## Exact curve edits, clone handoff, and shared authoring actions
+
+Marked keys now support explicit time, incoming/outgoing value, tangent,
+interpolation, synchronization, weight, and weighted-mode assignments. Time moves
+retain exact order and authored frames for Undo; handle staging keeps each key's
+own synchronization behavior. Shared batch code rejects callback changes and
+compensates only still-owned writes. The single-curve workflow is unchanged.
+
+Applied structural clone history now settles into its exact live authored scene
+owners. Only admitted private built-in constructor storage is retired. Borrowed,
+nonempty temporary, custom, foreign, and unsupported asset allocations keep their
+recovery receipts. No document-close destruction policy was added.
+
+Model-submesh material drops now retain exact LOD materials in one Undo action and
+mark explicit source documents dirty on apply and replay. Shared scene visibility
+and unload actions preserve exact scene order, independent loaded state, and
+selection intent. Dirty callbacks cannot redirect writes to a former source or
+suppress another still-owned document's dirty mark.
+
+Focused portable runs pass **72 distinct cases**: 31 construction/retirement,
+10 grouped-edit batch, and 31 scene/material/root-ownership cases. No full suite
+was repeated. New Editor coverage is **89 cases**: 21 added handle-backend cases,
+18 time-backend cases, 13 added handle/time UI cases, 10 clone-handoff cases,
+13 material-action cases, and 14 scene-action cases. They remain Windows-unrun;
+with the previous 105, the backlog is **194 cases**. Previously executed custody
+fixtures with changed assertions also need affected Windows revalidation.
+
+The separate 19-file nested-list draft and its 21 cases remain unpublished and
+outside that count. Two local draft stashes preserve the original and reviewed
+forms; the six earlier stash IDs are unchanged. Remaining independent code starts
+with that fixed-height detail integration and transient cross-host Animation
+search draft/focus state. Broader custom/stereo/3D shader profiles need an explicit
+render contract. Custom collection/adopted-content policy, analyzer choice, asset
+recovery/creation, window-key migration, shadow/bindless policy, and the native
+default remain held. Windows/live/GPU/IME/performance acceptance remains separate.
+The broad code reconciliation remains **51/60**. No private documentation or laptop
+work occurred; the same five public document paths changed after the migration
+snapshot.
+
+The final independent snapshot contains 10,998 source/project inputs. Editor
+wrapper 156 passed in 46.79s and test-project wrapper 157 in 46.44s, each with zero
+warnings/errors. The source manifest remained unchanged. Data subset build 146,
+Core 150, Rendering 151, and Headless 153 also pass. Only the two Editor dirty
+helpers and their fixtures changed after the earlier 154/155 compile; no portable
+production input changed, so the passing focused runs were not repeated.

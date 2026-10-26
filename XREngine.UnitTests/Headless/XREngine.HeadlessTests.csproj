@@ -38,6 +38,7 @@
     <Compile Include="../Core/InlineYamlTestAssetServices.cs" Link="Core/InlineYamlTestAssetServices.cs" />
     <Compile Include="../Prefabs/EngineTransformDebugServiceProbe.cs" Link="Prefabs/EngineTransformDebugServiceProbe.cs" />
     <Compile Include="../Prefabs/EngineTransformDebugOwnershipTests.cs" Link="Prefabs/EngineTransformDebugOwnershipTests.cs" />
+    <Compile Include="../Prefabs/OwnedHierarchyConstructionSubsetTests.cs" Link="Prefabs/OwnedHierarchyConstructionSubsetTests.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/HierarchyBatchLocalValues.cs" Link="Editor/HierarchyBatchLocalValues.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/HierarchyBatchReplayExpectation.cs" Link="Editor/HierarchyBatchReplayExpectation.cs" />
     <Compile Include="../Editor/HierarchyBatchReplayExpectationTests.cs" Link="Editor/HierarchyBatchReplayExpectationTests.cs" />
@@ -54,6 +55,12 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatCurveKeyMarks.cs" Link="Editor/InspectorFloatCurveKeyMarks.cs" />
     <Compile Include="../Editor/InspectorFloatCurveRemovalMarksTests.cs" Link="Editor/InspectorFloatCurveRemovalMarksTests.cs" />
     <Compile Include="../Rendering/KeyframeTrackNotificationRevisionTests.cs" Link="Rendering/KeyframeTrackNotificationRevisionTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/IInspectorFloatCurveEditMember.cs" Link="Editor/IInspectorFloatCurveEditMember.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatCurveEditBatch.cs" Link="Editor/InspectorFloatCurveEditBatch.cs" />
+    <Compile Include="../Rendering/InspectorFloatCurveEditBatchTests.cs" Link="Rendering/InspectorFloatCurveEditBatchTests.cs" />
+    <Compile Include="../Rendering/SubMeshLODMaterialWriteTests.cs" Link="Rendering/SubMeshLODMaterialWriteTests.cs" />
+    <Compile Include="../Prefabs/SceneVisibilityGuardedWriteTests.cs" Link="Prefabs/SceneVisibilityGuardedWriteTests.cs" />
+    <Compile Include="../Rendering/ControlledFloatCurveEditMember.cs" Link="Rendering/ControlledFloatCurveEditMember.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/AutoUniformDefaultValue.cs" Link="Rendering/AutoUniformDefaultValue.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/AutoUniformMember.cs" Link="Rendering/AutoUniformMember.cs" />
     <Compile Include="../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/AutoUniformBlockInfo.cs" Link="Rendering/AutoUniformBlockInfo.cs" />
