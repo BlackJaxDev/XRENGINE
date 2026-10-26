@@ -5,6 +5,7 @@ using XREngine.Data;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Gaussian.Cache;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Serialization;
 using YamlDotNet.Serialization;
@@ -20,6 +21,9 @@ public static class RenderingSerializationRegistration
             RenderingPublishedCookedAssetRegistration.RegisterBrowserRuntimeFactories();
             leases.Add(global::XREngine.Generated.GeneratedRuntimeContracts_XREngine_Runtime_Rendering.Install());
             leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory<XRShader>(static () => new XRShader()));
+            leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory<GaussianCache>(static () => new GaussianCache()));
+            leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory<GaussianCacheChunk>(static () => new GaussianCacheChunk()));
+            leases.Add(GaussianCachePublishedRegistration.Install());
             leases.Add(ThirdPartyCacheCodecRegistry.Install(new TextureStreamingCacheCodec()));
             leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Rendering", typeof(XRTexture2D)));
             // .cs also names C# scripts; only an explicitly typed shader load may claim it.
