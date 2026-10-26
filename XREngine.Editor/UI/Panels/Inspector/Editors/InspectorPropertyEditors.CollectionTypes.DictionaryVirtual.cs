@@ -12,7 +12,7 @@ public static partial class InspectorPropertyEditors
         {
             private void RenderVirtualDictionary(Type keyType, Type valueType,
                 EditorDictionarySourceLease[] sources, EditorDictionarySnapshot primary,
-                ulong generation)
+                EditorDictionaryRowPlan plan, ulong generation)
             {
                 Type bindingType = typeof(DictionaryValueBinding<,>).MakeGenericType(keyType, valueType);
                 PropertyInfo bindingProperty = bindingType.GetProperty(
@@ -22,12 +22,13 @@ public static partial class InspectorPropertyEditors
                     bindingProperty,
                     primary.Keys.Length,
                     "Add Entry",
-                    index => primary.Keys[index].ToString() ?? "<null>",
+                    plan.Label,
                     (index, rowRead, rowWrite) => CreateDictionaryBindings(bindingType,
                         primary.Keys[index], generation, sources, rowRead, rowWrite),
                     (index, rowWrite) => RemoveDictionaryEntry(
                         CreateDictionaryRowSources(sources, rowWrite), primary.Keys[index], generation),
-                    () => AddDictionaryEntry(sources, generation));
+                    () => AddDictionaryEntry(sources, generation),
+                    plan.ReadOnlyText);
                 RenderVirtualFixedHeightRows(contract, generation);
             }
 

@@ -2179,7 +2179,7 @@ checklist or permission request.
 | Open area | Concrete code/contract remainder | Holds and acceptance |
 |---|---|---|
 | Direct-world clipping | Vulkan direct-world publication/clipping and unsupported world output profiles; bounded OpenGL canvas output already exists. | World-shadow and bindless-use choices remain open. OpenGL/Vulkan GPU and visual checks remain required. |
-| Inspector | Existing-key time/value/handle edits across distinct selected curves; explicit one-key-per-curve removal is implemented; partial-key/multiline dictionary cases; tall/custom collection editors and remaining nested row coverage. Top-level property rows and supported fixed-height collections are already virtual. | Variable-height priority is an owner decision. Real-host multi-object Undo and scale checks remain. |
+| Inspector | Existing-key time/value/handle edits across distinct selected curves; explicit one-key-per-curve removal is implemented; multiline dictionary cases; tall/custom collection editors and remaining nested row coverage. Top-level property rows and supported fixed-height collections are already virtual. | Variable-height priority is an owner decision. Real-host multi-object Undo and scale checks remain. |
 | Native panels | Remaining AnimationPanel authoring, broader hierarchy clone profiles, and document-end cleanup; full asset creation/recovery remains absent. Existing asset navigation, console, and bounded profiler views must not be reimplemented. | Persistent asset recovery proposal is held. Native panel workflow/visual acceptance remains. |
 | Shared controls | All ordinary menu factories now use existing guarded construction, including submenu host/component creation and matching close ownership. Custom-content ownership and reserved adopted-subtree retirement need a clear graph contract. Full paragraph/fallback/accessibility coverage remains. | Paragraph analyzer choice is held. Native input, IME, accessibility, and visual checks remain. No arbitrary adopted graph was admitted. |
 | Docking | Remaining cross-host focus/transfer-state parity. Existing dock tree mutation and tool-view transfer receipts are implemented. | Primary-window key migration is held. Mixed-DPI, pointer capture, overlap, and multi-window checks remain. |
@@ -2260,3 +2260,27 @@ review. Existing-key time/value/handle editing and other inspector gaps remain;
 the broad reconciliation stays **51/60**. All owner-decision holds remain. Only
 the same five public documentation paths changed; private reconciliation remains
 with its owning task and the frozen `2462125639af4750609c88730e96866d547a1f86` snapshot.
+
+
+## Partial-key dictionary virtualization checkpoint
+
+Supported partial-key dictionary selections now use the shared fixed-height row
+presenter. Primary key order and displayed keys stay unchanged. Common keys use
+existing multi-owner mutation and Undo; missing-key rows show the primary value
+read-only, without creating keys in another owner. Recycled rows detach old
+bindings and Remove actions before switching presentation. Single-line key and
+read-only text admission retains multiline/custom fallback. Admission still
+captures source state and formats missing-key text; only controls are bounded
+to viewport plus overscan.
+
+The affected portable run passed **61/61**, including **14 new row-plan cases**.
+Headless wrapper build 127 and full editor/test wrapper build 128 passed with
+zero warnings/errors. The seven dictionary Editor cases compile but remain unrun:
+four prior cases (one revised) plus three new cases. The prior **67** unrun Editor
+cases therefore become **70**, not 74. No full suite, laptop, GPU, native input,
+IME, visual, or performance run occurred. The broader reconciliation stays
+**51/60**; multiline/custom/nested inspector coverage and grouped key editing
+remain open. Value-assignment planning adds no code in this checkpoint.
+
+Only the same five public documentation paths changed after the private migration
+snapshot `2462125639af4750609c88730e96866d547a1f86`. No private writes occurred.

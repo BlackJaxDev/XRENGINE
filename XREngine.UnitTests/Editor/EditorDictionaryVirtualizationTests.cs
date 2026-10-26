@@ -84,7 +84,7 @@ public sealed class EditorDictionaryVirtualizationTests
     }
 
     [Test]
-    public void MissingOwnerKeysKeepCurrentEagerReadonlyBehavior()
+    public void PartialOwnerKeysUseVirtualReadonlyRowsAndKeepCommonEditsExact()
     {
         using UITestShaderScope shaders = new();
         EditorDictionaryMutationTestTarget first = new();
@@ -95,17 +95,10 @@ public sealed class EditorDictionaryVirtualizationTests
         SceneNode detail = Create(first, second);
         try
         {
-            Assert.That(HasVirtualList(detail), Is.False,
-                "A partial-key selection keeps the existing eager row presentation.");
-            UITextInputComponent common = InputForLabel(detail, "common");
-            common.Binding!.SetValue("7");
-            Assert.That(first.Values["common"], Is.EqualTo(7));
-            Assert.That(second.Values["common"], Is.EqualTo(7));
-            Assert.That(Undo.TryUndo(), Is.True);
-            Assert.That(first.Values["common"], Is.EqualTo(1));
-            Assert.That(second.Values["common"], Is.EqualTo(9));
-
-            SceneNode missingRow = RowForLabel(detail, "missing");
+            UIListTransform list = VirtualList(detail);
+            Assert.That(list.VirtualProvider!.Count, Is.EqualTo(2));
+            list.SynchronizeVirtualRows(280);
+            SceneNode missingRow = RowForLabel(list.SceneNode!, "missing");
             Assert.That(Nodes(missingRow).SelectMany(node => node.Components.OfType<UITextInputComponent>()),
                 Is.Empty);
             Assert.That(Nodes(missingRow).SelectMany(node => node.Components.OfType<UITextComponent>())
@@ -113,6 +106,137 @@ public sealed class EditorDictionaryVirtualizationTests
             Assert.That(Nodes(missingRow).SelectMany(node => node.Components.OfType<UIButtonComponent>())
                 .Any(button => Nodes(button.SceneNode).SelectMany(node => node.Components.OfType<UITextComponent>())
                     .Any(label => label.Text == "Remove")), Is.False);
+            UITextInputComponent common = InputForKey(list, "common");
+            common.Binding!.SetValue("7");
+            Assert.That(first.Values["common"], Is.EqualTo(7));
+            Assert.That(second.Values["common"], Is.EqualTo(7));
+            Action<UIInteractableComponent> remove = RemoveActionForIndex(detail, 0,
+                out UIButtonComponent button);
+            remove(button);
+            Assert.That(first.Values.ContainsKey("common"), Is.False);
+            Assert.That(second.Values.ContainsKey("common"), Is.False);
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(first.Values["common"], Is.EqualTo(7));
+            Assert.That(second.Values["common"], Is.EqualTo(7));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(first.Values["common"], Is.EqualTo(1));
+            Assert.That(second.Values["common"], Is.EqualTo(9));
+
+        }
+        finally { detail.Destroy(true); }
+    }
+
+    [Test]
+    public void LargePartialDictionaryKeepsPrimaryOrderAndBoundsRealizedNodes()
+    {
+        using UITestShaderScope shaders = new();
+        EditorDictionaryMutationTestTarget first = new();
+        for (int index = 0; index < 10000; index++)
+            first.Values.Add(index.ToString("D5"), index);
+        EditorDictionaryMutationTestTarget second = new();
+        second.Values.Add("00000", 7);
+        second.Values.Add("secondary-only", 8);
+        SceneNode detail = Create(first, second);
+        try
+        {
+            UIListTransform list = VirtualList(detail);
+            Assert.That(list.VirtualProvider!.Count, Is.EqualTo(10000));
+            list.SynchronizeVirtualRows(280);
+            Assert.That(Nodes(detail).Count(), Is.LessThan(200));
+            Assert.That(InputForKey(list, "00000").Binding, Is.Not.Null);
+            list.ContentScrollOffset = 28 * 40;
+            list.SynchronizeVirtualRows(280);
+            Assert.That(Nodes(detail).Count(), Is.LessThan(200));
+            SceneNode missing = RowForLabel(list.SceneNode!, "00040");
+            Assert.That(Nodes(missing).SelectMany(node =>
+                node.Components.OfType<UITextInputComponent>()), Is.Empty);
+            Assert.That(Nodes(missing).SelectMany(node =>
+                node.Components.OfType<UITextComponent>()).Any(text => text.Text == "40"), Is.True);
+            list.ContentScrollOffset = 28 * 9999;
+            list.SynchronizeVirtualRows(280);
+            Assert.That(Nodes(detail).Count(), Is.LessThan(200));
+            Assert.That(RowForLabel(list.SceneNode!, "09999"), Is.Not.Null);
+            Assert.That(Nodes(detail).SelectMany(node =>
+                node.Components.OfType<UITextComponent>())
+                .Any(text => text.Text == "secondary-only"), Is.False);
+            Assert.That(second.Values["secondary-only"], Is.EqualTo(8));
+        }
+        finally { detail.Destroy(true); }
+    }
+
+    [Test]
+    public void ReusedPartialRowDetachesEditableBindingAndRemoveAction()
+    {
+        using UITestShaderScope shaders = new();
+        EditorDictionaryMutationTestTarget first = new();
+        for (int index = 0; index < 100; index++)
+            first.Values.Add(index.ToString("D3"), index);
+        EditorDictionaryMutationTestTarget second = new();
+        second.Values.Add("000", 10);
+        second.Values.Add("080", 90);
+        SceneNode detail = Create(first, second);
+        try
+        {
+            UIListTransform list = VirtualList(detail);
+            list.SynchronizeVirtualRows(280);
+            UITextInputComponent oldInput = InputForKey(list, "000");
+            IUIValueBinding<string> oldBinding = oldInput.Binding!;
+            Action<UIInteractableComponent> oldRemove = RemoveActionForIndex(detail, 0,
+                out UIButtonComponent oldButton);
+            object oldCell = CellStateForIndex(detail, 0);
+            SceneNode oldEditor = (SceneNode)oldCell.GetType().GetProperty("EditorNode")!
+                .GetValue(oldCell)!;
+
+            list.ContentScrollOffset = 28 * 40;
+            list.SynchronizeVirtualRows(280);
+            SceneNode missing = RowForLabel(list.SceneNode!, "040");
+            Assert.That(Nodes(missing).SelectMany(node =>
+                node.Components.OfType<UITextInputComponent>()), Is.Empty);
+            Assert.That(oldInput.Binding, Is.Null,
+                "The previous editable binding must detach when rows become read-only.");
+            Assert.That(oldEditor.IsDestroyed || !oldEditor.IsActiveSelf, Is.True);
+            Assert.That(oldCell.GetType().GetProperty("RemoveAction")!.GetValue(oldCell),
+                Is.Null, "The previous remove action must detach from its recycled cell.");
+            Assert.That(oldButton.IsEnabled, Is.False);
+            Assert.Throws<InvalidOperationException>(() => oldBinding.SetValue("999"));
+            oldRemove(oldButton);
+            Assert.That((first.Values["000"], second.Values["000"]),
+                Is.EqualTo((0, 10)));
+            Assert.That((first.Values["040"], second.Values.ContainsKey("040")),
+                Is.EqualTo((40, false)));
+
+            list.ContentScrollOffset = 28 * 80;
+            list.SynchronizeVirtualRows(280);
+            InputForKey(list, "080").Binding!.SetValue("123");
+            Assert.That((first.Values["080"], second.Values["080"]),
+                Is.EqualTo((123, 123)));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That((first.Values["080"], second.Values["080"]),
+                Is.EqualTo((80, 90)));
+            Assert.That(Nodes(detail).Count(), Is.LessThan(200));
+        }
+        finally { detail.Destroy(true); }
+    }
+
+    [Test]
+    public void MultilineMissingStringValueKeepsEagerReadonlyLayout()
+    {
+        using UITestShaderScope shaders = new();
+        EditorStringDictionaryVirtualizationTestTarget first = new();
+        first.Values.Add("common", "one");
+        first.Values.Add("missing", "line one\nline two");
+        EditorStringDictionaryVirtualizationTestTarget second = new();
+        second.Values.Add("common", "two");
+        SceneNode detail = CreateString(first, second);
+        try
+        {
+            Assert.That(HasVirtualList(detail), Is.False);
+            SceneNode missing = RowForLabel(detail, "missing");
+            Assert.That(Nodes(missing).SelectMany(node =>
+                node.Components.OfType<UITextComponent>())
+                .Any(text => text.Text == "line one\nline two"), Is.True);
+            Assert.That(Nodes(missing).SelectMany(node =>
+                node.Components.OfType<UITextInputComponent>()), Is.Empty);
         }
         finally { detail.Destroy(true); }
     }
@@ -145,6 +269,18 @@ public sealed class EditorDictionaryVirtualizationTests
         return detail;
     }
 
+    private static SceneNode CreateString(params EditorStringDictionaryVirtualizationTestTarget[] targets)
+    {
+        SceneNode detail = new("Dictionary detail");
+        detail.SetTransform<UIBoundableTransform>();
+        PropertyInfo property = typeof(EditorStringDictionaryVirtualizationTestTarget).GetProperty(
+            nameof(EditorStringDictionaryVirtualizationTestTarget.Values))!;
+        Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(property.PropertyType,
+            out var create), Is.True);
+        create!(detail, property, targets.Cast<object?>().ToArray());
+        return detail;
+    }
+
     private static bool HasVirtualList(SceneNode root)
         => Nodes(root).Select(node => node.Transform).OfType<UIListTransform>()
             .Any(list => list.VirtualProvider is not null);
@@ -173,6 +309,13 @@ public sealed class EditorDictionaryVirtualizationTests
     private static Action<UIInteractableComponent> RemoveActionForIndex(SceneNode detail, int index,
         out UIButtonComponent button)
     {
+        object state = CellStateForIndex(detail, index);
+        button = (UIButtonComponent)state.GetType().GetProperty("RemoveButton")!.GetValue(state)!;
+        return (Action<UIInteractableComponent>)state.GetType().GetProperty("RemoveAction")!.GetValue(state)!;
+    }
+
+    private static object CellStateForIndex(SceneNode detail, int index)
+    {
         InspectorListDetailRefreshComponent lifetime = detail.GetComponent<InspectorListDetailRefreshComponent>()!;
         object context = lifetime.Release!.Target!;
         System.Collections.IDictionary cells = (System.Collections.IDictionary)context.GetType()
@@ -181,8 +324,7 @@ public sealed class EditorDictionaryVirtualizationTests
         {
             object state = entry.Value!;
             if ((int)state.GetType().GetProperty("Index")!.GetValue(state)! != index) continue;
-            button = (UIButtonComponent)state.GetType().GetProperty("RemoveButton")!.GetValue(state)!;
-            return (Action<UIInteractableComponent>)state.GetType().GetProperty("RemoveAction")!.GetValue(state)!;
+            return state;
         }
         throw new AssertionException($"No realized virtual row exists for index {index}.");
     }

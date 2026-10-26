@@ -52,6 +52,9 @@
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatTransitionOwnership.cs" Link="Editor/InspectorFloatTransitionOwnership.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/Inspector/Editors/InspectorFloatCurveRemovalMarks.cs" Link="Editor/InspectorFloatCurveRemovalMarks.cs" />
     <Compile Include="../Editor/InspectorFloatCurveRemovalMarksTests.cs" Link="Editor/InspectorFloatCurveRemovalMarksTests.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorDictionarySnapshot.cs" Link="Editor/EditorDictionarySnapshot.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorDictionaryRowPlan.cs" Link="Editor/EditorDictionaryRowPlan.cs" />
+    <Compile Include="../Editor/EditorDictionaryRowPlanTests.cs" Link="Editor/EditorDictionaryRowPlanTests.cs" />
     <Compile Include="../Editor/InspectorFloatCurveTransitionOwnerTests.cs" Link="Editor/InspectorFloatCurveTransitionOwnerTests.cs" />
     <Compile Include="../Rendering/UITextMultilineSubmitTests.cs" Link="Rendering/UITextMultilineSubmitTests.cs" />
     <Compile Include="../Rendering/UITextPointerCaretTests.cs" Link="Rendering/UITextPointerCaretTests.cs" />

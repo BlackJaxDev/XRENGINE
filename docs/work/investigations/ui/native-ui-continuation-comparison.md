@@ -2432,3 +2432,33 @@ in 1.514s. The new nine backend and eleven UI Editor cases compiled but did not
 run. No full suite, laptop work, or Windows execution occurred. Logs and source
 manifests remain under the existing ignored run: builds 123–126 and
 `grouped-removal-affected.log` / `grouped-removal-affected.xml`.
+
+
+## Partial-key dictionary implementation and validation
+
+Source review found that one absent selected-owner key forced the complete
+primary dictionary onto the eager row path. The existing per-row behavior was
+already explicit: common keys editable, missing keys read-only. The new
+`EditorDictionaryRowPlan` retains that distinction and primary order before
+using the existing virtual collection presenter. It admits only single-line
+keys/read-only text and retains formatted read-only strings. Unsupported layouts
+keep the previous fallback. No dictionary mutation adapter or Undo semantics changed.
+
+Review checked exact ownership of the retained read-only control, detachment of
+old editor bindings/actions, mode reuse, linked-list compatibility and multiline
+fallback. No blocker remained. The added label uses no wrapping and bounds
+clipping; cleanup also checks its value-node attachment, including cells that
+never created an editable control.
+
+Wrapper build 127 compiled the headless runner (zero warnings/errors, 13.20s).
+The affected portable run passed 61/61, including 14 new model cases (1.660s).
+The subsequent full editor/test build 128 passed with zero warnings/errors in
+6m02.39s. The final source manifest has 10,956 entries. The two files changed
+after portable compilation are editor-only row presentation and the Windows
+Editor fixture, neither linked into the portable runner. Seven Editor dictionary
+cases compile; none ran here. Three additions increase the prior unrun total
+from 67 to 70. Evidence is under the existing native UI completion run in
+`logs/build-127-partial-dictionary-headless.log`,
+`logs/build-128-partial-dictionary-editor-tests.log`,
+`logs/partial-dictionary-affected.log` and
+`reports/partial-dictionary-affected.xml`. No full-suite or laptop run occurred.

@@ -118,11 +118,17 @@ public static partial class InspectorPropertyEditors
 
                 SceneNode valueNode = cellNode.NewChild();
                 valueNode.SetTransform<UIBoundableTransform>().Width = 300;
+                UITextComponent readOnlyValue = AddInfoLabel(valueNode, string.Empty);
+                readOnlyValue.WrapMode = Rendering.FontGlyphSet.EWrapMode.None;
+                readOnlyValue.ClipToBounds = true;
+                readOnlyValue.SceneNode.IsActiveSelf = false;
                 EditorVirtualCollectionRowCellState state = new()
                 {
                     Label = label,
                     RemoveHost = removeHost,
                     ValueNode = valueNode,
+                    ReadOnlyValue = readOnlyValue,
+                    ReadOnlyControl = EditorVirtualRowControlLease.Capture(readOnlyValue, valueNode),
                     RemoveButton = removeButton,
                 };
                 _virtualCells.Add(layout, state);
@@ -147,6 +153,7 @@ public static partial class InspectorPropertyEditors
                 state.RowId = rowId;
                 state.Lease = lease;
                 state.IsPublished = false;
+                state.IsReadOnly = true;
                 state.Bindings = null;
                 ulong providerIncarnation = list.VirtualProviderIncarnation;
                 ObjectConstructionIdentity cellIdentity = ObjectConstructionIdentity.Capture(cell);
@@ -186,6 +193,7 @@ public static partial class InspectorPropertyEditors
                         !IsLive(listNode, listNodeIdentity) || !IsLive(state.Label, labelIdentity) ||
                         !IsLive(labelNode, labelNodeIdentity) || !IsLive(state.RemoveHost, removeHostIdentity) ||
                         !IsLive(state.ValueNode, valueNodeIdentity) ||
+                        !state.ReadOnlyControl.IsCurrent(state.ValueNode) ||
                         !removeButtonIdentity.IsCurrent || !removeButtonNodeIdentity.IsCurrent ||
                         !IsLive(removeButtonNode, removeButtonNodeIdentity) ||
                         !IsLive(branch, branchIdentity) || !IsLive(_container, containerIdentity) ||
@@ -212,7 +220,7 @@ public static partial class InspectorPropertyEditors
                         state.EditorControls.All(control => control.IsCurrent(editorNode));
                 }
 
-                bool WriteCurrent() => state.IsPublished && RowCurrent();
+                bool WriteCurrent() => state.IsPublished && !state.IsReadOnly && RowCurrent();
 
                 try
                 {
@@ -233,6 +241,36 @@ public static partial class InspectorPropertyEditors
                     if (!RowCurrent()) return;
                     removeButton.SceneNode.IsActiveSelf = false;
                     if (!RowCurrent()) return;
+
+                    state.ReadOnlyValue.SceneNode.IsActiveSelf = false;
+                    if (!RowCurrent()) return;
+                    if (state.ReadOnlyValue.SceneNode.IsActiveSelf || removeButton.SceneNode.IsActiveSelf)
+                        throw new InvalidOperationException("The collection row rejected its presentation reset.");
+
+                    string? readOnlyText = contract.ReadOnlyText?.Invoke(index);
+                    if (!RowCurrent()) return;
+                    if (readOnlyText is not null)
+                    {
+                        if (editorNode is not null)
+                        {
+                            ResetFixedValueEditor(editorNode, RowCurrent);
+                            if (!RowCurrent()) return;
+                            editorNode.IsActiveSelf = false;
+                            if (!RowCurrent()) return;
+                            if (editorNode.IsActiveSelf)
+                                throw new InvalidOperationException("The collection row rejected its read-only presentation.");
+                        }
+                        state.ReadOnlyValue.SetTextGuarded(readOnlyText, RowCurrent, static current =>
+                        {
+                            if (!current()) throw new InvalidOperationException("The read-only collection row changed during binding.");
+                        });
+                        if (!RowCurrent()) return;
+                        state.ReadOnlyValue.SceneNode.IsActiveSelf = true;
+                        if (!RowCurrent()) return;
+                        state.IsPublished = state.ReadOnlyValue.SceneNode.IsActiveSelf;
+                        return;
+                    }
+                    state.IsReadOnly = false;
 
                     if (editorNode is not null && (!state.ReusableEditor || state.EditorControls.Length == 0))
                         throw new InvalidOperationException("An incomplete fixed-height collection editor cannot be reused.");
@@ -367,6 +405,7 @@ public static partial class InspectorPropertyEditors
                 state.Intent++;
                 ulong cleanupIntent = state.Intent;
                 state.IsPublished = false;
+                state.IsReadOnly = true;
                 state.Index = -1;
                 state.RowId = 0;
                 state.Lease = default;
@@ -374,6 +413,8 @@ public static partial class InspectorPropertyEditors
                 bool CleanupCurrent() => state.Intent == cleanupIntent &&
                     _virtualCells.TryGetValue(cell, out EditorVirtualCollectionRowCellState? current) &&
                     ReferenceEquals(current, state) && cellIdentity.IsCurrent &&
+                    state.ReadOnlyControl.IsCurrent(state.ValueNode) &&
+                    ReferenceEquals(state.ValueNode.Parent, cellNode) &&
                     !cell.IsDestroyed && !cell.IsDestroyQueued && ReferenceEquals(cell.SceneNode, cellNode) &&
                     (row is not null && list is not null && rowIdentity?.IsCurrent == true && rowNodeIdentity?.IsCurrent == true &&
                         !row.IsDestroyed && !row.IsDestroyQueued && ReferenceEquals(cell.Parent, row) &&
@@ -403,7 +444,9 @@ public static partial class InspectorPropertyEditors
                     ResetFixedValueEditor(editor, CleanupCurrent);
                     if (!CleanupCurrent()) return;
                     editor.IsActiveSelf = false;
+                    if (!CleanupCurrent()) return;
                 }
+                if (CleanupCurrent()) state.ReadOnlyValue.SceneNode.IsActiveSelf = false;
             }
 
             private static void ResetFixedValueEditor(SceneNode editor, Func<bool> isCurrent)

@@ -2363,12 +2363,14 @@ property, count, labels, and existing Add/Remove actions. Both routes use one
 There is no second dictionary-specific row lifecycle.
 
 The virtual route accepts the existing exact int/default-comparer and
-string/default-or-ordinal dictionary adapters. Each displayed primary key must
-exist in every selected owner's captured snapshot. Values must use a known
-fixed-height editor, and string keys must not contain line breaks. Partial-key
-selections retain their existing eager layout: common keys remain editable and
-missing keys retain wrapped read-only labels. Multiline keys, custom/tall editors,
-and unsupported dictionary sources also keep their prior layout and behavior.
+string/default-or-ordinal dictionary adapters. Values must use a known
+fixed-height editor. `EditorDictionaryRowPlan` retains primary key order and
+labels. A key present in every selected source stays editable. A key missing
+from any selected source displays the primary value as read-only text; it has
+no active value binding or Remove action. Secondary-only keys are not added.
+Admission requires single-line key labels and single-line read-only values.
+Multiline keys or read-only values, custom/tall editors, and unsupported
+dictionary sources keep their prior layout and behavior.
 This does not decide variable-height virtualization.
 
 `RenderVirtualDictionary` uses the primary captured snapshot for row keys and
@@ -2377,11 +2379,18 @@ owner's snapshot. The existing source leases remain shared so Set advances their
 snapshot and state token. Remove creates row-bound lease copies only when clicked,
 using the current committed snapshots. Existing mutation receipts preserve exact
 key identity, alias handling, Undo/Redo, and dirty tracking. Row recycling stops
-old binding and Remove callbacks from acquiring a later key.
+old binding and Remove callbacks from acquiring a later key. Switching to a
+read-only row detaches the old editor bindings and Remove action, then hides
+the editor. Switching back hides the read-only label before publishing new
+bindings. Read-only text retains its full string and uses no wrapping with
+bounds clipping. Its exact control path must remain owned during text writes
+and cleanup.
 
 Opening/rebuilding still captures O(N) source state. Admission uses the existing
-snapshot key indexes and scans key text for line breaks. Realization builds only
-the viewport plus overscan. This is a bounded UI-node contract, not a measured
+snapshot key indexes and scans key text for line breaks. It also formats missing-key
+read-only values once during admission, checks them for line breaks, and retains
+that text. This work is O(N) in displayed keys per selected source; it does not
+create offscreen controls. Realization builds only the viewport plus overscan. This is a bounded UI-node contract, not a measured
 frame-time or allocation-performance claim.
 
 

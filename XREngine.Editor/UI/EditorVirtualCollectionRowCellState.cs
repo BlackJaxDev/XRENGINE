@@ -9,6 +9,8 @@ internal sealed class EditorVirtualCollectionRowCellState
     public required UITextComponent Label { get; init; }
     public required SceneNode RemoveHost { get; init; }
     public required SceneNode ValueNode { get; init; }
+    public required UITextComponent ReadOnlyValue { get; init; }
+    public required EditorVirtualRowControlLease ReadOnlyControl { get; init; }
     public UIButtonComponent? RemoveButton { get; set; }
     public Action<UIInteractableComponent>? RemoveAction { get; set; }
     public SceneNode? EditorNode { get; set; }
@@ -18,6 +20,7 @@ internal sealed class EditorVirtualCollectionRowCellState
     public UIVirtualRowLease Lease { get; set; }
     public ulong Intent { get; set; }
     public bool IsPublished { get; set; }
+    public bool IsReadOnly { get; set; } = true;
     public object[]? Bindings { get; set; }
     public EditorVirtualRowControlLease[] EditorControls { get; set; } = [];
 }

@@ -247,17 +247,17 @@ public static partial class InspectorPropertyEditors
                     sources.All(source => source.Adapter.KeyType == keyType &&
                         source.Adapter.ValueType == valueType);
                 if (!IsCurrentBuild(generation)) return;
-                // Partial-key rows and multiline key labels keep the eager view so their readonly/wrapped presentation is unchanged.
+                // Wrapped labels and read-only values retain their existing layout.
                 if (canMutate && CanUseFixedHeightCollectionEditor(valueType))
                 {
                     EditorDictionarySnapshot primary = sources[0].Displayed;
-                    bool allKeysPresent = primary.Keys.All(key => sources.All(source =>
-                        source.Adapter.IndexOf(source.Displayed, key) >= 0));
-                    bool singleLineKeys = primary.Keys.All(key => key is not string text ||
-                        !text.Any(character => character is '\r' or '\n' or '\u0085' or '\u2028' or '\u2029'));
-                    if (allKeysPresent && singleLineKeys)
+                    bool hasPlan = EditorDictionaryRowPlan.TryCreate(
+                        sources.Select(source => source.Displayed).ToArray(), out var plan);
+                    if (!IsCurrentBuild(generation)) return;
+                    if (hasPlan && plan is not null && sources.All(source => source.IsCurrent()))
                     {
-                        RenderVirtualDictionary(keyType, valueType, sources, primary, generation);
+                        if (!IsCurrentBuild(generation)) return;
+                        RenderVirtualDictionary(keyType, valueType, sources, primary, plan, generation);
                         return;
                     }
                 }

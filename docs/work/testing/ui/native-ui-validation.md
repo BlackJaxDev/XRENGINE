@@ -1328,3 +1328,31 @@ Live acceptance must check the labelled Previous/Next removal curve and
 Mark / Unmark actions, mixed/equal-time keys, the displayed row limit, Undo/Redo,
 and source replacement in a real inspector. Windows/native input, GPU, IME,
 visual, and performance acceptance remain separate. The laptop remains stopped.
+
+
+## Partial-key dictionary checks
+
+Portable production row-plan tests cover primary order, all-owner exact key
+membership, secondary-only exclusion, null/empty read-only text, empty primary,
+and all five supported line-break exclusions for keys and read-only values.
+The filter was:
+
+```text
+class =~ 'EditorDictionaryRowPlanTests|UIVirtualCollectionTests|UIVirtualTable|UIListVirtualBoundsWriteTests'
+```
+
+The run passed **61/61** in 1.660s, including all **14** new row-plan cases, with
+zero failures/skips/incomplete cases. Wrapper headless build 127 passed with zero
+warnings/errors in 13.20s. Full editor/test build 128 passed with zero
+warnings/errors in 6m02.39s. The final snapshot contains 10,956 source inputs.
+Only editor presentation and Editor fixture files changed after the portable
+build; its linked model/test inputs remained identical. No full suite was repeated.
+
+The Editor dictionary fixture now contains seven cases. One existing partial-key
+case now requires the virtual read-only route and common-key Set/Remove/Undo.
+Three new cases check 10,000 primary keys with bounded nodes, actual binding/action
+detachment through editable/read-only/editable reuse, and multiline read-only
+fallback. All seven are compile-only here. The previous 67 unrun Editor cases
+include the original four dictionary cases; three additions bring the total to
+**70 unrun Editor cases**. Windows/live row presentation, input, Undo and scale
+acceptance remain open. The laptop stays stopped.

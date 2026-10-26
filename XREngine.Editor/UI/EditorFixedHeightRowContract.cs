@@ -11,4 +11,5 @@ internal sealed record EditorFixedHeightRowContract(
     Func<int, string> RowLabel,
     Func<int, Func<bool>, Func<bool>, object[]> CreateBindings,
     Action<int, Func<bool>> Remove,
-    Action Add);
+    Action Add,
+    Func<int, string?>? ReadOnlyText = null);
