@@ -23,6 +23,10 @@ public interface IUICanvasInputSource
     /// <summary>Focuses a control only when its current row and scope are in the presented input packet.</summary>
     bool TryFocusPresented(UIInteractableComponent target);
 
+    /// <summary>Focuses a presented target without replacing another control or a newer caller intent.</summary>
+    bool TryFocusPresented(UIInteractableComponent target, ulong expectedFocusIntentRevision,
+        Func<bool> isCurrent) => false;
+
     /// <summary>Requests focus for a stable virtual item after its matching row is presented.</summary>
     bool RequestVirtualItemFocus(UIListTransform list, ulong itemId, bool center = false);
 

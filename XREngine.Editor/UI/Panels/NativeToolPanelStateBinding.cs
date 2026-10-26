@@ -148,7 +148,9 @@ internal sealed class NativeToolPanelStateBinding
 
     internal NativeDockPanelStateReceipt Restore(NativeDockPanelStateValues values,
         Func<bool>? sourceCurrent = null,
-        NativeAnimationPanelViewValues? animationView = null)
+        NativeAnimationPanelViewValues? animationView = null,
+        Action<NativeDockPanelStateReceipt>? retainPartialCommit = null,
+        bool restorePriorSearchFocus = false)
     {
         if (values.Panel != PanelName)
             throw new InvalidOperationException("The requested panel state is for another panel.");
@@ -183,7 +185,7 @@ internal sealed class NativeToolPanelStateBinding
                     profiler.SetViewOwned((ENativeProfilerView)values.ProfilerView, intent, this);
                     break;
                 case AnimationPanel animation when animationView is { } requestedView:
-                    appliedView = animation.RestoreViewOwned(requestedView, this, intent);
+                    appliedView = animation.RestoreViewOwned(requestedView, this, intent, restorePriorSearchFocus);
                     _restoreAnimationView = appliedView;
                     break;
             }
@@ -206,6 +208,19 @@ internal sealed class NativeToolPanelStateBinding
                     .Matches(applied.Values))
                 throw new InvalidOperationException("The panel did not accept the transferred state.");
             return applied;
+        }
+        catch
+        {
+            try
+            {
+                if (_restoreAnimationView is { IsCurrent: true } partialView && IsCurrent)
+                {
+                    NativeDockPanelStateReceipt partial = CaptureReceipt() with { AnimationView = partialView };
+                    if (partial.IsCurrent) retainPartialCommit?.Invoke(partial);
+                }
+            }
+            catch { }
+            throw;
         }
         finally
         {

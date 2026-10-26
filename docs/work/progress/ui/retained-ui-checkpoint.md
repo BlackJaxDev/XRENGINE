@@ -2397,3 +2397,50 @@ and errors. The focused pane, detached-leaf, and guarded-component run passed
 **47/47** in 0.370s, with no skips. No full suite was repeated. The 30 new Editor
 cases compiled but did not run, bringing the published new-case backlog to **224**.
 No Windows, GPU, live Editor, native input, IME, or performance checks ran.
+
+
+## Remaining scope after the bounded authoring changes
+
+| Open item | Implemented boundary | Remaining code or decision | Acceptance still needed |
+|---|---|---|---|
+| Direct-world clipping | Canonical OpenGL/Vulkan crop and uniform proofs | Define custom/stereo and arbitrary 3D override shader profiles before extending `UIWorldCropShaderContract` | GPU crop, painter order, stereo and live output |
+| Inspector collections | Fixed-height ordinary, linked, dictionary and one-level nested details; exact grouped curve edits | Variable-height/custom policy and recursive/custom nested-value contracts | New Editor fixtures, visual layout and measured large-list cost |
+| Native panels | Shared primary panels, bounded diagnostics, exact scene/material actions and structural clone handoff | Broader clone container/custom-transform ownership and authored document-end cleanup; asset recovery/creation decision | Changed custody and panel fixtures; live authoring workflows |
+| Shared controls | Ordinary control and menu factories use guarded construction | Paragraph analyzer and arbitrary custom/adopted-content retirement policy | Native input, IME, accessibility, visual and stress checks |
+| Docking | Exact pointer transfer and live tool-state receipts | Primary-window saved-key decision; broader focus parity beyond ordinary admitted toolbar targets | Native capture, mixed DPI, overlap and multi-window behavior |
+| Lifecycle state | Same-panel hierarchy rename/search and live hierarchy/view receipts | Define any additional panel/play-mode state contract rather than infer it | Windows lifecycle and cross-host focus cases |
+| Drag/drop | Exact scene, duplication and model-material mutation history | `EditorFileDropHandler.ProcessFileDrop` copy/import Undo depends on held asset-recovery policy | Live drops, persistence and error recovery |
+| Documentation | Public architecture, investigation and validation records updated with each checkpoint | Reconcile later public changes with the separate private migration when authorized | Link and claim review at closeout |
+| Native default | ImGui remains default | Owner stabilization decision after acceptance | Full agreed platform and performance acceptance |
+
+The source audit found no further concrete independent Animation authoring control
+beyond the implemented clip, channel, curve, key, playback, and view operations.
+The remaining profile and policy entries are unresolved contracts, not completed
+features. No custom shader injection, borrowed-container destruction, file-journal
+policy, private-document write, or default switch was inferred from this audit.
+
+
+## Animation search draft transfer
+
+Both hosts now transfer unsubmitted search text and caret/selection separately
+from committed query/results. Existing inactive destinations retain a pre-receive
+intent receipt through activation and first save. Later rejected transfers
+compensate only still-owned destination writes. Structural rollback suppresses
+search authoring for the exact captured input/display and preserves newer edits.
+Ordinary presented focus is conservative; virtual targets keep their existing
+lease-aware dispatch path. No saved format, window activation, or default changes.
+
+The candidate adds **23 Editor cases**, compiled but Windows-unrun. With the
+previous 224, the published backlog becomes **247 new Editor cases**. The earlier
+11 grouped-key, seven linked-list, and four dictionary cases remain included and
+unrun. Native/GPU/IME/multi-window/performance acceptance remains open. The broad
+reconciliation remains **51/60**; the table above separates unresolved contracts,
+owner decisions, and platform acceptance. All nine local stashes are preserved,
+including the six original stashes. Only the same five public document paths have
+changed after the frozen private migration snapshot; no private writes occurred.
+
+The final 11,016-input source snapshot remained unchanged through Editor build 172
+(43.99s) and test-project build 173 (48.63s), both with zero warnings/errors. The
+last repair changed only Editor rollback logic and its tests. Runtime inputs remain
+identical to the 88/88 passing focused run, so that run was not repeated. The 23 new
+Editor cases compiled but remain Windows-unrun; cumulative published backlog: 247.

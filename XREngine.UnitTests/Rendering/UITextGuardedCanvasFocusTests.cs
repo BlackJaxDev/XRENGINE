@@ -16,7 +16,7 @@ using XREngine.UnitTests.Physics;
 namespace XREngine.UnitTests.Rendering;
 
 [TestFixture, NonParallelizable]
-public sealed class UITextGuardedCanvasFocusTests
+public sealed partial class UITextGuardedCanvasFocusTests
 {
     private UITestShaderScope _shaders = null!;
     private SceneNode _root = null!;

@@ -11,6 +11,21 @@ namespace XREngine.Editor;
 
 public partial class AnimationPanel
 {
+    private NativeAnimationSearchReceiveReceipt? _searchReceiveReceipt;
+    internal NativeAnimationSearchReceiveReceipt? SearchReceiveReceipt
+    {
+        get => _searchReceiveReceipt;
+        set => SetField(ref _searchReceiveReceipt, value, publishNotifications: false);
+    }
+
+    internal NativeAnimationSearchReceiveReceipt BeginSearchReceive()
+    {
+        if (SearchReceiveReceipt is not null ||
+            !NativeAnimationSearchFieldReceipt.TryCapture(this, _searchInput, out var field))
+            throw new InvalidOperationException("The destination Animation search is unavailable.");
+        return SearchReceiveReceipt = new(this, field);
+    }
+
     internal bool TryCaptureViewReceipt(out NativeAnimationPanelViewReceipt receipt)
     {
         receipt = default;
@@ -44,7 +59,10 @@ public partial class AnimationPanel
             clip?.RootMember, _selectedMember, animation,
             animation is null ? null : ObjectConstructionIdentity.Capture(animation),
             _selectedKey, TrackFor(animation), _memberPage, _keyPage,
-            _graphView, _plotZoom, _plotWindowStart, _stretchLengthEdits, _valueChannel, CaptureCandidateView());
+            _graphView, _plotZoom, _plotWindowStart, _stretchLengthEdits, _valueChannel, CaptureCandidateView(), _searchInput is { } search
+                ? new(search.Text, search.CursorPosition, search.SelectionAnchor,
+                    search.IsFocused && ReferenceEquals(search.UserInterfaceCanvas?.GetInputComponent()?.FocusedComponent, search))
+                : null);
     }
 
     internal bool IsViewCurrent(NativeAnimationPanelViewReceipt receipt)
@@ -87,7 +105,7 @@ public partial class AnimationPanel
 
     internal NativeAnimationPanelViewReceipt RestoreViewOwned(
         NativeAnimationPanelViewValues values, NativeToolPanelStateBinding binding,
-        ulong intent)
+        ulong intent, bool restorePriorSearchFocus = false)
     {
         binding.RequireOwnedState(intent);
         if (!ReferenceEquals(CurrentClip(), values.Clip) ||
@@ -133,6 +151,8 @@ public partial class AnimationPanel
         if (!NativeAnimationSearchFieldReceipt.TryCapture(this, _searchInput, out var search))
             throw new InvalidOperationException("The Animation search field is unavailable during restore.");
         int searchPhase = 0;
+        NativeAnimationSearchViewValues searchValues = values.Search ??
+            new(values.Candidates.Query, 0, 0, false);
         if (_timeInput is not { } timeInput || _valueInput is not { } valueInput ||
             timeInput.SceneNode is not { } timeNode ||
             valueInput.SceneNode is not { } valueNode ||
@@ -239,7 +259,7 @@ public partial class AnimationPanel
         bool ToolbarPhaseCurrent()
         {
             if (!ReferenceEquals(_searchInput, search.Input) ||
-                !search.IsCurrent(searchPhase, values.Candidates.Query) ||
+                !search.IsTransferCurrent(searchPhase, searchValues) ||
                 !InputsCurrent() || !PlaybackCurrent() || _refreshingValueInput ||
                 _valueInputRefreshPending || toolbarPhase != 0 && _projectionDirty)
                 return false;
@@ -380,10 +400,17 @@ public partial class AnimationPanel
         toolbarPhase = 4;
         RequireCurrent();
         searchPhase = 1;
-        search.Input.SetTextGuarded(values.Candidates.Query, (Action)RequireCurrent,
+        search.Input.SetTextGuarded(searchValues.Text, (Action)RequireCurrent,
             static require => require());
         searchPhase = 2;
         RequireCurrent();
+        searchPhase = 3;
+        search.Input.SetSelectionGuarded(searchValues.Cursor, searchValues.Anchor,
+            (Action)RequireCurrent, static require => require());
+        searchPhase = 4;
+        RequireCurrent();
+        search.RestoreFocus(searchValues, restorePriorSearchFocus,
+            phase => searchPhase = phase, RequireCurrent);
         return appliedView;
     }
 

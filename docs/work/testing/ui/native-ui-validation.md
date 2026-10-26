@@ -1445,3 +1445,27 @@ and errors. The focused pane, detached-leaf, and guarded-component run passed
 **47/47** in 0.370s, with no skips. No full suite was repeated. The 30 new Editor
 cases compiled but did not run, bringing the published new-case backlog to **224**.
 No Windows, GPU, live Editor, native input, IME, or performance checks ran.
+
+
+## Animation search transfer checks
+
+The affected portable selection passes **88/88** cases (3.404s, no skips), covering
+guarded text, selection, canvas focus, and ordinary focus. It includes nine new
+presented-focus cases. The guarded overload rejects virtual metadata, absent
+presentation, changed caller/owner intent, and another focused control. Existing
+virtual-item focus behavior remains separate. No full suite was repeated.
+
+The two new Editor search-transfer partials add **23 cases**, including active and
+inactive destination drafts, reversed selection, source/destination callbacks,
+post-write compensation, first-save equal-value intents, and active-tab rollback
+preservation. These are compile-only. The published new Editor backlog becomes
+**247** (224 previous plus 23); previous grouped-key/linked-list/dictionary cases
+remain unrun. The next Windows run should select these partials and affected
+animation view/dock, search-stop, and owner-lifecycle fixtures. Native cross-window
+focus requires a separate presented-window run; these tests do not prove it.
+
+The final 11,016-input source snapshot remained unchanged through Editor build 172
+(43.99s) and test-project build 173 (48.63s), both with zero warnings/errors. The
+last repair changed only Editor rollback logic and its tests. Runtime inputs remain
+identical to the 88/88 passing focused run, so that run was not repeated. The 23 new
+Editor cases compiled but remain Windows-unrun; cumulative published backlog: 247.

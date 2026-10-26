@@ -649,6 +649,10 @@ namespace XREngine.Rendering.UI
             Require();
             return Current;
         }
+        /// <summary>Publishes the input text when the component becomes active.</summary>
+        protected virtual void PublishActivationText(UITextComponent display, string value)
+            => display.Text = value;
+
         protected override void OnComponentActivated()
         {
             long entryRevision = _bindingRevision;
@@ -677,7 +681,7 @@ namespace XREngine.Rendering.UI
             {
                 string displayText = IsFocused ? Text : FormatText(Text);
                 string? previousText = textComponent!.Text;
-                textComponent.Text = displayText;
+                PublishActivationText(textComponent, displayText);
                 // A nested cooked restore can activate the node while property
                 // notifications are suppressed by an ancestor's hydration scope.
                 if (XRBase.ArePropertyNotificationsSuppressed &&

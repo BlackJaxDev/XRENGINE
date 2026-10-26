@@ -36,6 +36,12 @@ public partial class UICanvasInputComponent
             _acceptingVirtualFocusProof is { } proof && ProofCurrent(proof) &&
             IsDispatchingVirtualItemFocus(_acceptingVirtualFocusList!,
                 _acceptingVirtualFocusLease.ItemId, target);
+        FocusTargetGuardedCore(target, Current, revision => _acceptingVirtualFocusIntentRevision = revision);
+    }
+
+    private void FocusTargetGuardedCore(UIInteractableComponent target, Func<bool> Current,
+        Action<ulong> acceptIntent)
+    {
         if (!Current()) return;
         UICanvasFocusOwnerProof? inputOwner = UICanvasFocusOwnerProof.Capture(this, null,
             GetCameraCanvasNonCreating(), null);
@@ -58,7 +64,7 @@ public partial class UICanvasInputComponent
         UIInteractableComponent? originalFocused = _focusedComponent;
         AdvanceFocusIntent();
         ulong committedIntent = _focusIntentRevision;
-        _acceptingVirtualFocusIntentRevision = committedIntent;
+        acceptIntent(committedIntent);
         _guardedFocusOperationFailed = false;
         bool rejected = false;
         void Require()

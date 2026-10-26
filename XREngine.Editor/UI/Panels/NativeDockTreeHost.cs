@@ -934,6 +934,15 @@ internal sealed class NativeDockTreeHost
                     destinationBeforeView = animation.CapturePriorView();
             }
         }
+        using var searchReceive = (destinationReceipt?.Binding.Panel as AnimationPanel)?.BeginSearchReceive();
+        void RestorePriorStructure(ulong revision)
+        {
+            void Restore() => RestoreReceiveSnapshot(priorRoot, priorClosed, revision,
+                registrationRevision, rootIdentity, rootTransform,
+                rootTransformIdentity, registrationIdentity);
+            if (searchReceive is null) Restore();
+            else searchReceive.RestoreStructure(Restore);
+        }
         bool stateMutationStarted = false;
         NativeDockPanelStateReceipt? appliedState = null;
         NativeDockNode? target = null;
@@ -978,9 +987,7 @@ internal sealed class NativeDockTreeHost
                         (!ReferenceEquals(priorHierarchy.Panel, hierarchy) || !priorHierarchy.HasSamePanelIntent))
                 {
                     if (DestinationCurrent())
-                        RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
-                            registrationRevision, rootIdentity, rootTransform,
-                            rootTransformIdentity, registrationIdentity);
+                        RestorePriorStructure(priorRevision + 1);
                     return false;
                 }
                 receivedSlot = slot;
@@ -992,9 +999,7 @@ internal sealed class NativeDockTreeHost
                         destinationHierarchy is null))
                 {
                     if (DestinationCurrent())
-                        RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
-                            registrationRevision, rootIdentity, rootTransform,
-                            rootTransformIdentity, registrationIdentity);
+                        RestorePriorStructure(priorRevision + 1);
                     return false;
                 }
                 stateMutationStarted = true;
@@ -1012,20 +1017,18 @@ internal sealed class NativeDockTreeHost
                     !_toolStateBindings.TryGetValue(panel, out NativeToolPanelStateBinding? binding) ||
                     !ReferenceEquals(binding.Slot, slot) || !binding.IsCurrent)
                 {
-                    RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
-                        registrationRevision, rootIdentity, rootTransform,
-                        rootTransformIdentity, registrationIdentity);
+                    RestorePriorStructure(priorRevision + 1);
                     return false;
                 }
                 receivedSlot = slot;
                 receivedBinding = binding;
                 if (destinationReceipt is { } prior &&
                     (!ReferenceEquals(prior.Binding, binding) ||
-                     binding.Panel.StateIntentRevision != prior.IntentRevision))
+                     binding.Panel.StateIntentRevision != prior.IntentRevision ||
+                     searchReceive is { IsCurrent: false }))
                 {
-                    RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
-                        registrationRevision, rootIdentity, rootTransform,
-                        rootTransformIdentity, registrationIdentity);
+                    searchReceive?.Dispose();
+                    RestorePriorStructure(priorRevision + 1);
                     return false;
                 }
                 bool ForwardCurrent() => DestinationCurrent() && state.IsCurrent &&
@@ -1033,37 +1036,33 @@ internal sealed class NativeDockTreeHost
                 if (!ForwardCurrent())
                 {
                     if (DestinationCurrent())
-                        RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
-                            registrationRevision, rootIdentity, rootTransform,
-                            rootTransformIdentity, registrationIdentity);
+                        RestorePriorStructure(priorRevision + 1);
                     return false;
                 }
+                searchReceive?.Complete();
                 stateMutationStarted = true;
                 NativeDockPanelStateReceipt applied = binding.Restore(
-                    state.Values, ForwardCurrent, state.AnimationView);
+                    state.Values, ForwardCurrent, state.AnimationView, partial => appliedState = partial);
                 appliedState = applied;
-                if (!applied.IsCurrent || !ForwardCurrent())
-                    return false;
-                if (!DestinationCurrent() || !applied.IsCurrent)
-                    return false;
+                if (!applied.IsCurrent || !ForwardCurrent() || !DestinationCurrent())
+                    throw new InvalidOperationException("The transferred panel changed after restore.");
                 applied.Values.WriteTo(_layout);
                 if (!DestinationCurrent() || !applied.IsCurrent)
-                    return false;
+                    throw new InvalidOperationException("The transferred panel changed during layout assignment.");
                 Save();
                 if (!DestinationCurrent() || !applied.IsCurrent || !ForwardCurrent() ||
                     !applied.Values.Matches(_layout))
-                    return false;
+                    throw new InvalidOperationException("The transferred panel changed during save.");
             }
             if (DestinationCurrent())
                 return true;
             if (!stateMutationStarted)
-                RestoreReceiveSnapshot(priorRoot, priorClosed, priorRevision + 1,
-                    registrationRevision, rootIdentity, rootTransform,
-                    rootTransformIdentity, registrationIdentity);
+                RestorePriorStructure(priorRevision + 1);
             return false;
         }
         catch (Exception exception)
         {
+            searchReceive?.Dispose();
             if (appliedHierarchy is { IsCurrent: true } hierarchyApplied &&
                 destinationHierarchy is { } hierarchyBefore && DestinationCurrent() &&
                 hierarchyApplied.Panel.HasHierarchyViewDocument(hierarchyBefore.Values))
@@ -1095,7 +1094,7 @@ internal sealed class NativeDockTreeHost
                 {
                     NativeDockPanelStateReceipt restored =
                         applied.Binding.Restore(destinationBefore, DestinationCurrent,
-                            destinationBeforeView);
+                            destinationBeforeView, restorePriorSearchFocus: true);
                     if (restored.IsCurrent && DestinationCurrent())
                     {
                         restored.Values.WriteTo(_layout);
@@ -1116,9 +1115,7 @@ internal sealed class NativeDockTreeHost
             ulong admittedRevision = _dockMutationRevision == priorRevision
                 ? priorRevision : priorRevision + 1;
             if (!stateMutationStarted)
-                RestoreReceiveSnapshot(priorRoot, priorClosed, admittedRevision,
-                    registrationRevision, rootIdentity, rootTransform,
-                    rootTransformIdentity, registrationIdentity);
+                RestorePriorStructure(admittedRevision);
             Debug.LogException(exception, "[NativeDock] Destination panel commit failed.");
             return false;
         }

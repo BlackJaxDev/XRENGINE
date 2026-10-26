@@ -253,8 +253,17 @@ internal sealed class NativeAnimationSearchStopReceipt : IDisposable
             CaptureResetSource(panel);
             try
             {
-                input.SetTextGuarded(_committedQuery, this,
-                    static receipt => receipt.RequireResetOwner());
+                if (panel.SearchReceiveReceipt is { } receive)
+                    receive.ResetDraft(input, _committedQuery, require =>
+                        input.SetTextGuarded(_committedQuery, require, admission =>
+                        {
+                            RequireResetOwner();
+                            admission();
+                            RequireResetOwner();
+                        }));
+                else
+                    input.SetTextGuarded(_committedQuery, this,
+                        static receipt => receipt.RequireResetOwner());
             }
             catch (InvalidOperationException) when (!ResetWriteStillOwned())
             {

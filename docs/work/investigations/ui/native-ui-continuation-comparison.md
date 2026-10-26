@@ -2546,3 +2546,29 @@ and errors. The focused pane, detached-leaf, and guarded-component run passed
 **47/47** in 0.370s, with no skips. No full suite was repeated. The 30 new Editor
 cases compiled but did not run, bringing the published new-case backlog to **224**.
 No Windows, GPU, live Editor, native input, IME, or performance checks ran.
+
+
+## Animation pre-receive and rollback review
+
+Review found three transfer paths that needed repair: post-restore false returns
+bypassed compensation; activation/first-save callbacks could become a fresh
+baseline; active prior-tab rollback could overwrite a callback display through
+normal activation. Both hosts now route accepted-write rejection through their
+retained receipts. A pre-receive receipt admits only guarded activation/reset
+writes. Scoped nonauthoring structural rollback preserves the exact captured
+input/display without changing normal activation behavior.
+
+The new guarded presented-focus overload originally omitted virtual-provider lease
+admission. It is now limited to ordinary toolbar records; the existing virtual
+focus route remains authoritative. Positive fixtures use standalone controls and
+a stale virtual record is rejected. Rendering, InputIntegration, and Headless builds 166–169 pass with zero warnings
+or errors. The corrected affected portable selection passes 88/88. Editor 170 and
+test-project 171 pass before the final Editor-only active-tab rollback repair.
+Those review findings are source evidence; the added Editor fixtures have not run
+on Windows. No failing Windows execution result is claimed for these candidates.
+
+The final 11,016-input source snapshot remained unchanged through Editor build 172
+(43.99s) and test-project build 173 (48.63s), both with zero warnings/errors. The
+last repair changed only Editor rollback logic and its tests. Runtime inputs remain
+identical to the 88/88 passing focused run, so that run was not repeated. The 23 new
+Editor cases compiled but remain Windows-unrun; cumulative published backlog: 247.

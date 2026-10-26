@@ -7,6 +7,8 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeAnimationSearchViewValues.cs" Link="Editor/NativeAnimationSearchViewValues.cs" />
+    <Compile Include="../Rendering/UITextGuardedCanvasFocusTests.Presented.cs" Link="Rendering/UITextGuardedCanvasFocusTests.Presented.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopDragPointerState.cs" Link="Rendering/DesktopDragPointerState.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopDragPointerObservation.cs" Link="Rendering/DesktopDragPointerObservation.cs" />
     <Compile Include="../Rendering/RuntimeDesktopDragPointerStateTests.cs" Link="Rendering/RuntimeDesktopDragPointerStateTests.cs" />

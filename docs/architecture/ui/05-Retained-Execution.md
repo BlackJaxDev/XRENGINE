@@ -2705,3 +2705,33 @@ outer context. A never-attached empty pane uses the existing detached-leaf recei
 for cleanup independently of the container lifetime. Transferred or replaced
 panes are preserved; failed retirement keeps its receipt. This adds no general
 custom-content or adopted-subtree destruction policy.
+
+
+## Animation search transfer
+
+Animation view receipts carry unsubmitted search text and caret/selection separately
+from the committed query, candidate page, and selected stable path. Copying a draft
+does not submit a search. Both native hosts retain destination field intent before
+activating an existing inactive panel or saving its layout. Only the known guarded
+stale-draft reset and activation display publication can advance that receipt.
+Callback text, caret, display, owner, or focus changes reject the old transfer,
+including attempts that assign an equal value.
+
+`NativeAnimationSearchReceiveReceipt` ends immediately before guarded view restore.
+The accepted view retains text/display/selection and owner proofs through later
+scroll and save callbacks. Rejection compensates only a still-current destination
+receipt and prior view; a newer destination edit is preserved. Inactive destinations
+can receive the draft and selection. No saved format or window activation changes.
+
+Focus restoration is conservative. `TryFocusPresented` with an expected intent and
+caller proof accepts only an ordinary presented toolbar target and an unchanged
+empty focus owner. It preserves another destination-focused control. Virtual row
+metadata is rejected; the existing virtual-item focus route remains responsible
+for exact provider and row leases. Unavailable presentation leaves the draft
+without acquiring focus. Native-window and cross-host focus acceptance remain
+separate checks.
+
+Structural rollback retains a scoped nonauthoring activation receipt for the exact
+captured search input/display. Reopening an active prior tab cannot republish old
+text over a callback's newer display or stale-draft edit. The scope restores the
+prior receipt in `finally`; normal activation bookkeeping remains unchanged.

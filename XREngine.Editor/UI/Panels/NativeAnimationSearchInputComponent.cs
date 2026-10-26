@@ -12,6 +12,14 @@ internal sealed class NativeAnimationSearchInputComponent : UITextInputComponent
         set => SetField(ref _panel, value, publishNotifications: false);
     }
 
+    protected override void PublishActivationText(UITextComponent display, string value)
+    {
+        if (Panel?.SearchReceiveReceipt is { } receipt)
+            receipt.WriteActivationDisplay(this, display, value);
+        else
+            base.PublishActivationText(display, value);
+    }
+
     protected override void OnComponentActivated()
     {
         Panel?.ResumeSearchDraft(this, beforePanelActivation: true);

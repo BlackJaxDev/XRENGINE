@@ -17,7 +17,7 @@ namespace XREngine.UnitTests.Editor;
 
 /// <summary>Checks Animation view transfer and compensation through real dock hosts.</summary>
 [TestFixture, NonParallelizable]
-public sealed class NativeDockAnimationTransferTests
+public sealed partial class NativeDockAnimationTransferTests
 {
     private static readonly BindingFlags InstanceFlags =
         BindingFlags.Instance | BindingFlags.NonPublic;

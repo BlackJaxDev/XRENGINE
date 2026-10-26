@@ -198,6 +198,8 @@ public static class EditorPanelHost
             if (!BeforeCurrent() || !state.IsCurrent || !BeforeCurrent())
                 return false;
             NativeDockPanelStateReceipt before = binding.CaptureReceipt();
+            NativeAnimationPanelViewValues? priorAnimation =
+                (binding.Panel as AnimationPanel)?.CapturePriorView();
             bool DestinationCurrent() => toolsIdentity.IsCurrent &&
                 registrationIdentity.IsCurrent && !toolsNode.IsDestroyed &&
                 !toolsNode.IsDestroyQueued && toolsNode.IsActiveInHierarchy &&
@@ -210,23 +212,52 @@ public static class EditorPanelHost
                 panelSelectionRevision == startingSelectionRevision + 1 &&
                 layout.SelectedTab == index && (layout.OpenMask & (1 << index)) != 0 &&
                 ReferenceEquals(stateBindings[index], binding) && binding.IsCurrent;
+            using var searchReceive = (binding.Panel as AnimationPanel)?.BeginSearchReceive();
             if (!ReceivePanel(panel) || !DestinationCurrent() || !state.IsCurrent ||
                 !DestinationCurrent() ||
-                binding.Panel.StateIntentRevision != before.IntentRevision)
+                binding.Panel.StateIntentRevision != before.IntentRevision ||
+                searchReceive is { IsCurrent: false })
                 return false;
             bool ForwardCurrent() => DestinationCurrent() && state.IsCurrent &&
                 DestinationCurrent();
             if (!ForwardCurrent()) return false;
-            NativeDockPanelStateReceipt applied = binding.Restore(
-                state.Values, ForwardCurrent, state.AnimationView);
-            if (!applied.IsCurrent || !ForwardCurrent())
-                return false;
-            if (!DestinationCurrent() || !applied.IsCurrent) return false;
-            applied.Values.WriteTo(layout);
-            if (!DestinationCurrent() || !applied.IsCurrent) return false;
-            Save();
-            return DestinationCurrent() && applied.IsCurrent && ForwardCurrent() &&
-                applied.Values.Matches(layout);
+            NativeDockPanelStateReceipt? retained = null;
+            try
+            {
+                searchReceive?.Complete();
+                NativeDockPanelStateReceipt applied = binding.Restore(
+                    state.Values, ForwardCurrent, state.AnimationView, partial => retained = partial);
+                retained = applied;
+                if (!applied.IsCurrent || !ForwardCurrent() || !DestinationCurrent())
+                    throw new InvalidOperationException("The transferred panel changed after restore.");
+                applied.Values.WriteTo(layout);
+                if (!DestinationCurrent() || !applied.IsCurrent)
+                    throw new InvalidOperationException("The transferred panel changed during layout assignment.");
+                Save();
+                if (!DestinationCurrent() || !applied.IsCurrent || !ForwardCurrent() ||
+                    !applied.Values.Matches(layout))
+                    throw new InvalidOperationException("The transferred panel changed during save.");
+                return true;
+            }
+            catch
+            {
+                if (retained is { IsCurrent: true } partial && DestinationCurrent() &&
+                    priorAnimation is { } priorView && binding.Panel is AnimationPanel animation &&
+                    animation.CanRestorePriorView(priorView))
+                {
+                    try
+                    {
+                        var restored = binding.Restore(before.Values, DestinationCurrent, priorView, restorePriorSearchFocus: true);
+                        if (restored.IsCurrent && DestinationCurrent())
+                        {
+                            restored.Values.WriteTo(layout);
+                            if (restored.IsCurrent && DestinationCurrent()) Save();
+                        }
+                    }
+                    catch (Exception failure) { Debug.LogException(failure, "The prior Animation view could not be restored."); }
+                }
+                throw;
+            }
         }
 
         bool ReceivePanel(string panel)
