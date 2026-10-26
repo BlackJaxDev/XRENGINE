@@ -1884,3 +1884,39 @@ failures or skips. Editor/test build 89 passes with zero warnings/errors (1m28.7
 All 10,918 source inputs stayed fixed through these checks. The 41 rename cases
 compile, including the new single-display case. Windows reruns are still pending;
 this is not live editor, GPU, native IME, or performance acceptance.
+
+
+
+## Animation candidate-view checkpoint
+
+The live dock-transfer receipt now carries the committed animation path query,
+result page, and selected stable path ID. Destination discovery remains deferred;
+it resolves selection against fresh results for the same scene root and clamps
+the page. Root changes discard the old position. The search field joins guarded
+time/value publication and host-save compensation. No saved fields change.
+Unsubmitted drafts and cross-host keyboard focus remain open.
+
+Headless build 263 passes with zero warnings/errors. Targeted run 229 passes
+23/23; full run 230 passes **1,579/1,579**, with no failures or skips. The matching
+editor/test build is pending. Fifteen new editor cases require Windows execution;
+their results are not covered by the earlier frozen rename validation. The
+original code reconciliation stays **51/60**, and all owner-decision holds remain.
+
+Documentation still uses its existing paths. PR 87 reconciliation owns a frozen
+`2462125639af4750609c88730e96866d547a1f86` snapshot. This later checkpoint changes
+retained execution, continuation investigation, progress, validation, and the UI
+TODO; those five documents need later reconciliation by that task.
+
+Editor/test build 88 passes with zero warnings/errors (3m58.24s). The 10,922
+source inputs stayed fixed through full portable run 230 and this build. Windows
+execution of this candidate remains pending. The candidate is preserved locally
+while two separately reported Windows rename failures at `24621256` take priority.
+
+
+The integrated candidate passes editor/test build 90 with zero warnings/errors
+(6m46.33s). All 10,922 source inputs stayed unchanged from headless build 265
+through full run 232 and editor/test build 90. The portable result is
+**1,579/1,579** (31.839s), with no failures or skips. The 15 added editor cases
+compile but have not run on Windows. The published rename repair at `fdf190c3`
+also awaits its Windows rerun. These checks do not establish live editor, GPU,
+native IME, or performance acceptance.

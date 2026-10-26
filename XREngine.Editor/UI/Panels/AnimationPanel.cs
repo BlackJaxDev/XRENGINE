@@ -203,6 +203,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         var (searchInput, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(searchNode);
         _searchInput = searchInput;
         searchInput.SingleLineMode = true;
+        searchInput.Text = _pathSearch;
         searchInput.Submitted += SubmitPathSearch;
         searchInput.Cancelled += CancelPathSearch;
     }
@@ -213,8 +214,10 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     {
         if (_destroying)
             return;
-        _pathSearch = field.Text.Trim();
-        _candidatePage = 0;
+        BeginStateIntent();
+        SetField(ref _pendingCandidateView, null, publishNotifications: false);
+        SetField(ref _pathSearch, field.Text.Trim(), publishNotifications: false);
+        SetField(ref _candidatePage, 0, publishNotifications: false);
         RefreshRows();
     }
     private void CancelPathSearch(UITextInputComponent field)
@@ -612,8 +615,9 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         if (_ownerSubscriptionsActive && IsActiveInHierarchy)
             ObserveProjectionSources(clip);
         requireCurrent?.Invoke();
-        if (!owned && !ReferenceEquals(_candidateRoot, Selection.SceneNode))
-            RebuildCandidates();
+        if (!owned && (_pendingCandidateView is not null ||
+                !ReferenceEquals(_candidateRoot, Selection.SceneNode)) && !RebuildCandidates())
+            return;
 
         _rows.Add((1, "Clip: " + (clip.Name ?? "<unnamed>")));
         _rows.Add((2, $"Length: {clip.LengthInSeconds:F3} s | Sample rate: {clip.SampleRate} fps | Loop: {clip.Looped}"));
@@ -1017,8 +1021,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             case 19: RemoveSelectedMember(); break;
             case 20: SelectedMatchingComponent()?.Play(); break;
             case 21: SelectedMatchingComponent()?.StopPlayback(); break;
-            case 24: _candidatePage = Math.Max(0, _candidatePage - 1); break;
-            case 25: _candidatePage++; break;
+            case 24: SetCandidatePage(Math.Max(0, _candidatePage - 1)); break;
+            case 25: SetCandidatePage(checked(_candidatePage + 1)); break;
             case 26: _memberPage = Math.Max(0, _memberPage - 1); break;
             case 27: _memberPage++; break;
             case 28: _keyPage = Math.Max(0, _keyPage - 1); break;
@@ -1176,15 +1180,6 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             if (ReferenceEquals(current, candidate))
                 return true;
         return false;
-    }
-
-    private void RebuildCandidates()
-    {
-        _candidateRoot = Selection.SceneNode;
-        _candidates = _candidateRoot is null ? [] : EditorImGuiUI.DiscoverAnimationClipPaths(_candidateRoot);
-        _selectedCandidate = null;
-        _candidatePage = 0;
-        _ids.Clear();
     }
 
     private void RemoveSelectedMember()

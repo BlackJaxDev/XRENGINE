@@ -2233,3 +2233,30 @@ native-window or IME acceptance.
 Hierarchy rename rows create their text component before the input. The input
 requires a text component and otherwise creates one itself. This order keeps
 one display and ensures the input uses the configured font size and color.
+
+
+
+### Animation path-candidate view transfer
+
+The live Animation view receipt includes the committed path query, result page,
+and selected stable path ID. It records the current scene root even when there
+is no selected clip. Root replacement, lifetime changes, later query/page/selection
+changes, and later source search-field intent invalidate the receipt. No saved
+layout fields are added. An unsubmitted search draft and keyboard focus are not
+part of this transfer.
+
+Owned destination projection defers scene-path discovery. It retains the requested
+candidate view until an ordinary refresh discovers a fresh candidate list. A
+matching root permits selection by stable path ID and clamps the saved page to
+the filtered result count. A changed root discards the old selection and page.
+Missing path IDs remain unselected. A page action updates the pending position
+so discovery cannot restore the older page over that action. Candidate objects
+and their default values come from the fresh destination discovery.
+
+The search field joins the existing guarded time/value toolbar restore. It uses
+`UITextInputComponent.SetTextGuarded`; its original field/display ownership and
+write intent remain part of the applied receipt through scroll and host-save
+callbacks. An edit during save prevents stale source closure. Same-clip save
+compensation restores the prior committed query through the same receipt path.
+These are transient managed contracts; cross-host focus and live acceptance
+remain separate.

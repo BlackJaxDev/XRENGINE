@@ -14,7 +14,7 @@ using XREngine.UnitTests.Rendering;
 namespace XREngine.UnitTests.Editor;
 
 [TestFixture, NonParallelizable]
-public sealed class NativeAnimationPanelViewTransferTests
+public sealed partial class NativeAnimationPanelViewTransferTests
 {
     private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.NonPublic;
     private UITestShaderScope _shaders = null!;

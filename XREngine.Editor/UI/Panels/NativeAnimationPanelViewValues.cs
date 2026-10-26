@@ -21,7 +21,8 @@ internal readonly record struct NativeAnimationPanelViewValues(
     float PlotZoom,
     float PlotWindowStart,
     bool StretchLengthEdits,
-    int ValueChannel)
+    int ValueChannel,
+    NativeAnimationCandidateView Candidates)
 {
     internal bool HasValidScalars =>
         (Clip is null ? ClipIdentity is null && RootMember is null && Member is null &&
@@ -32,6 +33,7 @@ internal readonly record struct NativeAnimationPanelViewValues(
             !Clip.IsDestroyed && !Clip.IsDestroyQueued &&
             ReferenceEquals(Clip.RootMember, RootMember) &&
             Clip.LengthInSeconds == ClipLength && Clip.SampleRate == SampleRate) &&
+        Candidates.IsCurrent &&
         float.IsFinite(ClipLength) && ClipLength >= 0 &&
         MemberPage >= 0 && KeyPage >= 0 &&
         float.IsFinite(PlotZoom) && PlotZoom is >= 1 and <= 32 &&

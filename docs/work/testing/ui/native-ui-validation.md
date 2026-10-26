@@ -5,6 +5,22 @@ This document owns native UI runtime, visual, performance, backend, editor workf
 
 Design: [Native UI retained rendering](../../design/ui/native-ui-retained-rendering-design.md)  Architecture: [UI architecture](../../../architecture/ui/README.md); [UI rendering pipeline](../../../architecture/ui/03-Rendering-Pipeline.md)  Code todos: [Native UI retained performance and editor parity TODO](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
 
+## Test selection during implementation
+
+Use affected fixtures during iteration. For animation candidate-view changes,
+start with `NativeAnimationPanelViewValuesTests` and
+`NativeDockPanelStateRoutingTests` in the portable runner. On Windows, add
+`NativeAnimationPanelViewTransferTests` and `NativeDockAnimationTransferTests`.
+Use the existing runner filters; do not run unrelated fixtures for each edit.
+
+Reserve the full portable suite for integration checkpoints, shared runtime
+changes, or observed interactions that require wider coverage. A commit alone
+does not require a full run. Record the reason and run it at most once for an
+unchanged snapshot. Do not repeat tests for documentation-only changes. After a local repair, rerun the
+failed case and its affected fixtures first; broaden only for an unresolved risk.
+Keep builds sequential through the repository wrapper. Windows execution and
+live UI acceptance remain separate from portable tests and Linux compilation.
+
 ## Retained UI Integration (2026-10-23)
 
 ### Native asset row menu acceptance
@@ -935,3 +951,35 @@ failures or skips. Editor/test build 89 passes with zero warnings/errors (1m28.7
 All 10,918 source inputs stayed fixed through these checks. The 41 rename cases
 compile, including the new single-display case. Windows reruns are still pending;
 this is not live editor, GPU, native IME, or performance acceptance.
+
+
+
+### Animation candidate-view validation
+
+Portable build 263 has zero warnings/errors. Run 229 passes 23/23 candidate-value
+and routing cases; full run 230 passes **1,579/1,579**, with no failures or skips.
+The five new portable cases check empty query context, invalid rootless position,
+and root lifetime/identity changes. They do not execute the editor transfer.
+
+Run `NativeAnimationPanelViewTransferTests` and `NativeDockAnimationTransferTests`
+on Windows at the published candidate, then include them in the broader native
+UI selection. The new cases cover committed query text, deferred fresh-ID
+resolution, filtered page clamping, null/root changes, empty-clip context, source
+edits, destination edits/veto, real-host success, and save compensation. There
+are 14 new view cases and one added real-host search-save case. Retain the
+established assertions and timeout limits. Unsubmitted search drafts, cross-host
+focus, live editor, GPU, native IME, and performance are outside these results.
+
+Editor/test build 88 passes with zero warnings/errors (3m58.24s). The 10,922
+source inputs stayed fixed through full portable run 230 and this build. Windows
+execution of this candidate remains pending. The candidate is preserved locally
+while two separately reported Windows rename failures at `24621256` take priority.
+
+
+The integrated candidate passes editor/test build 90 with zero warnings/errors
+(6m46.33s). All 10,922 source inputs stayed unchanged from headless build 265
+through full run 232 and editor/test build 90. The portable result is
+**1,579/1,579** (31.839s), with no failures or skips. The 15 added editor cases
+compile but have not run on Windows. The published rename repair at `fdf190c3`
+also awaits its Windows rerun. These checks do not establish live editor, GPU,
+native IME, or performance acceptance.

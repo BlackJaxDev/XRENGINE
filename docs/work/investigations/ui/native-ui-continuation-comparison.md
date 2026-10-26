@@ -1954,3 +1954,62 @@ failures or skips. Editor/test build 89 passes with zero warnings/errors (1m28.7
 All 10,918 source inputs stayed fixed through these checks. The 41 rename cases
 compile, including the new single-display case. Windows reruns are still pending;
 this is not live editor, GPU, native IME, or performance acceptance.
+
+
+
+### Animation candidate-view continuation audit
+
+At `2462125639af4750609c88730e96866d547a1f86`, the live Animation view values
+omit `_pathSearch`, `_candidatePage`, and `_selectedCandidate`. `CreateCommands`
+also creates the search field without its committed query. Owned row restore
+defers candidate discovery, and the later ordinary rebuild resets page and
+selection. This is a concrete missing view-transfer behavior. Other audited gaps
+are cross-host input focus, nested collection owner paths, and distinct-curve
+key correspondence; they are not silently treated as complete.
+
+The bounded candidate carries query/page/stable ID and the scene-root lifetime
+through the existing view receipt. Fresh discovery resolves the ID and clamps
+the page. A changed root drops the old position. The search field uses the shared
+guarded text writer and contributes its intent to source and applied receipts.
+No saved fields, asset writes, dependencies, or private-doc changes are included.
+Review found a missing null-root comparison; capture now records current scene
+selection even for an empty clip, and validation compares root identity for both
+null and non-null roots.
+
+Headless build 263 passes with zero warnings/errors (4m04.70s). Targeted run 229
+passes 23/23, including five new candidate-value tests and existing routing tests.
+Full run 230 passes **1,579/1,579** (34.761s), with no failures or skips. Changes
+after the headless build capture affect only editor panel code and editor-only
+fixtures, not portable compilation inputs. The final snapshot has 10,922 source
+inputs; the matching editor/test build follows. The 14 new candidate-transfer
+cases and added real-host search-save case remain unexecuted on Windows here.
+
+Editor/test build 88 passes with zero warnings/errors (3m58.24s). The 10,922
+source inputs stayed fixed through full portable run 230 and this build. Windows
+execution of this candidate remains pending. The candidate is preserved locally
+while two separately reported Windows rename failures at `24621256` take priority.
+
+
+### Candidate-view integration after the rename repair
+
+The preserved candidate-view changes were restored on `fdf190c3`. The append-only
+document conflicts retain both the rename findings and candidate-view evidence.
+All five stashes remain. Headless build 265 passes with zero warnings/errors
+(18.15s). Full portable run 232 passes **1,579/1,579** (31.839s), with no failures
+or skips. This run validates the integrated checkpoint; it is not a Windows
+result. The matching editor/test build is recorded below when complete.
+
+The user requested fewer full-suite runs. The validation guide now specifies
+affected fixtures during iteration, one full run for a coherent checkpoint or
+a stated shared-code risk, and reuse of results for unchanged source inputs.
+Documentation-only edits do not trigger tests. The current full result will not
+be repeated for the documentation and publication steps.
+
+
+The integrated candidate passes editor/test build 90 with zero warnings/errors
+(6m46.33s). All 10,922 source inputs stayed unchanged from headless build 265
+through full run 232 and editor/test build 90. The portable result is
+**1,579/1,579** (31.839s), with no failures or skips. The 15 added editor cases
+compile but have not run on Windows. The published rename repair at `fdf190c3`
+also awaits its Windows rerun. These checks do not establish live editor, GPU,
+native IME, or performance acceptance.

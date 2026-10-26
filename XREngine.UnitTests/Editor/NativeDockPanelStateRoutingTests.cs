@@ -91,7 +91,7 @@ public sealed class NativeDockPanelStateRoutingTests
         NativeDockPanelStateValues values = NativeDockPanelStateValues.Capture(new(),
             NativeDockPanel.Animation);
         NativeAnimationPanelViewValues view = new(null, null, 0, 0, null, null, null,
-            null, null, null, 0, 0, false, 1, 0, true, -1);
+            null, null, null, 0, 0, false, 1, 0, true, -1, new(null, null, string.Empty, 0, null));
         Assert.That(view.HasValidScalars, Is.True);
         _source.Configure(_sourceKey, _ => true, _context,
             capturePanelState: _ => new NativeDockPanelTransferState(values, () => true, view));

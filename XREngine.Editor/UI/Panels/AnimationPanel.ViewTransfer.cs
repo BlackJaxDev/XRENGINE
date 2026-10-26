@@ -20,8 +20,11 @@ public partial class AnimationPanel
         AnimationClip? clip = _displayedClip;
         NativeAnimationPanelViewValues values = CaptureViewValues(clip);
         if (!ViewContentCurrent(values)) return false;
+        if (!NativeAnimationSearchFieldReceipt.TryCapture(this, _searchInput, out var search))
+            return false;
         receipt = new(this, ObjectConstructionIdentity.Capture(this), values,
-            _authoringEpoch, _sourceRevision, _plotViewRevision, StateIntentRevision);
+            _authoringEpoch, _sourceRevision, _plotViewRevision, StateIntentRevision,
+            () => ReferenceEquals(_searchInput, search.Input) && search.IsCurrent(0, values.Candidates.Query));
         return receipt.IsCurrent;
     }
 
@@ -41,7 +44,7 @@ public partial class AnimationPanel
             clip?.RootMember, _selectedMember, animation,
             animation is null ? null : ObjectConstructionIdentity.Capture(animation),
             _selectedKey, TrackFor(animation), _memberPage, _keyPage,
-            _graphView, _plotZoom, _plotWindowStart, _stretchLengthEdits, _valueChannel);
+            _graphView, _plotZoom, _plotWindowStart, _stretchLengthEdits, _valueChannel, CaptureCandidateView());
     }
 
     internal bool IsViewCurrent(NativeAnimationPanelViewReceipt receipt)
@@ -61,12 +64,14 @@ public partial class AnimationPanel
             _graphView == values.GraphView && _plotZoom == values.PlotZoom &&
             _plotWindowStart == values.PlotWindowStart &&
             _stretchLengthEdits == values.StretchLengthEdits &&
-            _valueChannel == values.ValueChannel && ViewContentCurrent(values);
+            _valueChannel == values.ValueChannel && CaptureCandidateView() == values.Candidates &&
+            ViewContentCurrent(values);
     }
 
     private static bool ViewContentCurrent(NativeAnimationPanelViewValues values)
     {
-        if (!values.HasValidScalars) return false;
+        if (!values.HasValidScalars || !ReferenceEquals(values.Candidates.Root, Selection.SceneNode))
+            return false;
         if (values.Member is not { } member)
             return values.Key is null && values.Animation is null;
         if (values.Clip is not { } clip ||
@@ -111,7 +116,7 @@ public partial class AnimationPanel
                  _graphView != expected.GraphView || _plotZoom != expected.PlotZoom ||
                  _plotWindowStart != expected.PlotWindowStart ||
                  _stretchLengthEdits != expected.StretchLengthEdits ||
-                 _valueChannel != expected.ValueChannel))
+                 _valueChannel != expected.ValueChannel || CaptureCandidateView() != expected.Candidates))
                 return false;
             return true;
         }
@@ -125,6 +130,9 @@ public partial class AnimationPanel
                 throw new InvalidOperationException("The Animation toolbar changed during validation.");
         }
         RequireCurrent();
+        if (!NativeAnimationSearchFieldReceipt.TryCapture(this, _searchInput, out var search))
+            throw new InvalidOperationException("The Animation search field is unavailable during restore.");
+        int searchPhase = 0;
         if (_timeInput is not { } timeInput || _valueInput is not { } valueInput ||
             timeInput.SceneNode is not { } timeNode ||
             valueInput.SceneNode is not { } valueNode ||
@@ -230,7 +238,9 @@ public partial class AnimationPanel
             valueInput.Text == expectedValue && valueDisplay.Text == expectedValueDisplay;
         bool ToolbarPhaseCurrent()
         {
-            if (!InputsCurrent() || !PlaybackCurrent() || _refreshingValueInput ||
+            if (!ReferenceEquals(_searchInput, search.Input) ||
+                !search.IsCurrent(searchPhase, values.Candidates.Query) ||
+                !InputsCurrent() || !PlaybackCurrent() || _refreshingValueInput ||
                 _valueInputRefreshPending || toolbarPhase != 0 && _projectionDirty)
                 return false;
             return toolbarPhase switch
@@ -293,6 +303,7 @@ public partial class AnimationPanel
             static (_, _, _, _) => { }, publishNotifications: false);
         SetFieldValidated(ref _valueChannel, values.ValueChannel, 0,
             static (_, _, _, _) => { }, publishNotifications: false);
+        StageCandidateView(values.Candidates);
         expectedValue = values.Key is null ? string.Empty : FormatSelectedValue(values.Key);
         expectedValueDisplay = valueFocused ? expectedValue :
             string.Concat(valuePreText, expectedValue, valuePostText);
@@ -367,6 +378,11 @@ public partial class AnimationPanel
             valueInput.Text != expectedValue || valueDisplay.Text != expectedValueDisplay)
             throw new InvalidOperationException("The Animation value field did not accept the restored view.");
         toolbarPhase = 4;
+        RequireCurrent();
+        searchPhase = 1;
+        search.Input.SetTextGuarded(values.Candidates.Query, (Action)RequireCurrent,
+            static require => require());
+        searchPhase = 2;
         RequireCurrent();
         return appliedView;
     }

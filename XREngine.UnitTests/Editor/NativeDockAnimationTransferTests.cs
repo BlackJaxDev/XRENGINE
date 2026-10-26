@@ -60,12 +60,17 @@ public sealed class NativeDockAnimationTransferTests
         Host source = fixture.CreateHost(fixture.World, fixture.SourceKey,
             clipB, plotZoom: 2.0f);
 
+        SetPathSearch(source.Animation, "source query");
+        SetPathSearch(destination.Animation, "destination query");
+
         NativeDockTransferResult result = Transfer(source, destination);
 
         Assert.That(result, Is.EqualTo(NativeDockTransferResult.Committed));
         Assert.That(NativeAssetSelection.SelectedTarget, Is.SameAs(clipB));
         Assert.That(DisplayedClip(destination.Animation), Is.SameAs(clipB));
         Assert.That(PlotZoom(destination.Animation), Is.EqualTo(2.0f));
+        Assert.That(PathSearch(destination.Animation), Is.EqualTo("source query"));
+        Assert.That(SearchInput(destination.Animation).Text, Is.EqualTo("source query"));
     }
 
     [Test]
@@ -110,6 +115,8 @@ public sealed class NativeDockAnimationTransferTests
         Host source = fixture.CreateHost(fixture.World, fixture.SourceKey,
             clip, plotZoom: 2.0f);
 
+        SetPathSearch(source.Animation, "source query");
+        SetPathSearch(destination.Animation, "destination query");
         NativeDockTransferResult result = Transfer(source, destination);
 
         Assert.That(result, Is.EqualTo(NativeDockTransferResult.Rejected));
@@ -120,10 +127,13 @@ public sealed class NativeDockAnimationTransferTests
         Assert.That(PlotZoom(destination.Animation), Is.EqualTo(1.5f),
             "A same-clip failure must restore the destination's prior local view.");
         Assert.That(IsPanelOpen(source.Tree, NativeDockPanel.Animation), Is.True);
+        Assert.That(PathSearch(destination.Animation), Is.EqualTo("destination query"));
+        Assert.That(SearchInput(destination.Animation).Text, Is.EqualTo("destination query"));
     }
 
-    [Test]
-    public void SaveCallbackTextMutationInvalidatesAppliedReceiptAndKeepsSourceOpen()
+    [TestCase(false)]
+    [TestCase(true)]
+    public void SaveCallbackTextMutationInvalidatesAppliedReceiptAndKeepsSourceOpen(bool search)
     {
         using var fixture = new DockFixture();
         AnimationClip clip = NewClip("Shared");
@@ -135,8 +145,8 @@ public sealed class NativeDockAnimationTransferTests
         SetSelectedTarget(clip);
         Host source = fixture.CreateHost(fixture.World, fixture.SourceKey,
             clip, plotZoom: 2.0f);
-        UITextInputComponent timeInput = (UITextInputComponent)TimeInputField.GetValue(
-            destination.Animation)!;
+        UITextInputComponent timeInput = search ? SearchInput(destination.Animation) :
+            (UITextInputComponent)TimeInputField.GetValue(destination.Animation)!;
         bool edited = false;
         fixture.Paths.OnLookup = lookup =>
         {
@@ -157,6 +167,18 @@ public sealed class NativeDockAnimationTransferTests
         Assert.That(NativeAssetSelection.SelectedTarget, Is.SameAs(clip));
         Assert.That(IsPanelOpen(source.Tree, NativeDockPanel.Animation), Is.True,
             "A stale applied receipt must not authorize source closure.");
+    }
+
+    private static string PathSearch(AnimationPanel panel)
+        => (string)typeof(AnimationPanel).GetField("_pathSearch", InstanceFlags)!.GetValue(panel)!;
+
+    private static UITextInputComponent SearchInput(AnimationPanel panel)
+        => (UITextInputComponent)typeof(AnimationPanel).GetField("_searchInput", InstanceFlags)!.GetValue(panel)!;
+
+    private static void SetPathSearch(AnimationPanel panel, string query)
+    {
+        typeof(AnimationPanel).GetField("_pathSearch", InstanceFlags)!.SetValue(panel, query);
+        SearchInput(panel).Text = query;
     }
 
     private static NativeDockTransferResult Transfer(Host source, Host destination)
