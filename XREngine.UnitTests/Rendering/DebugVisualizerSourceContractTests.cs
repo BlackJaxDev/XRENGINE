@@ -36,7 +36,7 @@ public sealed class DebugVisualizerSourceContractTests
         AssertContainsInOrder(
             source,
             "if (!BuffersBound)\n                {\n                    Renderer.MeshGenerationQueue.EnqueueGeneration(this);",
-            "return true;\n                }",
+            "return indirectArguments is null;\n                }",
             "PrepareDynamicRenderData();",
             "BindSSBOs(mat!);",
             "BindSSBOs(vtx!);");

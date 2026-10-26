@@ -28,7 +28,7 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
 
         string[] references = project
             .Descendants("ProjectReference")
-            .Select(element => Path.GetFileNameWithoutExtension((string)element.Attribute("Include")!))
+            .Select(element => GetProjectReferenceName(element))
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -52,7 +52,7 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
 
             string[] references = project
                 .Descendants("ProjectReference")
-                .Select(element => Path.GetFileNameWithoutExtension((string)element.Attribute("Include")!))
+                .Select(element => GetProjectReferenceName(element))
                 .Order(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
@@ -69,7 +69,7 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
 
         string[] references = project
             .Descendants("ProjectReference")
-            .Select(element => Path.GetFileNameWithoutExtension((string)element.Attribute("Include")!))
+            .Select(element => GetProjectReferenceName(element))
             .ToArray();
 
         references.ShouldNotContain("XREngine.Runtime.Rendering.OpenGL");
@@ -198,8 +198,7 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
                 relativeProjectPath.Replace('/', Path.DirectorySeparatorChar)));
             string[] references = project
                 .Descendants("ProjectReference")
-                .Select(element => Path.GetFileNameWithoutExtension(
-                    (string)element.Attribute("Include")!))
+                .Select(element => GetProjectReferenceName(element))
                 .ToArray();
 
             references.ShouldNotContain("XREngine.Runtime.Rendering.OpenGL");
@@ -219,7 +218,7 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
         XElement[] backendReferences = project
             .Descendants("ProjectReference")
             .Where(element => BackendLeafProjectNames.Contains(
-                Path.GetFileNameWithoutExtension((string)element.Attribute("Include")!),
+                GetProjectReferenceName(element),
                 StringComparer.Ordinal))
             .ToArray();
 
@@ -290,7 +289,7 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
 
         string[] references = project
             .Descendants("ProjectReference")
-            .Select(element => Path.GetFileNameWithoutExtension((string)element.Attribute("Include")!))
+            .Select(element => GetProjectReferenceName(element))
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
@@ -445,6 +444,13 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
 
         throw new DirectoryNotFoundException($"Could not find workspace root from '{AppContext.BaseDirectory}'.");
     }
+
+    /// <summary>
+    /// Gets the project name from a project reference. Project files can use a backslash
+    /// as the path separator. This method gives the same name on all host platforms.
+    /// </summary>
+    private static string GetProjectReferenceName(XElement element)
+        => Path.GetFileNameWithoutExtension(((string)element.Attribute("Include")!).Replace('\\', '/'));
 
     private static string[] ReadPackageReferences(string projectPath)
         => XDocument
