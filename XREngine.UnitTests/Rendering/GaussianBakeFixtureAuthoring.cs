@@ -14,8 +14,9 @@ namespace XREngine.UnitTests.Rendering;
 
 /// <summary>
 /// Writes the cooked archives that the gaussian bake command uses as fixtures, in
-/// <c>Build/GaussianBakeFixtures/</c>. The test is explicit because it imports a large model
-/// and writes into the workspace. Git ignores the output folder.
+/// <c>Build/GaussianBakeFixtures/</c>. The tests are explicit because they import models and
+/// write into the workspace; run each one alone. Git ignores the output folder.
+/// The fixture meshes use the default lit engine materials, so that the bake can render them.
 /// </summary>
 [TestFixture]
 public sealed class GaussianBakeFixtureAuthoring
@@ -28,47 +29,74 @@ public sealed class GaussianBakeFixtureAuthoring
     private const float AvatarClearance = 1.0f;
 
     [Test]
-    [Explicit("Writes fixture archives into Build/GaussianBakeFixtures.")]
-    public void WriteFixturePaks()
+    [Explicit("Writes Build/GaussianBakeFixtures/avatar.pak.")]
+    public void WriteAvatarFixturePak()
     {
-        string fixtureRoot = Path.Combine(GltfImportTestUtilities.ResolveWorkspaceRoot(), "Build", "GaussianBakeFixtures");
-        Directory.CreateDirectory(fixtureRoot);
-        string avatarPak = Path.Combine(fixtureRoot, "avatar.pak");
-        string itemPak = Path.Combine(fixtureRoot, "item.pak");
-        string worldPak = Path.Combine(fixtureRoot, "world.pak");
-
-        XRPrefabSource avatar = GaussianBakeTestAssets.ImportPrefab(GaussianBakeTestAssets.SkinnedAvatarModelPath);
+        string avatarPak = FixturePath("avatar.pak");
+        XRPrefabSource avatar = ImportAvatar();
         GaussianBakeTestAssets.CountClipComponents(avatar.RootNode.ShouldNotBeNull(), requireAnimation: true).ShouldBeGreaterThan(0);
-        XRPrefabSource item = GaussianBakeTestAssets.ImportPrefab(GaussianBakeTestAssets.CorvetteModelPath);
-        GaussianBakeTestAssets.CountClipComponents(item.RootNode.ShouldNotBeNull(), requireAnimation: false).ShouldBe(0);
 
         GaussianBakeTestAssets.WritePak(avatarPak, (AvatarAssetPath, GaussianBakeTestAssets.Cook(avatar)));
-        GaussianBakeTestAssets.WritePak(itemPak, (ItemAssetPath, GaussianBakeTestAssets.Cook(item)));
-        GaussianBakeTestAssets.WritePak(worldPak, (WorldAssetPath, GaussianBakeTestAssets.Cook(CreateWorld(avatar, item))));
 
         CookedBakeInput avatarInput = CookedBakeInputLoader.Load(avatarPak, AvatarAssetPath, GaussianBakeKind.Avatar);
         SceneNode avatarRoot = avatarInput.PrefabRoot.ShouldNotBeNull();
-        AssertReadableMesh(avatarRoot);
+        AssertRenderableMesh(avatarRoot);
         GaussianBakeTestAssets.CountClipComponents(avatarRoot, requireAnimation: true).ShouldBeGreaterThan(0);
+        WriteSummary("avatar", avatarPak, avatarInput, avatarRoot);
+    }
+
+    [Test]
+    [Explicit("Writes Build/GaussianBakeFixtures/item.pak. The Corvette import takes several minutes.")]
+    public void WriteItemFixturePak()
+    {
+        string itemPak = FixturePath("item.pak");
+        XRPrefabSource item = ImportItem();
+        GaussianBakeTestAssets.CountClipComponents(item.RootNode.ShouldNotBeNull(), requireAnimation: false).ShouldBe(0);
+
+        GaussianBakeTestAssets.WritePak(itemPak, (ItemAssetPath, GaussianBakeTestAssets.Cook(item)));
 
         CookedBakeInput itemInput = CookedBakeInputLoader.Load(itemPak, ItemAssetPath, GaussianBakeKind.Item);
         SceneNode itemRoot = itemInput.PrefabRoot.ShouldNotBeNull();
-        AssertReadableMesh(itemRoot);
+        AssertRenderableMesh(itemRoot);
         GaussianBakeTestAssets.CountClipComponents(itemRoot, requireAnimation: false).ShouldBe(0);
+        WriteSummary("item", itemPak, itemInput, itemRoot);
+    }
+
+    [Test]
+    [Explicit("Writes Build/GaussianBakeFixtures/world.pak. The Corvette import takes several minutes.")]
+    public void WriteWorldFixturePak()
+    {
+        string worldPak = FixturePath("world.pak");
+        GaussianBakeTestAssets.WritePak(worldPak, (WorldAssetPath, GaussianBakeTestAssets.Cook(CreateWorld(ImportAvatar(), ImportItem()))));
 
         CookedBakeInput worldInput = CookedBakeInputLoader.Load(worldPak, WorldAssetPath, GaussianBakeKind.World);
         XRWorld world = worldInput.World.ShouldNotBeNull();
         XRScene scene = world.Scenes.ShouldHaveSingleItem();
         scene.RootNodes.Count.ShouldBe(2);
         foreach (SceneNode root in scene.RootNodes)
-            AssertReadableMesh(root);
+            AssertRenderableMesh(root);
         scene.RootNodes.Sum(static root => GaussianBakeTestAssets.CountClipComponents(root, requireAnimation: true)).ShouldBeGreaterThan(0);
 
-        WriteSummary("avatar", avatarPak, avatarInput, avatarRoot);
-        WriteSummary("item", itemPak, itemInput, itemRoot);
         foreach (SceneNode root in scene.RootNodes)
             WriteSummary($"world/{root.Name}", worldPak, worldInput, root);
     }
+
+    private static string FixturePath(string fileName)
+    {
+        string fixtureRoot = Path.Combine(GltfImportTestUtilities.ResolveWorkspaceRoot(), "Build", "GaussianBakeFixtures");
+        Directory.CreateDirectory(fixtureRoot);
+        return Path.Combine(fixtureRoot, fileName);
+    }
+
+    /// <summary>
+    /// Imports the avatar. The avatar mesh is one plane, so its materials draw both faces;
+    /// otherwise the capture views behind the plane would show nothing.
+    /// </summary>
+    private static XRPrefabSource ImportAvatar()
+        => GaussianBakeTestAssets.ImportPrefabWithEngineMaterials(GaussianBakeTestAssets.SkinnedAvatarModelPath, doubleSided: true);
+
+    private static XRPrefabSource ImportItem()
+        => GaussianBakeTestAssets.ImportPrefabWithEngineMaterials(GaussianBakeTestAssets.CorvetteModelPath, doubleSided: false);
 
     /// <summary>
     /// Puts the prop at the origin and the avatar beside the prop, on the +X side of its bounds,
@@ -89,12 +117,22 @@ public sealed class GaussianBakeFixtureAuthoring
         return new XRWorld("GaussianBakeFixtureWorld", new XRScene("GaussianBakeFixtureScene", prop, avatarAnchor));
     }
 
-    private static void AssertReadableMesh(SceneNode root)
+    /// <summary>
+    /// Checks that the first sub-mesh has readable positions and an engine material whose shaders have
+    /// GLSL source text, so that the bake can render the mesh.
+    /// </summary>
+    private static void AssertRenderableMesh(SceneNode root)
     {
         SubMesh subMesh = GaussianBakeTestAssets.FirstSubMesh(root).ShouldNotBeNull();
-        XRMesh mesh = subMesh.LODs.Min.ShouldNotBeNull().Mesh.ShouldNotBeNull();
+        SubMeshLOD lod = subMesh.LODs.Min.ShouldNotBeNull();
+        XRMesh mesh = lod.Mesh.ShouldNotBeNull();
         mesh.VertexCount.ShouldBeGreaterThan(0);
         float.IsFinite(mesh.GetPosition(0).X).ShouldBeTrue();
+
+        XRMaterial material = lod.Material.ShouldNotBeNull();
+        material.Shaders.Count.ShouldBeGreaterThan(0);
+        foreach (XRShader shader in material.Shaders)
+            (shader.Source?.Text ?? string.Empty).ShouldContain("#version");
     }
 
     private static (Vector3 Min, Vector3 Max) ComputeWorldBounds(SceneNode root)
