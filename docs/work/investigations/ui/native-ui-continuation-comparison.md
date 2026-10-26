@@ -2048,3 +2048,52 @@ test build 96 (43.72s), each with zero warnings/errors. All 10,922 source inputs
 stayed unchanged through these checks. No portable suite was repeated: this
 change modifies one Windows fixture and documentation only. The corrected case
 still requires its focused Windows execution; compilation is not that result.
+
+
+
+### Read-only collection preview audit and repair
+
+The current inspector already virtualizes property rows and editable IList
+rows. Its separate `RenderGenericCollection(ICollection)` fallback still built
+one child subtree and called `ToString()` for every item. This is a concrete
+remaining part of inspector virtualization, independent of the pending owner
+decisions. The repair reuses the existing fixed-height virtual table over the
+existing captured buffer. It preserves the read-only and snapshot contracts.
+
+Review found that the table provider checks its lease only after a cell callback
+returns. A value's `ToString()` could therefore change the same display or move
+the row before the cell wrote text. The new preview captures the text intent and
+exact row/list/provider lease, checks them after formatting, and uses the shared
+guarded display write for later callbacks. This fix is limited to the new path.
+
+Four new editor cases cover a 50,000-item snapshot, unchanged row reuse, deferred
+formatting, empty content, later display writes, and row transfer. Two existing
+generic-collection retirement cases now explicitly realize visible rows before
+their original assertions; their formatting moved from construction to binding.
+The dictionary variants retain the same call path. These fixtures use numeric
+test fonts. They do not validate production font import.
+
+The first focused editor build (91) passed with zero warnings/errors in 43.63s.
+The final callback repair requires the next focused build; validation results
+appear in the checkpoint and validation documents. No portable production inputs
+changed, so the unchanged 1,579-case suite is not repeated for this editor-only
+slice. Windows execution of the new behavior remains pending.
+
+
+The final preview editor build 92 passes with zero warnings/errors (44.77s).
+Test build 93 found two fixture API errors (`SetParent` overload and the list
+scroll property). The fixture now uses `Parent` and `ContentScrollOffset`; no
+assertion changed. Focused test build 94 passes with zero warnings/errors
+(40.81s). All 10,925 source inputs stayed unchanged through the final test build.
+No new case executed on Linux; the editor assembly has a Windows platform guard.
+The 10-case focused Windows selection remains pending. This candidate is preserved
+separately while the reported animation empty-clip capture failure is repaired.
+
+
+The preview candidate is restored on top of `44d60fb72`. Integrated editor
+build 97 passes in 34.89s and test build 98 passes in 42.07s, both with zero
+warnings/errors. All 10,925 source inputs stayed unchanged through these checks.
+The focused builds reuse unchanged project dependencies; no full portable suite
+was repeated. The four new preview cases and six affected retirement cases
+compile. Their Windows execution and the live preview check remain pending.
+All six stashes remain preserved.

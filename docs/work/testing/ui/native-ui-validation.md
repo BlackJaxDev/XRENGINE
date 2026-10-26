@@ -1012,3 +1012,48 @@ test build 96 (43.72s), each with zero warnings/errors. All 10,922 source inputs
 stayed unchanged through these checks. No portable suite was repeated: this
 change modifies one Windows fixture and documentation only. The corrected case
 still requires its focused Windows execution; compilation is not that result.
+
+
+
+### Published rename repair: Windows result
+
+The parent supplied Windows results for exact
+`fdf190c3b8be3016811541131662a2e4727e6454`: rename **41/41**, shared **119/119**,
+and combined **584/584**, with no failed, skipped, or incomplete cases. Both
+reported rename failures and the single-display construction check pass. The
+prior 583 cases, asset-spawn cases, and eight finalizer cases remain covered.
+The wrapper build reported zero warnings/errors. The 30-second inactivity and
+180-second session bounds stayed unchanged. The source checkout was clean;
+10,409 source hashes and 40 prior evidence hashes stayed unchanged. This is
+Windows fixture execution, not live editor, GPU, native IME, cross-host focus,
+or performance acceptance.
+
+### Read-only collection preview validation
+
+Run `EditorCollectionPreviewTests` and the two parameterized
+`EditorListMutationTests` methods
+`ThrowAfterRetirementLeavesNoPublishedCollectionBranch` and
+`ReturningAfterRetirementDoesNotPublishIntoAnOldRow` on Windows. This is a
+10-case focused selection: four new preview cases and six existing retirement
+cases. Do not repeat the unchanged broad suite for this isolated editor path.
+
+The new large-snapshot case checks that opening 50,000 items does not format
+values, that visible rows and overscan cause bounded formatting, that unchanged
+synchronization does not repeat formatting, and that scrolling reuses rows.
+It also checks the existing snapshot behavior and provider detachment. The
+callback cases preserve a newer display write and a transferred row. These
+are test expectations until executed; they are not measured performance claims.
+
+Live acceptance remains open: inspect a read-only Queue or Stack, scroll through
+all entries, check both columns and clipping, close/reopen the detail, and check
+that the captured snapshot matches existing behavior. No new mutation action
+should appear.
+
+
+The preview candidate is restored on top of `44d60fb72`. Integrated editor
+build 97 passes in 34.89s and test build 98 passes in 42.07s, both with zero
+warnings/errors. All 10,925 source inputs stayed unchanged through these checks.
+The focused builds reuse unchanged project dependencies; no full portable suite
+was repeated. The four new preview cases and six affected retirement cases
+compile. Their Windows execution and the live preview check remain pending.
+All six stashes remain preserved.

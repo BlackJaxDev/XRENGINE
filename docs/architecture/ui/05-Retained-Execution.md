@@ -2260,3 +2260,24 @@ callbacks. An edit during save prevents stale source closure. Same-clip save
 compensation restores the prior committed query through the same receipt path.
 These are transient managed contracts; cross-host focus and live acceptance
 remain separate.
+
+
+## Read-only inspector collection previews
+
+The `ICollection` fallback in `InspectorPropertyEditors.CollectionTypes` uses
+`EditorListRowSource` and the shared `UIVirtualTableProvider<int>`. It captures
+one ordered buffer when the detail opens, then creates 28-pixel rows for the
+viewport plus two overscan rows. Each row has an index and a value column.
+Only binding a realized value calls its `ToString()` method. An unchanged
+synchronization does not format the rows again. Scrolling recycles those cells.
+
+`EditorCollectionPreviewCell` retains a binding intent. Formatting must preserve
+that intent, the context generation, the exact list/provider/row lease, the cell
+owner, and the display text intent before it publishes text. The shared guarded
+text writer checks ownership through later text callbacks. Retirement detaches
+the provider and releases the cell cache.
+
+The snapshot still costs O(total items) references and enumeration when opened.
+Text formatting and guarded-write allocations occur for changed visible bindings,
+not every item or an unchanged frame. This route does not add mutation, Undo,
+generic-interface adapters, live snapshot refresh, or variable-height rows.

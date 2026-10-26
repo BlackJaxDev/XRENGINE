@@ -18,7 +18,7 @@ namespace XREngine.Editor;
 
 public static partial class InspectorPropertyEditors
 {
-    public static class CollectionTypes
+    public static partial class CollectionTypes
     {
         private const float RowHeaderWidth = 150.0f;
         private const float ButtonHeight = 24.0f;
@@ -75,7 +75,7 @@ public static partial class InspectorPropertyEditors
             || typeof(ICollection).IsAssignableFrom(type)
             || ImplementsGenericInterface(type, typeof(ICollection<>));
 
-        private sealed class CollectionEditorContext(PropertyInfo property, object?[]? objects, Type declaredType, SceneNode container)
+        private sealed partial class CollectionEditorContext(PropertyInfo property, object?[]? objects, Type declaredType, SceneNode container)
         {
             private readonly PropertyInfo _property = property;
             private readonly List<object> _owners = CollectOwners(objects);
@@ -129,6 +129,7 @@ public static partial class InspectorPropertyEditors
                     if (detached)
                     {
                         _listCells.Clear();
+                        _previewCells.Clear();
                         _virtualList = null;
                     }
                 }
@@ -146,6 +147,7 @@ public static partial class InspectorPropertyEditors
                 _virtualList = null;
                 _listCountLabel = null;
                 _listCells.Clear();
+                _previewCells.Clear();
                 foreach (var child in _container.Transform.Children.ToArray())
                 {
                     if (child.SceneNode is not { } old) continue;
@@ -1057,72 +1059,7 @@ public static partial class InspectorPropertyEditors
                 catch (Exception error) { Debug.LogException(error, "Could not remove a linked-list node."); }
             }
 
-            private void RenderGenericCollection(ICollection sample)
-            {
-                ulong generation = _headerGeneration;
-                List<object?> buffer = BuildBuffer(sample);
-                if (!IsCurrentBuild(generation)) return;
-                SceneNode branch = _container.NewChild();
-                try
-                {
-                EnsureVerticalLayout(branch);
-                if (!KeepRenderedBranch(branch, generation)) return;
-                AddInfoLabel(branch, $"Count: {buffer.Count}");
-                if (!KeepRenderedBranch(branch, generation)) return;
-                var header = branch.NewChild();
-                var headerLayout = header.SetTransform<UIListTransform>();
-                headerLayout.DisplayHorizontal = true;
-                headerLayout.ItemSpacing = 6.0f;
 
-                AddInfoLabel(header, "This collection has no guarded Undo adapter and is read-only.");
-                if (!KeepRenderedBranch(branch, generation)) return;
-
-                var listNode = branch.NewChild();
-                EnsureVerticalLayout(listNode);
-                if (!KeepRenderedBranch(branch, generation)) return;
-
-                if (buffer.Count == 0)
-                {
-                    AddInfoLabel(listNode, "<empty>");
-                    return;
-                }
-
-                for (int i = 0; i < buffer.Count; i++)
-                {
-                    BuildCollectionBufferRow(listNode, buffer, i);
-                    if (!KeepRenderedBranch(branch, generation)) return;
-                }
-                }
-                finally { if (!IsCurrentBuild(generation)) KeepRenderedBranch(branch, generation); }
-            }
-
-            private void BuildCollectionBufferRow(SceneNode parent, List<object?> buffer, int index)
-            {
-                ulong generation = _headerGeneration;
-                var row = parent.NewChild();
-                var splitter = row.SetTransform<UIDualSplitTransform>();
-                splitter.VerticalSplit = false;
-                splitter.FirstFixedSize = true;
-                splitter.FixedSize = RowHeaderWidth;
-
-                var labelNode = row.NewChild();
-                var labelLayout = labelNode.SetTransform<UIListTransform>();
-                labelLayout.DisplayHorizontal = true;
-                labelLayout.ItemSpacing = 4.0f;
-
-                labelNode.NewChild<UITextComponent>(out var label);
-                label.Text = $"Element {index}";
-                label.FontSize = EditorUI.Styles.PropertyNameFontSize;
-                label.HorizontalAlignment = EHorizontalAlignment.Left;
-                label.VerticalAlignment = EVerticalAlignment.Center;
-                label.Color = EditorUI.Styles.PropertyNameTextColor;
-                label.BoundableTransform.Margins = new Vector4(4.0f, 2.0f, 4.0f, 2.0f);
-
-                var valueNode = row.NewChild();
-                string text = buffer[index]?.ToString() ?? "<null>";
-                if (!IsCurrentBuild(generation)) return;
-                AddInfoLabel(valueNode, text);
-            }
         }
 
         private static void BuildValueEditor(SceneNode node, Type valueType, PropertyInfo bindingProperty, object[] targets)

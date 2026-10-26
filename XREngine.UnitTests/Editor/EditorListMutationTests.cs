@@ -248,6 +248,7 @@ public sealed class EditorListMutationTests
     [TestCase(nameof(EditorCollectionToStringTarget.GenericValue))]
     public void ThrowAfterRetirementLeavesNoPublishedCollectionBranch(string propertyName)
     {
+        using XREngine.UnitTests.Rendering.UITestShaderScope shaders = new();
         EditorCollectionToStringTarget target = new();
         var property = typeof(EditorCollectionToStringTarget).GetProperty(propertyName)!;
         SceneNode detail = new("Collection detail");
@@ -261,7 +262,13 @@ public sealed class EditorListMutationTests
         };
         Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(
             property.PropertyType, out var create), Is.True);
-        Assert.That(() => create!(detail, property, [target]), Throws.Exception);
+        Assert.That(() =>
+        {
+            create!(detail, property, [target]);
+            if (propertyName == nameof(EditorCollectionToStringTarget.GenericValue))
+                CollectionDetailNodes(detail).Select(node => node.Transform).OfType<UIListTransform>()
+                    .Single(list => list.VirtualProvider is not null).SynchronizeVirtualRows(280);
+        }, Throws.Exception);
         SceneNode container = detail.Transform.Children.Single().SceneNode!;
         Assert.That(textCalls, Is.EqualTo(1));
         Assert.That(container.Transform.Children.All(child => child.SceneNode?.IsActiveSelf == false), Is.True);
@@ -273,6 +280,7 @@ public sealed class EditorListMutationTests
     [TestCase(nameof(EditorCollectionToStringTarget.GenericValue))]
     public void ReturningAfterRetirementDoesNotPublishIntoAnOldRow(string propertyName)
     {
+        using XREngine.UnitTests.Rendering.UITestShaderScope shaders = new();
         EditorCollectionToStringTarget target = new();
         PropertyInfo property = typeof(EditorCollectionToStringTarget).GetProperty(propertyName)!;
         SceneNode detail = new("Collection detail");
@@ -294,6 +302,9 @@ public sealed class EditorListMutationTests
         Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(
             property.PropertyType, out var create), Is.True);
         create!(detail, property, [target]);
+        if (propertyName == nameof(EditorCollectionToStringTarget.GenericValue))
+            CollectionDetailNodes(detail).Select(node => node.Transform).OfType<UIListTransform>()
+                .Single(list => list.VirtualProvider is not null).SynchronizeVirtualRows(280);
         Assert.That(textCalls, Is.EqualTo(1));
         Assert.That(capturedNodes, Is.Not.Empty);
         foreach ((SceneNode node, int childCount) in capturedNodes)

@@ -1942,3 +1942,43 @@ test build 96 (43.72s), each with zero warnings/errors. All 10,922 source inputs
 stayed unchanged through these checks. No portable suite was repeated: this
 change modifies one Windows fixture and documentation only. The corrected case
 still requires its focused Windows execution; compilation is not that result.
+
+
+
+## Read-only collection preview checkpoint
+
+The inspector's remaining eager `ICollection` preview now uses shared fixed-height
+virtual rows. It formats only realized cells and preserves the existing read-only
+snapshot contract. It does not enumerate or format the entire collection on each
+frame. The initial snapshot still enumerates all items once.
+
+Windows validation of published rename repair `fdf190c3` passes **584/584**
+combined cases, including both reported failures. The affected animation results and the isolated fixture correction at
+`44d60fb72` are recorded above. This new
+collection slice has four new editor cases and six existing affected retirement
+cases; their execution remains pending. The unchanged portable suite is not
+repeated. The original reconciliation stays **51/60**.
+
+The documentation changes after the private-doc reconciliation snapshot
+`24621256` remain the same five paths: retained execution, this checkpoint,
+continuation investigation, native UI validation, and the native UI TODO. No
+private repository, PR branch, or documentation destination is changed here.
+
+
+The final preview editor build 92 passes with zero warnings/errors (44.77s).
+Test build 93 found two fixture API errors (`SetParent` overload and the list
+scroll property). The fixture now uses `Parent` and `ContentScrollOffset`; no
+assertion changed. Focused test build 94 passes with zero warnings/errors
+(40.81s). All 10,925 source inputs stayed unchanged through the final test build.
+No new case executed on Linux; the editor assembly has a Windows platform guard.
+The 10-case focused Windows selection remains pending. This candidate is preserved
+separately while the reported animation empty-clip capture failure is repaired.
+
+
+The preview candidate is restored on top of `44d60fb72`. Integrated editor
+build 97 passes in 34.89s and test build 98 passes in 42.07s, both with zero
+warnings/errors. All 10,925 source inputs stayed unchanged through these checks.
+The focused builds reuse unchanged project dependencies; no full portable suite
+was repeated. The four new preview cases and six affected retirement cases
+compile. Their Windows execution and the live preview check remain pending.
+All six stashes remain preserved.
