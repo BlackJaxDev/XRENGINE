@@ -134,6 +134,8 @@ internal partial class Program
         if (XREngine.Editor.Benchmarks.PhysicsChain.PhysicsChainCpuBenchmarkCommand.TryRun(args))
             return;
 
+        if (XREngine.Editor.GaussianBake.BakeSplatPreviewCommand.TryRun(args))
+            return;
 
         if (TryRunProjectBuildCommand(args))
             return;

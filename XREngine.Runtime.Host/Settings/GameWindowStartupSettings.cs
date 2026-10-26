@@ -23,7 +23,8 @@ namespace XREngine
         private bool? _outputHDR;
         private bool _useNativeTitleBar = true;
         private EInteractiveWindowResizeStrategy _interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Default;
-        
+        private bool _visible = true;
+
         [Category("Players")]
         [Description("Which local player indices render to this window.")]
         public ELocalPlayerIndexMask LocalPlayers
@@ -133,6 +134,18 @@ namespace XREngine
         {
             get => _outputHDR;
             set => SetField(ref _outputHDR, value);
+        }
+
+        /// <summary>
+        /// When false, the engine creates the window hidden. A hidden window has no taskbar entry, but its
+        /// graphics context continues to render offscreen targets. The preview baker uses this.
+        /// </summary>
+        [Category("Window")]
+        [Description("When false, the window is created hidden. Offscreen rendering continues.")]
+        public bool Visible
+        {
+            get => _visible;
+            set => SetField(ref _visible, value);
         }
     }
 }

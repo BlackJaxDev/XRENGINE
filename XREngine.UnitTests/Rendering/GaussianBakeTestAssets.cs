@@ -4,7 +4,10 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Fbx;
+using XREngine.Imaging;
+using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Runtime.Imaging.Magick;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -37,6 +40,50 @@ internal static class GaussianBakeTestAssets
     public static XRPrefabSource ImportPrefab(string modelPath)
     {
         using ModelAssetImporter importer = GltfImportTestUtilities.CreateImporter(modelPath, GltfImportBackend.Auto);
+        return Import(importer, modelPath);
+    }
+
+    /// <summary>
+    /// Imports a model file into a prefab with the default lit engine materials that the editor import makes.
+    /// The shaders come from the engine shader assets, and the texture pixels are decoded into the prefab,
+    /// so a cooked archive renders without the source files.
+    /// </summary>
+    /// <param name="modelPath">The model file to import.</param>
+    /// <param name="doubleSided">
+    /// When true, every material draws both faces. Use this for planar test models that a bake sees from all sides.
+    /// </param>
+    public static XRPrefabSource ImportPrefabWithEngineMaterials(string modelPath, bool doubleSided)
+    {
+        IRuntimeImageCodec? previousCodec = RuntimeImageCodecs.Current;
+        RuntimeImageCodecs.Current = new MagickRuntimeImageCodec();
+        try
+        {
+            using IDisposable shaderServices = EngineRuntimeShaderServices.Install();
+            using ModelAssetImporter importer = new(modelPath, onCompleted: null, materialFactory: null)
+            {
+                ImportOptions = new ModelImportOptions
+                {
+                    GltfBackend = GltfImportBackend.Auto,
+                    GenerateMeshRenderersAsync = false,
+                    ProcessMeshesAsynchronously = false,
+                    BatchSubmeshAddsDuringAsyncImport = true,
+                },
+                MakeTextureAction = LoadTextureWithPixels,
+            };
+
+            XRPrefabSource prefab = Import(importer, modelPath);
+            if (doubleSided)
+                DisableBackFaceCulling(prefab.RootNode.ShouldNotBeNull());
+            return prefab;
+        }
+        finally
+        {
+            RuntimeImageCodecs.Current = previousCodec;
+        }
+    }
+
+    private static XRPrefabSource Import(ModelAssetImporter importer, string modelPath)
+    {
         ModelImportOptions options = importer.ImportOptions.ShouldNotBeNull();
         SceneNode root = importer.Import(
             options.ImportSteps,
@@ -158,6 +205,42 @@ internal static class GaussianBakeTestAssets
         }
 
         return count;
+    }
+
+    /// <summary>Decodes a texture file into a texture that holds its pixels.</summary>
+    private static XRTexture2D LoadTextureWithPixels(string path)
+    {
+        using RuntimeImage image = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(path));
+        return new XRTexture2D(image)
+        {
+            Name = Path.GetFileNameWithoutExtension(path),
+            MagFilter = ETexMagFilter.Linear,
+            MinFilter = ETexMinFilter.Linear,
+            UWrap = ETexWrapMode.Repeat,
+            VWrap = ETexWrapMode.Repeat,
+            AutoGenerateMipmaps = false,
+            Resizable = false,
+        };
+    }
+
+    private static void DisableBackFaceCulling(SceneNode node)
+    {
+        foreach (ModelComponent component in node.GetComponents<ModelComponent>())
+        {
+            if (component.Model is null)
+                continue;
+
+            foreach (SubMesh subMesh in component.Model.Meshes)
+                foreach (SubMeshLOD lod in subMesh.LODs)
+                    if (lod.Material is XRMaterial material)
+                        material.RenderOptions.CullMode = ECullMode.None;
+        }
+
+        foreach (TransformBase child in node.Transform.Children)
+        {
+            if (child.SceneNode is SceneNode childNode)
+                DisableBackFaceCulling(childNode);
+        }
     }
 
     private static string CreateWorkRoot()
