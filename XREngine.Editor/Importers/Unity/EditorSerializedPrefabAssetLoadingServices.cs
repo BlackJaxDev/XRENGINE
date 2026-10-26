@@ -74,7 +74,7 @@ internal sealed class EditorSerializedPrefabAssetLoadingServices(
             options.SourceProjectRootOverride,
             context.CancellationToken,
             progress: (progress, _) => options.ProgressCallback?.Invoke(progress),
-            fbxBackend: options.FbxBackend);
+            fbxBackend: ResolvePrefabFbxBackend(options.FbxBackend));
         context.CancellationToken.ThrowIfCancellationRequested();
 
         if (conversion.RootNode is null)
@@ -95,4 +95,13 @@ internal sealed class EditorSerializedPrefabAssetLoadingServices(
             SerializedModelImportProducerAdapter.CreateReport(filePath, options, conversion.Manifest));
         return prefab;
     }
+
+    /// <summary>
+    /// Selects the FBX backend for Unity prefab composition. Prefab composition
+    /// does not support the native FBX model basis yet, so the Auto policy
+    /// selects Assimp. An explicit Native request stays Native, and the
+    /// importer then reports the unsupported case.
+    /// </summary>
+    private static FbxImportBackend ResolvePrefabFbxBackend(FbxImportBackend requested)
+        => requested == FbxImportBackend.Auto ? FbxImportBackend.Assimp : requested;
 }
