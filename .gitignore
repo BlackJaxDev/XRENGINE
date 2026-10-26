@@ -532,3 +532,6 @@ Samples/BrowserUiParity/Assets/*
 # Build output from the former MonkeyBallVR sample.
 /Samples/MonkeyBallVR/Build/
 /Samples/MonkeyBallVR/Intermediate/
+# Gaussian preview bake fixtures and bake output.
+/Build/GaussianBakeFixtures/
+/Build/GaussianBakeOut/
