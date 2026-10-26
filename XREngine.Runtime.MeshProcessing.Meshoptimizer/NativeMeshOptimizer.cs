@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 namespace XREngine.Rendering.Meshlets;
 
-internal static class NativeMeshOptimizer
+internal static partial class NativeMeshOptimizer
 {
     private const string NativeLibraryName = "meshoptimizer";
     private const string VersionFileName = "meshoptimizer.version";
