@@ -20,6 +20,13 @@
     <Content Include="$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)" Link="runtimes/$(MeshoptimizerRid)/native/$(MeshoptimizerLibraryName)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)')" />
     <Content Include="$(MeshoptimizerNativeDirectory)meshoptimizer.version" Link="runtimes/$(MeshoptimizerRid)/native/meshoptimizer.version" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(MeshoptimizerNativeDirectory)meshoptimizer.version')" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)" Link="$(MeshoptimizerLibraryName)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)')" />
+    <None Include="$(MeshoptimizerNativeDirectory)meshoptimizer.version" Link="meshoptimizer.version" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(MeshoptimizerNativeDirectory)meshoptimizer.version')" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="XREngine.UnitTests" />
+  </ItemGroup>
   <Target Name="EnsureMeshoptimizerNative" BeforeTargets="BeforeBuild;AssignTargetPaths">
     <Error Condition="!Exists('$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)') or !Exists('$(MeshoptimizerNativeDirectory)meshoptimizer.version')"
            Text="The native meshoptimizer library for $(MeshoptimizerRid) is missing. Run Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid $(MeshoptimizerRid) and build again." />

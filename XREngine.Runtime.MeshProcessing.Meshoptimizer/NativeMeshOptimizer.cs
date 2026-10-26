@@ -14,6 +14,53 @@ internal static class NativeMeshOptimizer
     private static int s_loggedLegacyOptimizeLevelFallback;
     private static int s_loggedMissingOptimizeMeshletExport;
 
+    static NativeMeshOptimizer()
+    {
+        try
+        {
+            NativeLibrary.SetDllImportResolver(typeof(NativeMeshOptimizer).Assembly, ResolveNativeLibrary);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private static nint ResolveNativeLibrary(string libraryName, System.Reflection.Assembly assembly, DllImportSearchPath? searchPath)
+        => libraryName == NativeLibraryName ? s_nativeLibraryHandle.Value : IntPtr.Zero;
+
+    /// <summary>
+    /// Finds the native library file. Order: the assembly folder, the application base folder,
+    /// then runtimes/&lt;rid&gt;/native under each of them.
+    /// </summary>
+    internal static string? FindNativeLibraryFile(string? assemblyDirectory, string baseDirectory, string rid, string fileName)
+    {
+        foreach (string directory in EnumerateProbeDirectories(assemblyDirectory, baseDirectory, rid))
+        {
+            string path = Path.Combine(directory, fileName);
+            if (File.Exists(path))
+                return path;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateProbeDirectories(string? assemblyDirectory, string baseDirectory, string rid)
+    {
+        if (!string.IsNullOrEmpty(assemblyDirectory))
+            yield return assemblyDirectory;
+
+        yield return baseDirectory;
+
+        if (!string.IsNullOrEmpty(assemblyDirectory))
+            yield return Path.Combine(assemblyDirectory, "runtimes", rid, "native");
+
+        yield return Path.Combine(baseDirectory, "runtimes", rid, "native");
+    }
+
+    private static string CurrentRid => OperatingSystem.IsWindows() ? "win-x64" : "linux-x64";
+
+    private static string NativeFileName => OperatingSystem.IsWindows() ? "meshoptimizer.dll" : "libmeshoptimizer.so";
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private unsafe delegate void MeshoptOptimizeMeshletLevelDelegate(uint* meshletVertices, nuint vertexCount, byte* meshletTriangles, nuint triangleCount, int level);
 
@@ -146,15 +193,8 @@ internal static class NativeMeshOptimizer
                 yield return loadedDirectory;
         }
 
-        string rid = OperatingSystem.IsWindows() ? "win-x64" : "linux-x64";
-        yield return Path.Combine(AppContext.BaseDirectory, "runtimes", rid, "native");
-        yield return AppContext.BaseDirectory;
-
-        if (Path.GetDirectoryName(typeof(NativeMeshOptimizer).Assembly.Location) is { Length: > 0 } assemblyDirectory)
-        {
-            yield return Path.Combine(assemblyDirectory, "runtimes", rid, "native");
-            yield return assemblyDirectory;
-        }
+        foreach (string directory in EnumerateProbeDirectories(Path.GetDirectoryName(typeof(NativeMeshOptimizer).Assembly.Location), AppContext.BaseDirectory, CurrentRid))
+            yield return directory;
     }
 
     [DllImport("kernel32", CharSet = CharSet.Unicode, ExactSpelling = true)]
@@ -226,6 +266,20 @@ internal static class NativeMeshOptimizer
 
     private static nint LoadNativeLibraryHandle()
     {
+        try
+        {
+            string? assemblyDirectory = Path.GetDirectoryName(typeof(NativeMeshOptimizer).Assembly.Location);
+            if (FindNativeLibraryFile(assemblyDirectory, AppContext.BaseDirectory, CurrentRid, NativeFileName) is { } path
+                && NativeLibrary.TryLoad(path, out IntPtr explicitHandle)
+                && explicitHandle != IntPtr.Zero)
+            {
+                return explicitHandle;
+            }
+        }
+        catch
+        {
+        }
+
         try
         {
             if (NativeLibrary.TryLoad(NativeLibraryName, typeof(NativeMeshOptimizer).Assembly, null, out IntPtr assemblyHandle)
