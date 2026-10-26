@@ -88,11 +88,14 @@ public sealed class OpenXrStereoTemporalIsolationCompletionTests
         string vulkanOpenXr = string.Join("\n", new[]
         {
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.OpenXrMirrorPreview.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanOpenXrRuntimeQueueLease.cs"),
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Synchronization/VulkanQueueOperationLease.cs"),
         });
         string pipelineInstance = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs");
         string resourceKey = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Resources/Records/ResourceGenerationKey.cs");
 
+        // The OpenXR serialized command section enters the shared queue lease through its runtime queue lease.
+        vulkanOpenXr.ShouldContain("VulkanOpenXrRuntimeQueueLease.Enter(");
         vulkanOpenXr.ShouldContain("VulkanQueueOperationLease.TryEnter(");
         vulkanOpenXr.ShouldContain("CommandBuffers.OneTimeSubmitGate");
         vulkanOpenXr.ShouldContain("EVulkanCpuStage.QueueLockAcquisition");
