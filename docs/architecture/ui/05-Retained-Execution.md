@@ -2466,9 +2466,9 @@ leaves remain intact with failure evidence.
 
 This does not change custom builders or virtual-provider ownership. Those paths
 can populate child graphs and therefore cannot use a detached-leaf receipt after
-population. The backdrop factory on the existing menu node also remains separate:
-guarded failed-component abort can cover an unchanged, never-inserted component,
-but cannot roll back an inserted component or the adopted owner.
+population. The backdrop and virtual-scroll factories use the existing-owner component
+contract below. Failed-component abort can cover an unchanged, never-inserted
+component, but cannot roll back an inserted component or the adopted owner.
 
 Adopted menu cleanup still uses `ClearMenuItems` and ordinary exact-child
 destruction. `DetachedLeafRetirementReceipt` rejects any prior structural/root
@@ -2477,3 +2477,36 @@ construction ledger. Neither is a general adapter for a manually populated menu
 subtree with callback-added or borrowed content. A new explicit adopted-content
 ownership contract is needed before extending reserved retirement to that graph.
 Do not detach an adopted subtree to force it through leaf admission.
+
+
+## Menu components on existing owners
+
+`UIContextMenuComponent.ComponentConstruction` uses
+`RuntimeComponentCreationReceipt` for the backdrop and virtual-scroll component
+factories on their existing nodes. It checks the show, owner, and source at every
+creation boundary and before/after configuration writes. Configuration failures
+also keep their receipt. A failed never-inserted claim can use guarded component
+abort only while its original owner remains current. Inserted or transferred
+components stay with their owner; no list removal or subtree retirement is used
+to force abort eligibility. Cleanup errors retain the original callback error.
+
+Pending Show/Hide cancels an uncommitted factory. After list insertion commits,
+creation finishes its lifecycle while intrinsic ownership and source checks stay
+active. Only then does the queued request cancel later configuration. The helper
+records successful return from `AddComponentGuarded`; `HasFinished` alone is not
+proof of successful creation. A completed component can remain with the existing
+owner for a replacement show. A genuine failed creation that left an inserted
+backdrop retains its receipt and cannot be reused as ready. The owner must remove
+or replace that incomplete component through its normal path. A completed
+creation with a later configuration failure does not acquire that incomplete
+status; the existing backdrop reuse path remains available.
+
+Virtual scroll setup captures the exact list identity, provider reference, and
+provider incarnation before callbacks. It rejects replacement and away/back
+changes during setup or creation. It validates before publishing `_virtualList`
+and before assigning `scroll.List`. Provider-created children keep the existing
+content-owner policy; the factory receipt claims only the new component. These
+changes complete the backdrop and virtual-scroll factory integration. The
+separate `OpenItemSubmenu` host-node/component factory still uses ordinary
+construction and needs its own owner/attachment review. Arbitrary custom builders
+and reserved retirement of adopted graphs also remain separate.

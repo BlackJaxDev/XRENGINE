@@ -2312,3 +2312,42 @@ incomplete cases. Logs `menu-ordinary-headless-build116.log`,
 `menu-ordinary-headless-build117.log`, and `menu-ordinary-affected-run1.log` /
 `menu-ordinary-affected-run2.log`, plus NUnit XML, remain in the existing ignored
 validation run. No full suite or Windows/laptop validation ran.
+
+
+## Existing-node component factory integration
+
+The backdrop and virtual-scroll component factories used ordinary AddComponent
+on already-adopted nodes. They now reuse guarded component creation and conditional
+failed-component abort. No node or child graph is claimed by this adapter.
+
+Source review found an important readiness boundary before validation: cancellation
+after committed list insertion must not stop AddComponent before its lifecycle
+setup finishes. The helper permits only pending-transition cancellation to wait
+for successful return; intrinsic ownership and source guards stay active. It then
+cancels configuration. Genuine failed creation retains an incomplete-component
+record, and backdrop reuse rejects that component. A completed creation with a
+later configuration failure remains distinct. Review found no remaining blocker
+in this bounded draft.
+
+Build 118 passed with zero warnings/errors (2m57.92s). The affected run was
+219/221. Both failures were new virtual-scroll cancellation tests: activation
+before cleanup passed, but the tests expected IsDestroyed immediately afterward.
+`SceneNode.OnDestroying` uses component.Destroy() to queue component destruction.
+The tests now require IsDestroyQueued, inactive component state, and destroyed
+owner, while retaining activation-before-cleanup and binding/replacement checks.
+Review confirmed the correction. No production change or queue drain was added.
+
+Build 119 passed with zero warnings/errors (11.85s), reusing build 118 references.
+Only the new test fixture changed between manifests. All 10,943 final inputs
+stayed fixed; final validation passed 221/221 in 5.548s with no skips/incomplete
+cases. Evidence logs use `menu-existing-headless-build118/119.log` and
+`menu-existing-affected-run1/2.log`, with corresponding NUnit reports in the
+existing ignored validation run. No full suite, Windows, or laptop run occurred.
+
+A final direct source search found a separate ordinary factory in
+`UIContextMenuComponent.OpenItemSubmenu`: host.NewChild, SetTransform, then
+AddComponent<UIContextMenuComponent> before the submenu fields are published.
+It was not changed by the authorization limited to existing-node backdrop and
+virtual-scroll factories. The remaining-scope map records this exact gap; the
+work does not claim that every menu factory is now guarded. Custom/adopted graph
+retirement still requires a clear ownership contract, not weakened receipt admission.

@@ -2147,3 +2147,55 @@ virtual scroll factories remain separate bounded code work. Custom-content and
 adopted-subtree retirement need an explicit ownership contract; the current
 receipts do not admit a previously adopted arbitrary menu graph. No private
 repository, owner-held proposal, saved format, or editor default changed.
+
+
+## Existing-owner menu component checkpoint
+
+Backdrop and virtual-scroll factories now use guarded component receipts on their
+existing nodes. Failed never-inserted claims abort only while their owner is
+unchanged. Inserted/foreign components are preserved. Committed creation finishes
+before queued cancellation; a genuine incomplete backdrop cannot be reused as
+ready. Virtual setup pins the provider reference and incarnation before callbacks
+and validates publication. Arbitrary provider/custom graph ownership is unchanged.
+
+Build 118 passed with project references enabled (zero warnings/errors,
+2m57.92s). The first affected run passed 219/221. Two new tests assumed immediate
+component destruction after virtual-menu cleanup; the existing adopted-owner path
+queues component destruction. The reviewed fixture now checks queued destruction,
+cleared activation, destroyed owner, and activation before cleanup. Production
+code did not change. Build 119 reused those references and passed with zero
+warnings/errors in 11.85s. The final **221/221** affected cases passed in 5.548s,
+including 20 new cases, with no skips or incomplete cases. All 10,943 final source
+inputs stayed fixed. No full suite, Windows run, or laptop worker was started.
+The 25 Animation, 11 grouped-key, 7 linked-list, and 4 dictionary Editor cases
+remain separately unrun.
+
+## Remaining scope after the menu factory work
+
+The original reconciliation remains **51/60**, with nine broad items open. This
+map separates code from owner decisions and platform acceptance; it is not a new
+checklist or permission request.
+
+| Open area | Concrete code/contract remainder | Holds and acceptance |
+|---|---|---|
+| Direct-world clipping | Vulkan direct-world publication/clipping and unsupported world output profiles; bounded OpenGL canvas output already exists. | World-shadow and bindless-use choices remain open. OpenGL/Vulkan GPU and visual checks remain required. |
+| Inspector | Existing-key edit/remove across distinct selected curves; partial-key/multiline dictionary cases; tall/custom collection editors and remaining nested row coverage. Top-level property rows and supported fixed-height collections are already virtual. | Variable-height priority is an owner decision. Real-host multi-object Undo and scale checks remain. |
+| Native panels | Remaining AnimationPanel authoring, broader hierarchy clone profiles, and document-end cleanup; full asset creation/recovery remains absent. Existing asset navigation, console, and bounded profiler views must not be reimplemented. | Persistent asset recovery proposal is held. Native panel workflow/visual acceptance remains. |
+| Shared controls | `OpenItemSubmenu` still uses ordinary host-node/component creation. Its exact owner/attachment integration is separate from the completed row/root/backdrop/virtual-scroll factories. Custom-content ownership and reserved adopted-subtree retirement need a clear graph contract. Full paragraph/fallback/accessibility coverage remains. | Paragraph analyzer choice is held. Native input, IME, accessibility, and visual checks remain. No arbitrary adopted graph was admitted. |
+| Docking | Remaining cross-host focus/transfer-state parity. Existing dock tree mutation and tool-view transfer receipts are implemented. | Primary-window key migration is held. Mixed-DPI, pointer capture, overlap, and multi-window checks remain. |
+| Lifecycle state | Cross-host search drafts/focus, expansion, and complete play-mode paths. Same-panel hierarchy focus/rename and Animation search continuation are implemented. | Windows/live acceptance remains separate; the laptop is stopped. No new saved-state format is authorized. |
+| Drag/drop and Undo | `EditorFileDropHandler.ProcessFileDrop` still copies/imports and assigns a material slot outside shared Undo/dirty transactions. Canonical hierarchy mutations and guarded reference drops already exist. | The filesystem recovery design is held; do not implement a journal or change asset formats without that decision. |
+| Documentation | Keep public descriptions current and reconcile the native branch's post-migration changes with the private snapshot through its owning task. | This task changes only the same five public documentation paths. No private writes or migration merge. |
+| Native default | Default switch is deliberately absent. | Owner stabilization decision plus Windows/GPU/workflow/performance acceptance; no faster-than-ImGui claim without equivalent workloads. |
+
+The three pending proposals are paragraph analysis, persistent asset recovery,
+and primary-window key compatibility. The four original owner choices remain
+variable-height priority, bindless image policy, world shadows, and stabilization.
+None was resolved by the menu work. The adopted-graph issue is a missing contract,
+not a reported permission denial.
+
+The next product code work can focus on existing multi-curve key edits/removal
+or a bounded remaining inspector collection case under the current fixed-height
+policy. If menu coverage is selected instead, review the explicit
+`OpenItemSubmenu` factory and matching close ownership as one bounded unit.
+Do not replace these concrete gaps with unrelated callback hardening.

@@ -1242,3 +1242,28 @@ in 4.728s, including all 14 new cases. No cases failed, skipped, or remained
 incomplete. No full suite was repeated. These are Linux portable results;
 Windows, native-window input, GPU, and live acceptance remain not run. The
 47 separate unrun Editor cases remain unchanged and are not covered by this run.
+
+
+## Existing-owner backdrop and virtual-scroll checks
+
+`UIContextMenuNavigationTests.ComponentConstruction.cs` adds 20 portable cases.
+They cover original callback errors, pre-insertion abort, transfer with borrowed
+children, post-insertion cancellation and activation, failed-backdrop readiness,
+provider replacement/away-back changes before publication and inside the factory,
+exact scroll binding, and completed backdrop configuration cancellation/failure.
+
+Build 118 passed with project references and no restore in 2m57.92s (zero
+warnings/errors). The first affected run was 219/221: two new tests incorrectly
+expected synchronous component destruction from the existing adopted-node path.
+They now check queued destruction, stopped activation, destroyed owner, and
+activation before cleanup. All other assertions remain. Only this new fixture
+changed afterward. Build 119 used `--no-restore` and
+`-p:BuildProjectReferences=false`, passed in 11.85s with zero warnings/errors,
+and reused the matching production assemblies. Both builds used the wrapper.
+
+The final unchanged 10,943-source-input snapshot passed **221/221** cases in the
+same five-fixture filter recorded above (5.548s; no failed, skipped, or incomplete
+cases). No full suite ran. Windows/live/GPU acceptance remains not run; the
+47 separate Editor cases remain unrun and are not covered by these portable tests.
+This does not validate arbitrary custom graph retirement or the separate submenu
+host factory.

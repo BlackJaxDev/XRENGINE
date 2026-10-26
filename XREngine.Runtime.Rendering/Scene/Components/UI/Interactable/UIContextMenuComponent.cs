@@ -307,15 +307,23 @@ namespace XREngine.Rendering.UI
             var bgMat = SceneNode.GetComponent<UIMaterialComponent>();
             if (bgMat is null)
             {
-                bgMat = SceneNode.AddComponent<UIMaterialComponent>()!;
-                bgMat.SetBatchSolidColor(BackgroundColor);
+                bgMat = BuildMenuComponent(SceneNode, showRevision, () => new UIMaterialComponent(),
+                    (background, write) =>
+                    {
+                        write(() => background.SetBatchSolidColor(BackgroundColor));
+                        write(() => background.RenderCommand2D.ZIndex = BackgroundZIndex);
+                        write(() => background.ClipToBounds = true);
+                    });
+                if (bgMat is null) return;
             }
             else
             {
+                if (_incompleteComponentCreations.Contains(bgMat))
+                    throw new InvalidOperationException("The menu backdrop has an incomplete creation receipt.");
                 bgMat.SetQuadColor("MatColor", BackgroundColor);
+                bgMat.RenderCommand2D.ZIndex = BackgroundZIndex;
+                bgMat.ClipToBounds = true;
             }
-            bgMat.RenderCommand2D.ZIndex = BackgroundZIndex;
-            bgMat.ClipToBounds = true;
 
             BuildMenuItems(showRevision);
             if (!CanContinueConstruction(showRevision))
@@ -483,14 +491,7 @@ namespace XREngine.Rendering.UI
 
             if (_virtualProvider is not null)
             {
-                listTfm.ItemSize = _itemHeight;
-                listTfm.VirtualOverscan = 2;
-                listTfm.VirtualProvider = _virtualProvider;
-                _virtualList = listTfm;
-                UIVirtualPopupScrollComponent scroll = listNode.AddComponent<UIVirtualPopupScrollComponent>()!;
-                if (!CanContinueConstruction(showRevision))
-                    return;
-                scroll.List = listTfm;
+                BuildVirtualMenuScroll(listNode, listTfm, showRevision);
                 return;
             }
 
