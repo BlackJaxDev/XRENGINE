@@ -302,6 +302,11 @@ jobs:
         if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         run: dotnet workload install wasm-tools
 
+      - name: Build native meshoptimizer
+        if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
+        shell: pwsh
+        run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
+
       - name: Prepare pinned browser physics sources
         if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
         shell: pwsh

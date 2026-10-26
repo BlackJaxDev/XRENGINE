@@ -62,6 +62,10 @@ jobs:
         shell: cmd
         run: Tools\Build-Submodules.bat Release AnyCPU
 
+      - name: Build native meshoptimizer
+        shell: pwsh
+        run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
+
       - name: Build DocFX site
         shell: cmd
         run: Tools\Build-DocFx.bat
@@ -124,6 +128,10 @@ jobs:
       - name: Build managed and native submodules
         shell: cmd
         run: Tools\Build-Submodules.bat Release AnyCPU
+
+      - name: Build native meshoptimizer
+        shell: pwsh
+        run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
 
       - name: Publish Windows applications
         shell: pwsh

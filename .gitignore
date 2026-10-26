@@ -535,3 +535,6 @@ Samples/BrowserUiParity/Assets/*
 # Gaussian preview bake fixtures and bake output.
 /Build/GaussianBakeFixtures/
 /Build/GaussianBakeOut/
+
+# Native meshoptimizer source and build output.
+Build/Dependencies/Meshoptimizer/

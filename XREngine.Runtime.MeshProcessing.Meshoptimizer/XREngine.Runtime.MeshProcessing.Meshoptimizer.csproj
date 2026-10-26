@@ -6,8 +6,22 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>
+  <PropertyGroup>
+    <MeshoptimizerRid Condition="'$(MeshoptimizerRid)' == '' and $([MSBuild]::IsOSPlatform('Windows'))">win-x64</MeshoptimizerRid>
+    <MeshoptimizerRid Condition="'$(MeshoptimizerRid)' == ''">linux-x64</MeshoptimizerRid>
+    <MeshoptimizerLibraryName Condition="'$(MeshoptimizerRid)' == 'win-x64'">meshoptimizer.dll</MeshoptimizerLibraryName>
+    <MeshoptimizerLibraryName Condition="'$(MeshoptimizerLibraryName)' == ''">libmeshoptimizer.so</MeshoptimizerLibraryName>
+    <MeshoptimizerNativeDirectory>$(MSBuildThisFileDirectory)..\Build\Dependencies\Meshoptimizer\$(MeshoptimizerRid)\</MeshoptimizerNativeDirectory>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
-    <PackageReference Include="Meshoptimizer.NET" Version="1.0.7" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)" Link="runtimes/$(MeshoptimizerRid)/native/$(MeshoptimizerLibraryName)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)')" />
+    <Content Include="$(MeshoptimizerNativeDirectory)meshoptimizer.version" Link="runtimes/$(MeshoptimizerRid)/native/meshoptimizer.version" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(MeshoptimizerNativeDirectory)meshoptimizer.version')" />
+  </ItemGroup>
+  <Target Name="EnsureMeshoptimizerNative" BeforeTargets="BeforeBuild;AssignTargetPaths">
+    <Error Condition="!Exists('$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)') or !Exists('$(MeshoptimizerNativeDirectory)meshoptimizer.version')"
+           Text="The native meshoptimizer library for $(MeshoptimizerRid) is missing. Run Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid $(MeshoptimizerRid) and build again." />
+  </Target>
 </Project>
