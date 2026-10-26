@@ -443,51 +443,35 @@ namespace XREngine.Rendering.UI
             if (!CanContinueConstruction(showRevision))
                 return;
             bool ordinaryItems = _contentBuilder is null && _virtualProvider is null;
-            SceneNode listParent = SceneNode;
+            SceneNode? listNode;
+            UIListTransform listTfm;
             if (ordinaryItems)
             {
-                SceneNode scrollNode = CreateContentRoot(new UIScrollableTransform(), showRevision);
-                if (!CanContinueConstruction(showRevision))
+                listNode = BuildOrdinaryMenuList(showRevision);
+                if (listNode is null || !CanContinueConstruction(showRevision))
                     return;
-                scrollNode.Name = "ContextMenuScroll";
-                UIScrollableTransform scroll = (UIScrollableTransform)scrollNode.Transform;
-                scroll.MinAnchor = Vector2.Zero;
-                scroll.MaxAnchor = Vector2.One;
-                scroll.Width = null;
-                scroll.Height = null;
-                scroll.ScrollableX = false;
-                UIScrollRegionComponent scrollInput = scrollNode.AddComponent<UIScrollRegionComponent>()!;
-                if (!CanContinueConstruction(showRevision))
-                    return;
-                scrollInput.IsTabStop = false;
-                scrollInput.ConsumeWheelAtBoundary = true;
-                listParent = scrollNode;
+                listTfm = (UIListTransform)listNode.Transform;
             }
-            var listNode = ordinaryItems ? listParent.NewChild() : CreateContentRoot(new UIListTransform(), showRevision);
-            if (!CanContinueConstruction(showRevision))
-                return;
-            listNode.Name = "ContextMenuList";
-            var listTfm = ordinaryItems ? listNode.SetTransform<UIListTransform>() : (UIListTransform)listNode.Transform;
-            if (!CanContinueConstruction(showRevision))
-                return;
-            listTfm.DisplayHorizontal = false;
-            listTfm.ItemSpacing = 0;
-            listTfm.Padding = new Vector4(0.0f);
-            listTfm.Margins = Vector4.Zero;
-            listTfm.MinAnchor = Vector2.Zero;
-            listTfm.MaxAnchor = Vector2.One;
-            listTfm.Translation = Vector2.Zero;
-            listTfm.Width = null;
-            listTfm.Height = null;
-            listTfm.ItemAlignment = EListAlignment.TopOrLeft;
-            if (ordinaryItems)
+            else
             {
-                listTfm.MinAnchor = new Vector2(0, 1);
+                // Provider and custom builders can create their own children. They keep
+                // the existing attached-content contract, not detached-leaf retirement.
+                listNode = CreateContentRoot(new UIListTransform(), showRevision);
+                if (!CanContinueConstruction(showRevision))
+                    return;
+                listNode.Name = "ContextMenuList";
+                listTfm = (UIListTransform)listNode.Transform;
+                listTfm.DisplayHorizontal = false;
+                listTfm.ItemSpacing = 0;
+                listTfm.Padding = Vector4.Zero;
+                listTfm.Margins = Vector4.Zero;
+                listTfm.MinAnchor = Vector2.Zero;
                 listTfm.MaxAnchor = Vector2.One;
-                listTfm.NormalizedPivot = new Vector2(0, 1);
-                listTfm.Height = _requestedHeight;
+                listTfm.Translation = Vector2.Zero;
+                listTfm.Width = null;
+                listTfm.Height = null;
+                listTfm.ItemAlignment = EListAlignment.TopOrLeft;
             }
-
             if (!CanContinueConstruction(showRevision))
                 return;
 
@@ -534,28 +518,39 @@ namespace XREngine.Rendering.UI
             => _failedConstructionLeaves;
 
         private SceneNode? BuildMenuLeaf(SceneNode parent, ulong showRevision,
-            Action<UIContextMenuLeafConstruction> configure, Func<bool>? ownsSource = null)
+            Action<UIContextMenuLeafConstruction> configure, Func<bool>? ownsSource = null,
+            UIBoundableTransform? transform = null, string name = "ContextMenuItem", bool contentRoot = false)
         {
             InvalidOperationException? cancellation = null;
             void RequireShow()
             {
-                if (!IsCurrentShow(showRevision) || !OwnsConstructionParent(parent) ||
+                if (!IsCurrentShow(showRevision) ||
+                    (contentRoot ? !ReferenceEquals(parent, SceneNode) : !OwnsConstructionParent(parent)) ||
                     ownsSource is not null && !ownsSource())
                     throw new InvalidOperationException("The menu construction owner changed.");
                 if (_pendingTransition is not null)
                     throw cancellation ??= new InvalidOperationException("Menu construction was superseded.");
             }
             RequireShow();
-            UIContextMenuLeafConstruction leaf = new(parent, RequireShow);
+            UIContextMenuLeafConstruction leaf = new(parent, RequireShow, transform, name);
             try
             {
                 configure(leaf);
+                if (contentRoot) CaptureContentRoot(leaf.Node);
                 leaf.Attach();
                 return leaf.Node;
             }
             catch (Exception failure)
             {
-                if (!leaf.RetireFailedLeaf())
+                bool cleanupHandled = leaf.RetireFailedLeaf();
+                if (contentRoot && ReferenceEquals(_contentRoot, leaf.Node) && !OwnsContentRoot(leaf.Node))
+                {
+                    _contentRoot = null;
+                    _contentRootIdentity = default;
+                    _contentTransformIdentity = default;
+                    _contentParentIdentity = default;
+                }
+                if (!cleanupHandled)
                 {
                     _failedConstructionLeaves.Add(leaf.Retirement);
                     if (ReferenceEquals(failure, cancellation))
@@ -696,13 +691,18 @@ namespace XREngine.Rendering.UI
                 ReferenceEquals(root.Transform.Parent, _contentParentIdentity.Target) &&
                 ReferenceEquals(Transform, _contentParentIdentity.Target);
 
+        private void CaptureContentRoot(SceneNode root)
+        {
+            _contentRoot = root;
+            _contentRootIdentity = ObjectConstructionIdentity.Capture(root);
+            _contentTransformIdentity = ObjectConstructionIdentity.Capture(root.Transform);
+            _contentParentIdentity = ObjectConstructionIdentity.Capture(Transform);
+        }
+
         private SceneNode CreateContentRoot(UIBoundableTransform transform, ulong showRevision)
         {
             SceneNode root = new("ContextMenuContent", transform);
-            _contentRoot = root;
-            _contentRootIdentity = ObjectConstructionIdentity.Capture(root);
-            _contentTransformIdentity = ObjectConstructionIdentity.Capture(transform);
-            _contentParentIdentity = ObjectConstructionIdentity.Capture(Transform);
+            CaptureContentRoot(root);
             transform.SetParent(Transform, false, EParentAssignmentMode.Immediate);
             // Attachment publishes callbacks before the builder can configure this root.
             // Continue only while the captured root still belongs to this show.

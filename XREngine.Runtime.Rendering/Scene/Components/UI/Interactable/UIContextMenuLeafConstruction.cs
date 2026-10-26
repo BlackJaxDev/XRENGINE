@@ -19,7 +19,8 @@ internal sealed class UIContextMenuLeafConstruction
     private readonly Action _requireShow;
     private readonly List<RuntimeComponentCreationReceipt> _attempts = [];
 
-    internal UIContextMenuLeafConstruction(SceneNode parent, Action requireShow)
+    internal UIContextMenuLeafConstruction(SceneNode parent, Action requireShow,
+        UIBoundableTransform? transform = null, string name = "ContextMenuItem")
     {
         _parent = parent;
         _parentTransform = parent.Transform;
@@ -27,7 +28,7 @@ internal sealed class UIContextMenuLeafConstruction
         _parentIdentity = ObjectConstructionIdentity.Capture(parent);
         _parentTransformIdentity = ObjectConstructionIdentity.Capture(_parentTransform);
         _requireShow = requireShow;
-        Node = new(parent.World, "ContextMenuItem", new UIBoundableTransform());
+        Node = new(parent.World, name, transform ?? new UIBoundableTransform());
         _nodeIdentity = ObjectConstructionIdentity.Capture(Node);
         _transformIdentity = ObjectConstructionIdentity.Capture(Node.Transform);
         Retirement = Node.World is { } world ? new(Node, world) : new(Node);

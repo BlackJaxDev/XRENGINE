@@ -500,6 +500,7 @@ public sealed partial class UIContextMenuNavigationTests
                     case "node": transferred.Generate(); break;
                     case "transform": transform.Generate(); break;
                 }
+                transferred.Name = "New owner content";
             }
             children.PostAnythingAdded += ChangeOwner;
             bool builderCalled = false;
@@ -510,7 +511,7 @@ public sealed partial class UIContextMenuNavigationTests
             Should.Throw<InvalidOperationException>(show);
 
             transferred.ShouldNotBeNull().IsDestroyed.ShouldBeFalse();
-            transferred!.Name.ShouldBe("ContextMenuContent");
+            transferred!.Name.ShouldBe("New owner content");
             transferred.Transform.Children.ShouldBeEmpty();
             if (change == "moved") transferred.Parent.ShouldBeSameAs(other);
             builderCalled.ShouldBeFalse();

@@ -2440,8 +2440,40 @@ the builder does not detach them to force cleanup. A transferred or otherwise
 unretirable leaf remains intact, and the menu retains its failed receipt for
 diagnosis. It does not retry cleanup or fall back to ordinary destruction.
 
-This contract covers the built-in row and decoration builders. The menu content
-root, scroll/list helpers, arbitrary custom builders, and retirement of adopted
-subtrees keep their existing contracts. Their broader ownership work remains
-open. Construction allocates receipts and setter delegates when a menu opens;
+This contract covers the built-in row and decoration builders, plus the ordinary
+scroll root and list. Custom/provider content and retirement of adopted subtrees
+keep their existing contracts. Their broader ownership work remains open.
+Construction allocates receipts and setter delegates when a menu opens;
 it adds no per-frame loop or cache invalidation path.
+
+
+## Ordinary menu content roots
+
+`UIContextMenuComponent.OrdinaryContent` uses the same leaf builder for the
+ordinary scroll root and list. It constructs the root with its final
+`UIScrollableTransform`, guards `UIScrollRegionComponent` creation, and completes
+scroll and input configuration before attachment. Root construction checks the
+show and menu owner without requiring an already-attached content root. It
+captures `_contentRoot` identities immediately before attachment. A rejected
+attachment clears only metadata that still belongs to that failed attempt;
+an attached, still-owned root stays available to normal transition cleanup.
+
+The ordinary list is a separate leaf with its final `UIListTransform`. Its size,
+anchors, pivot, spacing, and alignment are set before attachment. Only then can
+row construction start. A queued Show/Hide stops later writes and preserves the
+replacement. Failed never-adopted leaves use receipt retirement; transferred
+leaves remain intact with failure evidence.
+
+This does not change custom builders or virtual-provider ownership. Those paths
+can populate child graphs and therefore cannot use a detached-leaf receipt after
+population. The backdrop factory on the existing menu node also remains separate:
+guarded failed-component abort can cover an unchanged, never-inserted component,
+but cannot roll back an inserted component or the adopted owner.
+
+Adopted menu cleanup still uses `ClearMenuItems` and ordinary exact-child
+destruction. `DetachedLeafRetirementReceipt` rejects any prior structural/root
+adoption. The other reserved retirement input requires a complete sealed clone
+construction ledger. Neither is a general adapter for a manually populated menu
+subtree with callback-added or borrowed content. A new explicit adopted-content
+ownership contract is needed before extending reserved retirement to that graph.
+Do not detach an adopted subtree to force it through leaf admission.

@@ -1219,3 +1219,26 @@ started. The 25 new Animation search Editor cases and the earlier 11 grouped-key
 7 linked-list, and 4 dictionary Editor cases remain unrun; this portable result
 does not cover them. The shared-control code item stays open for remaining menu
 factories, adopted content, text, and host contracts.
+
+
+## Ordinary root and scroll construction checks
+
+`UIContextMenuNavigationTests.OrdinaryContent.cs` adds 14 portable cases for scroll
+factory failure, cancellation during creation/configuration, foreign adoption,
+root/list attachment transfer, queued replacement, and final configuration before
+child publication. The existing six content-ownership cases now set a new-owner
+name in the callback and assert that exact value survives. They retain all other
+assertions. This tests stale writes without assuming the old placeholder name.
+
+Headless build 116 passed through the wrapper with project references and no
+restore (2m44.79s; zero warnings/errors). The first affected run was 198/201;
+only three obsolete name expectations failed. After the fixture correction,
+headless build 117 passed through the wrapper with `--no-restore` and
+`-p:BuildProjectReferences=false` (12.83s; zero warnings/errors). Production inputs
+were unchanged from build 116. All 10,941 final source inputs stayed fixed.
+
+The same five-fixture filter from the ordinary leaf checks then passed **201/201**
+in 4.728s, including all 14 new cases. No cases failed, skipped, or remained
+incomplete. No full suite was repeated. These are Linux portable results;
+Windows, native-window input, GPU, and live acceptance remain not run. The
+47 separate unrun Editor cases remain unchanged and are not covered by this run.

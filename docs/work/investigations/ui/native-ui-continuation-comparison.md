@@ -2274,3 +2274,41 @@ No unchanged full suite was run. Evidence is under the existing task run in
 and corresponding NUnit XML reports. Windows and live acceptance remain not run.
 This does not close custom content, root/scroll factories, adopted-subtree cleanup,
 or the broad shared-control item.
+
+
+## Ordinary root/list factory integration and cleanup boundary
+
+The ordinary scroll root previously attached before configuration and used an
+ordinary scroll-component factory. Its list attached with a default transform
+before replacement by `UIListTransform`. Both now use the same guarded leaf
+builder with final transforms. Root ownership metadata is published just before
+attachment; configuration and component factories remain in the detached stage.
+The list attaches only after the root passes its post-callback checks.
+
+The audit did not find an existing reserved retirement adapter for arbitrary
+adopted menu content. `DetachedLeafRetirementReceipt.ValidateLeafShape` rejects
+prior parent/root adoption and all children. The other `OwnedHierarchyRetirement`
+input needs a complete sealed construction ledger. Ordinary menu graphs can
+contain callback-added or provider-owned nodes. The patch leaves existing
+`ClearMenuItems` and exact-child destruction in place; it does not detach content
+to bypass admission. Custom/provider ownership and adopted-content registration
+need a clear contract before that path can change. Guarded creation on the
+existing backdrop/virtual-scroll owner nodes remains a separate bounded task.
+
+Read-only review found no blocker in the root/list draft. Build 116 passed with
+zero warnings/errors in 2m44.79s. All 14 new cases passed in the first affected
+run. Three existing ordinary attachment cases failed only because they expected
+`ContextMenuContent`, the old pre-configuration name, instead of the final
+`ContextMenuScroll` name now set before attachment. The fixture now sets
+`New owner content` after its transfer/regeneration callback and asserts that it
+survives. Review confirmed that this retains the intended stale-write check.
+No production repair, guard relaxation, or other assertion change was needed.
+
+Build 117 passed with zero warnings/errors in 12.83s; it reused the unchanged
+references from build 116. Only the transition fixture changed between source
+manifests. The final manifest contains 10,941 unchanged source inputs. Final
+validation passed 201/201 affected portable cases in 4.728s, with no skips or
+incomplete cases. Logs `menu-ordinary-headless-build116.log`,
+`menu-ordinary-headless-build117.log`, and `menu-ordinary-affected-run1.log` /
+`menu-ordinary-affected-run2.log`, plus NUnit XML, remain in the existing ignored
+validation run. No full suite or Windows/laptop validation ran.

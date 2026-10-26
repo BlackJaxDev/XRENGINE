@@ -2120,3 +2120,30 @@ those 19 cases (4.675s; no failures, skips, or incomplete cases). Review found n
 remaining blocker in this scope. No full suite was repeated. Windows/live/GPU
 acceptance remains not run. The 25 Animation search cases and prior grouped-key
 11, linked-list 7, and dictionary 4 Editor cases remain separate and unrun.
+
+
+## Ordinary menu root and scroll checkpoint
+
+The ordinary scroll root and list now use the existing menu leaf builder. Their
+final transforms and settings are ready before attachment. The scroll component
+factory is guarded, root metadata is captured immediately before publication,
+and rejected attempts preserve transferred content and newer requests. This
+closes ordinary root/list construction, not all menu ownership work.
+
+Headless build 116 passed with project references enabled: zero warnings/errors,
+2m44.79s. The affected run passed 198/201. Three existing assertions expected the
+old pre-configuration root name. The reviewed fixture correction now writes a
+new-owner sentinel name inside the ownership callback and requires it to survive;
+all other ownership, failure, cleanup, and recovery assertions remain unchanged.
+Only that fixture changed after build 116. Build 117 reused the unchanged project
+references and passed with zero warnings/errors in 12.83s. The final affected
+run passed **201/201**, including 14 new cases, in 4.728s. The 10,941 final source
+inputs stayed unchanged through the final build and run.
+
+No full suite, laptop worker, or Windows/live acceptance run started. The separate
+25 Animation, 11 grouped-key, 7 linked-list, and 4 dictionary Editor cases remain
+unrun. The original reconciliation remains **51/60**. Existing-node backdrop and
+virtual scroll factories remain separate bounded code work. Custom-content and
+adopted-subtree retirement need an explicit ownership contract; the current
+receipts do not admit a previously adopted arbitrary menu graph. No private
+repository, owner-held proposal, saved format, or editor default changed.
