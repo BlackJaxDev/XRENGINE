@@ -17,6 +17,7 @@ internal sealed class NativeAnimationSearchFieldReceipt
     private readonly long _focusEpoch;
     private readonly bool _focused;
     private readonly string _preText, _postText;
+    private readonly string? _displayText;
     private readonly IRuntimeWorldContext? _world;
 
     private NativeAnimationSearchFieldReceipt(AnimationPanel panel, UITextInputComponent input, UITextComponent display)
@@ -37,6 +38,7 @@ internal sealed class NativeAnimationSearchFieldReceipt
         _focused = input.IsFocused;
         _preText = input.PreText;
         _postText = input.PostText;
+        _displayText = display.Text;
         _world = input.World;
     }
 
@@ -79,6 +81,11 @@ internal sealed class NativeAnimationSearchFieldReceipt
         return phase == 2 && _display.TextWriteIntentRevision == _displayIntent + 1 &&
             Input.Text == query && DisplayMatches(query);
     }
+
+    internal bool IsGuardedTextWriteOwned(string query)
+        => IsCurrent(1, query) && (_display.TextWriteIntentRevision == _displayIntent &&
+            _display.Text == _displayText ||
+            IsCurrent(2, query));
 
     private bool DisplayMatches(string query)
     {

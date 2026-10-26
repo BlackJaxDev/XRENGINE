@@ -1153,3 +1153,41 @@ Editor build 105 and test-project build 106 pass with zero warnings/errors
 unchanged during its build. Only the fixture lookup changed between builds;
 production sources stayed fixed. Existing unchanged dependency assemblies were
 reused. These are compilation results, not Windows test execution.
+
+
+### Same-panel Animation search draft validation
+
+`NativeAnimationPanelViewTransferTests.SearchDraft.cs` adds 25 focused cases.
+They cover component/subtree stops, unchanged authored text/caret intents,
+scene/asset selection away and back, selected component changes, newer edits,
+transferred and regenerated owners, source changes during guarded cancellation,
+obsolete receipts, destruction, canvas focus release, reentrant activation and
+subscription cleanup, transferred-input terminal cleanup, and composition/property-binding
+exclusion. The canvas cases exercise the
+host focus-release path through direct focus assignment; they do not establish
+presented pointer routing or live window input acceptance.
+
+These Editor cases are compile-only in cloud. Windows execution remains **not
+run** because the user stopped laptop work. The older unrun batches remain
+separate: grouped-key Add 11, linked-list virtualization 7, dictionary
+virtualization 4. Do not add these counts to prior passing Windows results.
+
+When Windows work is authorized again, select
+`NativeAnimationPanelViewTransferTests` (including the new `StoppedSearchDraft`
+cases), `NativeDockAnimationTransferTests`, and the existing owner-subscription
+teardown fixture. This covers the shared search receipt and activation paths.
+Do not repeat the unchanged full suite solely for this slice. No full portable
+suite was repeated for this Editor-only change.
+
+Live acceptance remains pending for focused stop/reactivation, source changes,
+newer input during teardown, formatting, and actual platform IME behavior.
+The supported lifecycle matrix is in retained execution. Cross-host drafts,
+automatic focus restoration, saved-format persistence, and IME continuation are
+not supplied by this change.
+
+Final editor build 111 and test-project build 112 passed with zero warnings and
+zero errors (49.18s and 48.87s). Both ran through `Tools/Invoke-AgentBuild.ps1`
+with `--no-restore` and `-p:BuildProjectReferences=false`. Only Editor and
+Editor-test code changed; unchanged dependency assemblies were reused. The
+10,937 source inputs were identical across both final builds. All 25 new cases
+compile; none ran on Windows. No live/GPU/IME/performance result is claimed.

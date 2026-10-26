@@ -6,9 +6,11 @@ namespace XREngine.Editor;
 public static class NativeAssetSelection
 {
     private static int _revision;
+    private static ulong _publicationRevision;
 
     public static string? SelectedPath { get; private set; }
     public static object? SelectedTarget { get; private set; }
+    internal static ulong PublicationRevision => _publicationRevision;
     public static event Action<object?>? SelectionChanged;
 
     public static void Select(string path)
@@ -88,6 +90,7 @@ public static class NativeAssetSelection
     private static void Publish(object? target)
     {
         SelectedTarget = target;
+        _publicationRevision = unchecked(_publicationRevision + 1);
         SelectionChanged?.Invoke(target);
     }
 }

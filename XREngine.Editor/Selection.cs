@@ -14,6 +14,8 @@ public static class Selection
 
     private static SceneNode[] _sceneNodes = [];
     private static SceneNode? _lastSceneNode;
+    private static ulong _publicationRevision;
+    internal static ulong PublicationRevision => _publicationRevision;
     /// <summary>
     /// The currently selected scene nodes.
     /// </summary>
@@ -23,6 +25,7 @@ public static class Selection
         set
         {
             _sceneNodes = value;
+            _publicationRevision = unchecked(_publicationRevision + 1);
             if (value.Length > 0)
                 _lastSceneNode = value[0];
             SelectionChanged?.Invoke(value);

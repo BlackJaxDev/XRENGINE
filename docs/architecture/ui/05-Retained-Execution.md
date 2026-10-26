@@ -2382,3 +2382,38 @@ Opening/rebuilding still captures O(N) source state. Admission uses the existing
 snapshot key indexes and scans key text for line breaks. Realization builds only
 the viewport plus overscan. This is a bounded UI-node contract, not a measured
 frame-time or allocation-performance claim.
+
+
+## Transient Animation Search Drafts
+
+The Animation command subtree survives ordinary panel stops. Search continuation
+uses that same input; it does not rebuild the field or rewrite an unchanged draft.
+The committed query, candidate page, and result selection remain separate from
+unsubmitted text and its caret/selection. The continuation does not acquire focus.
+
+A stop receipt retains the exact panel, field, display, ancestor path, world,
+window, authored input intents, and source context. Scene and asset selection
+publication revisions reject changes away and back. A temporary observer detects
+changes to the selected component's Animation reference while stopped. The
+receipt removes that observer when consumed or discarded.
+
+Whole-node activation runs child controls before the panel component. The
+Animation-specific search input checks the receipt before its ordinary base
+activation publishes display text. Panel activation also checks the receipt for
+component-only stops. Both paths consume the same receipt once. Normal shared
+input activation and display formatting remain unchanged.
+
+| Lifecycle or change | Supported behavior |
+|---|---|
+| Component-only stop/reactivation, unchanged source and field | Retain draft text, caret, and selection without new authored writes. |
+| Same panel subtree stop/reactivation, unchanged source and field | Apply the same ownership check before the field's normal display activation. |
+| Focused ordinary search input with supported canvas release | Release focus through the existing draft-preserving receipt; do not reacquire it. |
+| Source selection or component clip changes while stopped | Reset only the still-owned old draft to the committed query through a guarded text write. Do not submit a new query. |
+| Newer text, caret, display, focus, or query intent | Discard the old continuation; do not overwrite the newer edit. Normal base activation can still format the accepted input text. |
+| Replaced, destroyed, regenerated, reparented, or transferred owner | Discard the receipt without a write. |
+| IME composition, bound/commit-on-submit field, unsupported focused input host | Do not capture a continuation. Existing control lifecycle behavior applies. |
+| Input-only stop, cross-host transfer, window recreation, or saved-layout restore | No new draft continuation contract is supplied. |
+
+This is transient in-memory state. It changes no saved format, does not transfer
+an unsubmitted query between hosts, and does not establish native IME or live
+focus acceptance.

@@ -2199,3 +2199,46 @@ manifest contained 10,934 inputs, unchanged during its build. Between the two
 builds, only the fixture lookup changed. Four new Editor cases compile but were
 not run. The user stopped laptop work; no Windows/live acceptance is claimed.
 No full portable suite was repeated for this Editor-only slice.
+
+
+## Same-panel Animation search draft ownership
+
+Read-only tracing found that `NativeVirtualTextPanel` already retains its command
+subtree. The search field normally keeps its authored text and selection across
+stops. Rebuilding it or writing the same draft back would add callbacks without
+closing a missing contract. The new receipt therefore leaves an unchanged draft
+alone and supplies source/owner admission around stop/reactivation.
+
+The committed query remains separate. If the source changes while stopped, the
+receipt resets only the unchanged, still-owned old field to that committed query.
+It does not submit a query or request focus. Newer authored intents cancel the
+old write. The input-specific pre-base activation hook is needed because scene
+activation visits children before panel components. Component-only activation
+uses the panel hook. Shared `UITextInputComponent` behavior is unchanged.
+
+Finite review corrected these draft defects before publication: a display
+pre-write check rejected its own in-flight write; lifecycle checks mixed the
+view epoch with the stop/start serial; active stale receipts retained an observer;
+and reset observer replacement missed changes away and back on the selected
+component. Canvas construction identities reject regenerated focus owners.
+Reentrant focus release can reactivate the panel before the outer stop finishes,
+so the older stop now yields to the new lifecycle and activation avoids duplicate
+selection subscriptions. Terminal cleanup releases a transferred surviving
+input's panel callback reference. Bound/property-backed fields and composition
+are excluded from this ordinary unsubmitted-search contract.
+
+Editor build 107 completed with two nullable warnings and no errors. The nullable
+paths were corrected. Build 108 passed without warnings/errors (37.79s), before
+the subscription cleanup. Build 109 (37.74s) and test build 110 (43.25s) passed
+without warnings/errors before terminal callback cleanup and explicit property
+binding exclusion. These intermediate passes are not final-snapshot evidence.
+All checks use the repository wrapper; no full portable suite or laptop run was
+started. The source manifests cover 10,937 inputs. The new Editor cases remain
+compile-only until authorized Windows execution.
+
+Final editor build 111 and test-project build 112 passed with zero warnings and
+zero errors (49.18s and 48.87s). Both ran through `Tools/Invoke-AgentBuild.ps1`
+with `--no-restore` and `-p:BuildProjectReferences=false`. Only Editor and
+Editor-test code changed; unchanged dependency assemblies were reused. The
+10,937 source inputs were identical across both final builds. All 25 new cases
+compile; none ran on Windows. No live/GPU/IME/performance result is claimed.

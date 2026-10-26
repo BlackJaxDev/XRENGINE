@@ -36,7 +36,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private UITextInputComponent? _valueInput;
     private bool _refreshingValueInput;
     private bool _valueInputRefreshPending;
-    private UITextInputComponent? _searchInput;
+    private NativeAnimationSearchInputComponent? _searchInput;
+    private NativeAnimationSearchStopReceipt? _searchDraft;
     private SceneNode? _candidateRoot;
     private IReadOnlyList<EditorImGuiUI.AnimationClipPathCandidate> _candidates = [];
     private EditorImGuiUI.AnimationClipPathCandidate? _selectedCandidate;
@@ -96,6 +97,10 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private DateTime _lastRefresh;
     private bool _ownerSubscriptionsActive;
     private bool _destroying;
+    private ulong _searchLifecycleRevision;
+    internal ulong AuthoringEpoch => _authoringEpoch;
+    internal string CommittedPathSearch => _pathSearch;
+    internal AnimationClip? CurrentSearchClip => CurrentClip();
 
     public AnimationPanel()
     {
@@ -106,33 +111,51 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     protected override void OnComponentActivated()
     {
+        ulong activation = ++_searchLifecycleRevision;
         _authoringEpoch++;
         if (_destroying)
             return;
-        base.OnComponentActivated();
-        if (_destroying || IsDestroyed || IsDestroyQueued)
+        ResumeSearchDraft(_searchInput, beforePanelActivation: false);
+        if (_destroying || _searchLifecycleRevision != activation || IsDestroyed || IsDestroyQueued)
             return;
-        _ownerSubscriptionsActive = true;
-        Selection.SelectionChanged += SelectionChanged;
-        NativeAssetSelection.SelectionChanged += AssetSelectionChanged;
-        RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
+        base.OnComponentActivated();
+        if (_destroying || _searchLifecycleRevision != activation || IsDestroyed || IsDestroyQueued)
+            return;
+        if (!_ownerSubscriptionsActive)
+        {
+            _ownerSubscriptionsActive = true;
+            Selection.SelectionChanged += SelectionChanged;
+            NativeAssetSelection.SelectionChanged += AssetSelectionChanged;
+            RegisterTick(ETickGroup.Late, ETickOrder.Scene, RefreshTick);
+        }
         RefreshRows();
     }
 
     protected override void OnComponentDeactivated()
     {
+        ulong deactivation = ++_searchLifecycleRevision;
         _authoringEpoch++;
+        CaptureSearchDraft();
+        if (_searchLifecycleRevision != deactivation)
+            return;
         ReleaseOwnerSubscriptions();
+        if (_searchLifecycleRevision != deactivation)
+            return;
         base.OnComponentDeactivated();
     }
 
     protected override void OnDestroying()
     {
+        _searchLifecycleRevision++;
         _authoringEpoch++;
         _destroying = true;
+        _searchDraft?.Dispose();
+        _searchDraft = null;
         UITextInputComponent? time = _timeInput;
         UITextInputComponent? value = _valueInput;
-        UITextInputComponent? search = _searchInput;
+        NativeAnimationSearchInputComponent? search = _searchInput;
+        if (search is not null && ReferenceEquals(search.Panel, this))
+            search.Panel = null;
         _timeInput = null;
         _valueInput = null;
         _searchInput = null;
@@ -200,12 +223,40 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         valueInput.Cancelled += CancelValue;
         SceneNode searchNode = commands.NewChild();
         searchNode.SetTransform<UIBoundableTransform>().Width = 160;
-        var (searchInput, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(searchNode);
+        var (searchInput, _, _, _) = NativeUIElements.CreateTextInputField<NativeAnimationSearchInputComponent>(searchNode);
         _searchInput = searchInput;
+        searchInput.Panel = this;
         searchInput.SingleLineMode = true;
         searchInput.Text = _pathSearch;
         searchInput.Submitted += SubmitPathSearch;
         searchInput.Cancelled += CancelPathSearch;
+    }
+
+    private void CaptureSearchDraft()
+    {
+        NativeAnimationSearchStopReceipt? previous = _searchDraft;
+        _searchDraft = null;
+        previous?.Dispose();
+        IUICanvasInputSource? canvasInput = BoundableTransform.GetCanvasComponent()?.GetInputComponent();
+        if (_destroying || !NativeAnimationSearchStopReceipt.TryCreate(this, _searchInput,
+            canvasInput, out NativeAnimationSearchStopReceipt receipt))
+            return;
+        _searchDraft = receipt;
+        if (receipt.TryReleaseFocus() && !_destroying && _authoringEpoch == receipt.PanelEpoch)
+            return;
+        if (ReferenceEquals(_searchDraft, receipt))
+            _searchDraft = null;
+        receipt.Dispose();
+    }
+
+    internal void ResumeSearchDraft(UITextInputComponent? input, bool beforePanelActivation)
+    {
+        NativeAnimationSearchStopReceipt? receipt = _searchDraft;
+        if (receipt is null || input is null || !IsActiveInHierarchy)
+            return;
+        _searchDraft = null;
+        ulong expectedEpoch = beforePanelActivation ? receipt.PanelEpoch : unchecked(receipt.PanelEpoch + 1);
+        receipt.TryResume(this, input, expectedEpoch);
     }
 
     private void CancelTime(UITextInputComponent _) { if (!_destroying) RefreshTimeInput(); }

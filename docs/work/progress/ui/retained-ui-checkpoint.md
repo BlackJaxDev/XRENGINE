@@ -2065,3 +2065,33 @@ Editor build 105 and test-project build 106 pass with zero warnings/errors
 unchanged during its build. Only the fixture lookup changed between builds;
 production sources stayed fixed. Existing unchanged dependency assemblies were
 reused. These are compilation results, not Windows test execution.
+
+
+## Same-panel Animation search draft checkpoint
+
+Animation search now has an explicit transient stop/reactivation contract. It
+retains the existing command field and leaves unchanged draft text, caret, and
+selection alone. It does not submit the draft or acquire focus. Scene/asset
+publication revisions and a temporary component observer reject source changes
+away and back. A changed source resets only a still-owned old draft to the
+committed query. Newer edits, regenerated owners, and transfers cancel that write.
+
+The input pre-activation hook and panel activation hook support subtree and
+component-only stops respectively. The lifecycle serial is separate from view
+refresh. Reentrant activation does not register duplicate selection handlers.
+The [lifecycle matrix](../../../architecture/ui/05-Retained-Execution.md#transient-animation-search-drafts)
+lists unsupported composition, host, and saved-state paths. Normal base input
+activation still publishes its display; no shared text-control behavior changed.
+
+The original reconciliation remains **51/60**. This is one state-preservation
+subtask, not full docking, text, or play-mode acceptance. The prior grouped-key
+**11**, linked-list **7**, and dictionary **4** new cases remain separately not
+run on Windows. No laptop worker or full portable suite was started. No private
+repository, saved format, owner-held proposal, or editor default changed.
+
+Final editor build 111 and test-project build 112 passed with zero warnings and
+zero errors (49.18s and 48.87s). Both ran through `Tools/Invoke-AgentBuild.ps1`
+with `--no-restore` and `-p:BuildProjectReferences=false`. Only Editor and
+Editor-test code changed; unchanged dependency assemblies were reused. The
+10,937 source inputs were identical across both final builds. All 25 new cases
+compile; none ran on Windows. No live/GPU/IME/performance result is claimed.
