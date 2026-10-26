@@ -441,6 +441,7 @@ Screenshots/
 Build/TempValidation/
 Build/Dependencies/MsdfAtlasGen/
 Cache/
+!XREngine.Runtime.Rendering/Rendering/Models/Gaussian/Cache/
 !XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Cache/
 !XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Cache/**
 XREngine.Gltf/runtimes/
