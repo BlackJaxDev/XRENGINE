@@ -132,7 +132,7 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         string cpuQueryAsync = Slice(
             occlusionSource,
             "private void ApplyCpuQueryAsyncOcclusion",
-            "private static bool HasSignificantCameraChange",
+            "private static ECpuOcclusionMotionTier GetCpuQueryAsyncMotionTier(",
             StringComparison.Ordinal);
 
         cpuQueryAsync.ShouldContain("ECpuOcclusionMotionTier motionTier = GetCpuQueryAsyncMotionTier(");
@@ -169,15 +169,21 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs");
 
+        // Authored indexed backends replay CPU-owned meshes and non-mesh callbacks
+        // inside their GPU submission. Other backends render the excluded CPU
+        // fallback before the meshlet dispatch. Ownership comes from the CPU-side
+        // ready package, so zero-readback strategies keep excluded meshes too.
+        int authoredIndexedIndex = source.IndexOf("if (AbstractRenderer.Current is IAuthoredIndexedBackendCapability)", StringComparison.Ordinal);
+        int authoredReplayIndex = source.IndexOf("EAuthoredIndexedCpuReplayPolicy.MeshesAndNonMesh);", StringComparison.Ordinal);
         int excludedFallbackIndex = source.IndexOf("commands.RenderCPUNonMeshAndExcluded(command.RenderPass);", StringComparison.Ordinal);
-        int zeroReadbackFallbackIndex = source.IndexOf("commands.RenderCPUNonMeshOnly(command.RenderPass);", StringComparison.Ordinal);
-        int gpuDispatchIndex = source.IndexOf("commands.RenderGPU(", StringComparison.Ordinal);
+        int gpuDispatchIndex = source.IndexOf("commands.RenderGPU(\n                command.RenderPass,", StringComparison.Ordinal);
 
-        excludedFallbackIndex.ShouldBeGreaterThanOrEqualTo(0);
-        zeroReadbackFallbackIndex.ShouldBeGreaterThanOrEqualTo(0);
-        excludedFallbackIndex.ShouldBeLessThan(gpuDispatchIndex);
-        zeroReadbackFallbackIndex.ShouldBeLessThan(gpuDispatchIndex);
-        source.ShouldContain("if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())");
+        authoredIndexedIndex.ShouldBeGreaterThanOrEqualTo(0);
+        authoredReplayIndex.ShouldBeGreaterThan(authoredIndexedIndex);
+        excludedFallbackIndex.ShouldBeGreaterThan(authoredReplayIndex);
+        gpuDispatchIndex.ShouldBeGreaterThan(excludedFallbackIndex);
+        source.ShouldNotContain("commands.RenderCPUNonMeshOnly(");
+        source.ShouldContain("&& !strategy.IsGpuZeroReadbackStrategy()");
         source.ShouldContain("gpuPass.UseMeshletPipeline = true;");
         source.ShouldContain("ShouldUseOpenGLMeshletProgramWarmupFallback");
         source.ShouldContain("RenderCPUMeshOnly(command.RenderPass);");
@@ -216,7 +222,8 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         source.ShouldContain("bool useGpuRenderPath = prepassStrategy != EMeshSubmissionStrategy.CpuDirect;");
         source.ShouldContain("if (useGpuRenderPath)");
         source.ShouldContain("commands.RenderCPUFiltered(");
-        source.ShouldContain("commands.RenderGPU(pass, prepassStrategy);");
+        source.ShouldContain("commands.RenderGPU(pass, prepassStrategy, _resolvedRenderGraphPassIndex,");
+        source.ShouldContain("authoredIndexed ? EAuthoredIndexedCpuReplayPolicy.MeshesOnly : EAuthoredIndexedCpuReplayPolicy.None);");
         source.ShouldContain("commands.RenderCPUMeshOnly(pass);");
         source.ShouldNotContain("allowExcludedGpuFallbackMeshes: false");
     }
@@ -232,7 +239,8 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         source.ShouldNotContain("(int)EDefaultRenderPass.Background,");
         source.ShouldNotContain("(int)EDefaultRenderPass.OnTopForward,");
         source.ShouldContain("IsGpuPathCpuFallbackMesh(mesh)");
-        source.ShouldContain("commands.RenderGPU(pass, overdrawStrategy);");
+        source.ShouldContain("commands.RenderGPU(pass, overdrawStrategy, int.MinValue,");
+        source.ShouldContain("authoredIndexed ? EAuthoredIndexedCpuReplayPolicy.MeshesOnly : EAuthoredIndexedCpuReplayPolicy.None);");
         source.ShouldContain("return meshCommand.ForceCpuRendering || material?.RenderOptions?.ExcludeFromGpuIndirect == true;");
     }
 
@@ -322,7 +330,10 @@ public sealed class GpuIndirectPhase7ZeroReadbackTests
         calculatorSource.ShouldNotContain("snapshot = new RenderableMesh[");
 
         boundsSource.ShouldContain("SetRendererOwnsGpuAabb(renderer, false);");
-        boundsSource.ShouldContain("WriteTightCommandAabb(commandIndex, renderInfo, mesh.Bounds, modelMatrix);");
+        // CPU bounds come from the accepted capture that published the slot,
+        // not from the live command state.
+        boundsSource.ShouldContain("entry.snapshot.Renderer is not { } acceptedRenderer");
+        boundsSource.ShouldContain("WriteTightCommandAabb(commandIndex, renderInfo, mesh.Bounds, entry.snapshot.ModelMatrix);");
     }
 
     private static string Slice(string source, string startToken, string endToken, StringComparison comparison)

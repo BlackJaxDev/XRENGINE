@@ -714,7 +714,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         for (int index = 0; index < semaphores.Length; index++)
         {
             if (_api.CreateSemaphore(_device.Device, ref createInfo, null, out semaphores[index]) == Result.Success)
+            {
+                _device.SetDebugObjectName(ObjectType.Semaphore, semaphores[index].Handle, $"PresentBridge[{index}]");
                 continue;
+            }
             for (int created = 0; created < index; created++)
                 _api.DestroySemaphore(_device.Device, semaphores[created], null);
             throw new InvalidOperationException("Failed to create a desktop present bridge semaphore.");

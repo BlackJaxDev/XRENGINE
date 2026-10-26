@@ -210,6 +210,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         return false;
                     }
 
+                    // Name the prepared image so that validation messages and
+                    // GPU captures identify the texture, generation, and token.
+                    BackendContext.DeviceContext.SetDebugObjectName(
+                        ObjectType.Image,
+                        preparation.Image.Handle,
+                        preparation.DebugName);
                     preparation.Step = VulkanImportedTextureUploadPreparationStep.CreateImageView;
                     return true;
 

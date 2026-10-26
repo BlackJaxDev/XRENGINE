@@ -17,10 +17,13 @@ public sealed class VulkanMeshletCloseoutRegressionTests
             "private bool TryRecordPlannedNonGraphicsSecondaryRange(");
 
         int secondaryRange = dispatch.IndexOf("TryRecordPlannedNonGraphicsSecondaryRange(", StringComparison.Ordinal);
-        int inlineSwitch = dispatch.IndexOf("return header.OpCode switch", StringComparison.Ordinal);
+        // The inline switch stores its result so that the NV checkpoint can
+        // bracket the recorded operation before the method returns.
+        int inlineSwitch = dispatch.IndexOf("int recordedOperationIndex = header.OpCode switch", StringComparison.Ordinal);
         secondaryRange.ShouldBeGreaterThanOrEqualTo(0);
         secondaryRange.ShouldBeLessThan(inlineSwitch);
         dispatch.ShouldContain("return lastSecondaryOperationIndex;");
+        dispatch.ShouldContain("return recordedOperationIndex;");
 
         string bridge = Slice(
             source,
@@ -91,7 +94,14 @@ public sealed class VulkanMeshletCloseoutRegressionTests
         reuseGate.ShouldContain("VulkanPrimaryCommandBufferReuseEnabled");
         reuseGate.ShouldContain("!CommandChainBenchmarkForceRerecord");
         reuseGate.ShouldContain("!input.CommandChainSchedule.RequiresFreshPrimary");
-        reuseGate.ShouldContain("!input.Policy.FreshSerialRecording");
+        reuseGate.ShouldContain("input.Policy.AllowsArtifactReuse");
+
+        // The policy snapshot rejects artifact reuse for fresh serial recording.
+        string policy = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRecordingPolicySnapshot.cs");
+        policy.ShouldContain(
+            "internal bool AllowsArtifactReuse => AllowArtifactReuse && !IsPresentNow &&\n" +
+            "        !FreshSerialRecording;");
     }
 
     private static string Slice(string source, string startMarker, string endMarker)

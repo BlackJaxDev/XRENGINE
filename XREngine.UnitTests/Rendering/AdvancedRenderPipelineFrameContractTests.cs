@@ -73,7 +73,12 @@ public sealed class AdvancedRenderPipelineFrameContractTests
         IReadOnlyList<ViewportRenderCommand> commands =
             new AdvancedRenderPipeline().CommandChain.Commands;
 
-        commands.ShouldNotContain(static command => command is VPRC_RenderMeshesPass);
+        // Only the nested producer passes (PreRender before native scene
+        // consumers, PostRender before screen-space UI) remain as mesh passes.
+        // No legacy opaque, masked, or forward composition pass is present.
+        commands.OfType<VPRC_RenderMeshesPass>()
+            .Select(static pass => pass.RenderPass)
+            .ShouldBe([(int)EDefaultRenderPass.PreRender, (int)EDefaultRenderPass.PostRender]);
         commands.ShouldNotContain(static command => command is VPRC_ForwardDepthNormalPrePass);
         commands.ShouldNotContain(static command => command is VPRC_ForwardPlusLightCullingPass);
         commands.ShouldNotContain(static command => command is VPRC_LightCombinePass);
@@ -131,10 +136,12 @@ public sealed class AdvancedRenderPipelineFrameContractTests
             EAntiAliasingMode.None,
             stereo: false,
             featureMask: 0UL);
+        // The packed sample encoding bit is a structural web profile selector,
+        // not a feature. It is valid only for the mono four-sample profile.
         RenderPipelineResourceProfile maximal = CreateProfile(
             EAntiAliasingMode.Msaa,
             stereo: true,
-            featureMask: ulong.MaxValue);
+            featureMask: ulong.MaxValue & ~AdvancedVisibilitySampleContract.PackedUInt16FeatureBit);
 
         RenderPipelineResourceLayout baselineLayout =
             pipeline.BuildResourceLayout(baseline);
