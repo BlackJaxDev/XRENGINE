@@ -2520,3 +2520,29 @@ warnings/errors. The source manifest remained unchanged. Data subset build 146,
 Core 150, Rendering 151, and Headless 153 also pass. Only the two Editor dirty
 helpers and their fixtures changed after the earlier 154/155 compile; no portable
 production input changed, so the passing focused runs were not repeated.
+
+
+## Nested detail integration review
+
+The restored draft needed three final corrections. Inner-lifetime construction
+failures now forward their receipts to the retained outer context. The empty
+unattached pane uses the existing strict detached-leaf receipt even when its
+container changes. Dirty settlement now retains exact owner/node/document
+lifetimes and rechecks each document independently after callbacks.
+
+Build 158 found an inaccessible nested-context retention method. Build 159 found
+a missing Headless link for an independent animation value type. Both were
+corrected. Source review corrected three pane fixtures to observe transform
+publication instead of the component-created event. The four pane cases and
+30 affected canvas-focus cases passed in the combined draft (34/34). Animation
+is now isolated in a preserved local stash because review found additional
+pre-receive intent and virtual-row focus admission work. Those results do not
+establish acceptance of the still-changing animation candidate.
+
+The isolated source snapshot contains 11,010 inputs, unchanged through validation.
+Editor wrapper build 163 passed with dependencies in 6m19.36s; test-project build
+164 passed in 48.05s; Headless build 165 passed in 14.86s. All report zero warnings
+and errors. The focused pane, detached-leaf, and guarded-component run passed
+**47/47** in 0.370s, with no skips. No full suite was repeated. The 30 new Editor
+cases compiled but did not run, bringing the published new-case backlog to **224**.
+No Windows, GPU, live Editor, native input, IME, or performance checks ran.

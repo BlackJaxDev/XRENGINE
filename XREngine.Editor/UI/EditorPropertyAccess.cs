@@ -80,6 +80,21 @@ internal sealed class EditorPropertyAccess
         if (referenceEquality && _targets.Any(target => target is IEditorListElementBinding or
                 IEditorLinkedElementBinding or IEditorDictionaryElementBinding))
             throw new InvalidOperationException("A reference drop requires direct scalar property owners.");
+        if (_targets.Any(target => target is IEditorNestedListElementBinding))
+        {
+            if (!_targets.All(target => target is IEditorNestedListElementBinding))
+                throw new InvalidOperationException("The nested list targets do not share one mutation route.");
+            IEditorNestedListElementBinding[] nested = _targets.Cast<IEditorNestedListElementBinding>().ToArray();
+            if (nested.Any(binding => binding.Index != nested[0].Index ||
+                !ReferenceEquals(binding.Paths, nested[0].Paths) ||
+                !ReferenceEquals(binding.MutationContext, nested[0].MutationContext)))
+                throw new InvalidOperationException("The nested list targets do not share one source path.");
+            EditorNestedListMutation.Apply(nested[0].Paths, EEditorListMutation.Set,
+                nested[0].Index, ResolveNext, nested[0].MutationContext,
+                () => nested.All(binding => binding.IsRowCurrent), nested);
+            _changed?.Invoke();
+            return;
+        }
         if (_targets.Any(target => target is IEditorListElementBinding))
         {
             if (!_targets.All(target => target is IEditorListElementBinding))

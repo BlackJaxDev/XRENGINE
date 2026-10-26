@@ -1418,3 +1418,30 @@ warnings/errors. The source manifest remained unchanged. Data subset build 146,
 Core 150, Rendering 151, and Headless 153 also pass. Only the two Editor dirty
 helpers and their fixtures changed after the earlier 154/155 compile; no portable
 production input changed, so the passing focused runs were not repeated.
+
+
+## Nested collection detail checks
+
+The one-level fixed-height nested-detail candidate adds 30 Editor cases across
+`EditorNestedListDetailTests.cs` and its `Dirty` partial. They cover edits and
+Undo/Redo across outer-row recycling, source changes, exact pane/control ownership,
+retained construction failures, independent dirty documents, and owner/node/source
+regeneration. These cases are Windows-unrun. On publication they add to the
+previous 194, for **224 published new Editor cases awaiting Windows execution**.
+The isolated animation candidate is not included in that number.
+
+The portable `EditorNestedListPaneAttemptTests` exercises the exact never-attached
+empty root, changed container, transferred root, replacement layout, and retained
+retirement failure. This does not execute full Editor controls or prove visual,
+GPU, native input, IME, cross-window, or performance acceptance. The next Windows
+selection must include the 30 nested-detail cases and affected list, linked-list,
+dictionary, enum popup, and property binding fixtures. Do not repeat unrelated
+portable or Windows suites without a changed shared contract or a failure.
+
+The isolated source snapshot contains 11,010 inputs, unchanged through validation.
+Editor wrapper build 163 passed with dependencies in 6m19.36s; test-project build
+164 passed in 48.05s; Headless build 165 passed in 14.86s. All report zero warnings
+and errors. The focused pane, detached-leaf, and guarded-component run passed
+**47/47** in 0.370s, with no skips. No full suite was repeated. The 30 new Editor
+cases compiled but did not run, bringing the published new-case backlog to **224**.
+No Windows, GPU, live Editor, native input, IME, or performance checks ran.

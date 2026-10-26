@@ -2371,3 +2371,29 @@ warnings/errors. The source manifest remained unchanged. Data subset build 146,
 Core 150, Rendering 151, and Headless 153 also pass. Only the two Editor dirty
 helpers and their fixtures changed after the earlier 154/155 compile; no portable
 production input changed, so the passing focused runs were not repeated.
+
+
+## Fixed-height nested collection details
+
+One-level built-in inner lists now have retained details reached from list,
+linked-list, and dictionary rows. Scalar and nonflags-enum editors reuse the
+existing binding/Undo paths. Durable outer paths survive row recycling, while
+source replacement and owner/node/document lifetime changes reject writes and
+replay. Dirty settlement preserves valid independent source documents after
+history or dirty callbacks. Exact pane/control construction preserves transferred
+objects and retains failed cleanup receipts.
+
+This closes the supported one-level fixed-height nested-detail subtask. Recursive,
+custom, and variable-height details remain open. The broad reconciliation stays
+51/60. The animation search-transfer candidate is isolated for a separate
+pre-receive ownership repair; it is not part of this checkpoint. Its 12 Editor
+cases remain unpublished and outside the published count. All six original
+stashes and the two earlier nested-draft stashes remain unchanged.
+
+The isolated source snapshot contains 11,010 inputs, unchanged through validation.
+Editor wrapper build 163 passed with dependencies in 6m19.36s; test-project build
+164 passed in 48.05s; Headless build 165 passed in 14.86s. All report zero warnings
+and errors. The focused pane, detached-leaf, and guarded-component run passed
+**47/47** in 0.370s, with no skips. No full suite was repeated. The 30 new Editor
+cases compiled but did not run, bringing the published new-case backlog to **224**.
+No Windows, GPU, live Editor, native input, IME, or performance checks ran.

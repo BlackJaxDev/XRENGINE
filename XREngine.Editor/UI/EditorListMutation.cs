@@ -482,6 +482,59 @@ internal static class EditorListMutation
                 throw new InvalidOperationException("A list edit is already active for this collection.");
     }
 
+    /// <summary>Reserves nested source lists in the same owner/list domains as ordinary list edits.</summary>
+    internal static IDisposable ReserveNestedMutation(object[] owners, IList[] lists)
+    {
+        Reserve(owners);
+        List<IList> reserved = [];
+        try
+        {
+            foreach (IList list in lists.Distinct<IList>(ReferenceEqualityComparer.Instance))
+            {
+                ReserveList(list);
+                reserved.Add(list);
+            }
+            return new NestedReservation(owners, reserved);
+        }
+        catch
+        {
+            ReleaseLists(reserved);
+            Release(owners);
+            throw;
+        }
+    }
+
+    /// <summary>Advances the shared list token only when the expected source generation still owns it.</summary>
+    internal static object AdvanceNestedState(IList list, object expected, object next)
+    {
+        EditorListMutationState state = States.GetValue(list, _ => new());
+        if (!ReferenceEquals(state.Token, expected))
+            throw new InvalidOperationException("The nested list source changed during the edit.");
+        state.Token = next;
+        return next;
+    }
+
+    internal static void RestoreNestedState(IList list, object expected, object restore)
+    {
+        EditorListMutationState state = States.GetValue(list, _ => new());
+        if (!ReferenceEquals(state.Token, expected))
+            throw new InvalidOperationException("The nested list generation changed during compensation.");
+        state.Token = restore;
+    }
+
+    private sealed class NestedReservation(object[] owners, List<IList> lists) : IDisposable
+    {
+        private object[]? _owners = owners;
+        private List<IList>? _lists = lists;
+        public void Dispose()
+        {
+            List<IList>? heldLists = Interlocked.Exchange(ref _lists, null);
+            object[]? heldOwners = Interlocked.Exchange(ref _owners, null);
+            if (heldLists is not null) ReleaseLists(heldLists);
+            if (heldOwners is not null) Release(heldOwners);
+        }
+    }
+
     private static void ReleaseLists(List<IList> lists)
     {
         lock (BusyLock)

@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Collections;
 using System.Reflection;
 using XREngine.Components;
 using XREngine;
@@ -122,6 +123,10 @@ public static partial class InspectorPropertyEditors
                 readOnlyValue.WrapMode = Rendering.FontGlyphSet.EWrapMode.None;
                 readOnlyValue.ClipToBounds = true;
                 readOnlyValue.SceneNode.IsActiveSelf = false;
+                var (_, nestedButton, _, _) = NativeUIElements.CreateButton(
+                    valueNode, "Open nested list", width: 180, height: 24);
+                nestedButton.IsEnabled = false;
+                nestedButton.SceneNode.IsActiveSelf = false;
                 EditorVirtualCollectionRowCellState state = new()
                 {
                     Label = label,
@@ -130,6 +135,8 @@ public static partial class InspectorPropertyEditors
                     ReadOnlyValue = readOnlyValue,
                     ReadOnlyControl = EditorVirtualRowControlLease.Capture(readOnlyValue, valueNode),
                     RemoveButton = removeButton,
+                    NestedButton = nestedButton,
+                    NestedButtonControl = EditorVirtualRowControlLease.Capture(nestedButton, valueNode),
                 };
                 _virtualCells.Add(layout, state);
                 if (!IsCurrentBuild(generation))
@@ -174,6 +181,10 @@ public static partial class InspectorPropertyEditors
                 ObjectConstructionIdentity removeButtonIdentity = ObjectConstructionIdentity.Capture(removeButton);
                 SceneNode removeButtonNode = removeButton.SceneNode;
                 ObjectConstructionIdentity removeButtonNodeIdentity = ObjectConstructionIdentity.Capture(removeButtonNode);
+                UIButtonComponent nestedButton = state.NestedButton!;
+                ObjectConstructionIdentity nestedButtonIdentity = ObjectConstructionIdentity.Capture(nestedButton);
+                SceneNode nestedButtonNode = nestedButton.SceneNode;
+                ObjectConstructionIdentity nestedButtonNodeIdentity = ObjectConstructionIdentity.Capture(nestedButtonNode);
                 ObjectConstructionIdentity branchIdentity = ObjectConstructionIdentity.Capture(branch);
                 ObjectConstructionIdentity containerIdentity = ObjectConstructionIdentity.Capture(_container);
                 SceneNode? editorNode = state.EditorNode;
@@ -194,10 +205,14 @@ public static partial class InspectorPropertyEditors
                         !IsLive(labelNode, labelNodeIdentity) || !IsLive(state.RemoveHost, removeHostIdentity) ||
                         !IsLive(state.ValueNode, valueNodeIdentity) ||
                         !state.ReadOnlyControl.IsCurrent(state.ValueNode) ||
+                        !state.NestedButtonControl!.IsCurrent(state.ValueNode) ||
                         !removeButtonIdentity.IsCurrent || !removeButtonNodeIdentity.IsCurrent ||
+                        !nestedButtonIdentity.IsCurrent || !nestedButtonNodeIdentity.IsCurrent ||
                         !IsLive(removeButtonNode, removeButtonNodeIdentity) ||
+                        !IsLive(nestedButtonNode, nestedButtonNodeIdentity) ||
                         !IsLive(branch, branchIdentity) || !IsLive(_container, containerIdentity) ||
                         !ReferenceEquals(state.RemoveButton, removeButton) ||
+                        !ReferenceEquals(state.NestedButton, nestedButton) ||
                         cell.IsDestroyed || cell.IsDestroyQueued || row.IsDestroyed || row.IsDestroyQueued ||
                         list.IsDestroyed || list.IsDestroyQueued || state.Label.IsDestroyed ||
                         state.Label.IsDestroyQueued || removeButton.IsDestroyed || removeButton.IsDestroyQueued ||
@@ -205,6 +220,7 @@ public static partial class InspectorPropertyEditors
                         !ReferenceEquals(labelNode.Transform.Parent, cellNode.Transform) ||
                         !ReferenceEquals(state.RemoveHost.Parent, cell.SceneNode) ||
                         !ReferenceEquals(removeButtonNode.Transform.Parent, state.RemoveHost.Transform) ||
+                        !ReferenceEquals(nestedButtonNode.Transform.Parent, state.ValueNode.Transform) ||
                         !ReferenceEquals(state.ValueNode.Parent, cell.SceneNode) ||
                         !ReferenceEquals(cell.Parent, row) ||
                         !ReferenceEquals(row.Parent, list) || !ReferenceEquals(list.VirtualProvider, provider) ||
@@ -236,10 +252,19 @@ public static partial class InspectorPropertyEditors
                         removeButton.UnregisterClickActions(oldAction);
                         state.RemoveAction = null;
                     }
+                    if (state.NestedAction is { } oldNestedAction)
+                    {
+                        nestedButton.UnregisterClickActions(oldNestedAction);
+                        state.NestedAction = null;
+                    }
                     if (!RowCurrent()) return;
                     removeButton.IsEnabled = false;
                     if (!RowCurrent()) return;
                     removeButton.SceneNode.IsActiveSelf = false;
+                    if (!RowCurrent()) return;
+                    nestedButton.IsEnabled = false;
+                    if (!RowCurrent()) return;
+                    nestedButton.SceneNode.IsActiveSelf = false;
                     if (!RowCurrent()) return;
 
                     state.ReadOnlyValue.SceneNode.IsActiveSelf = false;
@@ -278,6 +303,52 @@ public static partial class InspectorPropertyEditors
                     if (!RowCurrent()) return;
                     if (targets.Length == 0) return;
                     state.Bindings = targets;
+
+                    if (IsNestedListType(contract.ValueType))
+                    {
+                        bool canOpenNested = CanCreateNestedList(contract.ValueType, targets);
+                        IList? nestedList = GetNestedListValue(targets[0]);
+                        state.ReadOnlyValue.SetTextGuarded(canOpenNested
+                                ? $"Nested list ({nestedList?.Count ?? 0} items)"
+                                : "Nested list details are unavailable for these values.",
+                            RowCurrent, static current =>
+                            {
+                                if (!current()) throw new InvalidOperationException("The nested list row changed during binding.");
+                            });
+                        if (!RowCurrent()) return;
+                        state.ReadOnlyValue.SceneNode.IsActiveSelf = true;
+                        if (!RowCurrent()) return;
+                        if (canOpenNested)
+                        {
+                            Action<UIInteractableComponent> openAction = _ =>
+                            {
+                                if (WriteCurrent())
+                                    OpenNestedListDetail(contract.ValueType, contract.BindingProperty,
+                                        targets, WriteCurrent, generation);
+                            };
+                            state.NestedAction = openAction;
+                            nestedButton.RegisterClickActions(openAction);
+                            if (!RowCurrent()) return;
+                            nestedButton.IsEnabled = true;
+                            if (!RowCurrent()) return;
+                            nestedButton.SceneNode.IsActiveSelf = true;
+                            if (!RowCurrent()) return;
+                        }
+                        Action<UIInteractableComponent> removeNested = _ =>
+                        {
+                            if (WriteCurrent()) contract.Remove(index, WriteCurrent);
+                        };
+                        state.RemoveAction = removeNested;
+                        removeButton.RegisterClickActions(removeNested);
+                        if (!RowCurrent()) return;
+                        removeButton.IsEnabled = true;
+                        if (!RowCurrent()) return;
+                        removeButton.SceneNode.IsActiveSelf = true;
+                        if (!RowCurrent()) return;
+                        state.IsReadOnly = false;
+                        state.IsPublished = true;
+                        return;
+                    }
 
                     if (editorNode is null)
                     {
@@ -395,6 +466,7 @@ public static partial class InspectorPropertyEditors
                 SceneNode? rowNode = row?.SceneNode;
                 SceneNode? editor = state.EditorNode;
                 UIButtonComponent? button = state.RemoveButton;
+                UIButtonComponent? nestedButton = state.NestedButton;
                 ObjectConstructionIdentity cellIdentity = ObjectConstructionIdentity.Capture(cell);
                 ObjectConstructionIdentity? rowIdentity = row is null ? null : ObjectConstructionIdentity.Capture(row);
                 ObjectConstructionIdentity? rowNodeIdentity = rowNode is null ? null : ObjectConstructionIdentity.Capture(rowNode);
@@ -402,6 +474,8 @@ public static partial class InspectorPropertyEditors
                 ObjectConstructionIdentity? editorIdentity = editor is null ? null : ObjectConstructionIdentity.Capture(editor);
                 ObjectConstructionIdentity? buttonIdentity = button is null ? null : ObjectConstructionIdentity.Capture(button);
                 ObjectConstructionIdentity? buttonNodeIdentity = button is null ? null : ObjectConstructionIdentity.Capture(button.SceneNode);
+                ObjectConstructionIdentity? nestedButtonIdentity = nestedButton is null ? null : ObjectConstructionIdentity.Capture(nestedButton);
+                ObjectConstructionIdentity? nestedButtonNodeIdentity = nestedButton is null ? null : ObjectConstructionIdentity.Capture(nestedButton.SceneNode);
                 state.Intent++;
                 ulong cleanupIntent = state.Intent;
                 state.IsPublished = false;
@@ -426,7 +500,11 @@ public static partial class InspectorPropertyEditors
                     (button is null || buttonIdentity?.IsCurrent == true && buttonNodeIdentity?.IsCurrent == true &&
                         ReferenceEquals(state.RemoveButton, button) &&
                         ReferenceEquals(button.SceneNode.Transform.Parent, state.RemoveHost.Transform) &&
-                        ReferenceEquals(state.RemoveHost.Parent, cellNode));
+                        ReferenceEquals(state.RemoveHost.Parent, cellNode)) &&
+                    (nestedButton is null || nestedButtonIdentity?.IsCurrent == true &&
+                        nestedButtonNodeIdentity?.IsCurrent == true && state.NestedButtonControl!.IsCurrent(state.ValueNode) &&
+                        ReferenceEquals(state.NestedButton, nestedButton) &&
+                        ReferenceEquals(nestedButton.SceneNode.Transform.Parent, state.ValueNode.Transform));
                 if (button is not null)
                 {
                     Action<UIInteractableComponent>? action = state.RemoveAction;
@@ -437,6 +515,17 @@ public static partial class InspectorPropertyEditors
                     button.IsEnabled = false;
                     if (!CleanupCurrent()) return;
                     button.SceneNode.IsActiveSelf = false;
+                    if (!CleanupCurrent()) return;
+                }
+                if (nestedButton is not null)
+                {
+                    Action<UIInteractableComponent>? action = state.NestedAction;
+                    state.NestedAction = null;
+                    if (action is not null) nestedButton.UnregisterClickActions(action);
+                    if (!CleanupCurrent()) return;
+                    nestedButton.IsEnabled = false;
+                    if (!CleanupCurrent()) return;
+                    nestedButton.SceneNode.IsActiveSelf = false;
                     if (!CleanupCurrent()) return;
                 }
                 if (editor is not null)
@@ -517,6 +606,16 @@ public static partial class InspectorPropertyEditors
                     return false;
                 if (Nullable.GetUnderlyingType(valueType) is not null)
                     return false;
+                if (typeof(IList).IsAssignableFrom(valueType))
+                {
+                    Type innerType = ResolveElementType(valueType, valueType);
+                    TypeCode innerCode = Type.GetTypeCode(innerType);
+                    return innerCode is TypeCode.Boolean or TypeCode.Byte or TypeCode.SByte or
+                        TypeCode.Int16 or TypeCode.UInt16 or TypeCode.Int32 or TypeCode.UInt32 or
+                        TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or
+                        TypeCode.Decimal || innerType.IsEnum &&
+                        !innerType.IsDefined(typeof(FlagsAttribute), inherit: false);
+                }
                 return CanRebindListEditor(valueType);
             }
         }

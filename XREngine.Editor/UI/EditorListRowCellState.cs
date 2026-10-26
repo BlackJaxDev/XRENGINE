@@ -9,6 +9,8 @@ internal sealed class EditorListRowCellState
     public required UITextComponent Label { get; init; }
     public required SceneNode RemoveHost { get; init; }
     public UIButtonComponent? RemoveButton { get; set; }
+    public UIButtonComponent? NestedButton { get; set; }
+    public Action<UIInteractableComponent>? NestedAction { get; set; }
     public required SceneNode ValueNode { get; init; }
     public SceneNode? EditorNode { get; set; }
     public bool ReusableEditor { get; set; }

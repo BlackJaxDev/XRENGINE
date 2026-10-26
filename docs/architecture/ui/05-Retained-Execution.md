@@ -2678,3 +2678,30 @@ embedded and shared source documents. Exact scene visibility intent rejects stal
 prechange writes. Canonical runtime load/unload operations remain responsible for
 their entered lifecycle work; editor checks run before and after those calls.
 Partial conflicts keep guarded history instead of overwriting callback edits.
+
+
+## One-level nested list details
+
+A direct list, linked-list, or dictionary row can open a separate retained detail
+for one inner built-in list or array. The inner values must use a fixed-height
+Boolean, numeric, or nonflags enum editor. Recursive objects, strings, flags enums,
+custom collections, and variable-height editors keep their existing fallback.
+Opening the detail captures the outer owner/property and exact slot or key. Row
+recycling does not invalidate that durable source path; replacement, changed
+collection generation, or changed owner/node/document lifetime does.
+
+`EditorNestedListMutation` reserves the same owner and list domains as ordinary
+list edits. It stages all selected targets before writing, deduplicates shared
+inner lists, and records one Undo action. Replay validates the original paths and
+sequence tokens. Compensation restores only a still-owned expected sequence.
+No synthetic outer property assignment is used. Dirty settlement rechecks each
+source document after history and earlier dirty callbacks, so independent current
+owners remain dirty while changed owners are preserved.
+
+The pane, detail, controls, and popup helpers use exact construction and binding
+receipts. Recycled compatible cells keep their controls; unchanged refresh does
+not reset row identity. Failed inner-lifetime construction is retained by the
+outer context. A never-attached empty pane uses the existing detached-leaf receipt
+for cleanup independently of the container lifetime. Transferred or replaced
+panes are preserved; failed retirement keeps its receipt. This adds no general
+custom-content or adopted-subtree destruction policy.

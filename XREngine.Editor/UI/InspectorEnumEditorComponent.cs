@@ -22,22 +22,31 @@ public sealed class InspectorEnumEditorComponent : XRComponent
     private bool _retired;
     private UIComboBoxComponent? _retiringCombo;
     private EditorEnumPropertyBinding? _retiringBinding;
+    private Func<bool>? _ownerAdmission;
+    internal bool IsOwnerCurrent => OwnerCurrent();
 
     public void Configure(UIComboBoxComponent combo, UITextComponent label,
-        PropertyInfo property, object?[]? targets)
+        PropertyInfo property, object?[]? targets, Func<bool>? ownerIsCurrent = null)
     {
+        if (ownerIsCurrent is not null) _ownerAdmission = ownerIsCurrent;
+        if (!OwnerCurrent()) return;
         if (_retired || _combo is not null)
             throw new InvalidOperationException("The enum editor already has an owner.");
         SetField(ref _combo, combo, publishNotifications: false);
+        if (!OwnerCurrent()) return;
         SetField(ref _label, label, publishNotifications: false);
+        if (!OwnerCurrent()) return;
         SetField(ref _popup, combo.Popup, publishNotifications: false);
+        if (!OwnerCurrent()) return;
         combo.SelectionChanged += OnSelectionChanged;
         combo.PropertyChanged += OnComboPropertyChanged;
-        Bind(property, targets);
+        if (OwnerCurrent()) Bind(property, targets, ownerIsCurrent);
     }
 
-    public void Bind(PropertyInfo? property, object?[]? targets)
+    public void Bind(PropertyInfo? property, object?[]? targets, Func<bool>? ownerIsCurrent = null)
     {
+        _ownerAdmission = ownerIsCurrent;
+        if (!OwnerCurrent()) return;
         if (_retired || _combo is null)
             return;
         _pendingProperty = property;
@@ -54,7 +63,7 @@ public sealed class InspectorEnumEditorComponent : XRComponent
         List<Exception>? failures = null;
         try
         {
-            while (!_retired && (_pendingBind || _pendingLabel))
+        while (!_retired && OwnerCurrent() && (_pendingBind || _pendingLabel))
             {
                 try
                 {
@@ -72,7 +81,15 @@ public sealed class InspectorEnumEditorComponent : XRComponent
                     {
                         _pendingLabel = false;
                         if (_label is { } label)
-                            label.Text = _combo?.AccessibilityValue ?? "Mixed or undefined";
+                        {
+                            string? text = _combo?.AccessibilityValue ?? "Mixed or undefined";
+                            if (OwnerCurrent())
+                                label.SetTextGuarded(text, (Func<bool>)OwnerCurrent, static current =>
+                                {
+                                    if (!current()) throw new InvalidOperationException(
+                                        "The nested enum label owner changed during assignment.");
+                                });
+                        }
                     }
                 }
                 catch (Exception error) { (failures ??= []).Add(error); }
@@ -108,64 +125,69 @@ public sealed class InspectorEnumEditorComponent : XRComponent
 
     private void ApplyBinding(PropertyInfo? property, object?[]? targets)
     {
+        if (!OwnerCurrent()) return;
         UIComboBoxComponent combo = _combo!;
         EditorEnumPropertyBinding? previous = _ownedBinding;
         previous?.Dispose();
+        if (!OwnerCurrent()) return;
         // Nested requests wait until this setter sequence returns. They cannot own
         // a row while an older PropertyChanging callback is still on the stack.
         combo.Close();
-        if (_retired) return;
+        if (_retired || !OwnerCurrent()) return;
         combo.Popup = property is null ? null : _popup;
-        if (_retired) return;
+        if (_retired || !OwnerCurrent()) return;
         if (combo.Binding is not null && !ReferenceEquals(combo.Binding, previous))
             throw new InvalidOperationException("The enum row has a different binding owner.");
         combo.Binding = null;
-        if (_retired) return;
+        if (_retired || !OwnerCurrent()) return;
         if (combo.Binding is not null)
             throw new InvalidOperationException("The enum row could not detach its previous binding.");
         if (combo.VirtualOptions is not null && !ReferenceEquals(combo.VirtualOptions, previous))
             throw new InvalidOperationException("The enum row has a different option owner.");
         combo.VirtualOptions = null;
-        if (_retired) return;
+        if (_retired || !OwnerCurrent()) return;
         if (combo.VirtualOptions is not null)
             throw new InvalidOperationException("The enum row could not detach its previous options.");
         combo.IsReadOnly = property is null || !property.CanWrite;
-        if (_retired) return;
+        if (_retired || !OwnerCurrent()) return;
         combo.AccessibilityLabel = property?.Name;
-        if (_retired) return;
+        if (_retired || !OwnerCurrent()) return;
         EditorEnumPropertyBinding? binding = property is not null && targets is not null
             ? new(property, targets) : null;
         SetField(ref _ownedBinding, binding, publishNotifications: false);
         if (binding is not null)
         {
             combo.VirtualOptions = binding;
-            if (_retired) return;
+            if (_retired || !OwnerCurrent()) return;
             if (!ReferenceEquals(combo.VirtualOptions, binding))
             {
                 binding.Dispose();
                 throw new InvalidOperationException("The enum row rejected its replacement options.");
             }
             combo.Binding = binding;
-            if (!_retired && !ReferenceEquals(combo.Binding, binding))
+            if (!_retired && OwnerCurrent() && !ReferenceEquals(combo.Binding, binding))
             {
                 binding.Dispose();
                 throw new InvalidOperationException("The enum row rejected its replacement binding.");
             }
         }
-        if (_retired) return;
+        if (_retired || !OwnerCurrent()) return;
         SetField(ref _boundProperty, property, publishNotifications: false);
+        if (!OwnerCurrent()) return;
         SetField(ref _boundTargets, targets, publishNotifications: false);
         _pendingLabel = true;
     }
 
     private void OnSelectionChanged(UIValueChange<ulong?> change)
     {
+        if (!OwnerCurrent()) return;
         _pendingLabel = true;
         DrainTransitions();
     }
 
     private void OnComboPropertyChanged(object? sender, IXRPropertyChangedEventArgs change)
     {
+        if (!OwnerCurrent()) return;
         if (!_retired || change.PropertyName != nameof(UIComboBoxComponent.Binding) ||
             _retiringCombo is not { } combo ||
             _retiringBinding is not { } binding ||
@@ -176,6 +198,8 @@ public sealed class InspectorEnumEditorComponent : XRComponent
         // assigning its binding. Clear only that binding before the combo reads it.
         combo.Binding = null;
     }
+
+    private bool OwnerCurrent() => _ownerAdmission?.Invoke() != false;
 
     protected override void OnDestroying()
     {

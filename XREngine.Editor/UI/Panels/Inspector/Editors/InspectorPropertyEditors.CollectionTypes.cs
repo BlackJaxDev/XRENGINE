@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Reflection;
 using XREngine;
 using XREngine.Animation;
+using XREngine.Components;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Editor.UI;
@@ -13,6 +14,8 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
+using XREngine.Scene.Prefabs;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
 
@@ -25,6 +28,11 @@ public static partial class InspectorPropertyEditors
         private const float ButtonWidth = 80.0f;
 
         public static bool TryCreateEditor(Type propType, out Action<SceneNode, PropertyInfo, object?[]?>? editor)
+            => TryCreateEditorCore(propType, null, out editor);
+
+        private static bool TryCreateEditorCore(Type propType, Func<bool>? ownerIsCurrent,
+            out Action<SceneNode, PropertyInfo, object?[]?>? editor,
+            Action<RuntimeComponentCreationReceipt>? retainFailedReceipt = null)
         {
             if (!IsSupportedCollectionType(propType))
             {
@@ -34,6 +42,7 @@ public static partial class InspectorPropertyEditors
 
             editor = (node, prop, objects) =>
             {
+                if (ownerIsCurrent?.Invoke() == false) return;
                 if (prop.DeclaringType == typeof(AnimStateMachine) &&
                     prop.Name == nameof(AnimStateMachine.Layers) &&
                     prop.PropertyType == typeof(EventList<AnimLayer>))
@@ -41,26 +50,101 @@ public static partial class InspectorPropertyEditors
                     EngineTypes.CreateStateMachineLayerDetail(node, prop, objects);
                     return;
                 }
+                if (ownerIsCurrent?.Invoke() == false) return;
                 if (objects?.Any(target => target is IEditorListElementBinding or
-                    IEditorLinkedElementBinding or IEditorDictionaryElementBinding) == true)
+                    IEditorLinkedElementBinding or IEditorDictionaryElementBinding) == true &&
+                    !CollectionEditorContext.CanCreateNestedList(propType, objects))
                 {
-                    AddInfoLabel(node, "Nested collection editing needs an owner path.");
+                    CollectionEditorContext.AddNestedAttemptLabel(node,
+                        "Nested editing supports direct fixed-height BCL lists with scalar values.",
+                        () => ownerIsCurrent?.Invoke() != false);
                     return;
                 }
-                EnsureVerticalLayout(node);
+                if (ownerIsCurrent?.Invoke() == false) return;
+                if (!EnsureVerticalLayout(node, ownerIsCurrent)) return;
+                if (ownerIsCurrent?.Invoke() == false) return;
+                ObjectConstructionIdentity nodeIdentity = ObjectConstructionIdentity.Capture(node);
+                TransformBase nodeTransform = node.Transform;
+                ObjectConstructionIdentity nodeTransformIdentity = ObjectConstructionIdentity.Capture(nodeTransform);
                 var container = node.NewChild();
-                EnsureVerticalLayout(container);
-                var context = new CollectionEditorContext(prop, objects, propType, container);
-                InspectorListDetailRefreshComponent lifetime =
-                    node.AddComponent<InspectorListDetailRefreshComponent>()!;
-                if (lifetime is null || lifetime.IsDestroyed || lifetime.IsDestroyQueued ||
-                    node.IsDestroyed || node.IsDestroyQueued)
+                ObjectConstructionIdentity containerIdentity = ObjectConstructionIdentity.Capture(container);
+                if (ownerIsCurrent?.Invoke() == false || !nodeIdentity.IsCurrent ||
+                    !nodeTransformIdentity.IsCurrent || node.IsDestroyed || node.IsDestroyQueued ||
+                    container.IsDestroyed || container.IsDestroyQueued ||
+                    !ReferenceEquals(node.Transform, nodeTransform) ||
+                    !ReferenceEquals(container.Transform.Parent, nodeTransform))
+                    return;
+                bool ContainerCreationCurrent() => ownerIsCurrent?.Invoke() != false &&
+                    nodeIdentity.IsCurrent && nodeTransformIdentity.IsCurrent &&
+                    containerIdentity.IsCurrent && !node.IsDestroyed && !node.IsDestroyQueued &&
+                    !container.IsDestroyed && !container.IsDestroyQueued &&
+                    ReferenceEquals(node.Transform, nodeTransform) &&
+                    ReferenceEquals(container.Transform.Parent, nodeTransform);
+                if (!EnsureVerticalLayout(container, ContainerCreationCurrent) ||
+                    !ContainerCreationCurrent()) return;
+                TransformBase containerTransform = container.Transform;
+                ObjectConstructionIdentity containerTransformIdentity =
+                    ObjectConstructionIdentity.Capture(containerTransform);
+                bool CoreCurrent() => ContainerCreationCurrent() &&
+                    containerTransformIdentity.IsCurrent &&
+                    ReferenceEquals(container.Transform, containerTransform);
+                var context = new CollectionEditorContext(prop, objects, propType, container,
+                    ownerIsCurrent is null ? null : CoreCurrent);
+                if (!CoreCurrent())
+                {
+                    context.Retire();
+                    return;
+                }
+                InspectorListDetailRefreshComponent? lifetime;
+                RuntimeComponentCreationReceipt? lifetimeReceipt = null;
+                void RetainFailedLifetime(Exception error)
+                {
+                    if (lifetimeReceipt is not { } receipt) return;
+                    receipt.RecordFailure(error);
+                    if (receipt.Component is { IsDestroyed: false, IsDestroyQueued: false } &&
+                        !receipt.TryAbortUnchangedComponent())
+                    {
+                        context.RetainFailedComponentCreation(receipt);
+                        retainFailedReceipt?.Invoke(receipt);
+                    }
+                }
+                try
+                {
+                    RuntimeComponentCreationReceipt receipt = new(node, CoreCurrent);
+                    lifetimeReceipt = receipt;
+                    lifetime = node.AddComponentGuarded(
+                        static () => new InspectorListDetailRefreshComponent(), receipt);
+                }
+                catch (Exception error)
+                {
+                    RetainFailedLifetime(error);
+                    context.Retire();
+                    Debug.LogException(error, "Could not attach a guarded collection detail lifetime.");
+                    return;
+                }
+                if (lifetime is null || lifetime.IsRetired || lifetime.IsDestroyed || lifetime.IsDestroyQueued ||
+                    node.IsDestroyed || node.IsDestroyQueued || !CoreCurrent() ||
+                    !ReferenceEquals(lifetime.SceneNode, node))
+                {
+                    RetainFailedLifetime(new InvalidOperationException(
+                        "The guarded collection detail lifetime could not retain its owner."));
+                    context.Retire();
+                    return;
+                }
+                if (!CoreCurrent())
                 {
                     context.Retire();
                     return;
                 }
                 lifetime.Refresh = context.RefreshList;
                 lifetime.Release = context.Retire;
+                if (!CoreCurrent())
+                {
+                    lifetime.Refresh = null;
+                    lifetime.Release = null;
+                    context.Retire();
+                    return;
+                }
                 context.Rebuild();
             };
             return true;
@@ -75,13 +159,36 @@ public static partial class InspectorPropertyEditors
             || typeof(ICollection).IsAssignableFrom(type)
             || ImplementsGenericInterface(type, typeof(ICollection<>));
 
-        private sealed partial class CollectionEditorContext(PropertyInfo property, object?[]? objects, Type declaredType, SceneNode container)
+        private static bool EnsureVerticalLayout(SceneNode node, Func<bool>? isCurrent = null)
+        {
+            if (isCurrent?.Invoke() == false) return false;
+            UIListTransform layout = isCurrent is not null && node.Transform is UIListTransform existing
+                ? existing
+                : node.SetTransform<UIListTransform>();
+            bool Current() => isCurrent?.Invoke() != false && ReferenceEquals(node.Transform, layout) &&
+                !node.IsDestroyed && !node.IsDestroyQueued && !layout.IsDestroyed && !layout.IsDestroyQueued;
+            if (!Current()) return false;
+            layout.DisplayHorizontal = false;
+            if (!Current()) return false;
+            layout.ItemSpacing = 6.0f;
+            if (!Current()) return false;
+            layout.ItemAlignment = EListAlignment.TopOrLeft;
+            if (!Current()) return false;
+            layout.Padding = new Vector4(0.0f);
+            return Current();
+        }
+
+        private sealed partial class CollectionEditorContext(PropertyInfo property, object?[]? objects,
+            Type declaredType, SceneNode container, Func<bool>? ownerIsCurrent = null)
         {
             private readonly PropertyInfo _property = property;
             private readonly List<object> _owners = CollectOwners(objects);
             private readonly Type _declaredType = declaredType;
             private readonly SceneNode _container = container;
+            private readonly Func<bool>? _ownerIsCurrent = ownerIsCurrent;
             private readonly EditorListMutationContext _listContext = new();
+            private readonly List<RuntimeComponentCreationReceipt> _failedComponentCreations = [];
+            private readonly List<DetachedLeafRetirementReceipt> _failedPaneLeafRetirements = [];
             private EditorListRowSource _listRows => _listContext.Rows;
             private readonly Dictionary<UIBoundableTransform, EditorListRowCellState> _listCells = [];
             private readonly Dictionary<UIBoundableTransform, EditorVirtualCollectionRowCellState> _virtualCells = [];
@@ -91,6 +198,20 @@ public static partial class InspectorPropertyEditors
             private IList? _boundList;
             private EditorListSourceLease[] _headerLeases = [];
             private ulong _headerGeneration;
+            private Func<bool>? _nestedListCurrent;
+            private Func<bool>? _nestedCountLabelCurrent;
+
+            public void RetainFailedComponentCreation(RuntimeComponentCreationReceipt receipt)
+            {
+                if (!_failedComponentCreations.Contains(receipt))
+                    _failedComponentCreations.Add(receipt);
+            }
+
+            private void RetainFailedPaneLeafRetirement(DetachedLeafRetirementReceipt receipt)
+            {
+                if (!_failedPaneLeafRetirements.Contains(receipt))
+                    _failedPaneLeafRetirements.Add(receipt);
+            }
 
             public void Retire()
             {
@@ -98,16 +219,20 @@ public static partial class InspectorPropertyEditors
                 _headerGeneration++;
                 _headerLeases = [];
                 _listContext.Retire();
+                RetireNestedListDetail();
                 UIListTransform? list = _virtualList;
                 bool detached = list is null;
                 try
                 {
-                    if (list is not null)
+                    bool mayDetach = _ownerIsCurrent is null || _nestedListCurrent?.Invoke() == true;
+                    if (list is not null && mayDetach)
                     {
                         IVirtualListProvider? provider = list.VirtualProvider;
                         list.DetachVirtualProviderForOwnerTeardown();
                         detached = provider is null || !ReferenceEquals(list.VirtualProvider, provider);
                     }
+                    else if (list is not null)
+                        detached = false;
                 }
                 catch (Exception error)
                 {
@@ -116,6 +241,8 @@ public static partial class InspectorPropertyEditors
                 }
                 finally
                 {
+                    _nestedListCurrent = null;
+                    _nestedCountLabelCurrent = null;
                     foreach (EditorListRowCellState cell in _listCells.Values)
                     {
                         if (cell.Bindings is { } bindings)
@@ -139,23 +266,33 @@ public static partial class InspectorPropertyEditors
 
             public void Rebuild()
             {
-                if (!_listContext.IsActive) return;
-                _headerGeneration++;
-                ulong buildGeneration = _headerGeneration;
+                if (!_listContext.IsActive || !IsOwnerCurrent()) return;
                 _headerLeases = [];
+                ulong buildGeneration = ++_headerGeneration;
+                RetireNestedListDetail();
+                if (!IsCurrentBuild(buildGeneration)) return;
                 if (_virtualList is not null)
                     _virtualList.VirtualProvider = null;
                 if (!IsCurrentBuild(buildGeneration)) return;
                 _virtualList = null;
                 _listCountLabel = null;
+                _nestedListCurrent = null;
+                _nestedCountLabelCurrent = null;
                 _listCells.Clear();
                 _virtualCells.Clear();
                 _previewCells.Clear();
                 foreach (var child in _container.Transform.Children.ToArray())
                 {
                     if (child.SceneNode is not { } old) continue;
+                    ObjectConstructionIdentity oldIdentity = ObjectConstructionIdentity.Capture(old);
+                    TransformBase oldTransform = old.Transform;
+                    ObjectConstructionIdentity oldTransformIdentity = ObjectConstructionIdentity.Capture(oldTransform);
+                    if (!ReferenceEquals(oldTransform.Parent, _container.Transform)) continue;
                     old.IsActiveSelf = false;
                     if (!IsCurrentBuild(buildGeneration)) return;
+                    if (!oldIdentity.IsCurrent || !oldTransformIdentity.IsCurrent ||
+                        !ReferenceEquals(old.Transform, oldTransform) ||
+                        !ReferenceEquals(oldTransform.Parent, _container.Transform)) continue;
                     old.Destroy(false);
                     if (!IsCurrentBuild(buildGeneration)) return;
                 }
@@ -204,13 +341,24 @@ public static partial class InspectorPropertyEditors
             }
 
             public bool IsCurrentBuild(ulong generation)
-                => _listContext.IsActive && _headerGeneration == generation;
+                => _listContext.IsActive && _headerGeneration == generation && IsOwnerCurrent();
+
+            private bool IsOwnerCurrent()
+                => _ownerIsCurrent?.Invoke() != false;
 
             private bool KeepRenderedBranch(SceneNode branch, ulong generation)
             {
+                if (_ownerIsCurrent is not null && !_ownerIsCurrent()) return false;
                 if (IsCurrentBuild(generation)) return true;
+                ObjectConstructionIdentity branchIdentity = ObjectConstructionIdentity.Capture(branch);
+                TransformBase branchTransform = branch.Transform;
+                ObjectConstructionIdentity transformIdentity = ObjectConstructionIdentity.Capture(branchTransform);
+                if (!ReferenceEquals(branchTransform.Parent, _container.Transform)) return false;
                 try { branch.IsActiveSelf = false; }
                 catch (Exception error) { Debug.LogException(error, "Could not deactivate a retired collection branch."); }
+                if (!branchIdentity.IsCurrent || !transformIdentity.IsCurrent ||
+                    !ReferenceEquals(branch.Transform, branchTransform) ||
+                    !ReferenceEquals(branchTransform.Parent, _container.Transform)) return false;
                 try
                 {
                     if (!branch.IsDestroyed && !branch.IsDestroyQueued)
@@ -222,6 +370,7 @@ public static partial class InspectorPropertyEditors
 
             private object? GetSampleCollection()
             {
+                if (_nestedSources is { Length: > 0 }) return _nestedSources[0].Inner;
                 foreach (var owner in _owners)
                 {
                     try
@@ -436,73 +585,139 @@ public static partial class InspectorPropertyEditors
                 _boundList = sampleList;
                 if (sampleCount is int count)
                 {
-                    _container.NewChild<UITextComponent>(out UITextComponent countLabel);
-                    countLabel.Text = $"Count: {count}";
+                    UITextComponent? countLabel;
+                    if (_ownerIsCurrent is not null)
+                    {
+                        countLabel = AddNestedAttemptLabel(_container, $"Count: {count}",
+                            () => IsCurrentBuild(buildGeneration));
+                        if (countLabel is null) return;
+                    }
+                    else
+                    {
+                        _container.NewChild<UITextComponent>(out UITextComponent label);
+                        label.Text = $"Count: {count}";
+                        countLabel = label;
+                    }
                     _listCountLabel = countLabel;
+                    if (_ownerIsCurrent is not null)
+                    {
+                        ObjectConstructionIdentity labelIdentity = ObjectConstructionIdentity.Capture(countLabel);
+                        SceneNode labelNode = countLabel.SceneNode!;
+                        ObjectConstructionIdentity labelNodeIdentity = ObjectConstructionIdentity.Capture(labelNode);
+                        TransformBase containerTransform = _container.Transform;
+                        ObjectConstructionIdentity containerTransformIdentity =
+                            ObjectConstructionIdentity.Capture(containerTransform);
+                        _nestedCountLabelCurrent = () => IsCurrentBuild(buildGeneration) &&
+                            labelIdentity.IsCurrent && labelNodeIdentity.IsCurrent &&
+                            containerTransformIdentity.IsCurrent &&
+                            !labelNode.IsDestroyed && !labelNode.IsDestroyQueued &&
+                            ReferenceEquals(_container.Transform, containerTransform) &&
+                            ReferenceEquals(countLabel.SceneNode, labelNode) &&
+                            ReferenceEquals(labelNode.Transform.Parent, containerTransform);
+                    }
                     if (!IsCurrentBuild(buildGeneration)) return;
                 }
 
                 bool canMutate = HasMutableList();
                 if (!IsCurrentBuild(buildGeneration)) return;
-                EditorListSourceLease[] leases = canMutate
+                EditorListSourceLease[] leases = canMutate && _nestedSources is null
                     ? _owners.Select(owner => EditorListSourceLease.Capture(owner, _property)).ToArray()
                     : [];
                 if (!IsCurrentBuild(buildGeneration)) return;
                 _headerLeases = leases;
-                var header = _container.NewChild();
-                var headerLayout = header.SetTransform<UIListTransform>();
-                headerLayout.DisplayHorizontal = true;
-                headerLayout.ItemSpacing = 6.0f;
+                SceneNode? header;
+                if (_ownerIsCurrent is not null)
+                {
+                    header = CreateNestedAttemptHeader(_container,
+                        () => IsCurrentBuild(buildGeneration));
+                    if (header is null) return;
+                }
+                else
+                {
+                    header = _container.NewChild();
+                    var headerLayout = header.SetTransform<UIListTransform>();
+                    headerLayout.DisplayHorizontal = true;
+                    headerLayout.ItemSpacing = 6.0f;
+                }
 
                 if (canMutate)
                 {
                     ulong headerGeneration = _headerGeneration;
-                    CreateInlineButton(header, "Add", () =>
+                    Action add = () =>
                     {
                         if (_listContext.IsActive && headerGeneration == _headerGeneration)
                             AddListElement(elementType);
-                    });
+                    };
+                    if (_ownerIsCurrent is not null)
+                    {
+                        if (CreateNestedAttemptButton(header, "Add", add,
+                            () => IsCurrentBuild(buildGeneration)) is null) return;
+                    }
+                    else CreateInlineButton(header, "Add", add);
                 }
                 else
                 {
-                    AddInfoLabel(header, "List is read-only.");
+                    string message = _nestedSources is not null &&
+                        CanResizeNestedLists(EEditorListMutation.Set)
+                            ? "Fixed-size nested list; values can be edited."
+                            : "List is read-only.";
+                    if (_ownerIsCurrent is not null)
+                    {
+                        if (AddNestedAttemptLabel(header, message,
+                            () => IsCurrentBuild(buildGeneration)) is null) return;
+                    }
+                    else AddInfoLabel(header, message);
                 }
                 if (!IsCurrentBuild(buildGeneration)) return;
 
                 if (sampleList is null || sampleList.Count == 0)
                 {
-                    AddInfoLabel(_container, "<empty>");
+                    if (_ownerIsCurrent is not null)
+                        AddNestedAttemptLabel(_container, "<empty>",
+                            () => IsCurrentBuild(buildGeneration));
+                    else AddInfoLabel(_container, "<empty>");
                     return;
                 }
-                SceneNode scrollNode = _container.NewChild();
-                UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
-                scroll.MinAnchor = Vector2.Zero;
-                scroll.MaxAnchor = Vector2.One;
-                scroll.Height = 300;
-                scrollNode.AddComponent<UIScrollRegionComponent>();
-                if (!IsCurrentBuild(buildGeneration)) return;
-                SceneNode listNode = scrollNode.NewChild();
-                UIListTransform list = listNode.SetTransform<UIListTransform>();
-                list.MinAnchor = Vector2.Zero;
-                list.MaxAnchor = Vector2.One;
-                list.ItemSize = 28;
-                list.VirtualOverscan = 2;
-                list.ItemAlignment = EListAlignment.TopOrLeft;
-                _virtualList = list;
-                UIVirtualTableProvider<int> provider = new(_listRows,
-                    new UIVirtualTableColumn<int>("value", "Element", 300,
-                        CreateVirtualListCell, BindVirtualListCell, UnbindVirtualListCell,
-                        BindVirtualListCell));
-                list.VirtualProvider = provider;
-                if (!IsCurrentBuild(buildGeneration))
+                UIListTransform list;
+                if (_ownerIsCurrent is not null)
                 {
-                    if (ReferenceEquals(list.VirtualProvider, provider))
-                        list.DetachVirtualProviderForOwnerTeardown();
-                    return;
+                    UIListTransform? nestedList = CreateNestedVirtualList(buildGeneration);
+                    if (nestedList is null) return;
+                    list = nestedList;
+                }
+                else
+                {
+                    SceneNode scrollNode = _container.NewChild();
+                    UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
+                    scroll.MinAnchor = Vector2.Zero;
+                    scroll.MaxAnchor = Vector2.One;
+                    scroll.Height = 300;
+                    scrollNode.AddComponent<UIScrollRegionComponent>();
+                    if (!IsCurrentBuild(buildGeneration)) return;
+                    SceneNode listNode = scrollNode.NewChild();
+                    list = listNode.SetTransform<UIListTransform>();
+                    list.MinAnchor = Vector2.Zero;
+                    list.MaxAnchor = Vector2.One;
+                    list.ItemSize = 28;
+                    list.VirtualOverscan = 2;
+                    list.ItemAlignment = EListAlignment.TopOrLeft;
+                    _virtualList = list;
+                    UIVirtualTableProvider<int> provider = new(_listRows,
+                        new UIVirtualTableColumn<int>("value", "Element", 300,
+                            CreateVirtualListCell, BindVirtualListCell, UnbindVirtualListCell,
+                            BindVirtualListCell));
+                    list.VirtualProvider = provider;
+                    if (!IsCurrentBuild(buildGeneration))
+                    {
+                        if (ReferenceEquals(list.VirtualProvider, provider))
+                            list.DetachVirtualProviderForOwnerTeardown();
+                        return;
+                    }
                 }
                 _listContext.RefreshRequested = () =>
                 {
                     if (!_listContext.IsActive) return;
+                    RetireNestedListDetailIfStale();
                     if (_headerLeases.Length != 0)
                     {
                         EditorListSourceLease[] refreshed = _owners.Select(owner =>
@@ -510,16 +725,43 @@ public static partial class InspectorPropertyEditors
                         if (!_listContext.IsActive) return;
                         _headerLeases = refreshed;
                     }
-                    if (_listCountLabel is not null)
-                        _listCountLabel.Text = $"Count: {_listRows.Count}";
+                    if (_listCountLabel is { } countLabel)
+                    {
+                        if (_ownerIsCurrent is null)
+                            countLabel.Text = $"Count: {_listRows.Count}";
+                        else if (_nestedCountLabelCurrent?.Invoke() == true)
+                        {
+                            ulong intent = countLabel.TextWriteIntentRevision;
+                            Func<bool> current = _nestedCountLabelCurrent!;
+                            try
+                            {
+                                countLabel.SetTextGuarded($"Count: {_listRows.Count}", current,
+                                    static require =>
+                                    {
+                                        if (!require()) throw new InvalidOperationException(
+                                            "The nested collection count label is no longer owned.");
+                                    });
+                            }
+                            catch (InvalidOperationException) when (!current() ||
+                                countLabel.TextWriteIntentRevision != unchecked(intent + 1)) { }
+                        }
+                    }
                     if (!_listContext.IsActive) return;
-                    _virtualList?.InvalidateMeasure();
+                    if (_virtualList is { } currentList &&
+                        (_ownerIsCurrent is null || _nestedListCurrent?.Invoke() == true))
+                        currentList.InvalidateMeasure();
                 };
             }
 
             public void RefreshList()
             {
-                if (!_listContext.IsActive) return;
+                if (!_listContext.IsActive || !IsOwnerCurrent()) return;
+                RetireNestedListDetailIfStale();
+                if (_nestedSources is { } nestedPaths && nestedPaths.Any(path => !path.IsInnerCurrent()))
+                {
+                    if (!nestedPaths.All(path => path.RefreshInnerSnapshot())) return;
+                    _listContext.RevisionChanged();
+                }
                 IList? current = GetListSample();
                 if (!ReferenceEquals(current, _boundList))
                 {
@@ -534,18 +776,10 @@ public static partial class InspectorPropertyEditors
                     foreach (EditorListRowCellState cell in _listCells.Values)
                     {
                         if (cell.Index < 0 || cell.Bindings is not { } bindings) continue;
-                        foreach (IEditorListElementBinding binding in bindings)
+                        if (!AreListBindingsCurrent(bindings, cell.Index, cell.RowId))
                         {
-                            if (binding.ContextRevision != _listContext.Revision) continue;
-                            IList list = binding.Collection;
-                            if (!ReferenceEquals(binding.OwnerProperty.GetValue(binding.Owner), list) ||
-                                !ReferenceEquals(binding.CollectionState, EditorListMutation.GetStateToken(list)) ||
-                                cell.Index >= list.Count ||
-                                !EditorListMutation.SameValue(list[cell.Index], binding.DisplayedValue))
-                            {
-                                changed = true;
-                                break;
-                            }
+                            changed = true;
+                            break;
                         }
                         if (changed) break;
                     }
@@ -561,8 +795,10 @@ public static partial class InspectorPropertyEditors
 
             private UIBoundableTransform CreateVirtualListCell(SceneNode tableRow)
             {
-                if (!_listContext.IsActive)
+                if (!_listContext.IsActive || (_ownerIsCurrent is not null && !_ownerIsCurrent()))
                     throw new InvalidOperationException("The list detail view was retired.");
+                if (_ownerIsCurrent is not null)
+                    return CreateNestedVirtualListCell(tableRow);
                 SceneNode cell = new(tableRow);
                 UIListTransform layout = cell.SetTransform<UIListTransform>();
                 layout.DisplayHorizontal = true;
@@ -574,9 +810,99 @@ public static partial class InspectorPropertyEditors
                 removeNode.GetTransformAs<UIBoundableTransform>(true)!.Width = 55;
                 SceneNode valueNode = cell.NewChild();
                 valueNode.SetTransform<UIBoundableTransform>().Width = 180;
+                var (_, nestedButton, _, _) = NativeUIElements.CreateButton(
+                    valueNode, "Open nested list", width: 180, height: 24);
+                nestedButton.IsEnabled = false;
+                nestedButton.SceneNode.IsActiveSelf = false;
                 EditorListRowCellState state = new()
                 {
-                    Label = label, RemoveHost = removeNode, ValueNode = valueNode
+                    Label = label, RemoveHost = removeNode, ValueNode = valueNode,
+                    NestedButton = nestedButton
+                };
+                _listCells.Add(layout, state);
+                return layout;
+            }
+
+            private UIBoundableTransform CreateNestedVirtualListCell(SceneNode tableRow)
+            {
+                bool Current() => _listContext.IsActive && IsCurrentBuild(_headerGeneration) &&
+                    _nestedListCurrent?.Invoke() == true;
+                if (!Current()) throw new InvalidOperationException("The nested list detail view was retired.");
+                ObjectConstructionIdentity rowIdentity = ObjectConstructionIdentity.Capture(tableRow);
+                TransformBase rowTransform = tableRow.Transform;
+                ObjectConstructionIdentity rowTransformIdentity = ObjectConstructionIdentity.Capture(rowTransform);
+                TransformBase? originalRowParent = rowTransform.Parent;
+                SceneNode? createdCell = CreateNestedAttemptNode(tableRow, Current);
+                if (createdCell is null)
+                    throw new InvalidOperationException("The nested row owner changed during cell creation.");
+                SceneNode cell = createdCell;
+                ObjectConstructionIdentity cellIdentity = ObjectConstructionIdentity.Capture(cell);
+                bool CellOwned() => rowIdentity.IsCurrent && rowTransformIdentity.IsCurrent &&
+                    cellIdentity.IsCurrent && !tableRow.IsDestroyed && !tableRow.IsDestroyQueued &&
+                    !cell.IsDestroyed && !cell.IsDestroyQueued &&
+                    ReferenceEquals(tableRow.Transform, rowTransform) &&
+                    ReferenceEquals(rowTransform.Parent, originalRowParent) &&
+                    ReferenceEquals(cell.Transform.Parent, rowTransform);
+                if (!Current() || !CellOwned())
+                    throw new InvalidOperationException("The nested row owner changed during cell creation.");
+                UIListTransform? layout = CreateNestedAttemptTransform<UIListTransform>(cell, Current, replace: true);
+                if (layout is null) throw new InvalidOperationException("The nested row owner changed during layout creation.");
+                ObjectConstructionIdentity layoutIdentity = ObjectConstructionIdentity.Capture(layout);
+                bool CellCurrent() => Current() && CellOwned() && layoutIdentity.IsCurrent &&
+                    ReferenceEquals(cell.Transform, layout);
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during layout setup.");
+                layout.DisplayHorizontal = true;
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during layout setup.");
+                layout.ItemAlignment = EListAlignment.TopOrLeft;
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during layout setup.");
+                layout.ItemSpacing = 4;
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during layout setup.");
+
+                UITextComponent? label = AddNestedAttemptLabel(cell, " ", CellCurrent);
+                if (label is null || !CellCurrent()) throw new InvalidOperationException("The nested row owner changed during label creation.");
+                UIBoundableTransform? labelBounds = CreateNestedAttemptTransform<UIBoundableTransform>(label.SceneNode!, CellCurrent);
+                if (labelBounds is null || !CellCurrent()) throw new InvalidOperationException("The nested row owner changed during label layout.");
+                labelBounds.Width = 60;
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during label layout.");
+
+                SceneNode? createdRemoveHost = CreateNestedAttemptNode(cell, CellCurrent);
+                if (createdRemoveHost is null) throw new InvalidOperationException("The nested row owner changed during remove-host creation.");
+                SceneNode removeHost = createdRemoveHost;
+                ObjectConstructionIdentity removeHostIdentity = ObjectConstructionIdentity.Capture(removeHost);
+                if (!CellCurrent() || !removeHostIdentity.IsCurrent ||
+                    !ReferenceEquals(removeHost.Transform.Parent, layout))
+                    throw new InvalidOperationException("The nested row owner changed during remove-host creation.");
+                UIBoundableTransform? removeBounds = CreateNestedAttemptTransform<UIBoundableTransform>(removeHost, CellCurrent);
+                if (removeBounds is null || !CellCurrent() || !ReferenceEquals(removeHost.Transform, removeBounds))
+                    throw new InvalidOperationException("The nested row owner changed during remove-host layout.");
+                removeBounds.Width = 55;
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during remove-host layout.");
+
+                SceneNode? createdValueNode = CreateNestedAttemptNode(cell, CellCurrent);
+                if (createdValueNode is null) throw new InvalidOperationException("The nested row owner changed during value-host creation.");
+                SceneNode valueNode = createdValueNode;
+                ObjectConstructionIdentity valueNodeIdentity = ObjectConstructionIdentity.Capture(valueNode);
+                if (!CellCurrent() || !valueNodeIdentity.IsCurrent ||
+                    !ReferenceEquals(valueNode.Transform.Parent, layout))
+                    throw new InvalidOperationException("The nested row owner changed during value-host creation.");
+                UIBoundableTransform? valueBounds = CreateNestedAttemptTransform<UIBoundableTransform>(valueNode, CellCurrent, replace: true);
+                if (valueBounds is null || !CellCurrent() || !ReferenceEquals(valueNode.Transform, valueBounds))
+                    throw new InvalidOperationException("The nested row owner changed during value-host layout.");
+                valueBounds.Width = 180;
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during value-host layout.");
+                UIButtonComponent? nestedButton = CreateNestedAttemptButton(valueNode,
+                    "Open nested list", static () => { }, CellCurrent);
+                if (nestedButton is null || !CellCurrent()) throw new InvalidOperationException("The nested row owner changed during button creation.");
+                nestedButton.IsEnabled = false;
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during button setup.");
+                nestedButton.SceneNode.IsActiveSelf = false;
+                if (!CellCurrent()) throw new InvalidOperationException("The nested row owner changed during button setup.");
+                EditorListRowCellState state = new()
+                {
+                    Label = label,
+                    RemoveHost = removeHost,
+                    ValueNode = valueNode,
+                    NestedButton = nestedButton
                 };
                 _listCells.Add(layout, state);
                 return layout;
@@ -600,12 +926,23 @@ public static partial class InspectorPropertyEditors
                             foreach (IEditorListElementBinding binding in cached)
                                 try { binding.ReleaseLease(); }
                                 catch (Exception error) { Debug.LogException(error, "Could not retire a cached list binding."); }
-                        state.Bindings = null;
-                        state.LastBindings = null;
-                        try { state.RemoveButton?.SceneNode.Destroy(false); }
-                        catch (Exception error) { Debug.LogException(error, "Could not retire a list action."); }
-                        try { state.EditorNode?.Destroy(false); }
-                        catch (Exception error) { Debug.LogException(error, "Could not retire a list editor."); }
+                        if (_ownerIsCurrent is null || _ownerIsCurrent())
+                        {
+                            state.Bindings = null;
+                            state.LastBindings = null;
+                            if (state.RemoveButton is { } remove &&
+                                ReferenceEquals(remove.SceneNode.Transform.Parent, state.RemoveHost.Transform))
+                            {
+                                try { remove.SceneNode.Destroy(false); }
+                                catch (Exception error) { Debug.LogException(error, "Could not retire a list action."); }
+                            }
+                            if (state.EditorNode is { } editor &&
+                                ReferenceEquals(editor.Transform.Parent, state.ValueNode.Transform))
+                            {
+                                try { editor.Destroy(false); }
+                                catch (Exception error) { Debug.LogException(error, "Could not retire a list editor."); }
+                            }
+                        }
                     }
                 }
             }
@@ -618,20 +955,47 @@ public static partial class InspectorPropertyEditors
             private void BindVirtualListCellCore(UIBoundableTransform cell,
                 EditorListRowCellState state, int index, ulong rowId, ulong generation)
             {
+                bool RowCurrent()
+                {
+                    if (!IsCurrentCellBinding(cell, state, generation) || state.Index != index ||
+                        state.RowId != rowId || _virtualList is not { } currentList ||
+                        cell.Parent is not UIBoundableTransform currentRow ||
+                        !ReferenceEquals(currentRow.Parent, currentList) ||
+                        !currentList.TryGetVirtualRowLease(currentRow, out UIVirtualRowLease currentLease) ||
+                        currentLease.ItemId != rowId)
+                        return false;
+                    return true;
+                }
                 IEditorListElementBinding[]? previousBindings = state.Bindings ?? state.LastBindings;
-                bool sameSource = state.RowId == rowId &&
+                bool sameSource = !IsNestedListType(_listElementType!) && state.RowId == rowId &&
                     (state.Index == index || state.LastIndex == index) &&
                     AreListBindingsCurrent(previousBindings, index, rowId);
                 if (!IsCurrentCellBinding(cell, state, generation)) return;
                 if (sameSource)
                 {
+                    SceneNode? sameEditor = state.EditorNode;
+                    ObjectConstructionIdentity? editorIdentity = sameEditor is null
+                        ? null : ObjectConstructionIdentity.Capture(sameEditor);
+                    TransformBase? editorTransform = sameEditor?.Transform;
+                    ObjectConstructionIdentity? editorTransformIdentity = editorTransform is null
+                        ? null : ObjectConstructionIdentity.Capture(editorTransform);
+                    TransformBase? valueTransform = state.ValueNode.Transform;
+                    ObjectConstructionIdentity valueTransformIdentity = ObjectConstructionIdentity.Capture(valueTransform);
+                    bool SameEditorCurrent() => sameEditor is null ||
+                        ReferenceEquals(state.EditorNode, sameEditor) && editorIdentity is { IsCurrent: true } &&
+                        editorTransformIdentity is { IsCurrent: true } && valueTransformIdentity.IsCurrent &&
+                        !sameEditor.IsDestroyed && !sameEditor.IsDestroyQueued &&
+                        ReferenceEquals(sameEditor.Transform, editorTransform) &&
+                        ReferenceEquals(state.ValueNode.Transform, valueTransform) &&
+                        ReferenceEquals(editorTransform?.Parent, valueTransform);
+                    if (!SameEditorCurrent()) return;
                     state.Index = index;
                     state.Bindings = previousBindings;
                     state.LastBindings = null;
                     foreach (IEditorListElementBinding binding in previousBindings!) binding.AcceptLease();
                     if (state.RemoveButton is not null) state.RemoveButton.SceneNode.IsActiveSelf = true;
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
-                    if (state.EditorNode is not null) state.EditorNode.IsActiveSelf = true;
+                    if (!RowCurrent() || !SameEditorCurrent()) return;
+                    if (sameEditor is not null) sameEditor.IsActiveSelf = true;
                     return;
                 }
                 if (previousBindings is not null)
@@ -642,107 +1006,239 @@ public static partial class InspectorPropertyEditors
                 state.Index = index;
                 state.RowId = rowId;
                 state.BoundRevision = _listContext.Revision;
-                state.Label.Text = $"[{index}]";
-                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                if (!SetNestedListCellLabel(cell, state, $"[{index}]", RowCurrent)) return;
+                if (!RowCurrent()) return;
+                if (state.NestedAction is { } oldNestedAction && state.NestedButton is { } currentNestedButton)
+                {
+                    currentNestedButton.UnregisterClickActions(oldNestedAction);
+                    state.NestedAction = null;
+                    currentNestedButton.IsEnabled = false;
+                    if (!RowCurrent()) return;
+                    currentNestedButton.SceneNode.IsActiveSelf = false;
+                    if (!RowCurrent()) return;
+                }
+                if (!RowCurrent()) return;
                 Type elementType = _listElementType!;
                 if (!sameButtonLease && state.RemoveButton is { } oldButton)
                 {
                     oldButton.SceneNode.IsActiveSelf = false;
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    if (!RowCurrent()) return;
                     oldButton.SceneNode.Destroy(false);
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    if (!RowCurrent()) return;
                     state.RemoveButton = null;
                 }
                 if (state.RemoveButton is null)
                 {
-                    SceneNode removeNode = state.RemoveHost.NewChild<UIButtonComponent>(out UIButtonComponent remove);
-                    state.RemoveButton = remove;
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
-                    removeNode.GetTransformAs<UIBoundableTransform>(true)!.MaxAnchor = Vector2.One;
-                    removeNode.NewChild<UITextComponent>(out UITextComponent removeText);
-                    removeText.Text = "Remove";
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
                     ulong capturedRevision = _listContext.Revision;
-                    remove.InteractAction += _ =>
+                    if (_ownerIsCurrent is not null)
                     {
-                        if (state.Index >= 0 && state.RowId == rowId &&
-                            _listContext.Revision == capturedRevision &&
-                            state.Index < _listRows.Count &&
-                            _listRows.GetItemId(state.Index) == rowId &&
-                            state.Bindings is { } bound)
-                            RemoveListElement(bound);
-                    };
+                        UIButtonComponent? remove = CreateNestedAttemptButton(state.RemoveHost, "Remove",
+                            () =>
+                            {
+                                if (RowCurrent() && state.Index == index && state.RowId == rowId &&
+                                    _listContext.Revision == capturedRevision && state.Index < _listRows.Count &&
+                                    _listRows.GetItemId(state.Index) == rowId && state.Bindings is { } bound)
+                                    RemoveListElement(bound);
+                            }, RowCurrent, width: null, fillParent: true);
+                        if (remove is null || !RowCurrent()) return;
+                        state.RemoveButton = remove;
+                    }
+                    else
+                    {
+                        SceneNode removeNode = state.RemoveHost.NewChild<UIButtonComponent>(out UIButtonComponent remove);
+                        state.RemoveButton = remove;
+                        if (!RowCurrent()) return;
+                        removeNode.GetTransformAs<UIBoundableTransform>(true)!.MaxAnchor = Vector2.One;
+                        removeNode.NewChild<UITextComponent>(out UITextComponent removeText);
+                        removeText.Text = "Remove";
+                        if (!RowCurrent()) return;
+                        remove.InteractAction += _ =>
+                        {
+                            if (state.Index >= 0 && state.RowId == rowId &&
+                                _listContext.Revision == capturedRevision &&
+                                state.Index < _listRows.Count &&
+                                _listRows.GetItemId(state.Index) == rowId &&
+                                state.Bindings is { } bound)
+                                RemoveListElement(bound);
+                        };
+                    }
                 }
                 state.RemoveButton.SceneNode.IsActiveSelf = true;
-                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                if (!RowCurrent()) return;
                 state.RemoveButton.IsReadOnly = !HasMutableList();
-                if (!IsCurrentCellBinding(cell, state, generation)) return;
-                bool rowEditable = EditorListMutation.SupportsSource(_property) &&
-                    !_owners.Any(owner => _property.GetValue(owner) is not IList list ||
-                        !EditorListMutation.Supports(list, EEditorListMutation.Set) || index >= list.Count);
-                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                if (!RowCurrent()) return;
+                bool rowEditable = _nestedSources is not null
+                    ? CanSetNestedIndex(index)
+                    : EditorListMutation.SupportsSource(_property) &&
+                        !_owners.Any(owner => _property.GetValue(owner) is not IList list ||
+                            !EditorListMutation.Supports(list, EEditorListMutation.Set) || index >= list.Count);
+                if (!RowCurrent()) return;
                 if (!rowEditable)
                 {
                     if (state.EditorNode is not null)
                     {
                         state.EditorNode.IsActiveSelf = false;
-                        if (!IsCurrentCellBinding(cell, state, generation)) return;
+                        if (!RowCurrent()) return;
                         state.EditorNode.Destroy(false);
-                        if (!IsCurrentCellBinding(cell, state, generation)) return;
+                        if (!RowCurrent()) return;
                         state.EditorNode = null;
                     }
-                    state.Label.Text = $"[{index}] Read-only or missing list item";
+                    if (!SetNestedListCellLabel(cell, state,
+                        $"[{index}] Read-only or missing list item", RowCurrent)) return;
                     return;
                 }
-                Type bindingType = typeof(ListElementBinding<>).MakeGenericType(elementType);
-                PropertyInfo bindingProperty = bindingType.GetProperty(nameof(ListElementBinding<object>.Value))!;
-                object[] targets = CreateListBindings(bindingType, index);
-                if (!IsCurrentCellBinding(cell, state, generation))
+                Type bindingType = (_nestedSources is null ? typeof(ListElementBinding<>) :
+                    typeof(EditorNestedListElementBinding<>)).MakeGenericType(elementType);
+                PropertyInfo bindingProperty = bindingType.GetProperty("Value")!;
+                object[] targets = _nestedSources is null
+                    ? CreateListBindings(bindingType, index)
+                    : CreateNestedListBindings(index, rowId, RowCurrent);
+                if (!RowCurrent())
                 {
                     foreach (IEditorListElementBinding binding in targets.OfType<IEditorListElementBinding>())
                         binding.ReleaseLease();
                     return;
                 }
                 state.Bindings = targets.Cast<IEditorListElementBinding>().ToArray();
+                if (IsNestedListType(elementType))
+                {
+                    SceneNode? oldEditor = state.EditorNode;
+                    if (oldEditor is not null &&
+                        ReferenceEquals(oldEditor.Transform.Parent, state.ValueNode.Transform))
+                        oldEditor.Destroy(false);
+                    if (!RowCurrent()) return;
+                    if (ReferenceEquals(state.EditorNode, oldEditor)) state.EditorNode = null;
+                    state.ReusableEditor = false;
+                    UIButtonComponent nestedButton = state.NestedButton!;
+                    bool canOpenNested = CanCreateNestedList(elementType, targets.Cast<object?>().ToArray());
+                    if (canOpenNested)
+                    {
+                        Action<UIInteractableComponent> openAction = _ =>
+                        {
+                            if (IsCurrentCellBinding(cell, state, generation) &&
+                                state.Index == index && state.RowId == rowId && state.Bindings is { } currentBindings &&
+                                currentBindings.All(binding => binding.IsLeased) && RowCurrent() &&
+                                AreListBindingsCurrent(currentBindings, index, rowId))
+                                OpenNestedListDetail(elementType, bindingProperty, targets,
+                                    () => RowCurrent() &&
+                                        state.Index == index && state.RowId == rowId &&
+                                        state.Bindings is { } bound && bound.All(binding => binding.IsLeased) &&
+                                        AreListBindingsCurrent(bound, index, rowId),
+                                    generation);
+                        };
+                        state.NestedAction = openAction;
+                        nestedButton.RegisterClickActions(openAction);
+                        if (!RowCurrent()) return;
+                        nestedButton.IsEnabled = true;
+                        if (!RowCurrent()) return;
+                        nestedButton.SceneNode.IsActiveSelf = true;
+                    }
+                    else
+                    {
+                        nestedButton.IsEnabled = false;
+                        if (!RowCurrent()) return;
+                        nestedButton.SceneNode.IsActiveSelf = false;
+                    }
+                    if (!RowCurrent()) return;
+                    return;
+                }
                 bool reusable = CanRebindListEditor(elementType);
                 if (state.EditorNode is not null && !state.ReusableEditor)
                 {
                     state.EditorNode.IsActiveSelf = false;
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    if (!RowCurrent()) return;
                     state.EditorNode.Destroy(false);
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    if (!RowCurrent()) return;
                     state.EditorNode = null;
                 }
-                if (!IsCurrentCellBinding(cell, state, generation)) return;
+                if (!RowCurrent()) return;
                 if (state.EditorNode is null)
                 {
-                    SceneNode editor = state.ValueNode.NewChild();
+                    SceneNode? createdEditor = _ownerIsCurrent is null
+                        ? state.ValueNode.NewChild()
+                        : CreateNestedAttemptNode(state.ValueNode, RowCurrent, () => IsCurrentBuild(generation));
+                    if (createdEditor is null || !RowCurrent()) return;
+                    SceneNode editor = createdEditor;
                     state.EditorNode = editor;
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
-                    editor.SetTransform<UIBoundableTransform>().MaxAnchor = Vector2.One;
-                    BuildValueEditor(editor, elementType, bindingProperty, targets);
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    UIBoundableTransform? editorLayout = _ownerIsCurrent is null
+                        ? editor.SetTransform<UIBoundableTransform>()
+                        : CreateNestedAttemptTransform<UIBoundableTransform>(editor, RowCurrent, replace: true);
+                    if (editorLayout is null || !RowCurrent() || !ReferenceEquals(editor.Transform, editorLayout)) return;
+                    editorLayout.MaxAnchor = Vector2.One;
+                    if (!RowCurrent()) return;
+                    if (_ownerIsCurrent is null)
+                        BuildValueEditor(editor, elementType, bindingProperty, targets);
+                    else if (!BuildNestedScalarValueEditor(editor, elementType, bindingProperty,
+                        targets, RowCurrent, RetainFailedComponentCreation))
+                    {
+                        if (!RowCurrent()) return;
+                        if (ReferenceEquals(editor.Transform.Parent, state.ValueNode.Transform))
+                            editor.Destroy(false);
+                        state.EditorNode = null;
+                        return;
+                    }
+                    if (!RowCurrent()) return;
                     state.ReusableEditor = reusable;
-                }
-                else if (TryRebindListEditor(state.EditorNode, elementType, bindingProperty,
-                    targets.Cast<object?>().ToArray()))
-                {
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
-                    state.EditorNode.IsActiveSelf = true;
                 }
                 else
                 {
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
-                    state.EditorNode.IsActiveSelf = false;
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
-                    state.EditorNode.Destroy(false);
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
-                    SceneNode editor = state.ValueNode.NewChild();
-                    state.EditorNode = editor;
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
-                    editor.SetTransform<UIBoundableTransform>().MaxAnchor = Vector2.One;
-                    BuildValueEditor(editor, elementType, bindingProperty, targets);
-                    if (!IsCurrentCellBinding(cell, state, generation)) return;
+                    SceneNode oldEditor = state.EditorNode;
+                    bool rebound;
+                    bool editorOwnershipCurrent = true;
+                    if (_ownerIsCurrent is null)
+                        rebound = TryRebindListEditor(oldEditor, elementType, bindingProperty,
+                            targets.Cast<object?>().ToArray());
+                    else
+                        rebound = TryRebindOwnedNestedListEditor(oldEditor, state, elementType, bindingProperty,
+                            targets.Cast<object?>().ToArray(), RowCurrent, out editorOwnershipCurrent);
+                    if (!editorOwnershipCurrent) return;
+                    if (!RowCurrent()) return;
+                    if (rebound)
+                    {
+                        oldEditor.IsActiveSelf = true;
+                        return;
+                    }
+                    ObjectConstructionIdentity editorIdentity = ObjectConstructionIdentity.Capture(oldEditor);
+                    TransformBase editorTransform = oldEditor.Transform;
+                    ObjectConstructionIdentity editorTransformIdentity = ObjectConstructionIdentity.Capture(editorTransform);
+                    TransformBase valueTransform = state.ValueNode.Transform;
+                    ObjectConstructionIdentity valueTransformIdentity = ObjectConstructionIdentity.Capture(valueTransform);
+                    bool FallbackOwnershipCurrent() => editorIdentity.IsCurrent && editorTransformIdentity.IsCurrent &&
+                        valueTransformIdentity.IsCurrent && ReferenceEquals(state.EditorNode, oldEditor) &&
+                        !oldEditor.IsDestroyed && !oldEditor.IsDestroyQueued &&
+                        ReferenceEquals(oldEditor.Transform, editorTransform) &&
+                        ReferenceEquals(state.ValueNode.Transform, valueTransform) &&
+                        ReferenceEquals(editorTransform.Parent, valueTransform);
+                    if (!FallbackOwnershipCurrent()) return;
+                    oldEditor.IsActiveSelf = false;
+                    if (!RowCurrent() || !FallbackOwnershipCurrent()) return;
+                    state.EditorNode = null;
+                    oldEditor.Destroy(false);
+                    if (!RowCurrent() || state.EditorNode is not null) return;
+                    SceneNode? createdEditor = _ownerIsCurrent is null
+                        ? state.ValueNode.NewChild()
+                        : CreateNestedAttemptNode(state.ValueNode, RowCurrent, () => IsCurrentBuild(generation));
+                    if (createdEditor is null || !RowCurrent()) return;
+                    SceneNode replacement = createdEditor;
+                    state.EditorNode = replacement;
+                    UIBoundableTransform? editorLayout = _ownerIsCurrent is null
+                        ? replacement.SetTransform<UIBoundableTransform>()
+                        : CreateNestedAttemptTransform<UIBoundableTransform>(replacement, RowCurrent, replace: true);
+                    if (editorLayout is null || !RowCurrent() || !ReferenceEquals(replacement.Transform, editorLayout)) return;
+                    editorLayout.MaxAnchor = Vector2.One;
+                    if (!RowCurrent()) return;
+                    if (_ownerIsCurrent is null)
+                        BuildValueEditor(replacement, elementType, bindingProperty, targets);
+                    else if (!BuildNestedScalarValueEditor(replacement, elementType, bindingProperty,
+                        targets, RowCurrent, RetainFailedComponentCreation))
+                    {
+                        if (!RowCurrent()) return;
+                        if (ReferenceEquals(replacement.Transform.Parent, state.ValueNode.Transform))
+                            replacement.Destroy(false);
+                        state.EditorNode = null;
+                        return;
+                    }
+                    if (!RowCurrent()) return;
                     state.ReusableEditor = reusable;
                 }
             }
@@ -755,6 +1251,15 @@ public static partial class InspectorPropertyEditors
                 foreach (IEditorListElementBinding binding in bindings)
                     try
                     {
+                        if (binding is IEditorNestedListElementBinding nested)
+                        {
+                            if (!nested.IsRowCurrent || binding.ContextRevision != _listContext.Revision ||
+                                binding.Index != index || binding.RowId != rowId ||
+                                index >= binding.Collection.Count ||
+                                !EditorListMutation.SameValue(binding.Collection[index], binding.DisplayedValue))
+                                return false;
+                            continue;
+                        }
                         IList list = binding.Collection;
                         if (binding.ContextRevision != _listContext.Revision ||
                             binding.Index != index || binding.RowId != rowId ||
@@ -779,8 +1284,9 @@ public static partial class InspectorPropertyEditors
                     valueType == typeof(ColorF4) || valueType == typeof(System.Drawing.Color);
 
             private static bool TryRebindListEditor(SceneNode editor, Type valueType,
-                PropertyInfo property, object?[] targets)
+                PropertyInfo property, object?[] targets, Func<bool>? ownerIsCurrent = null)
             {
+                if (ownerIsCurrent?.Invoke() == false) return false;
                 if (valueType == typeof(Vector2) || valueType == typeof(Vector3) ||
                     valueType == typeof(Vector4) || valueType == typeof(Quaternion) ||
                     valueType == typeof(LayerMask))
@@ -788,8 +1294,9 @@ public static partial class InspectorPropertyEditors
                     DataTransformerBase? transformer = editor.Components.OfType<DataTransformerBase>().FirstOrDefault();
                     if (transformer is null) return false;
                     transformer.Property = property;
+                    if (ownerIsCurrent?.Invoke() == false) return false;
                     transformer.Targets = targets;
-                    return true;
+                    return ownerIsCurrent?.Invoke() != false;
                 }
                 if (valueType == typeof(ColorF3) || valueType == typeof(ColorF4) ||
                     valueType == typeof(System.Drawing.Color))
@@ -797,21 +1304,22 @@ public static partial class InspectorPropertyEditors
                     UIColorSelectorComponent? color = editor.Components.OfType<UIColorSelectorComponent>().FirstOrDefault();
                     if (color is null) return false;
                     color.Binding = new EditorColorPropertyBinding(property, targets);
+                    if (ownerIsCurrent?.Invoke() == false) return false;
                     color.IsReadOnly = !property.CanWrite;
-                    return true;
+                    return ownerIsCurrent?.Invoke() != false;
                 }
                 if (valueType.IsEnum && !valueType.IsDefined(typeof(FlagsAttribute), inherit: false))
                 {
                     InspectorEnumEditorComponent? enumEditor = editor.Components
                         .OfType<InspectorEnumEditorComponent>().FirstOrDefault();
                     if (enumEditor is null) return false;
-                    enumEditor.Bind(property, targets);
-                    return true;
+                    enumEditor.Bind(property, targets, ownerIsCurrent);
+                    return ownerIsCurrent?.Invoke() != false;
                 }
                 if (CanRebindListEditor(valueType))
                 {
-                    NativeUIElements.RebindPropertyEditor(editor, property, targets);
-                    return true;
+                    NativeUIElements.RebindPropertyEditor(editor, property, targets, ownerIsCurrent);
+                    return ownerIsCurrent?.Invoke() != false;
                 }
                 return false;
             }
@@ -823,6 +1331,13 @@ public static partial class InspectorPropertyEditors
                 state.Index = -1;
                 state.LastBindings = state.Bindings;
                 state.Bindings = null;
+                if (state.NestedAction is { } nestedAction && state.NestedButton is { } nestedButton)
+                {
+                    state.NestedButton.UnregisterClickActions(nestedAction);
+                    state.NestedAction = null;
+                    nestedButton.IsEnabled = false;
+                    nestedButton.SceneNode.IsActiveSelf = false;
+                }
                 if (state.LastBindings is not null)
                     foreach (IEditorListElementBinding binding in state.LastBindings) binding.ReleaseLease();
                 if (state.RemoveButton is { } button)
@@ -842,6 +1357,7 @@ public static partial class InspectorPropertyEditors
 
             private IList? GetListSample()
             {
+                if (_nestedSources is { Length: > 0 }) return _nestedSources[0].Inner;
                 foreach (var owner in _owners)
                 {
                     if (_property.GetValue(owner) is IList list)
@@ -881,6 +1397,8 @@ public static partial class InspectorPropertyEditors
 
             private bool HasMutableList()
             {
+                if (_nestedSources is not null)
+                    return CanResizeNestedLists(EEditorListMutation.Insert);
                 if (_owners.Count == 0 || !EditorListMutation.SupportsSource(_property)) return false;
                 foreach (var owner in _owners)
                 {
@@ -894,6 +1412,11 @@ public static partial class InspectorPropertyEditors
             private void AddListElement(Type elementType)
             {
                 if (!_listContext.IsActive) return;
+                if (_nestedSources is not null)
+                {
+                    AddNestedListElement(elementType);
+                    return;
+                }
                 try
                 {
                     EditorListMutation.Apply(_owners.Select(owner => (owner, _property)).ToArray(),
@@ -908,6 +1431,11 @@ public static partial class InspectorPropertyEditors
             private void RemoveListElement(IReadOnlyList<IEditorListElementBinding> bindings)
             {
                 if (!_listContext.IsActive) return;
+                if (_nestedSources is not null)
+                {
+                    RemoveNestedListElements(bindings.OfType<IEditorNestedListElementBinding>().ToArray());
+                    return;
+                }
                 try
                 {
                     EditorListMutation.Remove(bindings);

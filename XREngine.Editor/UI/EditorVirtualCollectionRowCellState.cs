@@ -13,6 +13,9 @@ internal sealed class EditorVirtualCollectionRowCellState
     public required EditorVirtualRowControlLease ReadOnlyControl { get; init; }
     public UIButtonComponent? RemoveButton { get; set; }
     public Action<UIInteractableComponent>? RemoveAction { get; set; }
+    public UIButtonComponent? NestedButton { get; set; }
+    public Action<UIInteractableComponent>? NestedAction { get; set; }
+    public EditorVirtualRowControlLease? NestedButtonControl { get; set; }
     public SceneNode? EditorNode { get; set; }
     public bool ReusableEditor { get; set; }
     public int Index { get; set; } = -1;
