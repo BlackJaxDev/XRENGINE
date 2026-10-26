@@ -92,7 +92,13 @@ public sealed class PhysicsChainShaderContractTests
         string source = ReadPhysicsChainShader("PhysicsChainBonePalette.comp").Replace("\r\n", "\n");
 
         source.ShouldContain("layout(row_major, std430, binding = 4) readonly buffer BoneInvBindMatricesBuffer");
-        int columnMatrixIndex = source.IndexOf("mat4 boneWorldColumn = mat4(", StringComparison.Ordinal);
+        string bonePose = ReadPhysicsChainShader("PhysicsChainBonePose.glslinc").Replace("\r\n", "\n");
+
+        // The shared helper builds the bone world matrix in column-vector form.
+        source.ShouldContain("#include \"Compute/PhysicsChain/PhysicsChainBonePose.glslinc\"");
+        bonePose.ShouldContain("mat4 composeChainBoneWorld(");
+        bonePose.ShouldContain("return mat4(vec4(basis[0], 0.0), vec4(basis[1], 0.0), vec4(basis[2], 0.0), vec4(position, 1.0));");
+        int columnMatrixIndex = source.IndexOf("mat4 boneWorldColumn = composeChainBoneWorld(", StringComparison.Ordinal);
         int transposeIndex = source.IndexOf("mat4 boneWorldRow = transpose(boneWorldColumn);", StringComparison.Ordinal);
         int composeIndex = source.IndexOf(
             "mat4 skinMatrix = BoneInvBindMatrices[mapping.BoneMatrixIndex] * boneWorldRow;",
@@ -183,9 +189,17 @@ public sealed class PhysicsChainShaderContractTests
         swapIndex.ShouldBeGreaterThanOrEqualTo(0);
         outputBindIndex.ShouldBeGreaterThan(swapIndex);
         source.ShouldContain(
-            "SetGpuDrivenSkinPaletteSource(\n                binding.Component,\n                _gpuDrivenSkinPaletteBuffer!,\n                _gpuDrivenPreviousSkinPaletteBuffer,");
-        source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer?.Dispose();");
+            "SetGpuDrivenSkinPaletteSource(\n                    binding.Component,\n                    _gpuDrivenSkinPaletteBuffer!,\n                    _gpuDrivenPreviousSkinPaletteBuffer,");
         source.ShouldContain("_gpuDrivenPreviousSkinPaletteBuffer = null;");
+
+        // The unpaged buffers and the output pages own the palette allocations.
+        string outputPages = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.OutputPages.cs").Replace("\r\n", "\n");
+        source.ShouldContain("_unpagedPreviousSkinPaletteBuffer = _gpuDrivenPreviousSkinPaletteBuffer;");
+        source.ShouldContain("DisposeUnpagedPaletteBuffers();");
+        outputPages.ShouldContain("_unpagedPreviousSkinPaletteBuffer?.Dispose();");
+        outputPages.ShouldContain("_unpagedPreviousSkinPaletteBuffer = null;");
+        outputPages.ShouldContain("page.PreviousPalette?.Dispose();");
     }
     [Test]
     public void Dispatcher_BatchesPartialPalettesIntoGlobalAtlasWithoutPerRendererDispatches()
@@ -204,8 +218,11 @@ public sealed class PhysicsChainShaderContractTests
         palette.ShouldContain("if (!binding.DrivesCompleteBonePalette)");
         palette.ShouldContain("TryCopyBuffer(backend, copy, \"partial-palette-seed\")");
         palette.ShouldContain("PartialPaletteSeedCompletionPass");
-        dispatcher.ShouldContain("PublishBatchedGpuDrivenBoneMatrices(backend, _dispatchGroup)");
-        dispatcher.ShouldContain("if (!request.Component.HasGpuDrivenRenderers || batchedBonePalettePublished)");
+        // Every registered output goes through the batched atlas. No per-renderer fallback exists.
+        dispatcher.ShouldContain(
+            "if (!PublishBatchedGpuDrivenBoneMatrices(backend, _outputPublicationRequests))\n                return RecordDispatchFailure(\"BatchedPalettePublication\");");
+        dispatcher.ShouldNotContain("PublishGpuDrivenBoneMatrices(");
+        dispatcher.ShouldNotContain("batchedBonePalettePublished");
         dispatcher.ShouldNotContain("includeCompletePalettes: !batchedBonePalettePublished");
     }
 
