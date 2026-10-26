@@ -64,7 +64,9 @@ public sealed class GpuIndirectProgramContractTests
     {
         string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         string gpuPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.Core.cs");
-        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs");
+        string commandSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Traditional/VPRC_RenderMeshesPassTraditional.cs")
+            .Replace("\r\n", "\n");
+        string meshletSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/MeshRendering/Meshlet/VPRC_RenderMeshesPassMeshlet.cs");
 
         managerSource.ShouldContain("EnsureZeroReadbackMaterialSlotProgramsReady(");
         managerSource.ShouldContain("EnsureZeroReadbackActiveBucketProgramsReady(");
@@ -73,8 +75,18 @@ public sealed class GpuIndirectProgramContractTests
         managerSource.ShouldNotContain("TryForceSynchronousOpenGLProgramLink");
         managerSource.ShouldNotContain("forceSynchronousLink");
         gpuPassSource.ShouldContain("ZeroReadbackProgramPendingThisFrame");
-        commandSource.ShouldContain("ShouldUseOpenGLZeroReadbackProgramWarmupFallback");
+        // The traditional pass skips the frame while programs warm up and
+        // never runs the CPU safety net for a zero-readback strategy.
+        commandSource.ShouldContain("if (gpuPass.GpuProgramsPendingThisFrame)\n                return;");
+        commandSource.ShouldContain("if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())\n                return;");
+        commandSource.ShouldContain("bool allowCpuSafetyNet = IsExplicitCpuFallbackAllowed(meshSubmissionStrategy);");
         commandSource.ShouldContain("RenderCPUMeshOnly(command.RenderPass)");
+        // Only the OpenGL meshlet pass uses the CPU safety net while
+        // asynchronous programs warm up, and never for zero readback.
+        meshletSource.ShouldContain("if (ShouldUseOpenGLMeshletProgramWarmupFallback(meshSubmissionStrategy, gpuPass))");
+        meshletSource.ShouldContain("&& !strategy.IsGpuZeroReadbackStrategy()");
+        meshletSource.ShouldContain("&& gpuPass.ZeroReadbackProgramPendingThisFrame;");
+        meshletSource.ShouldContain("commands.RenderCPUMeshOnly(command.RenderPass);");
     }
 
     [Test]
@@ -163,7 +175,9 @@ public sealed class GpuIndirectProgramContractTests
         managerSource.ShouldContain("layout(location=27) flat out uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
         managerSource.ShouldContain("layout(location=27) flat in uint {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
         managerSource.ShouldContain("uint renderIdentityID = {DefaultVertexShaderGenerator.FragRenderIdentityIdName};");
-        managerSource.ShouldContain("FragRenderIdentityIdName} = XRE_LoadDrawMetadata(commandIndex).RenderIdentityID;");
+        managerSource.ShouldContain("DrawMetadata drawMetadata = XRE_LoadDrawMetadata(commandIndex);");
+        managerSource.ShouldContain("FragRenderIdentityIdName} = drawMetadata.RenderIdentityID;");
+        managerSource.ShouldContain("FragRenderIdentityIdName} = XRE_LoadDrawMetadata(drawID).RenderIdentityID;");
         deferredSource.ShouldContain("layout (location = 21) flat in uint FragTransformId;");
         deferredSource.ShouldContain("layout (location = 27) flat in uint FragRenderIdentityId;");
         deferredSource.ShouldContain("TransformId = FragRenderIdentityId;");
