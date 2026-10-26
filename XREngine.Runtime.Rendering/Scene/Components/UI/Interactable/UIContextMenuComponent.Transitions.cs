@@ -21,8 +21,12 @@ public partial class UIContextMenuComponent
             Transform = ObjectConstructionIdentity.Capture(Transform),
             Parent = Transform.Parent is { } parent ? ObjectConstructionIdentity.Capture(parent) : null
         };
-        if (_transitioning)
-            return;
+        if (!_transitioning)
+            DrainTransitions();
+    }
+
+    private void DrainTransitions()
+    {
         _transitioning = true;
         try
         {

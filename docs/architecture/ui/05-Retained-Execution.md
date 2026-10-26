@@ -2507,6 +2507,38 @@ changes during setup or creation. It validates before publishing `_virtualList`
 and before assigning `scroll.List`. Provider-created children keep the existing
 content-owner policy; the factory receipt claims only the new component. These
 changes complete the backdrop and virtual-scroll factory integration. The
-separate `OpenItemSubmenu` host-node/component factory still uses ordinary
-construction and needs its own owner/attachment review. Arbitrary custom builders
-and reserved retirement of adopted graphs also remain separate.
+`OpenItemSubmenu` factory uses the detached construction path below. Arbitrary
+custom builders and reserved retirement of adopted graphs remain separate.
+
+
+## Guarded submenu construction
+
+`UIContextMenuComponent.SubmenuConstruction` builds a submenu with its final
+`UIBoundableTransform` and a guarded component receipt while detached. It keeps
+the candidate private until attachment callbacks finish. Admission pins the
+owner show, row binding, item, host, and pending request. Opening holds the existing
+transition gate for its menu and ancestors, but does not take an already-held
+gate. Root Show/Hide requests keep their captured authority and drain from child
+to root after attachment unwinds. The candidate also queues an independent Show
+requested inside attachment until that mutation ends. No scene guard is bypassed.
+After attachment unwinds, an obsolete candidate uses ordinary exact-owned destruction.
+A never-adopted failed leaf uses its existing retirement receipt. A transferred
+candidate stays intact, with failed retirement evidence retained.
+
+The menu publishes the accepted construction and submenu show version together.
+The opening guard also covers closure of the previous submenu, so a dismissal
+callback cannot publish an intermediate sibling that the outer call overwrites.
+Show, focus, and action admission recheck the exact component and attachment.
+Cleanup checks the captured owner independently of the expired row binding.
+It checks again after Hide callbacks and preserves a transferred node or a newer
+independent show, even if that newer show is closed. Hidden submenus retain their
+captured cleanup ownership across owner deactivation. A child Hide queued during
+its own Show is cleaned up only after that transition unwinds.
+
+All ordinary menu factories now use the existing guarded contracts: ordinary
+rows and decorations, the scroll root and list, backdrop and virtual-scroll
+components, and submenu host/component creation. This does not make arbitrary
+custom/provider graphs eligible for reserved retirement. Existing adopted-child
+destruction remains the policy; no graph reservation or new ownership framework
+was added. Borrowed children and caller-created graphs require a separate explicit
+ownership contract before stronger retirement guarantees can be made.

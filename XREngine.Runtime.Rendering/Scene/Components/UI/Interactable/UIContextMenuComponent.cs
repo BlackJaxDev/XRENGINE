@@ -139,7 +139,8 @@ namespace XREngine.Rendering.UI
         private UIContextMenuComponent? _ownerMenu;
         private ulong _ownerShowRevision;
         private UIContextMenuComponent? _submenu;
-        private SceneNode? _submenuNode;
+        private UIContextMenuLeafConstruction? _submenuConstruction;
+        private ulong _submenuShowRevision;
         private UIContextMenuItemComponent? _submenuRow;
         private bool _openingSubmenu;
         private SceneNode? _contentRoot;
@@ -726,6 +727,8 @@ namespace XREngine.Rendering.UI
             => _isOpen && HasCurrentShowLifetime(showRevision) &&
                 (_ownerMenu is null ||
                     (ReferenceEquals(_ownerMenu._submenu, this) && _ownerMenu._submenuRow is { } row &&
+                        _ownerMenu._submenuConstruction?.OwnsAttachedNode() == true &&
+                        _ownerMenu._submenuShowRevision == showRevision &&
                         _ownerMenu.IsCurrentItem(row, _ownerShowRevision)));
 
         // A newer request cancels construction at its next boundary. Keep it queued
@@ -789,60 +792,58 @@ namespace XREngine.Rendering.UI
             if (_openingSubmenu || !IsCurrentItem(row, showRevision) ||
                 row.Item is not { HasSubmenu: true, Enabled: true } item)
                 return false;
-            if (_submenu is { _isOpen: true } current && ReferenceEquals(_submenuRow, row))
+            if (_submenu is { _isOpen: true } current && ReferenceEquals(_submenuRow, row) &&
+                _submenuConstruction?.OwnsAttachedNode() == true &&
+                ReferenceEquals(current._ownerMenu, this) && current._showRevision == _submenuShowRevision)
             {
+                UIContextMenuLeafConstruction construction = _submenuConstruction!;
+                ulong expectedShowRevision = _submenuShowRevision;
                 if (focusFirstItem)
                     current.RequestFirstItemFocus(row);
                 else
                     current.CancelNavigationFocus();
-                return IsCurrentItem(row, showRevision) && current.IsCurrentShow(current._showRevision);
-            }
-            CloseSubmenu(refocusRow: false);
-            if (!IsCurrentItem(row, showRevision) ||
-                SceneNode.Parent is not { } host)
+                if (IsCurrentItem(row, showRevision) && _pendingTransition is null &&
+                    ReferenceEquals(_submenu, current) && ReferenceEquals(_submenuConstruction, construction) &&
+                    construction.OwnsAttachedNode() && ReferenceEquals(current._ownerMenu, this) &&
+                    current.IsCurrentShow(expectedShowRevision))
+                    return true;
+                CloseConstructedSubmenu(construction, current, expectedShowRevision);
                 return false;
-
+            }
             _openingSubmenu = true;
+            List<UIContextMenuComponent> heldTransitions = HoldSubmenuTransitions();
+            UIContextMenuComponent? opened = null;
+            ulong openedRevision = 0;
+            Exception? openingFailure = null;
             try
             {
-                SceneNode node = host.NewChild();
-                node.Name = "ContextSubmenu";
-                node.SetTransform<UIBoundableTransform>();
-                UIContextMenuComponent submenu = node.AddComponent<UIContextMenuComponent>()!;
-                _submenu = submenu;
-                _submenuNode = node;
-                _submenuRow = row;
-                if (!IsCurrentItem(row, showRevision))
+                CloseSubmenu(refocusRow: false);
+                if (IsCurrentItem(row, showRevision) && !HasPendingSubmenuTransition() &&
+                    SceneNode.Parent is { } host &&
+                    BuildItemSubmenu(host, row, showRevision, item, focusFirstItem))
                 {
-                    CloseSubmenu(refocusRow: false);
-                    return false;
+                    opened = _submenu;
+                    openedRevision = _submenuShowRevision;
                 }
-                submenu.PreferredWidth = PreferredWidth;
-                submenu._ownerMenu = this;
-                submenu._ownerShowRevision = showRevision;
-                ContextMenuItem[] items = new ContextMenuItem[item.SubmenuItems.Count];
-                for (int index = 0; index < items.Length; index++)
-                    items[index] = item.SubmenuItems[index];
-                submenu.ShowCore(ResolveSubmenuPosition(item, submenu.PreferredWidth), items,
-                    null, subscribeForDismiss: false);
-                // A show callback can close this menu or replace the submenu.
-                if (!IsCurrentItem(row, showRevision) ||
-                    !ReferenceEquals(_submenu, submenu) || !submenu._isOpen ||
-                    !ReferenceEquals(submenu._ownerMenu, this))
-                {
-                    if (ReferenceEquals(_submenu, submenu))
-                        CloseSubmenu(refocusRow: false);
-                    return false;
-                }
-                if (focusFirstItem)
-                    submenu.RequestFirstItemFocus(row);
-                return IsCurrentItem(row, showRevision) && ReferenceEquals(_submenu, submenu) &&
-                    submenu.IsCurrentShow(submenu._showRevision);
+            }
+            catch (Exception failure)
+            {
+                openingFailure = failure;
+                throw;
             }
             finally
             {
-                _openingSubmenu = false;
+                try { ReleaseSubmenuTransitions(heldTransitions); }
+                catch (Exception drainFailure) when (openingFailure is not null)
+                {
+                    throw new AggregateException("Submenu construction and queued transition failed.",
+                        openingFailure, drainFailure);
+                }
+                finally { _openingSubmenu = false; }
             }
+            return opened is not null && ReferenceEquals(_submenu, opened) &&
+                IsCurrentItem(row, showRevision) && ReferenceEquals(opened._ownerMenu, this) &&
+                opened.IsCurrentShow(openedRevision);
         }
 
         /// <summary>Closes this submenu from one of its rows and returns focus to the owner row.</summary>
@@ -880,23 +881,31 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private void CloseSubmenu(bool refocusRow, bool destroyNode = true)
         {
-            UIContextMenuComponent? submenu = _submenu;
-            SceneNode? node = _submenuNode;
+            UIContextMenuLeafConstruction? construction = _submenuConstruction;
+            ulong submenuShowRevision = _submenuShowRevision;
             UIContextMenuItemComponent? row = _submenuRow;
             _submenu = null;
             _submenuRow = null;
             if (destroyNode)
-                _submenuNode = null;
-            if (submenu is not null && !submenu.IsDestroyed)
+                _submenuConstruction = null;
+            // Opening admission can expire before cleanup. Use the captured node and
+            // component ownership, not the old row binding, to release this submenu.
+            if (construction is not null && construction.OwnsAttachedNode())
             {
-                submenu._ownerMenu = null;
+                UIContextMenuComponent submenu = construction.Node.GetComponent<UIContextMenuComponent>()!;
+                if (submenu._showRevision != submenuShowRevision)
+                    return;
+                if (ReferenceEquals(submenu._ownerMenu, this))
+                    submenu._ownerMenu = null;
                 if (destroyNode)
                     submenu.Hide();
                 else
                     submenu.HideCore(clearMenuItems: false);
+                // Hide callbacks can transfer this node or open a new independent show.
+                if (destroyNode && construction.OwnsAttachedNode() && !submenu.IsOpen &&
+                    submenu._showRevision == submenuShowRevision)
+                    construction.Node.Destroy(true);
             }
-            if (destroyNode && node is not null && !node.IsDestroyed)
-                node.Destroy(true);
             if (refocusRow && row is not null && IsCurrentItem(row, row.ShowRevision) &&
                 UITransform.GetCanvasComponent()?.GetInputComponent() is { } input)
                 input.TryFocusPresented(row);
@@ -1102,16 +1111,8 @@ namespace XREngine.Rendering.UI
             UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompletePlacement);
             CancelNavigationFocus();
             UnsubscribeForDismiss();
-            UIContextMenuComponent? submenu = _submenu;
-            SceneNode? submenuNode = _submenuNode;
-            _submenu = null;
-            _submenuNode = null;
-            _submenuRow = null;
+            CloseSubmenu(refocusRow: false);
             _ownerMenu = null;
-            if (submenu is not null && !submenu.IsDestroyed)
-                submenu._ownerMenu = null;
-            if (submenuNode is not null && !submenuNode.IsDestroyed)
-                submenuNode.Destroy(true);
             _items = [];
             _virtualProvider = null;
             _contentBuilder = null;

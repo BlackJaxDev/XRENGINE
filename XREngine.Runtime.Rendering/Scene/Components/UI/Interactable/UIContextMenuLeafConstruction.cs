@@ -62,7 +62,7 @@ internal sealed class UIContextMenuLeafConstruction
         RequireDetached();
         Transform.SetParent(_parentTransform, false, EParentAssignmentMode.Immediate);
         RequireParent();
-        if (!IsOwnedAttachment())
+        if (!OwnsAttachedNode())
             throw new InvalidOperationException("A menu leaf changed ownership during attachment.");
     }
 
@@ -96,14 +96,18 @@ internal sealed class UIContextMenuLeafConstruction
             ReferenceEquals(Node.World, Retirement.SourceWorld) &&
             ReferenceEquals(Transform.World, Retirement.SourceWorld);
 
-    private bool IsOwnedAttachment()
+    internal bool OwnsAttachedNode()
     {
-        if (!IsLiveLeaf() || !ReferenceEquals(Transform.Parent, _parentTransform))
+        if (!_parentIdentity.IsCurrent || !_parentTransformIdentity.IsCurrent ||
+            !ReferenceEquals(_parent.Transform, _parentTransform) ||
+            !ReferenceEquals(_parentTransform.Parent, _grandparent) ||
+            !ReferenceEquals(_parent.World, Retirement.SourceWorld) || !IsLiveLeaf() ||
+            !ReferenceEquals(Transform.Parent, _parentTransform))
             return false;
         foreach (RuntimeComponentCreationReceipt attempt in _attempts)
             if (attempt.ClaimedIdentity is not { IsCurrent: true } || !attempt.IsInserted ||
                 attempt.Component is not { IsDestroyed: false, IsDestroyQueued: false } component ||
-                !ReferenceEquals(component.SceneNode, Node) ||
+                !ReferenceEquals(component.SceneNode, Node) || !Node.Components.Contains(component) ||
                 !ReferenceEquals(component.World, Retirement.SourceWorld))
                 return false;
         return true;
@@ -114,7 +118,7 @@ internal sealed class UIContextMenuLeafConstruction
     {
         // Attachment callbacks can cancel the show after adoption. The normal content
         // owner releases an attached leaf. Never detach it to force receipt admission.
-        if (IsOwnedAttachment())
+        if (OwnsAttachedNode())
             return true;
         return Retirement.SourceWorld is { } world
             ? Retirement.TryRetireFromWorld(world) : Retirement.TryRetire();

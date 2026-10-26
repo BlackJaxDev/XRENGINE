@@ -2181,7 +2181,7 @@ checklist or permission request.
 | Direct-world clipping | Vulkan direct-world publication/clipping and unsupported world output profiles; bounded OpenGL canvas output already exists. | World-shadow and bindless-use choices remain open. OpenGL/Vulkan GPU and visual checks remain required. |
 | Inspector | Existing-key edit/remove across distinct selected curves; partial-key/multiline dictionary cases; tall/custom collection editors and remaining nested row coverage. Top-level property rows and supported fixed-height collections are already virtual. | Variable-height priority is an owner decision. Real-host multi-object Undo and scale checks remain. |
 | Native panels | Remaining AnimationPanel authoring, broader hierarchy clone profiles, and document-end cleanup; full asset creation/recovery remains absent. Existing asset navigation, console, and bounded profiler views must not be reimplemented. | Persistent asset recovery proposal is held. Native panel workflow/visual acceptance remains. |
-| Shared controls | `OpenItemSubmenu` still uses ordinary host-node/component creation. Its exact owner/attachment integration is separate from the completed row/root/backdrop/virtual-scroll factories. Custom-content ownership and reserved adopted-subtree retirement need a clear graph contract. Full paragraph/fallback/accessibility coverage remains. | Paragraph analyzer choice is held. Native input, IME, accessibility, and visual checks remain. No arbitrary adopted graph was admitted. |
+| Shared controls | All ordinary menu factories now use existing guarded construction, including submenu host/component creation and matching close ownership. Custom-content ownership and reserved adopted-subtree retirement need a clear graph contract. Full paragraph/fallback/accessibility coverage remains. | Paragraph analyzer choice is held. Native input, IME, accessibility, and visual checks remain. No arbitrary adopted graph was admitted. |
 | Docking | Remaining cross-host focus/transfer-state parity. Existing dock tree mutation and tool-view transfer receipts are implemented. | Primary-window key migration is held. Mixed-DPI, pointer capture, overlap, and multi-window checks remain. |
 | Lifecycle state | Cross-host search drafts/focus, expansion, and complete play-mode paths. Same-panel hierarchy focus/rename and Animation search continuation are implemented. | Windows/live acceptance remains separate; the laptop is stopped. No new saved-state format is authorized. |
 | Drag/drop and Undo | `EditorFileDropHandler.ProcessFileDrop` still copies/imports and assigns a material slot outside shared Undo/dirty transactions. Canonical hierarchy mutations and guarded reference drops already exist. | The filesystem recovery design is held; do not implement a journal or change asset formats without that decision. |
@@ -2196,6 +2196,36 @@ not a reported permission denial.
 
 The next product code work can focus on existing multi-curve key edits/removal
 or a bounded remaining inspector collection case under the current fixed-height
-policy. If menu coverage is selected instead, review the explicit
-`OpenItemSubmenu` factory and matching close ownership as one bounded unit.
-Do not replace these concrete gaps with unrelated callback hardening.
+policy. Ordinary menu factory integration is complete; menu implementation stops
+at the custom/adopted ownership boundary. Do not replace these concrete gaps with
+unrelated callback hardening.
+
+
+## Guarded submenu construction checkpoint
+
+`OpenItemSubmenu` now uses the existing detached leaf and guarded component
+receipts with its final transform. The candidate stays private through
+attachment. Opening uses existing transition gates for the owner chain and
+candidate; captured requests drain only after scene mutation ends. Exact source,
+attachment, and show-version checks preserve transferred and independent shows.
+Close ownership survives hidden retention, and queued child Hide cleanup waits
+until the child transition ends. The opening guard covers switching dismissal;
+post-focus results cannot accept a replacement show.
+
+All ordinary menu factories are now covered, including matching submenu close
+ownership. Existing-node backdrop/virtual-scroll factories are covered as well.
+Custom/provider content graphs and stronger reserved retirement of arbitrary
+adopted subtrees remain outside these contracts. No borrowed-graph policy was
+invented. Ordinary menu implementation stops here. The next bounded product
+chunk should come from the remaining-scope map above.
+
+Wrapper build 122 passed with zero warnings/errors. The matching unchanged
+source snapshot passed **243/243** affected portable cases, including all **22**
+new submenu cases. No full suite ran; the earlier 235/239 run and its repairs are
+recorded in the investigation and validation documents. The **47 Editor cases**
+remain separately unrun. No Windows/live/GPU/IME/performance acceptance is added.
+The broad implementation reconciliation remains **51/60**.
+
+This checkpoint changes only the same five public documentation paths listed
+for post-migration reconciliation. The private snapshot remains frozen at
+`2462125639af4750609c88730e96866d547a1f86`; this task makes no private writes.

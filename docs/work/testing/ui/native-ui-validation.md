@@ -1267,3 +1267,28 @@ cases). No full suite ran. Windows/live/GPU acceptance remains not run; the
 47 separate Editor cases remain unrun and are not covered by these portable tests.
 This does not validate arbitrary custom graph retirement or the separate submenu
 host factory.
+
+
+## Guarded submenu factory checks
+
+`UIContextMenuNavigationTests.SubmenuConstruction.cs` adds 22 portable cases.
+They cover pre-insertion failure, root cancellation/replacement during creation,
+attachment and Show, nested ancestor transitions, transferred attachment,
+post-Hide transfer, independent show preservation, retained hidden cleanup,
+switching reentry, and exact post-focus results. Scene ownership guards and
+existing assertions remain active. One new dismissal callback is explicitly
+single-use so that it does not start another interaction during fixture teardown.
+
+Build 120 found three incorrect new fixture calls; no tests ran from that build.
+Build 121 passed with zero warnings/errors in 1m20.33s. Its affected run passed
+235/239 and exposed the attachment queue requirement plus the fixture callback
+issue. After repair, wrapper build 122 passed with project references and
+`--no-restore`, zero warnings/errors, in 1m14.93s.
+
+The final five-fixture run uses the filter recorded above. It passed **243/243**
+in 6.129s, with zero failed, skipped, or incomplete cases. All 10,946 source inputs
+remained unchanged from the matching build through the test run. No full suite
+was repeated. These are Linux portable results, not Windows, native-window input,
+GPU, IME, visual, or performance acceptance. The separate **47 unrun Editor
+cases** remain 25 Animation search, 11 grouped-key, 7 linked-list, and 4 dictionary
+cases. This run does not replace their Windows execution.

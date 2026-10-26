@@ -2351,3 +2351,51 @@ It was not changed by the authorization limited to existing-node backdrop and
 virtual-scroll factories. The remaining-scope map records this exact gap; the
 work does not claim that every menu factory is now guarded. Custom/adopted graph
 retirement still requires a clear ownership contract, not weakened receipt admission.
+
+
+## Submenu factory and close ownership
+
+The final ordinary factory audit found that `OpenItemSubmenu` attached a default
+child before setting its transform and adding its component. Close paths kept
+only the node reference and could destroy it after a Hide callback transferred
+it. The new path uses the existing detached leaf/component receipts, private
+attachment, and captured submenu show version. It preserves transferred nodes
+and independent shows. Cleanup admission is separate from the expired owner row.
+
+Read-only review found and corrected switching-dismissal reentry, cleanup after
+a queued child Hide, retained hidden-node show-version ownership, and stale
+success after a focus callback starts an independent show. The first build
+(120) compiled production code but rejected three new fixture calls that omitted
+the required `out` argument. Build 121 passed with zero warnings/errors in
+1m20.33s after that correction and the final focus-result check.
+
+The first affected run completed 239 cases: 235 passed and four failed in 4.827s.
+Two attachment cases attempted root Show/Hide while the scene mutation lease was
+active. The independent candidate-show attachment case also needed deferred
+execution. These failures require the existing bounded transition queue; they do
+not justify weaker scene guards. The fourth failure came from a new fixture
+callback that reopened again during teardown. The callback now fires once for
+the intended interaction; assertions remain unchanged.
+
+The repair holds only transition gates acquired by this opening, keeps the
+original captured requests, and drains from child to root after attachment.
+Candidate requests also drain after attachment. Both failure/drain boundaries
+preserve the original exception if draining also fails. New cases cover a nested
+submenu that requests a root transition and a failed factory that queues a root
+request. No general ownership or queue framework was added.
+
+Build 122 passed through the wrapper with project references and no restore:
+zero warnings/errors, 1m14.93s. The final unchanged 10,946-source-input snapshot
+passed **243/243** affected cases in 6.129s. This includes all 22 new submenu
+cases, all existing menu navigation/teardown cases in the filter, and guarded
+component/detached-leaf retirement fixtures. No case failed, skipped, or remained
+incomplete. Evidence is in `build-122-submenu.log`,
+`menu-submenu-gated-affected.log`, and `menu-submenu-gated-affected.xml` under the
+existing ignored task run. No full suite or laptop run was performed.
+
+The final direct factory inventory covers ordinary rows, labels, arrows,
+separators/lines, scroll root/list, existing-node backdrop/virtual-scroll
+components, and submenu host/component creation. `CreateContentRoot` for custom
+and provider content keeps its existing populated-graph contract. Stronger
+reserved retirement of arbitrary adopted graphs remains a separate contract
+question. This concludes ordinary menu factory implementation.
