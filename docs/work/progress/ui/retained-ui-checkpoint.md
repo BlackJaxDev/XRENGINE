@@ -1829,3 +1829,10 @@ Matching editor/test build 85 passes with zero warnings/errors (4m47.57s).
 All 10,906 source inputs stayed unchanged through build 257, runs 212/213, and
 build 85. This is managed compilation on Linux; Windows execution of this repair
 is still pending. The separate rename draft is not part of the tested snapshot.
+
+Windows validation now accepts exact `a30061f4c` for the reported cleanup scope:
+8/8 finalizer regressions, 3/3 minimal reproducer cases, and 448/448 combined
+UI/focus cases pass, with no failures, skips, or incomplete cases. Both prior
+asset-spawn teardown cases pass. Build warnings/errors are zero; assertions and
+time limits are unchanged. This does not cover the separate rename candidate
+or live editor, GPU, native IME, and performance acceptance.
