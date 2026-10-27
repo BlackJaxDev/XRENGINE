@@ -387,28 +387,11 @@ public sealed class AdvancedDeformedVertexArena
     }
 
     private void DrainRetired(ulong completedValue)
-    {
-        for (int i = 0; i < _retiredStorage.Length; i++)
-        {
-            if (_retiredStorage[i] is null ||
-                _retiredCompletionValues[i] > completedValue)
-            {
-                continue;
-            }
-
-            _retiredStorage[i] = null!;
-            _retiredCompletionValues[i] = 0UL;
-            _retiredGenerationCount--;
-        }
-    }
+        => AdvancedDeformationRetirement.Drain(
+            _retiredStorage, _retiredCompletionValues, completedValue, ref _retiredGenerationCount);
 
     private int FindEmptyRetiredSlot()
-    {
-        for (int i = 0; i < _retiredStorage.Length; i++)
-            if (_retiredStorage[i] is null)
-                return i;
-        return -1;
-    }
+        => AdvancedDeformationRetirement.FindEmptySlot(_retiredStorage);
 
     private int FindOrAddOwner(AdvancedGpuHandle owner)
     {
@@ -486,12 +469,7 @@ public sealed class AdvancedDeformedVertexArena
     }
 
     private ulong MaximumSubmissionCompletionValue()
-    {
-        ulong maximum = 0UL;
-        for (int i = 0; i < _slotSubmissionValues.Length; i++)
-            maximum = Math.Max(maximum, _slotSubmissionValues[i]);
-        return maximum;
-    }
+        => AdvancedDeformationRetirement.MaximumCompletionValue(_slotSubmissionValues);
 
     private byte[][] EnsureCpuStorage()
         => _storage ??= CreateStorage(_options.FrameSlotCount, _vertexCapacity);

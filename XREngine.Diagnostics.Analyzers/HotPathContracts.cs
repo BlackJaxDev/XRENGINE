@@ -158,6 +158,9 @@ internal sealed class HotPathContracts
             return false;
         if (method.ContainingType.SpecialType == SpecialType.System_Object && method.MethodKind == MethodKind.Constructor && method.Parameters.Length == 0)
             return true;
+        if (method.ContainingType.SpecialType == SpecialType.System_Array && method.MethodKind == MethodKind.PropertyGet)
+            return method.Name == "get_Length" && method.Parameters.Length == 0 &&
+                method.ReturnType.SpecialType == SpecialType.System_Int32;
         if (method.ContainingType.SpecialType == SpecialType.System_String && method.MethodKind == MethodKind.PropertyGet)
             return method.Name is "get_Length" or "get_Chars";
         if (IsSpan(method.ContainingType) && method.MethodKind == MethodKind.PropertyGet)

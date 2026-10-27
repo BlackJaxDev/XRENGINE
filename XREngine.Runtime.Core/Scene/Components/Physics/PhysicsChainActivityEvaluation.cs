@@ -18,6 +18,8 @@ public static class PhysicsChainActivityEvaluation
         return float.IsFinite(error) ? error : float.PositiveInfinity;
     }
 
+    /// <summary>Tests the normalized activity error against the sleep threshold.</summary>
+    [global::Engine.Diagnostics.HotPath]
     public static bool IsQuiet(float normalizedErrorSquared)
         => normalizedErrorSquared <= 1.0f;
 

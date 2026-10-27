@@ -58,10 +58,14 @@ A call must meet one of these conditions:
 - Its exact target has `[HotPathTrusted("review reason")]`. The reason must not
   be empty. The trusted body is outside automatic verification.
 - It is an exact framework intrinsic: the parameterless `object` constructor,
-  string length or character indexing, or `Span<T>` / `ReadOnlySpan<T>` length,
+  `System.Array.Length`, string length or character indexing, or `Span<T>` / `ReadOnlySpan<T>` length,
   emptiness, or element indexing. No namespace-wide allowlist exists.
 
-Array length and indexed access use compiler operations. String and span
+Array indexed access uses compiler operations. Roslyn can represent array
+length as a property read, so its exact framework getter is accepted explicitly.
+The [CoreCLR implementation](https://github.com/dotnet/runtime/blob/v10.0.0/src/coreclr/System.Private.CoreLib/src/System/Array.CoreCLR.cs)
+reads the stored array length. This does not permit `Array.GetValue`, array
+cloning, or arbitrary properties named `Length`. String and span
 intrinsics do not authorize `Slice`, storage conversion, or arbitrary members
 of those types. Ref-returning element access is permitted for direct value
 access. Unsupported ref aliases to those elements are rejected separately.
@@ -180,16 +184,27 @@ This prevents duplicate-type warnings across `InternalsVisibleTo` references.
 The generator emits the embedded attribute definition with the Roslyn 4.14
 helper, following the [Roslyn marker attribute guidance](https://github.com/dotnet/roslyn/blob/main/docs/features/incremental-generators.cookbook.md#put-microsoftcodeanalysisembeddedattribute-on-generated-marker-types).
 
-The initial engine coverage uses the unchanged strict contract:
+The engine coverage uses the strict contract:
 
 | Project and method | Checked work |
 | --- | --- |
 | `XREngine.Runtime.Core`: `PhysicsChainScalarReferenceKernel.Publish` | Copies particle state into preallocated outputs after scalar and AVX2 simulation steps |
 | `XREngine.Runtime.Rendering`: `AdvancedIndexedInstanceGroupPlanner.Hash` overloads and `HashWord` | Hashes retained geometry, material words, and bytes for indexed instance groups |
+| `XREngine.Runtime.Core`: `PhysicsChainSimulationClock.SetCadenceProgress` and `ResolveLoop` | Updates cadence progress and counts due simulation steps |
+| `XREngine.Runtime.Core`: `PhysicsChainActivityEvaluation.IsQuiet` | Checks normalized activity against the sleep threshold |
+| `XREngine.Runtime.Core`: `PhysicsChainCpuBackend.PublishInitialOutputs` and `NextGeneration` | Copies initial particle output and advances the output generation |
+| `XREngine.Runtime.Rendering`: `AdvancedDeformationRetirement.Drain`, `FindEmptySlot`, and `MaximumCompletionValue` | Releases completed storage, finds a free slot, and scans frame completion values |
 
 The physics output span must have at least one slot per state. Input and output
 storage must not overlap. Hash storage must not overlap the byte input. These
 are caller preconditions, not proofs made by the analyzer.
+
+The cadence loop requires a positive finite rate and a positive, bounded
+catch-up limit. The retirement scan receives equal-length
+storage and completion arrays. Its caller owns those arrays and the generation
+count during the scan. Retirement scans use a stateless type so the checked
+bodies do not depend on the arena's unchecked static initialization. Allocation
+and resource publication remain the arena's responsibility outside these scans.
 
 The 64-bit hash appends its low and high words through a value-returning helper.
 This preserves word order and arithmetic while avoiding two mutable borrows

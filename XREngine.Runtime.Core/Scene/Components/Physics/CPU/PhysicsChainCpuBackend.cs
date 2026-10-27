@@ -624,6 +624,9 @@ public sealed partial class PhysicsChainCpuBackend : IPhysicsChainCpuBatchExecut
         return new PhysicsChainCpuBounds(minimum, maximum);
     }
 
+    /// <summary>Copies initial particle state into preallocated output storage.</summary>
+    /// <remarks>The output span must contain at least one slot per state. The spans must not overlap.</remarks>
+    [global::Engine.Diagnostics.HotPath]
     private static void PublishInitialOutputs(ReadOnlySpan<PhysicsChainCpuState> states, Span<PhysicsChainCpuOutput> outputs)
     {
         for (int particleIndex = 0; particleIndex < states.Length; ++particleIndex)
@@ -634,6 +637,8 @@ public sealed partial class PhysicsChainCpuBackend : IPhysicsChainCpuBatchExecut
         }
     }
 
+    /// <summary>Advances the output generation and skips the reserved zero value.</summary>
+    [global::Engine.Diagnostics.HotPath]
     private static uint NextGeneration(uint generation)
     {
         unchecked { ++generation; }

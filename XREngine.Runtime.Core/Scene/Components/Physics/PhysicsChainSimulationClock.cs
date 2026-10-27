@@ -24,12 +24,16 @@ internal struct PhysicsChainSimulationClock
         FixedRenderAccumulatedTicks = 0L;
     }
 
+    /// <summary>Sets the retained progress for the current simulation cadence.</summary>
+    [global::Engine.Diagnostics.HotPath]
     public void SetCadenceProgress(float progress, float rate)
     {
         CadenceProgress = progress;
         ElapsedSeconds = rate > 0.0f ? progress / rate : 0.0f;
     }
 
+    /// <summary>Counts the simulation steps due from accumulated frame time.</summary>
+    [global::Engine.Diagnostics.HotPath]
     public void ResolveLoop(float deltaSeconds, float rate, int maximumCatchUpSteps, out int loop, out float stepDelta)
     {
         float frameTime = 1.0f / rate;

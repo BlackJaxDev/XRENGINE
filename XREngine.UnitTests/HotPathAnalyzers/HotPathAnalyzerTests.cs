@@ -119,6 +119,13 @@ public sealed class HotPathAnalyzerTests
         yield return Case("RefReturnRejected", "int field; [HotPath] ref int M() => ref field;", 0, 0, 1);
         yield return Case("StringIntrinsics", "[HotPath] int M(string value) => value.Length > 0 ? value[0] : 0;", 0);
         yield return Case("SpanIntrinsics", "[HotPath] void M(Span<int> value) { for (int i = 0; i < value.Length; i++) value[i]++; }", 0);
+        yield return Case("ArrayLengthLoop", "[HotPath] void M(int[] values) { for (int i = 0; i < values.Length; i++) values[i]++; }", 0);
+        yield return Case("JaggedArrayLengthLoop", "[HotPath] int M(byte[][][] values) { int count = 0; for (int i = 0; i < values.Length; i++) if (values[i] != null) count += values[i].Length; return count; }", 0);
+        yield return Case("MultidimensionalArrayLength", "[HotPath] int M(int[,] values) => values.Length;", 0);
+        yield return Case("ArrayBaseLength", "[HotPath] int M(Array values) => values.Length;", 0);
+        yield return Case("ArrayGetValueRejected", "[HotPath] object M(int[] values) => values.GetValue(0);", 0, 0, 1);
+        yield return Case("ArrayCloneRejected", "[HotPath] object M(int[] values) => values.Clone();", 0, 0, 1);
+        yield return Case("UnverifiedLengthRejected", "int Length => 0; [HotPath] int M(C value) => value.Length;", 0, 0, 1);
         yield return Case("ArraySliceRejected", "[HotPath] int[] M(int[] values) => values[1..];", 0, 0, 2);
         yield return Case("UsingRejected", "[HotPath] void M(IDisposable value) { using (value) {} }", 0, 0, 1);
         yield return Case("LockRejected", "[HotPath] void M(object value) { lock (value) {} }", 0, 0, 1);
