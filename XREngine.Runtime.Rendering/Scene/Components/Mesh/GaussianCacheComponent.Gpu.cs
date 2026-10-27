@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
@@ -7,6 +8,7 @@ using XREngine.Rendering.Gaussian;
 using XREngine.Rendering.Models.Gaussian.Cache;
 using XREngine.Rendering.Models.Gaussian.Cache.Encoding;
 using XREngine.Rendering.Models.Materials;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Components.Scene.Mesh;
 
@@ -88,6 +90,25 @@ public partial class GaussianCacheComponent
     /// <summary>Number of workgroups that the compute shaders dispatch for <paramref name="count"/> invocations.</summary>
     public static uint GetGroupCount(uint count)
         => Math.Max(1u, (count + ComputeLocalSize - 1u) / ComputeLocalSize);
+
+    /// <summary>
+    /// True when the GPU holds all data that the cache has decoded and the passes prepared the splats of that data at
+    /// least one time, so that the next draw shows the full cache. It is false while a new cache or a new chunk waits
+    /// for the next PreRender call, and when no cache is set. Read it on the render thread.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public bool IsGpuDataReady
+    {
+        get
+        {
+            if (!_gate.CanDispatch || !_hasPreparedSplats)
+                return false;
+
+            lock (_uploadSync)
+                return !_trackerChanged && _pendingUploads.Count == 0 && _gate.Accepts(_tracker);
+        }
+    }
 
     /// <summary>PreRender callback: applies new data, poses the drivers, chooses and poses the splats, and sorts them.</summary>
     private void PrepareSplats()

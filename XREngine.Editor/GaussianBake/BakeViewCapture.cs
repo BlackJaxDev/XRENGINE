@@ -19,6 +19,11 @@ namespace XREngine.Editor.GaussianBake;
 /// the first pose until the renderer has no mesh generation or shader linking left, then renders and reads back
 /// one pose for each dispatch. The capture follows the detached-viewport method of the octahedral impostor generator.
 /// </summary>
+/// <remarks>
+/// Without a sink, the capture keeps all views and gives them in <see cref="Completion"/>. With an
+/// <see cref="IBakeViewSink"/>, the capture gives each view to the sink when the sink can take it, keeps no view,
+/// and also waits in the warm-up until the sink reports that the content is ready.
+/// </remarks>
 internal sealed class BakeViewCapture
 {
     /// <summary>The number of warm-up renders before the capture can start.</summary>
@@ -41,6 +46,7 @@ internal sealed class BakeViewCapture
     private readonly int _width;
     private readonly int _height;
     private readonly CancellationToken _cancellationToken;
+    private readonly IBakeViewSink? _sink;
     private readonly TaskCompletionSource<float[][]> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly float[][] _views;
     private readonly Stopwatch _warmupTime = new();
@@ -62,7 +68,8 @@ internal sealed class BakeViewCapture
         IReadOnlyList<BakeCameraPose> poses,
         int width,
         int height,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IBakeViewSink? sink = null)
     {
         _world = world;
         _targets = targets;
@@ -72,10 +79,14 @@ internal sealed class BakeViewCapture
         _width = width;
         _height = height;
         _cancellationToken = cancellationToken;
-        _views = new float[poses.Count][];
+        _sink = sink;
+        _views = sink is null ? new float[poses.Count][] : [];
     }
 
-    /// <summary>Gets the task that completes with one linear RGBA array for each pose, top row first.</summary>
+    /// <summary>
+    /// Gets the task that completes with one linear RGBA array for each pose, top row first. With a sink, it completes
+    /// with an empty array after the sink took every view.
+    /// </summary>
     public Task<float[][]> Completion => _completion.Task;
 
     /// <summary>Runs one coroutine dispatch on the render thread. Returns true when the capture is complete.</summary>
@@ -103,7 +114,15 @@ internal sealed class BakeViewCapture
                 return false;
             }
 
-            _views[_nextView] = RenderAndRead(renderer, _poses[_nextView], _nextView);
+            // A sink that is full gets no new view until its consumer catches up.
+            if (_sink is not null && !_sink.CanAccept)
+                return false;
+
+            float[] view = RenderAndRead(renderer, _poses[_nextView], _nextView);
+            if (_sink is null)
+                _views[_nextView] = view;
+            else
+                _sink.Accept(_nextView, view);
             _nextView++;
             if (_nextView < _poses.Count)
                 return false;
@@ -140,7 +159,8 @@ internal sealed class BakeViewCapture
             return;
 
         bool pending = HasPendingGpuWork(renderer, out int pendingMeshes, out bool pendingPrograms);
-        if (rendered && !pending)
+        bool contentReady = _sink?.IsContentReady ?? true;
+        if (rendered && !pending && contentReady)
         {
             _warm = true;
             Debug.Out($"[GaussianBake] Renderer is ready after {_warmupRenders} warm-up renders ({_warmupTime.Elapsed.TotalSeconds:F1} s).");
@@ -155,6 +175,13 @@ internal sealed class BakeViewCapture
             throw new GaussianBakeException(
                 GaussianBakeFailureCodes.CaptureFailed,
                 $"The renderer did not accept a capture view in {WarmupTimeout.TotalSeconds:F0} s.");
+        }
+
+        if (!contentReady)
+        {
+            throw new GaussianBakeException(
+                GaussianBakeFailureCodes.CaptureFailed,
+                $"The content was not ready to render after {WarmupTimeout.TotalSeconds:F0} s of warm-up renders.");
         }
 
         _warm = true;
@@ -189,6 +216,8 @@ internal sealed class BakeViewCapture
     /// <summary>Renders one pose into the capture framebuffer. Returns true when the renderer accepted the view.</summary>
     private bool RenderView(BakeCameraPose pose, int viewIndex, bool requireRender)
     {
+        _sink?.PrepareView(viewIndex);
+
         XRViewport viewport = _viewport!;
         RenderCommandCollection commands = _commands!;
         XRFrameBuffer frameBuffer = _frameBuffer!;
