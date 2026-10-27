@@ -82,10 +82,6 @@ public sealed partial class GaussianSplatRenderer : IDisposable
         };
         VisibleCount = CreateCounter(VisibleCountBufferName, VisibleCountBinding);
         Overflow = CreateCounter(OverflowBufferName, OverflowBinding);
-        // The CPU maps the overflow counter to read it. Immutable storage needs the read bit, and the
-        // dynamic storage bit keeps ResetCounters on a sub-data update.
-        Overflow.StorageFlags = EBufferMapStorageFlags.Read | EBufferMapStorageFlags.DynamicStorage;
-        Overflow.RangeFlags = EBufferMapRangeFlags.Read;
         _order = CreatePairs(OrderBufferName, slots, OrderBinding);
         _scratch = CreatePairs(ScratchBufferName, slots, null);
         _settingUniformsHandler = OnQuadSettingUniforms;
@@ -103,10 +99,7 @@ public sealed partial class GaussianSplatRenderer : IDisposable
     /// </summary>
     public XRDataBuffer VisibleCount { get; }
 
-    /// <summary>
-    /// Storage buffer of one unsigned integer that producers increment for each splat that does not fit.
-    /// The CPU can map it for reading.
-    /// </summary>
+    /// <summary>Storage buffer of one unsigned integer that producers increment for each splat that does not fit.</summary>
     public XRDataBuffer Overflow { get; }
 
     /// <summary>Transform from the splat space (model space) to world space.</summary>

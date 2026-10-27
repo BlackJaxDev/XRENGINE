@@ -57,13 +57,21 @@ public partial class GaussianCacheComponent
     /// <summary>The culling volume grows by this multiple of the largest rest offset of a splat from its triangle.</summary>
     private const float BindingOffsetStretch = 1.5f;
 
+    /// <summary>The label of the GPU copy of the overflow counter.</summary>
+    private const string OverflowCopyLabel = "GaussianCacheOverflowReadback";
+
+    /// <summary>Reads the first unsigned integer of a mapped buffer. The delegate is made one time.</summary>
+    private static readonly DataBufferMappedReadCallback<uint> ReadFirstUInt = ReadFirstUIntCore;
+
     private readonly List<CacheUpload> _drainedUploads = [];
 
     // Render-thread state.
-    private UploadTracker? _gpuTracker;
+    private readonly GaussianCacheUploadGate _gate = new();
+    private readonly GaussianCacheOverflowCheck _overflowCheck = new();
     private CacheLayout? _gpuLayout;
-    private long _gpuLevelSequence;
     private long _gpuLoadedNodeCount;
+    private bool _hasPreparedSplats;
+    private XRDataBuffer? _overflowReadback;
     private XRDataBuffer? _records;
     private XRDataBuffer? _parents;
     private XRDataBuffer? _driverIndices;
@@ -76,7 +84,6 @@ public partial class GaussianCacheComponent
     private XRMeshRenderer? _quad;
     private XRMaterial? _ownedQuadMaterial;
     private XRGpuFence? _overflowFence;
-    private bool _overflowLogged;
 
     /// <summary>Number of workgroups that the compute shaders dispatch for <paramref name="count"/> invocations.</summary>
     public static uint GetGroupCount(uint count)
@@ -91,7 +98,8 @@ public partial class GaussianCacheComponent
         try
         {
             ApplyPendingUploads();
-            if (_gpuLayout is not { TotalNodeCount: > 0 } layout)
+            // Until the level table of the current cache is on the GPU, the buffers can hold data of another cache.
+            if (!_gate.CanDispatch || _gpuLayout is not { TotalNodeCount: > 0 } layout)
                 return;
 
             XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
@@ -113,6 +121,7 @@ public partial class GaussianCacheComponent
 
             renderer.ModelMatrix = model;
             renderer.Prepare(in view);
+            _hasPreparedSplats = renderer.HasOrder;
             TrackOverflow(renderer);
         }
         catch (Exception error)
@@ -121,10 +130,13 @@ public partial class GaussianCacheComponent
         }
     }
 
-    /// <summary>TransparentForward callback: draws the splats in the order from the PreRender call.</summary>
+    /// <summary>
+    /// TransparentForward callback: draws the splats in the order from the PreRender call. It draws nothing until the
+    /// passes of the current cache and renderer have run.
+    /// </summary>
     private void DrawSplats()
     {
-        if (IsDestroyed || _splatRenderer is not { HasOrder: true } renderer)
+        if (IsDestroyed || !_hasPreparedSplats || !_gate.CanDispatch || _splatRenderer is not { HasOrder: true } renderer)
             return;
 
         try
@@ -201,7 +213,7 @@ public partial class GaussianCacheComponent
                 BeginGpuCache(tracker);
             foreach (CacheUpload upload in _drainedUploads)
             {
-                if (ReferenceEquals(upload.Tracker, _gpuTracker))
+                if (_gate.Accepts(upload.Tracker))
                     ApplyUpload(upload);
             }
         }
@@ -211,14 +223,17 @@ public partial class GaussianCacheComponent
         }
     }
 
+    /// <summary>
+    /// Gives the GPU buffers to a new cache. The passes and the draw stay off until the first level table of the cache
+    /// arrives, and the level table on the GPU is cleared now, so no level of the old cache stays ready.
+    /// </summary>
     private void BeginGpuCache(UploadTracker? tracker)
     {
-        _gpuTracker = tracker;
+        _gate.Begin(tracker);
         _gpuLayout = tracker?.Layout;
-        _gpuLevelSequence = 0;
         _gpuLoadedNodeCount = 0;
-        _overflowLogged = false;
-        DropOverflowFence();
+        _hasPreparedSplats = false;
+        RearmOverflowCheck();
         if (_gpuLayout is not { } layout)
         {
             DisposeCacheBuffers();
@@ -231,6 +246,7 @@ public partial class GaussianCacheComponent
         _driverIndices = EnsureStorage<uint>(_driverIndices, "GaussianCacheDriverIndices", DriverIndicesBinding, layout.TotalIndexCount);
         _frames = EnsureStorage<ushort>(_frames, "GaussianCacheFrames", FramesBinding, layout.FrameValueCount);
         _levels = EnsureStorage<GaussianCacheGpuLevel>(_levels, "GaussianCacheLevels", LevelsBinding, layout.LevelCount);
+        Write(_levels, new UploadRange<GaussianCacheGpuLevel>(0u, new GaussianCacheGpuLevel[layout.LevelCount]));
         uint poseCount = (uint)Math.Max(layout.DriverVertexCount, 1);
         if (_driverPose is null || _driverPose.ElementCount < poseCount)
         {
@@ -259,10 +275,14 @@ public partial class GaussianCacheComponent
             Write(_frames!, range);
 
         // The level table and the loaded count come from the newest collect call.
-        if (upload.Sequence <= _gpuLevelSequence)
+        if (!_gate.AcceptLevelTable(upload.Tracker, upload.Sequence))
             return;
-        _gpuLevelSequence = upload.Sequence;
-        _gpuLoadedNodeCount = upload.LoadedNodeCount;
+        if (upload.LoadedNodeCount != _gpuLoadedNodeCount)
+        {
+            _gpuLoadedNodeCount = upload.LoadedNodeCount;
+            _overflowCheck.RearmForNewNodes();
+        }
+
         Write(_levels!, new UploadRange<GaussianCacheGpuLevel>(0u, upload.Levels));
     }
 
@@ -296,7 +316,9 @@ public partial class GaussianCacheComponent
         if (_splatRenderer is { } existing && existing.Capacity == capacity)
             return existing;
 
-        DropOverflowFence();
+        // The overflow counter of the old renderer is gone, and a new capacity can change the result of a read.
+        RearmOverflowCheck();
+        _hasPreparedSplats = false;
         _splatRenderer?.Dispose();
         _splatRenderer = null;
         _splatRenderer = new GaussianSplatRenderer(capacity);
@@ -337,64 +359,112 @@ public partial class GaussianCacheComponent
     }
 
     /// <summary>
-    /// Logs one time when chosen splats did not fit in the renderer. The read waits for a GPU fence, so it does not stall
-    /// the frame, and it reads the counter of a later frame. It runs only while the loaded nodes are more than the
-    /// capacity, because only then can the cut choose more splats than fit.
+    /// Logs one time when chosen splats did not fit in the renderer (see <see cref="GaussianCacheOverflowCheck"/>).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A read runs only while the loaded nodes are more than the capacity. It copies the overflow counter of this frame,
+    /// on the GPU and after the cut pass, into a small readback buffer that stays mapped (persistent, coherent, read
+    /// only), and then inserts a fence. A later frame polls the fence without a wait. After the fence signals, the copy
+    /// is complete and the CPU reads the mapped value. The read does not map a buffer and does not touch a buffer that
+    /// in-flight GPU work uses, so it does not wait for the GPU. No other read starts until this one ends.
+    /// </para>
+    /// <para>
+    /// One read ends the checks until the capacity, <see cref="MaxRenderedSplats"/>, or the cache changes, or more nodes
+    /// load (only when no overflow is logged). A backend without fences or GPU buffer copies never reads the counter, so
+    /// it does not log overflow. The strict zero-readback submission mode also stops the reads.
+    /// </para>
+    /// <para>
+    /// The readback buffer, its mapping, and the cached read delegate are made one time. The fence comes from the pool of
+    /// the backend and goes back to it when the read ends.
+    /// </para>
+    /// </remarks>
     private void TrackOverflow(GaussianSplatRenderer renderer)
     {
-        if (_overflowLogged || _gpuLoadedNodeCount <= renderer.Capacity ||
-            RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
-        {
-            DropOverflowFence();
-            return;
-        }
-
-        if (_overflowFence is null)
-        {
-            _overflowFence = AbstractRenderer.Current?.InsertGpuFence();
-            // A backend without fences reads now.
-            if (_overflowFence is not null)
-                return;
-        }
-        else
+        if (_overflowFence is not null)
         {
             EGpuFenceStatus status = _overflowFence.Poll();
             if (status == EGpuFenceStatus.Pending)
                 return;
+
             DropOverflowFence();
             if (status == EGpuFenceStatus.Failed)
+            {
+                _overflowCheck.ReadFailed();
                 return;
+            }
+
+            uint dropped = ReadMappedCounter(_overflowReadback);
+            if (_overflowCheck.ReadCompleted(dropped))
+            {
+                Debug.RenderingWarning(
+                    $"Gaussian cache component on '{SceneNode?.Name ?? GetType().Name}' chose {dropped} more splats than MaxRenderedSplats ({renderer.Capacity}) allows. The renderer drops them.");
+            }
+            return;
         }
 
-        uint dropped = ReadCounter(renderer.Overflow);
-        if (dropped == 0u)
+        if (!_overflowCheck.ShouldStartRead(_gpuLoadedNodeCount, renderer.Capacity))
             return;
 
-        _overflowLogged = true;
-        Debug.RenderingWarning(
-            $"Gaussian cache component on '{SceneNode?.Name ?? GetType().Name}' chose {dropped} more splats than MaxRenderedSplats ({renderer.Capacity}) allows. The renderer drops them.");
+        AbstractRenderer? api = AbstractRenderer.Current;
+        if (api is null || RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
+        {
+            _overflowCheck.ReadUnavailable();
+            return;
+        }
+
+        XRDataBuffer readback = EnsureOverflowReadback();
+        if (api.TryEnqueueGpuBufferCopy(renderer.Overflow, 0, readback, 0, sizeof(uint), OverflowCopyLabel) != ERendererComputeEnqueueStatus.Enqueued)
+        {
+            _overflowCheck.ReadUnavailable();
+            return;
+        }
+
+        if (!readback.IsMapped)
+            readback.MapBufferData();
+        api.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer);
+        _overflowFence = readback.IsMapped ? api.InsertGpuFence() : null;
+        if (_overflowFence is null)
+        {
+            _overflowCheck.ReadUnavailable();
+            return;
+        }
+
+        _overflowCheck.ReadStarted();
     }
 
-    private static uint ReadCounter(XRDataBuffer counter)
+    /// <summary>Creates the readback buffer of the overflow counter on the first call. It stays mapped for reading.</summary>
+    private XRDataBuffer EnsureOverflowReadback()
+        => _overflowReadback ??= new XRDataBuffer(OverflowCopyLabel, EBufferTarget.ShaderStorageBuffer, 4u, EComponentType.UInt, 1u, false, true)
+        {
+            Usage = EBufferUsage.StreamRead,
+            Resizable = false,
+            DisposeOnPush = false,
+            PadEndingToVec4 = true,
+            StorageFlags = EBufferMapStorageFlags.Read | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent,
+            RangeFlags = EBufferMapRangeFlags.Read | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent,
+        };
+
+    private static uint ReadMappedCounter(XRDataBuffer? readback)
     {
-        counter.MapBufferData();
-        try
-        {
-            uint value = 0u;
-            counter.TryReadMapped(ref value, static (scoped ReadOnlySpan<byte> bytes, ref uint result) =>
-            {
-                if (bytes.Length < sizeof(uint))
-                    return false;
-                result = BinaryPrimitives.ReadUInt32LittleEndian(bytes);
-                return true;
-            });
-            return value;
-        }
-        finally
-        {
-            counter.UnmapBufferData();
-        }
+        uint value = 0u;
+        readback?.TryReadMapped(ref value, ReadFirstUInt);
+        return value;
+    }
+
+    private static bool ReadFirstUIntCore(scoped ReadOnlySpan<byte> bytes, ref uint value)
+    {
+        if (bytes.Length < sizeof(uint))
+            return false;
+        value = BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+        return true;
+    }
+
+    /// <summary>Starts the overflow checks again and abandons a pending read.</summary>
+    private void RearmOverflowCheck()
+    {
+        DropOverflowFence();
+        _overflowCheck.Rearm();
     }
 
     private void DropOverflowFence()
@@ -426,21 +496,22 @@ public partial class GaussianCacheComponent
             _pendingUploads.Clear();
         }
 
-        XRDataBuffer?[] buffers = [_records, _parents, _driverIndices, _frames, _driverPose, _levels];
+        XRDataBuffer?[] buffers = [_records, _parents, _driverIndices, _frames, _driverPose, _levels, _overflowReadback];
         GaussianSplatRenderer? renderer = _splatRenderer;
         XRRenderProgram? driverPoseProgram = _driverPoseProgram;
         XRRenderProgram? splatsProgram = _splatsProgram;
         XRMeshRenderer? quad = _quad;
         XRMaterial? ownedMaterial = _ownedQuadMaterial;
         XRGpuFence? fence = _overflowFence;
-        _records = _parents = _driverIndices = _frames = _driverPose = _levels = null;
+        _records = _parents = _driverIndices = _frames = _driverPose = _levels = _overflowReadback = null;
         _splatRenderer = null;
         _driverPoseProgram = _splatsProgram = null;
         _quad = null;
         _ownedQuadMaterial = null;
         _overflowFence = null;
-        _gpuTracker = null;
+        _gate.Begin(null);
         _gpuLayout = null;
+        _hasPreparedSplats = false;
 
         RuntimeEngine.InvokeOnMainThread(
             () =>

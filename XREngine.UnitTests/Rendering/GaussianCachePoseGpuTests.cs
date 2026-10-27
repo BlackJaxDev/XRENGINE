@@ -125,16 +125,39 @@ public sealed class GaussianCachePoseGpuTests : GpuTestBase
         }, timeoutMs: 120_000);
     }
 
+    [Test, Category("Hardware")]
+    public void GpuPose_ClearedLevelTable_ChoosesNothing()
+    {
+        // When the component switches caches, it writes a level table with no ready level before the first table of the
+        // new cache arrives. The passes must then choose nothing, even over fully loaded records and frames.
+        GaussianCache cache = GaussianCacheTestSphere.Load(GaussianCacheTestSphere.Shared.Build());
+        float time = 12.5f / FrameRate;
+        Matrix4x4 view = Camera(3.0f);
+
+        RunWithGLContext(gl =>
+        {
+            RequireHardwareCompute(gl);
+            GpuResult result = RunPasses(gl, cache, time, view, totalCapacity: true, clearLevelTable: true);
+            result.Visible.ShouldBe(0u);
+            result.Overflow.ShouldBe(0u);
+            result.Splats.ShouldBeEmpty();
+        }, timeoutMs: 120_000);
+    }
+
     private readonly record struct GpuResult(uint Visible, uint Overflow, GaussianSplatGpuSplat[] Splats);
 
-    /// <summary>Uploads the decoded data of a cache as the component does, and runs both compute passes.</summary>
-    private static GpuResult RunPasses(GL gl, GaussianCache cache, float time, Matrix4x4 view, bool totalCapacity, int capacity = 0)
+    /// <summary>
+    /// Uploads the decoded data of a cache as the component does, and runs both compute passes. With
+    /// <paramref name="clearLevelTable"/>, the level table has no ready level, as the component writes it at a cache switch.
+    /// </summary>
+    private static GpuResult RunPasses(GL gl, GaussianCache cache, float time, Matrix4x4 view, bool totalCapacity, int capacity = 0, bool clearLevelTable = false)
     {
         GaussianCacheHeader header = cache.Header;
         GaussianCacheRuntimeData runtime = cache.Runtime;
         DriverFrameStore frames = runtime.Frames;
         GaussianCacheGpuLevel[] levels = new GaussianCacheGpuLevel[runtime.LevelRecords.Length];
-        GaussianCacheGpuLevel.Fill(cache, levels);
+        if (!clearLevelTable)
+            GaussianCacheGpuLevel.Fill(cache, levels);
         GaussianCacheSplatRecord[] records = [.. runtime.LevelRecords.SelectMany(level => level)];
         int[] parents = [.. runtime.ParentIndex.SelectMany(level => level)];
         uint[] indices = [.. runtime.DriverLevelIndices.SelectMany(level => level)];
