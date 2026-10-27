@@ -62,6 +62,18 @@ public sealed partial class GaussianCacheRuntimeData
     /// <summary>The quantized driver vertex positions of each frame, and the parts that are decoded.</summary>
     public DriverFrameStore Frames { get; }
 
+    /// <summary>
+    /// Returns the number of decoded nodes of a splat level. The decoded nodes are always the first nodes of the level,
+    /// so a node is decoded when its index is less than this number.
+    /// </summary>
+    public int GetLoadedNodeCount(int level) => _loadedNodeCounts[level];
+
+    /// <summary>
+    /// Returns the number of decoded triangles of a driver level. The decoded triangles are always the first triangles
+    /// of the level.
+    /// </summary>
+    public int GetLoadedTriangleCount(int driverLevel) => _loadedTriangleCounts[driverLevel];
+
     /// <summary>Makes empty runtime data for a header and checks that its counts agree.</summary>
     /// <exception cref="GaussianCacheFormatException">The counts of the header do not agree.</exception>
     internal static GaussianCacheRuntimeData Create(GaussianCacheHeader header)

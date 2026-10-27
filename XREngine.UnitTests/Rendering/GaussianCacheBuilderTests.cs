@@ -30,24 +30,16 @@ namespace XREngine.UnitTests.Rendering;
 [NonParallelizable]
 public sealed class GaussianCacheBuilderTests
 {
-    private const int LeafCount = 20_000;
-    private const int FrameCount = 64;
-    private const float FrameRate = 30.0f;
-    private const int L0Target = 2_000;
-    private const float SphereRadius = 0.5f;
-    private const int SphereSegments = 96;
-    private const int SphereRings = 48;
-
-    /// <summary>Leaves below this height do not move.</summary>
-    private const float StaticBelowY = -0.4f;
+    private const int FrameCount = GaussianCacheTestSphere.FrameCount;
+    private const float FrameRate = GaussianCacheTestSphere.FrameRate;
 
     /// <summary>A small chunk limit, so that the large levels split over several chunks.</summary>
     private const int SplitChunkBytes = 16_384;
 
-    private static readonly GaussianBakeBudget AvatarBudget = GaussianBakeBudget.For(GaussianBakeKind.Avatar);
+    private static readonly GaussianBakeBudget AvatarBudget = GaussianCacheTestSphere.AvatarBudget;
 
     private IMeshOptimizerBackend _meshopt = null!;
-    private SphereFixture _sphere = null!;
+    private GaussianCacheTestSphere _sphere = null!;
     private GaussianCacheBuildResult _cache = null!;
     private GaussianCacheBuildResult _splitCache = null!;
 
@@ -58,7 +50,7 @@ public sealed class GaussianCacheBuilderTests
             MeshOptimizerBackend.Register();
         _meshopt = MeshOptimizerBackendServices.Required;
 
-        _sphere = CreateSphereFixture(_meshopt);
+        _sphere = GaussianCacheTestSphere.Create(_meshopt);
         _cache = GaussianCacheBuilder.Build(_sphere.Input, AvatarBudget, _meshopt);
         _splitCache = GaussianCacheBuilder.Build(_sphere.Input, AvatarBudget, _meshopt, SplitChunkBytes);
     }
@@ -400,149 +392,6 @@ public sealed class GaussianCacheBuilderTests
 
         TestContext.Out.WriteLine($"Shared-vector scale: worst relative error {worst:E3}, normal axis {worstNormal:E3}");
         worst.ShouldBeLessThanOrEqualTo(2e-3);
-    }
-
-    private sealed record SphereFixture(GaussianCacheBuildInput Input, Vector3[] DriverRest, int[] StaticCounts);
-
-    private static SphereFixture CreateSphereFixture(IMeshOptimizerBackend meshopt)
-    {
-        DeformedSurface rest = EvaluateMeshes(CreateUvSphere());
-        uint[] weld = SeamWelder.CreateRemap(rest, meshopt);
-        BakedSplat[] leaves = SurfaceSampler.Sample(rest, LeafCount, new BakeRandom(20_261_026UL), meshopt);
-        for (int i = 0; i < leaves.Length; i++)
-        {
-            Vector3 p = leaves[i].Position / SphereRadius;
-            leaves[i].IsStatic = p.Y < StaticBelowY / SphereRadius;
-            leaves[i].LinearColor = new Vector3(0.1f + 0.4f * (p.X + 1.0f), 0.5f + 0.3f * p.Y, 0.2f + 0.35f * (p.Z + 1.0f));
-            leaves[i].Opacity = 0.55f + 0.2f * (p.X * p.Z + 1.0f);
-        }
-
-        SplatLodTree tree = SplatLodTreeBuilder.Build(leaves, L0Target, meshopt);
-        tree.LevelCount.ShouldBe(3);
-        int[] staticCounts = [.. tree.Levels.Select(level => level.Count(splat => splat.IsStatic))];
-
-        DriverHierarchy drivers = DriverHierarchyBuilder.Build(rest, [true], weld, [.. tree.Levels.Select(level => level.Length)], AvatarBudget, meshopt);
-        drivers.LevelCount.ShouldBe(3);
-        Vector3[] driverRest = new Vector3[drivers.VertexCount];
-        drivers.GatherPositions(rest, driverRest);
-
-        SplatBinding[][] bindings = new SplatBinding[tree.LevelCount][];
-        for (int level = 0; level < tree.LevelCount; level++)
-            bindings[level] = SplatBinder.Bind(tree.Levels[level].AsSpan(staticCounts[level]), drivers, level, driverRest);
-
-        // The bounds hold every driver vertex in every frame and every static splat.
-        Vector3 min = new(float.MaxValue);
-        Vector3 max = new(float.MinValue);
-        for (int frame = 0; frame < FrameCount; frame++)
-        {
-            foreach (Vector3 vertex in driverRest)
-            {
-                Vector3 p = Deform(vertex, frame);
-                min = Vector3.Min(min, p);
-                max = Vector3.Max(max, p);
-            }
-        }
-
-        foreach (BakedSplat splat in tree.Levels.SelectMany(level => level).Where(splat => splat.IsStatic))
-        {
-            min = Vector3.Min(min, splat.Position);
-            max = Vector3.Max(max, splat.Position);
-        }
-
-        AABB bounds = new(min - new Vector3(1e-3f), max + new Vector3(1e-3f));
-        byte gridBits = GridQuantizer.ChooseGridBits(bounds, AvatarBudget.MaxPositionErrorMeters);
-        GridQuantizer quantizer = new(bounds, gridBits);
-        DriverFrameStore frames = new(drivers.CumulativeVertexCounts, FrameCount, GaussianCacheLoopMode.Loop);
-        for (int frame = 0; frame < FrameCount; frame++)
-        {
-            for (int vertex = 0; vertex < driverRest.Length; vertex++)
-            {
-                quantizer.Quantize(Deform(driverRest[vertex], frame), out ushort x, out ushort y, out ushort z);
-                int offset = ((frame * driverRest.Length) + vertex) * 3;
-                frames.Positions[offset] = x;
-                frames.Positions[offset + 1] = y;
-                frames.Positions[offset + 2] = z;
-            }
-        }
-
-        GaussianCacheBuildInput input = new()
-        {
-            Kind = GaussianBakeKind.Avatar,
-            Tree = tree,
-            Drivers = drivers,
-            BindingsPerLevel = bindings,
-            DriverRestPositions = driverRest,
-            Frames = frames,
-            Motion = new BakeMotionChoice([], BakeMotionSources.First, "wobble", FrameCount / FrameRate, FrameCount, FrameRate),
-            LoopMode = GaussianCacheLoopMode.Loop,
-            Bounds = bounds,
-            GridBits = gridBits,
-            ColorScale = 1.25f,
-            CameraHints = new GaussianCacheCameraHints { MinRadius = 0.6f, MaxRadius = 3.6f, DefaultRadius = 1.2f, DefaultPitchDegrees = 15.0f },
-        };
-        return new SphereFixture(input, driverRest, staticCounts);
-    }
-
-    /// <summary>
-    /// Moves a rest point for a frame. The motion is zero at frame 0, repeats every <see cref="FrameCount"/> frames,
-    /// and is smaller near the bottom of the sphere.
-    /// </summary>
-    private static Vector3 Deform(Vector3 rest, int frame)
-    {
-        float phase = 2.0f * MathF.PI * frame / FrameCount;
-        float weight = (rest.Y / SphereRadius + 1.0f) * 0.5f;
-        Vector3 radial = Vector3.Normalize(rest);
-        Vector3 offset = 0.04f * MathF.Sin(phase) * radial
-            + 0.03f * MathF.Sin(phase) * MathF.Cos(4.0f * rest.Y) * Vector3.UnitX
-            + 0.02f * MathF.Sin(2.0f * phase) * Vector3.UnitZ;
-        return rest + weight * offset;
-    }
-
-    /// <summary>Makes a sphere with shared vertices: two poles and <see cref="SphereRings"/> − 1 rings of <see cref="SphereSegments"/> vertices.</summary>
-    private static (Vector3[] Vertices, ushort[] Triangles) CreateUvSphere()
-    {
-        List<Vector3> vertices = [new Vector3(0.0f, SphereRadius, 0.0f)];
-        for (int ring = 1; ring < SphereRings; ring++)
-        {
-            float polar = MathF.PI * ring / SphereRings;
-            for (int segment = 0; segment < SphereSegments; segment++)
-            {
-                float azimuth = 2.0f * MathF.PI * segment / SphereSegments;
-                vertices.Add(SphereRadius * new Vector3(MathF.Sin(polar) * MathF.Cos(azimuth), MathF.Cos(polar), MathF.Sin(polar) * MathF.Sin(azimuth)));
-            }
-        }
-
-        vertices.Add(new Vector3(0.0f, -SphereRadius, 0.0f));
-        ushort south = (ushort)(vertices.Count - 1);
-        List<ushort> triangles = [];
-        for (int segment = 0; segment < SphereSegments; segment++)
-        {
-            int next = (segment + 1) % SphereSegments;
-            triangles.AddRange([0, (ushort)(1 + next), (ushort)(1 + segment)]);
-            for (int ring = 0; ring < SphereRings - 2; ring++)
-            {
-                ushort a = (ushort)(1 + ring * SphereSegments + segment);
-                ushort b = (ushort)(1 + ring * SphereSegments + next);
-                ushort c = (ushort)(a + SphereSegments);
-                ushort d = (ushort)(b + SphereSegments);
-                triangles.AddRange([a, b, d, a, d, c]);
-            }
-
-            int lastRing = 1 + (SphereRings - 2) * SphereSegments;
-            triangles.AddRange([(ushort)(lastRing + segment), (ushort)(lastRing + next), south]);
-        }
-
-        return ([.. vertices], [.. triangles]);
-    }
-
-    private static DeformedSurface EvaluateMeshes((Vector3[] Vertices, ushort[] Triangles) mesh)
-    {
-        SceneNode root = new("Root", new Transform());
-        XRMesh xrMesh = new(mesh.Vertices.Select(position => new Vertex(position)), [.. mesh.Triangles]);
-        SceneNode node = new(root, "Sphere", new Transform());
-        node.AddComponent<ModelComponent>().ShouldNotBeNull().Model = new Model(new SubMesh(xrMesh, new XRMaterial()));
-        root.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
-        return DeformedSurfaceEvaluator.Evaluate(root);
     }
 
     private static BakedSplat[] CreateStaticLeaves(int count, int seed)
