@@ -29,6 +29,9 @@ public static class GaussianBakeFailureCodes
     /// <summary>The cache or the video encoder cannot write the output.</summary>
     public const string EncodeFailed = "encode-failed";
 
+    /// <summary>An error that has no other failure code stopped the bake. Its exit code is 1.</summary>
+    public const string Unexpected = "unexpected";
+
     /// <summary>
     /// Returns the process exit code for a failure code. An unknown code gives 1.
     /// </summary>

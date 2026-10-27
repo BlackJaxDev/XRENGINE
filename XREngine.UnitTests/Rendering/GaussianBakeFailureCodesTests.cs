@@ -31,5 +31,6 @@ public sealed class GaussianBakeFailureCodesTests
         GaussianBakeFailureCodes.UnsupportedOption.ShouldBe("unsupported-option");
         GaussianBakeFailureCodes.CaptureFailed.ShouldBe("capture-failed");
         GaussianBakeFailureCodes.EncodeFailed.ShouldBe("encode-failed");
+        GaussianBakeFailureCodes.Unexpected.ShouldBe("unexpected");
     }
 }

@@ -82,6 +82,21 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices
 
     /// <inheritdoc />
     /// <remarks>
+    /// The first call for an input builds and activates the bake world. The work then runs as an update thread task, so
+    /// no tick of the bake world runs at the same time. Long work, such as the frame passes of a world, holds the update
+    /// thread for its full time; that is correct for a bake, because nothing else uses the engine.
+    /// </remarks>
+    public async Task<T> RunOnContentThreadAsync<T>(CookedBakeInput input, Func<T> work, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(work);
+
+        await EnsureWorldAsync(input, cancellationToken).ConfigureAwait(false);
+        return await InvokeOnUpdateThreadAsync(work, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
     /// The cache plays on a new root node (<see cref="LoopNodeName"/>) of the bake world, and the capture draws only
     /// that node. The node is removed and destroyed after the recording. The time limit is 10 minutes plus one second
     /// for each frame.

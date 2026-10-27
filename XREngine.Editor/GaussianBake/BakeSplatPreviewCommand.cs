@@ -1,10 +1,14 @@
 using XREngine.Data.Geometry;
 using XREngine.Imaging;
+using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Cli;
 using XREngine.Rendering.Models.Gaussian.Baking.Imaging;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
+using XREngine.Rendering.Models.Gaussian.Baking.Output;
+using XREngine.Rendering.Models.Gaussian.Baking.Pipeline;
 using XREngine.Rendering.Models.Gaussian.Baking.Rendering;
+using XREngine.Rendering.Models.Gaussian.Baking.Report;
 using XREngine.Rendering.Models.Gaussian.Baking.Views;
 using XREngine.Scene;
 
@@ -12,7 +16,9 @@ namespace XREngine.Editor.GaussianBake;
 
 /// <summary>
 /// Runs the <c>--bake-splat-preview</c> editor command. The command reads a cooked prefab or world from a
-/// <c>.pak</c> archive and renders it in a hidden engine window.
+/// <c>.pak</c> archive and bakes it in a hidden engine window with <see cref="GaussianBakePipeline"/>: the gaussian
+/// cache, the loop videos, the posters, and <c>report.json</c>. With <c>--dump-views-only</c>, it writes the capture
+/// views as PNG files and stops.
 /// </summary>
 public static class BakeSplatPreviewCommand
 {
@@ -52,18 +58,109 @@ public static class BakeSplatPreviewCommand
 
     private static int Run(string[] args)
     {
+        // The options are checked before any file is read.
         if (!BakeSplatPreviewOptions.TryParse(args, out BakeSplatPreviewOptions? options, out string? error) || options is null)
             return Fail(GaussianBakeFailureCodes.InvalidArguments, error ?? "The arguments are not valid.");
 
+        return options.DumpViewsOnly ? RunDumpViews(options) : RunBake(options);
+    }
+
+    /// <summary>
+    /// Runs the full bake. The stage loads before the engine starts; the pipeline then runs in the hidden engine window.
+    /// The exit code is 0 for a bake that is ready, or the exit code of the failure code of the report.
+    /// </summary>
+    private static int RunBake(BakeSplatPreviewOptions options)
+    {
+        IMeshOptimizerBackend meshopt;
+        SceneNode stage;
+        try
+        {
+            meshopt = MeshOptimizerBackendServices.Required;
+        }
+        catch (InvalidOperationException ex)
+        {
+            Console.Error.WriteLine($"Gaussian preview bake failed with an unexpected error: {ex.Message}");
+            return UnexpectedExitCode;
+        }
+
+        try
+        {
+            stage = ResolveStage(options);
+        }
+        catch (GaussianBakeException ex)
+        {
+            BakeReport report = GaussianBakePipeline.CreateReport(options, meshopt);
+            report.MarkFailed(ex.FailureCode, ex.Message);
+            WriteFailedReport(options, report);
+            return Fail(ex.FailureCode, ex.Message);
+        }
+
+        try
+        {
+            return BakeRenderHost.Run(
+                options,
+                stage,
+                async (services, cancellationToken) =>
+                {
+                    BakeReport report = await new GaussianBakePipeline(services, meshopt).RunAsync(options, cancellationToken).ConfigureAwait(false);
+                    return PrintResult(options, report);
+                });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Gaussian preview bake failed with an unexpected engine error: {ex}");
+            return UnexpectedExitCode;
+        }
+    }
+
+    /// <summary>Prints the result of the bake and returns its exit code.</summary>
+    private static int PrintResult(BakeSplatPreviewOptions options, BakeReport report)
+    {
+        string output = Path.GetFullPath(options.OutputDirectory);
+        if (!string.Equals(report.Status, BakeReport.ReadyStatus, StringComparison.Ordinal))
+        {
+            Console.WriteLine($"Gaussian preview bake report: {Path.Combine(output, BakeReportWriter.FileName)}");
+            return Fail(report.FailureCode ?? GaussianBakeFailureCodes.Unexpected, report.FailureDetail ?? string.Empty);
+        }
+
+        BakeReportTimings timings = report.TimingsMs;
+        long totalMs = timings.Load + timings.Animate + timings.Sample + timings.Color + timings.Tree + timings.Driver + timings.Encode + timings.Loop;
+        Console.WriteLine($"Gaussian preview bake ready: {output}");
+        Console.WriteLine($"  splats per level: {Join(report.Splats?.PerLevel)} (static {report.Splats?.Static ?? 0})");
+        Console.WriteLine($"  driver vertices per level: {Join(report.Driver?.VerticesPerLevel)}, triangles per level: {Join(report.Driver?.TrianglesPerLevel)}");
+        Console.WriteLine($"  frames: {report.Frames?.Count} at {report.Frames?.Rate} fps, loop mode {report.Clip?.LoopMode}, clip '{report.Clip?.Name}' ({report.Clip?.Source})");
+        Console.WriteLine($"  chunks: {report.Cache?.Chunks.Count}, chunk 0: {report.Cache?.Chunk0Bytes} bytes, total: {report.Cache?.TotalBytes} bytes, content hash {report.Cache?.ContentHash}");
+        Console.WriteLine($"  time: {totalMs} ms (load {timings.Load}, animate {timings.Animate}, sample {timings.Sample}, color {timings.Color}, tree {timings.Tree}, driver {timings.Driver}, encode {timings.Encode}, loop {timings.Loop})");
+        if (report.Warnings.Count > 0)
+            Console.WriteLine($"  warnings: {string.Join(", ", report.Warnings)}");
+        return 0;
+    }
+
+    private static string Join(int[]? values)
+        => values is null ? "-" : string.Join("/", values);
+
+    /// <summary>Writes a failed report into the output folder. A file error only prints a message.</summary>
+    private static void WriteFailedReport(BakeSplatPreviewOptions options, BakeReport report)
+    {
+        try
+        {
+            BakeOutputDirectory.Begin(options.OutputDirectory).Fail(report);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Gaussian preview bake: the report cannot be written to '{options.OutputDirectory}': {ex.Message}");
+        }
+    }
+
+    /// <summary>Writes the capture views as PNG files and stops (<c>--dump-views-only</c>).</summary>
+    private static int RunDumpViews(BakeSplatPreviewOptions options)
+    {
         if (string.Equals(options.ColorMode, BakeSplatPreviewOptions.OptimizedFitColorMode, StringComparison.Ordinal))
         {
             return Fail(
                 GaussianBakeFailureCodes.UnsupportedOption,
                 $"The color mode {BakeSplatPreviewOptions.OptimizedFitColorMode} is not supported by this engine version.");
         }
-
-        if (!options.DumpViewsOnly)
-            return Fail(GaussianBakeFailureCodes.UnsupportedOption, "This engine version supports only --dump-views-only.");
 
         // Load and check everything that can fail before the engine starts. A failure then exits with its
         // failure code and never races engine shutdown.

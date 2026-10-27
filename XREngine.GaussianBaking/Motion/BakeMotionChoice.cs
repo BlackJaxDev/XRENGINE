@@ -18,4 +18,12 @@ public sealed record BakeMotionChoice(
     string? ClipName,
     float DurationSeconds,
     int FrameCount,
-    float FrameRate);
+    float FrameRate)
+{
+    /// <summary>
+    /// Gets the players that <see cref="BakeMotionSelector"/> made for this choice and that the content does not list,
+    /// for example the player of a state machine clip. <see cref="BakeMotionSelector.ReleaseTemporaryPlayers"/>
+    /// destroys them when the bake does not need them any more.
+    /// </summary>
+    public IReadOnlyList<AnimationClipComponent> TemporaryPlayers { get; init; } = [];
+}

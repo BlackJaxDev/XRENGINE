@@ -44,6 +44,26 @@ public static partial class DeformedSurfaceEvaluator
         return skipped;
     }
 
+    /// <summary>
+    /// Finds the skipped components under each of <paramref name="roots"/>, root by root, with the rules of
+    /// <see cref="FindSkipped(SceneNode)"/>. Each node path starts at its own root.
+    /// </summary>
+    /// <param name="roots">The root nodes of the content.</param>
+    /// <returns>The skipped components, root by root, each in depth-first order.</returns>
+    public static IReadOnlyList<BakeSkippedComponent> FindSkipped(IReadOnlyList<SceneNode> roots)
+    {
+        ArgumentNullException.ThrowIfNull(roots);
+
+        List<BakeSkippedComponent> skipped = [];
+        foreach (SceneNode root in roots)
+        {
+            ArgumentNullException.ThrowIfNull(root, nameof(roots));
+            skipped.AddRange(FindSkipped(root));
+        }
+
+        return skipped;
+    }
+
     private static bool IsNotCaptured(XRComponent component)
         => component switch
         {
