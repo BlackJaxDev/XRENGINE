@@ -104,9 +104,9 @@ public sealed class GaussianBakePipelineTests
     [Test]
     public void OutputDirectory_Commit_RemovesStaleFiles()
     {
+        // The final folder is the output of an earlier bake.
         string final = Path.Combine(_workRoot, "commit");
-        Directory.CreateDirectory(final);
-        File.WriteAllText(Path.Combine(final, "old.txt"), "stale");
+        WritePreviousOutput(final);
 
         BakeOutputDirectory output = BakeOutputDirectory.Begin(final);
         output.StagingPath.ShouldStartWith(Path.GetFullPath(final) + ".staging-");
@@ -115,16 +115,114 @@ public sealed class GaussianBakePipelineTests
         output.Commit();
 
         File.Exists(Path.Combine(final, "old.txt")).ShouldBeFalse();
+        File.Exists(Path.Combine(final, BakeReportWriter.FileName)).ShouldBeFalse();
         File.ReadAllText(Path.Combine(final, "new.txt")).ShouldBe("fresh");
         Directory.Exists(output.StagingPath).ShouldBeFalse();
+    }
+
+    [Test]
+    public void OutputDirectory_MissingFolder_CommitMakesIt()
+    {
+        string final = Path.Combine(_workRoot, "missing-parent", "out");
+
+        BakeOutputDirectory output = BakeOutputDirectory.Begin(final);
+        File.WriteAllText(Path.Combine(output.StagingPath, "new.txt"), "fresh");
+        output.Commit();
+
+        Directory.GetFileSystemEntries(final).Select(Path.GetFileName).ShouldBe(["new.txt"]);
+        StagingFoldersOf(final).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void OutputDirectory_EmptyFolder_CommitReplacesIt()
+    {
+        string final = Path.Combine(_workRoot, "empty-parent", "out");
+        Directory.CreateDirectory(final);
+
+        BakeOutputDirectory output = BakeOutputDirectory.Begin(final);
+        File.WriteAllText(Path.Combine(output.StagingPath, "new.txt"), "fresh");
+        output.Commit();
+
+        Directory.GetFileSystemEntries(final).Select(Path.GetFileName).ShouldBe(["new.txt"]);
+        StagingFoldersOf(final).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void OutputDirectory_UnrelatedFolder_BeginRefusesAndDeletesNothing()
+    {
+        string final = Path.Combine(_workRoot, "unrelated-parent", "out");
+        Directory.CreateDirectory(Path.Combine(final, "sub"));
+        File.WriteAllText(Path.Combine(final, "notes.txt"), "keep");
+
+        GaussianBakeException refusal = Should.Throw<GaussianBakeException>(() => BakeOutputDirectory.Begin(final));
+
+        refusal.FailureCode.ShouldBe(GaussianBakeFailureCodes.InvalidArguments);
+        refusal.Message.ShouldContain(Path.GetFullPath(final));
+        Directory.GetFileSystemEntries(final).Select(Path.GetFileName).Order(StringComparer.Ordinal).ShouldBe(["notes.txt", "sub"]);
+        File.ReadAllText(Path.Combine(final, "notes.txt")).ShouldBe("keep");
+        StagingFoldersOf(final).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void OutputDirectory_FileAtFinalPath_BeginRefuses()
+    {
+        string parent = Path.Combine(_workRoot, "file-parent");
+        Directory.CreateDirectory(parent);
+        string final = Path.Combine(parent, "out");
+        File.WriteAllText(final, "keep");
+
+        Should.Throw<GaussianBakeException>(() => BakeOutputDirectory.Begin(final))
+            .FailureCode.ShouldBe(GaussianBakeFailureCodes.InvalidArguments);
+
+        File.ReadAllText(final).ShouldBe("keep");
+        StagingFoldersOf(final).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void OutputDirectory_FolderBecomesUnrelated_FailDeletesOnlyStaging()
+    {
+        string final = Path.Combine(_workRoot, "late-unrelated-parent", "out");
+        Directory.CreateDirectory(final);
+        BakeOutputDirectory output = BakeOutputDirectory.Begin(final);
+        File.WriteAllText(Path.Combine(output.StagingPath, "partial.bin"), "partial");
+        File.WriteAllText(Path.Combine(final, "notes.txt"), "keep");
+        BakeReport report = CreateFullReport();
+        report.MarkFailed(GaussianBakeFailureCodes.InputLoadFailed, "missing");
+
+        Should.Throw<GaussianBakeException>(() => output.Fail(report))
+            .FailureCode.ShouldBe(GaussianBakeFailureCodes.InvalidArguments);
+
+        Directory.GetFileSystemEntries(final).Select(Path.GetFileName).ShouldBe(["notes.txt"]);
+        Directory.Exists(output.StagingPath).ShouldBeFalse();
+    }
+
+    [Test]
+    public async Task Pipeline_UnrelatedOutputFolder_FailsInvalidArgumentsAndWritesNothing()
+    {
+        FakeRenderServices render = new();
+        string final = Path.Combine(_workRoot, "unrelated-pipeline-parent", "out");
+        Directory.CreateDirectory(final);
+        File.WriteAllText(Path.Combine(final, "dummy.txt"), "keep");
+
+        // The asset path is wrong too: the output folder check comes first and nothing is deleted.
+        BakeReport report = await CreatePipeline(render).RunAsync(
+            Options(Path.Combine(_workRoot, "does-not-exist.pak"), "Fixtures/Typo.asset", "item", final),
+            CancellationToken.None);
+
+        report.Status.ShouldBe(BakeReport.FailedStatus);
+        report.FailureCode.ShouldBe(GaussianBakeFailureCodes.InvalidArguments);
+        GaussianBakeFailureCodes.ExitCodeFor(report.FailureCode!).ShouldBe(2);
+        render.ContentCalls.ShouldBe(0);
+        Directory.GetFileSystemEntries(final).Select(Path.GetFileName).ShouldBe(["dummy.txt"]);
+        File.ReadAllText(Path.Combine(final, "dummy.txt")).ShouldBe("keep");
+        StagingFoldersOf(final).ShouldBeEmpty();
     }
 
     [Test]
     public void OutputDirectory_Fail_LeavesOnlyReport()
     {
         string final = Path.Combine(_workRoot, "fail");
-        Directory.CreateDirectory(final);
-        File.WriteAllText(Path.Combine(final, "old.txt"), "stale");
+        WritePreviousOutput(final);
         BakeOutputDirectory output = BakeOutputDirectory.Begin(final);
         File.WriteAllText(Path.Combine(output.StagingPath, "partial.bin"), "partial");
         BakeReport report = CreateFullReport();
@@ -350,6 +448,24 @@ public sealed class GaussianBakePipelineTests
             Skipped = [new BakeReportSkipped { Node = "Root/Sparks", Component = "ParticleEmitterComponent", Reason = "not-captured" }],
             Warnings = ["clip-truncated"],
         };
+
+    /// <summary>Makes a folder that holds the outputs of an earlier bake: a ready report and a stale file.</summary>
+    private static void WritePreviousOutput(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        BakeReportWriter.Write(CreateFullReport(), directory);
+        File.WriteAllText(Path.Combine(directory, "old.txt"), "stale");
+    }
+
+    /// <summary>Returns the staging folders next to a final output folder.</summary>
+    private static string[] StagingFoldersOf(string final)
+    {
+        string full = Path.GetFullPath(final);
+        string parent = Path.GetDirectoryName(full)!;
+        return Directory.Exists(parent)
+            ? Directory.GetDirectories(parent, Path.GetFileName(full) + BakeOutputDirectory.StagingSuffix + "*")
+            : [];
+    }
 
     private static string[] PropertyNames(JsonElement element)
         => [.. element.EnumerateObject().Select(property => property.Name)];

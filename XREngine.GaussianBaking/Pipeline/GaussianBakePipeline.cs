@@ -175,6 +175,12 @@ public sealed partial class GaussianBakePipeline
         {
             output = BakeOutputDirectory.Begin(options.OutputDirectory);
         }
+        catch (GaussianBakeException ex)
+        {
+            // The bake cannot replace the output folder. Nothing in the folder changes, and no report is written.
+            report.MarkFailed(ex.FailureCode, ex.Message);
+            return new GaussianBakePreparation(options, report, output: null);
+        }
         catch (Exception ex) when (IsFileError(ex))
         {
             report.MarkFailed(GaussianBakeFailureCodes.EncodeFailed, $"The output folder '{options.OutputDirectory}' cannot be prepared: {ex.Message}");
@@ -414,7 +420,7 @@ public sealed partial class GaussianBakePipeline
         {
             output.Fail(report);
         }
-        catch (Exception ex) when (IsFileError(ex))
+        catch (Exception ex) when (IsFileError(ex) || ex is GaussianBakeException)
         {
             // The report stays available to the caller, which prints it.
         }

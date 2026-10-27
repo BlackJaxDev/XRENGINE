@@ -172,7 +172,7 @@ public static class BakeSplatPreviewCommand
         {
             BakeOutputDirectory.Begin(options.OutputDirectory).Fail(report);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or GaussianBakeException)
         {
             Console.Error.WriteLine($"Gaussian preview bake: the report cannot be written to '{options.OutputDirectory}': {ex.Message}");
         }

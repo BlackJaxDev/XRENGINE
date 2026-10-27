@@ -78,7 +78,7 @@ public sealed class GaussianBakePreparation
         {
             _output?.Fail(Report);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or GaussianBakeException)
         {
             // The report stays available to the caller, which prints it.
         }
