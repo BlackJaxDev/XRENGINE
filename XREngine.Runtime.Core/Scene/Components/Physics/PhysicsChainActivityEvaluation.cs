@@ -23,9 +23,11 @@ public static class PhysicsChainActivityEvaluation
     public static bool IsQuiet(float normalizedErrorSquared)
         => normalizedErrorSquared <= 1.0f;
 
+    /// <summary>Tests activity against the wake threshold.</summary>
+    [global::Engine.Diagnostics.HotPath]
     public static bool ShouldWake(float normalizedErrorSquared, float wakeMultiplier)
     {
-        float normalizedMultiplier = MathF.Max(wakeMultiplier, 1.01f);
+        float normalizedMultiplier = wakeMultiplier <= 1.01f ? 1.01f : wakeMultiplier;
         return normalizedErrorSquared >= normalizedMultiplier * normalizedMultiplier;
     }
 

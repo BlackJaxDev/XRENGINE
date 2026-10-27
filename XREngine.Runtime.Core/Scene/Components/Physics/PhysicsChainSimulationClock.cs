@@ -10,6 +10,8 @@ internal struct PhysicsChainSimulationClock
     public float CadenceProgress;
     public long FixedRenderAccumulatedTicks;
 
+    /// <summary>Sets the initial cadence state for one runtime slot.</summary>
+    [global::Engine.Diagnostics.HotPath]
     public void Initialize(float phase, float rate)
     {
         Phase = phase;
@@ -18,6 +20,8 @@ internal struct PhysicsChainSimulationClock
         FixedRenderAccumulatedTicks = 0L;
     }
 
+    /// <summary>Clears elapsed time and retained render time.</summary>
+    [global::Engine.Diagnostics.HotPath]
     public void Reset()
     {
         ElapsedSeconds = 0.0f;

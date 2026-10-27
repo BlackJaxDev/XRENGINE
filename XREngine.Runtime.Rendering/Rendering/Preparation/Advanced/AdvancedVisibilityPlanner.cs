@@ -252,7 +252,7 @@ public sealed class AdvancedVisibilityPlanner
         int slot = _extractionDrawSlotCount++;
         _extractionDrawSlots[slot] = draw;
         uint mask = checked((uint)_drawSlotLookupHandles.Length - 1u);
-        uint start = Hash(draw) & mask;
+        uint start = AdvancedGpuHandleHash.Compute(draw.Index, draw.Generation) & mask;
         for (uint probe = 0u; probe <= mask; probe++)
         {
             int lookup = checked((int)((start + probe) & mask));
@@ -272,7 +272,7 @@ public sealed class AdvancedVisibilityPlanner
         if (!draw.IsValid)
             return false;
         uint mask = checked((uint)_drawSlotLookupHandles.Length - 1u);
-        uint start = Hash(draw) & mask;
+        uint start = AdvancedGpuHandleHash.Compute(draw.Index, draw.Generation) & mask;
         for (uint probe = 0u; probe <= mask; probe++)
         {
             int lookup = checked((int)((start + probe) & mask));
@@ -284,15 +284,6 @@ public sealed class AdvancedVisibilityPlanner
             return true;
         }
         return false;
-    }
-
-    private static uint Hash(AdvancedGpuHandle handle)
-    {
-        uint value = handle.Index * 0x9E3779B9u;
-        value ^= handle.Generation + 0x85EBCA6Bu + (value << 6) + (value >> 2);
-        value ^= value >> 16;
-        value *= 0x7FEB352Du;
-        return value ^ (value >> 15);
     }
 
     private static int NextPowerOfTwo(int value)

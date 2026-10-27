@@ -66,6 +66,24 @@ public sealed class AdvancedVisibilityFeedbackRing
         out ReadOnlySpan<AdvancedAnimationVisibilityFeedback> feedback,
         out ulong feedbackFrameId)
     {
+        int selectedSlot = FindLatestCompletedSlot(maximumFrameId, completedValue);
+        if (selectedSlot < 0)
+        {
+            feedback = default;
+            feedbackFrameId = 0UL;
+            return false;
+        }
+
+        feedback = _slots[selectedSlot].AsSpan(0, _counts[selectedSlot]);
+        feedbackFrameId = _frameIds[selectedSlot];
+        return true;
+    }
+
+    /// <summary>Finds the newest sealed feedback slot whose GPU work is complete.</summary>
+    /// <remarks>The caller must prevent concurrent changes to the ring metadata.</remarks>
+    [global::Engine.Diagnostics.HotPath]
+    private int FindLatestCompletedSlot(ulong maximumFrameId, ulong completedValue)
+    {
         int selectedSlot = -1;
         ulong selectedFrame = 0UL;
         for (int slot = 0; slot < _slots.Length; slot++)
@@ -85,16 +103,7 @@ public sealed class AdvancedVisibilityFeedbackRing
             selectedFrame = frame;
         }
 
-        if (selectedSlot < 0)
-        {
-            feedback = default;
-            feedbackFrameId = 0UL;
-            return false;
-        }
-
-        feedback = _slots[selectedSlot].AsSpan(0, _counts[selectedSlot]);
-        feedbackFrameId = selectedFrame;
-        return true;
+        return selectedSlot;
     }
 
     /// <summary>

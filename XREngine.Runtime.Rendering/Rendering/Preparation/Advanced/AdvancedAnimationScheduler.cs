@@ -80,7 +80,7 @@ public sealed class AdvancedAnimationScheduler
             frameId >= _lastPoseFrames[slot]
                 ? frameId - _lastPoseFrames[slot]
                 : 0UL);
-        uint phase = StablePhase(feedback.Entity, cadence);
+        uint phase = StablePhase(feedback.Entity.Index, feedback.Entity.Generation, cadence);
         bool phaseDue = cadence <= 1u || frameId % cadence == phase;
         bool staleDue =
             profile.MaximumStalePoseFrames != 0u &&
@@ -134,7 +134,7 @@ public sealed class AdvancedAnimationScheduler
     private int FindOrAddSlot(AdvancedGpuHandle handle, ulong frameId)
     {
         uint mask = checked((uint)_handles.Length - 1u);
-        uint start = Hash(handle) & mask;
+        uint start = AdvancedGpuHandleHash.Compute(handle.Index, handle.Generation) & mask;
         for (uint probe = 0u; probe < (uint)_handles.Length; probe++)
         {
             int slot = checked((int)((start + probe) & mask));
@@ -180,21 +180,13 @@ public sealed class AdvancedAnimationScheduler
         return 0u;
     }
 
-    private static uint StablePhase(AdvancedGpuHandle handle, uint cadence)
+    /// <summary>Chooses a repeatable cadence phase from the stable handle words.</summary>
+    [global::Engine.Diagnostics.HotPath]
+    private static uint StablePhase(uint index, uint generation, uint cadence)
     {
         if (cadence <= 1u)
             return 0u;
-        return Hash(handle) % cadence;
-    }
-
-    private static uint Hash(AdvancedGpuHandle handle)
-    {
-        uint value = handle.Index * 0x9E3779B9u;
-        value ^= handle.Generation + 0x85EBCA6Bu + (value << 6) + (value >> 2);
-        value ^= value >> 16;
-        value *= 0x7FEB352Du;
-        value ^= value >> 15;
-        return value;
+        return AdvancedGpuHandleHash.Compute(index, generation) % cadence;
     }
 
     private static int NextPowerOfTwo(int value)
@@ -205,6 +197,8 @@ public sealed class AdvancedAnimationScheduler
         return result;
     }
 
+    /// <summary>Limits a stale-pose frame count to the unsigned 32-bit range.</summary>
+    [global::Engine.Diagnostics.HotPath]
     private static uint ToUIntSaturated(ulong value)
         => value > uint.MaxValue ? uint.MaxValue : (uint)value;
 }

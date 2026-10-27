@@ -194,10 +194,24 @@ The engine coverage uses the strict contract:
 | `XREngine.Runtime.Core`: `PhysicsChainActivityEvaluation.IsQuiet` | Checks normalized activity against the sleep threshold |
 | `XREngine.Runtime.Core`: `PhysicsChainCpuBackend.PublishInitialOutputs` and `NextGeneration` | Copies initial particle output and advances the output generation |
 | `XREngine.Runtime.Rendering`: `AdvancedDeformationRetirement.Drain`, `FindEmptySlot`, and `MaximumCompletionValue` | Releases completed storage, finds a free slot, and scans frame completion values |
+| `XREngine.Runtime.Core`: `PhysicsChainSimulationClock.Initialize` and `Reset` | Sets initial cadence state and clears elapsed time |
+| `XREngine.Runtime.Core`: `PhysicsChainActivityEvaluation.ShouldWake` | Applies the minimum wake multiplier and tests the wake threshold |
+| `XREngine.Runtime.Core`: `PhysicsChainAutomaticQualityEvaluation.ResolveVisibleTierCore`, `Promote`, and `Demote` | Selects a visible simulation tier from validated scalar inputs |
+| `XREngine.Runtime.Rendering`: `AdvancedVisibilityFeedbackRing.FindLatestCompletedSlot` | Selects the newest sealed feedback slot whose GPU work is complete |
+| `XREngine.Runtime.Rendering`: `AdvancedGpuHandleHash.Compute` | Hashes handle words for animation scheduling and visibility lookup |
+| `XREngine.Runtime.Rendering`: `AdvancedAnimationScheduler.StablePhase` and `ToUIntSaturated` | Computes a repeatable cadence phase and limits the stale-pose frame count |
 
 The physics output span must have at least one slot per state. Input and output
 storage must not overlap. Hash storage must not overlap the byte input. These
 are caller preconditions, not proofs made by the analyzer.
+
+The feedback-ring scan requires exclusive access to its metadata. Its public
+wrapper creates the output span after the checked scan. The automatic physics
+quality wrapper rejects invalid observations before it passes scalar values
+to the checked tier kernel. Render handle properties are also read outside the
+checked arithmetic methods. These boundaries do not certify the wrappers.
+The scalar wake comparison retains NaN propagation from the prior `MathF.Max`
+call. Integer importance clamping uses direct comparisons with the same limits.
 
 The cadence loop requires a positive finite rate and a positive, bounded
 catch-up limit. The retirement scan receives equal-length
