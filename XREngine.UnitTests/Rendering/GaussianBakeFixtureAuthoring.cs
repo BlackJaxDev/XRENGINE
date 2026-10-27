@@ -1,7 +1,10 @@
 using NUnit.Framework;
 using Shouldly;
 using System.Numerics;
+using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
+using XREngine.Data.Colors;
+using XREngine.Editor.GaussianBake;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Gaussian;
@@ -28,6 +31,9 @@ public sealed class GaussianBakeFixtureAuthoring
 
     /// <summary>Space between the prop and the avatar in the world fixture, in meters.</summary>
     private const float AvatarClearance = 1.0f;
+
+    /// <summary>The name of the root node that holds the lights of the world fixture.</summary>
+    private const string WorldLightsName = "Lights";
 
     /// <summary>"GSPT" in little-endian order: the optional header of the splat cloud format.</summary>
     private const uint TestSplatCloudMagic = 0x54505347u;
@@ -77,12 +83,17 @@ public sealed class GaussianBakeFixtureAuthoring
         CookedBakeInput worldInput = CookedBakeInputLoader.Load(worldPak, WorldAssetPath, GaussianBakeKind.World);
         XRWorld world = worldInput.World.ShouldNotBeNull();
         XRScene scene = world.Scenes.ShouldHaveSingleItem();
-        scene.RootNodes.Count.ShouldBe(2);
-        foreach (SceneNode root in scene.RootNodes)
+        scene.RootNodes.Count.ShouldBe(3);
+        SceneNode[] contentRoots = [.. scene.RootNodes.Where(static root => root.Name != WorldLightsName)];
+        contentRoots.Length.ShouldBe(2);
+        foreach (SceneNode root in contentRoots)
             AssertRenderableMesh(root);
-        scene.RootNodes.Sum(static root => GaussianBakeTestAssets.CountClipComponents(root, requireAnimation: true)).ShouldBeGreaterThan(0);
+        contentRoots.Sum(static root => GaussianBakeTestAssets.CountClipComponents(root, requireAnimation: true)).ShouldBeGreaterThan(0);
+        scene.RootNodes.Single(static root => root.Name == WorldLightsName)
+            .FindDescendant(static transform => transform.SceneNode?.GetComponent<DirectionalLightComponent>() is not null)
+            .ShouldNotBeNull();
 
-        foreach (SceneNode root in scene.RootNodes)
+        foreach (SceneNode root in contentRoots)
             WriteSummary($"world/{root.Name}", worldPak, worldInput, root);
     }
 
@@ -166,7 +177,8 @@ public sealed class GaussianBakeFixtureAuthoring
 
     /// <summary>
     /// Puts the prop at the origin and the avatar beside the prop, on the +X side of its bounds,
-    /// so that the two do not overlap.
+    /// so that the two do not overlap. A world bake keeps the lights of the world, so the world also gets the
+    /// two directional lights and the ambient light of the default preview stage.
     /// </summary>
     private static XRWorld CreateWorld(XRPrefabSource avatar, XRPrefabSource item)
     {
@@ -180,7 +192,13 @@ public sealed class GaussianBakeFixtureAuthoring
 
         SceneNode avatarAnchor = new("Avatar", new Transform(avatarOffset));
         avatar.Instantiate(world: null, parent: avatarAnchor);
-        return new XRWorld("GaussianBakeFixtureWorld", new XRScene("GaussianBakeFixtureScene", prop, avatarAnchor));
+
+        SceneNode lights = GaussianPreviewStage.CreateDefault();
+        lights.Name = WorldLightsName;
+        XRWorld world = new("GaussianBakeFixtureWorld", new XRScene("GaussianBakeFixtureScene", prop, avatarAnchor, lights));
+        world.Settings.AmbientLightColor = new ColorF3(1.0f, 1.0f, 1.0f);
+        world.Settings.AmbientLightIntensity = GaussianPreviewStage.AmbientIntensity;
+        return world;
     }
 
     /// <summary>
