@@ -58,6 +58,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 
 ## Developer Guides
 
+- [Hot-Path Analyzer](developer-guides/diagnostics/hot-path-analyzer.md): opt-in compiler allocation and local ownership checks.
 - [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
 - [Test Suite Layout](developer-guides/testing/test-suite-layout.md)
 - [Work Doc Templates](developer-guides/ai/work-doc-templates.md)

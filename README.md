@@ -304,6 +304,7 @@ Then open `http://localhost:8080/`.
 
 Good starting points:
 
+- [Hot-path compiler checks](docs/developer-guides/diagnostics/hot-path-analyzer.md) - opt-in allocation and local ownership diagnostics
 - `docs/architecture/README.md` - runtime flow, threading, project layout
 - `docs/architecture/getting-started-in-codebase.md` - contributor-oriented map of where to start
 - `docs/user-guide/README.md` - editor-facing concepts, settings, and workflows

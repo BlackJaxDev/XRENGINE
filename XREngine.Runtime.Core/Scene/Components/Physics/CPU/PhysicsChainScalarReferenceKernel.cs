@@ -271,6 +271,9 @@ public static class PhysicsChainScalarReferenceKernel
         position += toParent * ((length - segmentLength) / length);
     }
 
+    /// <summary>Copies particle state into preallocated output storage after a simulation step.</summary>
+    /// <remarks>The spans must not overlap. The output span must contain at least one slot per state.</remarks>
+    [global::Engine.Diagnostics.HotPath]
     internal static void Publish(ReadOnlySpan<PhysicsChainCpuState> states, Span<PhysicsChainCpuOutput> outputs)
     {
         for (int particleIndex = 0; particleIndex < states.Length; ++particleIndex)

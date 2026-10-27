@@ -324,17 +324,25 @@ internal sealed class AdvancedIndexedInstanceGroupPlanner
         return true;
     }
 
+    [global::Engine.Diagnostics.HotPath]
     private static void Hash(ref ulong hash, uint value)
     {
-        hash = (hash ^ value) * 1099511628211UL;
+        hash = HashWord(hash, value);
     }
 
+    [global::Engine.Diagnostics.HotPath]
     private static void Hash(ref ulong hash, ulong value)
     {
-        Hash(ref hash, (uint)value);
-        Hash(ref hash, (uint)(value >> 32));
+        hash = HashWord(HashWord(hash, (uint)value), (uint)(value >> 32));
     }
 
+    [global::Engine.Diagnostics.HotPath]
+    private static ulong HashWord(ulong hash, uint value)
+        => (hash ^ value) * 1099511628211UL;
+
+    /// <summary>Hashes retained geometry bytes without temporary storage.</summary>
+    /// <remarks>The hash storage must not overlap the byte span.</remarks>
+    [global::Engine.Diagnostics.HotPath]
     private static void Hash(ref ulong hash, ReadOnlySpan<byte> bytes)
     {
         for (int index = 0; index < bytes.Length; ++index)

@@ -1,4 +1,9 @@
 <Project>
+  <ItemGroup Condition="$(MSBuildProjectName.StartsWith('XREngine.Runtime.'))">
+    <ProjectReference Include="$(MSBuildThisFileDirectory)XREngine.Diagnostics.Analyzers/XREngine.Diagnostics.Analyzers.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all"
+                      GlobalPropertiesToRemove="PublishAot;PublishTrimmed;SelfContained;RuntimeIdentifier;RuntimeIdentifiers;PublishDir;IsAotCompatible;IsTrimmable;EnableAotAnalyzer;EnableTrimAnalyzer" />
+  </ItemGroup>
   <PropertyGroup>
     <YtDlpRepositoryPath Condition="'$(YtDlpRepositoryPath)' == ''">$(MSBuildThisFileDirectory)Build\Dependencies\YoutubeDL\yt-dlp.exe</YtDlpRepositoryPath>
     <NvidiaSdkRuntimeDir Condition="'$(NvidiaSdkRuntimeDir)' == '' and Exists('$(MSBuildThisFileDirectory)ThirdParty\NVIDIA\SDK\win-x64\')">$(MSBuildThisFileDirectory)ThirdParty\NVIDIA\SDK\win-x64\</NvidiaSdkRuntimeDir>

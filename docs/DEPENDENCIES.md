@@ -13,6 +13,7 @@ Notes:
 - Browser Jolt source entries were reconciled on 2026-10-01 from `Tools/Dependencies/JoltBrowser.lock.json`; a full refresh was interrupted during remote metadata lookup, so unrelated prior metadata is retained.
 - Playwright and Slang tool-only entries were reconciled on 2026-10-01 from the exact installed official packages and license files. A subsequent full generator run was blocked on an unintended Visual Studio telemetry connection; it is not recorded as a successful refresh.
 - Prompt mode for unknown licenses: False (use -PromptForUnknownLicenses or -NoPromptForUnknownLicenses to override).
+- Hot-path analyzer project references were reconciled on 2026-10-26 after a generator run. Existing license records were retained where the refresh could not resolve their sources.
 
 ## Git submodules / vendored submodules
 | Name | Path | Owner | License (best-effort) | URL |
@@ -61,16 +62,16 @@ Notes:
 | MIConvexHull | 1.1.19.1019 | DesignEngrLab | [MIT](licenses/nuget/MIConvexHull-1.1.19.1019-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | Microsoft.Build | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build-18.8.2-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Build.Framework | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build.Framework-18.8.2-MIT.txt) | XREngine.Editor.csproj |
-| Microsoft.CodeAnalysis.Analyzers | 3.11.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.Analyzers-3.11.0-MIT.txt) | XREngine.SourceGenerators.csproj |
-| Microsoft.CodeAnalysis.CSharp | 4.14.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.CSharp-4.14.0-MIT.txt) | XREngine.SourceGenerators.csproj |
-| Microsoft.NET.Test.Sdk | 18.8.1 | microsoft | [MIT](licenses/nuget/Microsoft.NET.Test.Sdk-18.8.1-MIT.txt) | XREngine.UnitTests.csproj |
+| Microsoft.CodeAnalysis.Analyzers | 3.11.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.Analyzers-3.11.0-MIT.txt) | XREngine.Diagnostics.Analyzers.csproj, XREngine.SourceGenerators.csproj |
+| Microsoft.CodeAnalysis.CSharp | 4.14.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.CSharp-4.14.0-MIT.txt) | XREngine.Diagnostics.Analyzers.csproj, XREngine.HotPathAnalyzerTests.csproj, XREngine.SourceGenerators.csproj |
+| Microsoft.NET.Test.Sdk | 18.8.1 | microsoft | [MIT](licenses/nuget/Microsoft.NET.Test.Sdk-18.8.1-MIT.txt) | XREngine.HotPathAnalyzerTests.csproj, XREngine.UnitTests.csproj |
 | Microsoft.Web.WebView2 | 1.0.4129.50 | Microsoft | [LICENSE.txt](licenses/nuget/Microsoft.Web.WebView2-1.0.4129.50-LICENSE.txt.txt) | LocalAgentBroker.Tray.csproj |
 | NAudio | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio-2.3.0-MIT.txt) | XREngine.Audio.NAudio.csproj |
 | NAudio.Sdl2 | 2.2.6 | alextnull | [MIT](licenses/nuget/NAudio.Sdl2-2.2.6-MIT.txt) | XREngine.Audio.NAudio.csproj |
 | NDILibDotNetCoreBase | 2024.7.22.1 | eliaspuurunen | [MIT](licenses/nuget/NDILibDotNetCoreBase-2024.7.22.1-MIT.txt) | XREngine.Editor.csproj, XREngine.VRClient.csproj |
 | Newtonsoft.Json | 13.0.4 | JamesNK | [MIT](licenses/nuget/Newtonsoft.Json-13.0.4-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Bootstrap.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.Host.csproj, XREngine.Server.csproj |
-| NUnit | 4.6.1 | nunit | [MIT](licenses/nuget/NUnit-4.6.1-MIT.txt) | XREngine.UnitTests.csproj |
-| NUnit3TestAdapter | 6.2.0 | nunit | [MIT](licenses/nuget/NUnit3TestAdapter-6.2.0-MIT.txt) | XREngine.UnitTests.csproj |
+| NUnit | 4.6.1 | nunit | [MIT](licenses/nuget/NUnit-4.6.1-MIT.txt) | XREngine.HotPathAnalyzerTests.csproj, XREngine.UnitTests.csproj |
+| NUnit3TestAdapter | 6.2.0 | nunit | [MIT](licenses/nuget/NUnit3TestAdapter-6.2.0-MIT.txt) | XREngine.HotPathAnalyzerTests.csproj, XREngine.UnitTests.csproj |
 | NUnitLite | 4.6.1 | nunit | [MIT](licenses/nuget/NUnitLite-4.6.1-MIT.txt) | XREngine.HeadlessTests.csproj |
 | NVorbis | 0.10.5 | NVorbis | [MIT](licenses/nuget/NVorbis-0.10.5-MIT.txt) | XREngine.Data.csproj |
 | SharpCompress | 0.50.3 | adamhathcock | [MIT](licenses/nuget/SharpCompress-0.50.3-MIT.txt) | XREngine.Editor.csproj |

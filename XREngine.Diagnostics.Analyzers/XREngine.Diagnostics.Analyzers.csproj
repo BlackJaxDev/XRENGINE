@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishAot;PublishTrimmed;SelfContained;RuntimeIdentifier;RuntimeIdentifiers;IsAotCompatible;IsTrimmable;EnableAotAnalyzer;EnableTrimAnalyzer">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <PublishAot>false</PublishAot>
+    <PublishTrimmed>false</PublishTrimmed>
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifier />
+    <RuntimeIdentifiers />
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" PrivateAssets="all" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+    <Compile Remove="HotPathAttribute.cs" />
+    <Compile Remove="HotPathTrustedAttribute.cs" />
+    <EmbeddedResource Include="HotPathAttribute.cs" LogicalName="Engine.Diagnostics.HotPathAttribute.cs" />
+    <EmbeddedResource Include="HotPathTrustedAttribute.cs" LogicalName="Engine.Diagnostics.HotPathTrustedAttribute.cs" />
+  </ItemGroup>
+</Project>
