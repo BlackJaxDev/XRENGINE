@@ -30,6 +30,9 @@ public static class MotionPrediction
             throw Malformed("A motion block names a level that does not exist.");
         if (block.FirstVertex < 0 || block.VertexCount <= 0 || block.FirstVertex > store.VertexCount - block.VertexCount)
             throw Malformed("A motion block vertex range is outside the store.");
+        int levelFirst = store.GetLevelFirstVertex(block.DriverLevel);
+        if (block.FirstVertex < levelFirst || block.FirstVertex - levelFirst > store.GetLevelVertexCount(block.DriverLevel) - block.VertexCount)
+            throw Malformed("A motion block vertex range is outside its driver level.");
         if (block.FirstFrame < 0 || block.FrameCount <= 0 || block.FirstFrame >= store.FrameCount)
             throw Malformed("A motion block frame range is outside the store.");
         if (TemporalLevels.Of(block.FirstFrame) != block.TemporalLevel)
