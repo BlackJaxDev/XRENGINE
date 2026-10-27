@@ -44,6 +44,8 @@ const uint CulledKey = 0xFFFFFFFFu;
 const float QuadExtentSigma = 3.0;
 // Low-pass filter added to the projected covariance, in square pixels.
 const float LowPassPixels = 0.3;
+// Limit of x/depth and y/depth for the Jacobian, as a multiple of tan(fov / 2).
+const float JacobianClampFactor = 1.3;
 
 // Puts all quad vertices at one point outside the clip volume, so the quad makes no fragments.
 void Collapse()
@@ -100,15 +102,28 @@ void main()
         0.0, sigma.y, 0.0,
         0.0, 0.0, sigma.z);
 
-    // Jacobian J of the pixel position with respect to the view position at the splat center:
+    // Standard 3DGS clamp: for a perspective projection, evaluate the Jacobian at a point whose x/depth and
+    // y/depth are limited to 1.3 * tan(fov / 2). Splats far outside the view then do not make very large
+    // quads. The clamp assumes a symmetric perspective projection, so tan(fovX / 2) = 1 / P[0][0] and
+    // tan(fovY / 2) = 1 / P[1][1]. The clamp changes only the Jacobian; the quad stays at the true center.
+    vec3 jacobianPoint = viewCenter.xyz;
+    if (ProjMatrix_VTX[2][3] != 0.0)
+    {
+        float depth = -jacobianPoint.z;
+        vec2 limit = JacobianClampFactor / vec2(ProjMatrix_VTX[0][0], ProjMatrix_VTX[1][1]);
+        jacobianPoint.xy = clamp(jacobianPoint.xy / depth, -limit, limit) * depth;
+    }
+    vec4 jacobianClip = ProjMatrix_VTX * vec4(jacobianPoint, 1.0);
+
+    // Jacobian J of the pixel position with respect to the view position at that point:
     // d(clip.xy / clip.w) = (P_row_xy - (clip.xy / clip.w) * P_row_w) / clip.w, scaled to pixels.
     vec3 projectionRowX = vec3(ProjMatrix_VTX[0][0], ProjMatrix_VTX[1][0], ProjMatrix_VTX[2][0]);
     vec3 projectionRowY = vec3(ProjMatrix_VTX[0][1], ProjMatrix_VTX[1][1], ProjMatrix_VTX[2][1]);
     vec3 projectionRowW = vec3(ProjMatrix_VTX[0][3], ProjMatrix_VTX[1][3], ProjMatrix_VTX[2][3]);
-    float inverseW = 1.0 / clipCenter.w;
+    float inverseW = 1.0 / jacobianClip.w;
     vec2 halfViewport = 0.5 * vec2(ScreenWidth, ScreenHeight);
-    vec3 jacobianX = halfViewport.x * inverseW * (projectionRowX - clipCenter.x * inverseW * projectionRowW);
-    vec3 jacobianY = halfViewport.y * inverseW * (projectionRowY - clipCenter.y * inverseW * projectionRowW);
+    vec3 jacobianX = halfViewport.x * inverseW * (projectionRowX - jacobianClip.x * inverseW * projectionRowW);
+    vec3 jacobianY = halfViewport.y * inverseW * (projectionRowY - jacobianClip.y * inverseW * projectionRowW);
 
     // T = J * W * R * S. The 2D covariance is T * transpose(T) plus the low-pass filter.
     vec3 tx = jacobianX * sigmaAxes;
