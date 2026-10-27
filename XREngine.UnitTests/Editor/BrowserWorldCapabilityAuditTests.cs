@@ -14,6 +14,21 @@ public sealed class BrowserWorldCapabilityAuditTests
     {
         SceneNode node = new("Splats");
         node.AddComponent<GaussianSplatComponent>().ShouldNotBeNull();
+
+        AssertShaderUnsupported(node, typeof(GaussianSplatComponent), "Splats");
+    }
+
+    [Test]
+    public void Inspect_GaussianCacheComponent_ReportsShaderUnsupported()
+    {
+        SceneNode node = new("AnimatedSplats");
+        node.AddComponent<GaussianCacheComponent>().ShouldNotBeNull();
+
+        AssertShaderUnsupported(node, typeof(GaussianCacheComponent), "AnimatedSplats");
+    }
+
+    private static void AssertShaderUnsupported(SceneNode node, Type componentType, string nodeName)
+    {
         XRWorld world = new("SplatWorld", new XRScene("SplatScene", node));
         string intermediateDirectory = Path.Combine(Path.GetTempPath(), "xre-browser-audit-" + Guid.NewGuid().ToString("N"));
         try
@@ -22,12 +37,12 @@ public sealed class BrowserWorldCapabilityAuditTests
             BrowserWorldCapabilityAudit.Inspect(world, resolver: null, CancellationToken.None, report: report);
 
             BrowserCapabilityDiagnostic diagnostic = report.Diagnostics
-                .Where(static candidate => candidate.Component == typeof(GaussianSplatComponent).FullName)
+                .Where(candidate => candidate.Component == componentType.FullName)
                 .ShouldHaveSingleItem();
             diagnostic.Severity.ShouldBe("required");
             diagnostic.Code.ShouldBe("BrowserCook.ShaderUnsupported");
-            diagnostic.NodePath.ShouldContain("Splats");
-            diagnostic.Reason.ShouldContain(nameof(GaussianSplatComponent));
+            diagnostic.NodePath.ShouldContain(nodeName);
+            diagnostic.Reason.ShouldContain(componentType.Name);
             diagnostic.Reason.ShouldContain("WebGPU");
             report.HasRequiredFailures.ShouldBeTrue();
         }
