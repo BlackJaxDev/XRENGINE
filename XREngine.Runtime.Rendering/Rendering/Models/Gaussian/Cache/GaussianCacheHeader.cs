@@ -20,7 +20,7 @@ public sealed partial class GaussianCacheHeader
     /// <summary>The cumulative driver vertex count of each driver level.</summary>
     public int[] DriverVertexCounts { get; set; } = [];
 
-    /// <summary>The cumulative driver triangle count of each driver level.</summary>
+    /// <summary>The triangle count of each driver level. Each level has its own full triangle list.</summary>
     public int[] DriverTriangleCounts { get; set; } = [];
 
     public int FrameCount { get; set; }
