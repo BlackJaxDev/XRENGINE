@@ -209,9 +209,9 @@ public sealed class DriverHierarchyTests
             Quaternion rotation = Quaternion.Normalize(frame * binding.LocalRotation);
             MathF.Abs(Quaternion.Dot(rotation, splats[i].Rotation)).ShouldBeGreaterThan(1.0f - 1e-5f);
 
-            // The bound triangle is the closest triangle that has a frame.
+            // The bound triangle is the closest triangle that has a frame and a good shape.
             float bound = DistanceToTriangle(splats[i].Position, a, b, c);
-            bound.ShouldBeLessThanOrEqualTo(ClosestFramedDistance(splats[i].Position, triangles, driverRest) + 1e-6f);
+            bound.ShouldBeLessThanOrEqualTo(ClosestCandidateDistance(splats[i].Position, triangles, driverRest) + 1e-6f);
         }
 
         TestContext.Out.WriteLine($"Max reconstruct error: {maxError:E3} m over {splats.Length} splats and {triangles.Length / 3} driver triangles");
@@ -254,6 +254,115 @@ public sealed class DriverHierarchyTests
             Vector3 reconstructed = TriangleFrame.Reconstruct(a, b, c, bindings[i].U, bindings[i].V, bindings[i].H);
             Vector3.Distance(reconstructed, splats[i].Position).ShouldBeLessThanOrEqualTo(ReconstructTolerance);
         }
+    }
+
+    [Test]
+    public void Bind_SliverIsClosest_PicksWellShapedTriangle()
+    {
+        // Triangle 0 is a sliver in the plane z = 0: its height is 1e-4 of its longest edge. Triangle 1 is well shaped
+        // and lies in the plane z = 0.0115. The splats are at z = 0.005, so triangle 1 is 1.5 mm farther from them.
+        DeformedSurface rest = EvaluateMeshes((
+            [new(0, 0, 0), new(1, 0, 0), new(0.5f, 1e-4f, 0), new(-1, -1, 0.0115f), new(2, -1, 0.0115f), new(0.5f, 2, 0.0115f)],
+            [0, 1, 2, 3, 4, 5]));
+        uint[] weld = SeamWelder.CreateRemap(rest, _meshopt);
+        DriverHierarchy drivers = DriverHierarchyBuilder.Build(rest, [true], weld, [10], AvatarBudget, _meshopt);
+        uint[] triangles = drivers.LevelTriangleIndices[0];
+        triangles.Length.ShouldBe(6);
+        Vector3[] driverRest = new Vector3[drivers.SourceVertexOfDriverVertex.Length];
+        drivers.GatherPositions(rest, driverRest);
+        BakedSplat[] splats = new BakedSplat[10];
+        Quaternion tilt = Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(1, 2, 3)), 0.7f);
+        for (int i = 0; i < splats.Length; i++)
+            splats[i] = new BakedSplat { Position = new Vector3(0.3f + 0.04f * i, 2e-5f, 0.005f), Rotation = tilt, Scale = new Vector3(0.01f) };
+
+        uint sliver = FindTriangle(triangles, driverRest, ratio => ratio < SplatBinder.MinTriangleShapeRatio);
+        uint wellShaped = FindTriangle(triangles, driverRest, ratio => ratio >= SplatBinder.MinTriangleShapeRatio);
+        ReadTriangle(triangles, driverRest, sliver, out Vector3 sa, out Vector3 sb, out Vector3 sc);
+        ReadTriangle(triangles, driverRest, wellShaped, out Vector3 wa, out Vector3 wb, out Vector3 wc);
+        TriangleFrame.TryCompute(sa, sb, sc, out _).ShouldBeTrue();
+        foreach (BakedSplat splat in splats)
+            DistanceToTriangle(splat.Position, sa, sb, sc).ShouldBeLessThan(DistanceToTriangle(splat.Position, wa, wb, wc));
+
+        SplatBinding[] bindings = SplatBinder.Bind(splats, drivers, 0, driverRest);
+
+        for (int i = 0; i < splats.Length; i++)
+        {
+            bindings[i].Triangle.ShouldBe(wellShaped);
+            Vector3 reconstructed = TriangleFrame.Reconstruct(wa, wb, wc, bindings[i].U, bindings[i].V, bindings[i].H);
+            Vector3.Distance(reconstructed, splats[i].Position).ShouldBeLessThanOrEqualTo(ReconstructTolerance);
+        }
+    }
+
+    [Test]
+    public void Bind_AllTrianglesAreSlivers_FallsBackToFramedTriangles()
+    {
+        // Both triangles are slivers with a height of 1e-4 of the longest edge, but both have a frame.
+        DeformedSurface rest = EvaluateMeshes((
+            [new(0, 0, 0), new(1, 0, 0), new(0.5f, 1e-4f, 0), new(0, 0.5f, 0), new(1, 0.5f, 0), new(0.5f, 0.5001f, 0)],
+            [0, 1, 2, 3, 4, 5]));
+        uint[] weld = SeamWelder.CreateRemap(rest, _meshopt);
+        DriverHierarchy drivers = DriverHierarchyBuilder.Build(rest, [true], weld, [16], AvatarBudget, _meshopt);
+        uint[] triangles = drivers.LevelTriangleIndices[0];
+        triangles.Length.ShouldBe(6);
+        Vector3[] driverRest = new Vector3[drivers.SourceVertexOfDriverVertex.Length];
+        drivers.GatherPositions(rest, driverRest);
+        BakedSplat[] splats = new BakedSplat[16];
+        Quaternion tilt = Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(-2, 1, 3)), 1.1f);
+        for (int i = 0; i < splats.Length; i++)
+        {
+            // Some centers are off the sliver in its plane by up to 9 sliver heights, so v reaches about 9.
+            float y = (i % 2 == 0 ? 0.0f : 0.5f) + 3e-4f * (i % 4);
+            splats[i] = new BakedSplat { Position = new Vector3(0.2f + 0.04f * i, y, i % 3 == 0 ? -0.01f : 0.01f), Rotation = tilt, Scale = new Vector3(0.01f) };
+        }
+
+        SplatBinding[] bindings = SplatBinder.Bind(splats, drivers, 0, driverRest);
+
+        for (int i = 0; i < splats.Length; i++)
+        {
+            SplatBinding binding = bindings[i];
+            ReadTriangle(triangles, driverRest, binding.Triangle, out Vector3 a, out Vector3 b, out Vector3 c);
+            ShapeRatio(a, b, c).ShouldBeLessThan(SplatBinder.MinTriangleShapeRatio);
+            TriangleFrame.TryCompute(a, b, c, out Quaternion frame).ShouldBeTrue();
+            float.IsFinite(binding.U).ShouldBeTrue();
+            float.IsFinite(binding.V).ShouldBeTrue();
+            float.IsFinite(binding.H).ShouldBeTrue();
+            Vector3 reconstructed = TriangleFrame.Reconstruct(a, b, c, binding.U, binding.V, binding.H);
+            Vector3.Distance(reconstructed, splats[i].Position).ShouldBeLessThanOrEqualTo(ReconstructTolerance);
+            MathF.Abs(Quaternion.Dot(Quaternion.Normalize(frame * binding.LocalRotation), tilt)).ShouldBeGreaterThan(1.0f - 1e-5f);
+        }
+    }
+
+    [Test]
+    public void Bind_FarFromOrigin_DoesNotFailOnPositionRounding()
+    {
+        // At 1,000 m one float step is 6.1e-5 m, so a world-space reconstruction cannot be within 1e-5 m of every
+        // center. The binder checks the offset from the triangle corner instead.
+        (Vector3[] vertices, ushort[] gridTriangles) = CreateGrid(20);
+        Vector3 offset = new(1_000.0f, -500.0f, 200.0f);
+        DeformedSurface rest = EvaluateMeshes(([.. vertices.Select(vertex => vertex + offset)], gridTriangles));
+        uint[] weld = SeamWelder.CreateRemap(rest, _meshopt);
+        DriverHierarchy drivers = DriverHierarchyBuilder.Build(rest, [true], weld, [200], AvatarBudget, _meshopt);
+        Vector3[] driverRest = new Vector3[drivers.SourceVertexOfDriverVertex.Length];
+        drivers.GatherPositions(rest, driverRest);
+        BakedSplat[] splats = SurfaceSampler.Sample(rest, 200, new BakeRandom(7UL), _meshopt);
+
+        SplatBinding[] bindings = SplatBinder.Bind(splats, drivers, 0, driverRest);
+
+        uint[] triangles = drivers.LevelTriangleIndices[0];
+        float maxWorldError = 0.0f;
+        float maxOffsetError = 0.0f;
+        for (int i = 0; i < splats.Length; i++)
+        {
+            ReadTriangle(triangles, driverRest, bindings[i].Triangle, out Vector3 a, out Vector3 b, out Vector3 c);
+            Vector3 world = TriangleFrame.Reconstruct(a, b, c, bindings[i].U, bindings[i].V, bindings[i].H);
+            Vector3 local = TriangleFrame.Reconstruct(Vector3.Zero, b - a, c - a, bindings[i].U, bindings[i].V, bindings[i].H);
+            maxWorldError = MathF.Max(maxWorldError, Vector3.Distance(world, splats[i].Position));
+            maxOffsetError = MathF.Max(maxOffsetError, Vector3.Distance(local, splats[i].Position - a));
+        }
+
+        TestContext.Out.WriteLine($"Far from origin: max world error {maxWorldError:E3} m, max offset error {maxOffsetError:E3} m");
+        maxOffsetError.ShouldBeLessThanOrEqualTo(SplatBinder.MaxReconstructErrorMeters);
+        maxWorldError.ShouldBeLessThanOrEqualTo(4.0f * (MathF.BitIncrement(1_024.0f) - 1_024.0f));
     }
 
     /// <summary>A dome over the unit square, so the surface has curvature in both directions.</summary>
@@ -351,18 +460,47 @@ public sealed class DriverHierarchyTests
         c = positions[triangles[triangle * 3 + 2]];
     }
 
-    /// <summary>Returns the smallest distance from the point to a triangle of the list that has a frame, by a test of every triangle.</summary>
-    private static float ClosestFramedDistance(Vector3 point, uint[] triangles, Vector3[] positions)
+    /// <summary>
+    /// Returns the smallest distance from the point to a triangle of the list that has a frame and a good shape, by a
+    /// test of every triangle.
+    /// </summary>
+    private static float ClosestCandidateDistance(Vector3 point, uint[] triangles, Vector3[] positions)
     {
         float closest = float.PositiveInfinity;
         for (uint triangle = 0; triangle < triangles.Length / 3; triangle++)
         {
             ReadTriangle(triangles, positions, triangle, out Vector3 a, out Vector3 b, out Vector3 c);
-            if (TriangleFrame.TryCompute(a, b, c, out _))
+            if (TriangleFrame.TryCompute(a, b, c, out _) && ShapeRatio(a, b, c) >= SplatBinder.MinTriangleShapeRatio)
                 closest = MathF.Min(closest, DistanceToTriangle(point, a, b, c));
         }
 
         return closest;
+    }
+
+    /// <summary>Returns the first triangle of the list whose shape ratio matches.</summary>
+    private static uint FindTriangle(uint[] triangles, Vector3[] positions, Func<double, bool> match)
+    {
+        for (uint triangle = 0; triangle < triangles.Length / 3; triangle++)
+        {
+            ReadTriangle(triangles, positions, triangle, out Vector3 a, out Vector3 b, out Vector3 c);
+            if (match(ShapeRatio(a, b, c)))
+                return triangle;
+        }
+
+        throw new InvalidOperationException("No triangle of the list has a matching shape ratio.");
+    }
+
+    /// <summary>Returns |ab × ac| / (longest edge)², in double precision.</summary>
+    private static double ShapeRatio(Vector3 a, Vector3 b, Vector3 c)
+    {
+        double abX = b.X - (double)a.X, abY = b.Y - (double)a.Y, abZ = b.Z - (double)a.Z;
+        double acX = c.X - (double)a.X, acY = c.Y - (double)a.Y, acZ = c.Z - (double)a.Z;
+        double bcX = acX - abX, bcY = acY - abY, bcZ = acZ - abZ;
+        double crossX = abY * acZ - abZ * acY;
+        double crossY = abZ * acX - abX * acZ;
+        double crossZ = abX * acY - abY * acX;
+        double longest = Math.Max(abX * abX + abY * abY + abZ * abZ, Math.Max(acX * acX + acY * acY + acZ * acZ, bcX * bcX + bcY * bcY + bcZ * bcZ));
+        return Math.Sqrt(crossX * crossX + crossY * crossY + crossZ * crossZ) / longest;
     }
 
     /// <summary>Returns the distance from the point to the closest point of the triangle, by a projection with clamped barycentric coordinates.</summary>

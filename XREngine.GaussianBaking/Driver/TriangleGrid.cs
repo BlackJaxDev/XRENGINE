@@ -4,10 +4,15 @@ using XREngine.Rendering.Models.Gaussian.Cache.Encoding;
 namespace XREngine.Rendering.Models.Gaussian.Baking.Driver;
 
 /// <summary>
-/// Finds the triangle that is closest to a point. Only triangles that have a frame
-/// (<see cref="TriangleFrame.TryCompute"/> succeeds) are candidates.
+/// Finds the triangle that is closest to a point. The candidates are the triangles that have a frame
+/// (<see cref="TriangleFrame.TryCompute"/> succeeds) and a good shape:
+/// <c>|ab × ac| ≥ minShapeRatio × (longest edge)²</c>. When no triangle has a good shape, the candidates are all
+/// triangles that have a frame.
 /// </summary>
 /// <remarks>
+/// <para>The shape gate removes slivers. The plane coordinates of a point on a sliver are badly conditioned, and the
+/// frame of a sliver turns fast when its vertices move. The grid only holds the candidates, so the closest-triangle
+/// search is exact over the gated set.</para>
 /// <para>The grid is uniform. The cell size is two times the mean edge length of the candidates. Each candidate is in
 /// every cell that its bounding box touches. Only cells with candidates use memory.</para>
 /// <para>A query tests the cell of the point and then rings of cells around it. A cell in ring <c>r</c> is at
@@ -48,13 +53,12 @@ internal sealed class TriangleGrid
     /// <summary>Makes the grid for a triangle list.</summary>
     /// <param name="indices">The triangle list. Each index must be less than the length of <paramref name="positions"/>.</param>
     /// <param name="positions">The position of each vertex.</param>
-    public TriangleGrid(ReadOnlySpan<uint> indices, ReadOnlySpan<Vector3> positions)
+    /// <param name="minShapeRatio">The smallest <c>|ab × ac| / (longest edge)²</c> of a candidate with a good shape.</param>
+    public TriangleGrid(ReadOnlySpan<uint> indices, ReadOnlySpan<Vector3> positions, double minShapeRatio)
     {
         int triangleCount = indices.Length / 3;
-        List<int> candidates = new(triangleCount);
-        double edgeSum = 0.0;
-        Vector3 min = new(float.PositiveInfinity);
-        Vector3 max = new(float.NegativeInfinity);
+        List<int> framed = new(triangleCount);
+        List<int> wellShaped = new(triangleCount);
         for (int triangle = 0; triangle < triangleCount; triangle++)
         {
             Vector3 a = positions[(int)indices[triangle * 3]];
@@ -63,24 +67,34 @@ internal sealed class TriangleGrid
             if (!IsFinite(a) || !IsFinite(b) || !IsFinite(c) || !TriangleFrame.TryCompute(a, b, c, out _))
                 continue;
 
-            candidates.Add(triangle);
-            edgeSum += (double)Vector3.Distance(a, b) + Vector3.Distance(b, c) + Vector3.Distance(c, a);
-            min = Vector3.Min(min, Vector3.Min(a, Vector3.Min(b, c)));
-            max = Vector3.Max(max, Vector3.Max(a, Vector3.Max(b, c)));
+            framed.Add(triangle);
+            if (ShapeRatio(a, b, c) >= minShapeRatio)
+                wellShaped.Add(triangle);
         }
 
+        UsesShapeFallback = wellShaped.Count == 0 && framed.Count != 0;
+        List<int> candidates = UsesShapeFallback ? framed : wellShaped;
         int count = candidates.Count;
         _a = new Vector3[count];
         _b = new Vector3[count];
         _c = new Vector3[count];
         _triangles = new uint[count];
+        double edgeSum = 0.0;
+        Vector3 min = new(float.PositiveInfinity);
+        Vector3 max = new(float.NegativeInfinity);
         for (int i = 0; i < count; i++)
         {
             int triangle = candidates[i];
-            _a[i] = positions[(int)indices[triangle * 3]];
-            _b[i] = positions[(int)indices[triangle * 3 + 1]];
-            _c[i] = positions[(int)indices[triangle * 3 + 2]];
+            Vector3 a = positions[(int)indices[triangle * 3]];
+            Vector3 b = positions[(int)indices[triangle * 3 + 1]];
+            Vector3 c = positions[(int)indices[triangle * 3 + 2]];
+            _a[i] = a;
+            _b[i] = b;
+            _c[i] = c;
             _triangles[i] = (uint)triangle;
+            edgeSum += (double)Vector3.Distance(a, b) + Vector3.Distance(b, c) + Vector3.Distance(c, a);
+            min = Vector3.Min(min, Vector3.Min(a, Vector3.Min(b, c)));
+            max = Vector3.Max(max, Vector3.Max(a, Vector3.Max(b, c)));
         }
 
         _cellSlots = [];
@@ -110,9 +124,30 @@ internal sealed class TriangleGrid
         Fill(count, out _largeCandidates, out _cellStart, out _cellCandidates);
     }
 
-    /// <summary>Gets the number of triangles that have a frame.</summary>
+    /// <summary>Gets the number of candidate triangles.</summary>
     public int CandidateCount
         => _triangles.Length;
+
+    /// <summary>Gets a value that is true when no triangle has a good shape, so the candidates are all triangles that have a frame.</summary>
+    public bool UsesShapeFallback { get; }
+
+    /// <summary>
+    /// Returns <c>|ab × ac| / (longest edge)²</c>, which is the height on the longest edge divided by the longest
+    /// edge. It is about 0.87 for an equilateral triangle and near 0 for a sliver. The calculation uses double
+    /// precision, so the value of a sliver is accurate.
+    /// </summary>
+    public static double ShapeRatio(Vector3 a, Vector3 b, Vector3 c)
+    {
+        double abX = (double)b.X - a.X, abY = (double)b.Y - a.Y, abZ = (double)b.Z - a.Z;
+        double acX = (double)c.X - a.X, acY = (double)c.Y - a.Y, acZ = (double)c.Z - a.Z;
+        double bcX = acX - abX, bcY = acY - abY, bcZ = acZ - abZ;
+        double crossX = abY * acZ - abZ * acY;
+        double crossY = abZ * acX - abX * acZ;
+        double crossZ = abX * acY - abY * acX;
+        double crossLength = Math.Sqrt(crossX * crossX + crossY * crossY + crossZ * crossZ);
+        double longestSquared = Math.Max(abX * abX + abY * abY + abZ * abZ, Math.Max(acX * acX + acY * acY + acZ * acZ, bcX * bcX + bcY * bcY + bcZ * bcZ));
+        return longestSquared > 0.0 ? crossLength / longestSquared : 0.0;
+    }
 
     /// <summary>Finds the closest candidate triangle to the point.</summary>
     /// <param name="point">The point.</param>
