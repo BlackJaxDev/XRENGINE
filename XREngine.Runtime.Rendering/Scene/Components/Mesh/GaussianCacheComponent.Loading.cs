@@ -87,6 +87,8 @@ public partial class GaussianCacheComponent
 
         if (tracker is not null)
             CollectUploads(tracker);
+        else
+            _renderInfo.LocalCullingVolume = null;
     }
 
     private void OnCacheChunkAccepted(object? sender, IXRPropertyChangedEventArgs args)

@@ -373,7 +373,7 @@ public partial class GaussianCacheComponent
 
         _overflowLogged = true;
         Debug.RenderingWarning(
-            $"Gaussian cache component '{Name}' chose {dropped} more splats than MaxRenderedSplats ({renderer.Capacity}) allows. The renderer drops them.");
+            $"Gaussian cache component on '{SceneNode?.Name ?? GetType().Name}' chose {dropped} more splats than MaxRenderedSplats ({renderer.Capacity}) allows. The renderer drops them.");
     }
 
     private static uint ReadCounter(XRDataBuffer counter)
