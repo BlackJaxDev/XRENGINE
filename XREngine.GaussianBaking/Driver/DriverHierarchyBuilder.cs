@@ -16,6 +16,15 @@ public static class DriverHierarchyBuilder
     /// <summary>The simplification stops when the target index count is less than one triangle.</summary>
     private const int MinTargetIndexCount = 3;
 
+    /// <summary>The largest number of simplifier calls that scale the target index count before the reduction changes to halving.</summary>
+    private const int MaxRetargetPasses = 16;
+
+    /// <summary>A scaled target index count is multiplied by this value, so that the next result is a small amount under the vertex target.</summary>
+    private const double RetargetMargin = 0.98;
+
+    /// <summary>A scaled target index count is at least this much less than the previous target.</summary>
+    private const int MinRetargetStep = 3;
+
     /// <summary>The absolute error limit of <see cref="IMeshOptimizerBackend.Simplify"/>. It is so large that only the index target stops it.</summary>
     private const float SimplifyTargetError = 1e30f;
 
@@ -144,26 +153,86 @@ public static class DriverHierarchyBuilder
     }
 
     /// <summary>
-    /// Simplifies the triangles until they use at most <paramref name="targetVertexCount"/> vertices.
+    /// Simplifies the triangles until they use at most <paramref name="targetVertexCount"/> vertices, and as close to
+    /// that count as the simplifier allows.
     /// </summary>
     /// <remarks>
-    /// The target index count starts at 6 × the vertex target and is halved after each result that is still above the
-    /// vertex target. When <see cref="IMeshOptimizerBackend.Simplify"/> makes no more progress, or its target goes below
-    /// one triangle first, the reduction continues with <see cref="IMeshOptimizerBackend.SimplifySloppy"/>. When the
-    /// sloppy target goes below one triangle, or the sloppy simplifier would remove every triangle, the method returns
-    /// the closest result. Each pass either returns, halves the target, or changes to the sloppy simplifier one time,
-    /// so the loop always stops.
+    /// <para>The target index count starts at 6 × the vertex target. Each result is simplified again from the previous
+    /// result, so the first result at or under the vertex target is the closest one. After a result that is still above
+    /// the vertex target, the target index count becomes <c>floor(target × vertex target / used vertices × 0.98)</c>,
+    /// and it always goes down by at least 3. When <see cref="IMeshOptimizerBackend.Simplify"/> makes no progress, the
+    /// reduction continues with <see cref="IMeshOptimizerBackend.SimplifySloppy"/> at the same target.</para>
+    /// <para>After <see cref="MaxRetargetPasses"/> simplifier calls without a result at or under the vertex target, the
+    /// reduction halves the target until it gets there (see <see cref="ReduceByHalving"/>).</para>
     /// </remarks>
     /// <returns>The simplified triangles, as surface vertex indices. Its vertices are a subset of the vertices of <paramref name="triangles"/>.</returns>
     private static uint[] Reduce(uint[] triangles, float[] positions, int targetVertexCount, IMeshOptimizerBackend meshopt, int[] scratch)
     {
-        if (CountUsedVertices(triangles, scratch) <= targetVertexCount)
+        int usedVertexCount = CountUsedVertices(triangles, scratch);
+        if (usedVertexCount <= targetVertexCount)
             return triangles;
 
         int startIndexCount = (int)Math.Min((long)IndicesPerTargetVertex * targetVertexCount, int.MaxValue);
         int targetIndexCount = startIndexCount;
         uint[] current = triangles;
         bool sloppy = false;
+        for (int pass = 0; pass < MaxRetargetPasses; pass++)
+        {
+            // A target that is not less than the current index count cannot remove a triangle, so scale it without a call.
+            while (targetIndexCount >= current.Length && targetIndexCount >= MinTargetIndexCount)
+                targetIndexCount = Retarget(targetIndexCount, targetVertexCount, usedVertexCount);
+
+            if (targetIndexCount < MinTargetIndexCount)
+                break;
+
+            uint[] reduced = SimplifyOnce(current, positions, targetIndexCount, sloppy, meshopt, scratch);
+            if (reduced.Length == 0)
+                return current;
+
+            if (reduced.Length >= current.Length)
+            {
+                // No progress. The topology stops the simplifier, so change to the sloppy simplifier at the same target.
+                // When the sloppy simplifier makes no progress, try a smaller target.
+                if (!sloppy)
+                    sloppy = true;
+                else
+                    targetIndexCount = Retarget(targetIndexCount, targetVertexCount, usedVertexCount);
+                continue;
+            }
+
+            current = reduced;
+            usedVertexCount = CountUsedVertices(current, scratch);
+            if (usedVertexCount <= targetVertexCount)
+                return current;
+
+            targetIndexCount = Retarget(targetIndexCount, targetVertexCount, usedVertexCount);
+        }
+
+        return ReduceByHalving(current, positions, targetVertexCount, targetIndexCount, startIndexCount, sloppy, meshopt, scratch);
+    }
+
+    /// <summary>
+    /// Returns <c>floor(targetIndexCount × targetVertexCount / usedVertexCount × 0.98)</c>, but at least 3 less than
+    /// <paramref name="targetIndexCount"/>. Call it only when <paramref name="usedVertexCount"/> is more than <paramref name="targetVertexCount"/>.
+    /// </summary>
+    private static int Retarget(int targetIndexCount, int targetVertexCount, int usedVertexCount)
+    {
+        double scaled = Math.Floor((double)targetIndexCount * targetVertexCount / usedVertexCount * RetargetMargin);
+        return (int)Math.Min(scaled, (double)targetIndexCount - MinRetargetStep);
+    }
+
+    /// <summary>
+    /// Continues a reduction that did not reach the vertex target within <see cref="MaxRetargetPasses"/> calls.
+    /// </summary>
+    /// <remarks>
+    /// The target index count is halved after each result that is still above the vertex target. When
+    /// <see cref="IMeshOptimizerBackend.Simplify"/> makes no more progress, or its target goes below one triangle first,
+    /// the reduction continues with <see cref="IMeshOptimizerBackend.SimplifySloppy"/>. When the sloppy target goes below
+    /// one triangle, or the sloppy simplifier would remove every triangle, the method returns the closest result. Each
+    /// pass either returns, halves the target, or changes to the sloppy simplifier one time, so the loop always stops.
+    /// </remarks>
+    private static uint[] ReduceByHalving(uint[] current, float[] positions, int targetVertexCount, int targetIndexCount, int startIndexCount, bool sloppy, IMeshOptimizerBackend meshopt, int[] scratch)
+    {
         while (true)
         {
             // A target that is not less than the current index count cannot remove a triangle.
