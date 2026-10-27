@@ -29,7 +29,7 @@ public sealed partial class GaussianBakePipeline
     private const int Chunk0RetryDivisor = 8;
 
     /// <summary>The start of the budget message of a chunk 0 that is too large.</summary>
-    private const string Chunk0LimitPrefix = "chunk0:";
+    private const string Chunk0LimitPrefix = GaussianCacheBuilder.Chunk0Limit + ":";
 
     /// <summary>The camera framing of the cache hints and the orbit views: the bounding sphere fills a 40 degree field of view with a 10 percent margin.</summary>
     private const float HalfFieldOfViewDegrees = 20.0f;
@@ -185,7 +185,7 @@ public sealed partial class GaussianBakePipeline
         GaussianCacheCameraHints hints,
         GaussianBakeBudget budget)
     {
-        GaussianCacheLoopMode loopMode = trajectories.MaxEndDistance > 2.0f * budget.MaxPositionErrorMeters
+        GaussianCacheLoopMode loopMode = trajectories.MaxEndDistance(drivers.SourceVertexOfDriverVertex) > 2.0f * budget.MaxPositionErrorMeters
             ? GaussianCacheLoopMode.PingPong
             : GaussianCacheLoopMode.Loop;
         DriverFrameStore frames = QuantizeFrames(drivers, trajectories, quantizer, loopMode);

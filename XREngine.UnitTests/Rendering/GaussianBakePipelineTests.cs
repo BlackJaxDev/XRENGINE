@@ -1,10 +1,13 @@
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Components.Lights;
 using XREngine.Core.Files;
 using XREngine.Editor.GaussianBake;
 using XREngine.Rendering.Models.Gaussian.Baking;
+using XREngine.Rendering.Models.Gaussian.Baking.Budgets;
 using XREngine.Rendering.Models.Gaussian.Baking.Build;
 using XREngine.Rendering.Models.Gaussian.Baking.Cli;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
@@ -17,6 +20,7 @@ using XREngine.Rendering.Models.Gaussian.Baking.Views;
 using XREngine.Rendering.Models.Gaussian.Cache;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
+using XREngine.Scene.Transforms;
 using CookedBinarySerializer = XREngine.Core.Files.RuntimeCookedBinarySerializer;
 
 namespace XREngine.UnitTests.Rendering;
@@ -33,6 +37,16 @@ public sealed class GaussianBakePipelineTests
 
     /// <summary>A small splat count keeps the avatar bakes fast.</summary>
     private const int TestSplatCount = 4_000;
+
+    /// <summary>
+    /// A chunk 0 limit between the measured chunk 0 sizes of the test avatar at <see cref="TestSplatCount"/> splats:
+    /// 7,547 bytes at the level 0 target 2,000 (levels 500 and 4,000) and 1,922 bytes at the target 250 (levels 63,
+    /// 500, and 4,000).
+    /// </summary>
+    private const int RetryChunk0Bytes = 4_700;
+
+    /// <summary>A chunk 0 limit below the measured chunk 0 size of the test avatar at the level 0 target 31: 1,414 bytes.</summary>
+    private const int FailChunk0Bytes = 1_000;
 
     private string _workRoot = string.Empty;
     private string _avatarPak = string.Empty;
@@ -497,6 +511,73 @@ public sealed class GaussianBakePipelineTests
         written.GetProperty("input").GetProperty("sha256").GetString().ShouldBe(inputSha);
     }
 
+    [Test]
+    public async Task Pipeline_Chunk0TooLarge_RetriesWithSmallerLevel0Target()
+    {
+        // A limit between the chunk 0 sizes at the level 0 targets 2,000 and 250 fails the first build and passes the
+        // first build again.
+        GaussianBakeBudget budget = GaussianBakeBudget.For(GaussianBakeKind.Avatar) with { Chunk0Bytes = RetryChunk0Bytes };
+        string output = Path.Combine(_workRoot, "chunk0-retry-out");
+
+        BakeReport report = await CreatePipeline(new FakeRenderServices(), budget).RunAsync(AvatarOptions(output), CancellationToken.None);
+
+        report.Status.ShouldBe(BakeReport.ReadyStatus, report.FailureDetail);
+        report.Warnings.ShouldBe([GaussianBakePipeline.Chunk0RetryWarning + "250"]);
+        report.Cache.ShouldNotBeNull().Chunk0Bytes.ShouldBeLessThanOrEqualTo(RetryChunk0Bytes);
+        report.Splats.ShouldNotBeNull().PerLevel[0].ShouldBeLessThanOrEqualTo(250);
+        ReadReport(output).GetProperty("warnings")[0].GetString().ShouldBe("chunk0-retry:250");
+    }
+
+    [Test]
+    public async Task Pipeline_Chunk0TooLargeAfterTwoRetries_FailsBudgetExceeded()
+    {
+        // The limit is smaller than chunk 0 at the level 0 target 31, the target of the second build again.
+        GaussianBakeBudget budget = GaussianBakeBudget.For(GaussianBakeKind.Avatar) with { Chunk0Bytes = FailChunk0Bytes };
+        FakeRenderServices render = new();
+        string output = Path.Combine(_workRoot, "chunk0-fail-out");
+
+        BakeReport report = await CreatePipeline(render, budget).RunAsync(AvatarOptions(output), CancellationToken.None);
+
+        report.Status.ShouldBe(BakeReport.FailedStatus);
+        report.FailureCode.ShouldBe(GaussianBakeFailureCodes.BudgetExceeded);
+        report.FailureDetail.ShouldNotBeNull().ShouldStartWith(GaussianCacheBuilder.Chunk0Limit + ":");
+        report.Warnings.ShouldBe([GaussianBakePipeline.Chunk0RetryWarning + "250", GaussianBakePipeline.Chunk0RetryWarning + "31"]);
+        render.LoopCalls.ShouldBe(0);
+        Directory.GetFileSystemEntries(output).Select(Path.GetFileName).ShouldBe([BakeReportWriter.FileName]);
+        JsonElement written = ReadReport(output);
+        written.GetProperty("failureCode").GetString().ShouldBe("budget-exceeded");
+        written.GetProperty("failureDetail").GetString().ShouldNotBeNull().ShouldStartWith("chunk0:");
+    }
+
+    [Test]
+    public void HasRenderableMesh_MeshUnderInactiveParent_IsFalse()
+    {
+        SceneNode root = new("Root", new Transform());
+        SceneNode parent = new(root, "Parent", new Transform());
+        SceneNode child = new(parent, "Child", new Transform());
+        BakeMotionTestScenes.AddStaticCube(child);
+
+        GaussianBakePipeline.HasRenderableMesh([root]).ShouldBeTrue();
+        parent.IsActiveSelf = false;
+        GaussianBakePipeline.HasRenderableMesh([root]).ShouldBeFalse();
+    }
+
+    [Test]
+    public void FindCameraPath_PathUnderInactiveParent_IsSkipped()
+    {
+        SceneNode root = new("Root", new Transform());
+        SceneNode hiddenParent = new(root, "HiddenParent", new Transform());
+        SceneNode hidden = new(hiddenParent, "Hidden", new Transform());
+        SceneNode shown = new(root, "Shown", new Transform());
+        GaussianCacheCameraKey hiddenKey = new(0.0f, Vector3.UnitX, Quaternion.Identity);
+        GaussianCacheCameraKey shownKey = new(1.0f, Vector3.UnitY, Quaternion.Identity);
+        hidden.AddComponent<PreviewCameraPathComponent>()!.Keys = [hiddenKey];
+        shown.AddComponent<PreviewCameraPathComponent>()!.Keys = [shownKey];
+        hiddenParent.IsActiveSelf = false;
+
+        GaussianBakePipeline.FindCameraPath([root]).ShouldBe([shownKey]);
+    }
+
     private static Task<GaussianBakePreparation> PrepareAsync(BakeSplatPreviewOptions options)
         => GaussianBakePipeline.PrepareAsync(
             options,
@@ -506,6 +587,9 @@ public sealed class GaussianBakePipelineTests
 
     private GaussianBakePipeline CreatePipeline(FakeRenderServices render)
         => new(render, GaussianCacheTestSphere.Meshopt, static (_, _) => Task.FromResult<IReadOnlyList<string>>([]));
+
+    private static GaussianBakePipeline CreatePipeline(FakeRenderServices render, GaussianBakeBudget budget)
+        => new(render, GaussianCacheTestSphere.Meshopt, static (_, _) => Task.FromResult<IReadOnlyList<string>>([]), _ => budget);
 
     private BakeSplatPreviewOptions AvatarOptions(string output, params string[] extra)
         => Options(_avatarPak, AvatarAssetPath, "avatar", output, ["--splats", TestSplatCount.ToString(System.Globalization.CultureInfo.InvariantCulture), .. extra]);

@@ -356,7 +356,7 @@ public sealed class BakeMotionSelectorTests
     }
 
     [Test]
-    public void HoldPose_KeepsThePoseUntilDisposed()
+    public void PoseHold_BeginAtOneSecond_KeepsThePoseUntilDisposed()
     {
         SceneNode root = BakeMotionTestScenes.CreateRig(out SceneNode bone);
         BakeMotionTestScenes.AddStaticCube(bone);
