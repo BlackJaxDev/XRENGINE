@@ -45,16 +45,56 @@ public static partial class DeformedSurfaceEvaluator
     public static DeformedSurface Evaluate(SceneNode root, DeformedSurface? reuse = null)
     {
         ArgumentNullException.ThrowIfNull(root);
+        return EvaluateRoots(new ReadOnlySpan<SceneNode>(in root), reuse);
+    }
 
+    /// <summary>
+    /// Calculates the surface of every active <see cref="RenderableComponent"/> under each of <paramref name="roots"/>,
+    /// root by root, each in depth-first order. Use it for content with more than one root node, such as the scenes of a
+    /// world. The rules of <see cref="Evaluate(SceneNode, DeformedSurface?)"/> apply to each root.
+    /// </summary>
+    /// <param name="roots">The root nodes of the content. A node must not be under another node of the list.</param>
+    /// <param name="reuse">
+    /// A surface from an earlier evaluation of the same roots, in the same order. The evaluation writes the new positions
+    /// into it and does not allocate.
+    /// </param>
+    /// <returns><paramref name="reuse"/> when it is given; otherwise a new surface.</returns>
+    public static DeformedSurface Evaluate(IReadOnlyList<SceneNode> roots, DeformedSurface? reuse = null)
+    {
+        ArgumentNullException.ThrowIfNull(roots);
+        SceneNode[] array = roots as SceneNode[] ?? [.. roots];
+        foreach (SceneNode root in array)
+            ArgumentNullException.ThrowIfNull(root, nameof(roots));
+        return EvaluateRoots(array, reuse);
+    }
+
+    /// <summary>Calculates the surface of the roots. A surface that has the same roots and current sources keeps its layout.</summary>
+    internal static DeformedSurface EvaluateRoots(ReadOnlySpan<SceneNode> roots, DeformedSurface? reuse)
+    {
         DeformedSurface surface = reuse ?? new DeformedSurface();
-        if (!ReferenceEquals(surface.Root, root) || !AreSourcesCurrent(surface.Sources))
-            BuildLayout(root, surface);
+        if (!HasRoots(surface, roots) || !AreSourcesCurrent(surface.Sources))
+            BuildLayout(roots, surface);
 
         DeformedMeshSource[] sources = surface.Sources;
         for (int i = 0; i < sources.Length; i++)
             Deform(sources[i], surface.Positions);
 
         return surface;
+    }
+
+    private static bool HasRoots(DeformedSurface surface, ReadOnlySpan<SceneNode> roots)
+    {
+        SceneNode[] known = surface.Roots;
+        if (known.Length != roots.Length)
+            return false;
+
+        for (int i = 0; i < roots.Length; i++)
+        {
+            if (!ReferenceEquals(known[i], roots[i]))
+                return false;
+        }
+
+        return true;
     }
 
     private static bool AreSourcesCurrent(DeformedMeshSource[] sources)
@@ -69,42 +109,45 @@ public static partial class DeformedSurfaceEvaluator
     }
 
     /// <summary>
-    /// Finds the meshes under the root and reads the data that does not change between frames:
+    /// Finds the meshes under the roots and reads the data that does not change between frames:
     /// rest positions, influences, blendshape deltas, and triangles.
     /// </summary>
-    private static void BuildLayout(SceneNode root, DeformedSurface surface)
+    private static void BuildLayout(ReadOnlySpan<SceneNode> roots, DeformedSurface surface)
     {
         List<DeformedMeshSource> sources = [];
         List<uint> indices = [];
         List<int> triangleMesh = [];
         int vertexCount = 0;
 
-        root.IterateComponents<RenderableComponent>(component =>
+        foreach (SceneNode root in roots)
         {
-            // Gaussian splat components are not renderable mesh components, so the walk does not see them.
-            if (!IsRendered(component, root))
-                return;
-
-            foreach (RenderableMesh renderableMesh in component.Meshes)
+            root.IterateComponents<RenderableComponent>(component =>
             {
-                XRMeshRenderer? renderer = renderableMesh.LODs.First?.Value.Renderer;
-                XRMesh? mesh = renderer?.Mesh;
-                if (renderer is null || mesh is null || !IsTriangleSurface(mesh))
-                    continue;
+                // Gaussian splat components are not renderable mesh components, so the walk does not see them.
+                if (!IsRendered(component, root))
+                    return;
 
-                int meshIndex = sources.Count;
-                sources.Add(CreateSource(component, renderer, mesh, vertexCount));
-                AppendTriangles(mesh, vertexCount, meshIndex, indices, triangleMesh);
-                vertexCount += mesh.VertexCount;
-            }
-        }, true);
+                foreach (RenderableMesh renderableMesh in component.Meshes)
+                {
+                    XRMeshRenderer? renderer = renderableMesh.LODs.First?.Value.Renderer;
+                    XRMesh? mesh = renderer?.Mesh;
+                    if (renderer is null || mesh is null || !IsTriangleSurface(mesh))
+                        continue;
+
+                    int meshIndex = sources.Count;
+                    sources.Add(CreateSource(component, renderer, mesh, vertexCount));
+                    AppendTriangles(mesh, vertexCount, meshIndex, indices, triangleMesh);
+                    vertexCount += mesh.VertexCount;
+                }
+            }, true);
+        }
 
         int[] meshVertexStart = new int[sources.Count + 1];
         for (int i = 0; i < sources.Count; i++)
             meshVertexStart[i] = sources[i].VertexStart;
         meshVertexStart[sources.Count] = vertexCount;
 
-        surface.Root = root;
+        surface.Roots = roots.ToArray();
         surface.Sources = [.. sources];
         surface.Positions = new float[vertexCount * 3];
         surface.Indices = [.. indices];

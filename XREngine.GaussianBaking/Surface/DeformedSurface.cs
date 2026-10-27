@@ -38,8 +38,8 @@ public sealed class DeformedSurface
     /// <summary>Gets the number of triangles.</summary>
     public int TriangleCount { get; internal set; }
 
-    /// <summary>Gets the root node that the surface was evaluated from.</summary>
-    internal SceneNode? Root { get; set; }
+    /// <summary>Gets the root nodes that the surface was evaluated from, in evaluation order.</summary>
+    internal SceneNode[] Roots { get; set; } = [];
 
     /// <summary>Gets the cached data of each mesh, in mesh order. An evaluation that reuses the surface reads this data.</summary>
     internal DeformedMeshSource[] Sources { get; set; } = [];

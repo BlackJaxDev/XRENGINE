@@ -22,6 +22,12 @@ namespace XREngine.UnitTests.Rendering;
 internal static class GaussianBakeTestAssets
 {
     /// <summary>
+    /// The largest side, in pixels, of a texture that <see cref="ImportPrefabWithEngineMaterials"/> decodes into a prefab.
+    /// The Corvette has 58 textures of up to 8K, and their full pixels make a cooked payload of more than 2 GB.
+    /// </summary>
+    public const uint MaxFixtureTextureSize = 256;
+
+    /// <summary>
     /// Gets the absolute path of the skinned, morphed, and animated glTF test model. The test uses
     /// the <c>.gltf</c> file of this corpus entry. The native glTF importer does not parse the
     /// <c>.glb</c> copy, and the Assimp fallback for that copy attaches no animation clip component.
@@ -46,7 +52,8 @@ internal static class GaussianBakeTestAssets
     /// <summary>
     /// Imports a model file into a prefab with the default lit engine materials that the editor import makes.
     /// The shaders come from the engine shader assets, and the texture pixels are decoded into the prefab,
-    /// so a cooked archive renders without the source files.
+    /// so a cooked archive renders without the source files. A texture that is larger than
+    /// <see cref="MaxFixtureTextureSize"/> on one side is made smaller, so that the cooked payload stays below its 2 GB limit.
     /// </summary>
     /// <param name="modelPath">The model file to import.</param>
     /// <param name="doubleSided">
@@ -207,11 +214,16 @@ internal static class GaussianBakeTestAssets
         return count;
     }
 
-    /// <summary>Decodes a texture file into a texture that holds its pixels.</summary>
+    /// <summary>
+    /// Decodes a texture file into a texture that holds its pixels. When the longer side is more than
+    /// <see cref="MaxFixtureTextureSize"/>, the image is resampled so that the longer side is that size.
+    /// </summary>
     private static XRTexture2D LoadTextureWithPixels(string path)
     {
-        using RuntimeImage image = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(path));
-        return new XRTexture2D(image)
+        IRuntimeImageCodec codec = RuntimeImageCodecs.Require();
+        using RuntimeImage decoded = codec.Decode(File.ReadAllBytes(path));
+        using RuntimeImage? resized = ResizeForFixture(codec, decoded);
+        return new XRTexture2D(resized ?? decoded)
         {
             Name = Path.GetFileNameWithoutExtension(path),
             MagFilter = ETexMagFilter.Linear,
@@ -221,6 +233,22 @@ internal static class GaussianBakeTestAssets
             AutoGenerateMipmaps = false,
             Resizable = false,
         };
+    }
+
+    /// <summary>
+    /// Returns a copy of the image with the longer side at <see cref="MaxFixtureTextureSize"/>, or null when the image
+    /// is not larger than that size.
+    /// </summary>
+    private static RuntimeImage? ResizeForFixture(IRuntimeImageCodec codec, RuntimeImage image)
+    {
+        uint longer = Math.Max(image.Width, image.Height);
+        if (longer <= MaxFixtureTextureSize)
+            return null;
+
+        double scale = (double)MaxFixtureTextureSize / longer;
+        uint width = (uint)Math.Max(1L, (long)Math.Round(image.Width * scale, MidpointRounding.AwayFromZero));
+        uint height = (uint)Math.Max(1L, (long)Math.Round(image.Height * scale, MidpointRounding.AwayFromZero));
+        return codec.Resize(image, width, height, RuntimeImageResizeMode.Lanczos);
     }
 
     private static void DisableBackFaceCulling(SceneNode node)

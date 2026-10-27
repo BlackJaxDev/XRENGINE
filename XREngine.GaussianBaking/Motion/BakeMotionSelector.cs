@@ -27,9 +27,12 @@ public static class BakeMotionSelector
     /// </summary>
     /// <remarks>
     /// <para>The candidates, in depth-first order, are the clips of the <see cref="AnimationClipComponent"/>s, and then
-    /// the <see cref="AnimationClip"/> motions of the <see cref="AnimStateMachineComponent"/> states. A state machine clip
-    /// plays through a temporary <see cref="AnimationClipComponent"/> that refers to the state machine node. The node
-    /// does not list that component, so it does not tick and later searches do not find it.</para>
+    /// the <see cref="AnimationClip"/> motions of the <see cref="AnimStateMachineComponent"/> states. A component that is
+    /// not active, or that is on a node that is not active (up to <paramref name="root"/>), is not a candidate, because
+    /// the engine does not play it. A state machine clip plays through a temporary <see cref="AnimationClipComponent"/>
+    /// that refers to the state machine node. The node does not list that component, so it does not tick and later
+    /// searches do not find it. The choice gives that component in <see cref="BakeMotionChoice.TemporaryPlayers"/>; call
+    /// <see cref="ReleaseTemporaryPlayers"/> when the bake is complete.</para>
     /// <para>A clip is playable when its length is more than 0 and
     /// <see cref="AnimationClipComponent.TryValidatePlaybackCapabilities(out string)"/> passes, for example when a
     /// humanoid clip has a sibling <see cref="HumanoidComponent"/>. A checked clip that is not playable adds the warning
@@ -84,7 +87,8 @@ public static class BakeMotionSelector
     /// <summary>
     /// Chooses the clips that a world bake plays. Every playable <see cref="AnimationClipComponent"/> of every scene
     /// plays at the same time, for <see cref="GaussianBakeBudget.MaxDurationSeconds"/>. Each one plays at the frame
-    /// time modulo its own length. With no playable clip, the choice is one still frame.
+    /// time modulo its own length. A component that is not active, or that is on a node that is not active, does not
+    /// play. With no playable clip, the choice is one still frame.
     /// </summary>
     /// <param name="world">The world.</param>
     /// <param name="budget">The budget of the world kind.</param>
@@ -99,12 +103,20 @@ public static class BakeMotionSelector
             if (scene is null)
                 continue;
 
-            foreach (SceneNode? root in scene.RootNodes)
+            foreach (SceneNode? sceneRoot in scene.RootNodes)
             {
-                root?.IterateComponents<AnimationClipComponent>(component =>
+                if (sceneRoot is not SceneNode root)
+                    continue;
+
+                root.IterateComponents<AnimationClipComponent>(component =>
                 {
-                    if (component.Animation is { } clip && HasPlayableLength(clip) && component.TryValidatePlaybackCapabilities(out _))
+                    if (component.Animation is { } clip
+                        && IsEnabled(component, root)
+                        && HasPlayableLength(clip)
+                        && component.TryValidatePlaybackCapabilities(out _))
+                    {
                         players.Add(component);
+                    }
                 }, true);
             }
         }
@@ -118,21 +130,38 @@ public static class BakeMotionSelector
     }
 
     /// <summary>
+    /// Destroys the temporary players of a choice (<see cref="BakeMotionChoice.TemporaryPlayers"/>), as the selector
+    /// destroys the temporary players that it does not choose: the engine destroys a queued object at its next
+    /// destruction pass. The components that the content lists stay. A second call does nothing.
+    /// </summary>
+    /// <param name="choice">The choice of <see cref="ChooseForPrefab"/> or <see cref="ChooseForWorld"/>.</param>
+    public static void ReleaseTemporaryPlayers(BakeMotionChoice choice)
+    {
+        ArgumentNullException.ThrowIfNull(choice);
+        foreach (AnimationClipComponent player in choice.TemporaryPlayers)
+        {
+            if (!player.IsDestroyed && !player.IsDestroyQueued)
+                player.Destroy();
+        }
+    }
+
+    /// <summary>
     /// Lists the clips of the clip components, and then the clips of the state machine states, in depth-first order.
-    /// A state machine clip that a component on the same node already plays is not listed again.
+    /// A state machine clip that a component on the same node already plays is not listed again. Components that the
+    /// engine does not play (see <see cref="IsEnabled"/>) are left out.
     /// </summary>
     private static List<BakeClipCandidate> CollectCandidates(SceneNode root)
     {
         List<BakeClipCandidate> candidates = [];
         root.IterateComponents<AnimationClipComponent>(component =>
         {
-            if (component.Animation is { } clip)
+            if (component.Animation is { } clip && IsEnabled(component, root))
                 candidates.Add(new BakeClipCandidate(clip, component, component.SceneNode));
         }, true);
 
         root.IterateComponents<AnimStateMachineComponent>(machine =>
         {
-            if (machine.StateMachine is not { } stateMachine)
+            if (machine.StateMachine is not { } stateMachine || !IsEnabled(machine, root))
                 return;
 
             foreach (AnimLayer? layer in stateMachine.Layers)
@@ -149,6 +178,26 @@ public static class BakeMotionSelector
         }, true);
 
         return candidates;
+    }
+
+    /// <summary>
+    /// Returns true when the component and every node from its node up to <paramref name="root"/> are active, as for a
+    /// component that the engine plays. The content does not have to be in a world.
+    /// </summary>
+    private static bool IsEnabled(XRComponent component, SceneNode root)
+    {
+        if (!component.IsActive)
+            return false;
+
+        for (SceneNode? node = component.SceneNode; node is not null; node = node.Parent)
+        {
+            if (!node.IsActiveSelf)
+                return false;
+            if (ReferenceEquals(node, root))
+                break;
+        }
+
+        return true;
     }
 
     private static bool ContainsClip(List<BakeClipCandidate> candidates, AnimationClip clip, SceneNode node)
@@ -257,7 +306,11 @@ public static class BakeMotionSelector
         }
 
         int frameCount = FrameCountFor(duration, budget.FrameRate);
-        return new BakeMotionChoice([candidate.Player!], source, candidate.Clip.Name, duration, frameCount, frameCount / duration);
+        AnimationClipComponent player = candidate.Player!;
+        return new BakeMotionChoice([player], source, candidate.Clip.Name, duration, frameCount, frameCount / duration)
+        {
+            TemporaryPlayers = candidate.Component is null ? [player] : [],
+        };
     }
 
     private static BakeMotionChoice CreateStill(GaussianBakeBudget budget)

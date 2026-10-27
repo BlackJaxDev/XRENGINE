@@ -14,7 +14,7 @@ namespace XREngine.Rendering.Models.Gaussian.Baking.Motion;
 /// play in the bake.
 /// </summary>
 /// <remarks>
-/// The snapshot covers the content root and the top node of each player that is not under the content root, so that
+/// The snapshot covers the content roots and the top node of each player that is not under a content root, so that
 /// the sampler also puts back the transforms that such a player changes.
 /// </remarks>
 internal sealed class BakePoseSnapshot
@@ -29,8 +29,8 @@ internal sealed class BakePoseSnapshot
     }
 
     /// <summary>
-    /// Gets the nodes whose hierarchies the snapshot covers: the content root first, and then the top node of each
-    /// player that is not under the content root.
+    /// Gets the nodes whose hierarchies the snapshot covers: the content roots first, and then the top node of each
+    /// player that is not under a content root.
     /// </summary>
     public IReadOnlyList<SceneNode> Roots => _roots;
 
@@ -38,16 +38,15 @@ internal sealed class BakePoseSnapshot
     /// Records the state of the hierarchies of <see cref="Roots"/>. The animation clip components and state machine
     /// components that are not in <paramref name="players"/> are recorded so that they can be disabled.
     /// </summary>
-    public static BakePoseSnapshot Capture(SceneNode root, IReadOnlyList<AnimationClipComponent> players)
+    /// <param name="contentRoots">The root nodes of the content.</param>
+    /// <param name="players">The components that play the clips.</param>
+    public static BakePoseSnapshot Capture(IReadOnlyList<SceneNode> contentRoots, IReadOnlyList<AnimationClipComponent> players)
     {
         BakePoseSnapshot snapshot = new();
-        snapshot._roots.Add(root);
+        for (int i = 0; i < contentRoots.Count; i++)
+            snapshot.AddRoot(contentRoots[i]);
         for (int i = 0; i < players.Count; i++)
-        {
-            SceneNode top = FindTop(players[i].SceneNode, root);
-            if (!snapshot._roots.Exists(existing => ReferenceEquals(existing, top)))
-                snapshot._roots.Add(top);
-        }
+            snapshot.AddRoot(FindTop(players[i].SceneNode, contentRoots));
 
         foreach (SceneNode poseRoot in snapshot._roots)
         {
@@ -95,13 +94,32 @@ internal sealed class BakePoseSnapshot
         }
     }
 
-    /// <summary>Returns <paramref name="root"/> when the node is under it, or else the top node of the node's hierarchy.</summary>
-    private static SceneNode FindTop(SceneNode node, SceneNode root)
+    /// <summary>
+    /// Returns the content root that <paramref name="node"/> is under, or else the top node of the node's hierarchy.
+    /// </summary>
+    private static SceneNode FindTop(SceneNode node, IReadOnlyList<SceneNode> contentRoots)
     {
         SceneNode top = node;
-        while (!ReferenceEquals(top, root) && top.Parent is SceneNode parent)
+        while (!IsContentRoot(top, contentRoots) && top.Parent is SceneNode parent)
             top = parent;
         return top;
+    }
+
+    private static bool IsContentRoot(SceneNode node, IReadOnlyList<SceneNode> contentRoots)
+    {
+        for (int i = 0; i < contentRoots.Count; i++)
+        {
+            if (ReferenceEquals(contentRoots[i], node))
+                return true;
+        }
+
+        return false;
+    }
+
+    private void AddRoot(SceneNode root)
+    {
+        if (!_roots.Exists(existing => ReferenceEquals(existing, root)))
+            _roots.Add(root);
     }
 
     private static bool Contains(IReadOnlyList<AnimationClipComponent> players, XRComponent component)

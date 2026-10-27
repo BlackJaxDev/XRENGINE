@@ -232,6 +232,149 @@ public sealed class BakeMotionSelectorTests
         atZero.Positions[1].ShouldBe(atSevenAndHalf.Positions[1], 1e-4f);
     }
 
+    [Test]
+    public void ChooseForPrefab_InactiveClipComponent_IsSkipped()
+    {
+        SceneNode root = BakeMotionTestScenes.CreateRig(out _);
+        AnimationClipComponent idle = BakeMotionTestScenes.AddClip(root, BakeMotionTestScenes.CreateClip("Idle", 4.0f));
+        idle.IsActive = false;
+        AnimationClipComponent wave = BakeMotionTestScenes.AddClip(root, BakeMotionTestScenes.CreateClip("Wave", 2.0f));
+        List<string> warnings = [];
+
+        BakeMotionChoice choice = BakeMotionSelector.ChooseForPrefab(root, "idle", AvatarBudget, warnings);
+
+        choice.Source.ShouldBe("first");
+        choice.Players.ShouldHaveSingleItem().ShouldBeSameAs(wave);
+        warnings.ShouldBe(["clip-not-found:idle"]);
+    }
+
+    [Test]
+    public void ChooseForPrefab_ClipOnInactiveNode_IsSkipped()
+    {
+        SceneNode root = BakeMotionTestScenes.CreateRig(out SceneNode bone);
+        BakeMotionTestScenes.AddClip(bone, BakeMotionTestScenes.CreateClip("Idle", 4.0f));
+        bone.IsActiveSelf = false;
+        List<string> warnings = [];
+
+        BakeMotionChoice choice = BakeMotionSelector.ChooseForPrefab(root, null, AvatarBudget, warnings);
+
+        choice.Source.ShouldBe("none");
+        choice.Players.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void ChooseForPrefab_InactiveStateMachine_IsSkipped()
+    {
+        SceneNode root = BakeMotionTestScenes.CreateRig(out SceneNode bone);
+        BakeMotionTestScenes.AddStaticCube(bone);
+        AnimStateMachineComponent machine = root.AddComponent<AnimStateMachineComponent>().ShouldNotBeNull();
+        machine.StateMachine.Layers.Add(new AnimLayer(new AnimState(BakeMotionTestScenes.CreateClip("Idle", 2.0f), "IdleState")));
+        machine.IsActive = false;
+        List<string> warnings = [];
+
+        BakeMotionChoice choice = BakeMotionSelector.ChooseForPrefab(root, null, AvatarBudget, warnings);
+
+        choice.Source.ShouldBe("none");
+        choice.TemporaryPlayers.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void ChooseForWorld_InactiveClipComponent_DoesNotPlay()
+    {
+        SceneNode first = BakeMotionTestScenes.CreateRig(out _);
+        AnimationClipComponent idle = BakeMotionTestScenes.AddClip(first, BakeMotionTestScenes.CreateClip("Idle", 4.0f));
+        idle.IsActive = false;
+        SceneNode second = BakeMotionTestScenes.CreateRig(out _);
+        AnimationClipComponent spin = BakeMotionTestScenes.AddClip(second, BakeMotionTestScenes.CreateClip("Spin", 3.0f));
+
+        BakeMotionChoice choice = BakeMotionSelector.ChooseForWorld(CreateWorld(first, second), WorldBudget);
+
+        choice.Players.ShouldHaveSingleItem().ShouldBeSameAs(spin);
+    }
+
+    [Test]
+    public void ReleaseTemporaryPlayers_StateMachineChoice_DestroysOnlyTheTemporaryPlayer()
+    {
+        SceneNode root = BakeMotionTestScenes.CreateRig(out SceneNode bone);
+        BakeMotionTestScenes.AddStaticCube(bone);
+        AnimStateMachineComponent machine = root.AddComponent<AnimStateMachineComponent>().ShouldNotBeNull();
+        machine.StateMachine.Layers.Add(new AnimLayer(new AnimState(BakeMotionTestScenes.CreateClip("Idle", 2.0f), "IdleState")));
+        SceneNode other = BakeMotionTestScenes.CreateRig(out _);
+        AnimationClipComponent wave = BakeMotionTestScenes.AddClip(other, BakeMotionTestScenes.CreateClip("Wave", 2.0f));
+
+        BakeMotionChoice machineChoice = BakeMotionSelector.ChooseForPrefab(root, null, AvatarBudget, []);
+        BakeMotionChoice clipChoice = BakeMotionSelector.ChooseForPrefab(other, null, AvatarBudget, []);
+        AnimationClipComponent temporary = machineChoice.Players.ShouldHaveSingleItem();
+        machineChoice.TemporaryPlayers.ShouldBe([temporary]);
+        clipChoice.TemporaryPlayers.ShouldBeEmpty();
+
+        BakeMotionSelector.ReleaseTemporaryPlayers(machineChoice);
+        BakeMotionSelector.ReleaseTemporaryPlayers(machineChoice);
+        BakeMotionSelector.ReleaseTemporaryPlayers(clipChoice);
+
+        (temporary.IsDestroyed || temporary.IsDestroyQueued).ShouldBeTrue();
+        wave.IsDestroyed.ShouldBeFalse();
+        wave.IsDestroyQueued.ShouldBeFalse();
+    }
+
+    [Test]
+    public void EvaluateAt_TwoRoots_PosesEveryRoot()
+    {
+        SceneNode first = BakeMotionTestScenes.CreateRig(out SceneNode firstBone);
+        BakeMotionTestScenes.AddStaticCube(firstBone);
+        BakeMotionTestScenes.AddClip(first, BakeMotionTestScenes.CreateClip("Idle", 4.0f, endTranslationX: 4.0f));
+        SceneNode second = BakeMotionTestScenes.CreateRig(out SceneNode secondBone);
+        BakeMotionTestScenes.AddStaticCube(secondBone);
+        BakeMotionTestScenes.AddClip(second, BakeMotionTestScenes.CreateClip("Spin", 2.0f, endTranslationX: 2.0f));
+        BakeMotionChoice choice = BakeMotionSelector.ChooseForWorld(CreateWorld(first, second), WorldBudget);
+        SceneNode[] roots = [first, second];
+
+        DeformedSurface atZero = BakeFrameSampler.EvaluateAt(roots, choice, 0.0f);
+        DeformedSurface atOne = BakeFrameSampler.EvaluateAt(roots, choice, 1.0f);
+
+        atZero.MeshCount.ShouldBe(2);
+        DeformedSurfaceEvaluator.Evaluate(roots).VertexCount.ShouldBe(atZero.VertexCount);
+        for (int mesh = 0; mesh < 2; mesh++)
+        {
+            int vertex = atZero.MeshVertexStart[mesh] * 3;
+            (atOne.Positions[vertex] - atZero.Positions[vertex]).ShouldBe(1.0f, 1e-3f);
+        }
+    }
+
+    [Test]
+    public void EvaluateLoopEnd_ClipLength_GivesTheLastPose()
+    {
+        SceneNode root = BakeMotionTestScenes.CreateRig(out SceneNode bone);
+        BakeMotionTestScenes.AddStaticCube(bone);
+        BakeMotionTestScenes.AddClip(root, BakeMotionTestScenes.CreateClip("Wave", 2.0f, endTranslationX: 3.0f));
+        BakeMotionChoice choice = BakeMotionSelector.ChooseForPrefab(root, null, AvatarBudget, []);
+
+        DeformedSurface start = BakeFrameSampler.EvaluateAt([root], choice, 0.0f);
+        DeformedSurface end = BakeFrameSampler.EvaluateLoopEnd([root], choice);
+
+        (end.Positions[0] - start.Positions[0]).ShouldBe(3.0f, 1e-3f);
+    }
+
+    [Test]
+    public void HoldPose_KeepsThePoseUntilDisposed()
+    {
+        SceneNode root = BakeMotionTestScenes.CreateRig(out SceneNode bone);
+        BakeMotionTestScenes.AddStaticCube(bone);
+        BakeMotionTestScenes.AddClip(root, BakeMotionTestScenes.CreateClip("Wave", 2.0f, endTranslationX: 2.0f));
+        BakeMotionChoice choice = BakeMotionSelector.ChooseForPrefab(root, null, AvatarBudget, []);
+        root.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
+        float restX = DeformedSurfaceEvaluator.Evaluate(root).Positions[0];
+
+        using (BakePoseHold.Begin([root], choice, 1.0f))
+        {
+            bone.Transform.RenderMatrix.Translation.X.ShouldBe(1.0f, 1e-4f);
+            (DeformedSurfaceEvaluator.Evaluate(root).Positions[0] - restX).ShouldBe(1.0f, 1e-3f);
+        }
+
+        bone.Transform.RenderMatrix.Translation.X.ShouldBe(0.0f, 1e-4f);
+        DeformedSurfaceEvaluator.Evaluate(root).Positions[0].ShouldBe(restX, 1e-4f);
+    }
+
     private static XRWorld CreateWorld(params SceneNode[] roots)
         => new("BakeMotionSelectorWorld", new XRScene("BakeMotionSelectorScene", roots));
 }

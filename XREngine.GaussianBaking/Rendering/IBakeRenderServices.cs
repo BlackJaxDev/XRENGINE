@@ -30,6 +30,22 @@ public interface IBakeRenderServices
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Runs work that reads or changes the content of <paramref name="input"/>, for example a pose for a capture or the
+    /// sampling of the animation frames. The content is in the render world before the work starts, and no update of
+    /// that world runs at the same time as the work.
+    /// </summary>
+    /// <remarks>
+    /// The editor runs the work on the update thread of the engine. A pose that the work sets stays until other work
+    /// changes it, so a capture after the work shows that pose. Do not start a call from inside the work.
+    /// </remarks>
+    /// <typeparam name="T">The type of the result.</typeparam>
+    /// <param name="input">The cooked content that the work uses.</param>
+    /// <param name="work">The work.</param>
+    /// <param name="cancellationToken">Stops the wait for the work.</param>
+    /// <returns>The result of <paramref name="work"/>. An exception of the work goes to the caller.</returns>
+    Task<T> RunOnContentThreadAsync<T>(CookedBakeInput input, Func<T> work, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Records the preview loop of a cache: the four videos and the two posters of <see cref="LoopRendition.All"/>.
     /// </summary>
     /// <remarks>
