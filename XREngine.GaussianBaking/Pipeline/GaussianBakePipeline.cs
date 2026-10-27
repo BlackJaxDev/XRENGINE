@@ -124,9 +124,16 @@ public sealed partial class GaussianBakePipeline
     /// </summary>
     /// <param name="options">The bake options.</param>
     /// <param name="cancellationToken">Stops the bake.</param>
+    /// <remarks>
+    /// This method loads the input when the caller calls it. A cooked world that loads while the engine runs does not
+    /// render in the bake world: its captures are black. A caller with a running engine thus
+    /// calls <see cref="PrepareAsync"/> before <c>Engine.Run</c>, and then
+    /// <see cref="RunAsync(GaussianBakePreparation, CancellationToken)"/>.
+    /// </remarks>
     /// <returns>
     /// The report. Its status is <see cref="BakeReport.ReadyStatus"/>, or <see cref="BakeReport.FailedStatus"/> with a
-    /// failure code. The output folder holds the same report.
+    /// failure code. The output folder holds the same report, unless the bake cannot replace the output folder or a
+    /// file error stops the write of the report.
     /// </returns>
     /// <exception cref="Exception">
     /// An error that has no failure code. The output folder then holds a report with the failure code
@@ -154,7 +161,12 @@ public sealed partial class GaussianBakePipeline
     /// <param name="options">The bake options.</param>
     /// <param name="meshopt">The mesh optimizer whose version the report gives.</param>
     /// <param name="cancellationToken">Stops the checks.</param>
-    /// <returns>The preparation. When a check fails, it holds the failed report, and the output folder holds that report.</returns>
+    /// <returns>
+    /// The preparation. When a check fails, it holds the failed report, and the output folder holds that report when
+    /// <see cref="GaussianBakePreparation.ReportPath"/> is not null. When the bake cannot replace the output folder (see
+    /// <see cref="BakeOutputDirectory.CanReplace"/>), the failure code is <see cref="GaussianBakeFailureCodes.InvalidArguments"/>
+    /// and the folder does not change.
+    /// </returns>
     public static Task<GaussianBakePreparation> PrepareAsync(BakeSplatPreviewOptions options, IMeshOptimizerBackend meshopt, CancellationToken cancellationToken)
         => PrepareAsync(options, meshopt, static (encoder, token) => encoder.VerifyEncodersAsync(token), cancellationToken);
 
@@ -220,12 +232,13 @@ public sealed partial class GaussianBakePipeline
         catch (Exception ex)
         {
             report.MarkFailed(GaussianBakeFailureCodes.Unexpected, $"{ex.GetType().FullName}: {ex.Message}");
-            TryWriteFailure(output, report);
+            new GaussianBakePreparation(options, report, output).WriteFailedReport();
             throw;
         }
 
-        TryWriteFailure(output, report);
-        return new GaussianBakePreparation(options, report, output);
+        GaussianBakePreparation failed = new(options, report, output);
+        failed.WriteFailedReport();
+        return failed;
     }
 
     /// <summary>
@@ -256,6 +269,7 @@ public sealed partial class GaussianBakePipeline
             report.MarkReady();
             BakeReportWriter.Write(report, output.StagingPath);
             output.Commit();
+            preparation.MarkCommitted();
             return report;
         }
         catch (GaussianBakeException ex)
@@ -272,7 +286,7 @@ public sealed partial class GaussianBakePipeline
                 ? "The bake stopped before it was complete."
                 : $"{ex.GetType().FullName}: {ex.Message}";
             report.MarkFailed(GaussianBakeFailureCodes.Unexpected, detail);
-            TryWriteFailure(output, report);
+            preparation.WriteFailedReport();
             throw;
         }
         finally
@@ -280,7 +294,7 @@ public sealed partial class GaussianBakePipeline
             await ReleaseTemporaryPlayersAsync(run).ConfigureAwait(false);
         }
 
-        TryWriteFailure(output, report);
+        preparation.WriteFailedReport();
         return report;
     }
 
@@ -411,18 +425,6 @@ public sealed partial class GaussianBakePipeline
         }
         catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
         {
-        }
-    }
-
-    private static void TryWriteFailure(BakeOutputDirectory output, BakeReport report)
-    {
-        try
-        {
-            output.Fail(report);
-        }
-        catch (Exception ex) when (IsFileError(ex) || ex is GaussianBakeException)
-        {
-            // The report stays available to the caller, which prints it.
         }
     }
 

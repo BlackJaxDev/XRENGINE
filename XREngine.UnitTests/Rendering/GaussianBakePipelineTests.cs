@@ -3,6 +3,7 @@ using System.Text.Json;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
+using XREngine.Editor.GaussianBake;
 using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Build;
 using XREngine.Rendering.Models.Gaussian.Baking.Cli;
@@ -408,11 +409,106 @@ public sealed class GaussianBakePipelineTests
         await Should.ThrowAsync<InvalidOperationException>(() => CreatePipeline(render).RunAsync(preparation, CancellationToken.None));
     }
 
+    [Test]
+    public async Task Preparation_ReportCannotBeWritten_HasNoReportPath()
+    {
+        string final = Path.Combine(_workRoot, "locked-parent", "out");
+        WritePreviousOutput(final);
+        GaussianBakePreparation preparation;
+
+        // The open report blocks the delete of the output folder, so the failed report cannot be written.
+        using (new FileStream(Path.Combine(final, BakeReportWriter.FileName), FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            preparation = await PrepareAsync(Options(Path.Combine(_workRoot, "does-not-exist.pak"), AvatarAssetPath, "avatar", final));
+        }
+
+        preparation.IsPrepared.ShouldBeFalse();
+        preparation.Report.FailureCode.ShouldBe(GaussianBakeFailureCodes.InputLoadFailed);
+        preparation.ReportPath.ShouldBeNull();
+        StagingFoldersOf(final).ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Preparation_FailedLoad_ReportPathNamesTheWrittenReport()
+    {
+        string final = Path.Combine(_workRoot, "failed-load-out");
+
+        GaussianBakePreparation preparation = await PrepareAsync(Options(Path.Combine(_workRoot, "does-not-exist.pak"), AvatarAssetPath, "avatar", final));
+
+        preparation.IsPrepared.ShouldBeFalse();
+        preparation.ReportPath.ShouldBe(Path.Combine(Path.GetFullPath(final), BakeReportWriter.FileName));
+        ReadReport(final).GetProperty("failureCode").GetString().ShouldBe("input-load-failed");
+    }
+
+    [Test]
+    public async Task Preparation_UnrelatedOutputFolder_HasNoReportPath()
+    {
+        string final = Path.Combine(_workRoot, "unrelated-preparation-parent", "out");
+        Directory.CreateDirectory(final);
+        File.WriteAllText(Path.Combine(final, "dummy.txt"), "keep");
+
+        GaussianBakePreparation preparation = await PrepareAsync(AvatarOptions(final));
+
+        preparation.IsPrepared.ShouldBeFalse();
+        preparation.Report.FailureCode.ShouldBe(GaussianBakeFailureCodes.InvalidArguments);
+        preparation.ReportPath.ShouldBeNull();
+        Directory.GetFileSystemEntries(final).Select(Path.GetFileName).ShouldBe(["dummy.txt"]);
+    }
+
+    [Test]
+    public async Task Pipeline_ReadyBake_ReportPathNamesTheCommittedReport()
+    {
+        string final = Path.Combine(_workRoot, "ready-report-path-out");
+        GaussianBakePreparation preparation = await PrepareAsync(AvatarOptions(final));
+        preparation.ReportPath.ShouldBeNull();
+
+        BakeReport report = await CreatePipeline(new FakeRenderServices()).RunAsync(preparation, CancellationToken.None);
+
+        report.Status.ShouldBe(BakeReport.ReadyStatus, report.FailureDetail);
+        preparation.ReportPath.ShouldBe(Path.Combine(Path.GetFullPath(final), BakeReportWriter.FileName));
+        File.Exists(preparation.ReportPath).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task CommandStage_MissingStagePak_LeavesOnlyFailedReport()
+    {
+        // The output folder holds a ready bake: after the stage failure it must hold only the failed report.
+        string final = Path.Combine(_workRoot, "stage-parent", "out");
+        WritePreviousOutput(final);
+        string missingStage = Path.Combine(_workRoot, "missing-stage.pak");
+        GaussianBakePreparation preparation = await PrepareAsync(
+            AvatarOptions(final, "--stage", missingStage + BakeSplatPreviewOptions.StageSeparator + "Fixtures/Stage.asset"));
+        preparation.IsPrepared.ShouldBeTrue(preparation.Report.FailureDetail);
+        string inputSha = preparation.Report.Input.ShouldNotBeNull().Sha256.ShouldNotBeNull();
+        StagingFoldersOf(final).Length.ShouldBe(1);
+
+        SceneNode? stage = BakeSplatPreviewCommand.ResolveStage(preparation);
+
+        stage.ShouldBeNull();
+        preparation.IsPrepared.ShouldBeFalse();
+        preparation.Report.FailureCode.ShouldBe(GaussianBakeFailureCodes.InputLoadFailed);
+        preparation.ReportPath.ShouldBe(Path.Combine(Path.GetFullPath(final), BakeReportWriter.FileName));
+        Directory.GetFileSystemEntries(final).Select(Path.GetFileName).ShouldBe([BakeReportWriter.FileName]);
+        StagingFoldersOf(final).ShouldBeEmpty();
+        JsonElement written = ReadReport(final);
+        written.GetProperty("status").GetString().ShouldBe("failed");
+        written.GetProperty("failureCode").GetString().ShouldBe("input-load-failed");
+        written.GetProperty("failureDetail").GetString().ShouldNotBeNull().ShouldContain(missingStage);
+        written.GetProperty("input").GetProperty("sha256").GetString().ShouldBe(inputSha);
+    }
+
+    private static Task<GaussianBakePreparation> PrepareAsync(BakeSplatPreviewOptions options)
+        => GaussianBakePipeline.PrepareAsync(
+            options,
+            GaussianCacheTestSphere.Meshopt,
+            static (_, _) => Task.FromResult<IReadOnlyList<string>>([]),
+            CancellationToken.None);
+
     private GaussianBakePipeline CreatePipeline(FakeRenderServices render)
         => new(render, GaussianCacheTestSphere.Meshopt, static (_, _) => Task.FromResult<IReadOnlyList<string>>([]));
 
-    private BakeSplatPreviewOptions AvatarOptions(string output)
-        => Options(_avatarPak, AvatarAssetPath, "avatar", output, "--splats", TestSplatCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    private BakeSplatPreviewOptions AvatarOptions(string output, params string[] extra)
+        => Options(_avatarPak, AvatarAssetPath, "avatar", output, ["--splats", TestSplatCount.ToString(System.Globalization.CultureInfo.InvariantCulture), .. extra]);
 
     private static BakeSplatPreviewOptions Options(string pak, string asset, string kind, string output, params string[] extra)
     {

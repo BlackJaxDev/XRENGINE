@@ -14,8 +14,8 @@ namespace XREngine.Rendering.Models.Gaussian.Baking.Pipeline;
 /// </summary>
 /// <remarks>
 /// The editor command prepares the bake before the engine starts, as the content load of a world must complete before
-/// the engine runs. A preparation that failed already holds the failed report, and the output folder already holds
-/// that report.
+/// the engine runs. A preparation that failed already holds the failed report, and the output folder holds that
+/// report when <see cref="ReportPath"/> is not null.
 /// </remarks>
 public sealed class GaussianBakePreparation
 {
@@ -33,6 +33,13 @@ public sealed class GaussianBakePreparation
 
     /// <summary>Gets the report. Its status is <see cref="BakeReport.FailedStatus"/> when the preparation failed.</summary>
     public BakeReport Report { get; }
+
+    /// <summary>
+    /// Gets the full path of the <see cref="BakeReportWriter.FileName"/> that the bake wrote into the output folder, or
+    /// null when the bake wrote no report: the bake did not end, the output folder cannot be used, or a file error
+    /// stopped the write.
+    /// </summary>
+    public string? ReportPath { get; private set; }
 
     /// <summary>Gets a value that is true when the bake can continue: the checks passed and the input is loaded.</summary>
     public bool IsPrepared => Input is not null && _output is not null && !Consumed
@@ -74,13 +81,33 @@ public sealed class GaussianBakePreparation
 
         Consumed = true;
         Report.MarkFailed(failureCode, failureDetail);
+        WriteFailedReport();
+    }
+
+    /// <summary>Records that the commit put the outputs and the ready report into the output folder.</summary>
+    internal void MarkCommitted()
+        => ReportPath = Path.Combine(_output!.FinalPath, BakeReportWriter.FileName);
+
+    /// <summary>
+    /// Deletes the staging folder and replaces the output folder with a folder that holds only the failed report. A
+    /// file error, or an output folder that the bake cannot replace, does not stop the caller: the method writes the
+    /// error to the standard error stream, and <see cref="ReportPath"/> stays null. The report stays available to the
+    /// caller.
+    /// </summary>
+    internal void WriteFailedReport()
+    {
+        ReportPath = null;
+        if (_output is null)
+            return;
+
         try
         {
-            _output?.Fail(Report);
+            _output.Fail(Report);
+            ReportPath = Path.Combine(_output.FinalPath, BakeReportWriter.FileName);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or GaussianBakeException)
         {
-            // The report stays available to the caller, which prints it.
+            Console.Error.WriteLine($"Gaussian preview bake: the failed report cannot be written to '{_output.FinalPath}': {ex.Message}");
         }
     }
 }

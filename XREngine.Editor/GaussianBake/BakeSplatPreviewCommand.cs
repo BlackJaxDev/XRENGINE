@@ -5,7 +5,6 @@ using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Cli;
 using XREngine.Rendering.Models.Gaussian.Baking.Imaging;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
-using XREngine.Rendering.Models.Gaussian.Baking.Output;
 using XREngine.Rendering.Models.Gaussian.Baking.Pipeline;
 using XREngine.Rendering.Models.Gaussian.Baking.Rendering;
 using XREngine.Rendering.Models.Gaussian.Baking.Report;
@@ -85,28 +84,34 @@ public static class BakeSplatPreviewCommand
         }
 
         GaussianBakePreparation preparation;
-        SceneNode stage;
         try
         {
             preparation = GaussianBakePipeline.PrepareAsync(options, meshopt, CancellationToken.None).GetAwaiter().GetResult();
-            if (!preparation.IsPrepared)
-                return PrintResult(options, preparation.Report);
-
-            stage = ResolveStage(options);
         }
-        catch (GaussianBakeException ex)
+        catch (Exception ex)
         {
-            // Only the stage load throws here: the preparation reports its own failures.
-            BakeReport report = GaussianBakePipeline.CreateReport(options, meshopt);
-            report.MarkFailed(ex.FailureCode, ex.Message);
-            WriteFailedReport(options, report);
-            return Fail(ex.FailureCode, ex.Message);
+            // The preparation wrote a failed report with the code unexpected before it threw.
+            Console.Error.WriteLine($"Gaussian preview bake failed with an unexpected error: {ex}");
+            return UnexpectedExitCode;
+        }
+
+        if (!preparation.IsPrepared)
+            return PrintResult(preparation);
+
+        SceneNode? stage;
+        try
+        {
+            stage = ResolveStage(preparation);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Gaussian preview bake failed with an unexpected error: {ex}");
+            PrintReportPath(preparation);
             return UnexpectedExitCode;
         }
+
+        if (stage is null)
+            return PrintResult(preparation);
 
         int exitCode;
         try
@@ -116,8 +121,8 @@ public static class BakeSplatPreviewCommand
                 stage,
                 async (services, cancellationToken) =>
                 {
-                    BakeReport report = await new GaussianBakePipeline(services, meshopt).RunAsync(preparation, cancellationToken).ConfigureAwait(false);
-                    return PrintResult(options, report);
+                    await new GaussianBakePipeline(services, meshopt).RunAsync(preparation, cancellationToken).ConfigureAwait(false);
+                    return PrintResult(preparation);
                 });
         }
         catch (Exception ex)
@@ -134,21 +139,59 @@ public static class BakeSplatPreviewCommand
                     ? GaussianBakeFailureCodes.CaptureFailed
                     : GaussianBakeFailureCodes.Unexpected,
                 "The engine stopped before the bake started.");
+            PrintReportPath(preparation);
         }
 
         return exitCode;
     }
 
-    /// <summary>Prints the result of the bake and returns its exit code.</summary>
-    private static int PrintResult(BakeSplatPreviewOptions options, BakeReport report)
+    /// <summary>
+    /// Loads the stage of a prepared bake. When the stage cannot load, the preparation fails: the staging folder is
+    /// deleted, the output folder gets only the failed report, and the method returns null.
+    /// </summary>
+    /// <param name="preparation">A preparation that passed its checks.</param>
+    /// <returns>The root node of the stage, or null when the stage cannot load.</returns>
+    /// <exception cref="Exception">
+    /// An error that has no failure code. The preparation fails first with <see cref="GaussianBakeFailureCodes.Unexpected"/>.
+    /// </exception>
+    internal static SceneNode? ResolveStage(GaussianBakePreparation preparation)
     {
-        string output = Path.GetFullPath(options.OutputDirectory);
+        ArgumentNullException.ThrowIfNull(preparation);
+
+        BakeSplatPreviewOptions options = preparation.Options;
+        string stageName = $"{options.StagePak}{BakeSplatPreviewOptions.StageSeparator}{options.StageAsset}";
+        try
+        {
+            return ResolveStage(options);
+        }
+        catch (GaussianBakeException ex)
+        {
+            preparation.Fail(ex.FailureCode, $"The stage '{stageName}' cannot load: {ex.Message}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            preparation.Fail(GaussianBakeFailureCodes.InputLoadFailed, $"The stage '{stageName}' cannot be read: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            preparation.Fail(GaussianBakeFailureCodes.Unexpected, $"{ex.GetType().FullName}: {ex.Message}");
+            throw;
+        }
+
+        return null;
+    }
+
+    /// <summary>Prints the result of the bake and returns its exit code.</summary>
+    private static int PrintResult(GaussianBakePreparation preparation)
+    {
+        BakeReport report = preparation.Report;
         if (!string.Equals(report.Status, BakeReport.ReadyStatus, StringComparison.Ordinal))
         {
-            Console.WriteLine($"Gaussian preview bake report: {Path.Combine(output, BakeReportWriter.FileName)}");
+            PrintReportPath(preparation);
             return Fail(report.FailureCode ?? GaussianBakeFailureCodes.Unexpected, report.FailureDetail ?? string.Empty);
         }
 
+        string output = Path.GetFullPath(preparation.Options.OutputDirectory);
         BakeReportTimings timings = report.TimingsMs;
         long totalMs = timings.Load + timings.Animate + timings.Sample + timings.Color + timings.Tree + timings.Driver + timings.Encode + timings.Loop;
         Console.WriteLine($"Gaussian preview bake ready: {output}");
@@ -165,17 +208,13 @@ public static class BakeSplatPreviewCommand
     private static string Join(int[]? values)
         => values is null ? "-" : string.Join("/", values);
 
-    /// <summary>Writes a failed report into the output folder. A file error only prints a message.</summary>
-    private static void WriteFailedReport(BakeSplatPreviewOptions options, BakeReport report)
+    /// <summary>Prints the path of the report that the bake wrote, or that the bake wrote no report.</summary>
+    private static void PrintReportPath(GaussianBakePreparation preparation)
     {
-        try
-        {
-            BakeOutputDirectory.Begin(options.OutputDirectory).Fail(report);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or GaussianBakeException)
-        {
-            Console.Error.WriteLine($"Gaussian preview bake: the report cannot be written to '{options.OutputDirectory}': {ex.Message}");
-        }
+        if (preparation.ReportPath is string reportPath)
+            Console.WriteLine($"Gaussian preview bake report: {reportPath}");
+        else
+            Console.Error.WriteLine("Gaussian preview bake: no report was written.");
     }
 
     /// <summary>Writes the capture views as PNG files and stops (<c>--dump-views-only</c>).</summary>
