@@ -111,6 +111,84 @@ public sealed class GaussianSplatRendererGpuTests : GpuTestBase
     }
 
     [Test, Category("Hardware")]
+    public void Keys_AllSlotsWritten_EqualDepthSortsInSlotOrder()
+    {
+        // A producer that writes every slot, as the gaussian cache does with one slot for each node. Slots 1 and 5 are
+        // empty. Slots 0, 3, and 4 have exactly the same depth, and so do slots 2 and 6. The visible count is only the
+        // number of splats (5), so the splat in slot 6 is past it and must still sort.
+        GaussianSplatGpuSplat[] splats =
+        [
+            Splat(new Vector3(0.1f, 0f, -2f), 1f, 0.1f, Vector3.One),
+            Empty(),
+            Splat(new Vector3(0f, 0.3f, -5f), 1f, 0.1f, Vector3.One),
+            Splat(new Vector3(-0.2f, 0f, -2f), 1f, 0.1f, Vector3.One),
+            Splat(new Vector3(0f, -0.4f, -2f), 1f, 0.1f, Vector3.One),
+            Empty(),
+            Splat(new Vector3(0.5f, 0f, -5f), 1f, 0.1f, Vector3.One),
+        ];
+
+        RunWithGLContext(gl =>
+        {
+            RequireHardwareCompute(gl);
+            for (int run = 0; run < 3; run++)
+            {
+                uint order = PrepareOnGpu(gl, splats, visibleCount: 5u, Matrix4x4.Identity, out (uint Splats, uint VisibleCount) buffers, allSlotsWritten: true);
+                try
+                {
+                    uint[] pairs = ReadStorage<uint>(gl, order, splats.Length * 2);
+                    uint[] ids = [.. Enumerable.Range(0, splats.Length).Select(i => pairs[(2 * i) + 1])];
+
+                    // Far to near; equal depths keep the slot order; empty slots sort last with the culled key.
+                    ids.ShouldBe([2u, 6u, 0u, 3u, 4u, 1u, 5u], $"run {run}");
+                    pairs[0].ShouldBe(pairs[2]);
+                    pairs[4].ShouldBe(pairs[6]);
+                    pairs[6].ShouldBe(pairs[8]);
+                    pairs[2].ShouldBeLessThan(pairs[4]);
+                    pairs[8].ShouldBeLessThan(CulledKey);
+                    pairs[10].ShouldBe(CulledKey);
+                    pairs[12].ShouldBe(CulledKey);
+                }
+                finally
+                {
+                    DeleteBuffers(gl, order, buffers.Splats, buffers.VisibleCount);
+                }
+            }
+        });
+    }
+
+    [Test, Category("Hardware")]
+    public void Draw_AllSlotsWritten_EqualDepthDrawsInSlotOrder()
+    {
+        const int size = 64;
+        GaussianSplatGpuSplat red = Splat(new Vector3(0f, 0f, -3f), 0.5f, 1f, new Vector3(1f, 0f, 0f));
+        GaussianSplatGpuSplat green = Splat(new Vector3(0f, 0f, -3f), 0.5f, 1f, new Vector3(0f, 1f, 0f));
+        // The empty slot holds a white splat in front of both; it must not draw.
+        GaussianSplatGpuSplat empty = Splat(new Vector3(0f, 0f, -1f), GaussianSplatRenderer.EmptySlotOpacity, 1f, Vector3.One);
+        Matrix4x4 projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 3f, 1f, 0.1f, 100f);
+
+        RunWithGLContext(gl =>
+        {
+            RequireHardwareCompute(gl);
+            int center = ((size / 2) * size + size / 2) * 4;
+
+            // Two splats at exactly the same depth: the later slot draws over the earlier slot, in every run.
+            // Premultiplied over: last = 0.5 * last color + 0.5 * (0.5 * first color).
+            for (int run = 0; run < 2; run++)
+            {
+                byte[] greenLast = DrawOnGpu(gl, [red, empty, green], visibleCount: 2u, projection, size, allSlotsWritten: true);
+                Math.Abs(greenLast[center] - 0.25f * 255f).ShouldBeLessThanOrEqualTo(2f, "red channel, green last");
+                Math.Abs(greenLast[center + 1] - 0.5f * 255f).ShouldBeLessThanOrEqualTo(2f, "green channel, green last");
+                ((float)greenLast[center + 2]).ShouldBeLessThanOrEqualTo(2f, "blue channel, green last");
+
+                byte[] redLast = DrawOnGpu(gl, [green, empty, red], visibleCount: 2u, projection, size, allSlotsWritten: true);
+                Math.Abs(redLast[center] - 0.5f * 255f).ShouldBeLessThanOrEqualTo(2f, "red channel, red last");
+                Math.Abs(redLast[center + 1] - 0.25f * 255f).ShouldBeLessThanOrEqualTo(2f, "green channel, red last");
+                ((float)redLast[center + 2]).ShouldBeLessThanOrEqualTo(2f, "blue channel, red last");
+            }
+        });
+    }
+
+    [Test, Category("Hardware")]
     public void Draw_PremultipliedOver_FrontColorWins()
     {
         const int size = 64;
@@ -172,6 +250,10 @@ public sealed class GaussianSplatRendererGpuTests : GpuTestBase
     private static GaussianSplatGpuSplat Splat(Vector3 center, float opacity, float sigma, Vector3 linearColor)
         => new(center, opacity, Quaternion.Identity, new Vector3(sigma), linearColor);
 
+    /// <summary>An empty slot, as a producer that writes every slot marks it: the opacity is <see cref="GaussianSplatRenderer.EmptySlotOpacity"/>.</summary>
+    private static GaussianSplatGpuSplat Empty()
+        => Splat(new Vector3(0f, 0f, -1f), GaussianSplatRenderer.EmptySlotOpacity, 0.1f, Vector3.One);
+
     private static uint NextRandom(uint state)
     {
         state ^= state << 13;
@@ -230,7 +312,7 @@ public sealed class GaussianSplatRendererGpuTests : GpuTestBase
     /// Returns the order buffer; the caller deletes it. The splat and count buffers are returned in
     /// <paramref name="splatAndCountBuffers"/>.
     /// </summary>
-    private static uint PrepareOnGpu(GL gl, GaussianSplatGpuSplat[] splats, uint visibleCount, Matrix4x4 modelView, out (uint Splats, uint VisibleCount) splatAndCountBuffers)
+    private static uint PrepareOnGpu(GL gl, GaussianSplatGpuSplat[] splats, uint visibleCount, Matrix4x4 modelView, out (uint Splats, uint VisibleCount) splatAndCountBuffers, bool allSlotsWritten = false)
     {
         uint capacity = (uint)splats.Length;
         uint keys = CompileComputeProgram(gl, GaussianSplatRenderer.KeysShaderPath);
@@ -247,6 +329,7 @@ public sealed class GaussianSplatRendererGpuTests : GpuTestBase
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, GaussianSplatRenderer.OrderBinding, order);
             gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, GaussianSplatRenderer.VisibleCountBinding, countBuffer);
             gl.Uniform1(gl.GetUniformLocation(keys, GaussianSplatRenderer.CapacityUniform), capacity);
+            gl.Uniform1(gl.GetUniformLocation(keys, GaussianSplatRenderer.AllSlotsWrittenUniform), allSlotsWritten ? 1u : 0u);
             SetMatrix(gl, keys, GaussianSplatRenderer.ModelViewUniform, modelView);
             gl.DispatchCompute(GaussianSplatRenderer.GetKeyGroupCount(capacity), 1u, 1u);
             gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
@@ -272,9 +355,9 @@ public sealed class GaussianSplatRendererGpuTests : GpuTestBase
     /// Prepares the splats, draws them into an RGBA8 framebuffer with the renderer's quad shaders and
     /// render options, and returns the framebuffer: RGBA rows, bottom row first.
     /// </summary>
-    private static byte[] DrawOnGpu(GL gl, GaussianSplatGpuSplat[] splats, uint visibleCount, Matrix4x4 projection, int size)
+    private static byte[] DrawOnGpu(GL gl, GaussianSplatGpuSplat[] splats, uint visibleCount, Matrix4x4 projection, int size, bool allSlotsWritten = false)
     {
-        uint order = PrepareOnGpu(gl, splats, visibleCount, Matrix4x4.Identity, out (uint Splats, uint VisibleCount) buffers);
+        uint order = PrepareOnGpu(gl, splats, visibleCount, Matrix4x4.Identity, out (uint Splats, uint VisibleCount) buffers, allSlotsWritten);
         uint program = CreateProgram(
             gl,
             LoadShaderSource(GaussianSplatRenderer.QuadVertexShaderPath),

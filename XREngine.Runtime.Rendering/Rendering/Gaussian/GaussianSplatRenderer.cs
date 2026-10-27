@@ -45,6 +45,12 @@ public sealed partial class GaussianSplatRenderer : IDisposable
     /// <summary>Invocations in one workgroup of the depth key shader.</summary>
     public const uint KeysLocalSize = 256u;
 
+    /// <summary>
+    /// The opacity that marks an empty slot. A real splat has an opacity from 0 to 1, so the depth key pass gives a slot
+    /// with a negative (or NaN) opacity the culled key, and the slot does not draw.
+    /// </summary>
+    public const float EmptySlotOpacity = -1f;
+
     private const string SplatsBufferName = "GaussianSplats";
     private const string VisibleCountBufferName = "GaussianSplatVisibleCount";
     private const string OverflowBufferName = "GaussianSplatOverflow";
@@ -108,6 +114,15 @@ public sealed partial class GaussianSplatRenderer : IDisposable
     /// <summary>Multiplier for the standard deviation of every splat.</summary>
     public float SplatScale { get; set; } = 1f;
 
+    /// <summary>
+    /// When true, the producer writes every one of the <see cref="Capacity"/> slots in each frame: a splat, or an empty
+    /// slot with the opacity <see cref="EmptySlotOpacity"/>. <see cref="Prepare(in Matrix4x4)"/> then sorts all slots, and
+    /// <see cref="VisibleCount"/> is only the number of splats. Because the sort is stable, splats with equal depth keep the
+    /// slot order, so a producer that writes a fixed slot for each splat gets the same draw order in each run.
+    /// When false (the default), only the first <see cref="VisibleCount"/> slots hold splats.
+    /// </summary>
+    public bool AllSlotsWritten { get; set; }
+
     /// <summary>True after a <see cref="Prepare(in Matrix4x4)"/> call sorted the splats, so <see cref="Draw"/> can draw.</summary>
     public bool HasOrder => _hasOrder;
 
@@ -170,6 +185,7 @@ public sealed partial class GaussianSplatRenderer : IDisposable
         keys.BindBuffer(_order, OrderBinding);
         keys.BindBuffer(VisibleCount, VisibleCountBinding);
         keys.Uniform(CapacityUniform, (uint)Capacity);
+        keys.Uniform(AllSlotsWrittenUniform, AllSlotsWritten ? 1u : 0u);
         keys.Uniform(ModelViewUniform, ModelMatrix * viewMatrix);
         keys.DispatchCompute(GetKeyGroupCount((uint)Capacity), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
 

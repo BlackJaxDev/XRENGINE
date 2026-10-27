@@ -13,10 +13,16 @@
 // - When the driver triangle is degenerate in this frame, the node uses the frame of the triangle at frame 0 (no
 //   rotation when that is degenerate too) and moves with corner a: position = a + (rest position - rest a).
 //
-// The pass writes each chosen node to the splat buffer of the gaussian splat renderer at atomicAdd(visibleCount).
-// A node that does not fit increments the overflow counter. The color is srgbToLinear(rgb) * ColorScale, and the
-// opacity is linear. scalePad.w holds the bits of the global node index, for diagnostics.
-// GaussianCachePoseReference.Compute is the CPU mirror of this pass.
+// The pass writes the chosen nodes to the splat buffer of the gaussian splat renderer in one of two modes:
+// - SlotPerNode = 1 (the splat capacity is at least TotalNodeCount): every node writes slot = its global node index
+//   in each frame. A chosen node writes its splat; any other node writes an empty slot, whose opacity is
+//   EmptySlotOpacity (-1, which a real splat never has). visibleCount counts the chosen nodes only. The slot order
+//   is then the node order, so the stable depth sort puts splats with equal depth in node order, and the result is
+//   the same in each run.
+// - SlotPerNode = 0: each chosen node writes slot = atomicAdd(visibleCount). A node that does not fit increments the
+//   overflow counter. The slot order changes from run to run, so splats with equal depth can blend in another order.
+// The color is srgbToLinear(rgb) * ColorScale, and the opacity is linear. scalePad.w holds the bits of the global node
+// index. GaussianCachePoseReference.Compute is the CPU mirror of this pass.
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -119,8 +125,12 @@ uniform float LodThresholdPixels;
 uniform float ColorScale;
 uniform vec3 GridOrigin;
 uniform vec3 GridStep;
+// 1 when each node writes the slot at its global node index (see the top of the file), 0 for atomic slots.
+uniform uint SlotPerNode;
 
 const uint StaticFlag = 1u;
+// The opacity of an empty slot. The depth key pass of the renderer gives it the culled key.
+const float EmptySlotOpacity = -1.0;
 const float LodExtentSigma = 3.0;
 const float MinLodDistance = 1e-6;
 const float MinCrossLength = 1e-12;
@@ -286,26 +296,23 @@ vec3 SrgbToLinear(vec3 encoded)
     return mix(high, low, lessThanEqual(encoded, vec3(0.04045)));
 }
 
-void main()
+// Returns true when the node at a global index is in the cut, with its record and its pose.
+bool ChooseNode(uint index, out CacheRecord record, out vec3 position, out vec4 rotation)
 {
-    uint index = gl_GlobalInvocationID.x;
-    if (index >= TotalNodeCount)
-        return;
-
+    position = vec3(0.0);
+    rotation = vec4(0.0, 0.0, 0.0, 1.0);
+    record = records[index];
     int level = int(LevelCount) - 1;
     while (level > 0 && uint(levels[level].nodes.x) > index)
         level--;
     ivec4 info = levels[level].nodes;
     int node = int(index) - info.x;
     if (info.w == 0 || node >= info.y)
-        return;
+        return false;
 
-    CacheRecord record = records[index];
-    vec3 position;
-    vec4 rotation;
     NodePose(record, level, position, rotation);
     if (Refines(level, record, position))
-        return;
+        return false;
 
     int ancestorLevel = level;
     int ancestor = node;
@@ -313,7 +320,7 @@ void main()
     {
         int parent = parents[uint(levels[ancestorLevel].nodes.x + ancestor)];
         if (parent < 0)
-            return;
+            return false;
         ancestorLevel--;
         ancestor = parent;
         CacheRecord parentRecord = records[uint(levels[ancestorLevel].nodes.x + ancestor)];
@@ -321,8 +328,56 @@ void main()
         vec4 parentRotation;
         NodePose(parentRecord, ancestorLevel, parentPosition, parentRotation);
         if (!Refines(ancestorLevel, parentRecord, parentPosition))
-            return;
+            return false;
     }
+
+    return true;
+}
+
+void WriteSplat(uint slot, uint index, CacheRecord record, vec3 position, vec4 rotation)
+{
+    vec4 color = unpackUnorm4x8(record.color);
+    splats[slot].centerOpacity = vec4(position, color.a);
+    splats[slot].rotation = rotation;
+    splats[slot].scalePad = vec4(record.scaleX, record.scaleY, record.scaleZ, uintBitsToFloat(index));
+    splats[slot].linearColor = vec4(SrgbToLinear(color.rgb) * ColorScale, 1.0);
+}
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= TotalNodeCount)
+        return;
+
+    CacheRecord record;
+    vec3 position;
+    vec4 rotation;
+    bool chosen = ChooseNode(index, record, position, rotation);
+
+    if (SlotPerNode != 0u)
+    {
+        // The caller sets SlotPerNode only when every node has a slot; this guard keeps the writes in the buffer.
+        if (index >= SplatCapacity)
+        {
+            if (chosen)
+                atomicAdd(overflowCount, 1u);
+            return;
+        }
+
+        if (!chosen)
+        {
+            splats[index].centerOpacity = vec4(0.0, 0.0, 0.0, EmptySlotOpacity);
+            return;
+        }
+
+        // The counter gives only the number of chosen nodes; the slot is the node index.
+        atomicAdd(visibleCount, 1u);
+        WriteSplat(index, index, record, position, rotation);
+        return;
+    }
+
+    if (!chosen)
+        return;
 
     uint slot = atomicAdd(visibleCount, 1u);
     if (slot >= SplatCapacity)
@@ -331,9 +386,5 @@ void main()
         return;
     }
 
-    vec4 color = unpackUnorm4x8(record.color);
-    splats[slot].centerOpacity = vec4(position, color.a);
-    splats[slot].rotation = rotation;
-    splats[slot].scalePad = vec4(record.scaleX, record.scaleY, record.scaleZ, uintBitsToFloat(index));
-    splats[slot].linearColor = vec4(SrgbToLinear(color.rgb) * ColorScale, 1.0);
+    WriteSplat(slot, index, record, position, rotation);
 }

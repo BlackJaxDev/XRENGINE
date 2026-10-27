@@ -30,6 +30,13 @@ namespace XREngine.Components.Scene.Mesh;
 /// The renderer holds at most <see cref="MaxRenderedSplats"/> splats. The splats that do not fit are dropped, and the
 /// component logs this one time.
 /// </para>
+/// <para>
+/// When <see cref="MaxRenderedSplats"/> is at least the node count of the cache (the default), each node writes the
+/// renderer slot at its global node index, and a node that is not chosen writes an empty slot. Splats with equal depth
+/// then draw in node order, so the same cache, time, and camera give the same image in each run. With a smaller
+/// <see cref="MaxRenderedSplats"/>, the slots come in atomic order, and the draw order of splats with equal depth can
+/// change from run to run.
+/// </para>
 /// </remarks>
 [Serializable]
 public partial class GaussianCacheComponent : XRComponent, IRenderable
