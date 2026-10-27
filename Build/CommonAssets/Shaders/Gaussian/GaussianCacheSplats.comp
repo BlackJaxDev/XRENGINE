@@ -1,0 +1,339 @@
+#version 460
+
+// Cut and splat pose pass of a gaussian cache. One invocation runs for each node of each level.
+//
+// The cut: a node refines when it is not in the last level, all of its children are loaded, and its projected
+// 3-sigma radius is at least LodThresholdPixels. A loaded node is chosen when it does not refine and each of its
+// ancestors refines. The pass walks up the parent links to test the ancestors.
+//
+// The pose of a chosen node:
+// - A static node uses its grid position and its stored rotation.
+// - A bound node uses its driver triangle (a, b, c) in the pose buffer: position = a + u(b - a) + v(c - a) + h n,
+//   and rotation = triangle frame * local rotation. The triangle frame has +X along b - a and +Z along the normal.
+// - When the driver triangle is degenerate in this frame, the node uses the frame of the triangle at frame 0 (no
+//   rotation when that is degenerate too) and moves with corner a: position = a + (rest position - rest a).
+//
+// The pass writes each chosen node to the splat buffer of the gaussian splat renderer at atomicAdd(visibleCount).
+// A node that does not fit increments the overflow counter. The color is srgbToLinear(rgb) * ColorScale, and the
+// opacity is linear. scalePad.w holds the bits of the global node index, for diagnostics.
+// GaussianCachePoseReference.Compute is the CPU mirror of this pass.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct GaussianSplat
+{
+    vec4 centerOpacity;
+    vec4 rotation;
+    vec4 scalePad;
+    vec4 linearColor;
+};
+
+// The 48-byte decoded splat record of the cache.
+struct CacheRecord
+{
+    uint triangle;
+    // Bound node: u in the low 16 bits and v in the high 16 bits. Static node: grid x and grid y.
+    uint planeUV;
+    // Bound node: the half-float bits of h in the low 16 bits. Static node: grid z. Flags in the high 16 bits.
+    uint heightFlags;
+    // Rotation as signed normalized 16-bit values: x and y, then z and w.
+    uint rotationXY;
+    uint rotationZW;
+    float scaleX;
+    float scaleY;
+    float scaleZ;
+    // sRGB red, green, and blue, and linear opacity. Red is the low byte.
+    uint color;
+    uint childStart;
+    uint childCount;
+    uint reserved;
+};
+
+struct CacheLevel
+{
+    // x: first record of the level, y: loaded node count, z: first driver index of the level,
+    // w: 1 when the level can be drawn.
+    ivec4 nodes;
+    // x: first driver vertex that the level adds, y: number of vertices that the level adds,
+    // z: frame step of the level (0 when the level is not decoded), w: not used.
+    ivec4 driver;
+};
+
+layout(std430, binding = 46) writeonly buffer GaussianSplats
+{
+    GaussianSplat splats[];
+};
+
+layout(std430, binding = 48) buffer GaussianSplatVisibleCount
+{
+    uint visibleCount;
+};
+
+layout(std430, binding = 49) buffer GaussianSplatOverflow
+{
+    uint overflowCount;
+};
+
+layout(std430, binding = 50) readonly buffer GaussianCacheRecords
+{
+    CacheRecord records[];
+};
+
+// For each node, the index of its parent in the level before it, or -1.
+layout(std430, binding = 51) readonly buffer GaussianCacheParents
+{
+    int parents[];
+};
+
+layout(std430, binding = 52) readonly buffer GaussianCacheDriverIndices
+{
+    uint driverIndices[];
+};
+
+// Quantized positions, two 16-bit values in each word, indexed ((frame * DriverVertexCount) + vertex) * 3.
+layout(std430, binding = 53) readonly buffer GaussianCacheFrames
+{
+    uint framePositions[];
+};
+
+layout(std430, binding = 54) readonly buffer GaussianCacheDriverPose
+{
+    vec4 driverPose[];
+};
+
+layout(std430, binding = 55) readonly buffer GaussianCacheLevels
+{
+    CacheLevel levels[];
+};
+
+uniform uint TotalNodeCount;
+uniform uint LevelCount;
+uniform uint SplatCapacity;
+uniform mat4 ModelViewMatrix;
+// Projection scale of Y times half the viewport height: pixels for one unit at a distance of one unit.
+uniform float FocalPixels;
+// Largest axis scale of the model-view transform.
+uniform float SigmaScale;
+uniform int PerspectiveProjection;
+uniform float LodThresholdPixels;
+uniform float ColorScale;
+uniform vec3 GridOrigin;
+uniform vec3 GridStep;
+
+const uint StaticFlag = 1u;
+const float LodExtentSigma = 3.0;
+const float MinLodDistance = 1e-6;
+const float MinCrossLength = 1e-12;
+
+vec3 GridPoint(uint x, uint y, uint z)
+{
+    return GridOrigin + vec3(float(x), float(y), float(z)) * GridStep;
+}
+
+uint FrameGrid(uint index)
+{
+    uint word = framePositions[index >> 1u];
+    return (index & 1u) == 0u ? (word & 0xFFFFu) : (word >> 16u);
+}
+
+// The position of a driver vertex at frame 0, the rest frame.
+vec3 RestPosition(uint vertex)
+{
+    uint first = vertex * 3u;
+    return GridPoint(FrameGrid(first), FrameGrid(first + 1u), FrameGrid(first + 2u));
+}
+
+// Unpacks a coordinate on a triangle plane. 0 to 65535 maps to -1 to 2.
+float PlaneCoordinate(uint value)
+{
+    return float(value) / 65535.0 * 3.0 - 1.0;
+}
+
+vec4 LocalRotation(CacheRecord record)
+{
+    vec4 q = vec4(
+        float(int(record.rotationXY << 16u) >> 16),
+        float(int(record.rotationXY) >> 16),
+        float(int(record.rotationZW << 16u) >> 16),
+        float(int(record.rotationZW) >> 16));
+    float lengthSquared = dot(q, q);
+    return lengthSquared > 0.0 ? q / sqrt(lengthSquared) : vec4(0.0, 0.0, 0.0, 1.0);
+}
+
+// The Hamilton product a * b: the rotation b, then the rotation a.
+vec4 QuaternionMultiply(vec4 a, vec4 b)
+{
+    return vec4(a.w * b.xyz + b.w * a.xyz + cross(a.xyz, b.xyz), a.w * b.w - dot(a.xyz, b.xyz));
+}
+
+// The quaternion of the rotation matrix with rows r1, r2, r3 (row vectors: local +X maps to r1).
+vec4 QuaternionFromRows(vec3 r1, vec3 r2, vec3 r3)
+{
+    float trace = r1.x + r2.y + r3.z;
+    if (trace > 0.0)
+    {
+        float s = sqrt(trace + 1.0);
+        float invS = 0.5 / s;
+        return vec4((r2.z - r3.y) * invS, (r3.x - r1.z) * invS, (r1.y - r2.x) * invS, s * 0.5);
+    }
+    if (r1.x >= r2.y && r1.x >= r3.z)
+    {
+        float s = sqrt(1.0 + r1.x - r2.y - r3.z);
+        float invS = 0.5 / s;
+        return vec4(0.5 * s, (r1.y + r2.x) * invS, (r1.z + r3.x) * invS, (r2.z - r3.y) * invS);
+    }
+    if (r2.y > r3.z)
+    {
+        float s = sqrt(1.0 + r2.y - r1.x - r3.z);
+        float invS = 0.5 / s;
+        return vec4((r2.x + r1.y) * invS, 0.5 * s, (r3.y + r2.z) * invS, (r3.x - r1.z) * invS);
+    }
+    float s = sqrt(1.0 + r3.z - r1.x - r2.y);
+    float invS = 0.5 / s;
+    return vec4((r3.x + r1.z) * invS, (r3.y + r2.z) * invS, 0.5 * s, (r1.y - r2.x) * invS);
+}
+
+// The frame of a triangle: +X along b - a, +Z along the normal (b - a) x (c - a), +Y = Z x X.
+// Returns false, with no rotation, when the triangle is degenerate.
+bool TriangleFrame(vec3 a, vec3 b, vec3 c, out vec4 frame)
+{
+    vec3 edge = b - a;
+    vec3 normal = cross(edge, c - a);
+    float normalLength = length(normal);
+    float edgeLength = length(edge);
+    if (!(normalLength >= MinCrossLength) || !(edgeLength > 0.0))
+    {
+        frame = vec4(0.0, 0.0, 0.0, 1.0);
+        return false;
+    }
+
+    vec3 tangent = edge / edgeLength;
+    vec3 unitNormal = normal / normalLength;
+    vec3 bitangent = cross(unitNormal, tangent);
+    frame = normalize(QuaternionFromRows(tangent, bitangent, unitNormal));
+    return true;
+}
+
+// The position and the rotation of a node at the current time.
+void NodePose(CacheRecord record, int level, out vec3 position, out vec4 rotation)
+{
+    vec4 local = LocalRotation(record);
+    if (((record.heightFlags >> 16u) & StaticFlag) != 0u)
+    {
+        position = GridPoint(record.planeUV & 0xFFFFu, record.planeUV >> 16u, record.heightFlags & 0xFFFFu);
+        rotation = local;
+        return;
+    }
+
+    uint first = uint(levels[level].nodes.z) + record.triangle * 3u;
+    uint ia = driverIndices[first];
+    uint ib = driverIndices[first + 1u];
+    uint ic = driverIndices[first + 2u];
+    vec3 a = driverPose[ia].xyz;
+    vec3 b = driverPose[ib].xyz;
+    vec3 c = driverPose[ic].xyz;
+    float u = PlaneCoordinate(record.planeUV & 0xFFFFu);
+    float v = PlaneCoordinate(record.planeUV >> 16u);
+    float h = unpackHalf2x16(record.heightFlags & 0xFFFFu).x;
+
+    vec4 frame;
+    if (TriangleFrame(a, b, c, frame))
+    {
+        vec3 ab = b - a;
+        vec3 ac = c - a;
+        position = a + u * ab + v * ac + h * normalize(cross(ab, ac));
+    }
+    else
+    {
+        vec3 a0 = RestPosition(ia);
+        vec3 ab0 = RestPosition(ib) - a0;
+        vec3 ac0 = RestPosition(ic) - a0;
+        vec3 offset = TriangleFrame(a0, a0 + ab0, a0 + ac0, frame)
+            ? a0 + u * ab0 + v * ac0 + h * normalize(cross(ab0, ac0)) - a0
+            : u * ab0 + v * ac0;
+        position = a + offset;
+    }
+
+    rotation = normalize(QuaternionMultiply(frame, local));
+}
+
+float ProjectedRadius(CacheRecord record, vec3 center)
+{
+    float sigma = max(record.scaleX, max(record.scaleY, record.scaleZ)) * SigmaScale;
+    float radius = LodExtentSigma * sigma * FocalPixels;
+    if (PerspectiveProjection != 0)
+    {
+        vec3 viewPosition = (ModelViewMatrix * vec4(center, 1.0)).xyz;
+        radius /= max(length(viewPosition), MinLodDistance);
+    }
+    return radius;
+}
+
+bool Refines(int level, CacheRecord record, vec3 center)
+{
+    if (level + 1 >= int(LevelCount) || record.childCount == 0u)
+        return false;
+    ivec4 children = levels[level + 1].nodes;
+    if (children.w == 0 || record.childStart + record.childCount > uint(children.y))
+        return false;
+    return ProjectedRadius(record, center) >= LodThresholdPixels;
+}
+
+vec3 SrgbToLinear(vec3 encoded)
+{
+    vec3 low = encoded / 12.92;
+    vec3 high = pow((encoded + 0.055) / 1.055, vec3(2.4));
+    return mix(high, low, lessThanEqual(encoded, vec3(0.04045)));
+}
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= TotalNodeCount)
+        return;
+
+    int level = int(LevelCount) - 1;
+    while (level > 0 && uint(levels[level].nodes.x) > index)
+        level--;
+    ivec4 info = levels[level].nodes;
+    int node = int(index) - info.x;
+    if (info.w == 0 || node >= info.y)
+        return;
+
+    CacheRecord record = records[index];
+    vec3 position;
+    vec4 rotation;
+    NodePose(record, level, position, rotation);
+    if (Refines(level, record, position))
+        return;
+
+    int ancestorLevel = level;
+    int ancestor = node;
+    while (ancestorLevel > 0)
+    {
+        int parent = parents[uint(levels[ancestorLevel].nodes.x + ancestor)];
+        if (parent < 0)
+            return;
+        ancestorLevel--;
+        ancestor = parent;
+        CacheRecord parentRecord = records[uint(levels[ancestorLevel].nodes.x + ancestor)];
+        vec3 parentPosition;
+        vec4 parentRotation;
+        NodePose(parentRecord, ancestorLevel, parentPosition, parentRotation);
+        if (!Refines(ancestorLevel, parentRecord, parentPosition))
+            return;
+    }
+
+    uint slot = atomicAdd(visibleCount, 1u);
+    if (slot >= SplatCapacity)
+    {
+        atomicAdd(overflowCount, 1u);
+        return;
+    }
+
+    vec4 color = unpackUnorm4x8(record.color);
+    splats[slot].centerOpacity = vec4(position, color.a);
+    splats[slot].rotation = rotation;
+    splats[slot].scalePad = vec4(record.scaleX, record.scaleY, record.scaleZ, uintBitsToFloat(index));
+    splats[slot].linearColor = vec4(SrgbToLinear(color.rgb) * ColorScale, 1.0);
+}
