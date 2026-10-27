@@ -270,3 +270,59 @@ this incomplete result, and will not be repeated. Its request, activation, and
 dedicated workflow are removed. The helpers remain inactive without a newly
 reviewed request and activation; the retired automatic trace flag stays absent
 from the normal workflow.
+
+## Root cause in SwiftShader and source fix
+
+A local reproduction used Chrome Headless Shell 153 with its bundled
+SwiftShader, and a matching SwiftShader build with debug symbols. The cook used
+Slang 2026.8 and the canonical recipe defines. The
+`engine-advanced-shade-native-depth-no-decals` program had two separate
+problems in SwiftShader pipeline creation.
+
+1. **Control-flow analysis time.** `sw::Spirv::Function::ExistsPath` runs a
+   search over the blocks of each loop body. Its cost grows with the number of
+   distinct paths through the body. Each short-circuit `&&` or `||` operator
+   becomes a branch and a merge in SPIR-V, and each one doubles the path count
+   of the loop body that contains it. After SPIR-V optimizer inlining, the
+   shadow, texture-handle and surface-reconstruction helpers put several
+   hundred of these branches into the light and cascade loop bodies. This was
+   the long "pending" wait in CI.
+2. **Stack limit.** The Subzero back end has a 512 KiB stack limit for one
+   routine (`setStackSizeLimit(512 * 1024)` in `SubzeroReactor.cpp`). The
+   program needed about 553 KiB. The extra size came mostly from phi values:
+   `XR_ADV_TryReconstructSurface` had 23 early returns, and the SPIR-V
+   optimizer merge-return pass made a phi chain for each field of the prepared
+   shadow primitive at each return. When Subzero goes over the limit, routine
+   creation returns null, and the GPU process stops with a segmentation fault
+   in `rr::Nucleus::acquireCoroutine`. This is the exit code 133 in CI.
+
+The fix changes only the shader source:
+
+- In the shadow, texture-handle, engine-surface, uber-base, authored-basis and
+  reconstruction helpers, boolean conditions use the non-short-circuit
+  operators `&` and `|`. Slang emits WGSL `&` and `|` on `bool`, and Tint
+  emits no branch for them. The change applies only where the right operand
+  has no side effect. WGSL robust buffer access makes an early read that the
+  old code skipped safe, and the code uses its result only when the left
+  operand allows it. Conditions where the right operand writes an `out`
+  parameter that later code uses (for example
+  `XR_ADV_TryLoadAuthoredDeformedBasis`) keep `&&` and `||`.
+- `XR_ADV_TryReconstructSurface` uses a one-pass `[loop] for (;;)` block.
+  Each failure uses `break` instead of `return false`. The function has one
+  return, so the optimizer makes no per-return phi chains.
+- `XR_ADV_ResolveTexturePairWithSampling` has one exit after its first
+  validation. It finds the first exact binding row, then validates that row.
+  This keeps the earlier result for each binding table.
+
+Local results for `engine-advanced-shade-native-depth-no-decals`, measured with
+the SwiftShader debug build:
+
+| Source | Subzero stack (bytes) | Pipeline creation |
+|---|---|---|
+| Before the fix | 553,512 (limit 524,288) | GPU process crash |
+| After the fix | 411,192 | Success in about 13.2 s |
+
+The other non-MSAA advanced shading variants are listed below. The MSAA native
+variants put the complete shading pass in a four-sample loop. With this change,
+they still need more than 120 seconds locally. No CI job uses them on the
+software adapter. They stay an open item.

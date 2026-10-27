@@ -30,7 +30,7 @@
 bool XR_ADV_IsEngineSurfaceMaterial(XRAdvancedMaterialRecord material)
 {
     // The final canonical header word is EAdvancedMaterialSourceContract.
-    return material.reserved == XR_ADV_ENGINE_SURFACE_SOURCE ||
+    return material.reserved == XR_ADV_ENGINE_SURFACE_SOURCE |
         material.reserved == XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE;
 }
 
@@ -49,52 +49,52 @@ bool XR_ADV_TryLoadEngineSurfaceHeader(XRAdvancedMaterialRecord material,
     uint arenaWordCount, arenaStride;
     SceneArena.GetDimensions(arenaWordCount, arenaStride);
     uint header = XR_ADV_ENGINE_SURFACE_TABLE * 8u;
-    if (arenaWordCount < header + 8u || material.stableRowId == 0u ||
-        material.generation == 0u || !XR_ADV_IsEngineSurfaceMaterial(material))
+    if (arenaWordCount < header + 8u | material.stableRowId == 0u |
+        material.generation == 0u | !XR_ADV_IsEngineSurfaceMaterial(material))
         return false;
     uint offset = SceneArena[header];
     uint count = SceneArena[header + 1u];
-    if (SceneArena[header + 2u] != XR_ADV_ENGINE_SURFACE_WORD_COUNT ||
-        material.stableRowId >= count || offset > arenaWordCount ||
+    if (SceneArena[header + 2u] != XR_ADV_ENGINE_SURFACE_WORD_COUNT |
+        material.stableRowId >= count | offset > arenaWordCount |
         material.stableRowId >= (arenaWordCount - offset) / XR_ADV_ENGINE_SURFACE_WORD_COUNT)
         return false;
     word = offset + material.stableRowId * XR_ADV_ENGINE_SURFACE_WORD_COUNT;
-    if (SceneArena[word] != material.generation ||
+    if (SceneArena[word] != material.generation |
         SceneArena[word + 1u] != XR_ADV_ENGINE_SURFACE_SCHEMA)
         return false;
     kind = SceneArena[word + 2u];
     roleFlags = SceneArena[word + 3u];
     if ((roleFlags & ~63u) != 0u)
         return false;
-    if (kind == XR_ADV_ENGINE_SURFACE_COLOR || kind == XR_ADV_ENGINE_SURFACE_UNLIT_COLOR)
+    if (kind == XR_ADV_ENGINE_SURFACE_COLOR | kind == XR_ADV_ENGINE_SURFACE_UNLIT_COLOR)
     {
-        if (roleFlags != 0u || kind == XR_ADV_ENGINE_SURFACE_UNLIT_COLOR &&
-            (material.reserved != XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE || material.coverageMode != 0u)) return false;
+        if (roleFlags != 0u | kind == XR_ADV_ENGINE_SURFACE_UNLIT_COLOR &
+            (material.reserved != XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE | material.coverageMode != 0u)) return false;
     }
     else if (kind == XR_ADV_ENGINE_SURFACE_TEXTURE)
     {
-        if ((roleFlags & 3u) != 1u || (roleFlags & 48u) != 0u) return false;
+        if ((roleFlags & 3u) != 1u | (roleFlags & 48u) != 0u) return false;
     }
     else if (kind == XR_ADV_ENGINE_SURFACE_TEXTURE_NORMAL)
     {
-        if ((roleFlags & 3u) != 3u || (roleFlags & 48u) != 0u) return false;
+        if ((roleFlags & 3u) != 3u | (roleFlags & 48u) != 0u) return false;
     }
     else if (kind == XR_ADV_ENGINE_SURFACE_TEXTURE_ALPHA)
     {
-        if (roleFlags != 17u || material.reserved != XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE ||
-            material.coverageMode != 1u || any(XR_ADV_EngineSurfaceVector(word + 4u) != float4(1.0))) return false;
+        if (roleFlags != 17u | material.reserved != XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE |
+            material.coverageMode != 1u | any(XR_ADV_EngineSurfaceVector(word + 4u) != float4(1.0))) return false;
     }
     else if (kind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED)
     {
-        if ((roleFlags & 1u) == 0u || (roleFlags & 34u) == 0u || (roleFlags & 12u) != 0u ||
-            material.reserved != XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE ||
-            any(XR_ADV_EngineSurfaceVector(word + 4u) != float4(1.0)) ||
+        if ((roleFlags & 1u) == 0u | (roleFlags & 34u) == 0u | (roleFlags & 12u) != 0u |
+            material.reserved != XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE |
+            any(XR_ADV_EngineSurfaceVector(word + 4u) != float4(1.0)) |
             (((roleFlags & 16u) != 0u) != (material.coverageMode == 1u))) return false;
     }
-    else if (kind >= XR_ADV_ENGINE_SURFACE_UNLIT_TEXTURE && kind <= XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE)
+    else if (kind >= XR_ADV_ENGINE_SURFACE_UNLIT_TEXTURE & kind <= XR_ADV_ENGINE_SURFACE_UNLIT_ARRAY_SLICE)
     {
-        if (roleFlags != 1u || material.reserved != XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE ||
-            material.coverageMode != (kind == XR_ADV_ENGINE_SURFACE_UNLIT_ALPHA_TEXTURE ? 1u : 0u) ||
+        if (roleFlags != 1u | material.reserved != XR_ADV_ENGINE_GENERATED_SURFACE_SOURCE |
+            material.coverageMode != (kind == XR_ADV_ENGINE_SURFACE_UNLIT_ALPHA_TEXTURE ? 1u : 0u) |
             any(XR_ADV_EngineSurfaceVector(word + 4u) != float4(1.0))) return false;
     }
     else return false;

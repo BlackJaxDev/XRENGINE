@@ -852,3 +852,15 @@ The shadow result artifact is `11452016895`, with ZIP SHA-256
 These results do not show an ON rendering pass or a native compilation benefit
 from borrowed parameters. The next diagnosis needs evidence of work inside
 native pipeline creation; the current result does not name a compiler pass.
+
+## Cause of the pending shadow ON program
+
+A local reproduction with a matching SwiftShader debug build found two causes
+for the pending `engine-advanced-shade-native-depth-no-decals` pipeline. First,
+short-circuit boolean operators in the inlined shadow and reconstruction code
+made the SwiftShader control-flow path search very slow. Second, the Subzero
+routine needed more than its 512 KiB stack limit. When routine creation fails,
+the GPU process crashes, and CI reports exit code 133. The shader source fix
+and the measurements are in the
+[native compiler stall investigation](../rendering/browser-native-compiler-stall-2026-10-05.md#root-cause-in-swiftshader-and-source-fix).
+The next CI run must confirm the shadow ON startup and the comparison.
