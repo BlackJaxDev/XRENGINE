@@ -77,7 +77,7 @@ public static class MotionDecoder
             store.MarkDecoded(block.DriverLevel, block.TemporalLevel, frame, block.FirstVertex, block.VertexCount);
         }
 
-        store.CompleteBlock(block.DriverLevel, block.FirstVertex, block.VertexCount);
+        store.CompleteBlock(block.DriverLevel);
     }
 
     private static void RequireDecoded(int neighbor, in MotionBlockDescriptor block, DriverFrameStore store, int frame)

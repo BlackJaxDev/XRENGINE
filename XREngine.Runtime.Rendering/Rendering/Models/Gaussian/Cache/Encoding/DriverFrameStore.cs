@@ -1,38 +1,56 @@
 using System;
+using System.Collections.Generic;
 
 namespace XREngine.Rendering.Models.Gaussian.Cache.Encoding;
 
-/// <summary>Holds quantized driver vertex positions for all frames and tracks which parts are decoded.</summary>
+/// <summary>
+/// Holds quantized driver vertex positions for all frames and tracks which parts are decoded.
+/// The store is the single source of truth for the loop mode. The encoder and the decoder must use stores with the same loop mode.
+/// </summary>
 public sealed class DriverFrameStore
 {
     private readonly byte[] _decodedCells;
     private readonly int[] _levelFirstVertex;
-    private readonly int[] _levelEndVertex;
-    private readonly bool[] _levelRangeFixed;
+    private readonly int[] _levelVertexCount;
     private readonly long[,] _levelTemporalCells;
 
-    public DriverFrameStore(int vertexCount, int frameCount, int driverLevelCount, GaussianCacheLoopMode loopMode = GaussianCacheLoopMode.Loop)
+    /// <param name="cumulativeDriverVertexCounts">The cumulative driver vertex count of each driver level, as in the cache header.</param>
+    /// <param name="frameCount">The number of frames. It must be 1 or a positive multiple of 8.</param>
+    /// <param name="loopMode">Tells how the later prediction neighbour of the last frames is chosen.</param>
+    /// <exception cref="ArgumentException">A count is not valid.</exception>
+    public DriverFrameStore(IReadOnlyList<int> cumulativeDriverVertexCounts, int frameCount, GaussianCacheLoopMode loopMode)
     {
-        LoopMode = loopMode;
-        ArgumentOutOfRangeException.ThrowIfNegative(vertexCount);
-        ArgumentOutOfRangeException.ThrowIfNegative(frameCount);
-        ArgumentOutOfRangeException.ThrowIfNegative(driverLevelCount);
-        long cells = (long)vertexCount * frameCount;
-        if (cells * 3 > int.MaxValue)
-            throw new ArgumentOutOfRangeException(nameof(vertexCount), "The store is too large.");
+        ArgumentNullException.ThrowIfNull(cumulativeDriverVertexCounts);
+        if (frameCount != 1 && (frameCount <= 0 || (frameCount & 7) != 0))
+            throw new ArgumentException("The frame count must be 1 or a positive multiple of 8.", nameof(frameCount));
 
-        VertexCount = vertexCount;
+        int levels = cumulativeDriverVertexCounts.Count;
+        _levelFirstVertex = new int[levels];
+        _levelVertexCount = new int[levels];
+        int previous = 0;
+        for (int level = 0; level < levels; level++)
+        {
+            int cumulative = cumulativeDriverVertexCounts[level];
+            if (cumulative < previous)
+                throw new ArgumentException("The cumulative vertex counts must not decrease and must not be negative.", nameof(cumulativeDriverVertexCounts));
+            _levelFirstVertex[level] = previous;
+            _levelVertexCount[level] = cumulative - previous;
+            previous = cumulative;
+        }
+
+        long cells = (long)previous * frameCount;
+        if (cells * 3 > int.MaxValue)
+            throw new ArgumentException("The store is too large.", nameof(cumulativeDriverVertexCounts));
+
+        LoopMode = loopMode;
+        VertexCount = previous;
         FrameCount = frameCount;
-        DriverLevelCount = driverLevelCount;
+        DriverLevelCount = levels;
         Positions = new ushort[cells * 3];
         _decodedCells = new byte[cells];
-        DecodedTemporalLevel = new sbyte[driverLevelCount];
+        DecodedTemporalLevel = new sbyte[levels];
         Array.Fill(DecodedTemporalLevel, (sbyte)-1);
-        _levelFirstVertex = new int[driverLevelCount];
-        _levelEndVertex = new int[driverLevelCount];
-        _levelRangeFixed = new bool[driverLevelCount];
-        _levelTemporalCells = new long[driverLevelCount, TemporalLevels.Count];
-        Array.Fill(_levelFirstVertex, int.MaxValue);
+        _levelTemporalCells = new long[levels, TemporalLevels.Count];
     }
 
     public int VertexCount { get; }
@@ -48,14 +66,11 @@ public sealed class DriverFrameStore
     /// <summary>Holds, per driver level, the highest temporal level for which all frames of the level vertex range are decoded. It is -1 when none are.</summary>
     public sbyte[] DecodedTemporalLevel { get; }
 
-    /// <summary>Sets the vertex range of a driver level. Without it, the range is the union of the decoded blocks.</summary>
-    public void SetDriverLevelRange(int driverLevel, int firstVertex, int vertexCount)
-    {
-        _levelFirstVertex[driverLevel] = firstVertex;
-        _levelEndVertex[driverLevel] = firstVertex + vertexCount;
-        _levelRangeFixed[driverLevel] = true;
-        UpdateDecodedLevel(driverLevel);
-    }
+    /// <summary>Returns the first vertex of a driver level.</summary>
+    public int GetLevelFirstVertex(int driverLevel) => _levelFirstVertex[driverLevel];
+
+    /// <summary>Returns the number of vertices of a driver level.</summary>
+    public int GetLevelVertexCount(int driverLevel) => _levelVertexCount[driverLevel];
 
     /// <summary>Returns true when every vertex of the range is decoded in the frame.</summary>
     public bool IsDecoded(int frame, int firstVertex, int vertexCount)
@@ -63,23 +78,14 @@ public sealed class DriverFrameStore
 
     internal void MarkDecoded(int driverLevel, byte temporalLevel, int frame, int firstVertex, int vertexCount)
     {
-        _decodedCells.AsSpan((frame * VertexCount) + firstVertex, vertexCount).Fill(1);
-        _levelTemporalCells[driverLevel, temporalLevel] += vertexCount;
+        Span<byte> cells = _decodedCells.AsSpan((frame * VertexCount) + firstVertex, vertexCount);
+        _levelTemporalCells[driverLevel, temporalLevel] += cells.Count((byte)0);
+        cells.Fill(1);
     }
 
-    internal void CompleteBlock(int driverLevel, int firstVertex, int vertexCount)
+    internal void CompleteBlock(int driverLevel)
     {
-        if (!_levelRangeFixed[driverLevel])
-        {
-            _levelFirstVertex[driverLevel] = Math.Min(_levelFirstVertex[driverLevel], firstVertex);
-            _levelEndVertex[driverLevel] = Math.Max(_levelEndVertex[driverLevel], firstVertex + vertexCount);
-        }
-        UpdateDecodedLevel(driverLevel);
-    }
-
-    private void UpdateDecodedLevel(int driverLevel)
-    {
-        long width = (long)_levelEndVertex[driverLevel] - _levelFirstVertex[driverLevel];
+        long width = _levelVertexCount[driverLevel];
         sbyte reached = -1;
         if (width > 0)
         {

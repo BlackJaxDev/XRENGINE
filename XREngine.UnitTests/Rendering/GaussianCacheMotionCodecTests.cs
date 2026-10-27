@@ -42,9 +42,10 @@ public sealed class GaussianCacheMotionCodecTests
     public void NextNeighbor_OnceUsesPreviousFrame()
         => TemporalLevels.NextNeighbor(12, 4, 16, GaussianCacheLoopMode.Once).ShouldBe(8);
 
-    private static DriverFrameStore CreateSmoothStore(int vertexCount, int frameCount, double amplitude, GaussianCacheLoopMode mode = GaussianCacheLoopMode.Loop)
+    private static DriverFrameStore CreateSmoothStore(int vertexCount, int frameCount, double amplitude, GaussianCacheLoopMode mode = GaussianCacheLoopMode.Loop, int noiseLsb = 0)
     {
-        DriverFrameStore store = new(vertexCount, frameCount, 1, mode);
+        DriverFrameStore store = new([vertexCount], frameCount, mode);
+        Random random = new(42);
         for (int v = 0; v < vertexCount; v++)
         {
             double baseX = 20000 + (v * 37 % 20000);
@@ -55,9 +56,12 @@ public sealed class GaussianCacheMotionCodecTests
             {
                 double t = (2 * Math.PI * f / frameCount) + phase;
                 int index = ((f * vertexCount) + v) * 3;
-                store.Positions[index] = (ushort)Math.Round(baseX + (amplitude * Math.Sin(t)));
-                store.Positions[index + 1] = (ushort)Math.Round(baseY + (amplitude * Math.Cos(t)));
-                store.Positions[index + 2] = (ushort)Math.Round(baseZ + (amplitude * Math.Sin(2 * t)));
+                int noiseX = noiseLsb > 0 ? random.Next(0, noiseLsb) : 0;
+                int noiseY = noiseLsb > 0 ? random.Next(0, noiseLsb) : 0;
+                int noiseZ = noiseLsb > 0 ? random.Next(0, noiseLsb) : 0;
+                store.Positions[index] = (ushort)(Math.Round(baseX + (amplitude * Math.Sin(t))) + noiseX);
+                store.Positions[index + 1] = (ushort)(Math.Round(baseY + (amplitude * Math.Cos(t))) + noiseY);
+                store.Positions[index + 2] = (ushort)(Math.Round(baseZ + (amplitude * Math.Sin(2 * t))) + noiseZ);
             }
         }
         return store;
@@ -80,7 +84,7 @@ public sealed class GaussianCacheMotionCodecTests
     public void Motion_EncodeDecodeAllLevels_ReconstructsGridExactly()
     {
         DriverFrameStore source = CreateSmoothStore(200, 64, 3000);
-        DriverFrameStore target = new(200, 64, 1);
+        DriverFrameStore target = new([200], 64, GaussianCacheLoopMode.Loop);
 
         foreach ((MotionBlockDescriptor block, byte[] encoded) in EncodeAllLevels(source))
             MotionDecoder.DecodeBlock(block, encoded, target, _meshopt);
@@ -93,7 +97,7 @@ public sealed class GaussianCacheMotionCodecTests
     public void Motion_OnceMode_ReconstructsGridExactly()
     {
         DriverFrameStore source = CreateSmoothStore(50, 40, 2000, GaussianCacheLoopMode.Once);
-        DriverFrameStore target = new(50, 40, 1, GaussianCacheLoopMode.Once);
+        DriverFrameStore target = new([50], 40, GaussianCacheLoopMode.Once);
 
         foreach ((MotionBlockDescriptor block, byte[] encoded) in EncodeAllLevels(source))
             MotionDecoder.DecodeBlock(block, encoded, target, _meshopt);
@@ -104,7 +108,7 @@ public sealed class GaussianCacheMotionCodecTests
     [Test]
     public void Motion_LargeJump_UsesWideResidualsAndRoundTrips()
     {
-        DriverFrameStore source = new(4, 16, 1);
+        DriverFrameStore source = new([4], 16, GaussianCacheLoopMode.Loop);
         for (int f = 0; f < 16; f++)
         {
             for (int v = 0; v < 4; v++)
@@ -120,7 +124,7 @@ public sealed class GaussianCacheMotionCodecTests
         List<(MotionBlockDescriptor Block, byte[] Encoded)> blocks = EncodeAllLevels(source);
         blocks[0].Block.WideResiduals.ShouldBeTrue();
 
-        DriverFrameStore target = new(4, 16, 1);
+        DriverFrameStore target = new([4], 16, GaussianCacheLoopMode.Loop);
         foreach ((MotionBlockDescriptor block, byte[] encoded) in blocks)
             MotionDecoder.DecodeBlock(block, encoded, target, _meshopt);
 
@@ -131,7 +135,7 @@ public sealed class GaussianCacheMotionCodecTests
     public void Motion_DecodeT0Only_SetsDecodedLevelZero()
     {
         DriverFrameStore source = CreateSmoothStore(20, 32, 1000);
-        DriverFrameStore target = new(20, 32, 1);
+        DriverFrameStore target = new([20], 32, GaussianCacheLoopMode.Loop);
 
         (MotionBlockDescriptor block, byte[] encoded) = EncodeAllLevels(source)[0];
         target.DecodedTemporalLevel[0].ShouldBe((sbyte)-1);
@@ -141,23 +145,156 @@ public sealed class GaussianCacheMotionCodecTests
     }
 
     [Test]
-    public void Motion_SmoothMotion_EncodesBelowQuarterOfRaw()
+    public void Motion_RealisticSmoothMotion_EncodesWithinMeasuredBound()
     {
-        DriverFrameStore source = CreateSmoothStore(200, 64, 120);
+        // Measured encoded/raw ratios for 200 vertices x 64 frames with 1-LSB noise:
+        // amplitude 120 -> 0.2669, amplitude 1000 -> 0.3369, amplitude 3000 -> 0.4111 (bound is 1.10 times this: 0.4522).
+        foreach (double amplitude in new[] { 120.0, 1000.0, 3000.0 })
+        {
+            double ratio = MeasureRatio(amplitude);
+            TestContext.Out.WriteLine($"Motion ratio amplitude {amplitude}: {ratio:F4}");
+            if (amplitude == 3000.0)
+                ratio.ShouldBeLessThan(0.4522);
+        }
+    }
+
+    private double MeasureRatio(double amplitude)
+    {
+        DriverFrameStore source = CreateSmoothStore(200, 64, amplitude, GaussianCacheLoopMode.Loop, noiseLsb: 2);
         long total = 0;
         foreach ((MotionBlockDescriptor _, byte[] encoded) in EncodeAllLevels(source))
             total += encoded.Length;
+        return total / (6.0 * 200 * 64);
+    }
 
-        double raw = 6.0 * 200 * 64;
-        TestContext.Out.WriteLine($"Motion encoded {total} B of {raw} B raw, ratio {total / raw:F4}");
-        total.ShouldBeLessThan((long)(0.25 * raw));
+    [Test]
+    public void Motion_FrameCountRule_RejectsNonMultipleOfEight()
+    {
+        Should.Throw<ArgumentException>(() => new DriverFrameStore([10], 302, GaussianCacheLoopMode.Loop));
+        Should.Throw<ArgumentException>(() => new DriverFrameStore([10], 0, GaussianCacheLoopMode.Loop));
+        new DriverFrameStore([10], 304, GaussianCacheLoopMode.Loop).FrameCount.ShouldBe(304);
+        new DriverFrameStore([10], 1, GaussianCacheLoopMode.Once).FrameCount.ShouldBe(1);
+    }
+
+    [Test]
+    public void Motion_PingPongStore_RoundTrips()
+    {
+        DriverFrameStore source = CreateSmoothStore(50, 32, 2000, GaussianCacheLoopMode.PingPong);
+        DriverFrameStore target = new([50], 32, GaussianCacheLoopMode.PingPong);
+
+        foreach ((MotionBlockDescriptor block, byte[] encoded) in EncodeAllLevels(source))
+            MotionDecoder.DecodeBlock(block, encoded, target, _meshopt);
+
+        target.Positions.ShouldBe(source.Positions);
+    }
+
+    [Test]
+    public void Motion_DecodeWithDifferentLoopMode_DoesNotReproduceSource()
+    {
+        DriverFrameStore source = CreateSmoothStore(50, 32, 2000, GaussianCacheLoopMode.Loop);
+        DriverFrameStore target = new([50], 32, GaussianCacheLoopMode.Once);
+
+        foreach ((MotionBlockDescriptor block, byte[] encoded) in EncodeAllLevels(source))
+            MotionDecoder.DecodeBlock(block, encoded, target, _meshopt);
+
+        target.Positions.ShouldNotBe(source.Positions);
+    }
+
+    [Test]
+    public void Motion_RepeatedBlock_DoesNotOverstateDecodedLevel()
+    {
+        DriverFrameStore source = CreateSmoothStore(20, 32, 1000);
+        DriverFrameStore target = new([20], 32, GaussianCacheLoopMode.Loop);
+        MotionBlockDescriptor half = new(0, 0, 0, 10, 0, TemporalLevels.FramesInLevel(0, 32), false);
+        (byte[] encoded, _) = MotionEncoder.EncodeBlock(half, source, _meshopt);
+
+        // Repeating a block that covers half of the vertices must not make the level count as complete.
+        for (int i = 0; i < 3; i++)
+            MotionDecoder.DecodeBlock(half, encoded, target, _meshopt);
+        target.DecodedTemporalLevel[0].ShouldBe((sbyte)-1);
+
+        MotionBlockDescriptor other = half with { FirstVertex = 10 };
+        (byte[] otherEncoded, _) = MotionEncoder.EncodeBlock(other, source, _meshopt);
+        MotionDecoder.DecodeBlock(other, otherEncoded, target, _meshopt);
+        target.DecodedTemporalLevel[0].ShouldBe((sbyte)0);
+    }
+
+    [Test]
+    public void Motion_LevelWithTwoVertexRanges_IsCompleteOnlyWhenBothArrive()
+    {
+        DriverFrameStore source = new([10, 20], 8, GaussianCacheLoopMode.Loop);
+        for (int i = 0; i < source.Positions.Length; i++)
+            source.Positions[i] = (ushort)(1000 + (i * 7 % 50));
+        DriverFrameStore target = new([10, 20], 8, GaussianCacheLoopMode.Loop);
+
+        MotionBlockDescriptor lower = new(1, 0, 10, 5, 0, 1, false);
+        MotionBlockDescriptor upper = new(1, 0, 15, 5, 0, 1, false);
+        (byte[] lowerBytes, _) = MotionEncoder.EncodeBlock(lower, source, _meshopt);
+        (byte[] upperBytes, _) = MotionEncoder.EncodeBlock(upper, source, _meshopt);
+
+        MotionDecoder.DecodeBlock(lower, lowerBytes, target, _meshopt);
+        target.DecodedTemporalLevel[1].ShouldBe((sbyte)-1);
+        MotionDecoder.DecodeBlock(upper, upperBytes, target, _meshopt);
+        target.DecodedTemporalLevel[1].ShouldBe((sbyte)0);
+        target.DecodedTemporalLevel[0].ShouldBe((sbyte)-1);
+    }
+
+    [Test]
+    public void Motion_BlockOutsideDriverLevel_ThrowsMalformed()
+    {
+        DriverFrameStore store = new([10, 20], 8, GaussianCacheLoopMode.Loop);
+        MotionBlockDescriptor block = new(0, 0, 8, 5, 0, 1, false);
+        GaussianCacheFormatException exception = Should.Throw<GaussianCacheFormatException>(
+            () => MotionDecoder.DecodeBlock(block, [], store, _meshopt));
+        exception.DiagnosticCode.ShouldBe(GaussianCacheFormatException.MalformedCode);
+    }
+
+    [Test]
+    public void SplatStreams_WriterReaderRoundTrip()
+    {
+        GaussianCacheSplatStreamsWriter writer = new();
+        writer.Append(GaussianCacheSplatAttribute.Binding, [1, 2, 3]);
+        writer.Append(GaussianCacheSplatAttribute.ChildCount, []);
+        writer.Append(GaussianCacheSplatAttribute.Color, [9]);
+
+        IReadOnlyDictionary<GaussianCacheSplatAttribute, ReadOnlyMemory<byte>> streams = GaussianCacheSplatStreams.Read(writer.ToArray());
+        streams.Count.ShouldBe(3);
+        streams[GaussianCacheSplatAttribute.Binding].ToArray().ShouldBe(new byte[] { 1, 2, 3 });
+        streams[GaussianCacheSplatAttribute.ChildCount].Length.ShouldBe(0);
+        streams[GaussianCacheSplatAttribute.Color].ToArray().ShouldBe(new byte[] { 9 });
+    }
+
+    [Test]
+    public void SplatStreams_TruncatedDuplicateOrUnknown_ThrowsMalformed()
+    {
+        GaussianCacheSplatStreamsWriter writer = new();
+        writer.Append(GaussianCacheSplatAttribute.Binding, [1, 2, 3]);
+        byte[] good = writer.ToArray();
+        AssertMalformed(good.AsMemory(0, good.Length - 1));
+        AssertMalformed(good.AsMemory(0, 3));
+
+        GaussianCacheSplatStreamsWriter duplicate = new();
+        duplicate.Append(GaussianCacheSplatAttribute.Scale, [1]);
+        duplicate.Append(GaussianCacheSplatAttribute.Scale, [2]);
+        AssertMalformed(duplicate.ToArray());
+
+        GaussianCacheSplatStreamsWriter unknown = new();
+        unknown.Append((GaussianCacheSplatAttribute)99, [1]);
+        AssertMalformed(unknown.ToArray());
+
+        byte[] negative = [1, 0xFF, 0xFF, 0xFF, 0xFF];
+        AssertMalformed(negative);
+
+        static void AssertMalformed(ReadOnlyMemory<byte> data)
+            => Should.Throw<GaussianCacheFormatException>(() => GaussianCacheSplatStreams.Read(data))
+                .DiagnosticCode.ShouldBe(GaussianCacheFormatException.MalformedCode);
     }
 
     [Test]
     public void Motion_DecodeBeforeNeighbor_ThrowsChunkOutOfOrder()
     {
         DriverFrameStore source = CreateSmoothStore(20, 32, 1000);
-        DriverFrameStore target = new(20, 32, 1);
+        DriverFrameStore target = new([20], 32, GaussianCacheLoopMode.Loop);
 
         (MotionBlockDescriptor block, byte[] encoded) = EncodeAllLevels(source)[1];
         GaussianCacheFormatException exception = Should.Throw<GaussianCacheFormatException>(
