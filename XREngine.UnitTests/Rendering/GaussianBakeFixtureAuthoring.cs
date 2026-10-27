@@ -4,6 +4,7 @@ using System.Numerics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
+using XREngine.Rendering.Models.Gaussian;
 using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
 using XREngine.Scene;
@@ -27,6 +28,10 @@ public sealed class GaussianBakeFixtureAuthoring
 
     /// <summary>Space between the prop and the avatar in the world fixture, in meters.</summary>
     private const float AvatarClearance = 1.0f;
+
+    /// <summary>"GSPT" in little-endian order: the optional header of the splat cloud format.</summary>
+    private const uint TestSplatCloudMagic = 0x54505347u;
+    private const uint TestSplatCloudVersion = 1u;
 
     [Test]
     [Explicit("Writes Build/GaussianBakeFixtures/avatar.pak.")]
@@ -79,6 +84,67 @@ public sealed class GaussianBakeFixtureAuthoring
 
         foreach (SceneNode root in scene.RootNodes)
             WriteSummary($"world/{root.Name}", worldPak, worldInput, root);
+    }
+
+    [Test]
+    [Explicit("Writes Build/GaussianBakeFixtures/test-sphere.splat.")]
+    public void WriteTestSplatCloud()
+    {
+        const int splatCount = 10_000;
+        const float radius = 0.5f;
+        string splatPath = FixturePath("test-sphere.splat");
+
+        using (FileStream stream = File.Create(splatPath))
+        using (BinaryWriter writer = new(stream))
+        {
+            writer.Write(TestSplatCloudMagic);
+            writer.Write(TestSplatCloudVersion);
+            float goldenAngle = MathF.PI * (3.0f - MathF.Sqrt(5.0f));
+            for (int i = 0; i < splatCount; i++)
+            {
+                // Fibonacci sphere: the splats are flat disks tangent to the sphere, so the
+                // local +Z axis of each splat points along the sphere normal.
+                float y = 1.0f - (2.0f * i + 1.0f) / splatCount;
+                float ring = MathF.Sqrt(MathF.Max(0.0f, 1.0f - y * y));
+                float azimuth = i * goldenAngle;
+                Vector3 normal = new(MathF.Cos(azimuth) * ring, y, MathF.Sin(azimuth) * ring);
+                Quaternion rotation = RotationFromUnitZ(normal);
+                Vector3 color = new Vector3(0.5f) + 0.5f * normal;
+
+                WriteVector(writer, normal * radius);
+                WriteVector(writer, new Vector3(0.012f, 0.012f, 0.002f));
+                writer.Write(rotation.X);
+                writer.Write(rotation.Y);
+                writer.Write(rotation.Z);
+                writer.Write(rotation.W);
+                WriteVector(writer, color);
+                writer.Write(0.85f);
+            }
+        }
+
+        using FileStream readBack = File.OpenRead(splatPath);
+        GaussianSplatCloud cloud = GaussianSplatCloud.Load(readBack);
+        cloud.Count.ShouldBe(splatCount);
+        Vector3.Distance(cloud.Splats[0].Position, Vector3.Zero).ShouldBe(radius, 1e-4f);
+        TestContext.Out.WriteLine($"test-sphere: '{splatPath}' ({new FileInfo(splatPath).Length} bytes), {cloud.Count} splats, bounds {cloud.Bounds.Min} .. {cloud.Bounds.Max}");
+
+        static void WriteVector(BinaryWriter writer, Vector3 value)
+        {
+            writer.Write(value.X);
+            writer.Write(value.Y);
+            writer.Write(value.Z);
+        }
+    }
+
+    /// <summary>Returns the shortest rotation that maps +Z to <paramref name="direction"/> (a unit vector).</summary>
+    private static Quaternion RotationFromUnitZ(Vector3 direction)
+    {
+        float cosine = Vector3.Dot(Vector3.UnitZ, direction);
+        if (cosine < -0.999999f)
+            return Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI);
+
+        Vector3 axis = Vector3.Cross(Vector3.UnitZ, direction);
+        return Quaternion.Normalize(new Quaternion(axis, 1.0f + cosine));
     }
 
     private static string FixturePath(string fileName)

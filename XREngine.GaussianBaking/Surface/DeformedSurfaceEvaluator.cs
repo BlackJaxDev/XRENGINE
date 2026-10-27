@@ -81,7 +81,8 @@ public static partial class DeformedSurfaceEvaluator
 
         root.IterateComponents<RenderableComponent>(component =>
         {
-            if (component is GaussianSplatComponent || !IsRendered(component, root))
+            // Gaussian splat components are not renderable mesh components, so the walk does not see them.
+            if (!IsRendered(component, root))
                 return;
 
             foreach (RenderableMesh renderableMesh in component.Meshes)
