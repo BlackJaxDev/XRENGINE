@@ -73,6 +73,21 @@ public sealed class DriverHierarchyTests
 
         DriverHierarchy drivers = DriverHierarchyBuilder.Build(rest, [true], weld, [2_000, 8_000, 50_000], AvatarBudget, _meshopt);
 
+        drivers.LevelCount.ShouldBe(3);
+        drivers.TargetVertexCounts[^1].ShouldBe(AvatarBudget.MaxDriverVertices);
+        CountUsedVertices(drivers.LevelTriangleIndices[^1]).ShouldBeLessThanOrEqualTo(AvatarBudget.MaxDriverVertices);
+        drivers.CumulativeVertexCounts[^1].ShouldBeLessThanOrEqualTo(AvatarBudget.MaxDriverVertices);
+        drivers.CumulativeVertexCounts[0].ShouldBeGreaterThanOrEqualTo(DriverHierarchyBuilder.MinLevelVertexCount);
+    }
+
+    [Test]
+    public void Build_TopLevelLandsNearMaxDriverVertices()
+    {
+        DeformedSurface rest = EvaluateMeshes(CreateGrid(200));
+        uint[] weld = SeamWelder.CreateRemap(rest, _meshopt);
+
+        DriverHierarchy drivers = DriverHierarchyBuilder.Build(rest, [true], weld, [2_000, 8_000, 50_000], AvatarBudget, _meshopt);
+
         for (int level = 0; level < drivers.LevelCount; level++)
         {
             TestContext.Out.WriteLine(
@@ -80,11 +95,12 @@ public sealed class DriverHierarchyTests
                 + $"{drivers.LevelTriangleIndices[level].Length / 3} triangles");
         }
 
-        drivers.LevelCount.ShouldBe(3);
-        drivers.TargetVertexCounts[^1].ShouldBe(AvatarBudget.MaxDriverVertices);
-        CountUsedVertices(drivers.LevelTriangleIndices[^1]).ShouldBeLessThanOrEqualTo(AvatarBudget.MaxDriverVertices);
-        drivers.CumulativeVertexCounts[^1].ShouldBeLessThanOrEqualTo(AvatarBudget.MaxDriverVertices);
-        drivers.CumulativeVertexCounts[0].ShouldBeGreaterThanOrEqualTo(DriverHierarchyBuilder.MinLevelVertexCount);
+        // The scaled target keeps the top level near its budget. A halved target would leave about half of the budget unused.
+        int topVertexCount = drivers.CumulativeVertexCounts[^1];
+        topVertexCount.ShouldBeGreaterThanOrEqualTo((int)(0.85 * AvatarBudget.MaxDriverVertices));
+        topVertexCount.ShouldBeLessThanOrEqualTo(AvatarBudget.MaxDriverVertices);
+        for (int level = 0; level < drivers.LevelCount; level++)
+            drivers.CumulativeVertexCounts[level].ShouldBeLessThanOrEqualTo(drivers.TargetVertexCounts[level]);
     }
 
     [Test]
