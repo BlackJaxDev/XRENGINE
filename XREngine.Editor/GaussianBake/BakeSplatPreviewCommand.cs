@@ -66,13 +66,14 @@ public static class BakeSplatPreviewCommand
     }
 
     /// <summary>
-    /// Runs the full bake. The stage loads before the engine starts; the pipeline then runs in the hidden engine window.
-    /// The exit code is 0 for a bake that is ready, or the exit code of the failure code of the report.
+    /// Runs the full bake. The option and encoder checks, the input load, and the stage load run before the engine
+    /// starts, as the load of a cooked world must complete before the engine runs. The rest of the pipeline then runs in
+    /// the hidden engine window. The exit code is 0 for a bake that is ready, or the exit code of the failure code of
+    /// the report.
     /// </summary>
     private static int RunBake(BakeSplatPreviewOptions options)
     {
         IMeshOptimizerBackend meshopt;
-        SceneNode stage;
         try
         {
             meshopt = MeshOptimizerBackendServices.Required;
@@ -83,34 +84,59 @@ public static class BakeSplatPreviewCommand
             return UnexpectedExitCode;
         }
 
+        GaussianBakePreparation preparation;
+        SceneNode stage;
         try
         {
+            preparation = GaussianBakePipeline.PrepareAsync(options, meshopt, CancellationToken.None).GetAwaiter().GetResult();
+            if (!preparation.IsPrepared)
+                return PrintResult(options, preparation.Report);
+
             stage = ResolveStage(options);
         }
         catch (GaussianBakeException ex)
         {
+            // Only the stage load throws here: the preparation reports its own failures.
             BakeReport report = GaussianBakePipeline.CreateReport(options, meshopt);
             report.MarkFailed(ex.FailureCode, ex.Message);
             WriteFailedReport(options, report);
             return Fail(ex.FailureCode, ex.Message);
         }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Gaussian preview bake failed with an unexpected error: {ex}");
+            return UnexpectedExitCode;
+        }
 
+        int exitCode;
         try
         {
-            return BakeRenderHost.Run(
+            exitCode = BakeRenderHost.Run(
                 options,
                 stage,
                 async (services, cancellationToken) =>
                 {
-                    BakeReport report = await new GaussianBakePipeline(services, meshopt).RunAsync(options, cancellationToken).ConfigureAwait(false);
+                    BakeReport report = await new GaussianBakePipeline(services, meshopt).RunAsync(preparation, cancellationToken).ConfigureAwait(false);
                     return PrintResult(options, report);
                 });
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Gaussian preview bake failed with an unexpected engine error: {ex}");
-            return UnexpectedExitCode;
+            exitCode = UnexpectedExitCode;
         }
+
+        // A bake that the engine stopped before it started still gets a failed report.
+        if (preparation.IsPrepared)
+        {
+            preparation.Fail(
+                exitCode == GaussianBakeFailureCodes.ExitCodeFor(GaussianBakeFailureCodes.CaptureFailed)
+                    ? GaussianBakeFailureCodes.CaptureFailed
+                    : GaussianBakeFailureCodes.Unexpected,
+                "The engine stopped before the bake started.");
+        }
+
+        return exitCode;
     }
 
     /// <summary>Prints the result of the bake and returns its exit code.</summary>

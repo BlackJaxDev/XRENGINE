@@ -27,7 +27,8 @@ namespace XREngine.Rendering.Models.Gaussian.Baking.Pipeline;
 /// <para>The steps are, in this order:</para>
 /// <list type="number">
 /// <item>Check the options and the ffmpeg encoders. Nothing is loaded or rendered before these checks.</item>
-/// <item>Load the input and check that it has a renderable mesh.</item>
+/// <item>Load the input and check that it has a renderable mesh. These first steps do not use the renderer
+/// (<see cref="PrepareAsync"/>), so a caller can run them before the engine starts.</item>
 /// <item>Choose the motion, and sample all frames: the largest distance that each vertex moves and the bounds over
 /// all frames. These give the grid bits and the grid step. Then break each seam weld that opens by more than one grid
 /// step in a frame, and mark the meshes that move more than one grid step as animated.</item>
@@ -118,7 +119,8 @@ public sealed partial class GaussianBakePipeline
     }
 
     /// <summary>
-    /// Runs the bake and writes its outputs to <see cref="BakeSplatPreviewOptions.OutputDirectory"/>.
+    /// Runs the bake and writes its outputs to <see cref="BakeSplatPreviewOptions.OutputDirectory"/>: first
+    /// <see cref="PrepareAsync"/>, and then <see cref="RunAsync(GaussianBakePreparation, CancellationToken)"/>.
     /// </summary>
     /// <param name="options">The bake options.</param>
     /// <param name="cancellationToken">Stops the bake.</param>
@@ -132,9 +134,42 @@ public sealed partial class GaussianBakePipeline
     /// </exception>
     public async Task<BakeReport> RunAsync(BakeSplatPreviewOptions options, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(options);
+        GaussianBakePreparation preparation = await PrepareAsync(options, _meshopt, _verifyEncoders, cancellationToken).ConfigureAwait(false);
+        return preparation.IsPrepared
+            ? await RunAsync(preparation, cancellationToken).ConfigureAwait(false)
+            : preparation.Report;
+    }
 
-        BakeReport report = CreateReport(options, _meshopt);
+    /// <summary>
+    /// Runs the steps of a bake that do not use the renderer, in this order: the option check (<c>optimized-fit</c>
+    /// fails with <see cref="GaussianBakeFailureCodes.UnsupportedOption"/>), the ffmpeg encoder check (a missing encoder
+    /// fails with <see cref="GaussianBakeFailureCodes.EncodeFailed"/>), the load of the input, and the content check (no
+    /// renderable mesh fails with <see cref="GaussianBakeFailureCodes.ContentEmpty"/>). Nothing is loaded before the
+    /// encoder check.
+    /// </summary>
+    /// <remarks>
+    /// Run this method before the engine starts when the input is a world: a cooked world that loads while the engine
+    /// runs does not render in the bake world.
+    /// </remarks>
+    /// <param name="options">The bake options.</param>
+    /// <param name="meshopt">The mesh optimizer whose version the report gives.</param>
+    /// <param name="cancellationToken">Stops the checks.</param>
+    /// <returns>The preparation. When a check fails, it holds the failed report, and the output folder holds that report.</returns>
+    public static Task<GaussianBakePreparation> PrepareAsync(BakeSplatPreviewOptions options, IMeshOptimizerBackend meshopt, CancellationToken cancellationToken)
+        => PrepareAsync(options, meshopt, static (encoder, token) => encoder.VerifyEncodersAsync(token), cancellationToken);
+
+    /// <summary>Runs <see cref="PrepareAsync(BakeSplatPreviewOptions, IMeshOptimizerBackend, CancellationToken)"/> with another encoder check, for tests.</summary>
+    internal static async Task<GaussianBakePreparation> PrepareAsync(
+        BakeSplatPreviewOptions options,
+        IMeshOptimizerBackend meshopt,
+        Func<FfmpegEncoder, CancellationToken, Task<IReadOnlyList<string>>> verifyEncoders,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(meshopt);
+        ArgumentNullException.ThrowIfNull(verifyEncoders);
+
+        BakeReport report = CreateReport(options, meshopt);
         BakeOutputDirectory output;
         try
         {
@@ -143,13 +178,75 @@ public sealed partial class GaussianBakePipeline
         catch (Exception ex) when (IsFileError(ex))
         {
             report.MarkFailed(GaussianBakeFailureCodes.EncodeFailed, $"The output folder '{options.OutputDirectory}' cannot be prepared: {ex.Message}");
-            return report;
+            return new GaussianBakePreparation(options, report, output: null);
         }
 
-        BakeRun run = new(options, report, output.StagingPath);
+        Stopwatch watch = Stopwatch.StartNew();
         try
         {
-            await RunStagesAsync(run, cancellationToken).ConfigureAwait(false);
+            FfmpegEncoder encoder = await CheckOptionsAndEncodersAsync(options, verifyEncoders, cancellationToken).ConfigureAwait(false);
+            CookedBakeInput input = CookedBakeInputLoader.Load(options.InputPak, options.AssetPath, options.Kind);
+            report.Input!.Sha256 = input.InputSha256;
+            SceneNode[] roots = ContentRoots(input);
+            if (!HasRenderableMesh(roots))
+            {
+                throw new GaussianBakeException(
+                    GaussianBakeFailureCodes.ContentEmpty,
+                    $"The asset '{options.AssetPath}' has no active renderable component with a mesh.");
+            }
+
+            report.TimingsMs.Load = watch.ElapsedMilliseconds;
+            return new GaussianBakePreparation(options, report, output)
+            {
+                Input = input,
+                Roots = roots,
+                Encoder = encoder,
+            };
+        }
+        catch (GaussianBakeException ex)
+        {
+            report.MarkFailed(ex.FailureCode, ex.Message);
+        }
+        catch (Exception ex) when (IsFileError(ex))
+        {
+            report.MarkFailed(GaussianBakeFailureCodes.InputLoadFailed, $"The input cannot be read: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            report.MarkFailed(GaussianBakeFailureCodes.Unexpected, $"{ex.GetType().FullName}: {ex.Message}");
+            TryWriteFailure(output, report);
+            throw;
+        }
+
+        TryWriteFailure(output, report);
+        return new GaussianBakePreparation(options, report, output);
+    }
+
+    /// <summary>
+    /// Continues a prepared bake with the renderer: the motion, the splats, the colors, the cache, and the loop. Then it
+    /// writes <c>report.json</c> and commits the output folder. A preparation can run one time.
+    /// </summary>
+    /// <param name="preparation">The result of <see cref="PrepareAsync"/>.</param>
+    /// <param name="cancellationToken">Stops the bake.</param>
+    /// <returns>The report, as for <see cref="RunAsync(BakeSplatPreviewOptions, CancellationToken)"/>.</returns>
+    /// <exception cref="InvalidOperationException">The preparation failed or already ran.</exception>
+    public async Task<BakeReport> RunAsync(GaussianBakePreparation preparation, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(preparation);
+        if (!preparation.IsPrepared)
+            throw new InvalidOperationException("The bake preparation failed or already ran.");
+        preparation.Consume();
+
+        BakeReport report = preparation.Report;
+        BakeOutputDirectory output = preparation.Output!;
+        BakeRun run = new(preparation.Options, report, output.StagingPath)
+        {
+            Input = preparation.Input,
+            Roots = preparation.Roots,
+        };
+        try
+        {
+            await RunStagesAsync(run, preparation.Encoder!, cancellationToken).ConfigureAwait(false);
             report.MarkReady();
             BakeReportWriter.Write(report, output.StagingPath);
             output.Commit();
@@ -161,7 +258,7 @@ public sealed partial class GaussianBakePipeline
         }
         catch (Exception ex) when (IsFileError(ex))
         {
-            report.MarkFailed(GaussianBakeFailureCodes.EncodeFailed, $"The outputs cannot be written to '{options.OutputDirectory}': {ex.Message}");
+            report.MarkFailed(GaussianBakeFailureCodes.EncodeFailed, $"The outputs cannot be written to '{preparation.Options.OutputDirectory}': {ex.Message}");
         }
         catch (Exception ex)
         {
@@ -181,27 +278,14 @@ public sealed partial class GaussianBakePipeline
         return report;
     }
 
-    /// <summary>Runs every step of the bake. Each step adds its time to the report.</summary>
-    private async Task RunStagesAsync(BakeRun run, CancellationToken cancellationToken)
+    /// <summary>Runs every step of the bake after the preparation. Each step adds its time to the report.</summary>
+    private async Task RunStagesAsync(BakeRun run, FfmpegEncoder encoder, CancellationToken cancellationToken)
     {
         BakeSplatPreviewOptions options = run.Options;
         BakeReport report = run.Report;
+        CookedBakeInput input = run.Input!;
         GaussianBakeBudget budget = GaussianBakeBudget.For(options.Kind);
         Stopwatch watch = Stopwatch.StartNew();
-
-        FfmpegEncoder encoder = await CheckOptionsAndEncodersAsync(options, cancellationToken).ConfigureAwait(false);
-        CookedBakeInput input = CookedBakeInputLoader.Load(options.InputPak, options.AssetPath, options.Kind);
-        run.Input = input;
-        report.Input!.Sha256 = input.InputSha256;
-        run.Roots = ContentRoots(input);
-        if (!HasRenderableMesh(run.Roots))
-        {
-            throw new GaussianBakeException(
-                GaussianBakeFailureCodes.ContentEmpty,
-                $"The asset '{options.AssetPath}' has no active renderable component with a mesh.");
-        }
-
-        report.TimingsMs.Load = Lap(watch);
 
         ContentAnalysis analysis = await AnalyzeAsync(run, budget, cancellationToken).ConfigureAwait(false);
         GridQuantizer quantizer = new(analysis.Bounds, analysis.GridBits);
@@ -237,7 +321,10 @@ public sealed partial class GaussianBakePipeline
     /// Fails <c>optimized-fit</c> with <see cref="GaussianBakeFailureCodes.UnsupportedOption"/>, and fails a missing ffmpeg
     /// encoder with <see cref="GaussianBakeFailureCodes.EncodeFailed"/>. Returns the encoder.
     /// </summary>
-    private async Task<FfmpegEncoder> CheckOptionsAndEncodersAsync(BakeSplatPreviewOptions options, CancellationToken cancellationToken)
+    private static async Task<FfmpegEncoder> CheckOptionsAndEncodersAsync(
+        BakeSplatPreviewOptions options,
+        Func<FfmpegEncoder, CancellationToken, Task<IReadOnlyList<string>>> verifyEncoders,
+        CancellationToken cancellationToken)
     {
         if (string.Equals(options.ColorMode, BakeSplatPreviewOptions.OptimizedFitColorMode, StringComparison.Ordinal))
         {
@@ -247,7 +334,7 @@ public sealed partial class GaussianBakePipeline
         }
 
         FfmpegEncoder encoder = new(options.FfmpegPath, options.H264Encoder);
-        IReadOnlyList<string> missing = await _verifyEncoders(encoder, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<string> missing = await verifyEncoders(encoder, cancellationToken).ConfigureAwait(false);
         if (missing.Count > 0)
         {
             throw new GaussianBakeException(

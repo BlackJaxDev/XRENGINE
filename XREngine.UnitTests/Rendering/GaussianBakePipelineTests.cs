@@ -289,6 +289,27 @@ public sealed class GaussianBakePipelineTests
         written.GetProperty("input").GetProperty("sha256").GetString().ShouldNotBeNull().Length.ShouldBe(64);
     }
 
+    [Test]
+    public async Task Pipeline_PreparedAvatar_RunsOneTime()
+    {
+        FakeRenderServices render = new();
+        string output = Path.Combine(_workRoot, "avatar-prepared");
+
+        GaussianBakePreparation preparation = await GaussianBakePipeline.PrepareAsync(
+            AvatarOptions(output),
+            GaussianCacheTestSphere.Meshopt,
+            static (_, _) => Task.FromResult<IReadOnlyList<string>>([]),
+            CancellationToken.None);
+
+        preparation.IsPrepared.ShouldBeTrue(preparation.Report.FailureDetail);
+        preparation.Input.ShouldNotBeNull();
+        render.ContentCalls.ShouldBe(0);
+        BakeReport report = await CreatePipeline(render).RunAsync(preparation, CancellationToken.None);
+        report.Status.ShouldBe(BakeReport.ReadyStatus, report.FailureDetail);
+        preparation.IsPrepared.ShouldBeFalse();
+        await Should.ThrowAsync<InvalidOperationException>(() => CreatePipeline(render).RunAsync(preparation, CancellationToken.None));
+    }
+
     private GaussianBakePipeline CreatePipeline(FakeRenderServices render)
         => new(render, GaussianCacheTestSphere.Meshopt, static (_, _) => Task.FromResult<IReadOnlyList<string>>([]));
 
