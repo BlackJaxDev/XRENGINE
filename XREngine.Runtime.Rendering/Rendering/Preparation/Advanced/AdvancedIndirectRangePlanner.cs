@@ -186,16 +186,7 @@ public sealed class AdvancedIndirectRangePlanner
             prefix = checked(prefix + range.PayloadCapacity);
         }
 
-        for (int payloadIndex = 0;
-             payloadIndex < payloads.Length;
-             payloadIndex++)
-        {
-            EAdvancedGeometryProducer producer = _producersByPayload[payloadIndex];
-            int rangeIndex = _rangeIndicesByPayload[payloadIndex];
-            uint destination = _writeCursors[rangeIndex]++;
-            _payloadIndices[destination] = payloadIndex;
-            _producers[destination] = producer;
-        }
+        WriteGroupedPayloads(payloads.Length);
 
         _payloadCount = payloads.Length;
         ulong signature = ComputeStructuralSignature();
@@ -217,6 +208,24 @@ public sealed class AdvancedIndirectRangePlanner
             StructuralGeneration: _structuralGeneration,
             RequiresPrimaryRerecord: requiresRerecord,
             RequiresCpuCount: false);
+    }
+
+    /// <summary>Writes payload indices and producers into their reserved range segments.</summary>
+    /// <remarks>
+    /// The caller must initialize valid range indices and write cursors. Each
+    /// segment must fit its payloads. The caller owns the planner during this scan.
+    /// </remarks>
+    [global::Engine.Diagnostics.HotPath]
+    private void WriteGroupedPayloads(int payloadCount)
+    {
+        for (int payloadIndex = 0; payloadIndex < payloadCount; payloadIndex++)
+        {
+            EAdvancedGeometryProducer producer = _producersByPayload[payloadIndex];
+            int rangeIndex = _rangeIndicesByPayload[payloadIndex];
+            uint destination = _writeCursors[rangeIndex]++;
+            _payloadIndices[destination] = payloadIndex;
+            _producers[destination] = producer;
+        }
     }
 
     public static EAdvancedGeometryProducer ResolveProducer(

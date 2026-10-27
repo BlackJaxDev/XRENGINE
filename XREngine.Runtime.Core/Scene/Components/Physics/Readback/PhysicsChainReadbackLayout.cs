@@ -35,29 +35,8 @@ public static class PhysicsChainReadbackLayout
         int selectedElementCount,
         out int elementCount,
         out int byteCount)
-    {
-        elementCount = 0;
-        byteCount = 0;
-        if (selectedElementCount <= 0)
-            return false;
-
-        ReadOnlySpan<PhysicsChainReadbackElementKind> kinds = GetKinds(fields);
-        try
-        {
-            elementCount = checked(kinds.Length * selectedElementCount);
-            int bytesPerSelection = 0;
-            for (int i = 0; i < kinds.Length; ++i)
-                bytesPerSelection = checked(bytesPerSelection + GetElementByteCount(kinds[i]));
-            byteCount = checked(bytesPerSelection * selectedElementCount);
-            return elementCount > 0 && byteCount > 0;
-        }
-        catch (OverflowException)
-        {
-            elementCount = 0;
-            byteCount = 0;
-            return false;
-        }
-    }
+        => PhysicsChainReadbackSizeKernel.TryCalculate(
+            fields, selectedElementCount, out elementCount, out byteCount);
 
     internal static ReadOnlySpan<PhysicsChainReadbackElementKind> GetKinds(
         PhysicsChainReadbackFields fields)

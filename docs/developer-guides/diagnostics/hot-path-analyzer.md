@@ -205,6 +205,9 @@ The engine coverage uses the strict contract:
 | `XREngine.Runtime.Core`: `PhysicsChainCpuSharedColliderSet.CopyCandidates` | Copies indexed world colliders into preallocated candidate storage |
 | `XREngine.Runtime.Rendering`: `AdvancedDeformationExecutor.CountVertices` and `CountBytes` | Totals admitted deformation vertices and output bytes |
 | `XREngine.Runtime.Rendering`: `AdvancedDeformationDispatchPlanner.WriteVertexOffsets` and `ResolveWorkGroupCount` | Writes per-batch exclusive vertex offsets and rounds work-group counts |
+| `XREngine.Runtime.Core`: `PhysicsChainReadbackSizeKernel.TryCalculate` | Counts selected readback fields and packed bytes without temporary field storage |
+| `XREngine.Runtime.Rendering`: `AdvancedIndirectRangePlanner.WriteGroupedPayloads` | Writes payload indices and producer kinds into their reserved range segments |
+| `XREngine.Runtime.Rendering`: `AdvancedReconstructionTemporalFlags.PackValidatedVelocityReason`, `DecodeVelocityReason`, and `IsReactive` | Encodes and reads the velocity-reason field while preserving other flag bits |
 
 The physics output span must have at least one slot per state. Input and output
 storage must not overlap. Hash storage must not overlap the byte input. These
@@ -231,6 +234,21 @@ the planner arrays, and job storage must not overlap output offsets. Dispatch
 rounding retains checked integer arithmetic, including the addition before
 division. The outer dispatch, candidate query, and telemetry wrappers remain
 outside the checked subset.
+
+Readback size calculation counts the six supported field bits directly. Unknown
+bits are ignored, as before. No known fields, a nonpositive selection count, or
+an element or byte count above `int.MaxValue` returns false with zero outputs.
+The arithmetic uses `long` to detect overflow without exceptions. The public
+layout type still owns static kind arrays; the checked kernel uses only its
+constants. Building a gather plan remains outside this contract and can allocate.
+`PhysicsChainReadbackLayoutTests` checks packed sizes, failure outputs, byte-limit
+boundaries, unknown bits, and zero managed allocation after warmup.
+
+The grouped-payload scan receives a count that fits the planner arrays. The
+caller must initialize valid range indices and cursors with enough capacity in
+each segment. The scan keeps input order within each range. Temporal flag packing
+keeps the public range check outside its checked bitwise helper. The helper
+requires an encoded reason from zero through fifteen; other flag bits are retained.
 
 The cadence loop requires a positive finite rate and a positive, bounded
 catch-up limit. The retirement scan receives equal-length
