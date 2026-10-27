@@ -128,14 +128,44 @@ public sealed class GaussianSplatRendererGpuTests : GpuTestBase
         RunWithGLContext(gl =>
         {
             RequireHardwareCompute(gl);
-            byte[] center = DrawOnGpu(gl, splats, visibleCount: 2u, projection, size);
-            TestContext.Out.WriteLine($"Center pixel RGBA: {center[0]}, {center[1]}, {center[2]}, {center[3]}");
+            byte[] frame = DrawOnGpu(gl, splats, visibleCount: 2u, projection, size);
+            int center = ((size / 2) * size + size / 2) * 4;
+            TestContext.Out.WriteLine($"Center pixel RGBA: {frame[center]}, {frame[center + 1]}, {frame[center + 2]}, {frame[center + 3]}");
 
             // Premultiplied over, back to front: front = 0.8 green, back = 1.0 red.
             // Result = 0.8 * green + (1 - 0.8) * red.
-            Math.Abs(center[0] - 0.2f * 255f).ShouldBeLessThanOrEqualTo(2f, "red channel");
-            Math.Abs(center[1] - 0.8f * 255f).ShouldBeLessThanOrEqualTo(2f, "green channel");
-            ((float)center[2]).ShouldBeLessThanOrEqualTo(2f, "blue channel");
+            Math.Abs(frame[center] - 0.2f * 255f).ShouldBeLessThanOrEqualTo(2f, "red channel");
+            Math.Abs(frame[center + 1] - 0.8f * 255f).ShouldBeLessThanOrEqualTo(2f, "green channel");
+            ((float)frame[center + 2]).ShouldBeLessThanOrEqualTo(2f, "blue channel");
+        });
+    }
+
+    [Test, Category("Hardware")]
+    public void Draw_OffAxisSplatOutsideGuardBand_DoesNotSmearIntoView()
+    {
+        const int size = 64;
+        // The center is at x/z = 3, far past the 1.3 x tan(fovX/2) guard band (0.75 for 60 degrees).
+        // The unclamped Jacobian gives a 3-sigma extent of about 260 pixels, which reaches across the
+        // whole view. The clamped Jacobian gives about 104 pixels, which stays outside the view.
+        GaussianSplatGpuSplat[] splats = [Splat(new Vector3(6f, 0f, -2f), 1f, 1f, Vector3.One)];
+        Matrix4x4 projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 3f, 1f, 0.1f, 100f);
+
+        RunWithGLContext(gl =>
+        {
+            RequireHardwareCompute(gl);
+            byte[] frame = DrawOnGpu(gl, splats, visibleCount: 1u, projection, size);
+            int covered = 0;
+            int brightest = 0;
+            for (int i = 0; i < frame.Length; i += 4)
+            {
+                int channel = Math.Max(frame[i], Math.Max(frame[i + 1], frame[i + 2]));
+                brightest = Math.Max(brightest, channel);
+                if (channel > 0)
+                    covered++;
+            }
+
+            TestContext.Out.WriteLine($"Covered pixels: {covered}, brightest channel: {brightest}");
+            covered.ShouldBe(0, "An off-axis splat outside the guard band must not reach the view.");
         });
     }
 
@@ -240,7 +270,7 @@ public sealed class GaussianSplatRendererGpuTests : GpuTestBase
 
     /// <summary>
     /// Prepares the splats, draws them into an RGBA8 framebuffer with the renderer's quad shaders and
-    /// render options, and returns the center pixel.
+    /// render options, and returns the framebuffer: RGBA rows, bottom row first.
     /// </summary>
     private static byte[] DrawOnGpu(GL gl, GaussianSplatGpuSplat[] splats, uint visibleCount, Matrix4x4 projection, int size)
     {
@@ -296,8 +326,9 @@ public sealed class GaussianSplatRendererGpuTests : GpuTestBase
             gl.DrawArraysInstanced(PrimitiveType.TriangleStrip, 0, 4u, (uint)splats.Length);
             gl.Finish();
 
-            byte[] rgba = new byte[4];
-            gl.ReadPixels(size / 2, size / 2, 1u, 1u, PixelFormat.Rgba, PixelType.UnsignedByte, rgba.AsSpan());
+            byte[] rgba = new byte[size * size * 4];
+            gl.PixelStore(PixelStoreParameter.PackAlignment, 1);
+            gl.ReadPixels(0, 0, (uint)size, (uint)size, PixelFormat.Rgba, PixelType.UnsignedByte, rgba.AsSpan());
             gl.GetError().ShouldBe(GLEnum.NoError);
             return rgba;
         }
