@@ -95,8 +95,9 @@ public sealed class LitProjectionColorTests
     }
 
     [Test]
-    public void Apply_HighlightsAbove1_ReturnsP99Scale()
+    public void Apply_TenPercentHighlights_ScaleEqualsMaxAndKeepsColorsAtOrBelow1()
     {
+        // 10 percent of the leaves are highlights, so p99 equals the maximum here. Colors fit in 1 only in this case.
         // 90 leaves see a value of 1 on the left. 10 leaves see a value of 4 on the right.
         BakedSplat[] leaves = new BakedSplat[100];
         for (int i = 0; i < 90; i++)
@@ -130,6 +131,49 @@ public sealed class LitProjectionColorTests
 
         leaves[0].LinearColor.X.ShouldBe(0.25f, 1e-4f);
         leaves[99].LinearColor.X.ShouldBe(1.0f, 1e-4f);
+    }
+
+    [Test]
+    public void Apply_SingleOutlier_ScaleIsP99BelowMax()
+    {
+        // 199 leaves see a luminance of 2 on the left. One outlier sees a luminance of 8 on the right.
+        const int count = 200;
+        BakedSplat[] leaves = new BakedSplat[count];
+        double[] luminances = new double[count];
+        for (int i = 0; i < count - 1; i++)
+        {
+            leaves[i] = Leaf(new Vector3(-0.8f + 0.001f * i, 0, 0), Vector3.UnitZ);
+            luminances[i] = 2.0;
+        }
+
+        leaves[count - 1] = Leaf(new Vector3(0.8f, 0, 0), Vector3.UnitZ);
+        luminances[count - 1] = 8.0;
+
+        float[] image = new float[Width * Height * 4];
+        for (int y = 0; y < Height; y++)
+        {
+            for (int x = 0; x < Width; x++)
+            {
+                float value = x < Width / 2 ? 2.0f : 8.0f;
+                int offset = (y * Width + x) * 4;
+                image[offset] = value;
+                image[offset + 1] = value;
+                image[offset + 2] = value;
+                image[offset + 3] = 1.0f;
+            }
+        }
+
+        // Nearest-rank 99th percentile, computed here without the code under test.
+        Array.Sort(luminances);
+        double expectedScale = luminances[(int)Math.Ceiling(0.99 * count) - 1];
+
+        float scale = LitProjectionColorMath.Apply(leaves, FarTriangleSurface(), [FrontCamera], [image], Width, Height);
+
+        scale.ShouldBe((float)expectedScale, 1e-4f);
+        scale.ShouldBeLessThan((float)luminances[count - 1]);
+        // The outlier stays above 1 after scaling. The 8-bit encode clamps values above 1 later.
+        leaves[count - 1].LinearColor.X.ShouldBeGreaterThan(1.0f);
+        leaves[0].LinearColor.X.ShouldBe(1.0f, 1e-4f);
     }
 
     [Test]
