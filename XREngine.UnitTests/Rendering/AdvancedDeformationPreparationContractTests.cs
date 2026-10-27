@@ -155,6 +155,7 @@ public sealed class AdvancedDeformationPreparationContractTests
             EAdvancedVelocityValidityReason.NewlyVisible);
         arena.GetCurrentVertices(first)[0].Position =
             new Vector3(1.0f, 2.0f, 3.0f);
+        arena.ConfirmOwnerHistoryProduced(owner);
         arena.EndFrame(1UL);
 
         arena.TryBeginFrame(1UL, 1UL).ShouldBeTrue();

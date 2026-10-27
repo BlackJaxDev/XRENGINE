@@ -86,11 +86,26 @@ public sealed class PhysicsChainCpuSharedColliderSet
 
         if (destination.Length < result.CandidateCount)
             return false;
-        for (int candidateIndex = 0; candidateIndex < result.CandidateCount; ++candidateIndex)
-            destination[candidateIndex] = _worldColliders[candidateIndices[candidateIndex]];
+        CopyCandidates(_worldColliders, candidateIndices, destination, result.CandidateCount);
         candidateCount = result.CandidateCount;
         Interlocked.Add(ref _candidateCount, candidateCount);
         return true;
+    }
+
+    /// <summary>Copies selected colliders into preallocated candidate storage.</summary>
+    /// <remarks>
+    /// The count must fit the index and destination spans. Each index must select
+    /// a valid collider. Neither input span can overlap the destination storage.
+    /// </remarks>
+    [global::Engine.Diagnostics.HotPath]
+    private static void CopyCandidates(
+        ReadOnlySpan<PhysicsChainCpuCollider> colliders,
+        ReadOnlySpan<int> candidateIndices,
+        Span<PhysicsChainCpuCollider> destination,
+        int candidateCount)
+    {
+        for (int candidateIndex = 0; candidateIndex < candidateCount; ++candidateIndex)
+            destination[candidateIndex] = colliders[candidateIndices[candidateIndex]];
     }
 
     public PhysicsChainCpuSharedColliderSetSnapshot GetSnapshot()

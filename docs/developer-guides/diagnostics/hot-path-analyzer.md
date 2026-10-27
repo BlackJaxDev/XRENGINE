@@ -200,6 +200,11 @@ The engine coverage uses the strict contract:
 | `XREngine.Runtime.Rendering`: `AdvancedVisibilityFeedbackRing.FindLatestCompletedSlot` | Selects the newest sealed feedback slot whose GPU work is complete |
 | `XREngine.Runtime.Rendering`: `AdvancedGpuHandleHash.Compute` | Hashes handle words for animation scheduling and visibility lookup |
 | `XREngine.Runtime.Rendering`: `AdvancedAnimationScheduler.StablePhase` and `ToUIntSaturated` | Computes a repeatable cadence phase and limits the stale-pose frame count |
+| `XREngine.Runtime.Core`: `PhysicsChainActivityEvaluation.NormalizeSquared` | Clamps a squared activity channel at zero and scales it by its threshold |
+| `XREngine.Runtime.Core`: `PhysicsChainColliderBroadphase.AddCandidate` | Stores bounded BVH candidates and counts required capacity |
+| `XREngine.Runtime.Core`: `PhysicsChainCpuSharedColliderSet.CopyCandidates` | Copies indexed world colliders into preallocated candidate storage |
+| `XREngine.Runtime.Rendering`: `AdvancedDeformationExecutor.CountVertices` and `CountBytes` | Totals admitted deformation vertices and output bytes |
+| `XREngine.Runtime.Rendering`: `AdvancedDeformationDispatchPlanner.WriteVertexOffsets` and `ResolveWorkGroupCount` | Writes per-batch exclusive vertex offsets and rounds work-group counts |
 
 The physics output span must have at least one slot per state. Input and output
 storage must not overlap. Hash storage must not overlap the byte input. These
@@ -212,6 +217,20 @@ to the checked tier kernel. Render handle properties are also read outside the
 checked arithmetic methods. These boundaries do not certify the wrappers.
 The scalar wake comparison retains NaN propagation from the prior `MathF.Max`
 call. Integer importance clamping uses direct comparisons with the same limits.
+
+Activity normalization maps negative magnitudes and either signed zero to
+positive zero before division. NaN and positive infinity retain their prior
+behavior. Threshold normalization and the activity reduction remain outside
+this checked kernel.
+
+The collider copy requires valid indices, sufficient destination capacity,
+and no overlap between its destination and either input span. The BVH candidate
+counters must be distinct and must not overlap the candidate span. The dispatch
+offset scan requires valid batch ranges and source-job indices. Its caller owns
+the planner arrays, and job storage must not overlap output offsets. Dispatch
+rounding retains checked integer arithmetic, including the addition before
+division. The outer dispatch, candidate query, and telemetry wrappers remain
+outside the checked subset.
 
 The cadence loop requires a positive finite rate and a positive, bounded
 catch-up limit. The retirement scan receives equal-length

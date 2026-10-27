@@ -86,10 +86,7 @@ public sealed class AdvancedDeformationDispatchPlanner
             _batches[batchIndex] = batch with
             {
                 FirstJobIndex = prefix,
-                WorkGroupCount = checked((uint)Math.Max(
-                    1UL,
-                    (batch.VertexCount + ThreadGroupSize - 1UL) /
-                    ThreadGroupSize)),
+                WorkGroupCount = ResolveWorkGroupCount(batch.VertexCount),
             };
             _writeCursors[batchIndex] = prefix;
             prefix = checked(prefix + batch.JobCount);
@@ -108,17 +105,38 @@ public sealed class AdvancedDeformationDispatchPlanner
         for (int batchIndex = 0; batchIndex < _batchCount; batchIndex++)
         {
             AdvancedDeformationDispatchBatch batch = _batches[batchIndex];
-            uint vertexOffset = 0u;
-            for (uint localJob = 0u; localJob < batch.JobCount; localJob++)
-            {
-                uint groupedIndex = batch.FirstJobIndex + localJob;
-                _jobVertexOffsets[groupedIndex] = vertexOffset;
-                int sourceJob = _jobIndices[groupedIndex];
-                vertexOffset = checked(
-                    vertexOffset + jobs[sourceJob].VertexCount);
-            }
+            WriteVertexOffsets(jobs, batch.FirstJobIndex, batch.JobCount);
         }
         return _familyOverflowCount == 0u;
+    }
+
+    /// <summary>Writes exclusive vertex offsets for one admitted dispatch batch.</summary>
+    /// <remarks>
+    /// The batch range and source indices must be valid. Job storage must not
+    /// overlap the output offsets. The caller owns the planner during this scan.
+    /// </remarks>
+    [global::Engine.Diagnostics.HotPath]
+    private void WriteVertexOffsets(
+        ReadOnlySpan<AdvancedDeformationJobRecord> jobs,
+        uint firstJobIndex,
+        uint jobCount)
+    {
+        uint vertexOffset = 0u;
+        for (uint localJob = 0u; localJob < jobCount; localJob++)
+        {
+            uint groupedIndex = firstJobIndex + localJob;
+            _jobVertexOffsets[groupedIndex] = vertexOffset;
+            int sourceJob = _jobIndices[groupedIndex];
+            vertexOffset = checked(vertexOffset + jobs[sourceJob].VertexCount);
+        }
+    }
+
+    /// <summary>Rounds the vertex count to dispatch groups, with at least one group.</summary>
+    [global::Engine.Diagnostics.HotPath]
+    private static uint ResolveWorkGroupCount(ulong vertexCount)
+    {
+        ulong groupCount = checked((vertexCount + ThreadGroupSize - 1UL) / ThreadGroupSize);
+        return checked((uint)(groupCount < 1UL ? 1UL : groupCount));
     }
 
     private int FindBatch(in AdvancedDeformationDispatchKey key)

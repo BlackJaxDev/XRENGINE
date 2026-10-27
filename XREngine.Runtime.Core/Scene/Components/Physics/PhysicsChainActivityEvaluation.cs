@@ -31,6 +31,8 @@ public static class PhysicsChainActivityEvaluation
         return normalizedErrorSquared >= normalizedMultiplier * normalizedMultiplier;
     }
 
+    /// <summary>Scales one squared activity channel by its quiet threshold.</summary>
+    [global::Engine.Diagnostics.HotPath]
     private static float NormalizeSquared(float magnitudeSquared, float threshold)
-        => MathF.Max(magnitudeSquared, 0.0f) / (threshold * threshold);
+        => (magnitudeSquared <= 0.0f ? 0.0f : magnitudeSquared) / (threshold * threshold);
 }

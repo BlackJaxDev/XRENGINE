@@ -141,6 +141,8 @@ public sealed class AdvancedDeformationExecutor
             AdmissionOverflowCount: admissionOverflowCount,
             GpuMilliseconds: backend.LastGpuMilliseconds);
 
+    /// <summary>Totals the vertex counts in the admitted job span.</summary>
+    [global::Engine.Diagnostics.HotPath]
     private static ulong CountVertices(
         ReadOnlySpan<AdvancedDeformationJobRecord> jobs)
     {
@@ -150,6 +152,8 @@ public sealed class AdvancedDeformationExecutor
         return count;
     }
 
+    /// <summary>Totals the output bytes in the admitted job span.</summary>
+    [global::Engine.Diagnostics.HotPath]
     private static ulong CountBytes(
         ReadOnlySpan<AdvancedDeformationJobRecord> jobs)
     {

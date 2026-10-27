@@ -218,6 +218,9 @@ public sealed class PhysicsChainColliderBroadphase
         }
     }
 
+    /// <summary>Stores one bounded candidate and counts the required capacity.</summary>
+    /// <remarks>The counters must be distinct and must not overlap candidate storage.</remarks>
+    [global::Engine.Diagnostics.HotPath]
     private static void AddCandidate(int colliderIndex, Span<int> candidates, ref int written, ref int required)
     {
         if (written < candidates.Length)
