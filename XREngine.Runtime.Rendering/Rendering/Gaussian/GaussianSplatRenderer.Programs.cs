@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
@@ -65,7 +66,12 @@ public sealed partial class GaussianSplatRenderer
     /// <param name="material">Material to use. It must use the gaussian splat quad shaders. Null creates one with <see cref="CreateQuadMaterial"/>.</param>
     public static XRMeshRenderer CreateQuadRenderer(XRMaterial? material = null)
     {
-        XRMesh mesh = XRMesh.Create(VertexQuad.PosZ(2f, 2f, 0f, bottomLeftOrigin: false, flipVerticalUVCoord: false));
+        // Positions only: the quad vertex shader reads no other attribute.
+        XRMesh mesh = XRMesh.Create(new VertexQuad(
+            new Vertex(new Vector3(-1f, -1f, 0f)),
+            new Vertex(new Vector3(1f, -1f, 0f)),
+            new Vertex(new Vector3(1f, 1f, 0f)),
+            new Vertex(new Vector3(-1f, 1f, 0f))));
         mesh.SupportsBillboarding = false;
         XRMeshRenderer renderer = new(mesh, material ?? CreateQuadMaterial())
         {
