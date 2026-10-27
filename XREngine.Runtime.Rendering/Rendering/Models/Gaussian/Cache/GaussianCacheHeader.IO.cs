@@ -32,7 +32,7 @@ public sealed partial class GaussianCacheHeader
             size += 12 + 20 + 4 + (long)CameraKeyByteSize * hints.Path.Length;
         size += 4;
         foreach (GaussianCacheChunkInfo chunk in Chunks)
-            size += ChunkInfoMinByteSize + Encoding.UTF8.GetByteCount(chunk.Sha256 ?? string.Empty);
+            size += ChunkInfoMinByteSize + System.Text.Encoding.UTF8.GetByteCount(chunk.Sha256 ?? string.Empty);
         return size;
     }
 
@@ -88,7 +88,7 @@ public sealed partial class GaussianCacheHeader
             writer.Write(chunk.DriverLevel);
             writer.Write(chunk.TemporalLevel);
             writer.Write(chunk.ByteLength);
-            byte[] hash = Encoding.UTF8.GetBytes(chunk.Sha256 ?? string.Empty);
+            byte[] hash = System.Text.Encoding.UTF8.GetBytes(chunk.Sha256 ?? string.Empty);
             writer.Write(hash.Length);
             writer.Write(hash);
         }
@@ -147,7 +147,7 @@ public sealed partial class GaussianCacheHeader
                 byte temporalLevel = reader.ReadByte();
                 int byteLength = ReadNonNegative(reader, "chunk byte length");
                 int hashLength = ReadCount(reader, 1, "chunk hash length");
-                string hash = Encoding.UTF8.GetString(reader.ReadBytes(hashLength));
+                string hash = System.Text.Encoding.UTF8.GetString(reader.ReadBytes(hashLength));
                 chunks[i] = new GaussianCacheChunkInfo(index, kind, splatLevel, driverLevel, temporalLevel, byteLength, hash);
             }
             header.Chunks = chunks;

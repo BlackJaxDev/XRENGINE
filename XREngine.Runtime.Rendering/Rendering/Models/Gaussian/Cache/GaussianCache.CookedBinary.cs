@@ -48,7 +48,7 @@ public sealed partial class GaussianCache : ICookedBinarySerializable
 
         byte[] headerBytes = reader.ReadBytes(ReadLength(ref reader, "header"));
         using (MemoryStream stream = new(headerBytes, writable: false))
-        using (BinaryReader headerReader = new(stream, Encoding.UTF8, leaveOpen: true))
+        using (BinaryReader headerReader = new(stream, System.Text.Encoding.UTF8, leaveOpen: true))
             Header = GaussianCacheHeader.Read(headerReader);
 
         RootChunkData = reader.ReadBytes(ReadLength(ref reader, "root chunk"));
@@ -81,7 +81,7 @@ public sealed partial class GaussianCache : ICookedBinarySerializable
     private byte[] SerializeHeader()
     {
         using MemoryStream stream = new(checked((int)_header.CalculateByteSize()));
-        using (BinaryWriter writer = new(stream, Encoding.UTF8, leaveOpen: true))
+        using (BinaryWriter writer = new(stream, System.Text.Encoding.UTF8, leaveOpen: true))
             _header.Write(writer);
         return stream.ToArray();
     }
@@ -93,7 +93,7 @@ public sealed partial class GaussianCache : ICookedBinarySerializable
         size += sizeof(int);
         foreach (string path in _chunkAssetPaths)
         {
-            int byteCount = Encoding.UTF8.GetByteCount(path);
+            int byteCount = System.Text.Encoding.UTF8.GetByteCount(path);
             size += Get7BitEncodedSize(byteCount) + byteCount;
         }
         return size;
