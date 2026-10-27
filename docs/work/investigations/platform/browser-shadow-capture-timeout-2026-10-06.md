@@ -863,4 +863,28 @@ routine needed more than its 512 KiB stack limit. When routine creation fails,
 the GPU process crashes, and CI reports exit code 133. The shader source fix
 and the measurements are in the
 [native compiler stall investigation](../rendering/browser-native-compiler-stall-2026-10-05.md#root-cause-in-swiftshader-and-source-fix).
-The next CI run must confirm the shadow ON startup and the comparison.
+
+## Capture budget after the startup fix
+
+With the shader source fix, the shadow job gets past startup in CI. Three runs
+then failed later, at the unchanged 10-second capture budget:
+
+| Run | Commit | Elapsed | Error |
+| --- | --- | --- | --- |
+| [40438140536](https://github.com/BlackJaxDev/XRENGINE/actions/runs/40438140536) | `6a5b401` | 184 s | `BrowserSmoke.ShadowOffResize` |
+| [40443610425](https://github.com/BlackJaxDev/XRENGINE/actions/runs/40443610425) | `66c90ca` | 215 s | `BrowserSmoke.ShadowOffSurface` |
+| [40443610425](https://github.com/BlackJaxDev/XRENGINE/actions/runs/40443610425) (re-run) | `66c90ca` | 190 s | `BrowserSmoke.ShadowOffResize` |
+
+No GPU process exit occurred. The master run
+[40388966279](https://github.com/BlackJaxDev/XRENGINE/actions/runs/40388966279)
+stops earlier, at the ON startup stall, so master never reaches these captures.
+The browser log timing shows about three page sessions before each failure.
+This suggests that the small profile completes and that the full-size OFF
+capture runs out of time. This is not confirmed: the failing capture phase and
+the time of the native consumer frame are in each run's `smoke-report.json`
+artifact, and this investigation has not read them.
+
+Next step: read `smoke-report.json` from one of these runs. Identify the
+failing profile, the slow capture phase, and the time of the first native
+consumer frame. Then decide if the full-size frame time or the capture budget
+must change.
