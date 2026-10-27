@@ -1,0 +1,62 @@
+#version 460
+
+// Writes one (depth key, splat index) pair for each splat slot. An ascending sort of the
+// keys puts the splats in order from far to near, which back-to-front blending needs.
+// Slots at or past the visible count, and splats behind the camera, get the culled key,
+// so they sort to the end and the quad vertex shader skips them.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+struct GaussianSplat
+{
+    vec4 centerOpacity;
+    vec4 rotation;
+    vec4 scalePad;
+    vec4 linearColor;
+};
+
+layout(std430, binding = 46) readonly buffer GaussianSplats
+{
+    GaussianSplat splats[];
+};
+
+layout(std430, binding = 47) writeonly buffer GaussianSplatOrder
+{
+    uvec2 orderPairs[];
+};
+
+layout(std430, binding = 48) readonly buffer GaussianSplatVisibleCount
+{
+    uint visibleCount;
+};
+
+uniform uint SplatCapacity;
+uniform mat4 ModelViewMatrix;
+
+const uint CulledKey = 0xFFFFFFFFu;
+
+// Maps a float to an unsigned integer that has the same order as the float.
+uint OrderedUint(float value)
+{
+    uint bits = floatBitsToUint(value);
+    return (bits & 0x80000000u) != 0u ? ~bits : (bits | 0x80000000u);
+}
+
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= SplatCapacity)
+        return;
+
+    uint key = CulledKey;
+    if (index < min(visibleCount, SplatCapacity))
+    {
+        // The camera looks along -Z in view space, so the depth along its forward axis is -z.
+        vec3 viewPosition = (ModelViewMatrix * vec4(splats[index].centerOpacity.xyz, 1.0)).xyz;
+        float viewDepth = -viewPosition.z;
+        if (viewDepth > 0.0)
+            key = CulledKey - OrderedUint(viewDepth);
+    }
+
+    orderPairs[index] = uvec2(key, index);
+}
