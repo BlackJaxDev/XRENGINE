@@ -76,6 +76,7 @@ public sealed partial class GaussianBakePipeline
     private readonly IBakeRenderServices _render;
     private readonly IMeshOptimizerBackend _meshopt;
     private readonly Func<FfmpegEncoder, CancellationToken, Task<IReadOnlyList<string>>> _verifyEncoders;
+    private readonly Func<GaussianBakeKind, GaussianBakeBudget> _budgetFor;
 
     /// <summary>Creates a pipeline.</summary>
     /// <param name="render">The renderer that captures the views and records the loop.</param>
@@ -89,14 +90,19 @@ public sealed partial class GaussianBakePipeline
     /// <param name="render">The renderer that captures the views and records the loop.</param>
     /// <param name="meshopt">The mesh optimizer.</param>
     /// <param name="verifyEncoders">Returns the names of the encoders that ffmpeg does not have.</param>
+    /// <param name="budgetFor">
+    /// Returns the budget of a kind for the steps after the preparation. Null gives <see cref="GaussianBakeBudget.For"/>.
+    /// </param>
     internal GaussianBakePipeline(
         IBakeRenderServices render,
         IMeshOptimizerBackend meshopt,
-        Func<FfmpegEncoder, CancellationToken, Task<IReadOnlyList<string>>> verifyEncoders)
+        Func<FfmpegEncoder, CancellationToken, Task<IReadOnlyList<string>>> verifyEncoders,
+        Func<GaussianBakeKind, GaussianBakeBudget>? budgetFor = null)
     {
         _render = render ?? throw new ArgumentNullException(nameof(render));
         _meshopt = meshopt ?? throw new ArgumentNullException(nameof(meshopt));
         _verifyEncoders = verifyEncoders ?? throw new ArgumentNullException(nameof(verifyEncoders));
+        _budgetFor = budgetFor ?? GaussianBakeBudget.For;
     }
 
     /// <summary>
@@ -210,7 +216,7 @@ public sealed partial class GaussianBakePipeline
             {
                 throw new GaussianBakeException(
                     GaussianBakeFailureCodes.ContentEmpty,
-                    $"The asset '{options.AssetPath}' has no active renderable component with a mesh.");
+                    $"The asset '{options.AssetPath}' has no enabled renderable component with a mesh.");
             }
 
             report.TimingsMs.Load = watch.ElapsedMilliseconds;
@@ -304,7 +310,7 @@ public sealed partial class GaussianBakePipeline
         BakeSplatPreviewOptions options = run.Options;
         BakeReport report = run.Report;
         CookedBakeInput input = run.Input!;
-        GaussianBakeBudget budget = GaussianBakeBudget.For(options.Kind);
+        GaussianBakeBudget budget = _budgetFor(options.Kind);
         Stopwatch watch = Stopwatch.StartNew();
 
         ContentAnalysis analysis = await AnalyzeAsync(run, budget, cancellationToken).ConfigureAwait(false);
@@ -403,14 +409,21 @@ public sealed partial class GaussianBakePipeline
         if (run.Input is not CookedBakeInput input || run.Choice is not { TemporaryPlayers.Count: > 0 } choice)
             return;
 
-        await RunReleaseAsync(input, () => BakeMotionSelector.ReleaseTemporaryPlayers(choice)).ConfigureAwait(false);
+        await RunReleaseAsync(
+            input,
+            () => BakeMotionSelector.ReleaseTemporaryPlayers(choice),
+            $"the release of {choice.TemporaryPlayers.Count} temporary animation players").ConfigureAwait(false);
     }
 
     /// <summary>
     /// Runs release work on the content thread and waits at most <see cref="ReleaseTimeout"/>. A timeout or a stop of the
-    /// engine is not an error here: the content is not used after the bake.
+    /// engine does not fail the bake, because the content is not used after the bake, but it writes a warning that names
+    /// the work to the standard error stream.
     /// </summary>
-    private async Task RunReleaseAsync(CookedBakeInput input, Action work)
+    /// <param name="input">The loaded input.</param>
+    /// <param name="work">The release work.</param>
+    /// <param name="description">The name of the work in the warning, for example "the release of 2 temporary animation players".</param>
+    private async Task RunReleaseAsync(CookedBakeInput input, Action work, string description)
     {
         try
         {
@@ -423,8 +436,15 @@ public sealed partial class GaussianBakePipeline
                 },
                 CancellationToken.None).WaitAsync(ReleaseTimeout).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        catch (TimeoutException)
         {
+            Console.Error.WriteLine(
+                $"Gaussian preview bake warning: {description} did not complete in {ReleaseTimeout.TotalSeconds:F0} s on the content thread. The bake continues.");
+        }
+        catch (OperationCanceledException)
+        {
+            Console.Error.WriteLine(
+                $"Gaussian preview bake warning: {description} did not run, because the content thread stopped. The bake continues.");
         }
     }
 

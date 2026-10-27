@@ -149,18 +149,16 @@ public sealed partial class GaussianBakePipeline
         });
 
         DeformedSurface end = BakeFrameSampler.EvaluateLoopEnd(roots, choice);
-        float maxEndDistance = 0.0f;
-        foreach (int vertex in sampled)
+        float[] endDistances = new float[sampled.Length];
+        for (int slot = 0; slot < sampled.Length; slot++)
         {
-            int offset = vertex * 3;
+            int offset = sampled[slot] * 3;
             Vector3 start = new(rest.Positions[offset], rest.Positions[offset + 1], rest.Positions[offset + 2]);
             Vector3 last = new(end.Positions[offset], end.Positions[offset + 1], end.Positions[offset + 2]);
-            float distance = Vector3.Distance(start, last);
-            if (!(distance <= maxEndDistance))
-                maxEndDistance = distance;
+            endDistances[slot] = Vector3.Distance(start, last);
         }
 
-        return new DriverTrajectories(slotOfVertex, sampled.Length, frameCount, positions, maxEndDistance);
+        return new DriverTrajectories(slotOfVertex, sampled.Length, frameCount, positions, endDistances);
     }
 
     /// <summary>
@@ -198,7 +196,7 @@ public sealed partial class GaussianBakePipeline
         }
         finally
         {
-            await RunReleaseAsync(input, hold.Dispose).ConfigureAwait(false);
+            await RunReleaseAsync(input, hold.Dispose, "the end of the time 0 pose hold of the color capture").ConfigureAwait(false);
         }
 
         if (baker.LastSeenLeafCount == 0)
@@ -206,15 +204,18 @@ public sealed partial class GaussianBakePipeline
         return colorScale;
     }
 
-    /// <summary>Returns true when an active renderable component under the roots has a mesh with vertices.</summary>
-    private static bool HasRenderableMesh(SceneNode[] roots)
+    /// <summary>
+    /// Returns true when an enabled renderable component under the roots has a mesh with vertices. A component is
+    /// enabled when it and every node from its node up to its root are active (see <see cref="BakeMotionSelector.IsEnabled"/>).
+    /// </summary>
+    internal static bool HasRenderableMesh(SceneNode[] roots)
     {
         bool found = false;
         foreach (SceneNode root in roots)
         {
             root.IterateComponents<RenderableComponent>(component =>
             {
-                if (found || !component.IsActive)
+                if (found || !BakeMotionSelector.IsEnabled(component, root))
                     return;
 
                 foreach (RenderableMesh mesh in component.Meshes)
@@ -232,17 +233,17 @@ public sealed partial class GaussianBakePipeline
     }
 
     /// <summary>
-    /// Returns the keys of the first active <see cref="PreviewCameraPathComponent"/> that has keys, in depth-first order
-    /// over the roots, or an empty array.
+    /// Returns the keys of the first enabled <see cref="PreviewCameraPathComponent"/> that has keys, in depth-first order
+    /// over the roots, or an empty array. The enabled rule is the rule of <see cref="BakeMotionSelector.IsEnabled"/>.
     /// </summary>
-    private static GaussianCacheCameraKey[] FindCameraPath(SceneNode[] roots)
+    internal static GaussianCacheCameraKey[] FindCameraPath(SceneNode[] roots)
     {
         GaussianCacheCameraKey[]? keys = null;
         foreach (SceneNode root in roots)
         {
             root.IterateComponents<PreviewCameraPathComponent>(component =>
             {
-                if (keys is null && component.IsActive && component.SceneNode.IsActiveSelf && component.Keys.Length > 0)
+                if (keys is null && component.Keys.Length > 0 && BakeMotionSelector.IsEnabled(component, root))
                     keys = [.. component.Keys];
             }, true);
         }
@@ -283,11 +284,28 @@ public sealed partial class GaussianBakePipeline
         GaussianCacheCameraKey[] CameraPath);
 
     /// <summary>
-    /// The positions of some surface vertices in every frame, as x, y, and z, frame by frame, plus the largest distance
-    /// of these vertices between time 0 and the end of the motion.
+    /// The positions of some surface vertices in every frame, as x, y, and z, frame by frame, plus the distance of each
+    /// of these vertices between time 0 and the end of the motion, by slot.
     /// </summary>
-    private sealed record DriverTrajectories(int[] SlotOfVertex, int SlotCount, int FrameCount, float[] Positions, float MaxEndDistance)
+    private sealed record DriverTrajectories(int[] SlotOfVertex, int SlotCount, int FrameCount, float[] Positions, float[] EndDistances)
     {
+        /// <summary>
+        /// Returns the largest distance between time 0 and the end of the motion of the surface vertices in
+        /// <paramref name="sources"/> only. A build again after chunk 0 can use fewer vertices than the sampled set.
+        /// </summary>
+        public float MaxEndDistance(int[] sources)
+        {
+            float max = 0.0f;
+            foreach (int vertex in sources)
+            {
+                float distance = EndDistances[SlotOfVertex[vertex]];
+                if (!(distance <= max))
+                    max = distance;
+            }
+
+            return max;
+        }
+
         /// <summary>Returns true when every surface vertex in <paramref name="sources"/> has sampled positions.</summary>
         public bool Covers(int[] sources)
         {

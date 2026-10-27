@@ -34,6 +34,12 @@ public static partial class GaussianCacheBuilder
     /// <summary>The meshoptimizer vertex codec version of every encoded stream.</summary>
     public const ushort MotionCodecVersion = 1;
 
+    /// <summary>
+    /// The limit name of a chunk 0 that is too large. The budget message starts with this name and a colon, for example
+    /// <c>chunk0: 300000 &gt; 262144</c>.
+    /// </summary>
+    public const string Chunk0Limit = "chunk0";
+
     /// <summary>The smallest chunk data limit that a caller can ask for.</summary>
     private const int MinChunkDataBytes = 4_096;
 
@@ -42,7 +48,7 @@ public static partial class GaussianCacheBuilder
     /// <exception cref="GaussianBakeException">
     /// The input or the output goes above a budget limit (<see cref="GaussianBakeFailureCodes.BudgetExceeded"/>). The message
     /// is <c>&lt;limit&gt;: &lt;actual&gt; &gt; &lt;max&gt;</c>, and the limit is <c>splats</c>, <c>driver-vertices</c>,
-    /// <c>duration</c>, <c>chunk0</c>, or <c>cache-bytes</c>.
+    /// <c>duration</c>, <see cref="Chunk0Limit"/>, or <c>cache-bytes</c>.
     /// </exception>
     public static GaussianCacheBuildResult Build(GaussianCacheBuildInput input, GaussianBakeBudget budget, IMeshOptimizerBackend meshopt)
         => Build(input, budget, meshopt, MaxChunkDataBytes);
@@ -131,7 +137,7 @@ public static partial class GaussianCacheBuilder
         long dataBytes = sections.Sum(section => (long)GaussianCacheSection.HeaderSize + section.Payload.Length);
         long limit = Math.Min(budget.Chunk0Bytes, planner.MaxChunkDataBytes);
         if (dataBytes > limit)
-            throw Exceeded("chunk0", dataBytes, limit);
+            throw Exceeded(Chunk0Limit, dataBytes, limit);
 
         planner.BeginUnit(GaussianCacheChunkKind.Root, 0, 0, 0);
         foreach (GaussianCacheSection section in sections)
@@ -151,7 +157,7 @@ public static partial class GaussianCacheBuilder
 
         int chunk0Bytes = checked(headerBytes.Length + rootData.Length);
         if (chunk0Bytes > budget.Chunk0Bytes)
-            throw Exceeded("chunk0", chunk0Bytes, budget.Chunk0Bytes);
+            throw Exceeded(Chunk0Limit, chunk0Bytes, budget.Chunk0Bytes);
 
         long totalBytes = headerBytes.Length;
         using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
