@@ -322,7 +322,52 @@ the SwiftShader debug build:
 | Before the fix | 553,512 (limit 524,288) | GPU process crash |
 | After the fix | 411,192 | Success in about 13.2 s |
 
-The other non-MSAA advanced shading variants are listed below. The MSAA native
-variants put the complete shading pass in a four-sample loop. With this change,
-they still need more than 120 seconds locally. No CI job uses them on the
-software adapter. They stay an open item.
+All single-sample advanced shading variants, with the same local Chrome
+SwiftShader and a 120-second limit:
+
+| Variant | Before | After |
+|---|---|---|
+| `native-depth-no-decals` | Timeout or crash | 13.4 s |
+| `native-no-decals` | Timeout | 12.6 s |
+| `native-no-modifiers` | 12.3 s | 8.0 s |
+| `surface-exports-depth-no-decals` | Timeout | 11.5 s |
+| `surface-exports-no-decals` | Timeout | 12.3 s |
+| `surface-exports-no-modifiers` | 11.8 s | 7.6 s |
+| `uber-native`, `uber-native-depth` | 4.1 to 4.4 s | 3.0 to 3.1 s |
+| `uber-surface-exports`, `uber-surface-exports-depth` | 3.5 to 3.7 s | 2.4 to 2.5 s |
+| `native`, `native-depth`, `surface-exports`, `surface-exports-depth` | Timeout | Timeout |
+
+No variant became slower. The four variants with decals still exceed the
+limit, because the decal evaluator adds more branches inside the same loops.
+The MSAA variants put the complete shading pass in a four-sample loop and also
+exceed the limit. The current Linux Chromium jobs do not use these variants on
+the software adapter. They stay an open item.
+
+## UI animation-frame stall has the same cause
+
+The `ui-parity` job stops at its first animation-frame witness. The browser
+then needs a forced kill at cleanup. This agrees with a GPU process that is
+busy with one long task.
+
+SwiftShader compiles graphics shaders at the first draw, on the queue. The
+`engine-ui-text-batched-bitmap` fragment shader draws glyph outlines in a loop
+of up to five rings. Each ring inlines `sampleGlyph` 16 times, and each
+`sampleGlyph` had a short-circuit bounds test (`||` chain) and an early return.
+That loop body has about 64 diamonds in series, so the same
+`ExistsPath` search is exponential. The search does not depend on the outline
+data, so every draw with this pipeline stops the queue. Presentation then
+stops, and `requestAnimationFrame` callbacks stop.
+
+A local draw test with the cooked shader, Chrome Headless Shell 153 and its
+SwiftShader:
+
+| Source | First draw |
+|---|---|
+| Before the fix | No completion in 60 s |
+| After the fix | Complete in 60 ms |
+
+`sampleGlyph` now samples without branches and uses `select` for the bounds
+test. `SampleGrad` uses explicit gradients, so the sample is valid outside
+uniform control flow. Coverage inside the glyph bounds is the same. A UV with
+a NaN component now gives zero coverage; the earlier code sampled the atlas
+for it.
