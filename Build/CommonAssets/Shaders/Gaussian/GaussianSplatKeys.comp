@@ -2,8 +2,12 @@
 
 // Writes one (depth key, splat index) pair for each splat slot. An ascending sort of the
 // keys puts the splats in order from far to near, which back-to-front blending needs.
-// Slots at or past the visible count, and splats behind the camera, get the culled key,
-// so they sort to the end and the quad vertex shader skips them.
+// These slots get the culled key, so they sort to the end and the quad vertex shader skips them:
+// - slots at or past the visible count, when AllSlotsWritten is 0;
+// - empty slots: slots whose opacity is negative or NaN (a producer writes opacity -1 there);
+// - splats behind the camera.
+// With AllSlotsWritten = 1, the producer writes every slot in each frame (a splat or an empty slot), and this pass
+// reads all SplatCapacity slots. The sort is stable, so splats with equal keys keep the slot order.
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
@@ -32,6 +36,8 @@ layout(std430, binding = 48) readonly buffer GaussianSplatVisibleCount
 
 uniform uint SplatCapacity;
 uniform mat4 ModelViewMatrix;
+// 1 when the producer writes every slot (see above), 0 when only the first visibleCount slots are valid.
+uniform uint AllSlotsWritten;
 
 const uint CulledKey = 0xFFFFFFFFu;
 
@@ -49,13 +55,20 @@ void main()
         return;
 
     uint key = CulledKey;
-    if (index < min(visibleCount, SplatCapacity))
+    uint validSlots = AllSlotsWritten != 0u ? SplatCapacity : min(visibleCount, SplatCapacity);
+    if (index < validSlots)
     {
-        // The camera looks along -Z in view space, so the depth along its forward axis is -z.
-        vec3 viewPosition = (ModelViewMatrix * vec4(splats[index].centerOpacity.xyz, 1.0)).xyz;
-        float viewDepth = -viewPosition.z;
-        if (viewDepth > 0.0)
-            key = CulledKey - OrderedUint(viewDepth);
+        vec4 centerOpacity = splats[index].centerOpacity;
+
+        // An empty slot has a negative opacity. The test is written so that NaN is empty too.
+        if (centerOpacity.w >= 0.0)
+        {
+            // The camera looks along -Z in view space, so the depth along its forward axis is -z.
+            vec3 viewPosition = (ModelViewMatrix * vec4(centerOpacity.xyz, 1.0)).xyz;
+            float viewDepth = -viewPosition.z;
+            if (viewDepth > 0.0)
+                key = CulledKey - OrderedUint(viewDepth);
+        }
     }
 
     orderPairs[index] = uvec2(key, index);

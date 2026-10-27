@@ -18,6 +18,7 @@ public sealed partial class GaussianSplatRenderer
     internal const string CapacityUniform = "SplatCapacity";
     internal const string ModelViewUniform = "ModelViewMatrix";
     internal const string SplatScaleUniform = "SplatScale";
+    internal const string AllSlotsWrittenUniform = "AllSlotsWritten";
 
     private static readonly uint SplatStrideBytes = (uint)Unsafe.SizeOf<GaussianSplatGpuSplat>();
 

@@ -52,6 +52,7 @@ public partial class GaussianCacheComponent
     public const string PerspectiveUniform = "PerspectiveProjection";
     public const string LodThresholdUniform = "LodThresholdPixels";
     public const string ColorScaleUniform = "ColorScale";
+    public const string SlotPerNodeUniform = "SlotPerNode";
 
     /// <summary>The quad extent of the renderer, in standard deviations. The culling volume uses it.</summary>
     private const float QuadExtentSigma = 3.0f;
@@ -138,9 +139,11 @@ public partial class GaussianCacheComponent
             if (layout.DriverVertexCount > 0)
                 DispatchDriverPose(layout, frame);
             renderer.ResetCounters();
-            DispatchSplats(layout, renderer, model * view, camera.ProjectionMatrixUnjittered, viewportHeight);
+            bool slotPerNode = UsesSlotPerNode(layout, renderer);
+            DispatchSplats(layout, renderer, model * view, camera.ProjectionMatrixUnjittered, viewportHeight, slotPerNode);
 
             renderer.ModelMatrix = model;
+            renderer.AllSlotsWritten = slotPerNode;
             renderer.Prepare(in view);
             _hasPreparedSplats = renderer.HasOrder;
             TrackOverflow(renderer);
@@ -186,7 +189,17 @@ public partial class GaussianCacheComponent
         program.DispatchCompute(GetGroupCount((uint)layout.DriverVertexCount), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
     }
 
-    private void DispatchSplats(CacheLayout layout, GaussianSplatRenderer renderer, Matrix4x4 modelView, Matrix4x4 projection, float viewportHeight)
+    /// <summary>
+    /// Returns true when the renderer has a slot for every node of the cache, which is the default
+    /// (<see cref="MaxRenderedSplats"/> is at least the node count). Then each node writes the slot at its global node
+    /// index, empty or not, so the stable depth sort orders splats with equal depth by node index and the draw order is
+    /// the same in each run. With fewer slots than nodes, the cut pass gives slots in atomic order, and splats with equal
+    /// depth can blend in a different order from run to run.
+    /// </summary>
+    private static bool UsesSlotPerNode(CacheLayout layout, GaussianSplatRenderer renderer)
+        => renderer.Capacity >= layout.TotalNodeCount;
+
+    private void DispatchSplats(CacheLayout layout, GaussianSplatRenderer renderer, Matrix4x4 modelView, Matrix4x4 projection, float viewportHeight, bool slotPerNode)
     {
         XRRenderProgram program = _splatsProgram!;
         program.BindBuffer(renderer.Splats, GaussianSplatRenderer.SplatsBinding);
@@ -209,6 +222,7 @@ public partial class GaussianCacheComponent
         program.Uniform(ColorScaleUniform, layout.Header.ColorScale);
         program.Uniform(GridOriginUniform, layout.GridOrigin);
         program.Uniform(GridStepUniform, layout.GridCellSize);
+        program.Uniform(SlotPerNodeUniform, slotPerNode ? 1u : 0u);
         program.DispatchCompute(GetGroupCount((uint)layout.TotalNodeCount), 1u, 1u, EMemoryBarrierMask.ShaderStorage);
     }
 

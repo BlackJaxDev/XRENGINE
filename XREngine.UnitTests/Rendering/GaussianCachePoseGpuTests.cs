@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using NUnit.Framework;
 using Shouldly;
 using Silk.NET.OpenGL;
@@ -72,11 +73,58 @@ public sealed class GaussianCachePoseGpuTests : GpuTestBase
                 TestContext.Out.WriteLine($"{name}: CPU {Histogram(expected.Select(pose => pose.Level))}");
                 expected.Count.ShouldBeGreaterThan(0, name);
 
-                GpuResult result = RunPasses(gl, cache, time, view, totalCapacity: true);
-                result.Overflow.ShouldBe(0u, name);
-                result.Visible.ShouldBe((uint)expected.Count, name);
-                CompareWithReference(cache, expected, result.Splats, name);
+                // Both slot modes: atomic slots, and one slot for each node (the component default).
+                foreach (bool slotPerNode in new[] { false, true })
+                {
+                    string scenario = $"{name}, {(slotPerNode ? "slot per node" : "atomic slots")}";
+                    GpuResult result = RunPasses(gl, cache, time, view, totalCapacity: true, slotPerNode: slotPerNode);
+                    result.Overflow.ShouldBe(0u, scenario);
+                    result.Visible.ShouldBe((uint)expected.Count, scenario);
+                    CompareWithReference(cache, expected, result.Splats, scenario);
+                }
             }
+        }, timeoutMs: 120_000);
+    }
+
+    [Test, Category("Hardware")]
+    public void GpuPose_SlotPerNode_WritesEverySlotTheSameEachRun()
+    {
+        GaussianCacheTestSphere sphere = GaussianCacheTestSphere.Shared;
+        GaussianCache cache = GaussianCacheTestSphere.Load(sphere.Build());
+        float time = 37.3f / FrameRate;
+        Matrix4x4 view = Camera(MixedCutDistance(cache, time));
+        List<GaussianSplatPose> expected = [];
+        GaussianCachePoseReference.Compute(cache, time, view, Projection, Viewport, LodThresholdPixels, expected);
+
+        RunWithGLContext(gl =>
+        {
+            RequireHardwareCompute(gl);
+            GpuResult first = RunPasses(gl, cache, time, view, totalCapacity: true, slotPerNode: true);
+            GpuResult second = RunPasses(gl, cache, time, view, totalCapacity: true, slotPerNode: true);
+
+            first.Visible.ShouldBe((uint)expected.Count);
+            first.Overflow.ShouldBe(0u);
+            first.Slots.Length.ShouldBe(cache.Runtime.LevelRecords.Sum(level => level.Length));
+
+            // RunPasses fills the splat buffer with a pattern first, so a slot that the pass does not write is found here.
+            int empty = 0;
+            for (int slot = 0; slot < first.Slots.Length; slot++)
+            {
+                GaussianSplatGpuSplat splat = first.Slots[slot];
+                if (splat.CenterOpacity.W == GaussianSplatRenderer.EmptySlotOpacity)
+                {
+                    empty++;
+                    continue;
+                }
+
+                BitConverter.SingleToUInt32Bits(splat.ScalePad.W).ShouldBe((uint)slot, $"slot {slot} holds another node");
+                splat.CenterOpacity.W.ShouldBeInRange(0.0f, 1.0f);
+            }
+
+            empty.ShouldBe(first.Slots.Length - expected.Count);
+            TestContext.Out.WriteLine($"Slot per node: {expected.Count} splats and {empty} empty slots of {first.Slots.Length}.");
+            MemoryMarshal.AsBytes(second.Slots.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(first.Slots.AsSpan()))
+                .ShouldBeTrue("Two runs of the cut pass wrote different slots.");
         }, timeoutMs: 120_000);
     }
 
@@ -137,20 +185,31 @@ public sealed class GaussianCachePoseGpuTests : GpuTestBase
         RunWithGLContext(gl =>
         {
             RequireHardwareCompute(gl);
-            GpuResult result = RunPasses(gl, cache, time, view, totalCapacity: true, clearLevelTable: true);
-            result.Visible.ShouldBe(0u);
-            result.Overflow.ShouldBe(0u);
-            result.Splats.ShouldBeEmpty();
+            foreach (bool slotPerNode in new[] { false, true })
+            {
+                GpuResult result = RunPasses(gl, cache, time, view, totalCapacity: true, clearLevelTable: true, slotPerNode: slotPerNode);
+                result.Visible.ShouldBe(0u);
+                result.Overflow.ShouldBe(0u);
+                result.Splats.ShouldBeEmpty();
+                if (slotPerNode)
+                    result.Slots.ShouldAllBe(splat => splat.CenterOpacity.W == GaussianSplatRenderer.EmptySlotOpacity);
+            }
         }, timeoutMs: 120_000);
     }
 
-    private readonly record struct GpuResult(uint Visible, uint Overflow, GaussianSplatGpuSplat[] Splats);
+    /// <summary>
+    /// The result of the passes. <see cref="Splats"/> holds the written splats. <see cref="Slots"/> holds every slot of the
+    /// splat buffer in slot-per-node mode (empty slots too), and the same as <see cref="Splats"/> in atomic mode.
+    /// </summary>
+    private readonly record struct GpuResult(uint Visible, uint Overflow, GaussianSplatGpuSplat[] Splats, GaussianSplatGpuSplat[] Slots);
 
     /// <summary>
     /// Uploads the decoded data of a cache as the component does, and runs both compute passes. With
     /// <paramref name="clearLevelTable"/>, the level table has no ready level, as the component writes it at a cache switch.
+    /// With <paramref name="slotPerNode"/>, the cut pass writes the slot of each node (the component mode when the capacity is
+    /// at least the node count). The splat buffer starts filled with the byte 0x3F, which no pass writes.
     /// </summary>
-    private static GpuResult RunPasses(GL gl, GaussianCache cache, float time, Matrix4x4 view, bool totalCapacity, int capacity = 0, bool clearLevelTable = false)
+    private static GpuResult RunPasses(GL gl, GaussianCache cache, float time, Matrix4x4 view, bool totalCapacity, int capacity = 0, bool clearLevelTable = false, bool slotPerNode = false)
     {
         GaussianCacheHeader header = cache.Header;
         GaussianCacheRuntimeData runtime = cache.Runtime;
@@ -175,7 +234,9 @@ public sealed class GaussianCachePoseGpuTests : GpuTestBase
         uint frameBuffer = CreateStorage<ushort>(gl, positions.Length > 0 ? positions : [0, 0]);
         uint poseBuffer = CreateStorage(gl, (nuint)(Math.Max(frames.VertexCount, 1) * 16));
         uint levelBuffer = CreateStorage<GaussianCacheGpuLevel>(gl, levels);
-        uint splatBuffer = CreateStorage(gl, (nuint)(capacity * Unsafe.SizeOf<GaussianSplatGpuSplat>()));
+        byte[] fill = new byte[Math.Max(capacity, 1) * Unsafe.SizeOf<GaussianSplatGpuSplat>()];
+        Array.Fill(fill, (byte)0x3F);
+        uint splatBuffer = CreateStorage<byte>(gl, fill);
         uint visibleBuffer = CreateStorage<uint>(gl, [0u, 0u, 0u, 0u]);
         uint overflowBuffer = CreateStorage<uint>(gl, [0u, 0u, 0u, 0u]);
         try
@@ -219,6 +280,7 @@ public sealed class GaussianCachePoseGpuTests : GpuTestBase
             gl.Uniform1(gl.GetUniformLocation(splats, GaussianCacheComponent.ColorScaleUniform), header.ColorScale);
             SetVector(gl, splats, GaussianCacheComponent.GridOriginUniform, grid.Origin);
             SetVector(gl, splats, GaussianCacheComponent.GridStepUniform, grid.CellSize);
+            gl.Uniform1(gl.GetUniformLocation(splats, GaussianCacheComponent.SlotPerNodeUniform), slotPerNode ? 1u : 0u);
             gl.DispatchCompute(GaussianCacheComponent.GetGroupCount((uint)records.Length), 1u, 1u);
             gl.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit | MemoryBarrierMask.BufferUpdateBarrierBit);
             gl.Finish();
@@ -226,8 +288,15 @@ public sealed class GaussianCachePoseGpuTests : GpuTestBase
 
             uint visible = ReadStorage<uint>(gl, visibleBuffer, 1)[0];
             uint overflow = ReadStorage<uint>(gl, overflowBuffer, 1)[0];
-            int written = (int)Math.Min(visible, (uint)capacity);
-            return new GpuResult(visible, overflow, ReadStorage<GaussianSplatGpuSplat>(gl, splatBuffer, written));
+            if (slotPerNode)
+            {
+                GaussianSplatGpuSplat[] slots = ReadStorage<GaussianSplatGpuSplat>(gl, splatBuffer, capacity);
+                GaussianSplatGpuSplat[] written = [.. slots.Where(splat => splat.CenterOpacity.W != GaussianSplatRenderer.EmptySlotOpacity)];
+                return new GpuResult(visible, overflow, written, slots);
+            }
+
+            GaussianSplatGpuSplat[] compact = ReadStorage<GaussianSplatGpuSplat>(gl, splatBuffer, (int)Math.Min(visible, (uint)capacity));
+            return new GpuResult(visible, overflow, compact, compact);
         }
         finally
         {
