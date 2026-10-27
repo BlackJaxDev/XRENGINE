@@ -39,6 +39,12 @@ public readonly struct GridQuantizer
     /// <summary>The largest error on one axis after a round trip, which is half of the largest step.</summary>
     public float MaxErrorMeters { get; }
 
+    /// <summary>The point of grid cell (0, 0, 0): the minimum of the box.</summary>
+    public Vector3 Origin => _min;
+
+    /// <summary>The size of one grid cell on each axis. An axis with zero extent has a cell size of 0.</summary>
+    public Vector3 CellSize => _step;
+
     /// <summary>Rounds a point to the nearest grid cell. Points outside the box clamp to the border.</summary>
     public void Quantize(Vector3 p, out ushort x, out ushort y, out ushort z)
     {
