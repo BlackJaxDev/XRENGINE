@@ -1105,7 +1105,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         // The editor configures these variables so its in-process MSBuild host can
         // load SDK projects. A child dotnet process configures its own MSBuild host;
         // forwarding the editor's values also makes nested Visual Studio C++ builds
-        // look for VC targets inside the .NET SDK.
+        // look for VC targets inside the .NET SDK. The editor can select a newer
+        // installed SDK than the one global.json pins for the child. Forwarding that
+        // SDK's Sdks folder mixes two SDK versions in one build, and its task hosts
+        // then point at the wrong SDK.
+        startInfo.Environment.Remove(XREngineEnvironmentVariables.MsBuildSdksPath);
         startInfo.Environment.Remove(XREngineEnvironmentVariables.MsBuildExePath);
         startInfo.Environment.Remove(XREngineEnvironmentVariables.MsBuildExtensionsPath);
         startInfo.Environment.Remove(XREngineEnvironmentVariables.MsBuildExtensionsPath32);
