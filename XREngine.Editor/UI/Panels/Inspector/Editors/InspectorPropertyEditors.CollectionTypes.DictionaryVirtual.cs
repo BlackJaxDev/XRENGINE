@@ -29,15 +29,26 @@ public static partial class InspectorPropertyEditors
                         CreateDictionaryRowSources(sources, rowWrite), primary.Keys[index], generation),
                     () => AddDictionaryEntry(sources, generation),
                     plan.ReadOnlyText,
-                    plan.HasMultilineRows ? CreateDictionaryRowExtent(plan) : null);
+                    CreateDictionaryRowExtent(plan, valueType, primary));
                 RenderVirtualRows(contract, generation);
             }
 
-            /// <summary>Measures each row from the retained line counts of the plan.</summary>
-            private static Func<int, float> CreateDictionaryRowExtent(EditorDictionaryRowPlan plan)
+            /// <summary>
+            /// Measures each row from the retained line counts of the plan and from a custom value
+            /// editor that measures its own rows. A row uses the larger of the two heights. Returns
+            /// null when every row has the single-line height.
+            /// </summary>
+            private static Func<int, float>? CreateDictionaryRowExtent(EditorDictionaryRowPlan plan,
+                Type valueType, EditorDictionarySnapshot primary)
             {
                 float fontSize = EditorUI.Styles.PropertyNameFontSize;
-                return index => EditorVirtualRowExtent.ForLines(plan.LineCount(index), fontSize);
+                Func<int, float>? measured = CreateMeasuredRowExtent(valueType, index => primary.Values[index]);
+                if (measured is null)
+                    return plan.HasMultilineRows
+                        ? index => EditorVirtualRowExtent.ForLines(plan.LineCount(index), fontSize)
+                        : null;
+                return index => MathF.Max(measured(index),
+                    EditorVirtualRowExtent.ForLines(plan.LineCount(index), fontSize));
             }
 
             private static EditorDictionarySourceLease[] CreateDictionaryRowSources(

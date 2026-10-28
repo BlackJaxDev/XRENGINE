@@ -32,7 +32,8 @@ public static partial class InspectorPropertyEditors
                         generation, sources, rowRead, rowWrite),
                     (index, rowWrite) => RemoveLinkedListElement(
                         CreateLinkedRowSources(sources, rowWrite), index, generation),
-                    () => AddLinkedListElement(sources, generation));
+                    () => AddLinkedListElement(sources, generation),
+                    RowExtent: CreateMeasuredRowExtent(elementType, index => values[index]));
                 RenderVirtualRows(contract, generation);
             }
 
@@ -93,6 +94,27 @@ public static partial class InspectorPropertyEditors
                         list.DetachVirtualProviderForOwnerTeardown();
                 }
                 finally { if (!IsCurrentBuild(generation)) KeepRenderedBranch(branch, generation); }
+            }
+
+            /// <summary>Gets the custom editor of a type when it measures its own row height.</summary>
+            private static IEditorMeasuredRowEditor? MeasuredRowEditorFor(Type valueType)
+                => valueType.GetCustomAttribute<EditorComponentAttribute>() as IEditorMeasuredRowEditor;
+
+            /// <summary>
+            /// Creates the row extent of a custom editor that measures its own rows, or null when
+            /// the value type uses fixed-height rows.
+            /// </summary>
+            private static Func<int, float>? CreateMeasuredRowExtent(Type valueType, Func<int, object?> valueAt)
+            {
+                if (MeasuredRowEditorFor(valueType) is not { } measured) return null;
+                return index => EditorVirtualRowExtent.ForMeasured(measured.MeasureRowHeight(valueAt(index)));
+            }
+
+            /// <summary>Requests new row heights after a refresh when the rows are measured.</summary>
+            private void InvalidateMeasuredRowExtents()
+            {
+                if (_virtualList?.VirtualProvider is UIVirtualTableProvider<int> { HasItemExtents: true } provider)
+                    provider.InvalidateItemExtents();
             }
 
             private UIBoundableTransform CreateVirtualCollectionCell(SceneNode tableRow,
@@ -611,10 +633,14 @@ public static partial class InspectorPropertyEditors
                 }
             }
 
-            private static bool CanUseFixedHeightCollectionEditor(Type valueType)
+            /// <summary>
+            /// Checks that the virtual row host can show values of this type. A row uses either a
+            /// known fixed-height editor or a custom editor that measures its own row height.
+            /// </summary>
+            private static bool CanUseVirtualCollectionEditor(Type valueType)
             {
-                if (valueType.GetCustomAttribute<EditorComponentAttribute>() is not null)
-                    return false;
+                if (valueType.GetCustomAttribute<EditorComponentAttribute>() is { } custom)
+                    return custom is IEditorMeasuredRowEditor;
                 if (Nullable.GetUnderlyingType(valueType) is not null)
                     return false;
                 if (typeof(IList).IsAssignableFrom(valueType))

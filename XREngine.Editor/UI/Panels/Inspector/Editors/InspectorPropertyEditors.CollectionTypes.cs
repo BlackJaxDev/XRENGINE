@@ -397,7 +397,7 @@ public static partial class InspectorPropertyEditors
                         source.Adapter.ValueType == valueType);
                 if (!IsCurrentBuild(generation)) return;
                 // Multiline labels and read-only values use measured virtual rows.
-                if (canMutate && CanUseFixedHeightCollectionEditor(valueType))
+                if (canMutate && CanUseVirtualCollectionEditor(valueType))
                 {
                     EditorDictionarySnapshot primary = sources[0].Displayed;
                     bool hasPlan = EditorDictionaryRowPlan.TryCreate(
@@ -706,6 +706,9 @@ public static partial class InspectorPropertyEditors
                         new UIVirtualTableColumn<int>("value", "Element", 300,
                             CreateVirtualListCell, BindVirtualListCell, UnbindVirtualListCell,
                             BindVirtualListCell));
+                    // The bound list can change in place, so each read uses the current list.
+                    provider.ItemExtent = CreateMeasuredRowExtent(elementType, index =>
+                        _boundList is { } bound && index < bound.Count ? bound[index] : null);
                     list.VirtualProvider = provider;
                     if (!IsCurrentBuild(buildGeneration))
                     {
@@ -749,7 +752,10 @@ public static partial class InspectorPropertyEditors
                     if (!_listContext.IsActive) return;
                     if (_virtualList is { } currentList &&
                         (_ownerIsCurrent is null || _nestedListCurrent?.Invoke() == true))
+                    {
+                        InvalidateMeasuredRowExtents();
                         currentList.InvalidateMeasure();
+                    }
                 };
             }
 
@@ -790,6 +796,7 @@ public static partial class InspectorPropertyEditors
                 }
                 else
                     _listRows.Refresh();
+                InvalidateMeasuredRowExtents();
                 _virtualList?.InvalidateMeasure();
             }
 
@@ -1541,7 +1548,7 @@ public static partial class InspectorPropertyEditors
                 if (!IsCurrentBuild(generation)) return;
                 List<object?> values = EnumerateLinkedListValues(sample).ToList();
                 if (!IsCurrentBuild(generation)) return;
-                if (canMutate && CanUseFixedHeightCollectionEditor(elementType))
+                if (canMutate && CanUseVirtualCollectionEditor(elementType))
                 {
                     RenderVirtualLinkedList(elementType, sources, values, generation);
                     return;

@@ -2482,8 +2482,23 @@ is the explicit measured-height contract: it returns the row height for an index
 before the row binds. `EditorVirtualRowExtent.ForLines` gives 28 units for one line
 plus 1.3 times the font size for each added line. When every row has one line, the
 contract is null and the list keeps the fixed 28-unit path. Editable values keep
-their fixed-height editors. Custom or tall editors and unsupported dictionary
-sources keep their prior layout and behavior.
+their fixed-height editors. Unsupported dictionary sources keep their prior layout
+and behavior.
+
+### Custom editors with measured rows
+
+A type with a custom `EditorComponentAttribute` editor can use virtual rows in
+direct lists, linked lists, and dictionaries when the attribute also implements
+`IEditorMeasuredRowEditor`. `MeasureRowHeight` returns the row height for one
+value before the row binds, and the editor must fit in that height.
+`EditorVirtualRowExtent.ForMeasured` uses 28 units for a value that is not finite
+or smaller than 28, and it limits the height to
+`IEditorMeasuredRowEditor.MaxRowHeight` (2048). A direct list reads the current
+bound list for each height. A dictionary row uses the larger of the measured
+height and the line height of its label. Each list refresh increases the extent
+revision, so the list reads every height again. A custom editor is not rebindable,
+so a recycled row builds a new editor. A custom editor type without the interface
+keeps its non-virtual fallback.
 
 `RenderVirtualDictionary` uses the primary captured snapshot for row keys and
 count. Binding creation resolves each owner's actual key object from that

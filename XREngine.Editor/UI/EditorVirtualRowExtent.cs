@@ -15,6 +15,11 @@ internal static class EditorVirtualRowExtent
     /// </summary>
     internal const float LineAdvanceScale = 1.3f;
 
+    /// <summary>Limits the height that a custom row editor measured to the accepted range.</summary>
+    internal static float ForMeasured(float height)
+        => !float.IsFinite(height) || height < SingleLineHeight ? SingleLineHeight :
+            MathF.Min(height, IEditorMeasuredRowEditor.MaxRowHeight);
+
     internal static float ForLines(int lineCount, float fontSize)
     {
         if (lineCount <= 1 || !float.IsFinite(fontSize) || fontSize <= 0)
