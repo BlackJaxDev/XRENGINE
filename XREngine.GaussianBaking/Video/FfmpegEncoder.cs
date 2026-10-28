@@ -41,6 +41,13 @@ public sealed class FfmpegEncoder
     /// <summary>The scale filter options that convert RGB to BT.709 limited-range YUV.</summary>
     private const string Bt709ScaleOptions = "out_color_matrix=bt709:out_range=tv";
 
+    /// <summary>
+    /// The filter that marks the frames with the BT.709 primaries and transfer. The encoder takes the color properties
+    /// of the frames, and the scale filter sets only the matrix and the range, so without this filter ffmpeg writes
+    /// the primaries and the transfer as unknown.
+    /// </summary>
+    private const string Bt709FrameTags = "setparams=color_primaries=bt709:color_trc=bt709";
+
     /// <summary>The output options that tag a video with the BT.709 color space, primaries, and transfer.</summary>
     private static readonly string[] Bt709Tags = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"];
 
@@ -252,7 +259,7 @@ public sealed class FfmpegEncoder
             ? string.Create(CultureInfo.InvariantCulture, $"scale=-2:{rendition.Height}:flags=area")
             : null;
         if (video)
-            filter = filter is null ? "scale=" + Bt709ScaleOptions : filter + ":" + Bt709ScaleOptions;
+            filter = (filter is null ? "scale=" + Bt709ScaleOptions : filter + ":" + Bt709ScaleOptions) + "," + Bt709FrameTags;
         if (filter is not null)
             arguments.AddRange(["-vf", filter]);
 

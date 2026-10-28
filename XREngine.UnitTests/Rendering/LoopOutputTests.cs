@@ -230,7 +230,8 @@ public sealed class LoopOutputTests
 
         arguments.ShouldBe(
             "-hide_banner -loglevel error -y -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i - -an -threads 1 " +
-            "-fflags +bitexact -flags:v +bitexact -map_metadata -1 -vf scale=out_color_matrix=bt709:out_range=tv " +
+            "-fflags +bitexact -flags:v +bitexact -map_metadata -1 " +
+            "-vf scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709 " +
             "-c:v libvpx-vp9 -b:v 0 -crf 34 -deadline good -cpu-used 2 -row-mt 0 -pix_fmt yuv420p " +
             "-colorspace bt709 -color_primaries bt709 -color_trc bt709 out/loop-1080.webm");
     }
@@ -243,7 +244,8 @@ public sealed class LoopOutputTests
 
         arguments.ShouldBe(
             "-hide_banner -loglevel error -y -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i - -an -threads 1 " +
-            "-fflags +bitexact -flags:v +bitexact -map_metadata -1 -vf scale=-2:480:flags=area:out_color_matrix=bt709:out_range=tv " +
+            "-fflags +bitexact -flags:v +bitexact -map_metadata -1 " +
+            "-vf scale=-2:480:flags=area:out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709 " +
             "-c:v libopenh264 -b:v 1M -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 " +
             "-movflags +faststart out/loop-480.mp4");
     }
@@ -256,8 +258,8 @@ public sealed class LoopOutputTests
             "-fflags +bitexact -flags:v +bitexact -map_metadata -1 ";
 
         const string tags = "-colorspace bt709 -color_primaries bt709 -color_trc bt709 ";
-        const string scale1080 = "-vf scale=out_color_matrix=bt709:out_range=tv ";
-        const string scale480 = "-vf scale=-2:480:flags=area:out_color_matrix=bt709:out_range=tv ";
+        const string scale1080 = "-vf scale=out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709 ";
+        const string scale480 = "-vf scale=-2:480:flags=area:out_color_matrix=bt709:out_range=tv,setparams=color_primaries=bt709:color_trc=bt709 ";
         FfmpegEncoder.BuildArguments(LoopRendition.Loop1080H264, 1920, 1080, 30.0f, BakeSplatPreviewOptions.OpenH264Encoder, "a.mp4")
             .ShouldBe(common + scale1080 + "-c:v libopenh264 -b:v 4M -pix_fmt yuv420p " + tags + "-movflags +faststart a.mp4");
         FfmpegEncoder.BuildArguments(LoopRendition.Loop1080H264, 1920, 1080, 30.0f, BakeSplatPreviewOptions.NvencEncoder, "a.mp4")
