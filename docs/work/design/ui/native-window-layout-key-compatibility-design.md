@@ -1,6 +1,6 @@
 # Native Window Layout Key Compatibility
 
-Status: Proposed; owner approval pending
+Status: Approved on 2026-10-26; implemented
 Scope: Saved layout keys for the current single-primary editor profile
 Related work: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
 
@@ -44,11 +44,16 @@ preservation of old entries, and unchanged detached keys. A Windows check must
 confirm layout restore after restart and a title override. No platform result
 is claimed by this proposal.
 
-## Approval Boundary
+## Implementation
 
-Copying a saved layout to a new key is a data migration. `AGENTS.md` requires
-owner approval before data/storage migrations. The lookup/copy rule above is
-proposed for that approval; no key migration is implemented yet.
+`NativeDockLayoutKeys.ResolvePrimary` applies the lookup rule above.
+`EditorPanelHost.GetWindowKey` returns `primary` for the first window and keeps
+`index:title` keys for other windows. `NativeDockLayoutStore.Load` reports
+unmatched index-zero records and uses the default layout. A normal save writes
+the `primary` record and keeps every other record. `NativeDockLayoutStore.Save`
+refuses to write when the stored data is malformed. `NativeDockLayoutKeyTests`
+covers the pure rule and the store behavior. The Windows restart and title
+override checks remain in the validation plan.
 
 Optional detached-window geometry fields are a separate additive change. Their
 old-record defaults and close-approval ownership can be implemented without this

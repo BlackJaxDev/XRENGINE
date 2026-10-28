@@ -27,7 +27,7 @@ public static class EditorPanelHost
         bool toolsOnly, int? initialPanel)
     {
         string windowKey = keyOverride ?? GetWindowKey(window);
-        NativeDockLayout layout = NativeDockLayoutStore.Load(windowKey);
+        NativeDockLayout layout = NativeDockLayoutStore.Load(windowKey, window?.WindowTitle);
         if (initialPanel is >= 0 and < 4 && layout.OpenMask == 15 && layout.SelectedTab == 0)
         {
             layout.OpenMask = 1 << initialPanel.Value;
@@ -386,15 +386,21 @@ public static class EditorPanelHost
         return RuntimeEngine.Windows.FirstOrDefault();
     }
 
+    /// <summary>
+    /// Returns the layout key for a host window. The first window uses the canonical
+    /// <see cref="NativeDockLayoutKeys.Primary"/> key, so a title override or a changed window
+    /// title keeps its layout. Other windows keep their <c>index:title</c> key until they have
+    /// durable host identities. Detached windows use explicit keys and do not call this method.
+    /// </summary>
     internal static string GetWindowKey(XRWindow? target)
     {
         int index = 0;
         foreach (XRWindow window in RuntimeEngine.Windows)
         {
             if (ReferenceEquals(window, target))
-                return $"{index}:{window.WindowTitle}";
+                return index == 0 ? NativeDockLayoutKeys.Primary : $"{index}:{window.WindowTitle}";
             index++;
         }
-        return "primary";
+        return NativeDockLayoutKeys.Primary;
     }
 }

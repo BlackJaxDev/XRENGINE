@@ -518,6 +518,7 @@ Architecture: [UI architecture](../../../architecture/ui/README.md); [Native UI 
 |---|---|---|---|---|
 | Check native editor workflows. | Use hierarchy, inspector, scene view, asset browser, console, profiler, toolbar, menus, docking, edit, play, import, drag/drop, undo, and save workflows. | Native panels support the normal workflows expected from the ImGui editor. | Planned | none |
 | Check panel lifecycle. | Open, close, rebuild, and transition through play mode for panels with external callbacks or resources. | Teardown deactivates child subtrees and unregisters input, render, watcher, audio, and streaming callbacks. State that must persist stays stable. | Planned | none |
+| Check primary layout key restore. | Arrange the native dock layout, restart the editor, then restart with `XRE_WINDOW_TITLE` set to another title. Repeat with only an old `0:XRE Editor` record in the global preferences. | The layout restores in all three runs. Old records stay in `NativeDockLayoutsJson`. A record for another old title is reported and not used. | Planned | none |
 | Check backend parity. | Run the same native editor workflow on OpenGL and Vulkan. | Native UI behavior and visuals are correct on both backends. | Planned | none |
 
 ### Default-Path Readiness

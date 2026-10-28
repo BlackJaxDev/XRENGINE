@@ -38,7 +38,7 @@ internal sealed class NativeDockTreeHost
         _world = world;
         _window = window ?? EditorPanelHost.ResolveWindow(root);
         _windowKey = windowKey ?? EditorPanelHost.GetWindowKey(_window);
-        _layout = NativeDockLayoutStore.Load(_windowKey);
+        _layout = NativeDockLayoutStore.Load(_windowKey, _window?.WindowTitle);
         if (initialPanel is not null)
         {
             _layout.DockTree = new NativeDockTree
