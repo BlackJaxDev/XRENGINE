@@ -1,5 +1,90 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Texture cache inspection placement (2026-10-28)
+
+Implementation commit `fb66b55ab29f882c4fe6d68a63680a679cd97c69` moves
+all five physical file operations in `TextureStreamingCacheCodec` to existing
+host capabilities. Binary marker reads capture `IRuntimeHostFileReadBackend`
+after host-file admission. Recognized cache reads use that same object as
+`IAssetMetadataFileBackend` for the timestamp. Source-path resolution captures
+metadata after its blank-path and authored-asset exits, then retains it for the
+existence probe and source timestamp. The
+[composition contract](../../../architecture/runtime/project-organization.md)
+records the custom-host capability requirement.
+
+Marker streams retain `FileShare.ReadWrite` and deterministic disposal. Empty,
+text, and whitespace markers remain misses. An I/O or access failure during
+inspection remains a rejection, and direct loading claims the file to prevent
+YAML fallback. Timestamp exceptions retain their caller-owned boundary. Invalid
+shapes, stored source timestamps on write, and non-texture direct requests keep
+their lazy exits. Payload mapping, nested texture preparation, cache writing,
+and usability probes keep their existing owners. No payload format, cache key,
+schema, dependency, tracked test, shader, native UI, or reference-runtime source
+changed. Provider retention is not an atomic snapshot or retirement lease.
+
+A disposable executable passes 29 checks against compiled Rendering:
+
+- Valid binary cache reads preserve payload bytes, paths, and timestamps. Marker
+  and timestamp calls retain one provider through replacement; marker streams
+  keep their share mode and are disposed. Payload mapping is also disposed.
+- Stale cache reads stop before mapping. Empty, text, tab, newline, and carriage
+  return markers miss without timestamp access.
+- I/O and access failures reject cache reads and keep direct files claimed;
+  recognized corrupt payloads also remain claimed. Timestamp errors retain the
+  existing exception boundary.
+- Direct binary reads need no timestamp lookup. Wrong types, valid streaming
+  shapes, blank paths, authored-asset paths, invalid write shapes, and stored
+  source timestamps preserve their relevant provider-free exits.
+- Write source probes and timestamps retain one provider through replacement,
+  and output keeps the source timestamp. Missing sources stop resolution.
+- Preparation retains its source provider before the existing missing
+  render-asset-host rejection. This harness does not install the full render
+  asset host. An initial broader expectation of successful source-image
+  preparation failed at that existing boundary; the final check covers only
+  provider retention and the unchanged rejection result.
+- Text markers and direct binary reads accept a read-only capability. A
+  recognized cache read rejects the missing metadata capability explicitly.
+  Missing read providers fail explicitly, and non-synchronous sources reject
+  before a host read.
+
+The harness uses an injected file provider and a disposable memory-mapping
+backend over real temporary files. It links the unchanged pinned Magick codec
+for fixture creation; it does not qualify the Windows desktop mapping adapter,
+GPU cooking, or full source-image preparation. Rendering and the final harness
+build in Release with zero warnings and errors. Independent source review found
+no regression. No tracked test or assertion changed. Evidence under
+`Build/_AgentValidation/20261028-120000-webgpu-io/` includes
+`logs/texture-codec-rendering-build.log`, `logs/texture-codec-smoke-build.log`,
+`logs/texture-codec-smoke.log`, and `reports/texture-codec-inventory.json`.
+
+The full local publication gate passes at this implementation source. Editor,
+Server, and VRClient Release builds report zero warnings and errors with
+`EnableWindowsTargeting=true` on Linux. The unchanged
+`DesktopAssetFileSystemTests` fixture passes one test with zero failures,
+warnings, or skips. All 19 portable manifest projects compile for `browser-wasm`.
+Browser publishes into a fresh directory with `WasmBuildNative=true`, pinned
+Jolt inputs, and unchanged interpreter mode. The browser gate reports no
+warning or error diagnostics.
+
+Evidence is in `logs/texture-codec-gate-Editor.log`,
+`logs/texture-codec-gate-Server.log`, `logs/texture-codec-gate-VRClient.log`,
+`logs/texture-codec-headless-build.log`, `logs/texture-codec-headless-test.log`,
+`reports/texture-codec-host-TestResult.xml`, and
+`logs/texture-codec-full-gate.log`. Fresh output is
+`texture-codec-browser-publish/wwwroot/`.
+`reports/texture-codec-browser-publish-hashes.json` records the native runtime,
+Browser, and Rendering WASM sizes and SHA-256 hashes. This does not establish
+Windows startup, rendered browser parity, GPU cooking, or post-push CI. Shader
+sources and recipes did not change, so the previous production cook was not
+repeated.
+
+The repeatable committed-source scan reports 30 files / 101 direct-file matching
+lines across the four original roots, and 15 files / 42 lines in Core and
+Rendering. It removes four matching lines and one file. The fifth removed
+physical operation used a target-typed `FileStream` constructor, which the
+historical expression does not match. Blocking counts are unchanged. Both broad
+inventory requirements remain open; the checklist stays 122/163 complete.
+
 ## Font atlas and cache file placement (2026-10-28)
 
 Implementation commit `dc4d8ed39292bfb02c192ef5c7eaf2f8c9995933` moves

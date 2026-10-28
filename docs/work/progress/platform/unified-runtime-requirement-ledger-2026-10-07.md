@@ -3,6 +3,7 @@
 This dated record is the authoritative 163-ID accounting source. It preserves each named UR requirement, kind, state, evidence, limits, and historical context from the integration branch. It gives no new completion credit for the master merge. The [completed-work view](unified-desktop-browser-runtime-completed-work-2026-10-08.md) contains the 122 Complete rows. The [active code TODO](../../todo/platform/unified-desktop-browser-runtime-todo.md) contains only open implementation work and the open owner decision. The [platform validation view](../../testing/platform/platform-validation.md#unified-runtime-ur-verification-view) owns open runtime, browser, hardware, and benchmark checks.
 
 The [2026-10-28 inventory refresh](browser-caller-blocking-inventory-2026-10-03.md#committed-source-refresh-2026-10-28),
+[texture cache inspection placement](browser-runtime-asset-io-boundaries-2026-10-03.md#texture-cache-inspection-placement-2026-10-28),
 [font-file placement](browser-runtime-asset-io-boundaries-2026-10-03.md#font-atlas-and-cache-file-placement-2026-10-28),
 [load-probe placement](browser-runtime-asset-io-boundaries-2026-10-03.md#asset-load-probe-placement-2026-10-28),
 [cache metadata placement](browser-runtime-asset-io-boundaries-2026-10-03.md#third-party-cache-metadata-placement-2026-10-28),

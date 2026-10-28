@@ -2,6 +2,21 @@
 
 Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
 
+## Texture cache inspection follow-up (2026-10-28)
+
+The scan at implementation commit `fb66b55ab29f882c4fe6d68a63680a679cd97c69`
+uses the same roots, tracked sources, and expressions. Texture cache inspection
+placement removes four matching lines and one file from Rendering. The change
+also replaces the target-typed `FileStream` constructor, which this historical
+expression does not count. Counts are Core **8 / 24**, Rendering **7 / 18**,
+Host **2 / 5**, and Data **13 / 54**, for **30 files / 101 lines**.
+Core plus Rendering total **15 files / 42 lines**. Blocking counts and the
+three literal asset-manager sync waits are unchanged. The
+[texture cache record](browser-runtime-asset-io-boundaries-2026-10-03.md#texture-cache-inspection-placement-2026-10-28)
+records provider compatibility and bounded runtime evidence. The nested texture
+payload writer and usability probes remain in shared code. Neither complete
+inventory requirement is satisfied; earlier sections retain their dated counts.
+
 ## Font file follow-up (2026-10-28)
 
 The scan at implementation commit `dc4d8ed39292bfb02c192ef5c7eaf2f8c9995933`
