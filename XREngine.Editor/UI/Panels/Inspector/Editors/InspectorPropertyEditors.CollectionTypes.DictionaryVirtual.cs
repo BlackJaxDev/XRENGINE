@@ -29,7 +29,8 @@ public static partial class InspectorPropertyEditors
                         CreateDictionaryRowSources(sources, rowWrite), primary.Keys[index], generation),
                     () => AddDictionaryEntry(sources, generation),
                     plan.ReadOnlyText,
-                    CreateDictionaryRowExtent(plan, valueType, primary));
+                    CreateDictionaryRowExtent(plan, valueType, primary),
+                    MeasuredRowEditorFor(valueType) is not null);
                 RenderVirtualRows(contract, generation);
             }
 

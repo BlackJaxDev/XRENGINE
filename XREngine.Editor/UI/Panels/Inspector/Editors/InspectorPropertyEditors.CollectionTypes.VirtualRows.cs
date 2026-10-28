@@ -33,7 +33,8 @@ public static partial class InspectorPropertyEditors
                     (index, rowWrite) => RemoveLinkedListElement(
                         CreateLinkedRowSources(sources, rowWrite), index, generation),
                     () => AddLinkedListElement(sources, generation),
-                    RowExtent: CreateMeasuredRowExtent(elementType, index => values[index]));
+                    RowExtent: CreateMeasuredRowExtent(elementType, index => values[index]),
+                    RebuildEditor: MeasuredRowEditorFor(elementType) is not null);
                 RenderVirtualRows(contract, generation);
             }
 
@@ -221,7 +222,8 @@ public static partial class InspectorPropertyEditors
                 ObjectConstructionIdentity branchIdentity = ObjectConstructionIdentity.Capture(branch);
                 ObjectConstructionIdentity containerIdentity = ObjectConstructionIdentity.Capture(_container);
                 SceneNode? editorNode = state.EditorNode;
-                if (editorNode is not null && (!state.ReusableEditor || state.EditorControls.Length == 0))
+                if (editorNode is not null && (!state.ReusableEditor ||
+                    state.EditorControls.Length == 0 && !contract.RebuildEditor))
                     throw new InvalidOperationException("An incomplete fixed-height collection editor cannot be reused.");
                 ObjectConstructionIdentity? editorIdentity = editorNode is null ? null :
                     ObjectConstructionIdentity.Capture(editorNode);
@@ -330,7 +332,8 @@ public static partial class InspectorPropertyEditors
                     }
                     state.IsReadOnly = false;
 
-                    if (editorNode is not null && (!state.ReusableEditor || state.EditorControls.Length == 0))
+                    if (editorNode is not null && (!state.ReusableEditor ||
+                    state.EditorControls.Length == 0 && !contract.RebuildEditor))
                         throw new InvalidOperationException("An incomplete fixed-height collection editor cannot be reused.");
                     object[] targets = contract.CreateBindings(index, RowCurrent, WriteCurrent);
                     if (!RowCurrent()) return;
@@ -383,6 +386,19 @@ public static partial class InspectorPropertyEditors
                         return;
                     }
 
+                    if (contract.RebuildEditor && editorNode is not null)
+                    {
+                        // A custom editor cannot rebind, so the row builds a new one.
+                        SceneNode retired = editorNode;
+                        retired.IsActiveSelf = false;
+                        if (!RowCurrent()) return;
+                        retired.Destroy(false);
+                        state.EditorNode = null;
+                        state.EditorControls = [];
+                        editorNode = null;
+                        editorIdentity = null;
+                        if (!RowCurrent()) return;
+                    }
                     if (editorNode is null)
                     {
                         SceneNode created = state.ValueNode.NewChild();
@@ -406,7 +422,8 @@ public static partial class InspectorPropertyEditors
                     {
                         BuildValueEditor(editorNode, contract.ValueType, contract.BindingProperty, targets);
                         if (!RowCurrent()) return;
-                        state.EditorControls = CaptureFixedEditorControls(editorNode, contract.ValueType);
+                        state.EditorControls = CaptureFixedEditorControls(editorNode, contract.ValueType,
+                            exactCount: !contract.RebuildEditor);
                         if (!RowCurrent()) return;
                         state.ReusableEditor = true;
                     }
@@ -464,7 +481,12 @@ public static partial class InspectorPropertyEditors
                 return rows;
             }
 
-            private static EditorVirtualRowControlLease[] CaptureFixedEditorControls(SceneNode editor, Type elementType)
+            /// <summary>
+            /// Captures the controls of a new row editor. A known fixed-height editor must have its
+            /// exact control count. A custom editor can have any number of controls.
+            /// </summary>
+            private static EditorVirtualRowControlLease[] CaptureFixedEditorControls(SceneNode editor, Type elementType,
+                bool exactCount = true)
             {
                 List<EditorVirtualRowControlLease> controls = [];
                 void Visit(SceneNode node)
@@ -477,6 +499,7 @@ public static partial class InspectorPropertyEditors
                             Visit(childNode);
                 }
                 Visit(editor);
+                if (!exactCount) return controls.ToArray();
                 int expected = elementType == typeof(Vector2) ? 3 :
                     elementType == typeof(Vector3) || elementType == typeof(Quaternion) ? 4 :
                     elementType == typeof(Vector4) ? 5 :
