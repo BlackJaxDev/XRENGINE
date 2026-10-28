@@ -888,6 +888,8 @@ public sealed partial class EditorNestedListDetailTests
         };
         SceneNode detail = new("Nested vector detail");
         detail.SetTransform<UIBoundableTransform>();
+        // The vector transformer binds its source only while it is active in a world.
+        detail.SetWorldContext(new TestWorldContext());
         PropertyInfo property = typeof(EditorNestedVectorListTarget)
             .GetProperty(nameof(EditorNestedVectorListTarget.Values))!;
         Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(
@@ -938,7 +940,7 @@ public sealed partial class EditorNestedListDetailTests
             SceneNode firstDetail = Nodes(firstRoot)
                 .First(node => node.GetComponent<InspectorListDetailRefreshComponent>() is not null);
             InvokeNestedAction(firstDetail, 0);
-            SceneNode secondRoot = Nodes(firstRoot).Single(node => node.Name == "NestedListDetail" &&
+            SceneNode secondRoot = Nodes(firstDetail).Single(node => node.Name == "NestedListDetail" &&
                 !node.IsDestroyed && !node.IsDestroyQueued);
             UIListTransform second = VirtualList(secondRoot, 2);
             second.SynchronizeVirtualRows(280);
