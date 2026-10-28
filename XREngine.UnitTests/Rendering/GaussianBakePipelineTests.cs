@@ -48,6 +48,9 @@ public sealed class GaussianBakePipelineTests
     /// <summary>A chunk 0 limit below the measured chunk 0 size of the test avatar at the level 0 target 31: 1,414 bytes.</summary>
     private const int FailChunk0Bytes = 1_000;
 
+    /// <summary>A loop file of an earlier bake.</summary>
+    private const string StaleLoopFile = "loop-480.mp4";
+
     private string _workRoot = string.Empty;
     private string _avatarPak = string.Empty;
     private string _emptyPak = string.Empty;
@@ -129,7 +132,8 @@ public sealed class GaussianBakePipelineTests
         File.WriteAllText(Path.Combine(output.StagingPath, "new.txt"), "fresh");
         output.Commit();
 
-        File.Exists(Path.Combine(final, "old.txt")).ShouldBeFalse();
+        File.Exists(Path.Combine(final, StaleLoopFile)).ShouldBeFalse();
+        Directory.Exists(Path.Combine(final, BakeCacheFiles.FolderName)).ShouldBeFalse();
         File.Exists(Path.Combine(final, BakeReportWriter.FileName)).ShouldBeFalse();
         File.ReadAllText(Path.Combine(final, "new.txt")).ShouldBe("fresh");
         Directory.Exists(output.StagingPath).ShouldBeFalse();
@@ -175,6 +179,78 @@ public sealed class GaussianBakePipelineTests
         refusal.Message.ShouldContain(Path.GetFullPath(final));
         Directory.GetFileSystemEntries(final).Select(Path.GetFileName).Order(StringComparer.Ordinal).ShouldBe(["notes.txt", "sub"]);
         File.ReadAllText(Path.Combine(final, "notes.txt")).ShouldBe("keep");
+        StagingFoldersOf(final).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void OutputDirectory_UnrelatedFolderWithReportJson_BeginRefusesAndDeletesNothing()
+    {
+        // A report.json that is not the report of a bake, alone and with other files.
+        string alone = Path.Combine(_workRoot, "unrelated-report-parent", "alone");
+        Directory.CreateDirectory(alone);
+        File.WriteAllText(Path.Combine(alone, BakeReportWriter.FileName), "{ \"version\": 3, \"items\": [] }");
+        string mixed = Path.Combine(_workRoot, "unrelated-report-parent", "mixed");
+        Directory.CreateDirectory(mixed);
+        File.WriteAllText(Path.Combine(mixed, BakeReportWriter.FileName), "{ \"schemaVersion\": 1 }");
+        File.WriteAllText(Path.Combine(mixed, "photo.jpg"), "keep");
+
+        foreach (string final in new[] { alone, mixed })
+        {
+            string[] before = RelativeFiles(final);
+            BakeOutputDirectory.CanReplace(final).ShouldBeFalse(final);
+            Should.Throw<GaussianBakeException>(() => BakeOutputDirectory.Begin(final))
+                .FailureCode.ShouldBe(GaussianBakeFailureCodes.InvalidArguments);
+            RelativeFiles(final).ShouldBe(before);
+            StagingFoldersOf(final).ShouldBeEmpty();
+        }
+    }
+
+    [Test]
+    public void OutputDirectory_BakeOutputWithUnknownFile_BeginRefusesAndDeletesNothing()
+    {
+        string final = Path.Combine(_workRoot, "unknown-file-parent", "out");
+        WritePreviousOutput(final);
+        File.WriteAllText(Path.Combine(final, "notes.txt"), "keep");
+        string[] before = RelativeFiles(final);
+
+        BakeOutputDirectory.CanReplace(final).ShouldBeFalse();
+        GaussianBakeException refusal = Should.Throw<GaussianBakeException>(() => BakeOutputDirectory.Begin(final));
+
+        refusal.FailureCode.ShouldBe(GaussianBakeFailureCodes.InvalidArguments);
+        refusal.Message.ShouldContain("notes.txt");
+        RelativeFiles(final).ShouldBe(before);
+        StagingFoldersOf(final).ShouldBeEmpty();
+    }
+
+    [Test]
+    public void OutputDirectory_RootOrUserProfile_BeginRefuses()
+    {
+        string driveRoot = Path.GetPathRoot(Path.GetFullPath(_workRoot)).ShouldNotBeNull();
+        string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        foreach (string final in new[] { driveRoot, profile })
+        {
+            if (string.IsNullOrEmpty(final))
+                continue;
+
+            BakeOutputDirectory.CanReplace(final).ShouldBeFalse(final);
+            Should.Throw<GaussianBakeException>(() => BakeOutputDirectory.Begin(final))
+                .FailureCode.ShouldBe(GaussianBakeFailureCodes.InvalidArguments);
+        }
+    }
+
+    [Test]
+    public void OutputDirectory_PreviousBakeOutput_CommitReplacesIt()
+    {
+        string final = Path.Combine(_workRoot, "previous-parent", "out");
+        WritePreviousOutput(final);
+        BakeOutputDirectory.CanReplace(final).ShouldBeTrue();
+
+        BakeOutputDirectory output = BakeOutputDirectory.Begin(final);
+        File.WriteAllText(Path.Combine(output.StagingPath, BakeReportWriter.FileName), "fresh");
+        output.Commit();
+
+        Directory.GetFileSystemEntries(final).Select(Path.GetFileName).ShouldBe([BakeReportWriter.FileName]);
+        File.ReadAllText(Path.Combine(final, BakeReportWriter.FileName)).ShouldBe("fresh");
         StagingFoldersOf(final).ShouldBeEmpty();
     }
 
@@ -465,8 +541,9 @@ public sealed class GaussianBakePipelineTests
         WritePreviousOutput(final);
         GaussianBakePreparation preparation;
 
-        // The open report blocks the delete of the output folder, so the failed report cannot be written.
-        using (new FileStream(Path.Combine(final, BakeReportWriter.FileName), FileMode.Open, FileAccess.Read, FileShare.None))
+        // The open loop file blocks the delete of the output folder, so the failed report cannot be written. The
+        // report of the earlier bake stays readable, so the folder check accepts the folder.
+        using (new FileStream(Path.Combine(final, StaleLoopFile), FileMode.Open, FileAccess.Read, FileShare.None))
         {
             preparation = await PrepareAsync(Options(Path.Combine(_workRoot, "does-not-exist.pak"), AvatarAssetPath, "avatar", final));
         }
@@ -664,12 +741,18 @@ public sealed class GaussianBakePipelineTests
             Warnings = ["clip-truncated"],
         };
 
-    /// <summary>Makes a folder that holds the outputs of an earlier bake: a ready report and a stale file.</summary>
+    /// <summary>
+    /// Makes a folder that holds the outputs of an earlier bake: a ready report, a cache folder, a stale loop, and a
+    /// capture view dump.
+    /// </summary>
     private static void WritePreviousOutput(string directory)
     {
-        Directory.CreateDirectory(directory);
+        Directory.CreateDirectory(Path.Combine(directory, BakeCacheFiles.FolderName));
+        Directory.CreateDirectory(Path.Combine(directory, "debug", "views"));
         BakeReportWriter.Write(CreateFullReport(), directory);
-        File.WriteAllText(Path.Combine(directory, "old.txt"), "stale");
+        File.WriteAllText(Path.Combine(directory, BakeCacheFiles.FolderName, BakeCacheFiles.RootFileName), "stale");
+        File.WriteAllText(Path.Combine(directory, StaleLoopFile), "stale");
+        File.WriteAllText(Path.Combine(directory, "debug", "views", "view_00.png"), "stale");
     }
 
     /// <summary>Returns the staging folders next to a final output folder.</summary>
