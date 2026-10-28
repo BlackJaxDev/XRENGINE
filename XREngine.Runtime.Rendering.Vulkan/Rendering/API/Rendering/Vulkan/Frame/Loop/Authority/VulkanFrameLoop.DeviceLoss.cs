@@ -12,6 +12,9 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class VulkanFrameLoop
 {
+    /// <summary>The number of recent submission breadcrumbs in the device-loss footer.</summary>
+    private const int DeviceLossBreadcrumbTailEntries = 8;
+
     /// <summary>
     /// Destructive, opt-in lifetime validation. The injection waits for a real
     /// resident native template so teardown exercises detached table ownership,
@@ -180,6 +183,16 @@ internal sealed partial class VulkanFrameLoop
                 .Append(" commandBuffer=0x")
                 .Append(submission.FirstCommandBufferHandle.ToString("X"));
         }
+
+        // Add the recent submission history and the validation messages so
+        // that the device-loss footer identifies the work before the fault.
+        string breadcrumbTail = _telemetry.DescribeVulkanCrashBreadcrumbTail(DeviceLossBreadcrumbTailEntries);
+        if (breadcrumbTail.Length != 0)
+            builder.Append("; ").Append(breadcrumbTail);
+
+        string validationSummary = _deviceContext.DescribeValidationSummary();
+        if (validationSummary.Length != 0)
+            builder.Append("; ").Append(validationSummary);
 
         AppendNvCheckpointDiagnostics(builder, in submission);
 

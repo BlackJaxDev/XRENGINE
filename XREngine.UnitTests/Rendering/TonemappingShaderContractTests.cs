@@ -90,7 +90,8 @@ public sealed class TonemappingShaderContractTests
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
         schemaSource.ShouldContain("DescribeTonemappingStage(builder.Stage(StageKeys.Tonemapping, \"Tonemapping\").BackedBy<TonemappingSettings>());");
         schemaSource.ShouldContain("visibilityCondition: IsMobius");
-        pipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder);");
+        // A browser route has no automatic exposure producer, so the default is off there.
+        pipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder, defaultAutoExposure: !OperatingSystem.IsBrowser());");
         pipelineSource.ShouldContain("(tonemapping ?? DefaultTonemappingSettings).SetUniforms(program);");
 
         string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
@@ -129,7 +130,8 @@ public sealed class TonemappingShaderContractTests
         string schemaSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PostProcessing/CommonPostProcessStages.cs").Replace("\r\n", "\n");
         schemaSource.ShouldContain("DescribeVignetteStage(builder.Stage(StageKeys.Vignette, \"Vignette\").BackedBy<VignetteSettings>());");
         schemaSource.ShouldContain(".IncludeStages(StageKeys.Tonemapping, StageKeys.ColorGrading, StageKeys.Vignette);");
-        pipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder);");
+        // A browser route has no automatic exposure producer, so the default is off there.
+        pipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder, defaultAutoExposure: !OperatingSystem.IsBrowser());");
 
         string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
         advancedPipelineSource.ShouldContain("CommonPostProcessStages.AddStandardPipelineSchema(builder);");

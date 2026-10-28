@@ -1367,7 +1367,11 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("program.Uniform(\"ShadowNearPlaneDist\", ShadowNearPlaneDistance);");
         source.ShouldContain("private void SyncShadowCaptureTransforms()");
         source.ShouldContain("SetField(ref _influenceVolume, new Sphere(lightPosition, _influenceVolume.Radius));");
-        source.ShouldContain("SetRenderMatrix(Matrix4x4.CreateTranslation(lightPosition), recalcAllChildRenderMatrices: true)");
+        // The shadow-camera parent uses one translation matrix. Browser hosts and
+        // scheduler threads apply it at once; other threads wait for the hierarchy update.
+        source.ShouldContain("Matrix4x4 parentRenderMatrix = Matrix4x4.CreateTranslation(lightPosition);");
+        source.ShouldContain("_shadowCameraParentTransform.SetRenderMatrixHierarchyImmediate(parentRenderMatrix);");
+        source.ShouldContain("_shadowCameraParentTransform.SetRenderMatrix(parentRenderMatrix, recalcAllChildRenderMatrices: true).Wait();");
         source.ShouldContain("SyncShadowCaptureTransforms();");
     }
 

@@ -120,8 +120,15 @@ public sealed class AlphaToCoveragePhase2Tests
         exactTransparencySource.ShouldContain("SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)");
         exactTransparencySource.ShouldNotContain("SetTargets(ForwardPassFBOName, TransparentSceneCopyFBOName)");
 
+        // The Advanced pipeline takes one scene-color snapshot for all late consumers
+        // before its transparency passes, instead of one copy per exact-transparency mode.
+        string advancedLateCommandsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.LateAndPostCommands.cs");
+        advancedLateCommandsSource.ShouldContain("SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)");
+        advancedLateCommandsSource.ShouldNotContain("SetTargets(ForwardPassFBOName, TransparentSceneCopyFBOName)");
+        advancedLateCommandsSource.IndexOf("SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)", StringComparison.Ordinal)
+            .ShouldBeLessThan(advancedLateCommandsSource.IndexOf("AppendExactTransparencyCommands(lateCommands);", StringComparison.Ordinal));
+
         string exactTransparency2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.ExactTransparency.cs");
-        exactTransparency2Source.ShouldContain("SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)");
         exactTransparency2Source.ShouldNotContain("SetTargets(ForwardPassFBOName, TransparentSceneCopyFBOName)");
 
         string sceneCopyShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/SceneCopy.fs");
@@ -143,8 +150,13 @@ public sealed class AlphaToCoveragePhase2Tests
         pipelineFboSource.ShouldNotContain("fbo.SettingUniforms += BrightPassFBO_SettingUniforms;");
 
         string advancedPipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
-        advancedPipelineFboSource.ShouldContain("private XRFrameBuffer CreateForwardPassFBO()");
-        advancedPipelineFboSource.ShouldContain("Path.Combine(SceneShaderPath, SceneCopyShaderName())");
+        string advancedForwardPassFactory = ExtractBetween(
+            advancedPipelineFboSource,
+            "private sealed class ForwardPassFrameBufferFactory(AdvancedRenderPipeline owner)",
+            "private void CompleteFrameBuffer()");
+        advancedPipelineFboSource.ShouldContain("private IIncrementalFrameBufferFactory CreateForwardPassFBOIncrementally()");
+        CollapseWhitespace(advancedForwardPassFactory).ShouldContain("Path.Combine(SceneShaderPath, owner.SceneCopyShaderName())");
+        advancedForwardPassFactory.ShouldNotContain("BrightPassShaderName()");
         advancedPipelineFboSource.ShouldNotContain("Path.Combine(SceneShaderPath, BrightPassShaderName())");
         advancedPipelineFboSource.ShouldNotContain("fbo.SettingUniforms += BrightPassFBO_SettingUniforms;");
 
@@ -302,10 +314,10 @@ public sealed class AlphaToCoveragePhase2Tests
     public void LightCombineQuad_DisablesMaterialDerivedTargets_ToMatchItsRecreateValidator()
     {
         string pipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs");
-        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false)");
+        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)");
 
         string advancedPipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs");
-        advancedPipelineFboSource.ShouldContain("new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false)");
+        advancedPipelineFboSource.ShouldContain("new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)");
     }
 
     [Test]
@@ -328,8 +340,14 @@ public sealed class AlphaToCoveragePhase2Tests
         string pipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs");
         pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false)");
 
+        // The Advanced pipeline builds the same quad through its incremental forward-pass factory.
         string advancedPipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs");
-        advancedPipelineFboSource.ShouldContain("new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false)");
+        string advancedForwardPassFactory = CollapseWhitespace(ExtractBetween(
+            advancedPipelineFboSource,
+            "private sealed class ForwardPassFrameBufferFactory(AdvancedRenderPipeline owner)",
+            "private void CreateMaterial()"));
+        advancedForwardPassFactory.ShouldContain(
+            "useTriangle: false, deriveRenderTargetsFromMaterial: false, useMultiview: owner.Stereo, prepareForInitialRendering: false);");
     }
 
     [Test]
@@ -349,20 +367,22 @@ public sealed class AlphaToCoveragePhase2Tests
     public void TransparencyResolveQuads_DisableMaterialDerivedTargets()
     {
         string pipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs");
-        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DeferredTransparencyBlurFBOName }");
-        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = TransparentResolveFBOName }");
+        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = DeferredTransparencyBlurFBOName }");
+        pipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = TransparentResolveFBOName }");
 
         string pipelineExactSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.ExactTransparency.cs");
         pipelineExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = PpllResolveFBOName }");
         pipelineExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DepthPeelingResolveFBOName }");
 
         string advancedPipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs");
-        advancedPipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DeferredTransparencyBlurFBOName }");
-        advancedPipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = TransparentResolveFBOName }");
+        advancedPipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = DeferredTransparencyBlurFBOName }");
+        advancedPipelineFboSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = TransparentResolveFBOName }");
 
         string advancedPipelineExactSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.ExactTransparency.cs");
-        advancedPipelineExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = PpllResolveFBOName }");
-        advancedPipelineExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DepthPeelingResolveFBOName }");
+        advancedPipelineExactSource.ShouldContain("new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = PpllResolveFBOName }");
+        // The depth-peeling resolve quad is built by an incremental factory.
+        CollapseWhitespace(advancedPipelineExactSource).ShouldContain(
+            "deriveRenderTargetsFromMaterial: false, useMultiview: owner.Stereo, prepareForInitialRendering: false) { Name = DepthPeelingResolveFBOName };");
     }
 
     [Test]
@@ -379,23 +399,34 @@ public sealed class AlphaToCoveragePhase2Tests
         advancedPipelineSource.ShouldContain("MsaaGBufferFBOName => !HasMsaaGBufferTargets(fbo)");
         advancedPipelineSource.ShouldContain("MsaaLightingFBOName => !HasMsaaLightingTargets(fbo)");
         advancedPipelineSource.ShouldContain("ForwardPassMsaaFBOName => !HasForwardPassMsaaTargets(fbo)");
-        advancedPipelineSource.ShouldContain("HasTextureAttachment(targets[4], MsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
+        // The Advanced MSAA GBuffer has an extra emission color target, so depth-stencil is the sixth target.
+        advancedPipelineSource.ShouldContain("if (fbo.Targets is not { Length: 6 } targets)");
+        advancedPipelineSource.ShouldContain("HasTextureAttachment(targets[4], MsaaEmissionColorTextureName, EFrameBufferAttachment.ColorAttachment4)");
+        advancedPipelineSource.ShouldContain("HasTextureAttachment(targets[5], MsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
         advancedPipelineSource.ShouldContain("HasTextureAttachment(targets[1], ForwardPassMsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment)");
     }
 
     [Test]
-    public void AdvancedPipeline_PostAaResourcesRemainDisconnectedFromTheFrameSkeleton()
+    public void AdvancedPipeline_PostAaResourcesAreDeclaredForTheFrameSkeleton()
     {
         string resources = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.Resources.cs");
         string commandChain = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.CommandChain.cs");
+        string frameContract = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/Contracts/AdvancedRenderPipelineFrameContract.cs");
 
-        resources.ShouldNotContain("PostProcessOutputFBOName");
-        resources.ShouldNotContain("FxaaFBOName");
-        resources.ShouldNotContain("TsrHistoryColorFBOName");
-        resources.ShouldNotContain("TsrUpscaleFBOName");
+        // The Advanced pipeline now owns its post-AA chain. The resource layout
+        // declares the post-process, FXAA, and TSR destinations, and the ordered
+        // frame skeleton runs them in its temporal and post-processing stage.
+        resources.ShouldContain("builder.FrameBuffer(PostProcessOutputFBOName)");
+        resources.ShouldContain("DeclareLatePostDestination(builder, FxaaFBOName, FxaaOutputTextureName, windowSize, CreateFxaaFBO);");
+        resources.ShouldContain("DeclareLatePostDestination(builder, TsrHistoryColorFBOName, TsrHistoryColorTextureName, windowSize, CreateTsrHistoryColorFBO);");
+        resources.ShouldContain("builder.FrameBuffer(TsrUpscaleFBOName)");
         commandChain.ShouldContain("AdvancedRenderPipelineFrameContract.OrderedStages");
+        frameContract.ShouldContain("EAdvancedRenderStage.TemporalAndPostProcessing,");
+        frameContract.IndexOf("EAdvancedRenderStage.TemporalAndPostProcessing,", StringComparison.Ordinal)
+            .ShouldBeLessThan(frameContract.IndexOf("EAdvancedRenderStage.Output,", StringComparison.Ordinal));
     }
 
     [Test]
@@ -434,11 +465,24 @@ public sealed class AlphaToCoveragePhase2Tests
         helperSource.ShouldNotContain("RemoveTextureResource");
         helperSource.ShouldNotContain("Dependencies =");
 
+        // A changed AA mode is part of the temporal history profile, so the next
+        // frame resets history even when the pipeline only regenerates resources.
+        temporalSource.ShouldContain("EAntiAliasingMode AntiAliasingMode,");
+        temporalSource.ShouldContain("bool profileReset = state.HistoryGeneration.BeginFrame(profile, expectedHistoryLayers);");
+
+        // AA changes go through owner-checked helpers, so a stale pipeline asset
+        // cannot reset the history of an instance that it no longer applies.
+        string basePipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipeline.cs");
+        basePipelineSource.ShouldContain("protected void InvalidateOwnedInstanceAntiAliasingResources(string reason)");
+        basePipelineSource.ShouldContain("instance.TryInvalidateOwnedAntiAliasingResources(");
+        string transitionSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.PipelineTransition.cs");
+        transitionSource.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(this, reason);");
+
         string pipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        pipelineSource.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);");
+        pipelineSource.ShouldContain("InvalidateOwnedInstancePhysicalResources(\"AntiAliasingSettingsChanged\");");
 
         string advancedPipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs");
-        advancedPipelineSource.ShouldContain("RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);");
+        advancedPipelineSource.ShouldContain("InvalidateOwnedInstanceAntiAliasingResources(\"AntiAliasingSettingsChanged\");");
     }
 
     [Test]
@@ -450,16 +494,24 @@ public sealed class AlphaToCoveragePhase2Tests
 
         string pipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
         pipelineSource.ShouldContain("public void SyncPbrLightingResourcesForFrame()");
-        pipelineSource.ShouldContain("if (_probeBindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)");
+        pipelineSource.ShouldContain("ForwardLightProbeInstanceResources state = ForwardLightProbeInstanceResources.Get(instance);");
+        pipelineSource.ShouldContain("if (state.BindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)");
         pipelineSource.ShouldNotContain("UpdatePbrLightingResourcesForFrame(");
 
         string pipelineCommandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
-        pipelineCommandChainSource.ShouldContain("c.Add<VPRC_SyncLightProbeResources>();");
-        pipelineCommandChainSource.ShouldContain("private void AppendLightingPass(ViewportRenderCommandContainer c)");
+        // The lighting pass syncs probes once per frame, but only when the GI plan needs native probe IBL bindings.
+        string lightingPass = ExtractBetween(
+            pipelineCommandChainSource,
+            "private void AppendLightingPass(ViewportRenderCommandContainer c)",
+            "c.Add<VPRC_SetClears>()");
+        lightingPass.ShouldContain("probeSync.ConditionEvaluator = () => GlobalIlluminationPlan.RequiresNativeProbeIblBindings;");
+        lightingPass.ShouldContain("probeCommands.Add<VPRC_SyncLightProbeResources>();");
+        lightingPass.ShouldContain("probeSync.TrueCommands = probeCommands;");
 
         string advancedPipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs");
         advancedPipelineSource.ShouldContain("public void SyncPbrLightingResourcesForFrame()");
-        advancedPipelineSource.ShouldContain("if (_probeBindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)");
+        advancedPipelineSource.ShouldContain("ForwardLightProbeInstanceResources state = ForwardLightProbeInstanceResources.Get(instance);");
+        advancedPipelineSource.ShouldContain("if (state.BindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)");
         advancedPipelineSource.ShouldNotContain("UpdatePbrLightingResourcesForFrame(");
 
     }
@@ -486,7 +538,12 @@ public sealed class AlphaToCoveragePhase2Tests
     {
         string instanceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs").Replace("\r\n", "\n");
         instanceSource.ShouldContain("public void ViewportResized(int width, int height, XRViewport? viewport)");
-        instanceSource.ShouldContain("_pipeline?.HandleViewportResized(this, width, height, viewport);");
+        // Display and internal resizes share one profile-change path that calls the
+        // pipeline hook before it requests the replacement resource generation.
+        instanceSource.ShouldContain("pipeline.HandleViewportResized(this, dimensions.DisplayWidth, dimensions.DisplayHeight, viewport);");
+        instanceSource.IndexOf("pipeline.HandleViewportResized(this, dimensions.DisplayWidth, dimensions.DisplayHeight, viewport);", StringComparison.Ordinal)
+            .ShouldBeLessThan(instanceSource.IndexOf("RequestResourceGeneration(\n            dimensions.DisplayWidth,", StringComparison.Ordinal));
+        instanceSource.ShouldContain("viewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);");
         instanceSource.ShouldContain("public void InternalResolutionResized(int internalWidth, int internalHeight, XRViewport? viewport)");
 
         string helperSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RenderPipelineAntiAliasingResources.cs").Replace("\r\n", "\n");
@@ -565,8 +622,10 @@ public sealed class AlphaToCoveragePhase2Tests
         string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
         temporalSource.ShouldContain("public Matrix4x4 CurrProjection");
         temporalSource.ShouldContain("public Matrix4x4 CurrInverseProjection");
-        temporalSource.ShouldContain("state.CurrProjection = jitteredProjection;");
-        temporalSource.ShouldContain("state.CurrInverseProjection = camera.InverseProjectionMatrix;");
+        // Each eye stores its jittered projection and the inverse of that same matrix.
+        temporalSource.ShouldContain("eyeState.CurrProjection = jitteredProjection;");
+        temporalSource.ShouldContain("bool projectionInvertible = Matrix4x4.Invert(jitteredProjection, out Matrix4x4 inverseProjection);");
+        temporalSource.ShouldContain("eyeState.CurrInverseProjection = inverseProjection;");
 
         string historyPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_VolumetricFogHistoryPass.cs").Replace("\r\n", "\n");
         historyPassSource.ShouldContain("? temporalData.CurrViewProjection");
@@ -651,12 +710,19 @@ public sealed class AlphaToCoveragePhase2Tests
     public void TemporalResolves_ApplyProjectionJitterExactlyWhereRequired()
     {
         string temporalSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalAccumulation.fs").Replace("\r\n", "\n");
-        temporalSource.ShouldContain("vec2 historyUV = uv - velocity * 0.5f;");
+        // Motion vectors are unjittered, so TAA history lookup adds only the jitter phase delta, as TSR does.
+        temporalSource.ShouldContain("vec2 historyUV = uv - velocity * 0.5f + PreviousJitterUv - CurrentJitterUv;");
+        temporalSource.ShouldNotContain("vec2 historyUV = uv - velocity * 0.5f;");
         temporalSource.ShouldNotContain("historyUV = uv - velocity * 0.5f + (PreviousJitterUv - CurrentJitterUv);");
 
         string tsrSource = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalSuperResolution.fs").Replace("\r\n", "\n");
-        tsrSource.ShouldContain("vec2 historyUV = uv - velocity * 0.5f + PreviousJitterUv - CurrentJitterUv;");
-        tsrSource.ShouldContain("PreviousJitterUv - CurrentJitterUv");
+        // TSR converts the jitter uniforms into framebuffer UV direction first.
+        tsrSource.ShouldContain("vec2 currentJitter = TsrFramebufferUvDisplacement(CurrentJitterUv, FramebufferTextureYDirection);");
+        tsrSource.ShouldContain("vec2 previousJitter = TsrFramebufferUvDisplacement(PreviousJitterUv, FramebufferTextureYDirection);");
+        CollapseWhitespace(tsrSource).ShouldContain(
+            "vec2 historyUV = uv - TsrFramebufferUvDisplacement(velocity * 0.5f, FramebufferTextureYDirection) + previousJitter - currentJitter;");
+        // Stable-output color history has no jitter; only its raw depth companion keeps the previous jitter.
+        tsrSource.ShouldContain("vec2 historyDepthUv = historyUV + previousJitter;");
     }
 
     [Test]
@@ -738,6 +804,18 @@ public sealed class AlphaToCoveragePhase2Tests
 
     private static string ReadWorkspaceFile(string relativePath)
         => SourceContractWorkspace.ReadFile(relativePath);
+
+    private static string CollapseWhitespace(string source)
+        => System.Text.RegularExpressions.Regex.Replace(source, @"\s+", " ");
+
+    private static string ExtractBetween(string source, string startMarker, string endMarker)
+    {
+        int start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0, $"Could not find '{startMarker}'.");
+        int end = source.IndexOf(endMarker, start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start, $"Could not find '{endMarker}' after '{startMarker}'.");
+        return source[start..end];
+    }
 
     private static string ResolveWorkspacePath(string relativePath)
     {

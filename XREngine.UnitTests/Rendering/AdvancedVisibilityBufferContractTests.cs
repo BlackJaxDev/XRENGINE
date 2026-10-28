@@ -18,7 +18,7 @@ public sealed class AdvancedVisibilityBufferContractTests
             EAdvancedVisibilityFormatCandidate.OneRg32UIntAttachment);
         AdvancedVisibilityBufferContract.Encoding.ShouldBe(
             EAdvancedVisibilityTargetEncoding.R32G32UInt);
-        AdvancedVisibilityBufferContract.PayloadVersion.ShouldBe(1u);
+        AdvancedVisibilityBufferContract.PayloadVersion.ShouldBe(2u);
         AdvancedVisibilityCapacityInventory.TargetScenes.FitsVersion1
             .ShouldBeTrue();
         Unsafe.SizeOf<AdvancedVisibilityPayloadWords>().ShouldBe(8);
@@ -95,7 +95,7 @@ public sealed class AdvancedVisibilityBufferContractTests
             FrontFace: false,
             VelocityValid: true,
             ViewIndex: 7u,
-            PayloadVersion: 1u,
+            PayloadVersion: 2u,
             SelectionValid: true));
 
         AdvancedVisibilityPrimitiveIdentity.TryEncodeIndexed(

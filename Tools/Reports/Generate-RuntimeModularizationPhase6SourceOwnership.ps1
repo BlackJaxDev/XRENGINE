@@ -1,5 +1,5 @@
 param(
-    [string]$OutputPath = "docs/work/progress/runtime/runtime-modularization-phase6-source-ownership.tsv"
+    [string]$OutputPath = "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-source-ownership.tsv"
 )
 
 $ErrorActionPreference = "Stop"
@@ -40,7 +40,7 @@ if (Test-Path -LiteralPath $resolvedOutputPath) {
 # Keep the checked-in baseline as an immutable source ledger even after `git mv`
 # removes completed facade paths from the index. The working manifest wins when
 # it already contains a row with newer migration state.
-$baselineManifestPath = "docs/work/progress/runtime/runtime-modularization-phase6-source-ownership.tsv"
+$baselineManifestPath = "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-source-ownership.tsv"
 $baselineLines = @(& git -C $repositoryRoot show "HEAD:$baselineManifestPath" 2>$null)
 if ($LASTEXITCODE -eq 0 -and $baselineLines.Count -gt 1) {
     $baselineHeaders = $baselineLines[0].Split("`t", [System.StringSplitOptions]::None)

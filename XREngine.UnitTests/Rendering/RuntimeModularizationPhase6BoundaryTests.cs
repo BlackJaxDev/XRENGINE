@@ -8,9 +8,9 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class RuntimeModularizationPhase6BoundaryTests
 {
     private const string OwnershipManifestPath =
-        "docs/work/progress/runtime/runtime-modularization-phase6-source-ownership.tsv";
+        "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-source-ownership.tsv";
     private const string ConsumerManifestPath =
-        "docs/work/progress/runtime/runtime-modularization-phase6-consumer-api-baseline.tsv";
+        "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-consumer-api-baseline.tsv";
 
     private static readonly HashSet<string> ApprovedOwners = new(StringComparer.Ordinal)
     {
@@ -365,7 +365,10 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
         Assert.That(File.Exists(facadeProject), Is.False);
         Assert.That(Directory.Exists(Path.Combine(root, "XRENGINE")), Is.False);
         Assert.That(File.Exists(Path.Combine(root, "XREngine.Runtime.Core", "runtimes", "win-x64", "native", "lib_coacd.dll")), Is.True);
-        Assert.That(File.Exists(Path.Combine(root, "ThirdParty", "NVIDIA", "SDK", "win-x64", "nis.license.txt")), Is.True);
+        // NVIDIA SDK files are a local drop that the repository does not redistribute.
+        // The dependency report owns the NIS license location for that drop.
+        string dependencyReport = File.ReadAllText(Path.Combine(root, "Tools", "Reports", "Generate-Dependencies.ps1"));
+        Assert.That(dependencyReport, Does.Contain("ThirdParty/NVIDIA/SDK/win-x64/nis.license.txt"));
 
         string authoringProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Physics.Authoring", "XREngine.Runtime.Physics.Authoring.csproj"));
         string openGlProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Rendering.OpenGL", "XREngine.Runtime.Rendering.OpenGL.csproj"));
@@ -546,7 +549,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
             .Descendants("ProjectReference")
             .Select(element => (string?)element.Attribute("Include"))
             .Where(static include => !string.IsNullOrWhiteSpace(include))
-            .Select(static include => Path.GetFileNameWithoutExtension(include!))
+            .Select(static include => Path.GetFileNameWithoutExtension(include!.Replace('\\', '/')))
             .ToHashSet(StringComparer.Ordinal);
 
     private static HashSet<string> ReadIncludes(XDocument document, string elementName)

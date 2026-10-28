@@ -58,12 +58,20 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         string buildPlanGroup = ExtractRegion(
             source,
             "if (TryGetDirectionalCascadeGroupContainingRequest(request, out ShadowAtlasGroupedDirectionalCascadeAllocation directionalGroup)",
-            "if (TryGetFirstPointFaceGroup(request, out ShadowAtlasGroupedPointFaceAllocation pointGroup)");
+            "if (TryGetPointFaceGroupContainingRequest(request, out ShadowAtlasGroupedPointFaceAllocation pointGroup)");
         buildPlanGroup.ShouldContain("TryGetDirectionalCascadeGroupRenderRequirement");
         buildPlanGroup.ShouldNotContain("CanRenderDirectionalCascadeGroup");
 
-        source.ShouldContain("TryRenderDirectionalCascadeGroupSequentially(plan, light, entry, collectVisibleNow)");
-        source.ShouldContain("EnqueuePlanMemberCompletions(plan, entry)");
+        string renderGroup = ExtractRegion(
+            source,
+            "private bool TryRenderDirectionalCascadeGroup(\n        ShadowAtlasRenderPlan plan,\n        int planIndex,",
+            "private bool TryRenderDirectionalCascadeGroupSequentially(");
+        // A group that the light cannot render as one layered pass falls back
+        // to sequential tiles. Grouped capability only selects the command
+        // preparation and does not gate the fallback.
+        renderGroup.ShouldContain(
+            "usedSequentialFallback = TryRenderDirectionalCascadeGroupSequentially(\n                plan,\n                light,\n                entry,\n                prepareSequentialCommands: canRenderGrouped,\n                collectVisibleNow: collectVisibleNow,");
+        renderGroup.ShouldContain("EnqueueDirectionalCascadePlanMemberCompletions(plan, entry, light);");
         source.ShouldNotContain("TryRenderDirectionalCascadeGroup(\n        ShadowMapRequest seedRequest");
         source.ShouldNotContain("TryRenderPointFaceGroup(\n        ShadowMapRequest seedRequest");
     }
@@ -163,10 +171,17 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         forwardSource.ShouldContain("GetSampleableCascadedShadowReceiverTexture(directionalShadowCamera)");
         forwardSource.ShouldContain("IsTextureReadyForShadowSampling(directionalAtlas)");
 
+        string commandRuntime = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.cs")
+            .Replace("\r\n", "\n");
+
         dirtyReasonSource.ShouldContain("InvalidateCommandChainScheduleForResourceChange");
         loweringSource.ShouldContain("private void InvalidateCommandChainScheduleForResourceChange(string reason)");
-        loweringSource.ShouldContain("Array.Clear(_commandChainScheduleFastSignatures)");
-        loweringSource.ShouldContain("Array.Clear(_commandChainScheduleCache)");
+        // The command runtime owns the one schedule cache. A resource change
+        // clears it so that no primary reuses a stale schedule.
+        loweringSource.ShouldContain("_commandRuntime.InvalidateScheduleCache();");
+        commandRuntime.ShouldContain(
+            "public void InvalidateScheduleCache()\n    {\n        if (_scheduleCache is not null)\n            Array.Clear(_scheduleCache);\n    }");
     }
 
     [Test]
@@ -201,14 +216,29 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
             + ReadRepoFile("XREngine.Runtime.Rendering/Rendering/Lights3DCollection.ForwardDirectionalLightGpu.cs")
             .Replace("\r\n", "\n");
 
-        lightStructs.ShouldContain("mat4 RenderedCascadeMatrices[XRENGINE_MAX_CASCADES];");
-        lightStructs.ShouldContain("float RenderedCascadeStaleAge[XRENGINE_MAX_CASCADES];");
+        string shadowRecord = ReadRepoFile("XREngine.Runtime.Rendering/Rendering/DirectionalShadowGpuRecord.cs")
+            .Replace("\r\n", "\n");
+        string cascadeShadows = ReadRepoFile("XREngine.Runtime.Rendering/Scene/Components/Lights/Types/DirectionalLightComponent.CascadeShadows.cs")
+            .Replace("\r\n", "\n");
+        const string renderedMatrixSelection =
+            "mat4 lightMatrix = atlasSampleAllowed ? record.RenderedWorldToLight : record.CurrentWorldToLight;";
+
+        // Each cascade publishes one record that holds the current and the
+        // rendered matrices. The stale age is in ReceiverOffsetsAge.z.
+        lightStructs.ShouldContain("struct DirectionalShadowGpuRecord");
+        lightStructs.ShouldContain("mat4 RenderedWorldToLight;");
+        lightStructs.ShouldContain("vec4 ReceiverOffsetsAge;");
+        shadowRecord.ShouldContain("[FieldOffset(64)] public Matrix4x4 RenderedWorldToLight;");
+        shadowRecord.ShouldContain("[FieldOffset(160)] public Vector4 ReceiverOffsetsAge;");
+        cascadeShadows.ShouldContain("RenderedWorldToLight = renderedMatrix,");
+        cascadeShadows.ShouldContain("ReceiverOffsetsAge = new(currentReceiverOffset, renderedReceiverOffset, staleAge, 0.0f),");
         forwardShader.ShouldContain("uniform float DirectionalShadowAtlasMaxStaleFrames");
         forwardShader.ShouldContain("const int XRENGINE_SHADOW_FALLBACK_STALE_TILE = 3;");
         forwardShader.ShouldContain("bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;");
         forwardShader.ShouldContain("(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames)");
         forwardShader.ShouldContain("fallbackMode > 0 && fallbackMode != XRENGINE_SHADOW_FALLBACK_LEGACY");
-        forwardShader.ShouldContain("light.RenderedCascadeMatrices[cascadeIndex]");
+        forwardShader.ShouldContain("float renderedAge = record.ReceiverOffsetsAge.z;");
+        forwardShader.ShouldContain(renderedMatrixSelection);
         forwardShader.ShouldContain("XRENGINE_ApplyDirectionalStaleAtlasEdgeFade");
 
         deferredShader.ShouldContain("uniform float DirectionalShadowAtlasMaxStaleFrames");
@@ -216,7 +246,8 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         deferredShader.ShouldContain("bool staleTileFallback = atlasState.z == XRENGINE_SHADOW_FALLBACK_STALE_TILE;");
         deferredShader.ShouldContain("(!staleTileFallback || renderedAge <= DirectionalShadowAtlasMaxStaleFrames)");
         deferredShader.ShouldContain("fallbackMode > 0 && fallbackMode != XRENGINE_SHADOW_FALLBACK_LEGACY");
-        deferredShader.ShouldContain("LightData.RenderedCascadeMatrices[cascadeIndex]");
+        deferredShader.ShouldContain("float renderedAge = DirectionalShadowRecords[cascadeIndex].ReceiverOffsetsAge.z;");
+        deferredShader.ShouldContain(renderedMatrixSelection);
         deferredShader.ShouldContain("ApplyDirectionalStaleAtlasEdgeFade");
         deferredShader.ShouldContain("DeferredDebugMode == 17");
         deferredShader.ShouldContain("DeferredDebugMode == 18");
@@ -224,9 +255,10 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         pipelineSource.ShouldContain("DirectionalShadowStaleAge = 17");
         pipelineSource.ShouldContain("DirectionalShadowStaleUvValidity = 18");
 
-        lightComponent.ShouldContain("CopyPublishedRenderedCascadeUniformData");
+        cascadeShadows.ShouldContain("internal void CopyPublishedDirectionalShadowRecords(");
         lightComponent.ShouldContain("program.Uniform(\"DirectionalShadowAtlasMaxStaleFrames\"");
-        forwardGpu.ShouldContain("fixed float RenderedCascadeMatrices[ForwardMaxCascades * 16];");
+        forwardGpu.ShouldContain("private readonly DirectionalShadowGpuRecord[] _forwardDirectionalShadowRecords");
+        forwardGpu.ShouldContain("directionalLights[i].CopyPublishedDirectionalShadowRecords(");
         forwardGpu.ShouldContain("program.Uniform(\"DirectionalShadowAtlasMaxStaleFrames\"");
     }
 
@@ -300,8 +332,16 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         lightsSource.ShouldContain("AddQuantizedMatrix(ref hash, viewProjection, quantum);");
         lightsSource.ShouldContain("clipTexel / 4096.0f");
 
-        atlasManager.ShouldContain("PrepareDirectionalCascadeGroupSequentialCommands(light);");
-        atlasManager.ShouldContain("collectVisibleNow: false");
+        string sequential = ExtractRegion(
+            atlasManager,
+            "private bool TryRenderDirectionalCascadeGroupSequentially(",
+            "private void EnqueuePlanMemberCompletions(");
+        // Prepared sequential commands already hold the visible set, so the
+        // tiles do not collect it again.
+        sequential.ShouldContain("if (!light.PrepareSequentialCascadeShadowAtlasCommands(");
+        sequential.ShouldContain("collectVisibleNow = false;");
+        sequential.IndexOf("if (!light.PrepareSequentialCascadeShadowAtlasCommands(", StringComparison.Ordinal)
+            .ShouldBeLessThan(sequential.IndexOf("collectVisibleNow = false;", StringComparison.Ordinal));
         atlasManager.ShouldContain("LogDirectionalCascadeGroupBudgetDeferral(");
         atlasManager.ShouldContain("keeping the previous coherent atlas generation");
         atlasManager.ShouldContain("ResolveTilesScheduledMetric()");
@@ -318,14 +358,19 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         directionalLight.ShouldContain("GetDirectionalCascadeStableRequestFrameCount");
         directionalLight.ShouldContain("StableAtlasRequestFrameCounts");
         lightsSource.ShouldContain("ShouldSkipDirectionalCascadeRefreshByCadence");
-        lightsSource.ShouldContain("IsLargeDirectionalCascadeMatrixJump(requestSample, renderedSample, desiredResolution)");
+        // The cadence holds the last coherent atlas generation while the source
+        // camera moves. It refreshes after a pose-stability debounce. The dirty
+        // stale-age limit forces a fresh render and never holds the stale tile.
+        directionalLight.ShouldContain("internal int GetDirectionalCascadeSourceCameraStableFrameCount(");
         lightsSource.ShouldContain("ResolveDirectionalCascadeSettledRefreshStableFrames");
-        lightsSource.ShouldContain("private static int ResolveDirectionalCascadeSettledRefreshStableFrames(int activeCascadeCount)\n            => 1;");
-        lightsSource.ShouldContain("ResolveDirectionalCascadeRefreshInterval");
-        lightsSource.ShouldContain("stableRequestFrames >= ResolveDirectionalCascadeSettledRefreshStableFrames(activeCascadeCount)");
-        lightsSource.ShouldContain("if (staleAge >= (ulong)maxStaleFrames)");
+        lightsSource.ShouldContain("private static int ResolveDirectionalCascadeSettledRefreshStableFrames(int activeCascadeCount)\n            => Math.Clamp(activeCascadeCount, 2, 8);");
+        lightsSource.ShouldContain("int stableSourceCameraFrames =\n                light.GetDirectionalCascadeSourceCameraStableFrameCount(source);");
+        lightsSource.ShouldContain("if (stableSourceCameraFrames < ResolveDirectionalCascadeSettledRefreshStableFrames(activeCascadeCount))\n                return true;");
+        lightsSource.ShouldContain("if (HasExceededDirtyShadowStaleAge(projectionType, hasPrevious, previous, contentHash))\n                dirtyReason |= ShadowDirtyReason.StaleContentAgeLimitReached;");
+        lightsSource.ShouldContain("ulong maximumDeferredDirtyFrames = ResolveMaximumDeferredDirtyShadowFrames(projectionType);");
+        lightsSource.ShouldContain("return (ulong)Math.Max(0, RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);");
+        lightsSource.ShouldContain("if ((dirtyReason & ShadowDirtyReason.StaleContentAgeLimitReached) != 0)\n            {\n                forcedFresh = true;\n                return false;\n            }");
         lightsSource.ShouldContain("forcedFresh = true;\n                return false;");
-        lightsSource.ShouldNotContain("if (staleAge >= (ulong)maxStaleFrames)\n                return true;");
         atlasManager.ShouldContain("bool keepDirectionalStaleTileUntilRefresh =\n            fallbackCanUseStaleTile &&\n            IsDirectionalRequest(request) &&\n            !shouldRefreshBeforeStale;");
         atlasManager.ShouldNotContain("bool keepDirectionalStaleTileUntilRefresh = fallbackCanUseStaleTile && IsDirectionalRequest(request);");
         lightsSource.ShouldContain("SkipReason.StaleTileReused");

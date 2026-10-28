@@ -7,7 +7,6 @@ This document describes CPU-side ownership for renderer memory that can dominate
 - [Mesh Submission Strategies](mesh-submission-strategies.md)
 - [Texture Streaming](texture-streaming.md)
 - [Vulkan Memory Allocation](vulkan-memory-allocation.md)
-- [Runtime And AOT Validation](../../work/testing/runtime/runtime-and-aot-validation.md)
 
 ## Ownership Rules
 
@@ -99,7 +98,3 @@ Use these budget lines in memory reports:
   while increments occur after a successful buffer swap. This existing counter
   limit is unchanged by the host-storage extraction. It must be resolved before
   using that counter as proof of a memory reduction.
-
-## Validation
-
-Manual and runtime checks live in [Runtime And AOT Validation](../../work/testing/runtime/runtime-and-aot-validation.md). Use that doc for profiler captures, screenshots, hardware rows, and editor runs.

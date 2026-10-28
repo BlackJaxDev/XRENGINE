@@ -405,6 +405,7 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
             resources.FontDescriptorSet,
             usesUpdateAfterBind: false,
             owner: "ImGui.FontAtlas.DescriptorSet");
+        _resourceRuntime.DescriptorLifetime.SetDebugName(resources.FontDescriptorSet, "ImGui.Font.DescriptorSet");
 
         DescriptorImageInfo imageInfo = new()
         {

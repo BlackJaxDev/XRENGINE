@@ -124,7 +124,9 @@ namespace XREngine.Data.Trees
         // for 100+ ms. Remaining buffered commands are re-enqueued and picked up on the
         // next Swap(); correctness is preserved because command combining is idempotent
         // across calls (the same (item, ETreeCommand) dedup keys survive re-enqueue).
-        private const long MaxSwapExecuteTicksPerFrame = 4 * TimeSpan.TicksPerMillisecond; // 4ms
+        // Stopwatch timestamps use Stopwatch.Frequency, not TimeSpan ticks. On hosts with a
+        // nanosecond timer, a TimeSpan-tick budget would allow only 40 microseconds.
+        private static readonly long MaxSwapExecuteTicksPerFrame = Stopwatch.Frequency * 4L / 1000L; // 4ms
 
         private void ConsumeRaycastCommandsInternal()
         {

@@ -4,7 +4,7 @@ param(
     [string]$Root = (Resolve-Path ".").Path,
 
     [Parameter(Mandatory = $false)]
-    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "docs\work\audit\thread-task-runs.md")
+    [string]$OutFile = (Join-Path (Resolve-Path ".").Path "Build\Reports\thread-task-runs.md")
 )
 
 $ErrorActionPreference = "Stop"

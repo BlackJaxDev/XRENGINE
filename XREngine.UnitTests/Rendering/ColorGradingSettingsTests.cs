@@ -85,7 +85,12 @@ public class ColorGradingSettingsTests
         source.ShouldNotContain("camera requested exposure stability");
 
         int suppressionIndex = source.IndexOf(suppressionGuard, StringComparison.Ordinal);
-        int resetIndex = source.IndexOf("grading.MarkGpuAutoExposureReady(false);", StringComparison.Ordinal);
+        // A camera without auto exposure clears readiness at once. The GPU
+        // update path clears readiness only after the suppression guards.
+        source.ShouldContain("if (!grading.RequiresAutoExposure)\n            {\n                grading.MarkGpuAutoExposureReady(false);\n                return;\n            }");
+        int resetIndex = source.IndexOf(
+            "grading.MarkGpuAutoExposureReady(false);\n\n            if (IsAutoExposureRestrictedPass())",
+            StringComparison.Ordinal);
         suppressionIndex.ShouldBeGreaterThanOrEqualTo(0);
         resetIndex.ShouldBeGreaterThanOrEqualTo(0);
         suppressionIndex.ShouldBeLessThan(resetIndex);

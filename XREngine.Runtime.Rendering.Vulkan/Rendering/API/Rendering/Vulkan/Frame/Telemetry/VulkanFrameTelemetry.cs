@@ -440,6 +440,50 @@ internal sealed class VulkanFrameTelemetry
         }
     }
 
+    /// <summary>
+    /// Writes the most recent successful submission breadcrumbs, oldest first.
+    /// Use this only on the cold device-loss path. It returns an empty string
+    /// when no submission was recorded.
+    /// </summary>
+    internal string DescribeVulkanCrashBreadcrumbTail(int maxEntries)
+    {
+        lock (_vulkanSubmissionDiagnosticsLock)
+        {
+            ulong lastSerial = unchecked((ulong)Math.Max(
+                0L,
+                Volatile.Read(ref _vulkanCrashBreadcrumbSerial)));
+            if (lastSerial == 0 || maxEntries <= 0)
+                return string.Empty;
+
+            ulong count = Math.Min(
+                lastSerial,
+                (ulong)Math.Min(maxEntries, _vulkanCrashBreadcrumbs.Length));
+            System.Text.StringBuilder builder = new();
+            builder.Append("Breadcrumbs count=").Append(count);
+            for (ulong serial = lastSerial - count + 1UL; serial <= lastSerial; serial++)
+            {
+                int slot = (int)((serial - 1UL) % (ulong)_vulkanCrashBreadcrumbs.Length);
+                VulkanCrashBreadcrumb breadcrumb = _vulkanCrashBreadcrumbs[slot];
+                if (breadcrumb.Serial != serial)
+                    continue;
+
+                builder.Append(" [serial=").Append(breadcrumb.Serial)
+                    .Append(" kind=").Append(breadcrumb.SubmissionKind ?? "<unknown>")
+                    .Append(" op=").Append(breadcrumb.FrameOpKind ?? "<none>")
+                    .Append(" frame=").Append(breadcrumb.FrameId)
+                    .Append(" queue=").Append(breadcrumb.QueueKind ?? "<unknown>")
+                    .Append(" caller=").Append(breadcrumb.Caller ?? "<unknown>")
+                    .Append(" marker=").Append(breadcrumb.LastCommandMarkerSerial)
+                    .Append(" layoutTransition=").Append(breadcrumb.ImageLayoutTransitionSerial)
+                    .Append(" descriptorTable=").Append(breadcrumb.DescriptorTableGeneration)
+                    .Append(" firstFailingApi=").Append(breadcrumb.FirstFailingApi ?? "<none>")
+                    .Append(']');
+            }
+
+            return builder.ToString();
+        }
+    }
+
     public VulkanFrameTrace BeginFrame(in DesktopFrameIdentity identity)
     {
         VulkanFrameWaitInstrumentation.BeginFrame(this, in identity);

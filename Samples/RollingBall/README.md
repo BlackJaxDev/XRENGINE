@@ -87,8 +87,9 @@ pwsh Tools/Cook-RollingBallBrowserShaders.ps1
 ```
 
 From a Windows source checkout with .NET 10.0.401, `wasm-tools`, and the
-reviewed browser Jolt managed/native source prepared as described in
-`docs/work/progress/rendering/browser-project-publishing.md`, use the production
+reviewed browser Jolt managed/native source prepared with
+`Tools/Dependencies/Prepare-JoltBrowserManaged.ps1` and
+`Tools/Dependencies/Build-JoltBrowser.ps1`, use the production
 Editor Build Project command:
 
 ```powershell
@@ -149,7 +150,5 @@ this path and upload `rolling-ball-win-x64.zip`.
 ## Hardware Sign-Off
 
 Automated smoke validation does not prove headset presentation, controller
-poses, comfort, or frame pacing. Before calling a package release-ready, run
-the matrix in
-`docs/work/testing/xr/rolling-ball-release-matrix.md` on physical target
-hardware.
+poses, comfort, or frame pacing. Before calling a package release-ready,
+validate it on physical target hardware.

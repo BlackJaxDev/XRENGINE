@@ -47,18 +47,24 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
             },
             new GPUMaterialTextureHandles(0x0000000200000001ul, 0ul, 0ul));
 
+        // std430 row: Albedo, Normal, RM, and Emissive handle indices, then
+        // Flags, then the vec4 constants aligned to a four-word boundary.
         ReadUInt(table.Buffer, 2u, 0u).ShouldBe(1u);
         ReadUInt(table.Buffer, 2u, 1u).ShouldBe(0u);
         ReadUInt(table.Buffer, 2u, 2u).ShouldBe(0u);
-        ReadUInt(table.Buffer, 2u, 3u).ShouldBe(0x80000001u);
-        ReadFloat(table.Buffer, 2u, 4u).ShouldBe(0.25f, 0.000001f);
-        ReadFloat(table.Buffer, 2u, 5u).ShouldBe(0.5f, 0.000001f);
-        ReadFloat(table.Buffer, 2u, 6u).ShouldBe(0.75f, 0.000001f);
-        ReadFloat(table.Buffer, 2u, 7u).ShouldBe(0.9f, 0.000001f);
-        ReadFloat(table.Buffer, 2u, 8u).ShouldBe(0.1f, 0.000001f);
-        ReadFloat(table.Buffer, 2u, 9u).ShouldBe(0.2f, 0.000001f);
-        ReadFloat(table.Buffer, 2u, 10u).ShouldBe(0.3f, 0.000001f);
-        ReadFloat(table.Buffer, 2u, 11u).ShouldBe(0.4f, 0.000001f);
+        ReadUInt(table.Buffer, 2u, 3u).ShouldBe(0u);
+        ReadUInt(table.Buffer, 2u, 4u).ShouldBe(0x80000001u);
+        ReadUInt(table.Buffer, 2u, 5u).ShouldBe(0u);
+        ReadUInt(table.Buffer, 2u, 6u).ShouldBe(0u);
+        ReadUInt(table.Buffer, 2u, 7u).ShouldBe(0u);
+        ReadFloat(table.Buffer, 2u, 8u).ShouldBe(0.25f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 9u).ShouldBe(0.5f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 10u).ShouldBe(0.75f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 11u).ShouldBe(0.9f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 12u).ShouldBe(0.1f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 13u).ShouldBe(0.2f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 14u).ShouldBe(0.3f, 0.000001f);
+        ReadFloat(table.Buffer, 2u, 15u).ShouldBe(0.4f, 0.000001f);
 
         ReadUInt(table.TextureHandleBuffer, 1u, 0u).ShouldBe(1u);
         ReadUInt(table.TextureHandleBuffer, 1u, 1u).ShouldBe(2u);
@@ -118,8 +124,11 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         materialEntrySource.ShouldContain("RMSE");
         passSource.ShouldContain("materialCapability?.ResolveMaterialTextureReference(texture, semantic)");
         passSource.ShouldContain("TextureArrayPolicy");
-        passSource.ShouldContain("ResolveMaterialBaseColorOpacity");
-        passSource.ShouldContain("ResolveMaterialRmse");
+        // Material constants are encoded by the shared material binding source encoder.
+        passSource.ShouldContain("MaterialBindingSourceSnapshot source = MaterialBindingSourceEncoder.Encode(material);");
+        string materialSourceEncoderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Materials/MaterialBindingSourceEncoder.cs");
+        materialSourceEncoderSource.ShouldContain("BaseColorOpacity = ResolveBaseColorOpacity(material),");
+        materialSourceEncoderSource.ShouldContain("RMSE = ResolveRmse(material),");
         passSource.ShouldContain("IReadOnlyDictionary<uint, XRMaterial> materialMap = scene.MaterialMap;");
         hybridSource.ShouldContain("MaterialTextureHandleTableSsboBinding");
         hybridSource.ShouldContain("SampleBindlessTexture");
@@ -135,7 +144,9 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         vulkanBindlessSource.ShouldContain("MaxTextureDescriptorCount");
         vulkanBindlessSource.ShouldContain("TextureArrayBindingName");
         vkBufferSource.ShouldContain("DeviceAddress");
-        vkBufferSource.ShouldContain("ShouldEnableDeviceAddressForSceneDatabaseBuffer");
+        // The buffer resource service owns scene-database device-address eligibility.
+        vkBufferSource.ShouldContain("BackendContext.Resources.Buffers.ShouldEnableDeviceAddress(BackendContext, Data)");
+        vkAddressSource.ShouldContain("(IsSceneDatabaseDeviceAddressCandidate(buffer) ||");
         vkAddressSource.ShouldContain("MaterialStateBuffer");
 
         renderParametersSource.ShouldContain("EMaterialTextureArrayPolicy");
@@ -180,8 +191,8 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
         // Invariant 2: material-table program cache key does not depend on material identity.
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
         hybridSource.ShouldContain(
-            "(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass) cacheKey =",
-            customMessage: "EnsureMaterialTableDrawProgram cache key changed shape. Phase D acceptance requires the material-table draw program to be keyed on texture-reference mode, renderer identity, and layout only - never on material identity. (The separate EnsureCombinedProgram per-material cache is unrelated.)");
+            "(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool forwardColorPass, bool stereoMultiview) cacheKey =",
+            customMessage: "EnsureMaterialTableDrawProgram cache key changed shape. Phase D acceptance requires the material-table draw program to be keyed on texture-reference mode, renderer identity, layout, and pass variant flags only - never on material identity. (The separate EnsureCombinedProgram per-material cache is unrelated.)");
 
         // Sanity: the shadow short-circuit that routes every shadow-pass draw to the Shadow family
         // is what keeps shadow PSO count constant across diverse material inputs.

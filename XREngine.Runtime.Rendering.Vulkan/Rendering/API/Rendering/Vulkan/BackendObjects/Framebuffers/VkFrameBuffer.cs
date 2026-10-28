@@ -1069,6 +1069,11 @@ internal unsafe class VkFrameBuffer(
             frameBuffer,
             views,
             $"Framebuffer.{Data?.Name ?? "<unnamed>"}");
+        // Name the native framebuffer so that validation messages identify it.
+        BackendContext.DeviceContext.SetDebugObjectName(
+            ObjectType.Framebuffer,
+            frameBuffer.Handle,
+            $"FBO.{Data?.Name ?? "<unnamed>"}");
 
         return new CachedFrameBufferState(
             frameBuffer,

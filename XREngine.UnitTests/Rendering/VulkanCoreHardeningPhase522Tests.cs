@@ -15,8 +15,9 @@ public sealed class VulkanCoreHardeningPhase522Tests
         string state = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
         state.ShouldContain("RuntimeRenderingHostServices.Settings.EnableVulkanPrimaryCommandBufferReuse");
-        state.ShouldContain("ReadOptionalBooleanEnvironmentOverride");
+        state.ShouldContain("XREnvironment.GetBooleanOverride(");
         state.ShouldContain("XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse");
+        state.ShouldContain("(VulkanPrimaryCommandBufferReuseOverride ??\n             RuntimeRenderingHostServices.Settings.EnableVulkanPrimaryCommandBufferReuse)");
         state.ShouldNotContain("private static readonly bool VulkanPrimaryCommandBufferReuseEnabled");
     }
 
@@ -57,13 +58,16 @@ public sealed class VulkanCoreHardeningPhase522Tests
         string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
             "ComputeFrameOpFrameDataSignature",
             "FrameDataSignature");
-        string plannerState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string frameOpContext = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/FrameOpContext.cs");
+        string primaryRecording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
         recording.ShouldContain("TryRefreshReusableCommandBufferFrameData");
         recording.ShouldContain("ComputeFrameOpFrameDataSignature");
-        recording.ShouldContain("variant.RecordedGenerations = currentGenerations");
-        plannerState.ShouldContain("ulong RecordingFingerprint");
+        primaryRecording.ShouldContain("CommandBufferGenerationDomains generations = CaptureCommandBufferGenerationDomains(");
+        primaryRecording.ShouldContain("owner.RecordedGenerations = generations;");
+        frameOpContext.ShouldContain("ulong RecordingFingerprint");
         lowering.ShouldContain("ComputeFrameOpFrameDataSignature");
         lowering.ShouldContain("FrameDataSignature");
     }
@@ -73,10 +77,20 @@ public sealed class VulkanCoreHardeningPhase522Tests
     {
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string primaryRecording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
-        recording.ShouldContain("!usingCommandChains &&");
-        recording.ShouldContain("variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose");
-        recording.ShouldContain("inline primary camera pose changed");
+        // Only a command-chain primary is a reuse candidate. An inline primary records
+        // again, so a camera pose change can never replay stale inline frame data.
+        int chainsEnabled = primaryRecording.IndexOf("CommandChainsEnabledForCurrentRecording &&", StringComparison.Ordinal);
+        chainsEnabled.ShouldBeGreaterThanOrEqualTo(0);
+        int schedule = primaryRecording.IndexOf("input.CommandChainSchedule is not null &&", chainsEnabled, StringComparison.Ordinal);
+        schedule.ShouldBeGreaterThan(chainsEnabled);
+        primaryRecording.IndexOf("if (TryReuseCleanCommandChainPrimaryVariant(", schedule, StringComparison.Ordinal)
+            .ShouldBeGreaterThan(schedule);
+        primaryRecording.ShouldContain("!input.CommandChainSchedule.RequiresFreshPrimary &&");
+
+        recording.ShouldContain("CameraPose: ResolveCameraPoseReplayGeneration(");
         recording.ShouldContain("ComputeCameraPoseGeneration");
         recording.ShouldContain("ResolveCameraPoseReplayGeneration");
         recording.ShouldContain("state.SettleInvalidationPending");
@@ -106,15 +120,21 @@ public sealed class VulkanCoreHardeningPhase522Tests
     {
         string allocation = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
-        string state = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+        string outputArtifacts = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.DesktopOutputArtifacts.cs");
+        string frameData = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferReuse.FrameData.cs");
+        string primaryRecording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
-        state.ShouldContain("PrimaryCommandBufferVariantCapacity = 64");
-        allocation.ShouldContain("variants.Count < PrimaryCommandBufferVariantCapacity");
-        allocation.ShouldContain("variant.FrameOpsSignature == frameOpsSignature");
+        // Each swapchain target slot owns exactly one primary command artifact.
+        outputArtifacts.ShouldContain("CommandBuffers.PrimaryOwners = new PrimaryCommandArtifactOwner[imageCount];");
+        outputArtifacts.ShouldContain("CommandBuffers.PrimaryOwners[index] = new PrimaryCommandArtifactOwner(");
+        frameData.ShouldContain("if (variant.FrameOpsSignature != frameOpsSignature ||");
         allocation.ShouldNotContain("reusableCommandChainPrimary");
-        allocation.ShouldContain("LastUsedFrameId");
-        allocation.ShouldContain("RecordedGenerations = default");
+        frameData.ShouldContain("variant.LastUsedFrameId = VulkanFrameCounter;");
+        primaryRecording.ShouldContain("owner.LastUsedFrameId = input.FramePlan.RenderFrameId;");
+        primaryRecording.ShouldContain("owner.RecordedGenerations = generations;");
     }
 
     [Test]
@@ -126,7 +146,7 @@ public sealed class VulkanCoreHardeningPhase522Tests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Queries/VkRenderQuery.cs");
 
         recording.ShouldContain("PrepareQueryFrameOpsForCommandBufferReuse");
-        recording.ShouldContain("queryOp.Query.PrepareForCommandBufferReuse(commandBuffer)");
+        recording.ShouldContain("ops.Stream.GetQuery(index).Query.PrepareForCommandBufferReuse(commandBuffer)");
         recording.ShouldNotContain("!VulkanPrimaryCommandBufferReuseEnabled || hasQueryFrameOps");
         recording.ShouldNotContain("primaryFrameStateDirtyReason = hasQueryFrameOps");
         query.ShouldContain("PrepareForCommandBufferReuse(CommandBuffer commandBuffer)");

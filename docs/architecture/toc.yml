@@ -21,8 +21,6 @@
   items:
     - name: Baked Value Compression
       href: animation/baked-value-compression.md
-    - name: VMD Animation Import Design
-      href: animation/vmd-animation-import.md
 
 - name: Editor
   items:
