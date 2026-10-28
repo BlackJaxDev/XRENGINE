@@ -259,10 +259,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Set up .NET 10
-        uses: actions/setup-dotnet@v6
+      # global.json pins a workload version, so every build needs the installed workload set.
+      - name: Prepare the Windows Editor CLI toolchain
+        uses: ./.github/actions/prepare-windows-editor
         with:
-          global-json-file: global.json
+          browser-physics: 'false'
+          build-editor: 'false'
 
       - name: Cook the shared browser shader catalog
         shell: pwsh
