@@ -90,15 +90,19 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             else
             {
                 ShaderProgramArtifact rasterArtifact = artifact ?? throw new InvalidOperationException("EngineMeshDiagnostic.ArtifactRequired.");
+                string vertexEntryPoint = rasterArtifact.VertexEntryPoint
+                    ?? throw new InvalidOperationException("EngineMeshDiagnostic.VertexEntryPointRequired.");
+                string fragmentEntryPoint = rasterArtifact.FragmentEntryPoint
+                    ?? throw new InvalidOperationException("EngineMeshDiagnostic.FragmentEntryPointRequired.");
                 _vertex = new XRShader(EShaderType.Vertex)
                 {
                     Name = rasterArtifact.Name + " vertex", SourceLanguage = ShaderSourceLanguage.Slang,
-                    EntryPoint = rasterArtifact.VertexEntryPoint, CookedArtifact = rasterArtifact,
+                    EntryPoint = vertexEntryPoint, CookedArtifact = rasterArtifact,
                 };
                 _fragment = new XRShader(EShaderType.Fragment)
                 {
                     Name = rasterArtifact.Name + " fragment", SourceLanguage = ShaderSourceLanguage.Slang,
-                    EntryPoint = rasterArtifact.FragmentEntryPoint, CookedArtifact = rasterArtifact,
+                    EntryPoint = fragmentEntryPoint, CookedArtifact = rasterArtifact,
                 };
                 _material = new XRMaterial(_vertex, _fragment)
                 {
