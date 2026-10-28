@@ -7,7 +7,7 @@ Architecture: [Retained execution](../../../architecture/ui/05-Retained-Executio
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
 Latest code reconciliation: **57 of 60 implementation items are complete**.
-The active TODO has nine code items and four owner decisions. Later sections
+The active TODO has three code items: world clipping, panel parity, and the default switch. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
