@@ -2498,7 +2498,8 @@ bound list for each height. A dictionary row uses the larger of the measured
 height and the line height of its label. Each list refresh increases the extent
 revision, so the list reads every height again. A custom editor is not rebindable,
 so a recycled row builds a new editor. A custom editor type without the interface
-keeps its non-virtual fallback.
+keeps its non-virtual fallback. Nested list details also accept measured custom
+editors.
 
 `RenderVirtualDictionary` uses the primary captured snapshot for row keys and
 count. Binding creation resolves each owner's actual key object from that
@@ -2813,7 +2814,9 @@ Partial conflicts keep guarded history instead of overwriting callback edits.
 A direct list, linked-list, or dictionary row can open a separate retained detail
 for one inner built-in list or array. The inner values must use a fixed-height
 Boolean, numeric, nonflags enum, single-line string, `Vector2`, `Vector3`, `Vector4`, or
-`Quaternion` editor, or be a built-in list of such values. A list value gives the nested
+`Quaternion` editor, a custom editor that implements `IEditorMeasuredRowEditor`, or
+be a built-in list of such values. A custom nested editor uses its measured row height
+and is rebuilt on each bind; its writes use the same nested mutation route. A list value gives the nested
 row its own detail button, so a detail can open a deeper detail, up to eight list
 levels below the row. The deeper source path holds the path of its parent detail,
 and each currency check walks the whole path to the owner. A list that contains

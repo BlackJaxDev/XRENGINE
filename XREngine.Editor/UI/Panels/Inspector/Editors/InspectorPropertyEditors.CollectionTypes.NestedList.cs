@@ -83,12 +83,14 @@ public static partial class InspectorPropertyEditors
             private const int MaxNestedListDepth = 8;
 
             /// <summary>
-            /// Checks that a nested row can show a value of this type with a fixed-height editor.
-            /// A list value is accepted when its own elements are accepted, so a nested row can
-            /// open a deeper nested detail.
+            /// Checks that a nested row can show a value of this type with a fixed-height editor or a
+            /// custom editor that measures its own rows. A list value is accepted when its own
+            /// elements are accepted, so a nested row can open a deeper nested detail.
             /// </summary>
             private static bool IsNestedRowValueType(Type type, int depth)
             {
+                if (MeasuredRowEditorFor(type) is not null)
+                    return true;
                 if (type.IsEnum)
                     return !type.IsDefined(typeof(FlagsAttribute), inherit: false);
                 if (type == typeof(string) || IsNestedVectorType(type))
@@ -610,6 +612,10 @@ public static partial class InspectorPropertyEditors
                     new UIVirtualTableColumn<int>("value", "Element", 300,
                         CreateVirtualListCell, BindVirtualListCell, UnbindVirtualListCell,
                         BindVirtualListCell));
+                if (_listElementType is { } elementType)
+                    provider.ItemExtent = CreateMeasuredRowExtent(elementType, index =>
+                        _boundList is { } bound && index < bound.Count ? bound[index] : null);
+                if (!ListCurrent()) return null;
                 _virtualList = list;
                 bool NestedListCurrent() => ListCurrent() && ReferenceEquals(list.VirtualProvider, provider);
                 _nestedListCurrent = NestedListCurrent;
@@ -756,6 +762,13 @@ public static partial class InspectorPropertyEditors
                 Action<RuntimeComponentCreationReceipt> retainFailedReceipt)
             {
                 if (!isCurrent()) return false;
+                // A custom editor builds its own controls. The row rebuilds it on each bind.
+                if (valueType.GetCustomAttribute<EditorComponentAttribute>() is
+                    IEditorMeasuredRowEditor and EditorComponentAttribute custom)
+                {
+                    custom.CreateEditor(editor, bindingProperty, targets.Cast<object?>().ToArray());
+                    return isCurrent();
+                }
                 if (valueType.IsEnum && !valueType.IsDefined(typeof(FlagsAttribute), inherit: false))
                     return BuildNestedEnumEditor(editor, bindingProperty, targets, isCurrent);
                 if (valueType.IsEnum) return false;

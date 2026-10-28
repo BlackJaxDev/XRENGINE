@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Reflection;
 using NUnit.Framework;
 using XREngine.Editor;
@@ -106,6 +107,55 @@ public sealed class EditorMeasuredRowEditorTests
         finally { detail.Destroy(true); }
     }
 
+    [Test]
+    public void MeasuredCustomNestedRowsUseTheEditorHeightsAndEditWithOneUndoStep()
+    {
+        using UITestShaderScope shaders = new();
+        MeasuredValue first = new(50);
+        MeasuredValue second = new(80);
+        MeasuredNestedListTarget target = new() { Values = [[first, second]] };
+        MeasuredEditorAttribute.Created.Clear();
+        SceneNode detail = Create(target, nameof(MeasuredNestedListTarget.Values));
+        try
+        {
+            UIListTransform outer = VirtualList(detail);
+            outer.SynchronizeVirtualRows(400);
+            object context = detail.GetComponent<InspectorListDetailRefreshComponent>()!.Release!.Target!;
+            IDictionary cells = (IDictionary)context.GetType().GetField("_listCells",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(context)!;
+            object state = cells.Values.Cast<object>().Single();
+            Action<UIInteractableComponent> open = (Action<UIInteractableComponent>)
+                state.GetType().GetProperty("NestedAction")!.GetValue(state)!;
+            open((UIButtonComponent)state.GetType().GetProperty("NestedButton")!.GetValue(state)!);
+            SceneNode nestedRoot = Nodes(detail).Single(node => node.Name == "NestedListDetail");
+            UIListTransform inner = VirtualList(nestedRoot);
+            inner.SynchronizeVirtualRows(400);
+            IVirtualListItemExtents extents = (IVirtualListItemExtents)inner.VirtualProvider!;
+            Assert.Multiple(() =>
+            {
+                Assert.That(extents.GetItemExtent(0), Is.EqualTo(50));
+                Assert.That(extents.GetItemExtent(1), Is.EqualTo(80));
+                Assert.That(Nodes(nestedRoot).Count(node => node.Name == MeasuredEditorAttribute.EditorName),
+                    Is.EqualTo(2));
+            });
+
+            (PropertyInfo property, object?[] targets) = MeasuredEditorAttribute.Created
+                .Single(created => created.Targets[0] is IEditorNestedListElementBinding { Index: 1 });
+            MeasuredValue replacement = new(70);
+            new EditorPropertyAccess(property, targets).SetValue(replacement);
+
+            Assert.That(target.Values[0][1], Is.SameAs(replacement));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(target.Values[0][1], Is.SameAs(second));
+            Assert.That(target.Values[0][0], Is.SameAs(first));
+        }
+        finally
+        {
+            detail.Destroy(true);
+            MeasuredEditorAttribute.Created.Clear();
+        }
+    }
+
     private static SceneNode Create(object target, string propertyName)
     {
         SceneNode detail = new("Measured row detail");
@@ -136,8 +186,14 @@ public sealed class EditorMeasuredRowEditorTests
     {
         public const string EditorName = "Measured test editor";
 
+        /// <summary>The bindings of each editor that this attribute built.</summary>
+        public static readonly List<(PropertyInfo Property, object?[] Targets)> Created = [];
+
         public override void CreateEditor(SceneNode node, PropertyInfo prop, object?[]? objects)
-            => node.NewChild().Name = EditorName;
+        {
+            node.NewChild().Name = EditorName;
+            Created.Add((prop, objects ?? []));
+        }
 
         public float MeasureRowHeight(object? value)
             => value is MeasuredValue measured ? measured.Height : 0;
@@ -164,6 +220,11 @@ public sealed class EditorMeasuredRowEditorTests
     private sealed class MeasuredListTarget
     {
         public List<MeasuredValue> Values { get; set; } = [];
+    }
+
+    private sealed class MeasuredNestedListTarget
+    {
+        public List<List<MeasuredValue>> Values { get; set; } = [];
     }
 
     private sealed class MeasuredDictionaryTarget
