@@ -45,7 +45,7 @@ public readonly struct GridQuantizer
     /// <summary>The size of one grid cell on each axis. An axis with zero extent has a cell size of 0.</summary>
     public Vector3 CellSize => _step;
 
-    /// <summary>Rounds a point to the nearest grid cell. Points outside the box clamp to the border.</summary>
+    /// <summary>Rounds a point to the nearest grid node. Points outside the box clamp to the border.</summary>
     public void Quantize(Vector3 p, out ushort x, out ushort y, out ushort z)
     {
         x = QuantizeAxis(p.X - _min.X, _inverseStep.X);
@@ -53,7 +53,11 @@ public readonly struct GridQuantizer
         z = QuantizeAxis(p.Z - _min.Z, _inverseStep.Z);
     }
 
-    /// <summary>Returns the point at the center of a grid cell.</summary>
+    /// <summary>
+    /// Returns the grid node of the grid values: <c>Origin + (x, y, z) × CellSize</c>. A grid node is a point of the
+    /// lattice, not the center of a cell. <see cref="Quantize"/> rounds a point to the nearest grid node, so the round
+    /// trip error on an axis is at most half of <see cref="CellSize"/> (<see cref="MaxErrorMeters"/>).
+    /// </summary>
     public Vector3 Dequantize(ushort x, ushort y, ushort z)
         => _min + new Vector3(x * _step.X, y * _step.Y, z * _step.Z);
 

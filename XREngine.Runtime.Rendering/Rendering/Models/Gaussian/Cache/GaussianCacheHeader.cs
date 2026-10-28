@@ -25,6 +25,14 @@ public sealed partial class GaussianCacheHeader
 
     public int FrameCount { get; set; }
     public float FrameRate { get; set; }
+
+    /// <summary>
+    /// The length of the baked clip, in seconds. The playback period is not always this value: a
+    /// <see cref="GaussianCacheLoopMode.Loop"/> cache plays <c>FrameCount / FrameRate</c> seconds and then blends from the
+    /// last frame back to frame 0. A <see cref="GaussianCacheLoopMode.PingPong"/> cache plays forward in
+    /// <c>(FrameCount − 1) / FrameRate</c> seconds, the time of the last stored frame, and then back in the same time,
+    /// so its full loop is <c>2 × (FrameCount − 1) / FrameRate</c> seconds.
+    /// </summary>
     public float DurationSeconds { get; set; }
     public GaussianCacheLoopMode LoopMode { get; set; }
     public AABB Bounds { get; set; }
