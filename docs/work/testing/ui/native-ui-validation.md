@@ -1140,6 +1140,16 @@ popups, focus during row recycling, exact-node replay, custom/variable-height
 fallback, and measured frame/allocation costs. No faster-than-ImGui claim is made.
 
 
+### Spawn drop validation scope
+
+`HierarchySpawnTests` covers a root spawn into a visible scene with Undo, Redo, and
+dirty marking; a child spawn that keeps its world position; a root spawn into a
+hidden scene; and refusal of an attached node. Run them on Windows with
+`--no-build`. Live checks remain pending: drop a model and a prefab on the
+hierarchy root, on a row, and in the viewport. Confirm the saved scene contains the
+new root, and confirm Undo and Redo in the hierarchy.
+
+
 ### Measured virtual row validation scope
 
 `UIVirtualMeasuredExtentTests` covers measured content extent, visible range,

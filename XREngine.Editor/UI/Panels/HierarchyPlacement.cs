@@ -89,6 +89,21 @@ internal sealed class HierarchyPlacement
         return new(node, world, null, [], [], world.PlanHierarchyRootRoutes(node, []), false, integration);
     }
 
+    /// <summary>
+    /// Plans a new root at the end of <paramref name="scene"/>. A visible, ready scene also routes
+    /// the root into the world. A null scene plans a plain world root with no scene membership.
+    /// </summary>
+    public static HierarchyPlacement SceneRoot(SceneNode node, RuntimeWorld world, XRScene? scene)
+    {
+        EditorWorldIntegrationRegistry.TryGet(world, out EditorWorldIntegration? integration);
+        if (scene is null)
+            return new(node, world, null, [], [], world.PlanHierarchyRootRoutes(node, []), true, integration);
+        HierarchySceneRootSlot slot = HierarchySceneRootSlot.Capture(scene, node, world) with { Index = int.MaxValue };
+        XRScene[] routes = scene.IsVisible && world.IsSceneReady(scene) ? [scene] : [];
+        return new(node, world, null, [slot], [], world.PlanHierarchyRootRoutes(node, routes),
+            scene.IsVisible, integration);
+    }
+
     public static HierarchyPlacement RootLike(SceneNode node, HierarchyPlacement sourceRoot)
     {
         List<HierarchySceneRootSlot> slots = [.. sourceRoot.Scenes.Select(slot => slot with { Index = int.MaxValue })];

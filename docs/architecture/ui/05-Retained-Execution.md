@@ -945,6 +945,15 @@ uses this shared control.
 
 Hierarchy panels carry their owning world into queued edits and Undo actions.
 Deferred model and prefab drops recheck that owner on the scene-edit queue.
+A model or prefab drop builds its subtree detached and inactive. `HierarchySpawn.Place`
+then attaches it through `HierarchyMutation`, the same structural edit that creates,
+moves, and deletes nodes. A root spawn uses `HierarchyPlacement.SceneRoot`: it joins
+the end of the default spawn scene, and it joins the world roots and runtime routes
+only when that scene is visible. A child spawn uses `HierarchyPlacement.Attached`.
+Apply, Undo, and Redo check the placement owners and mark the owning scene dirty.
+A viewport drop with a world position keeps that world position under a parent.
+A hover preview is detached before its spawn edit, so the edit records the complete
+placement. A refused edit destroys a subtree that stays detached and unselected.
 Streaming volumes retain the exact attachment host and world. Direct destruction
 invalidates pending loads before detach, so late completion cannot attach to a
 replacement owner.
