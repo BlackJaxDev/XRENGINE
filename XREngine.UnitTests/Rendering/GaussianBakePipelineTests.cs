@@ -403,6 +403,41 @@ public sealed class GaussianBakePipelineTests
     }
 
     [Test]
+    public async Task Pipeline_NonFiniteCapturePixels_FinishesWithFiniteColorsAndWarning()
+    {
+        // Some capture pixels are NaN, +Inf, or -Inf, as a broken shader or light can give.
+        FakeRenderServices render = new()
+        {
+            EditImage = image =>
+            {
+                for (int pixel = 0; pixel < image.Length / 4; pixel++)
+                {
+                    float value = (pixel % 7) switch
+                    {
+                        0 => float.NaN,
+                        3 => float.PositiveInfinity,
+                        5 => float.NegativeInfinity,
+                        _ => image[pixel * 4],
+                    };
+                    image[pixel * 4] = value;
+                    image[pixel * 4 + 1] = value;
+                    image[pixel * 4 + 2] = value;
+                }
+            },
+        };
+        string output = Path.Combine(_workRoot, "avatar-non-finite");
+
+        BakeReport report = await CreatePipeline(render).RunAsync(AvatarOptions(output), CancellationToken.None);
+
+        report.Status.ShouldBe(BakeReport.ReadyStatus, report.FailureDetail);
+        float colorScale = report.ColorScale.ShouldNotBeNull();
+        float.IsFinite(colorScale).ShouldBeTrue();
+        colorScale.ShouldBeGreaterThanOrEqualTo(1.0f);
+        report.Warnings.ShouldContain(warning => warning.StartsWith(GaussianBakePipeline.NonFiniteCaptureWarning, StringComparison.Ordinal));
+        TestContext.Out.WriteLine($"Color scale {report.ColorScale}, warnings: {string.Join(", ", report.Warnings)}");
+    }
+
+    [Test]
     public async Task Pipeline_PreparedAvatar_RunsOneTime()
     {
         FakeRenderServices render = new();
@@ -681,6 +716,9 @@ public sealed class GaussianBakePipelineTests
 
         private float[]? _gray;
 
+        /// <summary>Gets or sets an action that changes the shared image one time, after the fake makes it.</summary>
+        public Action<float[]>? EditImage { get; init; }
+
         public int CaptureCalls { get; private set; }
 
         public int ContentCalls { get; private set; }
@@ -705,6 +743,8 @@ public sealed class GaussianBakePipelineTests
                     _gray[i + 2] = MidGray;
                     _gray[i + 3] = 1.0f;
                 }
+
+                EditImage?.Invoke(_gray);
             }
 
             float[][] images = new float[poses.Count][];

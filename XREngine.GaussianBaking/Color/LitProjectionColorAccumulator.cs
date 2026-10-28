@@ -15,6 +15,9 @@ namespace XREngine.Rendering.Models.Gaussian.Baking.Color;
 /// <para>A view sees a leaf when the leaf is in the frame, the leaf faces the camera
 /// (<c>dot(normal, direction to camera) &gt; 0.1</c>), and no triangle of the rest surface is between them.
 /// The weight of a view is the cosine of the facing angle.</para>
+/// <para>A pixel value of +Inf, or a value above <see cref="MaxSampleValue"/>, becomes <see cref="MaxSampleValue"/>.
+/// A sample that is NaN or -Inf after the bilinear filter does not count. <see cref="NonFiniteSampleCount"/> counts the
+/// samples that read a pixel value that is not finite.</para>
 /// </remarks>
 public sealed class LitProjectionColorAccumulator
 {
@@ -23,6 +26,12 @@ public sealed class LitProjectionColorAccumulator
 
     /// <summary>The ray tolerance, as a fraction of the diagonal of the bounds of the rest surface.</summary>
     private const float OcclusionEpsilonFraction = 1e-3f;
+
+    /// <summary>
+    /// The largest color channel value of a sample: the largest finite value of a 16-bit float, which is the largest
+    /// value that a half-float render target holds.
+    /// </summary>
+    public const float MaxSampleValue = 65504.0f;
 
     private readonly BakedSplat[] _leaves;
     private readonly int _width;
@@ -57,6 +66,12 @@ public sealed class LitProjectionColorAccumulator
     /// <summary>Gets the number of leaves that at least one view saw. The value is final after <see cref="Finish"/>.</summary>
     public int SeenLeafCount { get; private set; }
 
+    /// <summary>
+    /// Gets the number of samples (one leaf in one view) that read a pixel value that is NaN or infinite. A sample with
+    /// +Inf uses <see cref="MaxSampleValue"/>. A sample that is NaN or -Inf after the filter does not count for its leaf.
+    /// </summary>
+    public long NonFiniteSampleCount { get; private set; }
+
     /// <summary>Adds the samples of a batch of views.</summary>
     /// <param name="views">The cameras of the images.</param>
     /// <param name="images">One linear RGBA image for each view, with width × height × 4 values and the top row first.</param>
@@ -83,8 +98,8 @@ public sealed class LitProjectionColorAccumulator
     /// Fills the leaves that no view saw from the nearest seen leaf, writes the colors, and scales them.
     /// </summary>
     /// <returns>
-    /// The color scale: the larger of 1 and the 99th percentile of the luminance. Every color is divided by it.
-    /// The value is 1 when no view saw any leaf.
+    /// The color scale: the larger of 1 and the 99th percentile of the luminance, and not more than
+    /// <see cref="MaxSampleValue"/>. Every color is divided by it. The value is 1 when no view saw any leaf.
     /// </returns>
     public float Finish()
     {
@@ -114,8 +129,7 @@ public sealed class LitProjectionColorAccumulator
             return 1.0f;
 
         Vector3[] filled = new Vector3[count];
-        for (int i = 0; i < count; i++)
-            filled[i] = seen[i] ? colors[i] : colors[NearestSeen(seen, i)];
+        FillUnseen(colors, seen, filled);
 
         float scale = ComputeScale(filled);
         for (int i = 0; i < count; i++)
@@ -159,7 +173,15 @@ public sealed class LitProjectionColorAccumulator
 
             float pixelX = (ndcX * 0.5f + 0.5f) * _width;
             float pixelY = (0.5f - ndcY * 0.5f) * _height;
-            Vector3 color = SampleBilinear(image, pixelX, pixelY);
+            bool nonFinite = false;
+            Vector3 color = SampleBilinear(image, pixelX, pixelY, ref nonFinite);
+            if (nonFinite)
+            {
+                NonFiniteSampleCount++;
+                if (!float.IsFinite(color.X) || !float.IsFinite(color.Y) || !float.IsFinite(color.Z))
+                    continue;
+            }
+
             _sums[3 * i] += facing * color.X;
             _sums[3 * i + 1] += facing * color.Y;
             _sums[3 * i + 2] += facing * color.Z;
@@ -167,7 +189,7 @@ public sealed class LitProjectionColorAccumulator
         }
     }
 
-    private Vector3 SampleBilinear(float[] image, float pixelX, float pixelY)
+    private Vector3 SampleBilinear(float[] image, float pixelX, float pixelY, ref bool nonFinite)
     {
         float fx = pixelX - 0.5f;
         float fy = pixelY - 0.5f;
@@ -180,32 +202,58 @@ public sealed class LitProjectionColorAccumulator
         x0 = Math.Clamp(x0, 0, _width - 1);
         y0 = Math.Clamp(y0, 0, _height - 1);
 
-        Vector3 top = Vector3.Lerp(Pixel(image, x0, y0), Pixel(image, x1, y0), tx);
-        Vector3 bottom = Vector3.Lerp(Pixel(image, x0, y1), Pixel(image, x1, y1), tx);
+        Vector3 top = Vector3.Lerp(Pixel(image, x0, y0, ref nonFinite), Pixel(image, x1, y0, ref nonFinite), tx);
+        Vector3 bottom = Vector3.Lerp(Pixel(image, x0, y1, ref nonFinite), Pixel(image, x1, y1, ref nonFinite), tx);
         return Vector3.Lerp(top, bottom, ty);
     }
 
-    private Vector3 Pixel(float[] image, int x, int y)
+    /// <summary>
+    /// Returns the color of a pixel. A channel above <see cref="MaxSampleValue"/> (+Inf too) becomes
+    /// <see cref="MaxSampleValue"/>. NaN and -Inf stay. A channel that is not finite sets <paramref name="nonFinite"/>.
+    /// </summary>
+    private Vector3 Pixel(float[] image, int x, int y, ref bool nonFinite)
     {
         int offset = (y * _width + x) * 4;
-        return new Vector3(image[offset], image[offset + 1], image[offset + 2]);
+        Vector3 color = new(image[offset], image[offset + 1], image[offset + 2]);
+        if (!float.IsFinite(color.X) || !float.IsFinite(color.Y) || !float.IsFinite(color.Z))
+            nonFinite = true;
+        return new Vector3(ClampHigh(color.X), ClampHigh(color.Y), ClampHigh(color.Z));
     }
 
-    /// <summary>Finds the seen leaf nearest in array index, searching i−1, i+1, i−2, i+2, and so on.</summary>
-    private static int NearestSeen(bool[] seen, int index)
-    {
-        for (int offset = 1; offset < seen.Length; offset++)
-        {
-            int below = index - offset;
-            if (below >= 0 && seen[below])
-                return below;
+    /// <summary>Returns <see cref="MaxSampleValue"/> for a value above it, and the value for all other values, NaN too.</summary>
+    private static float ClampHigh(float value)
+        => value > MaxSampleValue ? MaxSampleValue : value;
 
-            int above = index + offset;
-            if (above < seen.Length && seen[above])
-                return above;
+    /// <summary>
+    /// Gives each leaf that no view saw the color of the seen leaf nearest in array index. When a seen leaf below and a
+    /// seen leaf above are at the same index distance, the leaf below wins. Two passes over the leaves find the nearest
+    /// seen leaf below and above each leaf, so the work is linear in the leaf count. There must be a seen leaf.
+    /// </summary>
+    private static void FillUnseen(Vector3[] colors, bool[] seen, Vector3[] filled)
+    {
+        int count = colors.Length;
+        int[] below = new int[count];
+        int last = -1;
+        for (int i = 0; i < count; i++)
+        {
+            below[i] = last;
+            if (seen[i])
+                last = i;
         }
 
-        return index;
+        int above = -1;
+        for (int i = count - 1; i >= 0; i--)
+        {
+            if (seen[i])
+            {
+                filled[i] = colors[i];
+                above = i;
+                continue;
+            }
+
+            int nearest = below[i] >= 0 && (above < 0 || i - below[i] <= above - i) ? below[i] : above;
+            filled[i] = colors[nearest];
+        }
     }
 
     private static float ComputeScale(Vector3[] colors)
@@ -217,7 +265,7 @@ public sealed class LitProjectionColorAccumulator
         Array.Sort(luminances);
         int rank = (int)Math.Ceiling(0.99 * luminances.Length);
         double percentile = luminances[Math.Clamp(rank - 1, 0, luminances.Length - 1)];
-        return (float)Math.Max(1.0, percentile);
+        return (float)Math.Clamp(percentile, 1.0, MaxSampleValue);
     }
 
     private static float BoundsDiagonal(DeformedSurface surface)

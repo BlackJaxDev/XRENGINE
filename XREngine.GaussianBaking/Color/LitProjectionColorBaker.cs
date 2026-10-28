@@ -38,9 +38,16 @@ public sealed class LitProjectionColorBaker : ISplatColorBaker
 
         float scale = accumulator.Finish();
         LastSeenLeafCount = accumulator.SeenLeafCount;
+        LastNonFiniteSampleCount = accumulator.NonFiniteSampleCount;
         return scale;
     }
 
     /// <summary>Gets the number of leaves that a view saw in the last bake. Zero means that no leaf has a color.</summary>
     public int LastSeenLeafCount { get; private set; }
+
+    /// <summary>
+    /// Gets the number of samples in the last bake that read a capture pixel that is NaN or infinite (see
+    /// <see cref="LitProjectionColorAccumulator.NonFiniteSampleCount"/>).
+    /// </summary>
+    public long LastNonFiniteSampleCount { get; private set; }
 }

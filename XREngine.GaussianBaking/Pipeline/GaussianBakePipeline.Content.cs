@@ -201,6 +201,8 @@ public sealed partial class GaussianBakePipeline
 
         if (baker.LastSeenLeafCount == 0)
             run.Report.Warnings.Add(NoLeafSeenWarning);
+        if (baker.LastNonFiniteSampleCount > 0)
+            run.Report.Warnings.Add(NonFiniteCaptureWarning + baker.LastNonFiniteSampleCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
         return colorScale;
     }
 
