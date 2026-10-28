@@ -117,6 +117,12 @@ namespace XREngine.Rendering.Models.Materials
 
         protected abstract void SetProgramUniform(XRRenderProgram program, string name);
 
+        /// <summary>
+        /// Writes the current value to the program and keeps the change flag. Use this when one parameter
+        /// feeds more than one program, so that a write to one program does not hide a change from the other.
+        /// </summary>
+        internal void ApplyTo(XRRenderProgram program) => SetProgramUniform(program, Name);
+
         public ShaderVar(string userName, IShaderVarOwner? owner)
         {
             _owner = owner;

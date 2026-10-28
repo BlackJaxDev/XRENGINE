@@ -18,7 +18,7 @@ public partial class UITextComponent
     {
         if (GetType() != typeof(UITextComponent) || DisableBatching || AnimatableTransforms ||
             NonVertexShadersOverride is not null || !UIBatchCollector.HasWebGpuRasterProfile(RenderParameters) ||
-            RenderCommand2D.MaterialOverride is not null || RenderCommand3D.MaterialOverride is not null)
+            RenderCommand2D.MaterialOverride is not null || HasAuthoredWorldMaterialOverride)
             return false;
         if (Mesh is not null && (!ReferenceEquals(Mesh, _ownedStandaloneRenderer) ||
             !ReferenceEquals(Material, _ownedStandaloneMaterial) ||

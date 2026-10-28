@@ -19,7 +19,7 @@ namespace XREngine.Rendering.UI
     /// Automatically handles rendering and culling of UI components.
     /// </summary>
     [RequiresTransform(typeof(UIBoundableTransform))]
-    public abstract class UIRenderableComponent : UIComponent, IRenderable
+    public abstract partial class UIRenderableComponent : UIComponent, IRenderable
     {
         public UIBoundableTransform BoundableTransform => TransformAs<UIBoundableTransform>(true)!;
         public UIRenderableComponent()
@@ -121,6 +121,7 @@ namespace XREngine.Rendering.UI
                 (Transform as UITransform)?.IsVisibleInHierarchy == true;
             SetCanvasWorldCollectionSuppressed(!directWorld);
             ReconcileDirectWorldCanvas(directWorld ? canvasComponent : null);
+            RefreshLiveWorldClip();
         }
 
         private void ReconcileDirectWorldCanvas(UICanvasComponent? canvas)
@@ -159,6 +160,7 @@ namespace XREngine.Rendering.UI
         private void ReleaseCanvasWorldCollection()
         {
             ReconcileDirectWorldCanvas(null);
+            ReleaseLiveWorldClip();
             if (_worldCollectionCanvasTransform is not null)
                 _worldCollectionCanvasTransform.PropertyChanged -= CanvasWorldTransformPropertyChanged;
             _worldCollectionCanvasTransform = null;
@@ -226,6 +228,8 @@ namespace XREngine.Rendering.UI
                 RebindWorldCollectionAncestors();
             if (e.PropertyName is nameof(UITransform.Parent) or nameof(UITransform.Visibility))
                 SyncCanvasWorldCollection();
+            else if (e.PropertyName == nameof(UIBoundableTransform.AxisAlignedRegion))
+                RefreshLiveWorldClip();
         }
 
         /// <summary>Keeps authored visibility while canvas mode controls 3D collection membership.</summary>
@@ -609,7 +613,7 @@ namespace XREngine.Rendering.UI
                     if (directWorld)
                     {
                         RenderCommandMesh3D worldSource = RenderCommand3D;
-                        if (worldSource.MaterialOverride is not null || worldSource.RenderOptionsOverride is not null)
+                        if (HasAuthoredWorldMaterialOverride || worldSource.RenderOptionsOverride is not null)
                             captureFailure = "UI.DrawCapture.WorldOverrideAdapterRequired: direct-world material or raster overrides need an immutable payload adapter.";
                         else
                         {
@@ -713,6 +717,7 @@ namespace XREngine.Rendering.UI
             var mtx = GetRenderWorldMatrix(tfm);
             RenderCommand3D.WorldMatrix = mtx;
             RenderCommand2D.WorldMatrix = GetRenderCanvasMatrix(tfm);
+            RefreshLiveWorldClip();
         }
 
         protected virtual Matrix4x4 GetRenderWorldMatrix(UIBoundableTransform tfm)
@@ -797,6 +802,7 @@ namespace XREngine.Rendering.UI
 
                 if (_material != value?.Material)
                     Material = value?.Material;
+                RefreshLiveWorldClip();
             }
         }
 
@@ -832,7 +838,10 @@ namespace XREngine.Rendering.UI
                     !ReferenceEquals(_material, field)) return;
                 if (CanObserveMaterial)
                     AttachSubscribedMaterial(_material);
+                RefreshLiveWorldClip();
             }
+            if (propName == nameof(ClipToBounds))
+                RefreshLiveWorldClipInSubtree();
             if (propName is nameof(Material) or nameof(UIMaterialComponent.DisableBatching))
                 SyncBatchPrimitiveRegistration();
         }
@@ -925,9 +934,11 @@ namespace XREngine.Rendering.UI
                     break;
                 case nameof(ClipToBounds):
                     RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(BoundableTransform, ClipToBounds);
+                    RefreshLiveWorldClip();
                     break;
                 case nameof(UIBoundableTransform.AxisAlignedRegion):
                     RenderCommand2D.WorldCropRegion = UIClipRegion.ResolveCrop(BoundableTransform, ClipToBounds);
+                    RefreshLiveWorldClip();
                     break;
             }
         }

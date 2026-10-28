@@ -79,7 +79,26 @@ consumer receipts. Direct world UI uses the existing component route, unless a
 bounded OpenGL or Vulkan profile admits an exact frozen replacement. In these
 profiles, canonical solid, image, and text draws can carry a frozen canvas-local
 crop. Custom cropped shaders, cropped stereo text, and arbitrary 3D material or
-raster overrides stay outside these profiles. Direct-world draws without checked
+raster overrides stay outside these profiles.
+
+The existing component route also applies the nested crop. When a direct-world
+element or a clipping ancestor has a crop, `UIRenderableComponent` sets an owned
+clip material as the `RenderCommand3D` material override. The clip material uses
+the source shaders, with the canonical fragment shader replaced by its
+`UIWorldCropShaderContract` crop variant. Variants are cached for each source
+shader and its source revision. The clip material owns no shader parameters. Its
+uniform callback writes the source parameters, the component bounds,
+`UiWorldCropMinMax`, and `UiWorldModelToCanvas` on each draw, so a program that
+two materials share always gets current values. The crop is calculated again
+when the element matrix, the element or ancestor region, `ClipToBounds` on the
+element or an ancestor, the mesh, the material, or the canvas route changes.
+Stereo text vertex shaders are part of the canonical set, so this route also
+clips stereo text. An element that has an authored 3D material override, a
+non-canonical shader set, a reserved crop uniform, or an out-of-range crop keeps
+its unclipped draw. It reports `UI.WorldClip.OverrideUnsupported`,
+`UI.WorldClip.ShaderRequired`, `UI.WorldClip.UniformConflict`, or
+`UI.WorldClip.Range` through `UIFailureDiagnostics` once for each change of state.
+Direct-world draws without checked
 indexed-draw proof increment `UIWorkCounter.WorldUncheckedDraws`. An offscreen
 framebuffer completion alone does not prove that a world-space quad reached a
 presented window. Do not infer the screen canvas's publication guarantees for
