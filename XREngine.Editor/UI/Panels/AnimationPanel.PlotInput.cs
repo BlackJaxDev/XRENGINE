@@ -264,6 +264,33 @@ public partial class AnimationPanel
     }
 
     /// <summary>
+    /// Zooms the curve graph value axis by one wheel step per unit of <paramref name="wheelDelta"/>.
+    /// The value under <paramref name="point"/> keeps its vertical position unless the window
+    /// reaches an edge of the auto-fit range. The key timeline has no value axis, so it does not
+    /// handle the wheel here. Returns true when the snapshot is current, also at a zoom limit.
+    /// </summary>
+    internal bool ZoomPlotValueAtPointer(AnimationPlotPointerSnapshot snapshot, Vector2 point,
+        float wheelDelta)
+    {
+        if (_activePlotDrag is not null || _activePlotScrub is not null || !snapshot.Graph ||
+            !IsPlotSourceCurrent(snapshot) ||
+            !ReferenceEquals(_plotSnapshot, snapshot) ||
+            snapshot.BuildRevision != _plotBuildRevision ||
+            snapshot.ViewRevision != _plotViewRevision ||
+            !AnimationPlotValueZoom.TryZoom(_plotValueZoom, _plotValueCenter, snapshot.Height,
+                point.Y, wheelDelta, out float zoom, out float center))
+            return false;
+        if (zoom == _plotValueZoom && center == _plotValueCenter)
+            return true;
+        BeginStateIntent();
+        _plotValueZoom = zoom;
+        _plotValueCenter = center;
+        _plotViewRevision++;
+        RefreshRows();
+        return true;
+    }
+
+    /// <summary>
     /// Seeks the selected matching component to the frame under a point on the time axis.
     /// A scrub starts only on the current published plot. It continues while the plot view
     /// and size stay the same, also after the seek rebuilds the plot. Returns false when

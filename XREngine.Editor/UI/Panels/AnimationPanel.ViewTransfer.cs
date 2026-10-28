@@ -319,6 +319,7 @@ public partial class AnimationPanel
             static (_, _, _, _) => { }, publishNotifications: false);
         SetFieldValidated(ref _plotWindowStart, windowStart, 0,
             static (_, _, _, _) => { }, publishNotifications: false);
+        ResetPlotValueView();
         SetFieldValidated(ref _stretchLengthEdits, values.StretchLengthEdits, 0,
             static (_, _, _, _) => { }, publishNotifications: false);
         SetFieldValidated(ref _valueChannel, values.ValueChannel, 0,

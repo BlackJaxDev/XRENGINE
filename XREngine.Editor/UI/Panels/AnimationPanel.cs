@@ -91,6 +91,9 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private readonly NativeAnimationClipViewMemory _clipViews = new();
     private float _plotZoom = 1;
     private float _plotWindowStart;
+    // The value-axis view is transient: a clip change, a view reset, and a view restore return it to the full range.
+    private float _plotValueZoom = AnimationPlotValueZoom.MinimumZoom;
+    private float _plotValueCenter = AnimationPlotValueZoom.DefaultCenter;
     private readonly float[,] _plotSamples = new float[4, UIRetainedPlot.MaximumSegments / 4 + 1];
     private bool _graphView = true;
     private bool _stretchLengthEdits;
@@ -644,6 +647,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             _keyPage = 0;
             _plotZoom = 1;
             _plotWindowStart = 0;
+            ResetPlotValueView();
             // The checks below drop a remembered member or key that the clip no longer contains.
             if (clip is not null && _clipViews.TryTake(clip, out NativeAnimationClipView view))
             {
@@ -1118,7 +1122,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             case 36: _plotZoom = MathF.Max(1, _plotZoom / 1.5f); _plotViewRevision++; break;
             case 37: _plotWindowStart = MathF.Max(0,
                 _plotWindowStart - MathF.Max(0.01f, _plottedDuration * 0.75f)); _plotViewRevision++; break;
-            case 38: _plotZoom = 1; _plotWindowStart = 0; _plotViewRevision++; break;
+            case 38: _plotZoom = 1; _plotWindowStart = 0; ResetPlotValueView(); _plotViewRevision++; break;
             case 39: _plotWindowStart +=
                 MathF.Max(0.01f, _plottedDuration * 0.75f); _plotViewRevision++; break;
             case 40: CycleSelectedInterpolation(outgoing: false); break;
@@ -1442,6 +1446,9 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             return;
         }
         float span = Math.Max(0.001f, maximum - minimum);
+        // Ctrl+wheel narrows the value axis to a window of the auto-fit range.
+        minimum += AnimationPlotValueZoom.WindowStart(_plotValueZoom, _plotValueCenter) * span;
+        span /= _plotValueZoom;
         DrawTimeAxis(plot, width, height);
         if (!_plotValidator())
             return;
@@ -1454,10 +1461,11 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         for (int channel = 0; channel < channels; channel++)
             for (int index = 1; index < count; index++)
             {
+                // A value-axis zoom can put samples outside the value band; they stay on its edge.
                 Vector2 from = new(8 + (index - 1) * (width - 16) / (count - 1),
-                    12 + (_plotSamples[channel, index - 1] - minimum) / span * (height - 36));
+                    Math.Clamp(12 + (_plotSamples[channel, index - 1] - minimum) / span * (height - 36), 12, height - 24));
                 Vector2 to = new(8 + index * (width - 16) / (count - 1),
-                    12 + (_plotSamples[channel, index] - minimum) / span * (height - 36));
+                    Math.Clamp(12 + (_plotSamples[channel, index] - minimum) / span * (height - 36), 12, height - 24));
                 if (!_plotValidator()) return;
                 plot.AddLine(from, to, PlotPalette[channel], validate: _plotValidator);
             }
@@ -1492,6 +1500,12 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         if (IsPlotBuildCurrent(plot, clip, sourceRevision, viewRevision,
                 buildRevision))
             PublishPlotSnapshot(clip);
+    }
+
+    private void ResetPlotValueView()
+    {
+        _plotValueZoom = AnimationPlotValueZoom.MinimumZoom;
+        _plotValueCenter = AnimationPlotValueZoom.DefaultCenter;
     }
 
     private bool IsPlotBuildCurrent(UIRetainedPlot plot, AnimationClip clip,

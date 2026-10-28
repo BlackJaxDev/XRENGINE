@@ -1706,7 +1706,16 @@ keeps the pressed coordinates through its own new frames, while an unrelated
 view change or resize rejects it. The mouse wheel zooms the time axis about the
 time under the presented pointer (`AnimationPlotWheelZoom`): each step scales zoom
 by 1.25 within 1 to 32, and the window clamps to the clip. The wheel needs current
-plot metadata and does nothing during a press. Input dispatch generations reject
+plot metadata and does nothing during a press. With Ctrl held
+(`UICanvasInputComponent.IsCtrlHeld`), the wheel zooms the curve graph value axis
+instead (`AnimationPlotValueZoom`). The value view is a zoom from 1 to 32 and a
+window center, both as fractions of the auto-fit value range, so it stays valid
+when values change. The value under the pointer keeps its height unless the window
+reaches a range edge. Samples outside the window stay on the edge of the value
+band. The value view is transient: a clip change, the view reset command, and a
+view restore return it to the full range. Each change increments the plot view
+revision, so older view receipts are not current. The key timeline has no value
+axis and ignores Ctrl+wheel. Input dispatch generations reject
 owner changes that return to the same object during a callback.
 
 The bottom 30 pixels of the plot are the time axis strip (`AnimationPlotFrameAxis`).

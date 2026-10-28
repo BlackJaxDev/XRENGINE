@@ -66,7 +66,10 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
     /// <summary>Without a presented pointer position, the plot does not zoom.</summary>
     public bool HandleMouseScroll(float diff) => false;
 
-    /// <summary>Zooms the time axis about the time under the presented pointer.</summary>
+    /// <summary>
+    /// Zooms the time axis about the time under the presented pointer. With Ctrl held, the wheel
+    /// zooms the curve graph value axis about the value under the pointer instead.
+    /// </summary>
     public bool HandlePointerScroll(float diff, Vector2 localPoint, in UIPointerGeometry geometry)
     {
         ulong generation = ++_dispatchGeneration;
@@ -79,7 +82,9 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
             !ReferenceEquals(snapshot.PanelOwner, panel) ||
             !ReferenceEquals(snapshot.InputOwner, this))
             return false;
-        return panel!.ZoomPlotAtPointer(snapshot, localPoint, diff);
+        return UserInterfaceCanvas?.GetInputComponent()?.IsCtrlHeld == true
+            ? panel!.ZoomPlotValueAtPointer(snapshot, localPoint, diff)
+            : panel!.ZoomPlotAtPointer(snapshot, localPoint, diff);
     }
 
     public override void PointerPressed(Vector2 localPoint, in UIPointerGeometry geometry)
