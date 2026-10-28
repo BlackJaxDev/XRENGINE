@@ -3,7 +3,7 @@
 // Driver pose pass of a gaussian cache. One invocation runs for each driver vertex.
 // The pass blends the two nearest decoded frames of the vertex to the current fractional frame and writes
 // the position to the pose buffer. The step between decoded frames is 8 >> (decoded temporal level) of the
-// driver level that adds the vertex: a = floor(f / step) * step, b = the next neighbour of a, and the
+// driver level that adds the vertex: a = floor(f / step) * step, b = the next blend frame of a, and the
 // position is mix(frame a, frame b, (f - a) / step). A vertex of a driver level that is not decoded keeps
 // its old value; the cut pass does not use it.
 // GaussianCachePoseReference.PoseDrivers is the CPU mirror of this pass.
@@ -59,13 +59,15 @@ vec3 FramePosition(int frame, uint vertex)
     return GridOrigin + vec3(float(FrameGrid(first)), float(FrameGrid(first + 1u)), float(FrameGrid(first + 2u))) * GridStep;
 }
 
-// The later neighbour of frame i at a distance of step. Loop playback wraps; the other modes use the earlier neighbour.
-int NextNeighbor(int i, int step)
+// The second frame of the blend that starts at frame i. Loop playback wraps to the start. The other modes hold
+// frame i when the later frame is after the last frame, because a blend to an earlier frame moves the pose back.
+// TemporalLevels.NextBlendFrame is the CPU mirror of this function.
+int NextBlendFrame(int i, int step)
 {
     int b = i + step;
     if (b < FrameCount)
         return b;
-    return LoopMode == LoopModeLoop ? b - FrameCount : i - step;
+    return LoopMode == LoopModeLoop ? b - FrameCount : i;
 }
 
 void main()
@@ -89,7 +91,7 @@ void main()
         return;
 
     int a = clamp(int(floor(FractionalFrame / float(step))) * step, 0, FrameCount - 1);
-    int b = NextNeighbor(a, step);
+    int b = NextBlendFrame(a, step);
     if (b < 0 || b >= FrameCount)
         b = a;
 

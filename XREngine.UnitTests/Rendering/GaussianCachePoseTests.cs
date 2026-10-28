@@ -173,6 +173,63 @@ public sealed class GaussianCachePoseTests
         MaxDistance(PoseDrivers(loop, period + 2.5f / FrameRate), after).ShouldBeGreaterThan(1e-3f);
     }
 
+    [TestCase(GaussianCacheLoopMode.PingPong, 1)]
+    [TestCase(GaussianCacheLoopMode.PingPong, 2)]
+    [TestCase(GaussianCacheLoopMode.Once, 1)]
+    [TestCase(GaussianCacheLoopMode.Once, 2)]
+    public void PoseReference_PartialTemporalLevelsNearEnd_HoldsLastLoadedFrame(GaussianCacheLoopMode loopMode, int chunkCount)
+    {
+        // Chunk 0 holds the T0 motion of driver level 0, and chunk 1 holds its T1 motion.
+        GaussianCacheBuildResult build = _sphere.Build(loopMode);
+        build.Root.Header.Chunks[1].Kind.ShouldBe(GaussianCacheChunkKind.DriverTemporal);
+        build.Root.Header.Chunks[1].TemporalLevel.ShouldBe((byte)1);
+        GaussianCache partial = GaussianCacheTestSphere.Load(build, chunkCount);
+        GaussianCache complete = GaussianCacheTestSphere.Load(build);
+        GridQuantizer grid = Grid(complete);
+        partial.Runtime.Frames.DecodedTemporalLevel[0].ShouldBe((sbyte)(chunkCount - 1));
+        int step = GaussianCachePoseReference.DriverStep(partial.Runtime.Frames, 0);
+        step.ShouldBe(chunkCount == 1 ? 8 : 4);
+        int last = FrameCount - step;
+        int level0 = partial.Runtime.Frames.GetLevelVertexCount(0);
+
+        // Before the last loaded frame, the pose blends forward between two loaded frames.
+        float middle = last - (step * 0.5f);
+        Vector3[] blended = PoseDrivers(partial, middle / FrameRate);
+        for (int vertex = 0; vertex < level0; vertex++)
+        {
+            Vector3 expected = Vector3.Lerp(Stored(complete, grid, last - step, vertex), Stored(complete, grid, last, vertex), 0.5f);
+            Vector3.Distance(blended[vertex], expected).ShouldBeLessThanOrEqualTo(PositionTolerance, $"vertex {vertex} at frame {middle}");
+        }
+
+        // After the last loaded frame, the pose holds that frame. It does not blend back to an earlier frame.
+        foreach (float frame in new[] { last + 0.5f, last + (step * 0.5f), FrameCount - 1.0f })
+        {
+            Vector3[] posed = PoseDrivers(partial, frame / FrameRate);
+            for (int vertex = 0; vertex < level0; vertex++)
+                Vector3.Distance(posed[vertex], Stored(complete, grid, last, vertex)).ShouldBeLessThanOrEqualTo(PositionTolerance, $"vertex {vertex} at frame {frame}");
+        }
+
+        // A once cache ends on the last loaded frame.
+        if (loopMode == GaussianCacheLoopMode.Once)
+        {
+            Vector3[] end = PoseDrivers(partial, 10.0f * FrameCount / FrameRate);
+            for (int vertex = 0; vertex < level0; vertex++)
+                Vector3.Distance(end[vertex], Stored(complete, grid, last, vertex)).ShouldBeLessThanOrEqualTo(PositionTolerance, $"vertex {vertex} after the end");
+        }
+    }
+
+    [Test]
+    public void NextBlendFrame_AfterLastFrame_LoopWrapsAndOtherModesHold()
+    {
+        TemporalLevels.NextBlendFrame(56, 8, 64, GaussianCacheLoopMode.Loop).ShouldBe(0);
+        TemporalLevels.NextBlendFrame(56, 8, 64, GaussianCacheLoopMode.PingPong).ShouldBe(56);
+        TemporalLevels.NextBlendFrame(60, 4, 64, GaussianCacheLoopMode.Once).ShouldBe(60);
+        TemporalLevels.NextBlendFrame(48, 8, 64, GaussianCacheLoopMode.PingPong).ShouldBe(56);
+
+        // Motion prediction keeps the earlier neighbour.
+        TemporalLevels.NextNeighbor(60, 4, 64, GaussianCacheLoopMode.Once).ShouldBe(56);
+    }
+
     [Test]
     public void PoseReference_CollapsedDriverTriangle_KeepsFinitePose()
     {

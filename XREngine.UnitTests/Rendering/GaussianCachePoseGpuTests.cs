@@ -54,11 +54,22 @@ public sealed class GaussianCachePoseGpuTests : GpuTestBase
         GaussianCache mixed = GaussianCacheTestSphere.Load(complete);
         float mixedDistance = MixedCutDistance(mixed, 37.3f / FrameRate);
 
+        // Chunk 0 holds the T0 motion of driver level 0, and chunk 1 holds its T1 motion.
+        GaussianCacheBuildResult pingPong = sphere.Build(GaussianCacheLoopMode.PingPong);
+        GaussianCacheBuildResult once = sphere.Build(GaussianCacheLoopMode.Once);
+
         (string Name, GaussianCache Cache, float Frame, float Distance)[] scenarios =
         [
             ("complete, between frames", mixed, 37.3f, mixedDistance),
             ("first leaf chunk only, leaf motion at T0", GaussianCacheTestSphere.Load(split, firstLeafChunk + 1), 21.7f, 1.0f),
             ("collapsed frame 8", collapsed, 8.0f, mixedDistance),
+            ("loop wrap, all temporal levels", mixed, 63.5f, mixedDistance),
+            ("loop wrap, only T0", GaussianCacheTestSphere.Load(complete, chunkCount: 1), 60.0f, 1.0f),
+            ("ping-pong mirror, all temporal levels", GaussianCacheTestSphere.Load(pingPong), 65.5f, mixedDistance),
+            ("ping-pong near the end, only T0", GaussianCacheTestSphere.Load(pingPong, chunkCount: 1), 61.0f, 1.0f),
+            ("ping-pong near the end, T0 and T1", GaussianCacheTestSphere.Load(pingPong, chunkCount: 2), 62.0f, 1.0f),
+            ("once after the end, only T0", GaussianCacheTestSphere.Load(once, chunkCount: 1), 70.0f, 1.0f),
+            ("once near the end, T0 and T1", GaussianCacheTestSphere.Load(once, chunkCount: 2), 62.5f, 1.0f),
         ];
 
         RunWithGLContext(gl =>

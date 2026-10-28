@@ -58,12 +58,28 @@ public static class TemporalLevels
         return ((frameCount - 1 - first) / FrameStride(level)) + 1;
     }
 
-    /// <summary>Returns the later prediction neighbour. Loop playback wraps. Other modes use the earlier neighbour.</summary>
+    /// <summary>
+    /// Returns the later prediction neighbour. Loop playback wraps. Other modes use the earlier neighbour. Use this
+    /// method for motion prediction only. Playback uses <see cref="NextBlendFrame"/>.
+    /// </summary>
     public static int NextNeighbor(int i, int step, int frameCount, GaussianCacheLoopMode mode)
     {
         int b = i + step;
         if (b < frameCount)
             return b;
         return mode == GaussianCacheLoopMode.Loop ? b - frameCount : i - step;
+    }
+
+    /// <summary>
+    /// Returns the second frame of the playback blend that starts at frame <paramref name="i"/>. Loop playback wraps to
+    /// the start. The other modes hold frame <paramref name="i"/> when the later frame is after the last frame, because
+    /// a blend to an earlier frame moves the pose back in time.
+    /// </summary>
+    public static int NextBlendFrame(int i, int step, int frameCount, GaussianCacheLoopMode mode)
+    {
+        int b = i + step;
+        if (b < frameCount)
+            return b;
+        return mode == GaussianCacheLoopMode.Loop ? b - frameCount : i;
     }
 }
