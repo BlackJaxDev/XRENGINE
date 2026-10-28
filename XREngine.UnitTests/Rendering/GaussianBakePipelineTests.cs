@@ -536,6 +536,15 @@ public sealed class GaussianBakePipelineTests
             CancellationToken.None);
         loaded.IsComplete.ShouldBeTrue();
 
+        // The steps that load the cache by reference use these IDs.
+        loaded.ID.ShouldBe(BakeCacheFiles.StableId(built.ContentHash, 0));
+        for (int i = 0; i < built.Chunks.Length; i++)
+        {
+            string chunkPath = GaussianCacheChunkLoader.ResolveChunkPath(rootPath, loaded.ChunkAssetPaths[i]);
+            PublishedCookedAssetReader.LoadAsset<GaussianCacheChunk>(File.ReadAllBytes(chunkPath)).ShouldNotBeNull().ID
+                .ShouldBe(BakeCacheFiles.StableId(built.ContentHash, built.Chunks[i].Index));
+        }
+
         GaussianCache expected = GaussianCacheTestSphere.Load(built);
         HeaderBytes(loaded.Header).ShouldBe(HeaderBytes(built.Root.Header));
         loaded.Header.LoopMode.ShouldBe(built.Root.Header.LoopMode);

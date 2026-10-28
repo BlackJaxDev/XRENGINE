@@ -143,7 +143,9 @@ public sealed class BakeOutputDirectory
             if (!file.Exists || file.Length > MaxReportBytes)
                 return false;
 
-            using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(path));
+            byte[] bytes = [];
+            Retry(() => bytes = File.ReadAllBytes(path));
+            using JsonDocument document = JsonDocument.Parse(bytes);
             JsonElement root = document.RootElement;
             return root.ValueKind == JsonValueKind.Object
                 && root.TryGetProperty("schemaVersion", out JsonElement version)

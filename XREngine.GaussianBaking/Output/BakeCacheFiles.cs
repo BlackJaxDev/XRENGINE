@@ -63,7 +63,7 @@ public static class BakeCacheFiles
     /// Reads the cache files back through the runtime path, and checks that they hold the built cache. The runtime reads
     /// a cooked cache asset with <see cref="PublishedCookedAssetReader"/>, and accepts the chunks in order with
     /// <see cref="GaussianCacheChunkLoader.ResolveChunkPath"/> and <see cref="GaussianCache.AcceptChunk"/>. The check
-    /// compares the header bytes, the data of chunk 0, the chunk paths, and the index and data of each chunk with the
+    /// compares the asset IDs, the header bytes, the data of chunk 0, the chunk paths, and the index and data of each chunk with the
     /// built cache, and decodes every chunk.
     /// </summary>
     /// <param name="build">The built cache.</param>
@@ -83,6 +83,8 @@ public static class BakeCacheFiles
         {
             GaussianCache cache = PublishedCookedAssetReader.LoadAsset<GaussianCache>(File.ReadAllBytes(rootPath))
                 ?? throw ReadBackFailed(rootPath, "the file is not a gaussian cache asset");
+            if (cache.ID != StableId(build.ContentHash, 0))
+                throw ReadBackFailed(rootPath, "the asset ID is not the stable ID of the root");
             if (!HeaderBytes(cache.Header).AsSpan().SequenceEqual(HeaderBytes(build.Root.Header)))
                 throw ReadBackFailed(rootPath, "the header is not the built header");
             if (!cache.RootChunkData.AsSpan().SequenceEqual(build.Root.RootChunkData))
@@ -97,6 +99,8 @@ public static class BakeCacheFiles
                     ?? throw ReadBackFailed(chunkPath, "the file is not a gaussian cache chunk asset");
                 if (chunk.Index != build.Chunks[i].Index || !chunk.Data.AsSpan().SequenceEqual(build.Chunks[i].Data))
                     throw ReadBackFailed(chunkPath, $"the chunk is not built chunk {build.Chunks[i].Index}");
+                if (chunk.ID != StableId(build.ContentHash, chunk.Index))
+                    throw ReadBackFailed(chunkPath, $"the asset ID is not the stable ID of chunk {chunk.Index}");
                 if (!cache.AcceptChunk(chunk))
                     throw ReadBackFailed(chunkPath, $"chunk {chunk.Index} was accepted before");
             }
