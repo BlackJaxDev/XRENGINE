@@ -581,6 +581,25 @@ public sealed class GaussianBakePipelineTests
     }
 
     [Test]
+    public async Task Pipeline_GridCannotMeetPositionError_WarnsGridErrorExceeded()
+    {
+        // No grid of 16 bits can hold the avatar within 1 micrometer, so the bake uses 16 bits and warns.
+        GaussianBakeBudget budget = GaussianBakeBudget.For(GaussianBakeKind.Avatar) with { MaxPositionErrorMeters = 1e-6f };
+        string output = Path.Combine(_workRoot, "avatar-grid-error");
+
+        BakeReport report = await CreatePipeline(new FakeRenderServices(), budget).RunAsync(AvatarOptions(output), CancellationToken.None);
+
+        report.Status.ShouldBe(BakeReport.ReadyStatus, report.FailureDetail);
+        report.GridBits.ShouldBe(16);
+        report.Warnings.ShouldContain(GaussianBakePipeline.GridErrorWarning);
+
+        // With the real budget the grid meets the error, so there is no warning.
+        BakeReport normal = await CreatePipeline(new FakeRenderServices()).RunAsync(AvatarOptions(Path.Combine(_workRoot, "avatar-grid-normal")), CancellationToken.None);
+        normal.Status.ShouldBe(BakeReport.ReadyStatus, normal.FailureDetail);
+        normal.Warnings.ShouldNotContain(GaussianBakePipeline.GridErrorWarning);
+    }
+
+    [Test]
     public async Task Pipeline_PreparedAvatar_RunsOneTime()
     {
         FakeRenderServices render = new();

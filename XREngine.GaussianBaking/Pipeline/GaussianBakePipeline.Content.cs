@@ -24,7 +24,8 @@ public sealed partial class GaussianBakePipeline
 {
     /// <summary>
     /// Chooses the motion, samples every frame for the largest vertex distances and the bounds, chooses the grid, breaks
-    /// the seam welds that open, and marks the animated meshes. The frame passes run on the content thread.
+    /// the seam welds that open, and marks the animated meshes. When 16 grid bits cannot meet the largest position error
+    /// of the budget, the report gets <see cref="GridErrorWarning"/>. The frame passes run on the content thread.
     /// </summary>
     private async Task<ContentAnalysis> AnalyzeAsync(BakeRun run, GaussianBakeBudget budget, CancellationToken cancellationToken)
     {
@@ -44,7 +45,10 @@ public sealed partial class GaussianBakePipeline
             throw new GaussianBakeException(GaussianBakeFailureCodes.ContentEmpty, $"The asset '{run.Options.AssetPath}' has no triangle surface to bake.");
 
         byte gridBits = GridQuantizer.ChooseGridBits(pass.Bounds, budget.MaxPositionErrorMeters);
-        float gridStep = GridStep(new GridQuantizer(pass.Bounds, gridBits));
+        GridQuantizer grid = new(pass.Bounds, gridBits);
+        if (grid.MaxErrorMeters > budget.MaxPositionErrorMeters)
+            run.Report.Warnings.Add(GridErrorWarning);
+        float gridStep = GridStep(grid);
         bool[] animatedMeshes = MotionClassifier.FindAnimatedMeshes(rest, pass.MaxDisplacement, gridStep);
 
         // Weld seam-split vertices at rest, and break each weld that opens by more than one grid step in a frame.

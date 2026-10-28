@@ -82,6 +82,12 @@ public sealed partial class GaussianBakePipeline
     /// </summary>
     public const string NonFiniteCaptureWarning = "capture-non-finite:";
 
+    /// <summary>
+    /// The warning when no grid of up to 16 bits holds the content bounds within the largest position error of the
+    /// budget. The cache then uses 16 bits, and its positions can be off by more than the budget.
+    /// </summary>
+    public const string GridErrorWarning = "grid-error-exceeded";
+
     /// <summary>The longest time to wait for the content thread when the bake puts back a pose or releases a player.</summary>
     private static readonly TimeSpan ReleaseTimeout = TimeSpan.FromSeconds(30);
 
