@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
@@ -34,6 +35,11 @@ namespace XREngine.Rendering.Commands
     /// applying front-to-back ordering inside a bucket. Transparent, UI, overlay, and diagnostic
     /// passes continue to use their existing order-preserving sorters.
     /// </summary>
+    /// <remarks>
+    /// In a render pass collection, the buckets draw in the order of their first insertion. The order of the
+    /// identity keys is not the same in each process, so the collection uses the keys only to put the commands of
+    /// a bucket together.
+    /// </remarks>
     public sealed class OpaqueStateBucketRenderCommandSorter : IComparer<RenderCommand>
     {
         int IComparer<RenderCommand>.Compare(RenderCommand? x, RenderCommand? y)
@@ -94,6 +100,10 @@ namespace XREngine.Rendering.Commands
         private readonly bool _farToNear;
         private readonly bool _bucketOpaqueState;
         private readonly Comparison<Entry> _entryComparison;
+        private readonly List<(int Start, int Count, long FirstSortOrderKey)> _bucketRuns = [];
+        private readonly List<Entry> _bucketScratch = [];
+        private static readonly Comparison<(int Start, int Count, long FirstSortOrderKey)> s_bucketRunComparison =
+            static (x, y) => x.FirstSortOrderKey.CompareTo(y.FirstSortOrderKey);
         private bool _sortDirty;
 
         public SnapshotSortedRenderCommandCollection(IComparer<RenderCommand> sorter)
@@ -187,7 +197,51 @@ namespace XREngine.Rendering.Commands
                 return;
 
             _entries.Sort(_entryComparison);
+            if (_bucketOpaqueState)
+                OrderStateBucketsByFirstInsertion();
             _sortDirty = false;
+        }
+
+        /// <summary>
+        /// Puts the state buckets in the order of their first insertion. The keys of a bucket are identity hash
+        /// codes, and these codes can change from one process to a different process. Because of this, the key
+        /// sort only puts the entries of each bucket together. The insertion order comes from the collection order.
+        /// Thus, the same content that is collected in the same order draws in the same order in each process.
+        /// This is necessary because the draw order selects the visible surface when two surfaces have the same
+        /// depth. The order in a bucket does not change.
+        /// </summary>
+        private void OrderStateBucketsByFirstInsertion()
+        {
+            ReadOnlySpan<Entry> sorted = CollectionsMarshal.AsSpan(_entries);
+            _bucketRuns.Clear();
+            int start = 0;
+            while (start < sorted.Length)
+            {
+                OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey bucket = sorted[start].StateBucket;
+                long firstSortOrderKey = sorted[start].SortOrderKey;
+                int end = start + 1;
+                while (end < sorted.Length && sorted[end].StateBucket == bucket)
+                {
+                    firstSortOrderKey = Math.Min(firstSortOrderKey, sorted[end].SortOrderKey);
+                    end++;
+                }
+
+                _bucketRuns.Add((start, end - start, firstSortOrderKey));
+                start = end;
+            }
+
+            if (_bucketRuns.Count < 2)
+                return;
+
+            _bucketRuns.Sort(s_bucketRunComparison);
+            _bucketScratch.Clear();
+            for (int i = 0; i < _bucketRuns.Count; i++)
+            {
+                (int runStart, int runCount, _) = _bucketRuns[i];
+                _bucketScratch.AddRange(sorted.Slice(runStart, runCount));
+            }
+
+            CollectionsMarshal.AsSpan(_bucketScratch).CopyTo(CollectionsMarshal.AsSpan(_entries));
         }
 
         private int CompareEntries(Entry x, Entry y)
