@@ -1,26 +1,40 @@
 using MemoryPack;
 using System;
 using System.Security.Cryptography;
+using System.Threading;
 using XREngine.Rendering.Meshlets;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Models.Gaussian.Cache;
 
 // Decodes chunk 0 and accepts the later chunks in order. The decode uses the installed meshoptimizer backend.
+// One lock serializes the decode, because the asset manager can give the same cache to more than one component.
 public sealed partial class GaussianCache
 {
+    private readonly Lock _decodeLock = new();
     private GaussianCacheRuntimeData? _runtime;
     private int _nextChunkIndex = 1;
 
     /// <summary>
     /// The decoded data. The first access checks the header, the chunk paths, and the hash of chunk 0, and decodes
     /// chunk 0. Set <see cref="Header"/>, <see cref="RootChunkData"/>, and <see cref="ChunkAssetPaths"/> before the first
-    /// access.
+    /// access. A reader that can run while another thread accepts a chunk holds <see cref="DecodeLock"/>.
     /// </summary>
     /// <exception cref="GaussianCacheFormatException">The header, a chunk path, or chunk 0 is not valid.</exception>
     [YamlIgnore]
     [MemoryPackIgnore]
-    public GaussianCacheRuntimeData Runtime => _runtime ?? DecodeRoot();
+    public GaussianCacheRuntimeData Runtime
+    {
+        get
+        {
+            GaussianCacheRuntimeData? runtime = Volatile.Read(ref _runtime);
+            if (runtime is not null)
+                return runtime;
+
+            lock (_decodeLock)
+                return _runtime ?? DecodeRoot();
+        }
+    }
 
     /// <summary>The index of the chunk that <see cref="AcceptChunk"/> accepts next. Chunk 0 is in the root asset, so the first value is 1.</summary>
     [YamlIgnore]
@@ -37,31 +51,72 @@ public sealed partial class GaussianCache
     public bool IsComplete => NextChunkIndex >= _header.Chunks.Length;
 
     /// <summary>
-    /// Checks a chunk against the chunk table and decodes it into <see cref="Runtime"/>. Do not call this method from
-    /// more than one thread at the same time.
+    /// The lock of the decode. <see cref="AcceptChunk"/> holds it while it decodes and while it raises the change of
+    /// <see cref="NextChunkIndex"/>. Hold it to read <see cref="Runtime"/> when another thread can accept a chunk.
     /// </summary>
+    internal Lock DecodeLock => _decodeLock;
+
+    /// <summary>
+    /// Gets the index and the asset path of the chunk that <see cref="AcceptChunk"/> accepts next, in one step under the
+    /// decode lock.
+    /// </summary>
+    /// <param name="index">The index of the next chunk.</param>
+    /// <param name="assetPath">The asset path of the next chunk, relative to the folder of the root asset.</param>
+    /// <returns>False when every chunk is accepted.</returns>
+    /// <exception cref="GaussianCacheFormatException">The header, a chunk path, or chunk 0 is not valid.</exception>
+    public bool TryGetNextChunk(out int index, out string assetPath)
+    {
+        lock (_decodeLock)
+        {
+            _ = _runtime ?? DecodeRoot();
+            index = NextChunkIndex;
+            if (index >= _header.Chunks.Length)
+            {
+                assetPath = string.Empty;
+                return false;
+            }
+
+            assetPath = _chunkAssetPaths[index - 1];
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Checks a chunk against the chunk table and decodes it into <see cref="Runtime"/>. More than one thread can call
+    /// this method: the decode lock lets one decode run at a time. A chunk that is accepted already does not decode
+    /// again, so two loaders of one cache can give the same chunk.
+    /// </summary>
+    /// <returns>True when this call decoded the chunk. False when the chunk was accepted before.</returns>
     /// <exception cref="GaussianCacheFormatException">
-    /// The chunk is not the next chunk (<see cref="GaussianCacheFormatException.ChunkOutOfOrderCode"/>), its SHA-256 is
-    /// not the hash in the chunk table (<see cref="GaussianCacheFormatException.HashMismatchCode"/>), or its data is not
-    /// valid. After a data error the runtime data can hold part of the chunk.
+    /// The chunk is not in the chunk table or is after the next chunk
+    /// (<see cref="GaussianCacheFormatException.ChunkOutOfOrderCode"/>), its SHA-256 is not the hash in the chunk table
+    /// (<see cref="GaussianCacheFormatException.HashMismatchCode"/>), or its data is not valid. After a data error the
+    /// runtime data can hold part of the chunk.
     /// </exception>
-    public void AcceptChunk(GaussianCacheChunk chunk)
+    public bool AcceptChunk(GaussianCacheChunk chunk)
     {
         ArgumentNullException.ThrowIfNull(chunk);
-        GaussianCacheRuntimeData runtime = Runtime;
-        GaussianCacheChunkInfo[] chunks = _header.Chunks;
-        if (NextChunkIndex >= chunks.Length)
-            throw new GaussianCacheFormatException(
-                GaussianCacheFormatException.ChunkOutOfOrderCode,
-                $"Chunk {chunk.Index} arrived, but all {chunks.Length} chunks are accepted.");
-        if (chunk.Index != NextChunkIndex)
-            throw new GaussianCacheFormatException(
-                GaussianCacheFormatException.ChunkOutOfOrderCode,
-                $"Chunk {chunk.Index} arrived, but the next chunk is {NextChunkIndex}.");
+        lock (_decodeLock)
+        {
+            GaussianCacheRuntimeData runtime = _runtime ?? DecodeRoot();
+            GaussianCacheChunkInfo[] chunks = _header.Chunks;
+            if (chunk.Index <= 0 || chunk.Index >= chunks.Length)
+                throw new GaussianCacheFormatException(
+                    GaussianCacheFormatException.ChunkOutOfOrderCode,
+                    $"Chunk {chunk.Index} arrived, but the chunk table has chunks 1 to {chunks.Length - 1}.");
+            if (chunk.Index > NextChunkIndex)
+                throw new GaussianCacheFormatException(
+                    GaussianCacheFormatException.ChunkOutOfOrderCode,
+                    $"Chunk {chunk.Index} arrived, but the next chunk is {NextChunkIndex}.");
 
-        VerifyHash(chunk.Data, chunks[chunk.Index]);
-        runtime.ApplyChunk(chunk.Data, MeshOptimizerBackendServices.Required);
-        NextChunkIndex = chunk.Index + 1;
+            VerifyHash(chunk.Data, chunks[chunk.Index]);
+            if (chunk.Index < NextChunkIndex)
+                return false;
+
+            runtime.ApplyChunk(chunk.Data, MeshOptimizerBackendServices.Required);
+            NextChunkIndex = chunk.Index + 1;
+            return true;
+        }
     }
 
     /// <summary>
