@@ -2196,8 +2196,10 @@ never changes selection. Receipt storage is transient and bounded to one owner;
 no saved layout or asset format changes.
 
 This contract checks exact current ownership and object lifetimes. It is not a
-history of every intermediate parent assignment. Cross-window focus transfer,
-search drafts and complete play-mode restoration need separate work.
+history of every intermediate parent assignment. Cross-window focus transfer and
+complete play-mode restoration need separate work. Search drafts for the asset
+browser, console filter, and Animation search transfer between dock hosts through
+their own contracts.
 
 
 ### Private structural-list finalization
@@ -2450,15 +2452,16 @@ key identity, alias handling, Undo/Redo, and dirty tracking. Row recycling stops
 old binding and Remove callbacks from acquiring a later key. Switching to a
 read-only row detaches the old editor bindings and Remove action, then hides
 the editor. Switching back hides the read-only label before publishing new
-bindings. Read-only text retains its full string and uses no wrapping with
-bounds clipping. Its exact control path must remain owned during text writes
-and cleanup.
+bindings. Read-only text uses the normalized display text of the plan, with no
+wrapping and with bounds clipping. Its exact control path must remain owned during
+text writes and cleanup.
 
 Opening/rebuilding still captures O(N) source state. Admission uses the existing
-snapshot key indexes and scans key text for line breaks. It also formats missing-key
-read-only values once during admission, checks them for line breaks, and retains
-that text. This work is O(N) in displayed keys per selected source; it does not
-create offscreen controls. Realization builds only the viewport plus overscan. This is a bounded UI-node contract, not a measured
+snapshot key indexes, normalizes key text, and counts its lines. It also formats
+missing-key read-only values once during admission, normalizes them, and retains
+that text. When a row has more than one line, the list reads every row extent once
+for each source revision. This work is O(N) in displayed keys per selected source;
+it does not create offscreen controls. Realization builds only the viewport plus overscan. This is a bounded UI-node contract, not a measured
 frame-time or allocation-performance claim.
 
 

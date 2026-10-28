@@ -5,7 +5,7 @@ startup, the game loop, and installed backends. Lower projects expose
 `RuntimeEngine` in `XREngine.Runtime.Rendering` and managed contracts in
 Runtime.Core, Data, Input, and Audio. Public namespaces can stay the same after
 a type moves to another project; see [Runtime Project Organization](../../architecture/runtime/project-organization.md).
-The implementation entry points are [Engine.cs](../../../XREngine.Runtime.Bootstrap/Engine/Engine.cs)
+The implementation entry points are [Engine.cs](../../../XREngine.Runtime.Host/Engine/Engine.cs)
 and [RuntimeEngine.cs](../../../XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs).
 
 ## Engine Class
@@ -76,7 +76,7 @@ public static void RemoveWindow(XRWindow window);
 `GameWindowStartupSettings` and these creation methods live in Bootstrap;
 `XRWindow` is a renderer-neutral facade in Runtime.Rendering. The desktop
 window module owns the actual native window, event pump, and handles.
-See [Engine.Windows.cs](../../../XREngine.Runtime.Bootstrap/RenderingHost/Engine.Windows.cs)
+See [Engine.Windows.cs](../../../XREngine.Runtime.Host/RenderingHost/Engine.Windows.cs)
 and [XRWindow.cs](../../../XREngine.Runtime.Rendering/Rendering/API/XRWindow.cs).
 
 #### World Management
