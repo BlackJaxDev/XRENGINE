@@ -55,10 +55,11 @@ internal sealed class NativeProfilerValueCellState
 
     public void Bind(NativeProfilerDisplayRow row)
     {
-        ENativeProfilerSetting? setting = row.SettingIndex >= 0 && row.SettingIndex <= (int)ENativeProfilerSetting.RootMaximum
+        ENativeProfilerSetting? setting = row.SettingIndex >= 0 && row.SettingIndex <= (int)ENativeProfilerSetting.SpeedProfileSeconds
             ? (ENativeProfilerSetting)row.SettingIndex : null;
         if (setting is >= ENativeProfilerSetting.SnapshotInterval and <= ENativeProfilerSetting.GraphSmoothing or
-            ENativeProfilerSetting.RootMinimum or ENativeProfilerSetting.RootMaximum)
+            ENativeProfilerSetting.RootMinimum or ENativeProfilerSetting.RootMaximum or
+            ENativeProfilerSetting.SpeedProfileSeconds)
         {
             bool useFloat = setting is ENativeProfilerSetting.DropThreshold or
                 ENativeProfilerSetting.DebugOutputMinimum or ENativeProfilerSetting.FpsMinimumPrevious or
@@ -90,6 +91,7 @@ internal sealed class NativeProfilerValueCellState
                 ENativeProfilerSetting.MaxOverflowPerCycle => 1_000_000,
                 ENativeProfilerSetting.MaxOverflowQueueSize => 5_000_000,
                 ENativeProfilerSetting.ProducerBufferCapacity => 1 << 20,
+                ENativeProfilerSetting.SpeedProfileSeconds => NativeProfilerSpeedProfileSecondsBinding.MaximumSeconds,
                 _ => 10_000,
             };
             _float.Maximum = setting switch

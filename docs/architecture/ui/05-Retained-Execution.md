@@ -1331,7 +1331,10 @@ generation and ranking revision, and report omitted paths. A changed revision
 rejects an older page request. Existing canonical dumps keep their full details.
 
 The native profiler exposes the canonical external-profiler action, the existing
-UDP preference, and the configured update interval. Preference writes use the
+UDP preference, and the configured update interval. The Settings view also starts and stops
+the shared engine speed profile capture. Its duration is a panel value from 1 to 600
+seconds, 15 by default, and is not saved. A capture that ends on its own shows its
+summary path at the next refresh. Preference writes use the
 same captured owner policy. CPU hierarchy selection keeps the worst sampled
 thread-time snapshot in each completed 0.5-second window. The selector retains
 only its candidate and displayed frame, resets on session changes and backward

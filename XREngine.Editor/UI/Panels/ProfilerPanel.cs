@@ -306,6 +306,8 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             ? new NativeProfilerRootLimitBinding(this, setting == ENativeProfilerSetting.RootMinimum)
             : setting == ENativeProfilerSetting.SpikeMinimumDrop
             ? new NativeProfilerSpikeThresholdBinding(this)
+            : setting == ENativeProfilerSetting.SpeedProfileSeconds
+            ? new NativeProfilerSpeedProfileSecondsBinding(this)
             : new NativeProfilerNumericSettingBinding(setting,
                 _settingsOwner is { IsCurrent: true } owner ? owner : new NativeProfilerSettingOwner());
 
@@ -461,6 +463,9 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         {
             case ENativeProfilerSetting.Pause:
                 TogglePause();
+                return;
+            case ENativeProfilerSetting.SpeedProfile:
+                ToggleSpeedProfile();
                 return;
             case ENativeProfilerSetting.ComponentTiming:
                 NativeProfilerSettingWriter.Set(owner, !debug.EnableProfilerComponentTiming,

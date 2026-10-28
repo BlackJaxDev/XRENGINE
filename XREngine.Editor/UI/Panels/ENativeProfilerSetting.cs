@@ -35,4 +35,6 @@ internal enum ENativeProfilerSetting
     GpuDisplayMode,
     RootMinimum,
     RootMaximum,
+    SpeedProfile,
+    SpeedProfileSeconds,
 }

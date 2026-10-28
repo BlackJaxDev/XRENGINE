@@ -540,6 +540,7 @@ public partial class ProfilerPanel
         rows.Add(new("Interpolate GPU", debug.ProfilerPanelInterpolateGpuTimingGraphs ? "On" : "Off", "Animate the latest sample.", (int)ENativeProfilerSetting.GpuInterpolation));
         rows.Add(new("CPU display mode", debug.ProfilerPanelCpuTimingDisplayMode.ToString(), "Activate to cycle Latest, Average, Worst.", (int)ENativeProfilerSetting.CpuDisplayMode));
         rows.Add(new("GPU display mode", debug.ProfilerPanelGpuTimingDisplayMode.ToString(), "Activate to cycle Latest, Average, Worst.", (int)ENativeProfilerSetting.GpuDisplayMode));
+        AddSpeedProfileRows(rows);
         if (!owner.IsCurrent)
         {
             rows.Clear();
