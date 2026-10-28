@@ -269,6 +269,20 @@ cancellation checks after Right opens a submenu, before its first row is
 presented. Mouse opening must cancel pending keyboard focus. Right/Left/Escape
 behavior still requires native-window acceptance.
 
+## Windows Native Editor Test Run (2026-10-28)
+
+This run executed the desktop editor tests on a Windows 11 laptop, in a separate
+worktree. It used `Tools/Invoke-AgentBuild.ps1` for restore, build, and test. The
+build had 0 warnings and 0 errors.
+
+| Check | Result | Limit |
+|---|---|---|
+| `NativeHierarchy*`, `NativeDockLayout*`, `NativeSaveCoalescer*` at `ef11d56e` | 156 tests: 139 passed and 17 failed. All 17 failures were in `NativeHierarchyMenuTests`. | The failures were in test setup, not in product behavior. |
+| `XREngine.UnitTests.Editor.Native` at `ef11d56e` | 464 tests: 445 passed and 19 failed. The extra 2 were `ThrowAfterScrollCommitCompensatesOnlyTheStillOwnedPartialView`. | The 2 dock failures were present before `418767e6`. |
+| Cause | Since `418767e6`, a hierarchy panel that activates during a world mutation builds its rows on the next Late tick. The menu test helper read the row list immediately. The dock test subscribed to the old list, but the deferred build creates a new list. | No product change. |
+| Fix in `d4d48d60` | The menu helper calls `CompletePendingHierarchyRemake()` after activation. The dock test observes each row list that the panel adds. Assertions are unchanged. | Test files only. |
+| Both test sets at `d4d48d60` | Targeted classes: 32/32 passed. `XREngine.UnitTests.Editor.Native`: 464/464 passed, with 0 skipped. | Unit tests only. Visual, input, and multi-window checks remain open. |
+
 ## Hierarchy And Panel State Validation (2026-10-25)
 
 This run checks that moving the first editor-only child to the root allocates the
