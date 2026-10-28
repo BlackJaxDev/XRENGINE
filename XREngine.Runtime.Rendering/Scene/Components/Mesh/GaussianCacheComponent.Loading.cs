@@ -19,13 +19,14 @@ public partial class GaussianCacheComponent
     private bool _trackerChanged;
 
     /// <summary>
-    /// Loads the root asset of a cache, sets <see cref="Cache"/>, and then loads and accepts the chunks in order. The
-    /// component uploads the new data of each chunk after the cache accepts it. A chunk path that is not rooted is
-    /// relative to the folder of the root asset. The method stops without an error when <see cref="Cache"/> changes
-    /// while it loads.
+    /// Loads the root asset of a cache, sets <see cref="Cache"/>, and then loads and accepts the chunks in order with
+    /// <see cref="GaussianCacheChunkLoader"/>. The component uploads the new data of each chunk after the cache accepts
+    /// it. Each chunk path is relative to the folder of the root asset. The method stops without an error when
+    /// <see cref="Cache"/> changes while it loads. Another component can load the same cache at the same time: each
+    /// chunk then decodes one time, and each component uploads the decoded data.
     /// </summary>
     /// <exception cref="FileNotFoundException">The root asset or a chunk could not be loaded.</exception>
-    /// <exception cref="GaussianCacheFormatException">The cache or a chunk is not valid.</exception>
+    /// <exception cref="GaussianCacheFormatException">The cache, a chunk path, or a chunk is not valid.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was canceled.</exception>
     public async Task LoadAsync(string rootAssetPath, CancellationToken cancellationToken)
     {
@@ -37,22 +38,13 @@ public partial class GaussianCacheComponent
         cancellationToken.ThrowIfCancellationRequested();
         Cache = cache;
 
-        string? folder = Path.GetDirectoryName(rootAssetPath);
-        while (!cache.IsComplete && ReferenceEquals(_cache, cache))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            string relativePath = cache.ChunkAssetPaths[cache.NextChunkIndex - 1];
-            string chunkPath = string.IsNullOrEmpty(folder) || Path.IsPathRooted(relativePath)
-                ? relativePath
-                : Path.Combine(folder, relativePath);
-            GaussianCacheChunk chunk = await LoadAssetAsync<GaussianCacheChunk>(chunkPath, cancellationToken).ConfigureAwait(false)
-                ?? throw new FileNotFoundException($"The gaussian cache chunk '{chunkPath}' could not be loaded.", chunkPath);
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(_cache, cache))
-                return;
-            // The cache raises a NextChunkIndex change, and the handler collects the new data.
-            cache.AcceptChunk(chunk);
-        }
+        // The cache raises a NextChunkIndex change for each decoded chunk, and the handler collects the new data.
+        await GaussianCacheChunkLoader.LoadChunksAsync(
+            cache,
+            rootAssetPath,
+            static (path, token) => LoadAssetAsync<GaussianCacheChunk>(path, token),
+            () => ReferenceEquals(_cache, cache),
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -104,8 +96,12 @@ public partial class GaussianCacheComponent
         CacheUpload upload;
         try
         {
-            lock (tracker)
-                upload = tracker.Collect();
+            // The decode lock keeps another loader of the same cache from a decode while the tracker copies the data.
+            lock (tracker.Cache.DecodeLock)
+            {
+                lock (tracker)
+                    upload = tracker.Collect();
+            }
         }
         catch (Exception error)
         {
@@ -206,8 +202,9 @@ public partial class GaussianCacheComponent
     }
 
     /// <summary>
-    /// Tracks which decoded data of one cache is already collected for upload. Lock the tracker to call
-    /// <see cref="Collect"/>; the cache must not accept a chunk at the same time.
+    /// Tracks which decoded data of one cache is already collected for upload. To call <see cref="Collect"/>, hold the
+    /// decode lock of the cache (<see cref="GaussianCache.DecodeLock"/>) and then the tracker, so that no chunk decodes
+    /// at the same time.
     /// </summary>
     private sealed class UploadTracker
     {

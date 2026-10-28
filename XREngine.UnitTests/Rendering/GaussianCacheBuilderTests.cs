@@ -400,7 +400,7 @@ public sealed class GaussianCacheBuilderTests
     }
 
     [Test]
-    public void AcceptChunk_OutOfOrder_ThrowsChunkOutOfOrder()
+    public void AcceptChunk_OutOfOrder_ThrowsChunkOutOfOrderAndRepeatDoesNotDecode()
     {
         GaussianCache cache = CookRoundTrip(_cache.Root);
 
@@ -408,10 +408,15 @@ public sealed class GaussianCacheBuilderTests
         early.DiagnosticCode.ShouldBe(GaussianCacheFormatException.ChunkOutOfOrderCode);
         cache.NextChunkIndex.ShouldBe(1);
 
-        cache.AcceptChunk(_cache.Chunks[0]);
-        GaussianCacheFormatException repeated = Should.Throw<GaussianCacheFormatException>(() => cache.AcceptChunk(_cache.Chunks[0]));
-        repeated.DiagnosticCode.ShouldBe(GaussianCacheFormatException.ChunkOutOfOrderCode);
+        cache.AcceptChunk(_cache.Chunks[0]).ShouldBeTrue();
+
+        // A chunk that is accepted already counts as accepted and does not decode again.
+        cache.AcceptChunk(_cache.Chunks[0]).ShouldBeFalse();
         cache.NextChunkIndex.ShouldBe(2);
+
+        GaussianCacheFormatException unknown = Should.Throw<GaussianCacheFormatException>(
+            () => cache.AcceptChunk(new GaussianCacheChunk { Index = _cache.Root.Header.Chunks.Length, Data = [] }));
+        unknown.DiagnosticCode.ShouldBe(GaussianCacheFormatException.ChunkOutOfOrderCode);
     }
 
     [Test]
