@@ -21,6 +21,14 @@ internal readonly record struct NativeDockPanelStateValues(
         _ => -1,
     };
 
+    /// <summary>Gets a draft equal to the committed field value, for panels with a transfer field.</summary>
+    internal NativeTextFieldDraft? CommittedFieldDraft => Panel switch
+    {
+        NativeDockPanel.Assets => new(AssetSearch ?? string.Empty, 0, 0, false),
+        NativeDockPanel.Console => new(ConsoleFilter ?? string.Empty, 0, 0, false),
+        _ => null,
+    };
+
     internal static NativeDockPanelStateValues Capture(NativeDockLayout layout, string panel)
     {
         int index = ScrollIndex(panel);

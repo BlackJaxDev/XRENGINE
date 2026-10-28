@@ -146,11 +146,21 @@ internal sealed class NativeToolPanelStateBinding
             Panel.ScrollIntentRevision, scrollOwner, animationView);
     }
 
+    /// <summary>Captures the unsubmitted draft of the panel's transfer field, or null.</summary>
+    internal NativeTextFieldDraft? CaptureFieldDraft()
+    {
+        if (!IsCurrent)
+            throw new InvalidOperationException("The panel state owner is unavailable.");
+        return NativeTextFieldDraftTransfer.TryCapture(Panel.TransferDraftField, out NativeTextFieldDraft draft)
+            ? draft : null;
+    }
+
     internal NativeDockPanelStateReceipt Restore(NativeDockPanelStateValues values,
         Func<bool>? sourceCurrent = null,
         NativeAnimationPanelViewValues? animationView = null,
         Action<NativeDockPanelStateReceipt>? retainPartialCommit = null,
-        bool restorePriorSearchFocus = false)
+        bool restorePriorSearchFocus = false,
+        NativeTextFieldDraft? fieldDraft = null)
     {
         if (values.Panel != PanelName)
             throw new InvalidOperationException("The requested panel state is for another panel.");
@@ -190,6 +200,13 @@ internal sealed class NativeToolPanelStateBinding
                     break;
             }
             RequireOwnedState(intent);
+            // The draft is written after its committed value, so a later submit commits the draft.
+            if (fieldDraft is { } draft && Panel.TransferDraftField is { } field)
+            {
+                NativeTextFieldDraftTransfer.Restore(field, draft, () => RequireOwnedState(intent),
+                    releaseFocus: restorePriorSearchFocus);
+                RequireOwnedState(intent);
+            }
             if (appliedView is { } view && !view.IsCurrent)
                 throw new InvalidOperationException("The Animation view changed before scroll restore.");
             Panel.SetScrollOffsetOwned(values.ScrollOffset, intent, this);

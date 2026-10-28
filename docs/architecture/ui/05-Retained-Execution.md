@@ -2259,14 +2259,31 @@ one display and ensures the input uses the configured font size and color.
 
 
 
+### Tool field draft transfer
+
+The Assets search field and the Console filter field keep an unsubmitted draft
+separate from the committed value. `NativeToolPanelStateBinding.CaptureFieldDraft`
+captures the text, caret, selection anchor, and presented focus through
+`NativeTextFieldDraftTransfer`. A bound, commit-on-submit, or composing field is
+not captured. The dock transfer state carries the draft as `FieldDraft`.
+
+Restore writes the committed value first and then the draft, through guarded
+text and selection writes that check the destination binding and field. Equal
+values are not written again. Focus is requested only when the draft had
+presented focus and the destination canvas has no focused control and no
+pending focus request. A failed transfer restores the destination's prior draft,
+or its committed value when the panel had no prior field, and releases focus that
+the transfer acquired without committing the draft. No saved layout field is
+added. `NativeDockFieldDraftTransferTests` covers both panels.
+
 ### Animation path-candidate view transfer
 
 The live Animation view receipt includes the committed path query, result page,
 and selected stable path ID. It records the current scene root even when there
 is no selected clip. Root replacement, lifetime changes, later query/page/selection
 changes, and later source search-field intent invalidate the receipt. No saved
-layout fields are added. An unsubmitted search draft and keyboard focus are not
-part of this transfer.
+layout fields are added. The unsubmitted search draft, caret, selection, and
+presented focus transfer separately through the search field receipt.
 
 Owned destination projection defers scene-path discovery. It retains the requested
 candidate view until an ordinary refresh discovers a fresh candidate list. A

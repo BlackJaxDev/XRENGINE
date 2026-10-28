@@ -851,8 +851,9 @@ internal sealed class NativeDockTreeHost
             NativeDockPanelStateReceipt receipt = binding.CaptureReceipt();
             if (panel == NativeDockPanel.Animation && receipt.AnimationView is null)
                 return null;
+            NativeTextFieldDraft? draft = binding.CaptureFieldDraft();
             return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent,
-                receipt.AnimationView?.Values);
+                receipt.AnimationView?.Values, FieldDraft: draft);
         }
         if (panel is NativeDockPanel.Animation or NativeDockPanel.Hierarchy)
             return null;
@@ -912,6 +913,7 @@ internal sealed class NativeDockTreeHost
             NativeDockPanelStateValues.Capture(_layout, panel);
         NativeDockPanelStateReceipt? destinationReceipt = null;
         NativeAnimationPanelViewValues? destinationBeforeView = null;
+        NativeTextFieldDraft? destinationBeforeDraft = null;
         NativeHierarchyPanelViewReceipt? destinationHierarchy = null;
         NativeHierarchyPanelViewReceipt? appliedHierarchy = null;
         if (transferState is not null && _panelSlots.TryGetValue(panel, out SceneNode? priorSlot))
@@ -930,6 +932,7 @@ internal sealed class NativeDockTreeHost
                     return false;
                 destinationReceipt = priorBinding.CaptureReceipt();
                 destinationBefore = destinationReceipt.Value.Values;
+                destinationBeforeDraft = priorBinding.CaptureFieldDraft();
                 if (priorBinding.Panel is AnimationPanel animation)
                     destinationBeforeView = animation.CapturePriorView();
             }
@@ -1049,7 +1052,8 @@ internal sealed class NativeDockTreeHost
                 searchReceive?.Complete();
                 stateMutationStarted = true;
                 NativeDockPanelStateReceipt applied = binding.Restore(
-                    state.Values, ForwardCurrent, state.AnimationView, partial => appliedState = partial);
+                    state.Values, ForwardCurrent, state.AnimationView, partial => appliedState = partial,
+                    fieldDraft: state.FieldDraft);
                 appliedState = applied;
                 if (!applied.IsCurrent || !ForwardCurrent() || !DestinationCurrent())
                     throw new InvalidOperationException("The transferred panel changed after restore.");
@@ -1101,7 +1105,8 @@ internal sealed class NativeDockTreeHost
                 {
                     NativeDockPanelStateReceipt restored =
                         applied.Binding.Restore(destinationBefore, DestinationCurrent,
-                            destinationBeforeView, restorePriorSearchFocus: true);
+                            destinationBeforeView, restorePriorSearchFocus: true,
+                            fieldDraft: destinationBeforeDraft ?? destinationBefore.CommittedFieldDraft);
                     if (restored.IsCurrent && DestinationCurrent())
                     {
                         restored.Values.WriteTo(_layout);

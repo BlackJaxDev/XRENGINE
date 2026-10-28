@@ -5,7 +5,8 @@ internal readonly record struct NativeDockPanelTransferState(
     NativeDockPanelStateValues Values,
     Func<bool> RequireSourceCurrent,
     NativeAnimationPanelViewValues? AnimationView = null,
-    NativeHierarchyPanelViewValues? HierarchyView = null)
+    NativeHierarchyPanelViewValues? HierarchyView = null,
+    NativeTextFieldDraft? FieldDraft = null)
 {
     internal bool IsCurrent => RequireSourceCurrent();
 }

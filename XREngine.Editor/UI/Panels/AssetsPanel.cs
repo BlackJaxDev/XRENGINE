@@ -325,6 +325,8 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         }
     }
 
+    internal override UITextInputComponent? TransferDraftField => _searchInput;
+
     protected override void CreateCommands(SceneNode commands)
     {
         AddCommand("Up", () => Folder = Path.GetDirectoryName(CurrentFolder) ?? string.Empty);

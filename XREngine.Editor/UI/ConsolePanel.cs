@@ -318,6 +318,8 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         }
     }
 
+    internal override UITextInputComponent? TransferDraftField => _filterInput;
+
     protected override void CreateCommands(SceneNode commands)
     {
         if (BoundableTransform.GetCanvasTransform()?.SceneNode is { } canvasNode)

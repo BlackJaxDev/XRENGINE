@@ -343,6 +343,9 @@ public abstract class NativeVirtualTextPanel : EditorPanel, IUIScrollReceiver
     }
 
     protected virtual void CreateCommands(SceneNode commands) { }
+
+    /// <summary>Gets the text field whose unsubmitted draft moves with a dock transfer, or null.</summary>
+    internal virtual UITextInputComponent? TransferDraftField => null;
     protected virtual float FooterHeight => 0;
     protected virtual void CreateFooter(SceneNode parent) { }
     protected virtual void OnRowActivated(ulong id) { }

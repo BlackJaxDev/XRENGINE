@@ -164,9 +164,10 @@ public static class EditorPanelHost
             NativeDockPanelStateReceipt receipt = binding.CaptureReceipt();
             if (panel == NativeDockPanel.Animation && receipt.AnimationView is null)
                 return null;
+            NativeTextFieldDraft? draft = binding.CaptureFieldDraft();
             if (!HostCurrent()) return null;
             return new(receipt.Values, () => HostCurrent() && receipt.IsCurrent,
-                receipt.AnimationView?.Values);
+                receipt.AnimationView?.Values, FieldDraft: draft);
         }
 
         bool ReceivePanelWithState(string panel, NativeDockPanelTransferState state)
@@ -198,6 +199,7 @@ public static class EditorPanelHost
             if (!BeforeCurrent() || !state.IsCurrent || !BeforeCurrent())
                 return false;
             NativeDockPanelStateReceipt before = binding.CaptureReceipt();
+            NativeTextFieldDraft? beforeDraft = binding.CaptureFieldDraft();
             NativeAnimationPanelViewValues? priorAnimation =
                 (binding.Panel as AnimationPanel)?.CapturePriorView();
             bool DestinationCurrent() => toolsIdentity.IsCurrent &&
@@ -226,7 +228,8 @@ public static class EditorPanelHost
             {
                 searchReceive?.Complete();
                 NativeDockPanelStateReceipt applied = binding.Restore(
-                    state.Values, ForwardCurrent, state.AnimationView, partial => retained = partial);
+                    state.Values, ForwardCurrent, state.AnimationView, partial => retained = partial,
+                    fieldDraft: state.FieldDraft);
                 retained = applied;
                 if (!applied.IsCurrent || !ForwardCurrent() || !DestinationCurrent())
                     throw new InvalidOperationException("The transferred panel changed after restore.");
@@ -247,7 +250,8 @@ public static class EditorPanelHost
                 {
                     try
                     {
-                        var restored = binding.Restore(before.Values, DestinationCurrent, priorView, restorePriorSearchFocus: true);
+                        var restored = binding.Restore(before.Values, DestinationCurrent, priorView, restorePriorSearchFocus: true,
+                            fieldDraft: beforeDraft ?? before.Values.CommittedFieldDraft);
                         if (restored.IsCurrent && DestinationCurrent())
                         {
                             restored.Values.WriteTo(layout);
