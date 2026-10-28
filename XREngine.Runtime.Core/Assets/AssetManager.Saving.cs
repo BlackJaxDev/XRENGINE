@@ -24,6 +24,7 @@ namespace XREngine
             try
             {
 #endif
+                AdmitAuthoringWrite(asset.FilePath);
                 XRAssetGraphUtility.RefreshAssetGraph(asset);
                 asset.SerializeTo(asset.FilePath, Serializer);
                 PostSaved(asset, false);
@@ -47,6 +48,7 @@ namespace XREngine
                 if (File.Exists(path) && !(AllowOverwriteCallback?.Invoke(path) ?? true))
                     path = GetUniqueAssetPath(path);
 
+                AdmitAuthoringWrite(path);
                 asset.FilePath = path;
                 XRAssetGraphUtility.RefreshAssetGraph(asset);
                 asset.SerializeTo(path, Serializer);

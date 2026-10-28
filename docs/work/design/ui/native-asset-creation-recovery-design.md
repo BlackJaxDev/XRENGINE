@@ -1,6 +1,7 @@
 # Native Asset Creation Recovery Proposal
 
-Status: Proposed; owner approval pending
+Status: Approved on 2026-10-26; core protocol implemented
+Architecture: [Asset creation recovery](../../../architecture/assets/asset-creation-recovery.md)
 Scope: Native asset creation and its Undo/Redo only
 Related work: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-parity-todo.md)
 Investigation: [Retained UI integration](../../investigations/ui/retained-ui-integration.md)

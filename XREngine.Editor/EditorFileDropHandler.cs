@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Picking;
 using XREngine.Components.Scene.Mesh;
@@ -72,18 +73,7 @@ internal static class EditorFileDropHandler
             return;
         }
 
-        string assetsRoot = Path.GetFullPath(assetManager.GameAssetsPath);
-        string normalizedSource = Path.GetFullPath(sourcePath);
-        string copiedPath = normalizedSource.StartsWith(assetsRoot, StringComparison.OrdinalIgnoreCase)
-            ? normalizedSource
-            : CopyIntoAssetsRoot(normalizedSource, assetsRoot);
-
-        if (string.IsNullOrWhiteSpace(copiedPath) || !File.Exists(copiedPath))
-        {
-            Debug.LogWarning("Failed to copy dropped file into Assets.");
-            return;
-        }
-
+        // Resolve the target before any file is created, so a refused drop leaves no files.
         if (Engine.State.MainPlayer?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
         {
             Debug.LogWarning("No editor camera pawn available to apply dropped texture.");
@@ -109,38 +99,84 @@ internal static class EditorFileDropHandler
             return;
         }
 
-        XRTexture2D texture = new();
-        texture.Name = Path.GetFileNameWithoutExtension(copiedPath);
-        texture.FilePath = copiedPath;
-
-        if (!texture.Load3rdParty(copiedPath))
+        try
         {
-            Debug.LogWarning($"Failed to import texture from '{copiedPath}'.");
-            return;
+            ApplyDroppedTexture(assetManager, Path.GetFullPath(sourcePath), material);
         }
+        catch (Exception exception)
+        {
+            Debug.LogWarning($"The dropped texture was not applied: {exception.Message}");
+        }
+    }
 
-        string assetPath = AssetManager.VerifyAssetPath(texture, assetsRoot);
+    /// <summary>
+    /// Imports the dropped image as a texture asset and assigns it to the first material slot in one
+    /// Undo action. A source outside the assets root is copied in. New files go through the asset
+    /// creation recovery journal, so Undo moves them back into the journal and Redo publishes them
+    /// again. The material's source document becomes dirty on apply, Undo, and Redo.
+    /// </summary>
+    private static void ApplyDroppedTexture(AssetManager assetManager, string sourcePath, XRMaterial material)
+    {
+        string assetsRoot = Path.GetFullPath(assetManager.GameAssetsPath!);
+        bool insideAssets = IsUnderRoot(assetsRoot, sourcePath);
+        string imagePath = insideAssets
+            ? sourcePath
+            : GetUniqueFilePath(Path.Combine(assetsRoot, Path.GetFileName(sourcePath)));
+
+        XRTexture2D texture = new() { Name = Path.GetFileNameWithoutExtension(imagePath) };
+        if (!texture.Load3rdParty(sourcePath))
+            throw new InvalidDataException($"Failed to import texture from '{sourcePath}'.");
+        string assetPath = AssetManager.VerifyAssetPath(texture, Path.GetDirectoryName(imagePath)!);
         if (File.Exists(assetPath))
             assetPath = AssetManager.GetUniqueAssetPath(assetPath);
-
         texture.FilePath = assetPath;
-        assetManager.Save(texture);
+        byte[] assetBytes = SerializeAsset(texture);
 
-        material.Textures[0] = texture;
+        var files = new List<NativeAssetCreationFile>(2);
+        if (!insideAssets)
+            files.Add(new NativeAssetCreationFile(imagePath, File.ReadAllBytes(sourcePath), Guid.NewGuid()));
+        files.Add(new NativeAssetCreationFile(assetPath, assetBytes, texture.ID));
+
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Drop Texture");
+        NativeAssetCreation.Create("Drop Texture", files);
+        assetManager.NotifyExternalAssetSaved(texture, newAsset: true);
+        UI.MaterialTextureSlotAction.ApplyInScope(material, 0, texture, "Drop Texture");
+    }
+
+    private static bool IsUnderRoot(string root, string path)
+    {
+        try
+        {
+            NativeAssetPathPolicy.RequireUnderRoot(root, path, allowRoot: false);
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or IOException)
+        {
+            return false;
+        }
+    }
+
+    private static byte[] SerializeAsset(XRAsset asset)
+    {
+        string temp = Path.Combine(Path.GetTempPath(), "xre-asset-" + Guid.NewGuid().ToString("N") + ".asset");
+        try
+        {
+            asset.SerializeTo(temp, AssetManager.Serializer);
+            return File.ReadAllBytes(temp);
+        }
+        finally
+        {
+            try { File.Delete(temp); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     private static XRMaterial? GetMaterialForMesh(RenderableMesh mesh)
     {
         var renderer = mesh.CurrentLODRenderer ?? mesh.LODs.First?.Value.Renderer;
         return renderer?.Material;
-    }
-
-    private static string CopyIntoAssetsRoot(string sourcePath, string assetsRoot)
-    {
-        string targetPath = Path.Combine(assetsRoot, Path.GetFileName(sourcePath));
-        targetPath = GetUniqueFilePath(targetPath);
-        File.Copy(sourcePath, targetPath, overwrite: false);
-        return targetPath;
     }
 
     private static string GetUniqueFilePath(string path)

@@ -36,6 +36,8 @@ namespace XREngine
         {
             foreach (string metaFile in context.FileSystem.EnumerateFiles(context.MetadataRoot, "*.meta", SearchOption.AllDirectories).ToArray())
             {
+                if (IsCreationRecoveryProtected(metaFile))
+                    continue;
                 if (!ShouldDeleteMetadataFile(metaFile, context.AssetsRoot, context.Files))
                     continue;
 
@@ -145,7 +147,8 @@ namespace XREngine
             EnsureHostFileAssetAccess();
             lock (_metadataLock)
             {
-                if (!AssetPathExists(assetPath, isDirectory, files))
+                if (!AssetPathExists(assetPath, isDirectory, files) ||
+                    IsCreationRecoveryProtected(assetPath) || IsCreationRecoveryProtected(metaPath))
                     return;
 
                 string? directory = Path.GetDirectoryName(metaPath);

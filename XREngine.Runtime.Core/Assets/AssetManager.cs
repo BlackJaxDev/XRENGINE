@@ -511,6 +511,10 @@ namespace XREngine
             if (string.Equals(Path.GetExtension(path), ".tmp", StringComparison.OrdinalIgnoreCase))
                 return true;
 
+            // A journaled creation owns its paths until it completes or is recovered.
+            if (IsCreationRecoveryProtected(path))
+                return true;
+
             if (!_recentlySavedPaths.TryGetValue(path, out var saveTime))
                 return false;
 

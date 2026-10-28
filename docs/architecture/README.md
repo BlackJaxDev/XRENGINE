@@ -61,6 +61,7 @@ Shared managed feature libraries, `Runtime.Core`, `Runtime.Rendering`, and the i
 - [Rendering Architecture Index](rendering/README.md)
 - [Rendering Runtime Overview](rendering/runtime-overview.md)
 - [Cooked Texture Payloads](assets/cooked-texture-payloads.md)
+- [Asset Creation Recovery](assets/asset-creation-recovery.md)
 - [Portable Engine Host](runtime/portable-engine-host.md)
 - [Job System](../developer-guides/runtime/job-system.md)
 - [Networking Overview](networking/overview.md)

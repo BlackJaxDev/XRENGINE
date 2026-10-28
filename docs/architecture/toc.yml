@@ -11,6 +11,8 @@
       href: assets/coacd.md
     - name: Cooked Asset AOT And IO
       href: assets/cooked-asset-aot-and-io.md
+    - name: Asset Creation Recovery
+      href: assets/asset-creation-recovery.md
 
 - name: Audio
   items:

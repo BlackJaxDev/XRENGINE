@@ -53,6 +53,8 @@ public partial class AssetManager
             _authoringContextRebinding = true;
             try
             {
+                // Recovery records must protect their paths before watchers start.
+                OpenCreationRecovery(project);
                 if (assets is not null)
                 {
                     _gameAssetsPath = assets;
@@ -74,6 +76,7 @@ public partial class AssetManager
         lock (_metadataLock)
         {
             _authoringProjectRoot = null;
+            OpenCreationRecovery(null);
             InvalidateAuthoringContext();
         }
     }

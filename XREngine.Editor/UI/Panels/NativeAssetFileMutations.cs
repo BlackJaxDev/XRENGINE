@@ -116,6 +116,9 @@ internal static class NativeAssetFileMutations
             throw new FileNotFoundException("The source asset path no longer exists.", source);
         if (File.Exists(destination) || Directory.Exists(destination))
             throw new IOException($"'{Path.GetFileName(destination)}' already exists.");
+        // A normal move ends the Undo receipt of a journaled creation at either path.
+        NativeAssetCreation.AdmitPathEdit(source, "Moved");
+        NativeAssetCreation.AdmitPathEdit(destination, "Moved");
         if (isDirectory)
             Directory.Move(source, destination);
         else
