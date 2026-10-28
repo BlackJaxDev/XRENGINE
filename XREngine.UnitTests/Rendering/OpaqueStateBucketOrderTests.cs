@@ -57,6 +57,26 @@ public sealed class OpaqueStateBucketOrderTests
         PublishDistances([(other, 2.0f), (shared, 20.0f), (shared, 5.0f)]).ShouldBe([4.0f, 25.0f, 400.0f]);
     }
 
+    [Test]
+    public void StateBuckets_SharedMaterialsInsertedInterleaved_StayTogether()
+    {
+        // Two materials with two mesh renderers each. The buckets of one material stay together, so the renderer does
+        // not upload a material again between them. The materials, and the buckets in a material, draw in the order of
+        // their first insertion.
+        XRMaterial materialA = new();
+        XRMaterial materialB = new();
+        XRMeshRenderer a1 = new(null, materialA);
+        XRMeshRenderer a2 = new(null, materialA);
+        XRMeshRenderer b1 = new(null, materialB);
+        XRMeshRenderer b2 = new(null, materialB);
+
+        PublishRenderers([(a1, 2.0f), (b1, 2.0f), (a2, 2.0f), (b2, 2.0f)]).ShouldBe([a1, a2, b1, b2]);
+        PublishRenderers([(b2, 2.0f), (a1, 2.0f), (b1, 2.0f), (a2, 2.0f)]).ShouldBe([b2, b1, a1, a2]);
+
+        // The members of each bucket still draw near to far.
+        PublishDistances([(a1, 20.0f), (b1, 2.0f), (a1, 5.0f), (a2, 3.0f), (b1, 1.0f)]).ShouldBe([25.0f, 400.0f, 9.0f, 1.0f, 4.0f]);
+    }
+
     private static OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey ResolveBucket(XRMeshRenderer renderer)
         => OpaqueStateBucketRenderCommandSorter.ResolveStateBucket(CreateCommand(renderer, 2.0f));
 
