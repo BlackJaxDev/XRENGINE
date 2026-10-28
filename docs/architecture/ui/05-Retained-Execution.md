@@ -2797,8 +2797,10 @@ Partial conflicts keep guarded history instead of overwriting callback edits.
 
 A direct list, linked-list, or dictionary row can open a separate retained detail
 for one inner built-in list or array. The inner values must use a fixed-height
-Boolean, numeric, or nonflags enum editor. Recursive objects, strings, flags enums,
-custom collections, and variable-height editors keep their existing fallback.
+Boolean, numeric, nonflags enum, or single-line string editor. A string list with a
+line break (CR, LF, U+0085, U+2028, or U+2029) in any value cannot open the detail,
+because nested rows have a fixed height. Recursive objects, flags enums, custom
+collections, and variable-height editors keep their existing fallback.
 Opening the detail captures the outer owner/property and exact slot or key. Row
 recycling does not invalidate that durable source path; replacement, changed
 collection generation, or changed owner/node/document lifetime does.

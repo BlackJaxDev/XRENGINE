@@ -71,12 +71,26 @@ public static partial class InspectorPropertyEditors
                 Type elementType = ResolveElementType(collectionType, innerLists[0]!.GetType());
                 if (elementType.IsEnum)
                     return !elementType.IsDefined(typeof(FlagsAttribute), inherit: false);
+                // Nested rows have a fixed height, so a multiline string cannot use them.
+                if (elementType == typeof(string))
+                    return innerLists.All(list => AllSingleLine(list!));
                 TypeCode code = Type.GetTypeCode(elementType);
                 return code is TypeCode.Boolean or TypeCode.Byte or TypeCode.SByte or
                     TypeCode.Int16 or TypeCode.UInt16 or TypeCode.Int32 or TypeCode.UInt32 or
                     TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or
                     TypeCode.Decimal;
             }
+
+            private static bool AllSingleLine(IList list)
+            {
+                for (int index = 0; index < list.Count; index++)
+                    if (list[index] is string text && text.AsSpan().IndexOfAny(LineBreaks) >= 0)
+                        return false;
+                return true;
+            }
+
+            private static readonly System.Buffers.SearchValues<char> LineBreaks =
+                System.Buffers.SearchValues.Create("\r\n\u0085\u2028\u2029");
 
             private bool CanSetNestedIndex(int index)
                 => _nestedSources is { Length: > 0 } paths &&
@@ -748,6 +762,8 @@ public static partial class InspectorPropertyEditors
                     TypeCode.Double => NativeUIElements.TryCreateTextInputFieldGuarded<UIDoubleInputComponent>(
                         editor, bindingProperty, targets, isCurrent, out _, retainFailedReceipt),
                     TypeCode.Decimal => NativeUIElements.TryCreateTextInputFieldGuarded<UIDecimalInputComponent>(
+                        editor, bindingProperty, targets, isCurrent, out _, retainFailedReceipt),
+                    TypeCode.String => NativeUIElements.TryCreateTextInputFieldGuarded<UITextInputComponent>(
                         editor, bindingProperty, targets, isCurrent, out _, retainFailedReceipt),
                     _ => false,
                 };

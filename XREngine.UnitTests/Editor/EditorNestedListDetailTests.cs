@@ -848,6 +848,37 @@ public sealed partial class EditorNestedListDetailTests
     }
 
     [Test]
+    public void SingleLineStringNestedRowsEditWithOneUndoStep()
+    {
+        using UITestShaderScope shaders = new();
+        EditorNestedStringListTarget target = new() { Values = [["first", "second"]] };
+        SceneNode detail = new("Nested single-line string detail");
+        detail.SetTransform<UIBoundableTransform>();
+        PropertyInfo property = typeof(EditorNestedStringListTarget)
+            .GetProperty(nameof(EditorNestedStringListTarget.Values))!;
+        Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(
+            property.PropertyType, out var create), Is.True);
+        create!(detail, property, [target]);
+        try
+        {
+            UIListTransform outer = VirtualList(detail, 1);
+            outer.SynchronizeVirtualRows(280);
+            SceneNode nestedRoot = OpenNestedDetail(detail, outer, 0);
+            UIListTransform inner = VirtualList(nestedRoot, 2);
+            inner.SynchronizeVirtualRows(280);
+
+            InputForRow(inner, 1).Binding!.SetValue("edited");
+
+            Assert.That(target.Values[0], Is.EqualTo(new[] { "first", "edited" }));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(target.Values[0], Is.EqualTo(new[] { "first", "second" }));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(target.Values[0][1], Is.EqualTo("edited"));
+        }
+        finally { detail.Destroy(true); }
+    }
+
+    [Test]
     public void NestedWorldOwnerWithoutUniqueDocumentIsRejectedBeforeMutation()
     {
         using UITestShaderScope shaders = new();
