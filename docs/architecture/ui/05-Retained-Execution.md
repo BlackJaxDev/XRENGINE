@@ -1187,8 +1187,9 @@ visible and requires explicit recovery or reissue.
 The shared hierarchy spawn path supports first-time editor-scene allocation and
 hidden-scene parents. Native context/scene menus and single-root or grouped
 Duplicate use the guarded command routes. Applied history of an ended document is
-released without destruction (see the clone custody section). Broader clone
-profiles remain open. Windows workflow acceptance is recorded separately.
+released without destruction (see the clone custody section). Clone profiles
+outside the structural handoff stay retained by policy (see Applied structural
+clone handoff). Windows workflow acceptance is recorded separately.
 
 ## Accepted text measurements and editor navigation
 
@@ -1629,8 +1630,7 @@ remain recordable. Single-root Duplicate is active through these guards.
 When the document of an applied clone ends before its history is released, the
 release destroys nothing. The ended document owns and destroys its authored nodes;
 private constructor storage that it never adopted stays for the garbage collector.
-The entry is settled with a warning, and later duplicates are not blocked. Broader
-duplication profiles remain open.
+The entry is settled with a warning, and later duplicates are not blocked.
 
 Native loop edits capture the full member tree, unique child animations, source
 owners, and prior values. The receipt checks prechange callbacks, commits all
@@ -2863,7 +2863,10 @@ empty both before cleanup and at settlement. Failure retains the complete ledger
 private subset, and retirement result; it does not destroy borrowed content.
 Successful handoff releases the ledger without granting later destruction authority.
 Runtime-only roots, unsupported assets, custom private transforms, and foreign
-owners remain retained. This is not a new document-close or asset recovery policy.
+owners stay retained by policy. Clearing history does not hand them off or destroy
+them. When their document ends, the release settles them with a warning and
+destroys nothing, so retained memory is bounded by the document lifetime. This is
+not a new document-close or asset recovery policy.
 
 
 ## Material drops and scene actions

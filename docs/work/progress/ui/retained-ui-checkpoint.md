@@ -6,8 +6,8 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **57 of 60 implementation items are complete**.
-The active TODO has three code items: world clipping, panel parity, and the default switch. Later sections
+Latest code reconciliation: **58 of 60 implementation items are complete**.
+The active TODO has two code items: world clipping and the default switch. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 
 The first checkpoint closes **16 of the original 60 implementation items**.
