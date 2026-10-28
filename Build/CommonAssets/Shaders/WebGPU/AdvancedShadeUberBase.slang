@@ -15,15 +15,15 @@ bool XR_ADV_TryLoadUberBase(XRAdvancedMaterialRecord material, out uint word, ou
     word=0u; features=0u; pipeline=0u;
     uint count, stride; SceneArena.GetDimensions(count,stride);
     const uint header=34u*8u;
-    if (!XR_ADV_IsUberBaseMaterial(material) || count < 36u*8u || SceneArena[header+2u]!=156u ||
-        SceneArena[header+5u]!=1u || SceneArena[header+6u]!=36u || material.stableRowId==0u ||
+    if (!XR_ADV_IsUberBaseMaterial(material) | count < 36u*8u | SceneArena[header+2u]!=156u |
+        SceneArena[header+5u]!=1u | SceneArena[header+6u]!=36u | material.stableRowId==0u |
         material.stableRowId>=SceneArena[header+1u]) return false;
     uint offset=SceneArena[header];
-    if (offset < 36u*8u || offset>count || material.stableRowId>=(count-offset)/156u) return false;
+    if (offset < 36u*8u | offset>count | material.stableRowId>=(count-offset)/156u) return false;
     word=offset+material.stableRowId*156u;
-    if (SceneArena[word]!=material.generation || SceneArena[word+1u]!=1u || SceneArena[word+155u]!=0u) return false;
+    if (SceneArena[word]!=material.generation | SceneArena[word+1u]!=1u | SceneArena[word+155u]!=0u) return false;
     features=SceneArena[word+2u]; pipeline=SceneArena[word+3u];
-    return (features & ~31u)==0u && (pipeline & ~15u)==0u;
+    return (features & ~31u)==0u & (pipeline & ~15u)==0u;
 }
 UberBaseMaterialParameters XR_ADV_UberParameters(uint word)
 {
@@ -95,17 +95,17 @@ bool XR_ADV_TryLoadUberAttributes(uint drawDense,uint drawIdentity,XRAdvancedDra
 {
     a=(XRAdvancedUberAttributes)0; b=a; c=a;
     uint words,stride; SceneArena.GetDimensions(words,stride); const uint header=35u*8u;
-    if(words<36u*8u || SceneArena[header+2u]!=12u || SceneArena[header+5u]!=1u || SceneArena[header+6u]!=36u) return false;
+    if(words<36u*8u | SceneArena[header+2u]!=12u | SceneArena[header+5u]!=1u | SceneArena[header+6u]!=36u) return false;
     uint start=SceneArena[header],count=SceneArena[header+1u];
-    if(drawDense>=count || start<36u*8u || start>words || drawDense>=(words-start)/12u) return false;
+    if(drawDense>=count | start<36u*8u | start>words | drawDense>=(words-start)/12u) return false;
     uint row=start+drawDense*12u;
     XRAdvancedGpuHandle sourceDraw=XRAdvancedGpuHandle(SceneArena[row],SceneArena[row+1u]);
     XRAdvancedGpuHandle sourceGeometry=XRAdvancedGpuHandle(SceneArena[row+2u],SceneArena[row+3u]);
-    if(sourceDraw.index!=drawIdentity || sourceGeometry.index!=draw.geometry.index || sourceGeometry.generation!=draw.geometry.generation ||
-        XR_ADV_ResolveVisibilityHandle(sourceDraw,VisibilityDrawLookupSegment,XR_ADV_DIAGNOSTIC_DRAW)!=drawDense ||
+    if(sourceDraw.index!=drawIdentity | sourceGeometry.index!=draw.geometry.index | sourceGeometry.generation!=draw.geometry.generation |
+        XR_ADV_ResolveVisibilityHandle(sourceDraw,VisibilityDrawLookupSegment,XR_ADV_DIAGNOSTIC_DRAW)!=drawDense |
         XR_ADV_ResolveVisibilityHandle(sourceGeometry,VisibilityGeometryLookupSegment,XR_ADV_DIAGNOSTIC_MESH)!=geometryDense) return false;
     uint offset=SceneArena[row+6u], vertices=SceneArena[row+7u];
-    if(offset>words || vertices>(words-offset)/12u || any(sourceVertices>=uint3(vertices))) return false;
+    if(offset>words | vertices>(words-offset)/12u | any(sourceVertices>=uint3(vertices))) return false;
     a=XR_ADV_ReadUberAttributes(offset+sourceVertices.x*12u);
     b=XR_ADV_ReadUberAttributes(offset+sourceVertices.y*12u);
     c=XR_ADV_ReadUberAttributes(offset+sourceVertices.z*12u);

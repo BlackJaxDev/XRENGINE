@@ -91,7 +91,8 @@ public sealed class VulkanFrameLoopPhase2Tests
 
         submission.ShouldContain("TryMatchSealedImageEntriesNoLock");
         submission.ShouldContain("TryAppendSealedImageExits");
-        submission.ShouldContain("tracked.PendingQueueOwnershipRelease is not null");
+        submission.ShouldContain("tracked!.PendingQueueOwnershipRelease is not null ||");
+        submission.ShouldContain("tracked.SubmittedVersion != dependency.SubmittedStateVersion");
         submission.ShouldContain("RefreshSubmittedDescriptorDependencies_NoLock(");
         refresh.ShouldContain("SealedSubmissionContract? previousContract");
         refresh.ShouldContain("commandLifetime.InvalidateSealedSubmissionContract()");
@@ -117,7 +118,10 @@ public sealed class VulkanFrameLoopPhase2Tests
         table.ShouldContain("RecordVulkanResidentTemplateBroadFallback(");
         table.ShouldContain("Array.Clear(_reverseDependencyHeads[owner])");
         table.ShouldContain("!candidate.ReverseLinks[index].IsLinked");
-        table.ShouldContain("link.PreviousPrimaryIndex != expectedPreviousPrimaryIndex");
+        // Reverse links store full template handles, so the walk compares exact
+        // handles in both directions.
+        table.ShouldContain("if (link.Previous != expectedPrevious)");
+        table.ShouldContain("nextManifest!.ReverseLinks[nextLinkIndex].Previous != dependent");
         manifest.ShouldContain("dependencies[left].Handle.Index == dependencies[right].Handle.Index");
     }
 
@@ -176,7 +180,12 @@ public sealed class VulkanFrameLoopPhase2Tests
         contract.ShouldContain("ulong ResourceClosureGeneration");
         contract.ShouldContain("ulong ImagePayloadGeneration");
         submission.ShouldContain("ValidateSubmissionCommandBuffersReady(");
-        submission.ShouldContain("InvalidatedBuffersPendingReset.ContainsKey(handle)");
+        // Invalidation adds the handle to the invalidated set and the pending-reset
+        // map together; submission rejects any handle in the invalidated set.
+        submission.ShouldContain("!CommandBuffers.ContainsInvalidatedCommandHandle(handle)");
+        string invalidation = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "private VulkanExactInvalidationResult InvalidateCachedCommandBuffersCore(");
+        invalidation.ShouldContain("CommandBuffers.AddInvalidatedCommandHandle(\n                        dependentCommandBuffers[index]);\n                    CommandBuffers.InvalidatedBuffersPendingReset.TryAdd(");
     }
 
     [Test]

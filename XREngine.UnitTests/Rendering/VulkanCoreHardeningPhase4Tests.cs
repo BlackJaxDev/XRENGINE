@@ -132,7 +132,14 @@ public sealed class VulkanCoreHardeningPhase4Tests
         dispatch.ShouldBeGreaterThan(lifetimeValidation);
         successfulUse.ShouldBeGreaterThan(dispatch);
         method.ShouldContain("submit-rejected-validation");
-        method.ShouldContain("lifetimePinsTransferred = true;");
+        // The successful-use publication transfers the submission lifetime pins.
+        method.ShouldContain("out lifetimePinsTransferred,");
+        string publication = SliceBetween(
+            submission,
+            "private unsafe VulkanLifetimeSubmission PublishSuccessfulSubmissionLifetime(",
+            "private void QuarantineUnpublishedAcceptedSubmission(");
+        publication.ShouldContain("out bool lifetimeOwnershipPublished,");
+        publication.ShouldContain("lifetimeOwnershipPublished = true;");
     }
 
     [Test]
@@ -147,7 +154,10 @@ public sealed class VulkanCoreHardeningPhase4Tests
 
         commandPools.ShouldContain("internal void DestroyCommandPoolHostSynchronized(CommandPool pool)");
         commandPools.ShouldContain("internal Result ResetVulkanCommandPoolTracked(CommandPool pool, string owner)");
-        commandPools.ShouldContain("lock (CommandPoolsGate)");
+        Regex.IsMatch(
+            commandPools,
+            @"VulkanFrameLockScope\.Enter\(\s*CommandPoolsGate,\s*EVulkanFrameWaitReason\.CommandPool\)",
+            RegexOptions.CultureInvariant).ShouldBeTrue("Command pool host operations must hold the command pool gate.");
         commandPools.ShouldContain("batch.IsRecording ||\n                                            batch.QueuedSubmissionCount != 0");
         lifetimeNative.ShouldContain("internal unsafe Result AllocateCommandBuffersWithLifetime(");
         lifetimeNative.ShouldContain("lock (Pools.Gate)");
@@ -155,8 +165,17 @@ public sealed class VulkanCoreHardeningPhase4Tests
         int registration = lifetimeNative.IndexOf("ResourceRuntime.RegisterAllocatedCommandBuffer(", StringComparison.Ordinal);
         registration.ShouldBeGreaterThan(nativeAllocation);
         commandRuntime.ShouldContain("internal Result BeginTrackedCommandBuffer(");
-        commandRuntime.ShouldContain("lock (Pools.Gate)");
-        commandRuntime.ShouldContain("Api.BeginCommandBuffer(commandBuffer, ref beginInfo)");
+        string beginTracked = SliceBetween(
+            commandRuntime,
+            "private Result BeginTrackedCommandBuffer(",
+            "private ulong InitializeCommandBufferBindState(");
+        int poolGate = Regex.Match(
+            beginTracked,
+            @"VulkanFrameLockScope\.Enter\(\s*Pools\.Gate,\s*EVulkanFrameWaitReason\.CommandPool\)",
+            RegexOptions.CultureInvariant).Index;
+        poolGate.ShouldBeGreaterThan(0, "The native begin call must run while the command pool gate is held.");
+        beginTracked.IndexOf("api.BeginCommandBuffer(commandBuffer, ref beginInfo)", StringComparison.Ordinal)
+            .ShouldBeGreaterThan(poolGate);
     }
 
     [Test]
@@ -182,9 +201,38 @@ public sealed class VulkanCoreHardeningPhase4Tests
 
         lowering.ShouldContain("TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, secondary);");
         lowering.ShouldContain("TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, replacement);");
-        workers.ShouldContain("MarkOwnedCommandChainSecondaryPoolPendingDestroy(pool);");
-        workers.ShouldContain("worker.Arena.ClearAfterPoolRetirement();");
-        workers.ShouldNotContain("DestroyCommandPoolHostSynchronized(pool);");
+        string laneAttachments = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.RenderLaneAttachments.cs");
+        string laneArena = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Secondary/Workers/VulkanLaneCommandFamilyArena.cs");
+        string commandPools = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Allocation/VulkanRenderer.CommandPool.cs");
+
+        lowering.ShouldContain("if (ownsPool && pool.Handle != 0)\n            MarkOwnedCommandChainSecondaryPoolPendingDestroy(pool);");
+
+        // Worker lane arenas stop recording, then release their pools through the
+        // deferred pool retirement path.
+        string destroyWorkers = SliceBetween(
+            workers,
+            "private void DestroyCommandChainRecordingWorkers()",
+            "private void DestroyCommandChainRecordingWorkerPools()");
+        int quiesce = destroyWorkers.IndexOf("QuiesceCommandChainRecordingWorkersForRetirement();", StringComparison.Ordinal);
+        quiesce.ShouldBeGreaterThanOrEqualTo(0);
+        destroyWorkers.IndexOf("DestroyRenderLaneCommandAttachments();", StringComparison.Ordinal).ShouldBeGreaterThan(quiesce);
+
+        int clear = laneAttachments.IndexOf("arena.ClearAfterRetirement();", StringComparison.Ordinal);
+        clear.ShouldBeGreaterThanOrEqualTo(0);
+        laneAttachments.IndexOf("DestroyCommandPoolHostSynchronized(transientPool);", clear, StringComparison.Ordinal).ShouldBeGreaterThan(clear);
+        laneAttachments.IndexOf("DestroyCommandPoolHostSynchronized(retainedPool);", clear, StringComparison.Ordinal).ShouldBeGreaterThan(clear);
+        laneArena.ShouldContain("still owns \" +");
+        laneArena.ShouldContain("retained command artifact(s) during pool retirement.");
+
+        string destroyPool = SliceBetween(
+            commandPools,
+            "internal void DestroyCommandPoolHostSynchronized(CommandPool pool)",
+            "internal void DestroyCommandPool()");
+        destroyPool.ShouldContain("QueueCommandPoolRetirementTracked(");
+        destroyPool.ShouldNotContain("DestroyCommandPool(");
     }
 
     [Test]
@@ -339,8 +387,8 @@ public sealed class VulkanCoreHardeningPhase4Tests
     {
         (string File, string CreationPattern, string RegistrationPattern)[] contracts =
         [
-            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanImGuiOutputPipelineService.cs", @"CreateGraphicsPipelines\(", @"ObjectType\.Pipeline\b"),
-            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs", @"CreateComputePipelinesSynchronized\(", @"ProgramCreationPort\.RegisterPipeline\("),
+            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanImGuiOutputPipelineService.cs", @"CreateGraphicsPipelines\(", @"\bresources\.RegisterPipeline\("),
+            ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs", @"CreateComputePipelinesSynchronized\(", @"(?:ProgramCreationPort|request\.ProgramServices)\.RegisterPipeline\("),
             ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.GraphicsPipelines.cs", @"CreateGraphicsPipelinesSynchronized\(", @"ProgramCreationPort\.RegisterPipeline\("),
             ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgramPipeline.cs", @"Create(?:Graphics|Compute)PipelinesSynchronized\(", @"ProgramCreationPort\.RegisterPipeline\("),
             ("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineFactory.cs", @"CreateGraphicsPipelineWithCachePolicy\(", @"request\.ProgramServices\.RegisterPipeline\("),
@@ -349,13 +397,37 @@ public sealed class VulkanCoreHardeningPhase4Tests
         foreach ((string file, string creationPattern, string registrationPattern) in contracts)
         {
             string source = ReadWorkspaceFile(file);
-            int nativeCreates = Regex.Matches(source, creationPattern, RegexOptions.CultureInvariant).Count;
-            int registrations = Regex.Matches(source, registrationPattern, RegexOptions.CultureInvariant).Count;
+            MatchCollection nativeCreates = Regex.Matches(source, creationPattern, RegexOptions.CultureInvariant);
+            nativeCreates.Count.ShouldBeGreaterThan(0, $"Expected a pipeline creation site in {file}.");
 
-            nativeCreates.ShouldBeGreaterThan(0, $"Expected a pipeline creation site in {file}.");
-            registrations.ShouldBe(
-                nativeCreates,
+            // Several creation branches can write the same native handle variable, and a
+            // creation helper can return its handle to the caller that registers it. Each
+            // native handle target must therefore have a registration of that same handle.
+            HashSet<string> createdHandles = new(StringComparer.Ordinal);
+            foreach (Match nativeCreate in nativeCreates)
+            {
+                int statementEnd = source.IndexOf(';', nativeCreate.Index);
+                statementEnd.ShouldBeGreaterThan(nativeCreate.Index);
+                Match outTarget = Regex.Match(
+                    source[nativeCreate.Index..statementEnd],
+                    @"\bout\s+(?:Pipeline\s+)?(?<handle>[A-Za-z_][\w.]*)",
+                    RegexOptions.CultureInvariant);
+                outTarget.Success.ShouldBeTrue($"Expected an output pipeline handle for a creation site in {file}.");
+                createdHandles.Add(outTarget.Groups["handle"].Value);
+            }
+
+            int registrations = Regex.Matches(source, registrationPattern, RegexOptions.CultureInvariant).Count;
+            registrations.ShouldBeGreaterThanOrEqualTo(
+                createdHandles.Count,
                 $"Every successful pipeline creation site in {file} must register its native handle generation.");
+            foreach (string handle in createdHandles)
+            {
+                Regex.IsMatch(
+                        source,
+                        registrationPattern + @"\s*" + Regex.Escape(handle) + @"\s*,",
+                        RegexOptions.CultureInvariant)
+                    .ShouldBeTrue($"Pipeline handle '{handle}' created in {file} must register its native handle generation.");
+            }
         }
     }
 

@@ -2,7 +2,7 @@
 
 This document describes the dynamic shadow atlas: the allocator, relevance, threading, solve, stale-frame and reprojection rules, and cascade publication. The code is in `XREngine.Runtime.Rendering/Rendering/Shadows/` and `XREngine.Runtime.Rendering/Rendering/Lights3DCollection*.cs`.
 
-Related: [Default Render Pipeline Notes](default-render-pipeline-notes.md), [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md). Open work: [Shadow Atlas Overhaul TODO](../../work/todo/rendering/shadows/shadow-atlas-overhaul-todo.md). Checks: [Shadow Validation](../../work/testing/rendering/shadow-validation.md).
+Related: [Default Render Pipeline Notes](default-render-pipeline-notes.md), [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md).
 
 ## Type And File Map
 | Type | File | Responsibility |

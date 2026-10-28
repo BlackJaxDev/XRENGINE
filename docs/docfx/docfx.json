@@ -44,19 +44,23 @@
           "architecture/**/*.md",
           "architecture/toc.yml",
           "developer-guides/**/*.md",
-          "developer-guides/toc.yml",
-            "work/**/*.md"
+          "developer-guides/toc.yml"
         ]
       },
       {
         "files": [
           "apiref/**.yml",
-          "apiref/index.md",
           "apiref/toc.yml"
         ]
       }
     ],
     "resource": [
+      {
+        "src": "..",
+        "files": [
+          "developer-guides/rendering/render-pipelines/*.xrs"
+        ]
+      },
       {
         "files": [
           "styles/**"

@@ -64,7 +64,7 @@ public sealed class SourceToonParityContractTests
     {
         string importerPath = SourceToonParityCorpusTests.FindRepositoryFile(
             "XREngine.Runtime.ModelAssetPipeline", "Importing", "ModelAssetImporter.cs");
-        string importerSource = File.ReadAllText(importerPath);
+        string importerSource = File.ReadAllText(importerPath).Replace("\r\n", "\n", StringComparison.Ordinal);
         int methodStart = importerSource.IndexOf(
             "public static XRTexture2D GetOrCreateUberSamplerTexture",
             StringComparison.Ordinal);
@@ -76,10 +76,19 @@ public sealed class SourceToonParityContractTests
         methodEnd.ShouldBeGreaterThan(methodStart);
 
         string method = importerSource[methodStart..methodEnd];
-        method.ShouldContain("ScheduleImportedTexturePreviewJob");
-        method.ShouldNotContain("RegisterImportedTextureStreamingPlaceholder");
-        method.ShouldContain("loaded.SamplerName = key.samplerName");
-        method.ShouldContain("onError:");
+        method.ShouldContain("_uberSamplerTextureCache,\n                filePath,\n                samplerName,\n                schedulePreviewLoad: true);");
+
+        // Only the deferred variant registers a placeholder. The preview branch must decode the real source.
+        int previewStart = method.IndexOf("if (preview)", StringComparison.Ordinal);
+        previewStart.ShouldBeGreaterThanOrEqualTo(0);
+        int previewEnd = method.IndexOf("                else\n", previewStart, StringComparison.Ordinal);
+        previewEnd.ShouldBeGreaterThan(previewStart);
+        string previewBranch = method[previewStart..previewEnd];
+        previewBranch.ShouldContain("ScheduleImportedTexturePreviewJob");
+        previewBranch.ShouldNotContain("RegisterImportedTextureStreamingPlaceholder");
+        previewBranch.ShouldContain("loaded.SamplerName = key.samplerName");
+        previewBranch.ShouldContain("onError:");
+        method[previewEnd..].ShouldContain("XRTexture2D.RegisterImportedTextureStreamingPlaceholder(key.path, tex);");
     }
 
     [Test]
@@ -99,7 +108,7 @@ public sealed class SourceToonParityContractTests
         methodEnd.ShouldBeGreaterThan(methodStart);
 
         string method = managerSource[methodStart..methodEnd];
-        method.ShouldContain("return _tieredBackend;");
+        method.ShouldContain("return OpenGlDenseBackend;");
         method.ShouldNotContain("GetSparseTextureStreamingSupport");
         method.ShouldNotContain("return _sparseBackend;");
     }

@@ -9,49 +9,67 @@ public sealed class VulkanDescriptorLifetimePressureTests
     [Test]
     public void DescriptorPoolLifetimeUsesOwnedSetReverseIndexWithoutGlobalScans()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+        // The descriptor lifetime authority owns the pool-to-set reverse index.
+        // Pool retirement, pool ownership checks, and pool removal use only that
+        // index and never walk every tracked descriptor set.
+        string tracker = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
+        string authority = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
+        string manager = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorManager.cs");
 
-        lifetime.ShouldContain("_vulkanDescriptorSetsByPool");
-        lifetime.ShouldContain("UpdateVulkanDescriptorSetPoolIndex_NoLock");
+        tracker.ShouldContain("internal Dictionary<ulong, HashSet<ulong>> DescriptorSetsByPool { get; } = new();");
+        authority.ShouldContain("private void UpdatePoolIndexNoLock(");
 
         string capture = SliceMethod(
-            lifetime,
-            "private VulkanRetirementTicket CaptureVulkanDescriptorPoolRetirementTicket(",
-            "private bool IsVulkanRetirementReady(");
-        capture.ShouldContain("_vulkanDescriptorSetsByPool.TryGetValue");
-        capture.ShouldContain("_vulkanResourceCommandBufferDependencies.TryGetValue");
-        capture.ShouldContain("dependentCommandBuffers");
-        capture.ShouldContain("One aggregate exact invalidation");
-        capture.ShouldNotContain("in _vulkanDescriptorSetLifetimes");
+            authority,
+            "private VulkanRetirementTicket CaptureDescriptorPoolRetirementTicket(",
+            "private VulkanRetirementTicket CaptureRetirementTicket(");
+        capture.ShouldContain("tracker.DescriptorSetsByPool.TryGetValue(pool.Handle, out HashSet<ulong>? sets)");
+        capture.ShouldContain("ticket = ticket.Merge(setTicket);");
+        capture.ShouldNotContain("in tracker.DescriptorSetLifetimes");
 
-        string mutate = SliceMethod(
-            lifetime,
-            "private bool CanMutateVulkanDescriptorPool(",
-            "private Result ResetVulkanDescriptorPoolTracked(");
-        mutate.ShouldContain("_vulkanDescriptorSetsByPool.TryGetValue");
-        mutate.ShouldNotContain("in _vulkanDescriptorSetLifetimes");
+        string retirementTicket = SliceMethod(
+            authority,
+            "private VulkanRetirementTicket CaptureRetirementTicket(",
+            "private static ulong[] CaptureCurrentGenerationDependentsNoLock(");
+        retirementTicket.ShouldContain("dependentCommandBuffers = CaptureCurrentGenerationDependentsNoLock(tracker, key, generation);");
+        retirementTicket.ShouldContain("_resources.SynchronousCommands.CommandRuntime.InvalidateCachedCommandBuffers(");
+        string dependents = SliceMethod(
+            authority,
+            "private static ulong[] CaptureCurrentGenerationDependentsNoLock(",
+            "return result;");
+        dependents.ShouldContain("tracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? dependents)");
+
+        string ownership = SliceMethod(
+            manager,
+            "private bool PoolOwnsCurrentDescriptorSet(",
+            "private bool ContainsCurrentDescriptorSet(");
+        ownership.ShouldContain("tracker.DescriptorSetsByPool.TryGetValue(");
+        ownership.ShouldNotContain("in tracker.DescriptorSetLifetimes");
 
         string remove = SliceMethod(
-            lifetime,
-            "private void RemoveDescriptorSetsOwnedByPool_NoLock(",
-            "private void RemoveDescriptorSetLifetime_NoLock(");
-        remove.ShouldContain("_vulkanDescriptorSetsByPool.TryGetValue");
-        remove.ShouldNotContain("in _vulkanDescriptorSetLifetimes");
+            manager,
+            "internal static void RemoveDescriptorSetsOwnedByPoolNoLock(",
+            "internal static void PublishSnapshotNoLock(");
+        remove.ShouldContain("tracker.DescriptorSetsByPool.TryGetValue(poolHandle, out HashSet<ulong>? ownedSets)");
+        remove.ShouldNotContain("in tracker.DescriptorSetLifetimes");
     }
 
     [Test]
     public void DuplicatePoolRetirementIsSuppressedBeforeTicketCapture()
     {
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
         string method = SliceMethod(
             retirement,
             "internal void RetireDescriptorPool(DescriptorPool descriptorPool)",
-            "private void RemoveRetiredDescriptorSetsForPool_NoLock(");
+            "internal bool TryAcquireMeshDescriptorPoolSlab(");
 
-        method.IndexOf("_retiredDescriptorPoolHandlesAll.Add", StringComparison.Ordinal)
-            .ShouldBeLessThan(method.IndexOf("CaptureVulkanDescriptorPoolRetirementTicket", StringComparison.Ordinal));
+        int duplicateGuard = method.IndexOf("_lifetime.Retirement.AllDescriptorPoolHandles.Add", StringComparison.Ordinal);
+        duplicateGuard.ShouldBeGreaterThanOrEqualTo(0);
+        duplicateGuard.ShouldBeLessThan(method.IndexOf("CaptureDescriptorPoolRetirementTicket", StringComparison.Ordinal));
     }
 
     [Test]
@@ -65,10 +83,13 @@ public sealed class VulkanDescriptorLifetimePressureTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.DescriptorFingerprints.cs");
         string program = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Layouts.cs");
+        // Mesh descriptor pool slabs moved into the descriptor lifetime
+        // authority. Shared material-tier allocations moved into the
+        // descriptor manager.
         string slabs = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/MeshDescriptorPoolSlabs.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
         string sharedAllocations = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.MeshDescriptorAllocations.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorManager.cs");
 
         key.ShouldContain("ulong LayoutFingerprint");
         key.ShouldNotContain("ProgramIdentity");
@@ -78,12 +99,15 @@ public sealed class VulkanDescriptorLifetimePressureTests
         key.ShouldContain("ImmutableResourceFingerprint");
         descriptors.ShouldContain("_program.DescriptorLayoutFingerprint");
         descriptors.ShouldContain("_program.DescriptorSchemaFingerprint");
-        program.ShouldContain("_descriptorLayoutFingerprint = ComputeDescriptorLayoutFingerprint(_descriptorSetLayouts);");
-        program.ShouldContain("_descriptorSchemaFingerprint = ComputeDescriptorSchemaFingerprint(");
-        descriptors.ShouldContain("ResolveMeshDescriptorViewFamilyIdentity");
+        program.ShouldContain("ComputeDescriptorLayoutFingerprint(result.Layouts),");
+        program.ShouldContain("ComputeDescriptorSchemaFingerprint(result.Bindings, result.Layouts.Length));");
+        program.ShouldContain("_descriptorLayoutFingerprint = entry.LayoutFingerprint;");
+        program.ShouldContain("_descriptorSchemaFingerprint = entry.SchemaFingerprint;");
+        descriptors.ShouldContain("int viewFamilyIdentity = MaterializationSnapshot.DescriptorViewFamilyIdentity;");
         descriptors.ShouldContain("allocation.ViewFamilyIdentity != viewFamilyIdentity");
         descriptors.ShouldContain("candidate.ViewFamilyIdentity != viewFamilyIdentity");
-        descriptors.ShouldContain("candidate.ResourceFingerprint != resourceFingerprint");
+        descriptors.ShouldContain("DescriptorAllocationResourcesMatch(");
+        descriptors.ShouldContain("ResourceFingerprint = resourceFingerprint,");
         descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint)");
         descriptors.ShouldNotContain("_descriptorDirty && DescriptorSlotResourceFingerprintMatches");
         descriptorFingerprints.ShouldContain("AddTextureDescriptorResourceFingerprint(ref hash, texture);");
@@ -94,74 +118,103 @@ public sealed class VulkanDescriptorLifetimePressureTests
         descriptors.ShouldContain("int descriptorFrameSlotCount = frameCount;");
         descriptors.ShouldNotContain("frameCount * Math.Max(drawUniformSlot");
         descriptors.ShouldContain("Array.Fill(descriptorSets, Array.Empty<DescriptorSet>())");
-        descriptors.ShouldContain("MeshRendererDescriptorSets.AllocatedLazySlot");
+        descriptors.ShouldContain("private bool EnsureDescriptorSlotReady(");
         descriptors.ShouldContain("DescriptorSlotResourceFingerprintMatches");
         descriptors.ShouldContain("TryAcquireMeshDescriptorPoolSlab");
         descriptors.ShouldContain("UsesSharedMaterialTier");
-        descriptors.ShouldContain("Renderer.TryAcquireSharedMeshDescriptorAllocation");
+        descriptors.ShouldContain("BackendContext.Resources.Descriptors.TryAcquireSharedMeshDescriptorAllocation(");
         descriptors.ShouldContain("usesSharedMaterialTier: true");
+        sharedAllocations.ShouldContain("internal bool TryAcquireSharedMeshDescriptorAllocation(");
         sharedAllocations.ShouldContain("_sharedMeshDescriptorAllocations");
         sharedAllocations.ShouldContain("candidate.SharedReferenceCount++");
         sharedAllocations.ShouldContain("allocation.SharedReferenceCount--");
         slabs.ShouldContain("MeshDescriptorPoolSlabAllocationCapacity = 64");
         slabs.ShouldContain("DescriptorPoolCreateFlags.FreeDescriptorSetBit");
-        slabs.ShouldContain("RetireDescriptorSet(pool, sets[setIndex])");
-        slabs.ShouldContain("RetireDescriptorPool(pool)");
-        slabs.ShouldContain("Exclude the rotating external target/image identity");
-        slabs.ShouldContain("MeshOwnershipDiagnosticLimit = 64");
-        slabs.ShouldContain("program='{2}' layout=0x{3:X16} material='{4}'");
-        slabs.ShouldContain("output={5} outputTarget='{6}' pipeline={7} viewport={8} frameSlots={9}");
-        slabs.ShouldContain("planGeneration={12} descriptorGeneration={13}");
+        slabs.ShouldContain("RetireMeshDescriptorSetOrQueue(pool, sets[setIndex]);");
+        slabs.ShouldContain("RetireDescriptorPool(pool);");
+        descriptors.ShouldContain("if (diagnosticIndex > 64)");
+        descriptors.ShouldContain(
+            "index={0}/64 program='{1}' layout=0x{2:X16} material='{3}' output={4} frameSlots={5} sets={6} sharedMaterial={7}");
 
     }
 
     [Test]
     public void ExactRetirementInvalidationResetsCompletedRecordingsBeforeResourceDrain()
     {
-        string allocation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+        string runtime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.cs");
         string trackingBatch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandBufferTrackingBatch.cs");
+        string resources = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
         string frameSlots = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.FrameSlots.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.FrameSlots.cs");
 
-        allocation.ShouldContain("_invalidatedCommandBuffersPendingReset.TryAdd");
-        allocation.ShouldContain("private void DrainInvalidatedCommandBufferRecordings(int maxItems = 64)");
-        allocation.ShouldContain("CanResetVulkanCommandBuffer(commandBuffer, out _)");
-        lifetime.ShouldContain("if (batch.IsRecording)");
-        lifetime.ShouldContain("if (batch.QueuedSubmissionCount != 0)");
-        allocation.ShouldContain("ResetVulkanCommandBufferTracked(commandBuffer)");
-        allocation.ShouldContain("ReleaseVulkanCommandBufferDependencies_NoLock(handle, lifetime)");
-        allocation.ShouldContain("_invalidatedCommandBuffersPendingReset.TryRemove(handle, out _)");
+        runtime.ShouldContain("CommandBuffers.InvalidatedBuffersPendingReset.TryAdd(");
+        string drain = SliceMethod(
+            runtime,
+            "internal void DrainInvalidatedCommandBufferRecordings(",
+            "internal Result ResetCommandBufferWithLifetime(");
+        drain.ShouldContain("int maxItems = 64)");
+        drain.ShouldContain("if (!TryResetCommandBufferWithLifetime(");
+        drain.ShouldContain("CommandBuffers.InvalidatedBuffersPendingReset.TryRemove(handle, out _);");
+
+        // The canonical reset predicate rejects a recording or queued buffer,
+        // resets it natively, and then releases its recorded dependencies.
+        string reset = SliceMethod(
+            runtime,
+            "private bool TryResetCommandBufferWithLifetime(",
+            "internal unsafe void DrainRetiredCommandBuffers(");
+        reset.ShouldContain("if (batch.IsRecording || batch.QueuedSubmissionCount != 0 ||");
+        reset.ShouldContain("!ResourceRuntime.CanResetCommandBufferNoLock(handle)");
+        reset.ShouldContain("result = Api.ResetCommandBuffer(commandBuffer, 0);");
+        reset.ShouldContain("ResourceRuntime.CompleteCommandBufferReset(handle);");
+        string completeReset = SliceMethod(
+            resources,
+            "internal void CompleteCommandBufferReset(ulong handle)",
+            "lifetime.InvalidateSealedSubmissionContract();");
+        completeReset.ShouldContain("ReleaseCommandBufferDependenciesNoLock(handle, lifetime);");
         trackingBatch.ShouldContain("public bool IsRecording;");
-        frameSlots.ShouldContain("DrainInvalidatedCommandBufferRecordings();");
-        frameSlots.IndexOf("DrainInvalidatedCommandBufferRecordings();", StringComparison.Ordinal)
-            .ShouldBeLessThan(frameSlots.IndexOf("DrainRetiredDescriptorPools();", StringComparison.Ordinal));
+
+        int drainInvalidated = frameSlots.IndexOf(
+            "_commandRuntime.DrainInvalidatedCommandBufferRecordings(",
+            StringComparison.Ordinal);
+        drainInvalidated.ShouldBeGreaterThanOrEqualTo(0);
+        drainInvalidated.ShouldBeLessThan(frameSlots.IndexOf(
+            "ResourceRuntime.DrainRetiredDescriptorPools(",
+            StringComparison.Ordinal));
     }
 
     [Test]
     public void PhysicalPlanReplacementUsesExactResourceRetirementInsteadOfGlobalDescriptorRelease()
     {
         string planner = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.PhysicalResourcePlanning.cs");
+        string tracker = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
+        string authority = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
+        string manager = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorManager.cs");
+        string resources = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
 
         string commit = SliceMethod(
             planner,
             "private void CommitPhysicalAllocatorPlan(",
-            "private VulkanPhysicalImageGroup? PreserveAutoExposureHistory(");
-        commit.ShouldContain("oldAllocator.TryRetirePhysicalResources");
+            "private void EvictFrameOpResourcePlannerStatesReferencingAllocator(");
+        commit.ShouldContain("_ = oldAllocator.TryRetirePhysicalResources(");
         commit.ShouldNotContain("ReleaseDescriptorReferencesForPhysicalResourceDestruction");
 
-        lifetime.ShouldContain("_vulkanDescriptorSetsByReferencedResource");
-        lifetime.ShouldContain("InvalidateVulkanDescriptorSetsReferencingResource_NoLock");
-        lifetime.ShouldContain("InvalidateCachedCommandBuffersForRetiringResource");
-        lifetime.ShouldContain("TryTrackVulkanCommandBufferResource_NoLock");
-        lifetime.ShouldContain("Vulkan.ResourceLifetime.RetirementInvalidation.{key.Type}");
-        lifetime.ShouldNotContain("RetirementInvalidation.{key.Type}.{key.Handle}");
+        // Exact retirement invalidates only the descriptor sets and command
+        // buffers that reference the retiring resource generation.
+        tracker.ShouldContain("DescriptorSetsByReferencedResource { get; }");
+        manager.ShouldContain("internal int InvalidateResourceReferencesNoLock(");
+        authority.ShouldContain("invalidatedDescriptorSetCount = _descriptors.InvalidateResourceReferencesNoLock(_lifetime, key);");
+        authority.ShouldContain("$\"retiring {key} generation {generation}\"");
+        resources.ShouldContain("internal void PublishCommandBufferDependencyNoLock(");
+        authority.ShouldContain("Vulkan.ResourceLifetime.RetirementInvalidation.{key.Type}");
+        authority.ShouldNotContain("RetirementInvalidation.{key.Type}.{key.Handle}");
     }
 
     [Test]
@@ -180,43 +233,58 @@ public sealed class VulkanDescriptorLifetimePressureTests
     [Test]
     public void ForcedIdleRetirementDestroysPinnedSamplersAndTracksThemUntilDestruction()
     {
-        string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
-        string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
-        string samplerLifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Samplers/VulkanRenderer.SamplerLifetime.cs");
+        string ledger = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.LifetimeLedger.cs");
+        string images = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Images/VulkanImageResourceService.cs");
+        string resources = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
+        string samplers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanSamplerResourceService.cs");
+        string lifecycle = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.Lifecycle.cs");
 
         string beginDestroy = SliceMethod(
-            lifetime,
-            "private bool TryBeginDestroyVulkanResourceGeneration(",
-            "private bool HasUndestroyedVulkanBufferViewReference(");
-        beginDestroy.ShouldContain("bool forced = _vulkanForcedRetirementDrainDepth > 0;");
+            ledger,
+            "internal bool TryBeginDestroyResourceGeneration(",
+            "internal void CompleteResourceDestruction(");
+        beginDestroy.ShouldContain("bool forced = Lifetime.Tracker.ForcedRetirementDrainDepth > 0;");
         beginDestroy.ShouldContain("(!forced &&");
 
+        // Enqueue keeps the sampler registered. Only native destruction
+        // removes it from the live sampler set.
         string enqueue = SliceMethod(
-            retirement,
-            "internal void RetireImageResources(",
-            "private ImageView[] FilterRetiredAttachmentViews(");
+            images,
+            "internal void RetireOwnedResources(",
+            "internal Result CreateOwnedImage(");
+        enqueue.ShouldContain("lifetime.Retirement.SamplerHandles[frameSlot].Add(sampler.Handle);");
         enqueue.ShouldNotContain("UnregisterLiveSampler");
 
         string drain = SliceMethod(
-            retirement,
-            "private void DrainRetiredImages(int frameSlot, int maxItems)",
-            "private void CompleteRetiredImageDeduplication(");
-        int destroyIndex = drain.IndexOf("Api!.DestroySampler(device, r.Sampler, null);", StringComparison.Ordinal);
-        int unregisterIndex = drain.IndexOf("UnregisterLiveSampler(r.Sampler);", StringComparison.Ordinal);
+            resources,
+            "internal unsafe void DrainRetiredImages(",
+            "private bool AreRetiredImageViewsRegistered(");
+        int destroyIndex = drain.IndexOf("api.DestroySampler(device, resources.Sampler, null);", StringComparison.Ordinal);
+        int unregisterIndex = drain.IndexOf("Descriptors.UnregisterLiveSampler(resources.Sampler);", StringComparison.Ordinal);
         destroyIndex.ShouldBeGreaterThanOrEqualTo(0);
         unregisterIndex.ShouldBeGreaterThan(destroyIndex);
 
-        samplerLifetime.ShouldContain("private void DestroyRemainingTrackedSamplers()");
+        samplers.ShouldContain("internal unsafe int DestroyRemaining(Vk api, Device device)");
+        samplers.ShouldContain("ulong[] handles = descriptors.TakeLiveSamplerHandles();");
+        lifecycle.ShouldContain("_resourceRuntime.Samplers.DestroyRemaining(Api, _deviceContext.Device);");
 
-        string initialization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
-        string cleanupPrefix = initialization[
-            initialization.IndexOf("public override void CleanUp()", StringComparison.Ordinal)..
-            initialization.IndexOf("// Drain all deferred-deletion queues now that the GPU is idle.", StringComparison.Ordinal)];
-        cleanupPrefix.ShouldContain("DestroyComputeTransientResources();\n            DestroyComputeDescriptorCaches();");
+        int computeTransient = lifecycle.IndexOf(
+            "RunCleanupStep(\"compute transient resources\", _commandRuntime.DestroyComputeTransientResources, failures);",
+            StringComparison.Ordinal);
+        int computeDescriptorCaches = lifecycle.IndexOf(
+            "RunCleanupStep(\"compute descriptor caches\", () => _ = _resourceRuntime.RetireComputeDescriptorCachesForShutdown(), failures);",
+            StringComparison.Ordinal);
+        int initialDrain = lifecycle.IndexOf(
+            "RunCleanupStep(\"initial retirement drain\", ForceFlushAllRetiredResources, failures);",
+            StringComparison.Ordinal);
+        computeTransient.ShouldBeGreaterThanOrEqualTo(0);
+        computeDescriptorCaches.ShouldBeGreaterThan(computeTransient);
+        initialDrain.ShouldBeGreaterThan(computeDescriptorCaches);
     }
 
     private static string SliceMethod(string source, string startMarker, string endMarker)

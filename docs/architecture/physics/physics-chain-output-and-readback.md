@@ -231,8 +231,7 @@ Complete coverage bypasses stale CPU bone bounds during view and shadow
 admission. Layer, material, and `CastShadow` policy still apply. Partial coverage
 uses the existing CPU admission path. A missing committed source rejects the
 canonical publication with a diagnostic and permits later recovery. It does
-not substitute CPU bounds. Runtime checks are in the
-[validation plan](../../work/testing/physics/physics-validation.md#gpu-skinned-chain-scale).
+not substitute CPU bounds.
 
 Directional shadow work uses the frozen strategy of each complete consumer.
 The atlas keeps strict GPU tiles dirty when that consumer cannot accept a

@@ -180,13 +180,28 @@ public sealed class AdvancedRenderPipelineCapabilityTests
             AdvancedRenderPipelineCapabilities.NoRenderer);
         disabled.ShouldBeOfType<DefaultRenderPipeline>();
 
-        RenderPipeline selected = EngineRenderingSettingsApplication.NewStandardRenderPipeline(
+        // A desktop camera without a physical output is configured with the
+        // Advanced source asset. The output binds its reservation later.
+        RenderPipeline source = EngineRenderingSettingsApplication.NewStandardRenderPipeline(
+            RenderPipelineRequest.DesktopScene(stereo: true),
+            EAdvancedRenderPipelineMode.Available,
+            SupportedCapabilities);
+        AdvancedRenderPipeline advanced = source.ShouldBeOfType<AdvancedRenderPipeline>();
+        advanced.Stereo.ShouldBeTrue();
+
+        // A physical output selects Advanced only with a current renderer
+        // reservation. Global backend capabilities alone do not select it.
+        RenderPipeline unreserved = EngineRenderingSettingsApplication.NewStandardRenderPipeline(
             RenderPipelineRequest.DesktopScene(stereo: true, outputId: 1UL),
             EAdvancedRenderPipelineMode.Available,
             SupportedCapabilities);
-        AdvancedRenderPipeline advanced = selected.ShouldBeOfType<AdvancedRenderPipeline>();
-        advanced.Stereo.ShouldBeTrue();
-        advanced.CapabilityResult.IsSupported.ShouldBeTrue();
+        unreserved.ShouldBeOfType<DefaultRenderPipeline>().Stereo.ShouldBeTrue();
+        AdvancedRenderPipelineSelectionResult unreservedSelection =
+            EngineRenderingSettingsApplication.LastAdvancedRenderPipelineSelection;
+        unreservedSelection.EffectiveKind.ShouldBe(ERenderPipelineKind.LegacyDefault);
+        unreservedSelection.CapabilityEvaluated.ShouldBeTrue();
+        unreservedSelection.CapabilityResult.RejectionReason.ShouldBe(
+            EAdvancedRenderPipelineRejectionReason.MissingShaderFamily);
 
         RenderPipeline fallback = EngineRenderingSettingsApplication.NewStandardRenderPipeline(
             RenderPipelineRequest.DesktopScene(stereo: false, outputId: 1UL),

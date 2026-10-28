@@ -2,8 +2,6 @@
 
 XREngine supports imported surface-detail textures and forward directional shadow receiving through shared shader helpers and explicit material parameters.
 
-This feature doc promotes the implemented rendering note from `docs/work/design/rendering/shadows/surface-detail-and-forward-shadow-debugging.md`.
-
 ## Imported Surface Detail
 
 Imported materials can provide either a normal map or a height map for surface detail.

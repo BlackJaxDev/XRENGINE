@@ -9,9 +9,57 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanCommandRuntime
 {
-    internal float MaterialUniformUpdateDelta => RuntimeEngine.Time.Timer.Update.Delta;
-    internal float MaterialUniformSeconds => RuntimeEngine.ElapsedTime;
-    internal float MaterialUniformRenderDelta => RuntimeEngine.Time.Timer.Render.Delta;
+    internal float MaterialUniformUpdateDelta
+    {
+        get
+        {
+            EnsureMaterialUniformFrameTime();
+            return Volatile.Read(ref CommandBuffers.MaterialUniformUpdateDeltaLive);
+        }
+    }
+
+    internal float MaterialUniformSeconds
+    {
+        get
+        {
+            EnsureMaterialUniformFrameTime();
+            return Volatile.Read(ref CommandBuffers.MaterialUniformSecondsLive);
+        }
+    }
+
+    internal float MaterialUniformRenderDelta
+    {
+        get
+        {
+            EnsureMaterialUniformFrameTime();
+            return Volatile.Read(ref CommandBuffers.MaterialUniformDeltaSecondsLive);
+        }
+    }
+
+    /// <summary>
+    /// Captures the material time values one time for each render frame. All
+    /// draws of one frame then use the same values, also when recording takes
+    /// a long time or continues on worker lanes. The frame id is written last,
+    /// so a reader that sees the current frame id also sees its values.
+    /// </summary>
+    private void EnsureMaterialUniformFrameTime()
+    {
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        VulkanCommandBufferState state = CommandBuffers;
+        if (Volatile.Read(ref state.MaterialUniformFrameTimeFrameId) == frameId)
+            return;
+
+        lock (state.MaterialUniformFrameTimeSync)
+        {
+            if (state.MaterialUniformFrameTimeFrameId == frameId)
+                return;
+
+            Volatile.Write(ref state.MaterialUniformUpdateDeltaLive, RuntimeEngine.Time.Timer.Update.Delta);
+            Volatile.Write(ref state.MaterialUniformSecondsLive, RuntimeEngine.ElapsedTime);
+            Volatile.Write(ref state.MaterialUniformDeltaSecondsLive, RuntimeEngine.Time.Timer.Render.Delta);
+            Volatile.Write(ref state.MaterialUniformFrameTimeFrameId, frameId);
+        }
+    }
 
     internal void SetEngineUniforms(XRRenderProgram program, XRCamera camera)
     {

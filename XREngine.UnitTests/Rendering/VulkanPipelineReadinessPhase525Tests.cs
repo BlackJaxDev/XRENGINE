@@ -12,8 +12,14 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     [Test]
     public void CompiledPlanBuildsImmutablePipelineVariantManifestAcrossRequiredAxes()
     {
+        // The manifest contract, its compatibility hashing, and the
+        // requirement record are separate files.
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.Contract.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.Contract.cs") +
+            ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.Compatibility.cs") +
+            ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantRequirement.cs");
 
         source.ShouldContain("plan.CompatibilityIdentity");
         source.ShouldContain("EMeshSubmissionStrategy SubmissionStrategy");
@@ -33,23 +39,49 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     [Test]
     public void PipelinePrewarmHappensBeforeCommandBufferBeginAndPendingDrawsDeferLocally()
     {
+        // Primary recording builds the variant manifest and admits its
+        // pipelines in the preparation phase. Only then does it begin the
+        // command buffer. Optional draws defer locally. A pending required
+        // pipeline defers the whole recording before vkBeginCommandBuffer.
+        string lifecycleSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.cs");
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Preparation.cs");
+        string primaryRecordingSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
-        int manifest = source.IndexOf("GetOrBuildPipelineVariantManifest(", StringComparison.Ordinal);
-        int begin = source.IndexOf("Api!.BeginCommandBuffer", manifest, StringComparison.Ordinal);
+        int prepare = lifecycleSource.IndexOf("TryPreparePrimaryFrameData(", StringComparison.Ordinal);
+        int encoding = lifecycleSource.IndexOf("PreparePrimaryCommandEncoding(ref recordingState);", prepare, StringComparison.Ordinal);
+        prepare.ShouldBeGreaterThanOrEqualTo(0);
+        encoding.ShouldBeGreaterThan(prepare);
+
+        int manifest = source.IndexOf("ResourceRuntime.PipelineManager.GetOrBuildVariantManifest(", StringComparison.Ordinal);
+        int admit = source.IndexOf("if (!TryAdmitPrimaryGraphicsPipelines(", manifest, StringComparison.Ordinal);
+        int beginEncoding = source.IndexOf("private void PreparePrimaryCommandEncoding(", StringComparison.Ordinal);
+        int begin = source.IndexOf("ResetAndBeginPrimaryCommandBuffer(ref recordingState);", beginEncoding, StringComparison.Ordinal);
         manifest.ShouldBeGreaterThanOrEqualTo(0);
-        begin.ShouldBeGreaterThan(manifest);
-        source.ShouldContain("pipelineDeferredOps.Add(ops[opIndex])");
-        source.ShouldContain("if (pipelineDeferredOps.Contains(ops[opIndex]))");
-        source.ShouldContain("if (pipelineDeferredOps.Contains(ops[i]))");
-        source.ShouldContain("the rest of the frame will still submit");
-        source.ShouldContain("Recording a partial frame with {0} draw operation(s) deferred");
-        source.ShouldContain("Required graphics pipeline became pending after declared warmup");
-        source.ShouldContain("reuseDeferredPipelineReadiness");
-        source.ShouldContain("VulkanPipelineCompileActivityGeneration");
-        source.ShouldContain("SharedGraphicsPipelineGeneration");
-        source.ShouldContain("deferredRequirementIndices.Contains(requirementIndex)");
+        admit.ShouldBeGreaterThan(manifest);
+        beginEncoding.ShouldBeGreaterThanOrEqualTo(0);
+        begin.ShouldBeGreaterThan(beginEncoding);
+
+        source.ShouldContain(
+            "recordingState.PipelineDeferredOperationIndices.Add(\n" +
+            "                                opIndex);");
+        source.ShouldContain(
+            "if (recordingState.PipelineDeferredOperationIndices.Contains(\n" +
+            "                            opIndex))");
+        source.ShouldContain(
+            "recordingState.PipelineDeferredOperationIndices.Contains(\n" +
+            "                        opIndex) ||");
+        source.ShouldContain("optionalRequirements.Add(requirementIndex);");
+        source.ShouldContain("Graphics pipeline compilation is still pending before vkBeginCommandBuffer.");
+        source.ShouldContain("Defer the whole sealed graph until");
+        source.ShouldContain(
+            "bool manifestReset = previousManifestIdentity != manifestIdentity ||\n" +
+            "                pipelineRetired;");
+        source.ShouldContain("ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration;");
+        primaryRecordingSource.ShouldContain("SharedGraphicsPipelineGeneration);");
+        source.ShouldContain("pendingRequirements.Contains(requirementIndex) ||");
         source.ShouldNotContain("Vulkan.PipelineDrawDeferred.");
     }
 
@@ -72,15 +104,22 @@ public sealed class VulkanPipelineReadinessPhase525Tests
     {
         string manifest = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
+        string contract = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.Contract.cs");
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Preparation.cs");
 
         manifest.ShouldContain("MaxCachedPipelineVariantManifests = 64");
         manifest.ShouldContain("_pipelineVariantManifestCache.TryGetValue");
         manifest.ShouldContain("while (_pipelineVariantManifestCache.Count >= MaxCachedPipelineVariantManifests");
-        recording.ShouldContain("pipelineVariantManifest.WarmupCompleted");
-        recording.ShouldContain("pipelineVariantManifest.MarkWarmupCompleted()");
+        // The manifest owns its warmup state. Recording reads and sets it for
+        // the active native pipeline generation.
+        contract.ShouldContain("public bool WarmupCompleted");
+        contract.ShouldContain("public void MarkWarmupCompleted(long retirementGeneration)");
+        recording.ShouldContain("pipelineVariantManifest.IsWarmForPipelineGeneration(");
+        recording.ShouldContain("pipelineVariantManifest.MarkWarmupCompleted(pipelineRetirementGeneration)");
         recording.ShouldNotContain("_completedPipelineWarmupManifests");
+        manifest.ShouldNotContain("_completedPipelineWarmupManifests");
     }
 
     [Test]

@@ -100,13 +100,15 @@ public sealed class GpuBvhSceneTreeImprovementTests
         int flush = scene.IndexOf("FlushCommandAabbDirtyRange()", rebuildStart, StringComparison.Ordinal);
         backfill.ShouldBeGreaterThan(rebuildStart);
         flush.ShouldBeGreaterThan(backfill);
-        bounds.ShouldContain("GetDataRawAtIndex<DrawMetadata>(commandIndex).BoundsID");
+        bounds.ShouldContain("DrawMetadata metadata = metadataBuffer.GetDataRawAtIndex<DrawMetadata>(commandIndex);");
+        bounds.ShouldContain("uint boundsId = metadata.BoundsID;");
         bounds.ShouldContain("GetDataRawAtIndex<BoundsGpu>(boundsId)");
         bounds.ShouldContain("bounds.BoundsVersion != 0u");
         bounds.ShouldContain("forceDirty: true");
         bounds.ShouldContain("if (IsCommandOwnedByGpuAabb(commandIndex))");
-        bounds.ShouldContain("command.BoundingSphere");
+        bounds.ShouldContain("CreateBackfillCommandAabb(hasBounds, bounds, _bounds)");
         bounds.ShouldContain("configuredBounds.IsValid");
+        bounds.ShouldContain("const float FallbackExtent = 1.0e10f;");
     }
 
     [Test]

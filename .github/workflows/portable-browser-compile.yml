@@ -10,7 +10,6 @@ on:
       - '.github/diagnostic-activations/network-walkthrough-20261005.json'
       - '.github/diagnostic-activations/ui-frame-trace-20261006.json'
       - '.github/diagnostic-activations/ui-frame-trace-loaded-20261006.json'
-      - 'docs/work/**/*.md'
   pull_request:
   workflow_dispatch:
 
@@ -45,7 +44,7 @@ jobs:
         run: dotnet workload install wasm-tools
 
       - name: Set up browser qualification tools
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -689,7 +688,7 @@ jobs:
 
       - name: Set up native package and shadow staging tools
         if: ${{ steps.reuse_selector.outcome != 'success' || steps.reuse_selector.outputs.reuse != 'true' }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -1215,7 +1214,7 @@ jobs:
         run: ./Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1 -Mode Download -Kind windows-editor-advanced-shadow-parity-off-bundle -Destination "$env:VALIDATION_ROOT/published-cpu-baseline"
 
       - name: Set up browser qualification tools
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm

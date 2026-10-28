@@ -110,9 +110,7 @@ not implement the leased overload rejects a non-null owner as `Unsupported`.
 `PhysicsChainShaderContractTests` and `PhysicsChainGpuKernelFamilyTests` cover
 record layouts and source contracts. `PhysicsChainGpuDependencyOrderingTests`
 and `PhysicsChainGpuBranchedDependencyOrderingTests` provide GPU ordering
-checks. The source audit on 2026-10-06 did not run these tests. See the
-[validation plan](../../work/testing/physics/physics-validation.md#physics-chain-scale)
-for runtime and hardware acceptance.
+checks. The source audit on 2026-10-06 did not run these tests.
 
 ## Required capabilities and failure behavior
 

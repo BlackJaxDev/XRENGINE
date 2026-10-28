@@ -20,10 +20,12 @@ public sealed class PhysicsChainDebugDefaultTests
         component.ShouldContain("if (DebugDrawChains)");
         gpu.ShouldContain("RuntimePhysicsChainRendering.Current.RenderDebug(this)");
         string renderingBridge = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/RuntimePhysicsChainRenderingBridge.cs");
-        renderingBridge.ShouldContain("GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug()");
-        dispatcherDebug.ShouldContain("if (!request.Component.DebugDrawChains");
-        dispatcherDebug.IndexOf("if (!request.Component.DebugDrawChains", StringComparison.Ordinal)
-            .ShouldBeLessThan(dispatcherDebug.IndexOf("_gpuDebugItems.Add(", StringComparison.Ordinal));
+        renderingBridge.ShouldContain("GPUPhysicsChainDispatcher.Instance.RenderSelectedGpuDebug(chain.World)");
+        renderingBridge.ShouldContain("private volatile bool _debugDrawChains = chain.DebugDrawChains;");
+        renderingBridge.ShouldContain("GPUPhysicsChainDispatcher.Instance.SetDebugDrawChainsSelection(this, selected);");
+        dispatcherDebug.ShouldContain("if (!request.DebugSelected");
+        dispatcherDebug.IndexOf("if (!request.DebugSelected", StringComparison.Ordinal)
+            .ShouldBeLessThan(dispatcherDebug.IndexOf("items.Add(new PhysicsChainGpuDebugItem(", StringComparison.Ordinal));
     }
 
     [Test]
@@ -31,8 +33,16 @@ public sealed class PhysicsChainDebugDefaultTests
     {
         string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
-        dispatcher.ShouldContain("request.NeedsUpdate && request.DispatchIsolationKey == 0");
-        dispatcher.ShouldContain("request.NeedsUpdate && request.DispatchIsolationKey != 0");
+        // TryAcceptInput rejects a request that does not need an update.
+        dispatcher.ShouldContain("if (!NeedsUpdate)");
+        int acceptIndex = dispatcher.IndexOf("if (!request.TryAcceptInput(", StringComparison.Ordinal);
+        acceptIndex.ShouldBeGreaterThanOrEqualTo(0);
+        int batchedIndex = dispatcher.IndexOf("if (request.DispatchIsolationKey == 0)", acceptIndex, StringComparison.Ordinal);
+        batchedIndex.ShouldBeGreaterThan(acceptIndex);
+        int isolatedIndex = dispatcher.IndexOf("_isolatedRequests.Add(request);", batchedIndex, StringComparison.Ordinal);
+        isolatedIndex.ShouldBeGreaterThan(batchedIndex);
+        int appendIndex = dispatcher.IndexOf("_activeRequests.Add(_isolatedRequests[i]);", isolatedIndex, StringComparison.Ordinal);
+        appendIndex.ShouldBeGreaterThan(isolatedIndex);
         dispatcher.ShouldContain("Registration order is the stable order within both dispatch buckets.");
         dispatcher.ShouldNotContain("_activeRequests.Sort(");
         dispatcher.ShouldNotContain("RequiresDispatchSort(");
@@ -43,11 +53,11 @@ public sealed class PhysicsChainDebugDefaultTests
     {
         string dispatcherDebug = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Debug.cs");
 
-        dispatcherDebug.ShouldContain("ReplaceDebugRendererBuffer(_gpuDebugPointsRenderer, _gpuDebugPointsBuffer)");
-        dispatcherDebug.ShouldContain("ReplaceDebugRendererBuffer(_gpuDebugLinesRenderer, _gpuDebugLinesBuffer)");
+        dispatcherDebug.ShouldContain("ReplaceDebugRendererBuffer(batch.PointsRenderer, batch.PointsBuffer)");
+        dispatcherDebug.ShouldContain("ReplaceDebugRendererBuffer(batch.LinesRenderer, batch.LinesBuffer)");
         dispatcherDebug.ShouldContain("renderer.Buffers[name] = buffer;");
-        dispatcherDebug.ShouldNotContain("!_gpuDebugPointsRenderer.Buffers.ContainsKey");
-        dispatcherDebug.ShouldNotContain("!_gpuDebugLinesRenderer.Buffers.ContainsKey");
+        dispatcherDebug.ShouldNotContain("!batch.PointsRenderer.Buffers.ContainsKey");
+        dispatcherDebug.ShouldNotContain("!batch.LinesRenderer.Buffers.ContainsKey");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

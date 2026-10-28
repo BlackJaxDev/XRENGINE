@@ -30,11 +30,23 @@ public sealed class PhysicsChainSelectiveReadbackDispatcherTests
     public void Dispatcher_SubmitsExactMappedStagingCopiesAfterProducerBarriers()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
-        int producerBarrier = source.IndexOf("TryCompletePass(backend, BonePaletteCompletionPass)", StringComparison.Ordinal);
-        int selectiveQueue = source.IndexOf("QueueSelectiveReadbacks(backend, _dispatchGroup);", producerBarrier, StringComparison.Ordinal);
+        // The gather reads simulated particles and transforms. Each dispatch group completes the
+        // simulation barrier, and the selective readback is queued after all groups.
+        string groupMethod = SliceMethod(source, "private bool ProcessDispatchGroup(", "internal void ApplyPendingArenaLayoutReset(");
+        string publishMethod = SliceMethod(
+            source,
+            "private bool PublishSelectiveReadbacksAfterSimulation(",
+            "private void QueueSelectiveReadbacks(");
+        int groupDispatch = source.IndexOf("if (!ProcessDispatchGroup(backend, out string failureStage))", StringComparison.Ordinal);
+        groupDispatch.ShouldBeGreaterThanOrEqualTo(0);
+        int selectiveQueue = source.IndexOf(
+            "bool readbackPublished = PublishSelectiveReadbacksAfterSimulation(backend);",
+            groupDispatch,
+            StringComparison.Ordinal);
 
-        producerBarrier.ShouldBeGreaterThanOrEqualTo(0);
-        selectiveQueue.ShouldBeGreaterThan(producerBarrier);
+        groupMethod.ShouldContain("TryCompletePass(backend, SimulationCompletionPass)");
+        selectiveQueue.ShouldBeGreaterThan(groupDispatch);
+        publishMethod.ShouldContain("QueueSelectiveReadbacks(backend);");
         source.ShouldContain("nuint exactByteCount = (nuint)plan.ByteCount;");
         source.ShouldContain("DefaultMemoryPolicy = XRBufferMemoryPolicy.GpuToCpuReadback");
         source.ShouldContain("EBufferMapStorageFlags.Read | EBufferMapStorageFlags.ClientStorage");

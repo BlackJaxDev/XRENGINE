@@ -58,8 +58,15 @@ public sealed class PhysicsChainGpuKernelFamilyTests
     {
         string source = ReadShader("PhysicsChainActiveWork.comp");
 
+        string shortLinear = ReadShader("PhysicsChain.comp");
+
+        // The indirect count and the short linear solver share one group size.
+        source.ShouldContain("#include \"Compute/PhysicsChain/PhysicsChainWorkgroups.glslinc\"");
+        shortLinear.ShouldContain("#include \"Compute/PhysicsChain/PhysicsChainWorkgroups.glslinc\"");
+        shortLinear.ShouldContain("layout(local_size_x = PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE");
         source.ShouldContain("IndirectArguments[argumentBase] = bucket == 0u");
-        source.ShouldContain("(clampedCount + gl_WorkGroupSize.x - 1u) / gl_WorkGroupSize.x");
+        source.ShouldContain(
+            "(clampedCount + uint(PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE) - 1u) / uint(PHYSICS_CHAIN_SHORT_LINEAR_GROUP_SIZE)");
         source.ShouldContain(": clampedCount;");
     }
 

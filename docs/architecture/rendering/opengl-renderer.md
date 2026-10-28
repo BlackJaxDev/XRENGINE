@@ -358,8 +358,8 @@ there was no enclosing general-bind scope. `BoundForReading` and
 
 Scaled grab textures compare their scaled, nonzero destination dimensions
 before resizing. Comparing the unscaled viewport dimensions to a scaled grab
-target needlessly reallocates/re-attaches it on every draw. Both invariants
-were exercised by the [tessellated-water qualification](../../work/investigations/rendering/vulkan14-final-validation-2026-09-14.md).
+target needlessly reallocates/re-attaches it on every draw. The tessellated-water
+qualification exercised both invariants.
 
 ---
 

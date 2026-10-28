@@ -1,5 +1,5 @@
 param(
-    [string]$OutputPath = "docs/work/progress/runtime/runtime-modularization-phase6-project-graph-baseline.tsv"
+    [string]$OutputPath = "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-project-graph-baseline.tsv"
 )
 
 $ErrorActionPreference = "Stop"

@@ -93,7 +93,7 @@ bool XR_ADV_IsFinite(float4 value)
 float3 XR_ADV_NormalizeOr(float3 value, float3 fallback)
 {
     float lengthSquared = dot(value, value);
-    return isnan(lengthSquared) || isinf(lengthSquared) || lengthSquared <= 1.0e-20
+    return isnan(lengthSquared) | isinf(lengthSquared) | lengthSquared <= 1.0e-20
         ? fallback
         : value * rsqrt(lengthSquared);
 }
@@ -104,7 +104,7 @@ float3 XR_ADV_NormalizeEngineVertex(float3 value, bool authored)
 {
     if (!authored) return XR_ADV_NormalizeOr(value, float3(0.0));
     float3 normalized = normalize(value);
-    return XR_ADV_IsFinite(normalized) && dot(normalized, normalized) > 0.0
+    return XR_ADV_IsFinite(normalized) & dot(normalized, normalized) > 0.0
         ? normalized : float3(0.0);
 }
 
@@ -125,8 +125,8 @@ float3 XR_ADV_OrthogonalTangent(float3 normal, float3 sourceTangent)
     float3 perpendicular = cross(normal, sourceTangent);
     float perpendicularLengthSquared = dot(perpendicular, perpendicular);
     float tangentLengthSquared = dot(sourceTangent, sourceTangent);
-    if (isnan(tangentLengthSquared) || isinf(tangentLengthSquared) ||
-        isnan(perpendicularLengthSquared) || isinf(perpendicularLengthSquared) ||
+    if (isnan(tangentLengthSquared) | isinf(tangentLengthSquared) |
+        isnan(perpendicularLengthSquared) | isinf(perpendicularLengthSquared) |
         perpendicularLengthSquared <= max(1.0e-20, tangentLengthSquared * 1.0e-12))
         return XR_ADV_FallbackTangent(normal);
     perpendicular *= rsqrt(perpendicularLengthSquared);
@@ -156,11 +156,11 @@ bool XR_ADV_TryPerspectiveBarycentrics(
     weights = float3(0.0);
     weightDx = float3(0.0);
     weightDy = float3(0.0);
-    if (!XR_ADV_IsFinite(clip0) ||
-        !XR_ADV_IsFinite(clip1) ||
-        !XR_ADV_IsFinite(clip2) ||
-        abs(clip0.w) <= XR_ADV_RECONSTRUCTION_MIN_W ||
-        abs(clip1.w) <= XR_ADV_RECONSTRUCTION_MIN_W ||
+    if (!XR_ADV_IsFinite(clip0) |
+        !XR_ADV_IsFinite(clip1) |
+        !XR_ADV_IsFinite(clip2) |
+        abs(clip0.w) <= XR_ADV_RECONSTRUCTION_MIN_W |
+        abs(clip1.w) <= XR_ADV_RECONSTRUCTION_MIN_W |
         abs(clip2.w) <= XR_ADV_RECONSTRUCTION_MIN_W)
     {
         return false;
@@ -172,8 +172,8 @@ bool XR_ADV_TryPerspectiveBarycentrics(
     float denominator =
         (p1.y - p2.y) * (p0.x - p2.x) +
         (p2.x - p1.x) * (p0.y - p2.y);
-    if (isnan(denominator) ||
-        isinf(denominator) ||
+    if (isnan(denominator) |
+        isinf(denominator) |
         abs(denominator) <= XR_ADV_RECONSTRUCTION_MIN_AREA)
     {
         return false;
@@ -203,8 +203,8 @@ bool XR_ADV_TryPerspectiveBarycentrics(
     float3 numeratorDx = linearDx * inverseW;
     float3 numeratorDy = linearDy * inverseW;
     float sum = numerator.x + numerator.y + numerator.z;
-    if (isnan(sum) ||
-        isinf(sum) ||
+    if (isnan(sum) |
+        isinf(sum) |
         abs(sum) <= XR_ADV_RECONSTRUCTION_MIN_W)
     {
         return false;
@@ -222,8 +222,8 @@ bool XR_ADV_TryPerspectiveBarycentrics(
     weightDy =
         (numeratorDy * sum - numerator * sumDy) *
         (inverseSum * inverseSum);
-    return XR_ADV_IsFinite(weights) &&
-        XR_ADV_IsFinite(weightDx) &&
+    return XR_ADV_IsFinite(weights) &
+        XR_ADV_IsFinite(weightDx) &
         XR_ADV_IsFinite(weightDy);
 }
 
@@ -349,8 +349,8 @@ bool XR_ADV_TryInterpolateSurfaceBasis(XRAdvancedPreparedSurfaceBasis basis,
     if (basis.authoredSurfaceBasis)
     {
         // Source invalidity and cancellation at this pixel are separate checks.
-        if ((basis.uberSurface || !basis.authoredNormalMap) &&
-            (basis.authoredInvalidNormal || dot(shadingNormal, shadingNormal) == 0.0))
+        if ((basis.uberSurface | !basis.authoredNormalMap) &
+            (basis.authoredInvalidNormal | dot(shadingNormal, shadingNormal) == 0.0))
             return false;
         if (basis.authoredInvalidNormal) shadingNormal = float3(0.0);
         if (basis.authoredInvalidTangent)
@@ -376,32 +376,32 @@ void XR_ADV_InterpolateSurfaceTexCoords(XRAdvancedPreparedSurfaceTexCoords sourc
     out float2 uv1Dx, out float2 uv1Dy)
 {
     bool derivativesRequested = (requiredMask & XR_ADV_ATTRIBUTE_ANALYTICAL_DERIVATIVES) != 0u;
-    bool texCoord0Requested = (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD0) != 0u || derivativesRequested;
+    bool texCoord0Requested = (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD0) != 0u | derivativesRequested;
     bool requiresTexCoord1 = (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD1) != 0u;
-    uv0 = uberSurface || texCoord0Requested ? XR_ADV_Interpolate(
+    uv0 = uberSurface | texCoord0Requested ? XR_ADV_Interpolate(
         source.uv00, source.uv01, source.uv02, weights, flatQualified) : float2(0.0);
-    uv1 = uberSurface || requiresTexCoord1 && source.hasTexCoord1 ? XR_ADV_Interpolate(
+    uv1 = uberSurface | requiresTexCoord1 & source.hasTexCoord1 ? XR_ADV_Interpolate(
         source.uv10, source.uv11, source.uv12, weights, flatQualified) :
         requiresTexCoord1 ? uv0 : float2(0.0);
-    bool gradients = uberSurface || derivativesRequested && !flatQualified;
+    bool gradients = uberSurface | derivativesRequested & !flatQualified;
     uv0Dx = gradients ? XR_ADV_Gradient(source.uv00, source.uv01, source.uv02, weightDx) : float2(0.0);
     uv0Dy = gradients ? XR_ADV_Gradient(source.uv00, source.uv01, source.uv02, weightDy) : float2(0.0);
-    uv1Dx = !gradients ? float2(0.0) : uberSurface || source.hasTexCoord1 ?
+    uv1Dx = !gradients ? float2(0.0) : uberSurface | source.hasTexCoord1 ?
         XR_ADV_Gradient(source.uv10, source.uv11, source.uv12, weightDx) : uv0Dx;
-    uv1Dy = !gradients ? float2(0.0) : uberSurface || source.hasTexCoord1 ?
+    uv1Dy = !gradients ? float2(0.0) : uberSurface | source.hasTexCoord1 ?
         XR_ADV_Gradient(source.uv10, source.uv11, source.uv12, weightDy) : uv0Dy;
 }
 
 bool XR_ADV_ReconstructedSurfaceIsFinite(XRAdvancedSurface surface)
 {
-    return XR_ADV_IsFinite(surface.worldPosition) &&
-        XR_ADV_IsFinite(surface.shadingNormal) &&
-        XR_ADV_IsFinite(surface.tangent) &&
-        XR_ADV_IsFinite(surface.bitangent) &&
-        XR_ADV_IsFinite(surface.texCoord0) &&
-        XR_ADV_IsFinite(surface.texCoord0Dx) &&
-        XR_ADV_IsFinite(surface.texCoord0Dy) &&
-        XR_ADV_IsFinite(surface.texCoord1Dx) &&
+    return XR_ADV_IsFinite(surface.worldPosition) &
+        XR_ADV_IsFinite(surface.shadingNormal) &
+        XR_ADV_IsFinite(surface.tangent) &
+        XR_ADV_IsFinite(surface.bitangent) &
+        XR_ADV_IsFinite(surface.texCoord0) &
+        XR_ADV_IsFinite(surface.texCoord0Dx) &
+        XR_ADV_IsFinite(surface.texCoord0Dy) &
+        XR_ADV_IsFinite(surface.texCoord1Dx) &
         XR_ADV_IsFinite(surface.texCoord1Dy);
 }
 
@@ -427,7 +427,7 @@ bool XR_ADV_TryPrimitiveVertices(
 {
     vertices = uint3(0u);
     bool meshlet =
-        producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET ||
+        producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET |
         producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET;
     if (!meshlet)
     {
@@ -437,10 +437,10 @@ bool XR_ADV_TryPrimitiveVertices(
         uint geometryEnd =
             geometry.indexData.elementOffset +
             geometry.indexData.elementCount;
-        if (geometryEnd < geometry.indexData.elementOffset ||
-            firstIndex < geometry.indexData.elementOffset ||
-            firstIndex > geometryEnd ||
-            geometryEnd - firstIndex < 3u ||
+        if (geometryEnd < geometry.indexData.elementOffset |
+            firstIndex < geometry.indexData.elementOffset |
+            firstIndex > geometryEnd |
+            geometryEnd - firstIndex < 3u |
             firstIndex + 2u >=
                 GeometryCount(1u, 4u))
         {
@@ -456,8 +456,8 @@ bool XR_ADV_TryPrimitiveVertices(
     // Meshlet primitive identity is unchanged by compute triangle expansion.
     uint meshletIndex = encodedPrimitive >> 8u;
     uint localPrimitive = encodedPrimitive & 0xFFu;
-    if (meshletIndex < geometry.meshletFirst ||
-        meshletIndex - geometry.meshletFirst >= geometry.meshletCount ||
+    if (meshletIndex < geometry.meshletFirst |
+        meshletIndex - geometry.meshletFirst >= geometry.meshletCount |
         meshletIndex >=
             GeometryCount(4u, 80u))
     {
@@ -474,18 +474,18 @@ bool XR_ADV_TryPrimitiveVertices(
     uint wordLength = geometry.meshletTriangleWords.elementCount;
     uint remapCount = GeometryCount(5u, 4u);
     uint wordCount = GeometryCount(6u, 4u);
-    if (remapBase > remapCount || remapLength > remapCount - remapBase ||
-        wordBase > wordCount || wordLength > wordCount - wordBase ||
-        wordBase > 0x3fffffffu || wordLength > 0x3fffffffu ||
-        descriptor.vertexOffset > remapLength || descriptor.vertexCount > remapLength - descriptor.vertexOffset ||
-        descriptor.triangleByteOffset > wordLength * 4u ||
+    if (remapBase > remapCount | remapLength > remapCount - remapBase |
+        wordBase > wordCount | wordLength > wordCount - wordBase |
+        wordBase > 0x3fffffffu | wordLength > 0x3fffffffu |
+        descriptor.vertexOffset > remapLength | descriptor.vertexCount > remapLength - descriptor.vertexOffset |
+        descriptor.triangleByteOffset > wordLength * 4u |
         descriptor.triangleCount > (wordLength * 4u - descriptor.triangleByteOffset) / 3u)
         return false;
     uint triangleByte =
         wordBase * 4u + descriptor.triangleByteOffset + localPrimitive * 3u;
     uint triangleByteCount = GeometryCount(6u, 1u);
-    if (triangleByte < descriptor.triangleByteOffset ||
-        triangleByte > triangleByteCount || triangleByteCount - triangleByte < 3u)
+    if (triangleByte < descriptor.triangleByteOffset |
+        triangleByte > triangleByteCount | triangleByteCount - triangleByte < 3u)
         return false;
     uint3 localVertices = uint3(
         XR_ADV_ReconstructionTriangleByte(triangleByte),
@@ -500,7 +500,7 @@ bool XR_ADV_TryPrimitiveVertices(
 
     uint3 remapIndices =
         uint3(remapBase + descriptor.vertexOffset) + localVertices;
-    if (any(lessThan(remapIndices, uint3(remapBase))) ||
+    if (any(lessThan(remapIndices, uint3(remapBase))) |
         any(greaterThanEqual(remapIndices, uint3(remapCount))))
         return false;
     vertices = uint3(
@@ -596,7 +596,7 @@ bool XR_WEB_TryInterpolateShadowSurface(XRAdvancedSurface surface, float2 pixelC
         prepared.world0, prepared.world1, prepared.world2, weights, false);
     // Keep the original depth-position finite check before the caller replaces
     // this position with the interpolated primitive position for shadowing.
-    helper.worldPosition = prepared.basis.uberSurface ||
+    helper.worldPosition = prepared.basis.uberSurface |
         (surface.requiredAttributeMask & XR_ADV_ATTRIBUTE_DEFORMED_POSITION) != 0u
         ? helper.interpolatedWorldPosition
         : XR_ADV_ReconstructWorldPositionFromDepth(pixelCenter, surface.depth, viewRecord);
@@ -631,648 +631,659 @@ bool XR_ADV_TryReconstructSurface(
 #endif
     out XRAdvancedSurface surface)
 {
+    bool succeeded = false;
+    // This loop runs one time. Each failure breaks out of it. Do not use
+    // early returns here. The SPIR-V optimizer turns each early return into
+    // a chain of phi values for the prepared primitive fields, and the
+    // SwiftShader Subzero back end then goes over its 512 KiB stack limit.
+    [loop]
+    for (;;)
+    {
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
-    preparedPrimitive = (XRAdvancedPreparedShadowPrimitive)0;
+        preparedPrimitive = (XRAdvancedPreparedShadowPrimitive)0;
 #endif
-    surface = XR_ADV_InvalidSurface(
-        identity,
-        XR_ADV_RECONSTRUCTION_BACKGROUND);
-    uint payloadVersion =
-        (metadata >> XR_ADV_VIS_VERSION_SHIFT) & 0xFFu;
-    if (identity.x == 0u ||
-        identity.x == XR_ADV_VIS_INVALID ||
-        identity.y == XR_ADV_VIS_INVALID ||
-        metadata == XR_ADV_VIS_INVALID)
-    {
-        return false;
-    }
-    if (payloadVersion != XR_ADV_VISIBILITY_PAYLOAD_VERSION)
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_PAYLOAD_VERSION;
-        return false;
-    }
+        surface = XR_ADV_InvalidSurface(
+            identity,
+            XR_ADV_RECONSTRUCTION_BACKGROUND);
+        uint payloadVersion =
+            (metadata >> XR_ADV_VIS_VERSION_SHIFT) & 0xFFu;
+        if (identity.x == 0u |
+            identity.x == XR_ADV_VIS_INVALID |
+            identity.y == XR_ADV_VIS_INVALID |
+            metadata == XR_ADV_VIS_INVALID)
+        {
+            break;
+        }
+        if (payloadVersion != XR_ADV_VISIBILITY_PAYLOAD_VERSION)
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_PAYLOAD_VERSION;
+            break;
+        }
 
-    uint producer = metadata & XR_ADV_VIS_PRODUCER_MASK;
-    uint viewIndex =
-        (metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu;
-    if (!XR_ADV_IsSupportedVisibilityProducer(producer))
-        return false;
-    uint drawDense = XR_ADV_ResolveVisibilityStableIndex(
-        identity.x,
-        VisibilityDrawLookupSegment,
-        XR_ADV_DIAGNOSTIC_DRAW);
-    if (drawDense == XR_ADV_INVALID_DENSE_INDEX ||
-        drawDense >= SceneCount(0u))
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_DRAW_NOT_RESIDENT;
-        return false;
-    }
+        uint producer = metadata & XR_ADV_VIS_PRODUCER_MASK;
+        uint viewIndex =
+            (metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu;
+        if (!XR_ADV_IsSupportedVisibilityProducer(producer))
+            break;
+        uint drawDense = XR_ADV_ResolveVisibilityStableIndex(
+            identity.x,
+            VisibilityDrawLookupSegment,
+            XR_ADV_DIAGNOSTIC_DRAW);
+        if (drawDense == XR_ADV_INVALID_DENSE_INDEX |
+            drawDense >= SceneCount(0u))
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_DRAW_NOT_RESIDENT;
+            break;
+        }
 
-    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
-    uint instanceDense = XR_ADV_ResolveVisibilityHandle(
-        draw.instance,
-        VisibilityInstanceLookupSegment,
-        XR_ADV_DIAGNOSTIC_INSTANCE);
-    if (instanceDense == XR_ADV_INVALID_DENSE_INDEX ||
-        instanceDense >= SceneCount(1u))
-    {
-        surface.invalidReason = XR_ADV_RECONSTRUCTION_STALE_GENERATION;
-        return false;
-    }
-    XRAdvancedInstanceRecord instance = XR_ADV_LoadInstance(instanceDense);
-    XRAdvancedPreparedDrawDeformationRecord preparedTemporalState;
-    bool hasPreparedTemporalState =
-        XR_ADV_TryLoadPreparedDrawTemporalState(
-            drawDense,
-            draw,
-            preparedTemporalState);
-    // The sidecar is the only current-frame temporal authority. A stale or
-    // absent relation fails closed without making static surface shading fail.
-    uint velocityValidityReason = hasPreparedTemporalState
-        ? XR_ADV_PreparedDeformationTemporalReason(preparedTemporalState)
-        : 7u; // EAdvancedVelocityValidityReason.HistoryReset
-    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
-        draw.geometry,
-        VisibilityGeometryLookupSegment,
-        XR_ADV_DIAGNOSTIC_MESH);
-    if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING;
-        return false;
-    }
-    XRAdvancedGeometryRecord geometry =
-        XR_ADV_LoadGeometry(geometryDense);
-    if (!XR_ADV_GeometryIsResident(geometry) &&
-        geometry.missingBehavior ==
-            XR_ADV_GEOMETRY_MISSING_USE_FALLBACK &&
-        geometry.fallbackGeometry.index != draw.geometry.index)
-    {
-        uint fallbackDense = XR_ADV_ResolveVisibilityHandle(
-            geometry.fallbackGeometry,
+        XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+        uint instanceDense = XR_ADV_ResolveVisibilityHandle(
+            draw.instance,
+            VisibilityInstanceLookupSegment,
+            XR_ADV_DIAGNOSTIC_INSTANCE);
+        if (instanceDense == XR_ADV_INVALID_DENSE_INDEX |
+            instanceDense >= SceneCount(1u))
+        {
+            surface.invalidReason = XR_ADV_RECONSTRUCTION_STALE_GENERATION;
+            break;
+        }
+        XRAdvancedInstanceRecord instance = XR_ADV_LoadInstance(instanceDense);
+        XRAdvancedPreparedDrawDeformationRecord preparedTemporalState;
+        bool hasPreparedTemporalState =
+            XR_ADV_TryLoadPreparedDrawTemporalState(
+                drawDense,
+                draw,
+                preparedTemporalState);
+        // The sidecar is the only current-frame temporal authority. A stale or
+        // absent relation fails closed without making static surface shading fail.
+        uint velocityValidityReason = hasPreparedTemporalState
+            ? XR_ADV_PreparedDeformationTemporalReason(preparedTemporalState)
+            : 7u; // EAdvancedVelocityValidityReason.HistoryReset
+        uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+            draw.geometry,
             VisibilityGeometryLookupSegment,
             XR_ADV_DIAGNOSTIC_MESH);
-        if (fallbackDense != XR_ADV_INVALID_DENSE_INDEX)
+        if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
         {
-            geometry = XR_ADV_LoadGeometry(fallbackDense);
-            geometryDense = fallbackDense;
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING;
+            break;
         }
-    }
-    if (!XR_ADV_GeometryIsResident(geometry))
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_GEOMETRY_NOT_RESIDENT;
-        return false;
-    }
-
-    uint materialDense = XR_ADV_ResolveVisibilityHandle(
-        draw.material,
-        VisibilityMaterialLookupSegment,
-        XR_ADV_DIAGNOSTIC_MATERIAL);
-    if (materialDense == XR_ADV_INVALID_DENSE_INDEX)
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_MATERIAL_NOT_RESIDENT;
-        return false;
-    }
-    XRAdvancedMaterialRecord material =
-        XR_ADV_LoadMaterial(materialDense);
-    XRAdvancedGpuHandle kernelHandle = XRAdvancedGpuHandle(
-        material.shadingKernelId,
-        material.shadingKernelGeneration);
-    uint kernelDense = XR_ADV_ResolveVisibilityHandle(
-        kernelHandle,
-        VisibilityShadingKernelLookupSegment,
-        XR_ADV_DIAGNOSTIC_MATERIAL);
-    if (kernelDense == XR_ADV_INVALID_DENSE_INDEX)
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_KERNEL_NOT_RESIDENT;
-        return false;
-    }
-    if (viewIndex >= Parameters.viewCount)
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_VIEW_OUT_OF_RANGE;
-        return false;
-    }
-
-    uint currentTransformDense = XR_ADV_ResolveVisibilityHandle(
-        draw.currentTransform,
-        VisibilityTransformLookupSegment,
-        XR_ADV_DIAGNOSTIC_DRAW);
-    uint previousTransformDense = XR_ADV_ResolveVisibilityHandle(
-        draw.previousTransform,
-        VisibilityTransformLookupSegment,
-        XR_ADV_DIAGNOSTIC_DRAW);
-    if (currentTransformDense == XR_ADV_INVALID_DENSE_INDEX ||
-        previousTransformDense == XR_ADV_INVALID_DENSE_INDEX)
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_STALE_GENERATION;
-        return false;
-    }
-
-    uint3 sourceVertices;
-    if (!XR_ADV_TryPrimitiveVertices(
-            geometry,
-            producer,
-            identity.y,
-            sourceVertices))
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE;
-        return false;
-    }
-
-    XRAdvancedPreparedDrawDeformationRecord preparedDeformation;
-    bool hasPreparedDeformation =
-        XR_ADV_TryLoadPreparedDrawDeformation(
-            drawDense,
-            draw,
-            preparedDeformation);
-    bool producerRequiresDeformation =
-        producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET ||
-        producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
-    if (producerRequiresDeformation && !hasPreparedDeformation)
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
-        return false;
-    }
-
-    // The overlay is authoritative even for the ordinary indirect-indexed
-    // producer. Canonical geometry remains immutable bind-pose topology.
-    bool deformed = hasPreparedDeformation;
-    if (any(greaterThanEqual(
-            sourceVertices,
-            uint3(deformed ? preparedDeformation.vertexCount : geometry.vertexCount))))
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE;
-        return false;
-    }
-    uint currentVertexBase = deformed
-        ? preparedDeformation.currentVertexOffset
-        : geometry.currentVertexData.elementOffset;
-    bool previousUsesPreviousBuffer = deformed &&
-        XR_ADV_PreparedDeformationPreviousValid(preparedDeformation);
-    uint previousVertexBase = deformed
-        ? (previousUsesPreviousBuffer
-            ? preparedDeformation.previousVertexOffset
-            : preparedDeformation.currentVertexOffset)
-        : geometry.currentVertexData.elementOffset;
-    uint3 currentIndices =
-        uint3(currentVertexBase) + sourceVertices;
-    uint3 previousIndices =
-        uint3(previousVertexBase) + sourceVertices;
-    if (any(lessThan(currentIndices, uint3(currentVertexBase))))
-    {
-        surface.invalidReason = XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE;
-        return false;
-    }
-    XRAdvancedPackedVertex current0;
-    XRAdvancedPackedVertex current1;
-    XRAdvancedPackedVertex current2;
-    if (!XR_ADV_TryLoadVertex(
-            deformed, false, currentIndices.x, current0) ||
-        !XR_ADV_TryLoadVertex(
-            deformed, false, currentIndices.y, current1) ||
-        !XR_ADV_TryLoadVertex(
-            deformed, false, currentIndices.z, current2))
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
-        return false;
-    }
-
-    XRAdvancedPackedVertex previous0;
-    XRAdvancedPackedVertex previous1;
-    XRAdvancedPackedVertex previous2;
-    bool previousGeometryValid =
-        !any(lessThan(previousIndices, uint3(previousVertexBase))) &&
-        XR_ADV_TryLoadVertex(
-            deformed,
-            previousUsesPreviousBuffer,
-            previousIndices.x,
-            previous0) &&
-        XR_ADV_TryLoadVertex(
-            deformed,
-            previousUsesPreviousBuffer,
-            previousIndices.y,
-            previous1) &&
-        XR_ADV_TryLoadVertex(
-            deformed,
-            previousUsesPreviousBuffer,
-            previousIndices.z,
-            previous2);
-    XRAdvancedTransformRecord currentTransform =
-        XR_ADV_LoadTransform(currentTransformDense);
-    XRAdvancedTransformRecord previousTransform =
-        XR_ADV_LoadTransform(previousTransformDense);
-    XRAdvancedViewRecord viewRecord =
-        XR_ADV_LoadView(viewIndex);
-
-    float3 currentWorld0 =
-        XR_ADV_TransformPositionRowVector(
-            current0.position,
-            currentTransform.world);
-    float3 currentWorld1 =
-        XR_ADV_TransformPositionRowVector(
-            current1.position,
-            currentTransform.world);
-    float3 currentWorld2 =
-        XR_ADV_TransformPositionRowVector(
-            current2.position,
-            currentTransform.world);
-    float4 currentClip0 =
-        XR_ADV_CurrentJitteredClip(viewRecord, currentWorld0);
-    float4 currentClip1 =
-        XR_ADV_CurrentJitteredClip(viewRecord, currentWorld1);
-    float4 currentClip2 =
-        XR_ADV_CurrentJitteredClip(viewRecord, currentWorld2);
-    float3 weights;
-    float3 weightDx;
-    float3 weightDy;
-    if (!XR_ADV_TryPerspectiveBarycentrics(
-            pixelCenter,
-            currentClip0,
-            currentClip1,
-            currentClip2,
-            viewRecord,
-            weights,
-            weightDx,
-            weightDy))
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE;
-        return false;
-    }
-
-    uint requiredMask =
-        material.requiredAttributeMask &
-        XR_ADV_LoadShadingKernel(kernelDense).requiredAttributeMask &
-        XR_ADV_REQUIRED_ATTRIBUTE_MASK;
-    bool hasTexCoord1 =
-        (current0.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u &&
-        (current1.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u &&
-        (current2.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u;
-    bool flatQualified =
-        (requiredMask & XR_ADV_ATTRIBUTE_FLAT) != 0u;
-    float3 geometricNormal =
-        cross(
-            currentWorld1 - currentWorld0,
-            currentWorld2 - currentWorld0);
-    float geometricLength = length(geometricNormal);
-    if (geometricLength <= XR_ADV_RECONSTRUCTION_MIN_AREA ||
-        isnan(geometricLength) ||
-        isinf(geometricLength))
-    {
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE;
-        return false;
-    }
-    geometricNormal /= geometricLength;
-
-    bool requiresTangent =
-        (requiredMask & XR_ADV_ATTRIBUTE_TANGENT) != 0u;
-    float3x3 world3 = (float3x3)currentTransform.world;
-    bool mirrored = determinant(world3) < 0.0;
-    uint engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles;
-    uint uberWord, uberFeatures, uberPipeline;
-    bool uberSurface = XR_ADV_IsUberBaseMaterial(material);
-    if (uberSurface && !XR_ADV_TryLoadUberBase(material,uberWord,uberFeatures,uberPipeline))
-    { surface.invalidReason=XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING; return false; }
-    if (uberSurface) flatQualified=false;
-    bool engineTextureSurface = XR_ADV_TryLoadEngineSurfaceHeader(material,
-        engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles) &&
-        engineSurfaceKind != XR_ADV_ENGINE_SURFACE_COLOR;
-    bool authoredSurfaceBasis = uberSurface || engineTextureSurface &&
-        engineSurfaceKind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED;
-    bool authoredNormalMap = uberSurface ? (uberFeatures & 1u)!=0u : authoredSurfaceBasis && (engineSurfaceRoles & 2u) != 0u;
-    engineTextureSurface = engineTextureSurface || uberSurface;
-    XRAdvancedAuthoredBasisVertex basis0, basis1, basis2;
-    bool authoredInvalidNormal = false;
-    bool authoredInvalidTangent = false;
-    if (authoredSurfaceBasis)
-    {
-        if (!XR_ADV_TryLoadAuthoredBasis(drawDense, identity.x, draw, geometryDense, sourceVertices, basis0, basis1, basis2))
+        XRAdvancedGeometryRecord geometry =
+            XR_ADV_LoadGeometry(geometryDense);
+        if (!XR_ADV_GeometryIsResident(geometry) &
+            geometry.missingBehavior ==
+                XR_ADV_GEOMETRY_MISSING_USE_FALLBACK &
+            geometry.fallbackGeometry.index != draw.geometry.index)
         {
-            surface.invalidReason = XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING;
-            return false;
+            uint fallbackDense = XR_ADV_ResolveVisibilityHandle(
+                geometry.fallbackGeometry,
+                VisibilityGeometryLookupSegment,
+                XR_ADV_DIAGNOSTIC_MESH);
+            if (fallbackDense != XR_ADV_INVALID_DENSE_INDEX)
+            {
+                geometry = XR_ADV_LoadGeometry(fallbackDense);
+                geometryDense = fallbackDense;
+            }
         }
-        uint sourcePresence = basis0.flags & 1u;
-        if (deformed && (!XR_ADV_TryLoadAuthoredDeformedBasis(false, currentIndices, basis0, basis1, basis2) ||
-            (basis0.flags & 1u) != sourcePresence))
+        if (!XR_ADV_GeometryIsResident(geometry))
         {
-            surface.invalidReason = XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
-            return false;
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_GEOMETRY_NOT_RESIDENT;
+            break;
         }
-        requiresTangent = sourcePresence != 0u;
-        uint commonFlags = basis0.flags & basis1.flags & basis2.flags;
-        authoredInvalidNormal = (commonFlags & 2u) == 0u;
-        authoredInvalidTangent = requiresTangent && (commonFlags & 4u) == 0u;
-    }
-    XRAdvancedPreparedSurfaceBasis preparedBasis = (XRAdvancedPreparedSurfaceBasis)0;
-    preparedBasis.geometricNormal = geometricNormal;
-    preparedBasis.world3 = world3;
-    preparedBasis.requiresNormal = (requiredMask & XR_ADV_ATTRIBUTE_NORMAL) != 0u;
-    preparedBasis.requiresTangent = requiresTangent;
-    preparedBasis.vertexBasis = engineTextureSurface || uberSurface;
-    preparedBasis.flatQualified = flatQualified;
-    preparedBasis.mirrored = mirrored;
-    preparedBasis.authoredSurfaceBasis = authoredSurfaceBasis;
-    preparedBasis.authoredNormalMap = authoredNormalMap;
-    preparedBasis.uberSurface = uberSurface;
-    if (preparedBasis.requiresNormal)
-    {
-        float3x3 normalMatrix =
-            uberSurface ? UberNormalMatrix(world3) : NormalMatrix(world3);
-        preparedBasis.normalMatrix = normalMatrix;
-        if (preparedBasis.vertexBasis)
+
+        uint materialDense = XR_ADV_ResolveVisibilityHandle(
+            draw.material,
+            VisibilityMaterialLookupSegment,
+            XR_ADV_DIAGNOSTIC_MATERIAL);
+        if (materialDense == XR_ADV_INVALID_DENSE_INDEX)
         {
-            // Normalize each transformed vertex before perspective interpolation.
-            preparedBasis.normal0 = XR_ADV_NormalizeEngineVertex(mul(authoredSurfaceBasis ? basis0.normal : XR_ADV_DecodeOct(current0.normalOct), normalMatrix), authoredSurfaceBasis);
-            preparedBasis.normal1 = XR_ADV_NormalizeEngineVertex(mul(authoredSurfaceBasis ? basis1.normal : XR_ADV_DecodeOct(current1.normalOct), normalMatrix), authoredSurfaceBasis);
-            preparedBasis.normal2 = XR_ADV_NormalizeEngineVertex(mul(authoredSurfaceBasis ? basis2.normal : XR_ADV_DecodeOct(current2.normalOct), normalMatrix), authoredSurfaceBasis);
-            authoredInvalidNormal = authoredInvalidNormal || authoredSurfaceBasis &&
-                (dot(preparedBasis.normal0, preparedBasis.normal0) == 0.0 ||
-                 dot(preparedBasis.normal1, preparedBasis.normal1) == 0.0 ||
-                 dot(preparedBasis.normal2, preparedBasis.normal2) == 0.0);
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_MATERIAL_NOT_RESIDENT;
+            break;
         }
-        else
+        XRAdvancedMaterialRecord material =
+            XR_ADV_LoadMaterial(materialDense);
+        XRAdvancedGpuHandle kernelHandle = XRAdvancedGpuHandle(
+            material.shadingKernelId,
+            material.shadingKernelGeneration);
+        uint kernelDense = XR_ADV_ResolveVisibilityHandle(
+            kernelHandle,
+            VisibilityShadingKernelLookupSegment,
+            XR_ADV_DIAGNOSTIC_MATERIAL);
+        if (kernelDense == XR_ADV_INVALID_DENSE_INDEX)
         {
-            preparedBasis.normal0 = XR_ADV_DecodeOct(current0.normalOct);
-            preparedBasis.normal1 = XR_ADV_DecodeOct(current1.normalOct);
-            preparedBasis.normal2 = XR_ADV_DecodeOct(current2.normalOct);
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_KERNEL_NOT_RESIDENT;
+            break;
         }
-    }
-    if (requiresTangent)
-    {
-        float tangentSign0, tangentSign1, tangentSign2;
-        float3 localTangent0 = XR_ADV_DecodeTangent(current0.tangentOctAndSign, tangentSign0);
-        float3 localTangent1 = XR_ADV_DecodeTangent(current1.tangentOctAndSign, tangentSign1);
-        float3 localTangent2 = XR_ADV_DecodeTangent(current2.tangentOctAndSign, tangentSign2);
+        if (viewIndex >= Parameters.viewCount)
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_VIEW_OUT_OF_RANGE;
+            break;
+        }
+
+        uint currentTransformDense = XR_ADV_ResolveVisibilityHandle(
+            draw.currentTransform,
+            VisibilityTransformLookupSegment,
+            XR_ADV_DIAGNOSTIC_DRAW);
+        uint previousTransformDense = XR_ADV_ResolveVisibilityHandle(
+            draw.previousTransform,
+            VisibilityTransformLookupSegment,
+            XR_ADV_DIAGNOSTIC_DRAW);
+        if (currentTransformDense == XR_ADV_INVALID_DENSE_INDEX |
+            previousTransformDense == XR_ADV_INVALID_DENSE_INDEX)
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_STALE_GENERATION;
+            break;
+        }
+
+        uint3 sourceVertices;
+        if (!XR_ADV_TryPrimitiveVertices(
+                geometry,
+                producer,
+                identity.y,
+                sourceVertices))
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE;
+            break;
+        }
+
+        XRAdvancedPreparedDrawDeformationRecord preparedDeformation;
+        bool hasPreparedDeformation =
+            XR_ADV_TryLoadPreparedDrawDeformation(
+                drawDense,
+                draw,
+                preparedDeformation);
+        bool producerRequiresDeformation =
+            producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET |
+            producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
+        if (producerRequiresDeformation & !hasPreparedDeformation)
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
+            break;
+        }
+
+        // The overlay is authoritative even for the ordinary indirect-indexed
+        // producer. Canonical geometry remains immutable bind-pose topology.
+        bool deformed = hasPreparedDeformation;
+        if (any(greaterThanEqual(
+                sourceVertices,
+                uint3(deformed ? preparedDeformation.vertexCount : geometry.vertexCount))))
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE;
+            break;
+        }
+        uint currentVertexBase = deformed
+            ? preparedDeformation.currentVertexOffset
+            : geometry.currentVertexData.elementOffset;
+        bool previousUsesPreviousBuffer = deformed &
+            XR_ADV_PreparedDeformationPreviousValid(preparedDeformation);
+        uint previousVertexBase = deformed
+            ? (previousUsesPreviousBuffer
+                ? preparedDeformation.previousVertexOffset
+                : preparedDeformation.currentVertexOffset)
+            : geometry.currentVertexData.elementOffset;
+        uint3 currentIndices =
+            uint3(currentVertexBase) + sourceVertices;
+        uint3 previousIndices =
+            uint3(previousVertexBase) + sourceVertices;
+        if (any(lessThan(currentIndices, uint3(currentVertexBase))))
+        {
+            surface.invalidReason = XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE;
+            break;
+        }
+        XRAdvancedPackedVertex current0;
+        XRAdvancedPackedVertex current1;
+        XRAdvancedPackedVertex current2;
+        if (!XR_ADV_TryLoadVertex(
+                deformed, false, currentIndices.x, current0) |
+            !XR_ADV_TryLoadVertex(
+                deformed, false, currentIndices.y, current1) |
+            !XR_ADV_TryLoadVertex(
+                deformed, false, currentIndices.z, current2))
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
+            break;
+        }
+
+        XRAdvancedPackedVertex previous0;
+        XRAdvancedPackedVertex previous1;
+        XRAdvancedPackedVertex previous2;
+        bool previousGeometryValid =
+            !any(lessThan(previousIndices, uint3(previousVertexBase))) &
+            XR_ADV_TryLoadVertex(
+                deformed,
+                previousUsesPreviousBuffer,
+                previousIndices.x,
+                previous0) &
+            XR_ADV_TryLoadVertex(
+                deformed,
+                previousUsesPreviousBuffer,
+                previousIndices.y,
+                previous1) &
+            XR_ADV_TryLoadVertex(
+                deformed,
+                previousUsesPreviousBuffer,
+                previousIndices.z,
+                previous2);
+        XRAdvancedTransformRecord currentTransform =
+            XR_ADV_LoadTransform(currentTransformDense);
+        XRAdvancedTransformRecord previousTransform =
+            XR_ADV_LoadTransform(previousTransformDense);
+        XRAdvancedViewRecord viewRecord =
+            XR_ADV_LoadView(viewIndex);
+
+        float3 currentWorld0 =
+            XR_ADV_TransformPositionRowVector(
+                current0.position,
+                currentTransform.world);
+        float3 currentWorld1 =
+            XR_ADV_TransformPositionRowVector(
+                current1.position,
+                currentTransform.world);
+        float3 currentWorld2 =
+            XR_ADV_TransformPositionRowVector(
+                current2.position,
+                currentTransform.world);
+        float4 currentClip0 =
+            XR_ADV_CurrentJitteredClip(viewRecord, currentWorld0);
+        float4 currentClip1 =
+            XR_ADV_CurrentJitteredClip(viewRecord, currentWorld1);
+        float4 currentClip2 =
+            XR_ADV_CurrentJitteredClip(viewRecord, currentWorld2);
+        float3 weights;
+        float3 weightDx;
+        float3 weightDy;
+        if (!XR_ADV_TryPerspectiveBarycentrics(
+                pixelCenter,
+                currentClip0,
+                currentClip1,
+                currentClip2,
+                viewRecord,
+                weights,
+                weightDx,
+                weightDy))
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE;
+            break;
+        }
+
+        uint requiredMask =
+            material.requiredAttributeMask &
+            XR_ADV_LoadShadingKernel(kernelDense).requiredAttributeMask &
+            XR_ADV_REQUIRED_ATTRIBUTE_MASK;
+        bool hasTexCoord1 =
+            (current0.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u &
+            (current1.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u &
+            (current2.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u;
+        bool flatQualified =
+            (requiredMask & XR_ADV_ATTRIBUTE_FLAT) != 0u;
+        float3 geometricNormal =
+            cross(
+                currentWorld1 - currentWorld0,
+                currentWorld2 - currentWorld0);
+        float geometricLength = length(geometricNormal);
+        if (geometricLength <= XR_ADV_RECONSTRUCTION_MIN_AREA |
+            isnan(geometricLength) |
+            isinf(geometricLength))
+        {
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_DEGENERATE_TRIANGLE;
+            break;
+        }
+        geometricNormal /= geometricLength;
+
+        bool requiresTangent =
+            (requiredMask & XR_ADV_ATTRIBUTE_TANGENT) != 0u;
+        float3x3 world3 = (float3x3)currentTransform.world;
+        bool mirrored = determinant(world3) < 0.0;
+        uint engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles;
+        uint uberWord, uberFeatures, uberPipeline;
+        bool uberSurface = XR_ADV_IsUberBaseMaterial(material);
+        if (uberSurface & !XR_ADV_TryLoadUberBase(material,uberWord,uberFeatures,uberPipeline))
+        { surface.invalidReason=XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING; break; }
+        if (uberSurface) flatQualified=false;
+        bool engineTextureSurface = XR_ADV_TryLoadEngineSurfaceHeader(material,
+            engineSurfaceWord, engineSurfaceKind, engineSurfaceRoles) &
+            engineSurfaceKind != XR_ADV_ENGINE_SURFACE_COLOR;
+        bool authoredSurfaceBasis = uberSurface | engineTextureSurface &
+            engineSurfaceKind == XR_ADV_ENGINE_SURFACE_AUTHORED_TEXTURED;
+        bool authoredNormalMap = uberSurface ? (uberFeatures & 1u)!=0u : authoredSurfaceBasis & (engineSurfaceRoles & 2u) != 0u;
+        engineTextureSurface = engineTextureSurface | uberSurface;
+        XRAdvancedAuthoredBasisVertex basis0, basis1, basis2;
+        bool authoredInvalidNormal = false;
+        bool authoredInvalidTangent = false;
         if (authoredSurfaceBasis)
         {
-            localTangent0 = basis0.tangent.xyz;
-            localTangent1 = basis1.tangent.xyz;
-            localTangent2 = basis2.tangent.xyz;
-            tangentSign0 = basis0.tangent.w;
-            tangentSign1 = basis1.tangent.w;
-            tangentSign2 = basis2.tangent.w;
+            if (!XR_ADV_TryLoadAuthoredBasis(drawDense, identity.x, draw, geometryDense, sourceVertices, basis0, basis1, basis2))
+            {
+                surface.invalidReason = XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING;
+                break;
+            }
+            uint sourcePresence = basis0.flags & 1u;
+            if (deformed && (!XR_ADV_TryLoadAuthoredDeformedBasis(false, currentIndices, basis0, basis1, basis2) ||
+                (basis0.flags & 1u) != sourcePresence))
+            {
+                surface.invalidReason = XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
+                break;
+            }
+            requiresTangent = sourcePresence != 0u;
+            uint commonFlags = basis0.flags & basis1.flags & basis2.flags;
+            authoredInvalidNormal = (commonFlags & 2u) == 0u;
+            authoredInvalidTangent = requiresTangent & (commonFlags & 4u) == 0u;
         }
-        preparedBasis.tangentSigns = float3(tangentSign0, tangentSign1, tangentSign2);
-        if (preparedBasis.vertexBasis)
+        XRAdvancedPreparedSurfaceBasis preparedBasis = (XRAdvancedPreparedSurfaceBasis)0;
+        preparedBasis.geometricNormal = geometricNormal;
+        preparedBasis.world3 = world3;
+        preparedBasis.requiresNormal = (requiredMask & XR_ADV_ATTRIBUTE_NORMAL) != 0u;
+        preparedBasis.requiresTangent = requiresTangent;
+        preparedBasis.vertexBasis = engineTextureSurface | uberSurface;
+        preparedBasis.flatQualified = flatQualified;
+        preparedBasis.mirrored = mirrored;
+        preparedBasis.authoredSurfaceBasis = authoredSurfaceBasis;
+        preparedBasis.authoredNormalMap = authoredNormalMap;
+        preparedBasis.uberSurface = uberSurface;
+        if (preparedBasis.requiresNormal)
         {
-            // Transform and normalize tangent and bitangent independently. Keep
-            // source-degenerate values distinct from absent tangent attributes.
-            float3x3 normalMatrix = uberSurface ? UberNormalMatrix(world3) : NormalMatrix(world3);
-            preparedBasis.tangent0 = XR_ADV_NormalizeEngineVertex(mul(localTangent0, normalMatrix), authoredSurfaceBasis);
-            preparedBasis.tangent1 = XR_ADV_NormalizeEngineVertex(mul(localTangent1, normalMatrix), authoredSurfaceBasis);
-            preparedBasis.tangent2 = XR_ADV_NormalizeEngineVertex(mul(localTangent2, normalMatrix), authoredSurfaceBasis);
-            preparedBasis.bitangent0 = XR_ADV_NormalizeEngineVertex(mul(
-                cross(authoredSurfaceBasis ? basis0.normal : XR_ADV_DecodeOct(current0.normalOct), localTangent0) * tangentSign0,
-                normalMatrix), authoredSurfaceBasis);
-            preparedBasis.bitangent1 = XR_ADV_NormalizeEngineVertex(mul(
-                cross(authoredSurfaceBasis ? basis1.normal : XR_ADV_DecodeOct(current1.normalOct), localTangent1) * tangentSign1,
-                normalMatrix), authoredSurfaceBasis);
-            preparedBasis.bitangent2 = XR_ADV_NormalizeEngineVertex(mul(
-                cross(authoredSurfaceBasis ? basis2.normal : XR_ADV_DecodeOct(current2.normalOct), localTangent2) * tangentSign2,
-                normalMatrix), authoredSurfaceBasis);
-            authoredInvalidTangent = authoredInvalidTangent || authoredSurfaceBasis &&
-                (dot(preparedBasis.tangent0, preparedBasis.tangent0) == 0.0 ||
-                 dot(preparedBasis.tangent1, preparedBasis.tangent1) == 0.0 ||
-                 dot(preparedBasis.tangent2, preparedBasis.tangent2) == 0.0 ||
-                 dot(preparedBasis.bitangent0, preparedBasis.bitangent0) == 0.0 ||
-                 dot(preparedBasis.bitangent1, preparedBasis.bitangent1) == 0.0 ||
-                 dot(preparedBasis.bitangent2, preparedBasis.bitangent2) == 0.0);
+            float3x3 normalMatrix =
+                uberSurface ? UberNormalMatrix(world3) : NormalMatrix(world3);
+            preparedBasis.normalMatrix = normalMatrix;
+            if (preparedBasis.vertexBasis)
+            {
+                // Normalize each transformed vertex before perspective interpolation.
+                preparedBasis.normal0 = XR_ADV_NormalizeEngineVertex(mul(authoredSurfaceBasis ? basis0.normal : XR_ADV_DecodeOct(current0.normalOct), normalMatrix), authoredSurfaceBasis);
+                preparedBasis.normal1 = XR_ADV_NormalizeEngineVertex(mul(authoredSurfaceBasis ? basis1.normal : XR_ADV_DecodeOct(current1.normalOct), normalMatrix), authoredSurfaceBasis);
+                preparedBasis.normal2 = XR_ADV_NormalizeEngineVertex(mul(authoredSurfaceBasis ? basis2.normal : XR_ADV_DecodeOct(current2.normalOct), normalMatrix), authoredSurfaceBasis);
+                authoredInvalidNormal = authoredInvalidNormal | authoredSurfaceBasis &
+                    (dot(preparedBasis.normal0, preparedBasis.normal0) == 0.0 |
+                     dot(preparedBasis.normal1, preparedBasis.normal1) == 0.0 |
+                     dot(preparedBasis.normal2, preparedBasis.normal2) == 0.0);
+            }
+            else
+            {
+                preparedBasis.normal0 = XR_ADV_DecodeOct(current0.normalOct);
+                preparedBasis.normal1 = XR_ADV_DecodeOct(current1.normalOct);
+                preparedBasis.normal2 = XR_ADV_DecodeOct(current2.normalOct);
+            }
         }
-        else
+        if (requiresTangent)
         {
-            preparedBasis.tangent0 = localTangent0;
-            preparedBasis.tangent1 = localTangent1;
-            preparedBasis.tangent2 = localTangent2;
+            float tangentSign0, tangentSign1, tangentSign2;
+            float3 localTangent0 = XR_ADV_DecodeTangent(current0.tangentOctAndSign, tangentSign0);
+            float3 localTangent1 = XR_ADV_DecodeTangent(current1.tangentOctAndSign, tangentSign1);
+            float3 localTangent2 = XR_ADV_DecodeTangent(current2.tangentOctAndSign, tangentSign2);
+            if (authoredSurfaceBasis)
+            {
+                localTangent0 = basis0.tangent.xyz;
+                localTangent1 = basis1.tangent.xyz;
+                localTangent2 = basis2.tangent.xyz;
+                tangentSign0 = basis0.tangent.w;
+                tangentSign1 = basis1.tangent.w;
+                tangentSign2 = basis2.tangent.w;
+            }
+            preparedBasis.tangentSigns = float3(tangentSign0, tangentSign1, tangentSign2);
+            if (preparedBasis.vertexBasis)
+            {
+                // Transform and normalize tangent and bitangent independently. Keep
+                // source-degenerate values distinct from absent tangent attributes.
+                float3x3 normalMatrix = uberSurface ? UberNormalMatrix(world3) : NormalMatrix(world3);
+                preparedBasis.tangent0 = XR_ADV_NormalizeEngineVertex(mul(localTangent0, normalMatrix), authoredSurfaceBasis);
+                preparedBasis.tangent1 = XR_ADV_NormalizeEngineVertex(mul(localTangent1, normalMatrix), authoredSurfaceBasis);
+                preparedBasis.tangent2 = XR_ADV_NormalizeEngineVertex(mul(localTangent2, normalMatrix), authoredSurfaceBasis);
+                preparedBasis.bitangent0 = XR_ADV_NormalizeEngineVertex(mul(
+                    cross(authoredSurfaceBasis ? basis0.normal : XR_ADV_DecodeOct(current0.normalOct), localTangent0) * tangentSign0,
+                    normalMatrix), authoredSurfaceBasis);
+                preparedBasis.bitangent1 = XR_ADV_NormalizeEngineVertex(mul(
+                    cross(authoredSurfaceBasis ? basis1.normal : XR_ADV_DecodeOct(current1.normalOct), localTangent1) * tangentSign1,
+                    normalMatrix), authoredSurfaceBasis);
+                preparedBasis.bitangent2 = XR_ADV_NormalizeEngineVertex(mul(
+                    cross(authoredSurfaceBasis ? basis2.normal : XR_ADV_DecodeOct(current2.normalOct), localTangent2) * tangentSign2,
+                    normalMatrix), authoredSurfaceBasis);
+                authoredInvalidTangent = authoredInvalidTangent | authoredSurfaceBasis &
+                    (dot(preparedBasis.tangent0, preparedBasis.tangent0) == 0.0 |
+                     dot(preparedBasis.tangent1, preparedBasis.tangent1) == 0.0 |
+                     dot(preparedBasis.tangent2, preparedBasis.tangent2) == 0.0 |
+                     dot(preparedBasis.bitangent0, preparedBasis.bitangent0) == 0.0 |
+                     dot(preparedBasis.bitangent1, preparedBasis.bitangent1) == 0.0 |
+                     dot(preparedBasis.bitangent2, preparedBasis.bitangent2) == 0.0);
+            }
+            else
+            {
+                preparedBasis.tangent0 = localTangent0;
+                preparedBasis.tangent1 = localTangent1;
+                preparedBasis.tangent2 = localTangent2;
+            }
         }
-    }
-    preparedBasis.authoredInvalidNormal = authoredInvalidNormal;
-    preparedBasis.authoredInvalidTangent = authoredInvalidTangent;
-    float3 shadingNormal, tangent, bitangent;
-    float handedness;
-    if (!XR_ADV_TryInterpolateSurfaceBasis(preparedBasis, weights,
-        shadingNormal, tangent, bitangent, handedness))
-    {
-        surface.invalidReason = XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
-        return false;
-    }
+        preparedBasis.authoredInvalidNormal = authoredInvalidNormal;
+        preparedBasis.authoredInvalidTangent = authoredInvalidTangent;
+        float3 shadingNormal, tangent, bitangent;
+        float handedness;
+        if (!XR_ADV_TryInterpolateSurfaceBasis(preparedBasis, weights,
+            shadingNormal, tangent, bitangent, handedness))
+        {
+            surface.invalidReason = XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
+            break;
+        }
 
-    bool derivativesRequested =
-        (requiredMask &
-         XR_ADV_ATTRIBUTE_ANALYTICAL_DERIVATIVES) != 0u;
-    XRAdvancedPreparedSurfaceTexCoords preparedTexCoords;
-    preparedTexCoords.uv00 = unpackHalf(current0.texCoord0Half);
-    preparedTexCoords.uv01 = unpackHalf(current1.texCoord0Half);
-    preparedTexCoords.uv02 = unpackHalf(current2.texCoord0Half);
-    preparedTexCoords.uv10 = unpackHalf(current0.texCoord1Half);
-    preparedTexCoords.uv11 = unpackHalf(current1.texCoord1Half);
-    preparedTexCoords.uv12 = unpackHalf(current2.texCoord1Half);
-    preparedTexCoords.hasTexCoord1 = hasTexCoord1;
-    float2 uv0, uv1, uv0Dx, uv0Dy, uv1Dx, uv1Dy;
-    XR_ADV_InterpolateSurfaceTexCoords(preparedTexCoords, requiredMask,
-        flatQualified, false, weights, weightDx, weightDy,
-        uv0, uv1, uv0Dx, uv0Dy, uv1Dx, uv1Dy);
-    float4 color0 =
-        (requiredMask & XR_ADV_ATTRIBUTE_COLOR0) != 0u
-            ? XR_ADV_Interpolate(
-                XR_ADV_UnpackRgba8(current0.color0Rgba8),
-                XR_ADV_UnpackRgba8(current1.color0Rgba8),
-                XR_ADV_UnpackRgba8(current2.color0Rgba8),
-                weights,
-                flatQualified)
-            : float4(1.0);
-    float4 color1 =
-        (requiredMask & XR_ADV_ATTRIBUTE_COLOR1) != 0u
-            ? XR_ADV_Interpolate(
-                XR_ADV_UnpackRgba8(current0.color1Rgba8),
-                XR_ADV_UnpackRgba8(current1.color1Rgba8),
-                XR_ADV_UnpackRgba8(current2.color1Rgba8),
-                weights,
-                flatQualified)
-            : float4(1.0);
-    float foveationScale = XR_ADV_FoveationDerivativeScale(
-        viewRecord, pixelCenter * viewRecord.renderSizeAndInverse.zw);
-    if (uberSurface)
-    {
-        XRAdvancedUberAttributes a,b,c;
-        if(!XR_ADV_TryLoadUberAttributes(drawDense,identity.x,draw,geometryDense,sourceVertices,a,b,c))
-        {surface.invalidReason=XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING;return false;}
-        preparedTexCoords.uv00=a.uv0; preparedTexCoords.uv01=b.uv0; preparedTexCoords.uv02=c.uv0;
-        preparedTexCoords.uv10=a.uv1; preparedTexCoords.uv11=b.uv1; preparedTexCoords.uv12=c.uv1;
+        bool derivativesRequested =
+            (requiredMask &
+             XR_ADV_ATTRIBUTE_ANALYTICAL_DERIVATIVES) != 0u;
+        XRAdvancedPreparedSurfaceTexCoords preparedTexCoords;
+        preparedTexCoords.uv00 = unpackHalf(current0.texCoord0Half);
+        preparedTexCoords.uv01 = unpackHalf(current1.texCoord0Half);
+        preparedTexCoords.uv02 = unpackHalf(current2.texCoord0Half);
+        preparedTexCoords.uv10 = unpackHalf(current0.texCoord1Half);
+        preparedTexCoords.uv11 = unpackHalf(current1.texCoord1Half);
+        preparedTexCoords.uv12 = unpackHalf(current2.texCoord1Half);
+        preparedTexCoords.hasTexCoord1 = hasTexCoord1;
+        float2 uv0, uv1, uv0Dx, uv0Dy, uv1Dx, uv1Dy;
         XR_ADV_InterpolateSurfaceTexCoords(preparedTexCoords, requiredMask,
-            false, true, weights, weightDx, weightDy,
+            flatQualified, false, weights, weightDx, weightDy,
             uv0, uv1, uv0Dx, uv0Dy, uv1Dx, uv1Dy);
-        color0=XR_ADV_Interpolate(a.color,b.color,c.color,weights,false);
-        surface.uberTexCoord2=XR_ADV_Interpolate(a.uv2,b.uv2,c.uv2,weights,false);
-        surface.uberTexCoord3=XR_ADV_Interpolate(a.uv3,b.uv3,c.uv3,weights,false);
-        surface.uberTexCoord2Dx=XR_ADV_Gradient(a.uv2,b.uv2,c.uv2,weightDx)*foveationScale;
-        surface.uberTexCoord2Dy=XR_ADV_Gradient(a.uv2,b.uv2,c.uv2,weightDy)*foveationScale;
-        surface.uberTexCoord3Dx=XR_ADV_Gradient(a.uv3,b.uv3,c.uv3,weightDx)*foveationScale;
-        surface.uberTexCoord3Dy=XR_ADV_Gradient(a.uv3,b.uv3,c.uv3,weightDy)*foveationScale;
-        surface.uberColorDx=(a.color*weightDx.x+b.color*weightDx.y+c.color*weightDx.z)*foveationScale;
-        surface.uberColorDy=(a.color*weightDy.x+b.color*weightDy.y+c.color*weightDy.z)*foveationScale;
-        surface.uberLocalPosition=XR_ADV_Interpolate(current0.position,current1.position,current2.position,weights,false);
-        surface.uberLocalPositionDx=(current0.position*weightDx.x+current1.position*weightDx.y+current2.position*weightDx.z)*foveationScale;
-        surface.uberLocalPositionDy=(current0.position*weightDy.x+current1.position*weightDy.y+current2.position*weightDy.z)*foveationScale;
-    }
-    float3 interpolatedCurrentWorld = XR_ADV_Interpolate(
-        currentWorld0,
-        currentWorld1,
-        currentWorld2,
-        weights,
-        false);
-    float3 worldPosition =
-        uberSurface || (requiredMask & XR_ADV_ATTRIBUTE_DEFORMED_POSITION) != 0u
-            ? interpolatedCurrentWorld
-            : XR_ADV_ReconstructWorldPositionFromDepth(
-                pixelCenter,
-                depth,
-                viewRecord);
-    float4 currentUnjitteredClip =
-        mul(float4(interpolatedCurrentWorld, 1.0), viewRecord.viewProjectionUnjittered);
-    float4 previousUnjitteredClip = float4(0.0);
-    bool viewHistoryValid =
-        (viewRecord.flags & XR_ADV_VIEW_TEMPORAL_HISTORY_VALID) != 0u;
-    if (!viewHistoryValid && velocityValidityReason == 0u)
-        velocityValidityReason = 7u; // EAdvancedVelocityValidityReason.HistoryReset
-    bool velocityValid =
-        ((metadata >> XR_ADV_VIS_VELOCITY_VALID_SHIFT) & 1u) != 0u &&
-        viewHistoryValid &&
-        previousGeometryValid &&
-        velocityValidityReason == 0u;
-    if (previousGeometryValid)
-    {
-        float3 previousWorld0 =
-            XR_ADV_TransformPositionRowVector(
-                previous0.position,
-                previousTransform.world);
-        float3 previousWorld1 =
-            XR_ADV_TransformPositionRowVector(
-                previous1.position,
-                previousTransform.world);
-        float3 previousWorld2 =
-            XR_ADV_TransformPositionRowVector(
-                previous2.position,
-                previousTransform.world);
-        float3 previousWorld = XR_ADV_Interpolate(
-            previousWorld0,
-            previousWorld1,
-            previousWorld2,
+        float4 color0 =
+            (requiredMask & XR_ADV_ATTRIBUTE_COLOR0) != 0u
+                ? XR_ADV_Interpolate(
+                    XR_ADV_UnpackRgba8(current0.color0Rgba8),
+                    XR_ADV_UnpackRgba8(current1.color0Rgba8),
+                    XR_ADV_UnpackRgba8(current2.color0Rgba8),
+                    weights,
+                    flatQualified)
+                : float4(1.0);
+        float4 color1 =
+            (requiredMask & XR_ADV_ATTRIBUTE_COLOR1) != 0u
+                ? XR_ADV_Interpolate(
+                    XR_ADV_UnpackRgba8(current0.color1Rgba8),
+                    XR_ADV_UnpackRgba8(current1.color1Rgba8),
+                    XR_ADV_UnpackRgba8(current2.color1Rgba8),
+                    weights,
+                    flatQualified)
+                : float4(1.0);
+        float foveationScale = XR_ADV_FoveationDerivativeScale(
+            viewRecord, pixelCenter * viewRecord.renderSizeAndInverse.zw);
+        if (uberSurface)
+        {
+            XRAdvancedUberAttributes a,b,c;
+            if(!XR_ADV_TryLoadUberAttributes(drawDense,identity.x,draw,geometryDense,sourceVertices,a,b,c))
+            {surface.invalidReason=XR_ADV_RECONSTRUCTION_GEOMETRY_MISSING;break;}
+            preparedTexCoords.uv00=a.uv0; preparedTexCoords.uv01=b.uv0; preparedTexCoords.uv02=c.uv0;
+            preparedTexCoords.uv10=a.uv1; preparedTexCoords.uv11=b.uv1; preparedTexCoords.uv12=c.uv1;
+            XR_ADV_InterpolateSurfaceTexCoords(preparedTexCoords, requiredMask,
+                false, true, weights, weightDx, weightDy,
+                uv0, uv1, uv0Dx, uv0Dy, uv1Dx, uv1Dy);
+            color0=XR_ADV_Interpolate(a.color,b.color,c.color,weights,false);
+            surface.uberTexCoord2=XR_ADV_Interpolate(a.uv2,b.uv2,c.uv2,weights,false);
+            surface.uberTexCoord3=XR_ADV_Interpolate(a.uv3,b.uv3,c.uv3,weights,false);
+            surface.uberTexCoord2Dx=XR_ADV_Gradient(a.uv2,b.uv2,c.uv2,weightDx)*foveationScale;
+            surface.uberTexCoord2Dy=XR_ADV_Gradient(a.uv2,b.uv2,c.uv2,weightDy)*foveationScale;
+            surface.uberTexCoord3Dx=XR_ADV_Gradient(a.uv3,b.uv3,c.uv3,weightDx)*foveationScale;
+            surface.uberTexCoord3Dy=XR_ADV_Gradient(a.uv3,b.uv3,c.uv3,weightDy)*foveationScale;
+            surface.uberColorDx=(a.color*weightDx.x+b.color*weightDx.y+c.color*weightDx.z)*foveationScale;
+            surface.uberColorDy=(a.color*weightDy.x+b.color*weightDy.y+c.color*weightDy.z)*foveationScale;
+            surface.uberLocalPosition=XR_ADV_Interpolate(current0.position,current1.position,current2.position,weights,false);
+            surface.uberLocalPositionDx=(current0.position*weightDx.x+current1.position*weightDx.y+current2.position*weightDx.z)*foveationScale;
+            surface.uberLocalPositionDy=(current0.position*weightDy.x+current1.position*weightDy.y+current2.position*weightDy.z)*foveationScale;
+        }
+        float3 interpolatedCurrentWorld = XR_ADV_Interpolate(
+            currentWorld0,
+            currentWorld1,
+            currentWorld2,
             weights,
             false);
-        previousUnjitteredClip =
-            mul(float4(previousWorld, 1.0), viewRecord.previousViewProjectionUnjittered);
-        velocityValid = velocityValid &&
-            XR_ADV_IsFinite(previousUnjitteredClip) &&
-            abs(previousUnjitteredClip.w) >
+        float3 worldPosition =
+            uberSurface | (requiredMask & XR_ADV_ATTRIBUTE_DEFORMED_POSITION) != 0u
+                ? interpolatedCurrentWorld
+                : XR_ADV_ReconstructWorldPositionFromDepth(
+                    pixelCenter,
+                    depth,
+                    viewRecord);
+        float4 currentUnjitteredClip =
+            mul(float4(interpolatedCurrentWorld, 1.0), viewRecord.viewProjectionUnjittered);
+        float4 previousUnjitteredClip = float4(0.0);
+        bool viewHistoryValid =
+            (viewRecord.flags & XR_ADV_VIEW_TEMPORAL_HISTORY_VALID) != 0u;
+        if (!viewHistoryValid & velocityValidityReason == 0u)
+            velocityValidityReason = 7u; // EAdvancedVelocityValidityReason.HistoryReset
+        bool velocityValid =
+            ((metadata >> XR_ADV_VIS_VELOCITY_VALID_SHIFT) & 1u) != 0u &
+            viewHistoryValid &
+            previousGeometryValid &
+            velocityValidityReason == 0u;
+        if (previousGeometryValid)
+        {
+            float3 previousWorld0 =
+                XR_ADV_TransformPositionRowVector(
+                    previous0.position,
+                    previousTransform.world);
+            float3 previousWorld1 =
+                XR_ADV_TransformPositionRowVector(
+                    previous1.position,
+                    previousTransform.world);
+            float3 previousWorld2 =
+                XR_ADV_TransformPositionRowVector(
+                    previous2.position,
+                    previousTransform.world);
+            float3 previousWorld = XR_ADV_Interpolate(
+                previousWorld0,
+                previousWorld1,
+                previousWorld2,
+                weights,
+                false);
+            previousUnjitteredClip =
+                mul(float4(previousWorld, 1.0), viewRecord.previousViewProjectionUnjittered);
+            velocityValid = velocityValid &
+                XR_ADV_IsFinite(previousUnjitteredClip) &
+                abs(previousUnjitteredClip.w) >
+                    XR_ADV_RECONSTRUCTION_MIN_W;
+        }
+        velocityValid = velocityValid &
+            XR_ADV_IsFinite(currentUnjitteredClip) &
+            abs(currentUnjitteredClip.w) >
                 XR_ADV_RECONSTRUCTION_MIN_W;
-    }
-    velocityValid = velocityValid &&
-        XR_ADV_IsFinite(currentUnjitteredClip) &&
-        abs(currentUnjitteredClip.w) >
-            XR_ADV_RECONSTRUCTION_MIN_W;
 
-    bool masked =
-        ((metadata >> XR_ADV_VIS_MASKED_SHIFT) & 1u) != 0u;
-    bool frontFacing =
-        ((metadata >> XR_ADV_VIS_FRONT_FACE_SHIFT) & 1u) != 0u;
-    bool reactive = masked || !velocityValid;
-    uint flags = XR_ADV_SURFACE_VALID |
-        ((velocityValidityReason << XR_ADV_TEMPORAL_VELOCITY_REASON_SHIFT) &
-            XR_ADV_TEMPORAL_VELOCITY_REASON_MASK);
-    if (derivativesRequested)
-        flags |= XR_ADV_SURFACE_DERIVATIVES_VALID;
-    if (!frontFacing)
-        flags |= XR_ADV_SURFACE_BACK_FACING;
-    if (flatQualified)
-        flags |= XR_ADV_SURFACE_FLAT_ATTRIBUTES;
-    if (deformed)
-        flags |= XR_ADV_SURFACE_DEFORMED;
-    if (velocityValid)
-        flags |= XR_ADV_SURFACE_VELOCITY_VALID;
-    if (masked)
-        flags |= XR_ADV_SURFACE_MASKED_EDGE;
-    if (reactive)
-        flags |= XR_ADV_SURFACE_REACTIVE;
-    if (mirrored)
-        flags |= XR_ADV_SURFACE_MIRRORED_TRANSFORM;
+        bool masked =
+            ((metadata >> XR_ADV_VIS_MASKED_SHIFT) & 1u) != 0u;
+        bool frontFacing =
+            ((metadata >> XR_ADV_VIS_FRONT_FACE_SHIFT) & 1u) != 0u;
+        bool reactive = masked | !velocityValid;
+        uint flags = XR_ADV_SURFACE_VALID |
+            ((velocityValidityReason << XR_ADV_TEMPORAL_VELOCITY_REASON_SHIFT) &
+                XR_ADV_TEMPORAL_VELOCITY_REASON_MASK);
+        if (derivativesRequested)
+            flags |= XR_ADV_SURFACE_DERIVATIVES_VALID;
+        if (!frontFacing)
+            flags |= XR_ADV_SURFACE_BACK_FACING;
+        if (flatQualified)
+            flags |= XR_ADV_SURFACE_FLAT_ATTRIBUTES;
+        if (deformed)
+            flags |= XR_ADV_SURFACE_DEFORMED;
+        if (velocityValid)
+            flags |= XR_ADV_SURFACE_VELOCITY_VALID;
+        if (masked)
+            flags |= XR_ADV_SURFACE_MASKED_EDGE;
+        if (reactive)
+            flags |= XR_ADV_SURFACE_REACTIVE;
+        if (mirrored)
+            flags |= XR_ADV_SURFACE_MIRRORED_TRANSFORM;
 
-    surface.identity = identity;
-    surface.producer = producer;
-    surface.viewIndex = viewIndex;
-    surface.materialDenseIndex = materialDense;
-    surface.shadingKernelDenseIndex = kernelDense;
-    surface.primitiveSection = draw.primitiveSection;
-    surface.layerMask = instance.layerMask;
-    surface.authoredRenderPass = instance.reserved0;
-    surface.requiredAttributeMask = requiredMask;
-    surface.worldPosition = worldPosition;
-    surface.interpolatedWorldPosition = interpolatedCurrentWorld;
-    surface.worldPositionDx = currentWorld0 * weightDx.x + currentWorld1 * weightDx.y + currentWorld2 * weightDx.z;
-    surface.worldPositionDy = currentWorld0 * weightDy.x + currentWorld1 * weightDy.y + currentWorld2 * weightDy.z;
-    surface.visibilityMetadata = metadata;
-    surface.samplePixelPosition = pixelCenter;
-    surface.geometricNormal = geometricNormal;
-    surface.shadingNormal = shadingNormal;
-    surface.tangent = tangent;
-    surface.bitangent = bitangent;
-    surface.texCoord0 = uv0;
-    surface.texCoord1 = uv1;
-    surface.color0 = color0;
-    surface.color1 = color1;
-    surface.custom0 =
-        (requiredMask & XR_ADV_ATTRIBUTE_CUSTOM0) != 0u
-        ? current0.custom0
-        : 0u;
-    surface.barycentrics = weights;
-    surface.barycentricDx = weightDx;
-    surface.barycentricDy = weightDy;
-    surface.texCoord0Dx = uv0Dx * foveationScale;
-    surface.texCoord0Dy = uv0Dy * foveationScale;
-    surface.texCoord1Dx = uv1Dx * foveationScale;
-    surface.texCoord1Dy = uv1Dy * foveationScale;
-    surface.currentUnjitteredClip = currentUnjitteredClip;
-    surface.previousUnjitteredClip = previousUnjitteredClip;
-    surface.motionNdc = velocityValid
-        ? clamp(
-            currentUnjitteredClip.xy /
-                currentUnjitteredClip.w -
-            previousUnjitteredClip.xy /
-                previousUnjitteredClip.w,
-            float2(-2.0),
-            float2(2.0))
-        : float2(0.0);
-    surface.depth = depth;
-    surface.tangentHandedness = handedness;
-    surface.flags = flags;
-    surface.invalidReason = XR_ADV_RECONSTRUCTION_OK;
-    bool finite = XR_ADV_ReconstructedSurfaceIsFinite(surface);
-    if (!finite)
-    {
-        surface.flags = 0u;
-        surface.invalidReason =
-            XR_ADV_RECONSTRUCTION_NON_FINITE;
-    }
+        surface.identity = identity;
+        surface.producer = producer;
+        surface.viewIndex = viewIndex;
+        surface.materialDenseIndex = materialDense;
+        surface.shadingKernelDenseIndex = kernelDense;
+        surface.primitiveSection = draw.primitiveSection;
+        surface.layerMask = instance.layerMask;
+        surface.authoredRenderPass = instance.reserved0;
+        surface.requiredAttributeMask = requiredMask;
+        surface.worldPosition = worldPosition;
+        surface.interpolatedWorldPosition = interpolatedCurrentWorld;
+        surface.worldPositionDx = currentWorld0 * weightDx.x + currentWorld1 * weightDx.y + currentWorld2 * weightDx.z;
+        surface.worldPositionDy = currentWorld0 * weightDy.x + currentWorld1 * weightDy.y + currentWorld2 * weightDy.z;
+        surface.visibilityMetadata = metadata;
+        surface.samplePixelPosition = pixelCenter;
+        surface.geometricNormal = geometricNormal;
+        surface.shadingNormal = shadingNormal;
+        surface.tangent = tangent;
+        surface.bitangent = bitangent;
+        surface.texCoord0 = uv0;
+        surface.texCoord1 = uv1;
+        surface.color0 = color0;
+        surface.color1 = color1;
+        surface.custom0 =
+            (requiredMask & XR_ADV_ATTRIBUTE_CUSTOM0) != 0u
+            ? current0.custom0
+            : 0u;
+        surface.barycentrics = weights;
+        surface.barycentricDx = weightDx;
+        surface.barycentricDy = weightDy;
+        surface.texCoord0Dx = uv0Dx * foveationScale;
+        surface.texCoord0Dy = uv0Dy * foveationScale;
+        surface.texCoord1Dx = uv1Dx * foveationScale;
+        surface.texCoord1Dy = uv1Dy * foveationScale;
+        surface.currentUnjitteredClip = currentUnjitteredClip;
+        surface.previousUnjitteredClip = previousUnjitteredClip;
+        surface.motionNdc = velocityValid
+            ? clamp(
+                currentUnjitteredClip.xy /
+                    currentUnjitteredClip.w -
+                previousUnjitteredClip.xy /
+                    previousUnjitteredClip.w,
+                float2(-2.0),
+                float2(2.0))
+            : float2(0.0);
+        surface.depth = depth;
+        surface.tangentHandedness = handedness;
+        surface.flags = flags;
+        surface.invalidReason = XR_ADV_RECONSTRUCTION_OK;
+        bool finite = XR_ADV_ReconstructedSurfaceIsFinite(surface);
+        if (!finite)
+        {
+            surface.flags = 0u;
+            surface.invalidReason =
+                XR_ADV_RECONSTRUCTION_NON_FINITE;
+        }
 #if defined(XR_ADV_PREPARED_SHADOW_PRIMITIVE)
-    if (finite)
-    {
-        preparedPrimitive.clip0 = currentClip0; preparedPrimitive.clip1 = currentClip1; preparedPrimitive.clip2 = currentClip2;
-        preparedPrimitive.world0 = currentWorld0; preparedPrimitive.world1 = currentWorld1; preparedPrimitive.world2 = currentWorld2;
-        preparedPrimitive.basis = preparedBasis;
-        preparedPrimitive.texCoords = preparedTexCoords;
-        preparedPrimitive.ready = true;
-    }
+        if (finite)
+        {
+            preparedPrimitive.clip0 = currentClip0; preparedPrimitive.clip1 = currentClip1; preparedPrimitive.clip2 = currentClip2;
+            preparedPrimitive.world0 = currentWorld0; preparedPrimitive.world1 = currentWorld1; preparedPrimitive.world2 = currentWorld2;
+            preparedPrimitive.basis = preparedBasis;
+            preparedPrimitive.texCoords = preparedTexCoords;
+            preparedPrimitive.ready = true;
+        }
 #endif
-    return finite;
+        succeeded = finite;
+        break;
+    }
+    return succeeded;
 }

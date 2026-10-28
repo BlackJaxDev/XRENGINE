@@ -50,14 +50,25 @@ public sealed class PhysicsChainStructuralCommandTests
         world.Invoke(ETickGroup.Normal);
         PhysicsChainRuntimeHandle originalHandle = component.RuntimeHandle;
 
+        PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler).ShouldBeTrue();
+        scheduler.ShouldNotBeNull();
+        scheduler!.TryResolveRuntimeHandle(originalHandle, out _).ShouldBeTrue();
+
         SetWorld(node, null);
         SetWorld(node, world);
         world.Invoke(ETickGroup.Normal);
 
-        component.RuntimeHandle.ShouldBe(originalHandle);
-        PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler).ShouldBeTrue();
-        scheduler.ShouldNotBeNull();
-        scheduler!.RegisteredCount.ShouldBe(1);
+        // Deactivation retires the live slot at once, before it writes rest transforms.
+        // The new registration gets a new generation, so the old handle cannot resolve
+        // to the component or to another component.
+        originalHandle.IsValid.ShouldBeTrue();
+        component.RuntimeHandle.IsValid.ShouldBeTrue();
+        component.RuntimeHandle.ShouldNotBe(originalHandle);
+        scheduler.TryResolveRuntimeHandle(originalHandle, out PhysicsChainComponent? stale).ShouldBeFalse();
+        stale.ShouldBeNull();
+        scheduler.TryResolveRuntimeHandle(component.RuntimeHandle, out PhysicsChainComponent? resolved).ShouldBeTrue();
+        resolved.ShouldBeSameAs(component);
+        scheduler.RegisteredCount.ShouldBe(1);
 
         SetWorld(node, null);
         world.Invoke(ETickGroup.Normal);

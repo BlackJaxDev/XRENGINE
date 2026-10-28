@@ -8,10 +8,9 @@
   href: ../developer-guides/README.md
 - name: Architecture
   href: ../architecture/README.md
-- name: Work Docs
-  href: ../work/README.md
 - name: Dependencies
   href: ../DEPENDENCIES.md
 - name: API Reference
-  href: apiref/index.md
+  href: apiref/toc.yml
+  topicHref: api/index.md
 

@@ -319,7 +319,7 @@ internal static class SourceContractWorkspace
                 if (name.Equals("bin", StringComparison.OrdinalIgnoreCase) ||
                     name.Equals("obj", StringComparison.OrdinalIgnoreCase) ||
                     name.Equals("_AgentValidation", StringComparison.OrdinalIgnoreCase) ||
-                    name.Equals("Dependencies", StringComparison.OrdinalIgnoreCase) ||
+                    IsBuildDependenciesDirectory(directory, name) ||
                     name.Equals("Submodules", StringComparison.OrdinalIgnoreCase) ||
                     name.Equals(".git", StringComparison.OrdinalIgnoreCase) ||
                     name.Equals(".vs", StringComparison.OrdinalIgnoreCase) ||
@@ -332,6 +332,14 @@ internal static class SourceContractWorkspace
             }
         }
     }
+
+    /// <summary>
+    /// Returns true for the local dependency checkout folder under <c>Build/</c>.
+    /// Source folders named <c>Dependencies</c> inside projects stay eligible.
+    /// </summary>
+    private static bool IsBuildDependenciesDirectory(string parentDirectory, string name)
+        => name.Equals("Dependencies", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(Path.GetFileName(parentDirectory), "Build", StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizeLineEndings(string source)
         => source.Replace("\r\n", "\n", StringComparison.Ordinal);

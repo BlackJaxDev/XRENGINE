@@ -89,7 +89,7 @@ void main()
     [TestCase("AutoExposureComputeShaderSource2DArray", "VulkanAutoExposure2DArray.comp")]
     public void AutoExposureComputeShaders_UseParallelReductionAndCompileAfterRewrite(string constantName, string shaderName)
     {
-        FieldInfo? field = typeof(VulkanRenderer).GetField(constantName, BindingFlags.NonPublic | BindingFlags.Static);
+        FieldInfo? field = typeof(VulkanResourceRuntime).GetField(constantName, BindingFlags.NonPublic | BindingFlags.Static);
         field.ShouldNotBeNull();
         string source = (string)field!.GetRawConstantValue()!;
 
@@ -390,18 +390,18 @@ void main()
             TestContext.WriteLine($"  {name,-28} type={glslType,-6} isArray={isArray,-5} len={arrayLength} offset={offset} stride={stride} size={size}");
         }
 
-        // The struct must contain ALL six cascade arrays + CascadeCount, at correct std140 offsets.
-        object cascadeMatrices = GetStructMember(lightData, "CascadeMatrices");
-        GetProperty<uint>(cascadeMatrices, "Offset").ShouldBe(864u);
-        GetProperty<uint>(cascadeMatrices, "ArrayStride").ShouldBe(64u);
-        GetProperty<uint>(cascadeMatrices, "ArrayLength").ShouldBe(8u);
-
-        object cascadeSplits = GetStructMember(lightData, "CascadeSplits");
-        GetProperty<uint>(cascadeSplits, "Offset").ShouldBe(224u);
-        GetProperty<uint>(cascadeSplits, "ArrayStride").ShouldBe(16u);
+        // Cascade matrices and splits moved to the DirectionalShadowGpuRecord storage buffer.
+        // The light struct keeps the light matrices, direction, and CascadeCount at std140 offsets.
+        GetProperty<uint>(GetStructMember(lightData, "Color"), "Offset").ShouldBe(0u);
+        GetProperty<uint>(GetStructMember(lightData, "DiffuseIntensity"), "Offset").ShouldBe(12u);
+        GetProperty<uint>(GetStructMember(lightData, "WorldToLightInvViewMatrix"), "Offset").ShouldBe(16u);
+        GetProperty<uint>(GetStructMember(lightData, "WorldToLightProjMatrix"), "Offset").ShouldBe(80u);
+        GetProperty<uint>(GetStructMember(lightData, "WorldToLightSpaceMatrix"), "Offset").ShouldBe(144u);
+        GetProperty<uint>(GetStructMember(lightData, "Direction"), "Offset").ShouldBe(208u);
 
         object cascadeCount = GetStructMember(lightData, "CascadeCount");
-        GetProperty<uint>(cascadeCount, "Offset").ShouldBe(2656u);
+        GetProperty<uint>(cascadeCount, "Offset").ShouldBe(220u);
+        lightDataSize.ShouldBe(224u);
     }
 
     private static string RewriteForVulkanFragment(string source)

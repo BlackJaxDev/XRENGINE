@@ -1,7 +1,9 @@
+using System.Reflection;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.UnitTests.VR;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -31,6 +33,9 @@ public sealed class AdvancedGpuDeformationResourceTests
         first.PreviousVertices.AttributeName.ShouldBe(
             "AdvancedDeformation.Output.Slot2");
         first.JobCount.ShouldBe(0u);
+        // Output becomes history only after its producer work is submitted
+        // with a completion fence.
+        RecordSubmittedProducerOutput(resources, slot: 0u);
         resources.EndFrame(0UL);
 
         resources.TryBeginFrame(
@@ -147,6 +152,30 @@ public sealed class AdvancedGpuDeformationResourceTests
             .ShouldBeFalse();
         (prepared with { Slice = slice with { VertexCount = slice.VertexCount + 1u } })
             .IsReusable(3UL, mesh, 7u).ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Records the state that a successful aggregate dispatch leaves on its
+    /// output slot: a submitted producer fence, valid output, and a pin on the
+    /// static source generation. A unit test has no renderer to run the
+    /// dispatch, so the test sets this state directly.
+    /// </summary>
+    private static void RecordSubmittedProducerOutput(
+        AdvancedGpuDeformationResources resources,
+        uint slot)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Type type = typeof(AdvancedGpuDeformationResources);
+        XRGpuFence?[] fences = (XRGpuFence?[])type.GetField("_slotProducerFences", flags)!.GetValue(resources)!;
+        bool[] outputValid = (bool[])type.GetField("_slotOutputValid", flags)!.GetValue(resources)!;
+        fences[slot].ShouldBeNull();
+        fences[slot] = new SpectatorTestFence
+        {
+            Status = EGpuFenceStatus.Signaled,
+            Submission = EGpuFenceSubmissionStatus.Submitted,
+        };
+        outputValid[slot] = true;
+        type.GetMethod("PinCurrentStaticGeneration", flags)!.Invoke(resources, [slot]);
     }
 
     private static AdvancedPreparationOptions CreateOptions(
