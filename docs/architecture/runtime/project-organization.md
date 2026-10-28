@@ -172,6 +172,24 @@ the capability for these direct reads; a missing capability fails with
 `AssetSource.HostFileReadUnavailable`. Codec-only loads and packaged assets do
 not need it. This capability does not change metadata, cache, or writer APIs.
 
+World file identities use the installed `IAssetFileSystem` with its existing
+`IAssetMetadataFileBackend` and `IRuntimeHostFileReadBackend` capabilities.
+Core retains verified-package admission, environment overrides, timestamp
+precedence, SHA-256 hashing, and generated fingerprints. It captures the provider
+only when it needs a host-file probe, then retains that provider across revision
+and hash reads. Hash streams use `FileShare.Read` and are disposed after hashing.
+Provider replacement does not retarget an operation already in progress. This
+capture does not make the timestamp and file bytes an atomic snapshot.
+
+Desktop and smoke-publisher registrations supply both capabilities. Custom native
+hosts must supply the capabilities used by their world identity path. A missing
+provider or capability now fails explicitly instead of using implicit physical
+file access. Verified identities and pathless generated worlds need no host-file
+provider. A path-backed world also needs none when both values have overrides,
+or when an original timestamp supplies the revision and a hash override exists.
+Browser and runtime-catalog worlds with a path still require a verified package
+identity before any provider lookup.
+
 Archive stale-path checks capture this provider at the first source entry and
 use it for source existence checks and whole-file byte reads. Custom hosts that
 use these checks with nonempty archives need this read capability, even if they

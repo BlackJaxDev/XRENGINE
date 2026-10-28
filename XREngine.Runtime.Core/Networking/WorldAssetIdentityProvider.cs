@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Runtime.CompilerServices;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Networking;
 using XREngine.Scene;
 
@@ -35,12 +36,14 @@ public static class WorldAssetIdentityProvider
             throw new InvalidOperationException(
                 "WorldAssetIdentity.UnverifiedPackagedWorld: a non-file-backed world with a path requires an identity from its verified content package.");
 
+        // Keep related revision and hash reads on one provider, even if a callback replaces it.
+        IAssetFileSystem? hostFiles = null;
         string worldId = GetOverride(XREngineEnvironmentVariables.WorldId)
             ?? (world?.ID.ToString("D") ?? "local-world");
         string revisionId = GetOverride(XREngineEnvironmentVariables.WorldRevision)
-            ?? ResolveRevisionId(world, !requiresVerifiedIdentity);
+            ?? ResolveRevisionId(world, !requiresVerifiedIdentity, ref hostFiles);
         string contentHash = GetOverride(XREngineEnvironmentVariables.WorldContentHash)
-            ?? ComputeWorldHash(world, !requiresVerifiedIdentity);
+            ?? ComputeWorldHash(world, !requiresVerifiedIdentity, ref hostFiles);
         string requiredBuildVersion = GetOverride(XREngineEnvironmentVariables.WorldRequiredBuildVersion)
             ?? fallbackBuildVersion;
 
@@ -92,23 +95,33 @@ public static class WorldAssetIdentityProvider
             Metadata = new Dictionary<string, string>(source.Metadata, StringComparer.Ordinal),
         };
 
-    private static string ResolveRevisionId(XRWorld? world, bool allowHostFile)
+    private static string ResolveRevisionId(XRWorld? world, bool allowHostFile, ref IAssetFileSystem? hostFiles)
     {
         if (world?.OriginalLastWriteTimeUtc is DateTime originalWrite)
             return originalWrite.ToUniversalTime().Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         string? path = world?.FilePath;
-        if (allowHostFile && !string.IsNullOrWhiteSpace(path) && File.Exists(path))
-            return File.GetLastWriteTimeUtc(path).Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (allowHostFile && !string.IsNullOrWhiteSpace(path))
+        {
+            var files = (hostFiles ??= AssetFileSystemServices.Required) as IAssetMetadataFileBackend
+                ?? throw new NotSupportedException("AssetSource.MetadataFileUnavailable: world file revisions require a metadata file backend.");
+            if (files.FileExists(path))
+                return files.GetLastWriteTimeUtc(path).Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
 
         return "local";
     }
 
-    private static string ComputeWorldHash(XRWorld? world, bool allowHostFile)
+    private static string ComputeWorldHash(XRWorld? world, bool allowHostFile, ref IAssetFileSystem? hostFiles)
     {
         string? path = world?.FilePath;
-        if (allowHostFile && !string.IsNullOrWhiteSpace(path) && File.Exists(path))
-            return $"sha256:{ComputeFileSha256(path)}";
+        if (allowHostFile && !string.IsNullOrWhiteSpace(path))
+        {
+            var files = (hostFiles ??= AssetFileSystemServices.Required) as IRuntimeHostFileReadBackend
+                ?? throw new NotSupportedException("AssetSource.HostFileReadUnavailable: world file hashes require a host-file read backend.");
+            if (files.FileExists(path))
+                return $"sha256:{ComputeFileSha256(path, files)}";
+        }
 
         IEnumerable<string> sceneNames = world is null
             ? Array.Empty<string>()
@@ -124,10 +137,10 @@ public static class WorldAssetIdentityProvider
         return $"sha256:{ComputeStringSha256(fingerprint)}";
     }
 
-    private static string ComputeFileSha256(string path)
+    private static string ComputeFileSha256(string path, IRuntimeHostFileReadBackend files)
     {
         using SHA256 sha256 = SHA256.Create();
-        using FileStream stream = File.OpenRead(path);
+        using Stream stream = files.OpenRead(path, FileShare.Read);
         return Convert.ToHexString(sha256.ComputeHash(stream)).ToLowerInvariant();
     }
 
