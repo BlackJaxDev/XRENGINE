@@ -141,13 +141,58 @@ public sealed class LoopOutputTests
     }
 
     [Test]
-    public void ChooseTiming_AnimatedLoop_UsesClipDurationAndRate()
+    public void ChooseTiming_AnimatedLoop_RepeatsClipForMinimumTurntable()
     {
+        // A clip of 5 s plays two times, so the turntable takes 10 s.
         GaussianCacheHeader header = new() { FrameCount = 152, FrameRate = 30.4f, DurationSeconds = 5.0f, LoopMode = GaussianCacheLoopMode.Loop };
 
         LoopTiming timing = LoopCameraPlanner.ChooseTiming(GaussianBakeKind.Avatar, header);
 
-        timing.ShouldBe(new LoopTiming(5.0f, 30.4f, 152));
+        timing.ShouldBe(new LoopTiming(10.0f, 30.4f, 304));
+    }
+
+    [Test]
+    public void ChooseTiming_AnimatedLoopLongerThanMinimum_PlaysClipOneTime()
+    {
+        GaussianCacheHeader header = new() { FrameCount = 200, FrameRate = 30.0f, DurationSeconds = 200.0f / 30.0f, LoopMode = GaussianCacheLoopMode.Loop };
+
+        LoopTiming timing = LoopCameraPlanner.ChooseTiming(GaussianBakeKind.Item, header);
+
+        timing.FrameCount.ShouldBe(200);
+        timing.DurationSeconds.ShouldBe(200.0f / 30.0f, 1e-6f);
+    }
+
+    [Test]
+    public void ChooseTiming_AnimatedPingPongAvatar_RepeatsRoundTripForMinimumTurntable()
+    {
+        // One round trip is 2 x (32 - 1) = 62 frames, about 2.07 s. Three round trips give 186 frames, 6.2 s.
+        GaussianCacheHeader header = new() { FrameCount = 32, FrameRate = 30.0f, DurationSeconds = 32.0f / 30.0f, LoopMode = GaussianCacheLoopMode.PingPong };
+
+        LoopTiming timing = LoopCameraPlanner.ChooseTiming(GaussianBakeKind.Avatar, header);
+
+        timing.FrameCount.ShouldBe(186);
+        timing.FramesPerSecond.ShouldBe(30.0f);
+        timing.DurationSeconds.ShouldBe(186.0f / 30.0f, 1e-6f);
+        (timing.FrameCount % 62).ShouldBe(0);
+        timing.DurationSeconds.ShouldBeGreaterThanOrEqualTo(LoopCameraPlanner.MinTurntableSeconds);
+    }
+
+    [Test]
+    public void ChooseTiming_RepeatedClip_IsSeamlessInAnimationAndCamera()
+    {
+        GaussianCacheHeader header = new() { FrameCount = 64, FrameRate = 30.0f, DurationSeconds = 64.0f / 30.0f, LoopMode = GaussianCacheLoopMode.Loop };
+        LoopTiming timing = LoopCameraPlanner.ChooseTiming(GaussianBakeKind.Avatar, header);
+        timing.FrameCount.ShouldBe(192);
+
+        // The frame after the last is frame 0 of the clip and frame 0 of the camera, and the camera turns one time.
+        float wrapFrame = GaussianCachePoseReference.FractionalFrame(header, timing.FrameCount / timing.FramesPerSecond);
+        MathF.Min(wrapFrame, header.FrameCount - wrapFrame).ShouldBeLessThan(1e-3f);
+        GaussianCacheCameraHints hints = OrbitHints();
+        BakeCameraPose[] poses = LoopCameraPlanner.Plan(hints, timing.DurationSeconds, timing.FrameCount);
+        ShouldMatch(LoopCameraPlanner.PoseAt(hints, timing.DurationSeconds, timing.FrameCount, timing.FrameCount), poses[0]);
+        Vector3 start = Flat(poses[0].Position - OrbitTarget);
+        Vector3.Dot(start, Flat(poses[timing.FrameCount / 4].Position - OrbitTarget)).ShouldBe(0.0f, 1e-4f);
+        Vector3.Dot(start, Flat(poses[timing.FrameCount / 2].Position - OrbitTarget)).ShouldBeLessThan(0.0f);
     }
 
     [Test]

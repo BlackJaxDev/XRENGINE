@@ -22,15 +22,25 @@ public static class LoopCameraPlanner
     public const float StillFramesPerSecond = 30.0f;
 
     /// <summary>
+    /// The shortest loop of an animated avatar or item, in seconds. The loop repeats the clip a whole number of times
+    /// until it is at least this long, and the camera orbits one time over the full loop.
+    /// </summary>
+    public const float MinTurntableSeconds = 6.0f;
+
+    /// <summary>
     /// Chooses the length and the frame rate of the loop of a cache. The video frame rate is the stored frame rate of
-    /// the cache, so video frame <c>i</c> shows cache frame <c>i</c>.
+    /// the cache, so video frame <c>i</c> shows the cache at <c>i / FrameRate</c> seconds.
     /// <list type="bullet">
     /// <item>A still cache (one frame) loops for <see cref="StillPrefabSeconds"/> (avatar or item) or
     /// <see cref="StillWorldSeconds"/> (world) at <see cref="StillFramesPerSecond"/>.</item>
-    /// <item>An animated <see cref="GaussianCacheLoopMode.Loop"/> or <see cref="GaussianCacheLoopMode.Once"/> cache
-    /// loops for its clip: <see cref="GaussianCacheHeader.FrameCount"/> frames.</item>
-    /// <item>An animated <see cref="GaussianCacheLoopMode.PingPong"/> cache plays forward and then back, because only
-    /// that is a loop with no jump: 2 × (<see cref="GaussianCacheHeader.FrameCount"/> − 1) frames.</item>
+    /// <item>The playback period of an animated <see cref="GaussianCacheLoopMode.Loop"/> or
+    /// <see cref="GaussianCacheLoopMode.Once"/> cache is its clip: <see cref="GaussianCacheHeader.FrameCount"/> frames.
+    /// An animated <see cref="GaussianCacheLoopMode.PingPong"/> cache plays forward and then back, because only that is
+    /// a loop with no jump: 2 × (<see cref="GaussianCacheHeader.FrameCount"/> − 1) frames.</item>
+    /// <item>The loop of an animated avatar or item repeats the playback period <c>k</c> times, with
+    /// <c>k = ceil(MinTurntableSeconds / period)</c> (see <see cref="MinTurntableSeconds"/>). The loop of an animated
+    /// world is one period. The loop is a whole number of periods, so the frame after the last frame is frame 0 of the
+    /// clip again.</item>
     /// </list>
     /// </summary>
     /// <param name="kind">The kind of content.</param>
@@ -54,9 +64,13 @@ public static class LoopCameraPlanner
         if (!float.IsFinite(rate) || rate <= 0.0f)
             throw new ArgumentException($"The frame rate of an animated cache must be more than 0, not {rate}.", nameof(header));
 
-        int frames = header.LoopMode == GaussianCacheLoopMode.PingPong
+        int period = header.LoopMode == GaussianCacheLoopMode.PingPong
             ? 2 * (header.FrameCount - 1)
             : header.FrameCount;
+        int repeats = kind is GaussianBakeKind.Avatar or GaussianBakeKind.Item
+            ? Math.Max(1, (int)Math.Ceiling(MinTurntableSeconds * (double)rate / period))
+            : 1;
+        int frames = checked(period * repeats);
         return new LoopTiming((float)(frames / (double)rate), rate, frames);
     }
 
