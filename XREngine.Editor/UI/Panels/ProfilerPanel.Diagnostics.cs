@@ -164,6 +164,41 @@ public partial class ProfilerPanel
         return true;
     }
 
+    private const string SpikeSortColumnRow = "Sort by";
+    private const string SpikeSortOrderRow = "Sort order";
+
+    private static string SpikeSortName(ENativeProfilerSpikeSort column) => column switch
+    {
+        ENativeProfilerSpikeSort.DropPercent => "Drop (%)",
+        ENativeProfilerSpikeSort.Count => "Count",
+        ENativeProfilerSpikeSort.WorstFrame => "Worst frame (s)",
+        ENativeProfilerSpikeSort.ReferenceFps => "Reference FPS",
+        ENativeProfilerSpikeSort.CurrentFps => "Current FPS",
+        ENativeProfilerSpikeSort.Thread => "Thread",
+        ENativeProfilerSpikeSort.HotPath => "Hot path",
+        _ => "Drop FPS",
+    };
+
+    /// <summary>Runs the clear or sort command of an activated FPS spike row.</summary>
+    /// <returns><see langword="true"/> when the spike rows must be built again.</returns>
+    private bool ActivateSpikeRow(string scope)
+    {
+        switch (scope)
+        {
+            case "Tracked hot paths":
+                return _spikes.Clear();
+            case SpikeSortColumnRow:
+                ENativeProfilerSpikeSort next = _spikes.SortColumn == ENativeProfilerSpikeSort.HotPath
+                    ? ENativeProfilerSpikeSort.DropFps : _spikes.SortColumn + 1;
+                // Text and thread columns read best ascending; measured values read best descending.
+                return _spikes.SetSort(next, next is not (ENativeProfilerSpikeSort.Thread or ENativeProfilerSpikeSort.HotPath));
+            case SpikeSortOrderRow:
+                return _spikes.SetSort(_spikes.SortColumn, !_spikes.SortDescending);
+            default:
+                return false;
+        }
+    }
+
     private bool CaptureFpsSpikes(List<NativeProfilerDisplayRow> rows)
     {
         Engine.Profiler.TryGetSnapshot(out var frame, out var history);
@@ -182,12 +217,16 @@ public partial class ProfilerPanel
                 "Enable frame logging in Settings to collect new spikes."));
         rows.Add(new("Tracked hot paths", _spikes.Count.ToString(CultureInfo.InvariantCulture),
             "Activate this row to clear native spike history."));
+        rows.Add(new(SpikeSortColumnRow, SpikeSortName(_spikes.SortColumn),
+            "Activate this row to sort by the next column."));
+        rows.Add(new(SpikeSortOrderRow, _spikes.SortDescending ? "Descending" : "Ascending",
+            "Activate this row to reverse the order."));
         for (int index = 0; index < _spikes.Count; index++)
         {
             var spike = _spikes[index];
             rows.Add(new($"Thread {spike.ThreadId} | {spike.HotPath}",
                 spike.WorstDropFps.ToString("F1", CultureInfo.InvariantCulture),
-                $"{spike.SeenCount} samples | {spike.WorstReferenceFps.ToString("F1", CultureInfo.InvariantCulture)} to {spike.WorstCurrentFps.ToString("F1", CultureInfo.InvariantCulture)} FPS | frame {spike.WorstFrameSeconds.ToString("F3", CultureInfo.InvariantCulture)} s"));
+                $"drop {NativeProfilerSpikeHistory.DropPercent(spike).ToString("F1", CultureInfo.InvariantCulture)}% | {spike.SeenCount} samples | {spike.WorstReferenceFps.ToString("F1", CultureInfo.InvariantCulture)} to {spike.WorstCurrentFps.ToString("F1", CultureInfo.InvariantCulture)} FPS | frame {spike.WorstFrameSeconds.ToString("F3", CultureInfo.InvariantCulture)} s"));
         }
         if (_spikes.LastSkippedThreads != 0)
             rows.Add(new("Threads not inspected", _spikes.LastSkippedThreads.ToString(CultureInfo.InvariantCulture),

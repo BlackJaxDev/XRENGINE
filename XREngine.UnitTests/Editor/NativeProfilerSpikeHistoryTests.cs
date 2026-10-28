@@ -57,6 +57,45 @@ public sealed class NativeProfilerSpikeHistoryTests
         history[1].ThreadId.ShouldBe(7);
     }
 
+    [Test]
+    public void SortColumnAndOrderPersistAcrossRecordsAndClear()
+    {
+        NativeProfilerSpikeHistory history = new();
+        Node root = new("Work", 2, ProfilerScopeKind.Unspecified, Array.Empty<Node>());
+        Dictionary<int, float[]> samples = new()
+        {
+            [7] = [10f, 10f, 20f],
+            [8] = [10f, 10f, 30f],
+        };
+        history.Record(new Frame(0.03f, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0,
+            new[] { new Thread(8, new[] { root }), new Thread(7, new[] { root }) }, null),
+            samples, 10f, 1f, 2).ShouldBeTrue();
+        history.SortColumn.ShouldBe(ENativeProfilerSpikeSort.DropFps);
+        history.SortDescending.ShouldBeTrue();
+        history[0].ThreadId.ShouldBe(8);
+
+        ulong revision = history.Revision;
+        history.SetSort(ENativeProfilerSpikeSort.Thread, descending: false).ShouldBeTrue();
+        history.Revision.ShouldBeGreaterThan(revision);
+        history[0].ThreadId.ShouldBe(7);
+        history[1].ThreadId.ShouldBe(8);
+        history.SetSort(ENativeProfilerSpikeSort.Thread, descending: false).ShouldBeFalse();
+        history.SetSort((ENativeProfilerSpikeSort)99, descending: false).ShouldBeFalse();
+
+        history.Record(new Frame(0.04f, 1, 2, 0, 2, 2, 0, 0, 0, 0, 0,
+            new[] { new Thread(8, new[] { root }), new Thread(7, new[] { root }) }, null),
+            samples, 10f, 1f, 2).ShouldBeTrue();
+        history[0].ThreadId.ShouldBe(7);
+
+        history.SetSort(ENativeProfilerSpikeSort.DropPercent, descending: true).ShouldBeTrue();
+        history[0].ThreadId.ShouldBe(8);
+        NativeProfilerSpikeHistory.DropPercent(history[0]).ShouldBeGreaterThan(
+            NativeProfilerSpikeHistory.DropPercent(history[1]));
+
+        history.Clear().ShouldBeTrue();
+        history.SortColumn.ShouldBe(ENativeProfilerSpikeSort.DropPercent);
+    }
+
     private static Frame Snapshot(ulong frame)
     {
         Node hot = new("Hot", 3, ProfilerScopeKind.Unspecified, Array.Empty<Node>());

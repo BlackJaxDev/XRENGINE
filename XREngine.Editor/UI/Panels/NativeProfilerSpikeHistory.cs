@@ -22,6 +22,8 @@ internal sealed class NativeProfilerSpikeHistory
     public int Count => _entries.Count;
     public ulong Revision { get; private set; }
     public int LastSkippedThreads { get; private set; }
+    public ENativeProfilerSpikeSort SortColumn { get; private set; }
+    public bool SortDescending { get; private set; } = true;
     public NativeProfilerSpikeEntry this[int index] => _entries[_sorted[index]];
 
     public bool Record(Frame? frame, Dictionary<int, float[]>? history,
@@ -88,14 +90,29 @@ internal sealed class NativeProfilerSpikeHistory
             changed = true;
         }
         if (changed)
-        {
-            _sorted.Clear();
-            for (int index = 0; index < _entries.Count; index++)
-                _sorted.Add(index);
-            _sorted.Sort(_compare);
-            Revision++;
-        }
+            Resort();
         return changed;
+    }
+
+    /// <summary>Orders the rows by one column. The order stays in effect for later records.</summary>
+    /// <returns><see langword="true"/> when the order changed.</returns>
+    public bool SetSort(ENativeProfilerSpikeSort column, bool descending)
+    {
+        if (!Enum.IsDefined(column) || column == SortColumn && descending == SortDescending)
+            return false;
+        SortColumn = column;
+        SortDescending = descending;
+        Resort();
+        return true;
+    }
+
+    private void Resort()
+    {
+        _sorted.Clear();
+        for (int index = 0; index < _entries.Count; index++)
+            _sorted.Add(index);
+        _sorted.Sort(_compare);
+        Revision++;
     }
 
     public bool Clear()
@@ -151,7 +168,29 @@ internal sealed class NativeProfilerSpikeHistory
     }
 
     private int CompareEntries(int left, int right)
-        => _entries[right].WorstDropFps.CompareTo(_entries[left].WorstDropFps);
+    {
+        NativeProfilerSpikeEntry a = _entries[left];
+        NativeProfilerSpikeEntry b = _entries[right];
+        int result = SortColumn switch
+        {
+            ENativeProfilerSpikeSort.DropPercent => DropPercent(a).CompareTo(DropPercent(b)),
+            ENativeProfilerSpikeSort.Count => a.SeenCount.CompareTo(b.SeenCount),
+            ENativeProfilerSpikeSort.WorstFrame => a.WorstFrameSeconds.CompareTo(b.WorstFrameSeconds),
+            ENativeProfilerSpikeSort.ReferenceFps => a.WorstReferenceFps.CompareTo(b.WorstReferenceFps),
+            ENativeProfilerSpikeSort.CurrentFps => a.WorstCurrentFps.CompareTo(b.WorstCurrentFps),
+            ENativeProfilerSpikeSort.Thread => a.ThreadId.CompareTo(b.ThreadId),
+            ENativeProfilerSpikeSort.HotPath => string.CompareOrdinal(a.HotPath, b.HotPath),
+            _ => a.WorstDropFps.CompareTo(b.WorstDropFps),
+        };
+        if (SortDescending)
+            result = -result;
+        // Equal keys keep the record order, so the visible order is stable between refreshes.
+        return result != 0 ? result : left.CompareTo(right);
+    }
+
+    /// <summary>Gets the FPS drop as a percent of the reference FPS.</summary>
+    public static float DropPercent(NativeProfilerSpikeEntry entry)
+        => entry.WorstReferenceFps > 0f ? entry.WorstDropFps * 100f / entry.WorstReferenceFps : 0f;
 
     private static float MedianTail(float[] samples, int requestedCount)
     {

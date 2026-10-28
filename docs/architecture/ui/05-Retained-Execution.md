@@ -1359,7 +1359,11 @@ subsystem reported no work. CPU-root aggregation reuses two
 buffers and caps distinct names at 4,096 with an explicit overflow row. Nested
 child aggregation uses a separate 4,096-path cap and the same bounded pump. Spike
 capture inspects at most 64 threads and 2,048 path nodes per frame and retains
-256 groups. GPU history contains 1,200 summaries and 24 worst frames; the visible
+256 groups. The "Sort by" row selects the next sort column (drop FPS, drop
+percent, count, worst frame, reference FPS, current FPS, thread, or hot path),
+and the "Sort order" row reverses the order. Measured columns start descending;
+thread and hot path start ascending. Equal keys keep the record order. The
+selected order stays in effect for new records and after a clear. GPU history contains 1,200 summaries and 24 worst frames; the visible
 tree shows 256 stages and offers a canonical dump. Output rows show 64 outputs
 and an explicit remainder. Plots retain up to 720 samples, reduce them to 64 peak
 bins, and use at most 128 segments.

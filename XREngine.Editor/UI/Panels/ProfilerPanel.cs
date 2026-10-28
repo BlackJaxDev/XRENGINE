@@ -395,7 +395,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             return;
         if (_rows.View == ENativeProfilerView.FpsSpikes)
         {
-            if (_rows.GetItem(index).Scope != "Tracked hot paths" || !_spikes.Clear()) return;
+            if (!ActivateSpikeRow(_rows.GetItem(index).Scope)) return;
             _fpsViewInitialized = false;
             RefreshRows();
             return;
