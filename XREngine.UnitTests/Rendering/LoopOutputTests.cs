@@ -230,8 +230,9 @@ public sealed class LoopOutputTests
 
         arguments.ShouldBe(
             "-hide_banner -loglevel error -y -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i - -an -threads 1 " +
-            "-fflags +bitexact -flags:v +bitexact -map_metadata -1 " +
-            "-c:v libvpx-vp9 -b:v 0 -crf 34 -deadline good -cpu-used 2 -row-mt 0 -pix_fmt yuv420p out/loop-1080.webm");
+            "-fflags +bitexact -flags:v +bitexact -map_metadata -1 -vf scale=out_color_matrix=bt709:out_range=tv " +
+            "-c:v libvpx-vp9 -b:v 0 -crf 34 -deadline good -cpu-used 2 -row-mt 0 -pix_fmt yuv420p " +
+            "-colorspace bt709 -color_primaries bt709 -color_trc bt709 out/loop-1080.webm");
     }
 
     [Test]
@@ -242,8 +243,9 @@ public sealed class LoopOutputTests
 
         arguments.ShouldBe(
             "-hide_banner -loglevel error -y -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i - -an -threads 1 " +
-            "-fflags +bitexact -flags:v +bitexact -map_metadata -1 -vf scale=-2:480:flags=area " +
-            "-c:v libopenh264 -b:v 1M -pix_fmt yuv420p -movflags +faststart out/loop-480.mp4");
+            "-fflags +bitexact -flags:v +bitexact -map_metadata -1 -vf scale=-2:480:flags=area:out_color_matrix=bt709:out_range=tv " +
+            "-c:v libopenh264 -b:v 1M -pix_fmt yuv420p -colorspace bt709 -color_primaries bt709 -color_trc bt709 " +
+            "-movflags +faststart out/loop-480.mp4");
     }
 
     [Test]
@@ -253,14 +255,17 @@ public sealed class LoopOutputTests
             "-hide_banner -loglevel error -y -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i - -an -threads 1 " +
             "-fflags +bitexact -flags:v +bitexact -map_metadata -1 ";
 
+        const string tags = "-colorspace bt709 -color_primaries bt709 -color_trc bt709 ";
+        const string scale1080 = "-vf scale=out_color_matrix=bt709:out_range=tv ";
+        const string scale480 = "-vf scale=-2:480:flags=area:out_color_matrix=bt709:out_range=tv ";
         FfmpegEncoder.BuildArguments(LoopRendition.Loop1080H264, 1920, 1080, 30.0f, BakeSplatPreviewOptions.OpenH264Encoder, "a.mp4")
-            .ShouldBe(common + "-c:v libopenh264 -b:v 4M -pix_fmt yuv420p -movflags +faststart a.mp4");
+            .ShouldBe(common + scale1080 + "-c:v libopenh264 -b:v 4M -pix_fmt yuv420p " + tags + "-movflags +faststart a.mp4");
         FfmpegEncoder.BuildArguments(LoopRendition.Loop1080H264, 1920, 1080, 30.0f, BakeSplatPreviewOptions.NvencEncoder, "a.mp4")
-            .ShouldBe(common + "-c:v h264_nvenc -preset p5 -b:v 4M -pix_fmt yuv420p -movflags +faststart a.mp4");
+            .ShouldBe(common + scale1080 + "-c:v h264_nvenc -preset p5 -b:v 4M -pix_fmt yuv420p " + tags + "-movflags +faststart a.mp4");
         FfmpegEncoder.BuildArguments(LoopRendition.Loop480H264, 1920, 1080, 30.0f, BakeSplatPreviewOptions.NvencEncoder, "a.mp4")
-            .ShouldBe(common + "-vf scale=-2:480:flags=area -c:v h264_nvenc -preset p5 -b:v 1M -pix_fmt yuv420p -movflags +faststart a.mp4");
+            .ShouldBe(common + scale480 + "-c:v h264_nvenc -preset p5 -b:v 1M -pix_fmt yuv420p " + tags + "-movflags +faststart a.mp4");
         FfmpegEncoder.BuildArguments(LoopRendition.Loop480Vp9, 1920, 1080, 30.0f, BakeSplatPreviewOptions.OpenH264Encoder, "a.webm")
-            .ShouldBe(common + "-vf scale=-2:480:flags=area -c:v libvpx-vp9 -b:v 0 -crf 34 -deadline good -cpu-used 2 -row-mt 0 -pix_fmt yuv420p a.webm");
+            .ShouldBe(common + scale480 + "-c:v libvpx-vp9 -b:v 0 -crf 34 -deadline good -cpu-used 2 -row-mt 0 -pix_fmt yuv420p " + tags + "a.webm");
         FfmpegEncoder.BuildArguments(LoopRendition.Poster1080, 1920, 1080, 30.0f, BakeSplatPreviewOptions.OpenH264Encoder, "p.webp")
             .ShouldBe(common + "-frames:v 1 -c:v libwebp -quality 85 p.webp");
         FfmpegEncoder.BuildArguments(LoopRendition.Poster480, 1920, 1080, 30.0f, BakeSplatPreviewOptions.OpenH264Encoder, "p.webp")
