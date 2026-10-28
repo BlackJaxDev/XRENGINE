@@ -671,6 +671,10 @@ namespace XREngine.Rendering.UI
             {
                 SceneNode? root = _contentRoot;
                 bool owned = root is not null && OwnsContentRoot(root);
+                ReleaseBorrowedContent(root, owned);
+                if (_tearingDown || IsDestroyed)
+                    return;
+                owned = root is not null && OwnsContentRoot(root);
                 _contentRoot = null;
                 _contentRootIdentity = default;
                 _contentTransformIdentity = default;
@@ -1118,6 +1122,9 @@ namespace XREngine.Rendering.UI
             _contentBuilder = null;
             _virtualList = null;
             _placementCanvas = null;
+            // Borrowed nodes belong to other owners, so they leave before this node is destroyed.
+            SceneNode? contentRoot = _contentRoot;
+            ReleaseBorrowedContent(contentRoot, contentRoot is not null && OwnsContentRoot(contentRoot));
             _contentRoot = null;
             _contentRootIdentity = default;
             _contentTransformIdentity = default;

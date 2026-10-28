@@ -2617,6 +2617,27 @@ subtree with callback-added or borrowed content. A new explicit adopted-content
 ownership contract is needed before extending reserved retirement to that graph.
 Do not detach an adopted subtree to force it through leaf admission.
 
+### Custom menu content ownership
+
+Custom content from `ShowContent` and `ShowPassiveContent` has two kinds of nodes.
+A node that the builder creates under the content root belongs to the menu.
+`ClearMenuItems` destroys it with the content root through ordinary exact-child
+destruction. A node that another owner keeps enters the content only through
+`UIContextMenuComponent.BorrowContent(contentParent, borrowed)`, during the builder
+of the current show. The call records the node and its original parent with their
+construction identities, then attaches the node. It rejects a parent outside the
+current content root, a destroyed node, a node that contains the menu, a node that
+is already in the content, and a second borrow of the same node.
+
+Before the menu destroys an owned content root, on Clear, Show, Hide, or menu
+destruction, it returns each borrowed node that is still under that root to its
+original parent, in reverse borrow order. If the original parent no longer exists,
+the node is detached and is not destroyed. A borrowed node that a callback moved
+out of the content root stays where it is. If the menu no longer owns the content
+root, the records are released and no node moves. A failed return keeps its
+exception and releases the records. Reserved receipt retirement is not extended to
+this graph: the borrowed/owned split is the adopted-content retirement contract.
+
 
 ## Menu components on existing owners
 
