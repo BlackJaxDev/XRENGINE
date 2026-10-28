@@ -1,4 +1,5 @@
 using XREngine.Assets.Recovery;
+using XREngine.Core.Files;
 
 namespace XREngine.Editor;
 
@@ -83,6 +84,78 @@ internal static class NativeAssetCreation
                 store.Release(operation, "The Undo history released the creation.");
         }));
         return operation;
+    }
+
+    /// <summary>
+    /// Creates a new asset of <paramref name="type"/> in <paramref name="directory"/> as one
+    /// "Create Asset" Undo action. Returns the new asset path.
+    /// </summary>
+    internal static string CreateAsset(string root, string directory, Type type, string displayName)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        string folder = NativeAssetPathPolicy.RequireUnderRoot(root, directory, allowRoot: true);
+        if (!Directory.Exists(folder))
+            throw new DirectoryNotFoundException($"The asset folder no longer exists: '{folder}'.");
+        if (Activator.CreateInstance(type) is not XRAsset asset)
+            throw new InvalidOperationException($"'{type.FullName}' is not a creatable asset type.");
+        if (string.IsNullOrWhiteSpace(asset.Name))
+            asset.Name = displayName;
+        string path = AssetManager.VerifyAssetPath(asset, folder);
+        if (File.Exists(path) || Directory.Exists(path))
+            path = AssetManager.GetUniqueAssetPath(path);
+        path = NativeAssetPathPolicy.RequireUnderRoot(root, path, allowRoot: false);
+        asset.FilePath = path;
+        byte[] bytes = SerializeAsset(asset);
+
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Create Asset");
+        Create("Create Asset", [new NativeAssetCreationFile(path, bytes, asset.ID)]);
+        Engine.Assets.NotifyExternalAssetSaved(asset, newAsset: true);
+        return path;
+    }
+
+    /// <summary>Serializes an asset to the exact bytes that a normal save writes.</summary>
+    internal static byte[] SerializeAsset(XRAsset asset)
+    {
+        string temp = Path.Combine(Path.GetTempPath(), "xre-asset-" + Guid.NewGuid().ToString("N") + ".asset");
+        try
+        {
+            asset.SerializeTo(temp, AssetManager.Serializer);
+            return File.ReadAllBytes(temp);
+        }
+        finally
+        {
+            try { File.Delete(temp); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>
+    /// Records an explicit acceptance for every recovery-required operation with a readable
+    /// manifest. Files stay where they are. Returns the count accepted.
+    /// </summary>
+    internal static int AcceptRecoveryRecords()
+    {
+        AssetCreationRecoveryStore? store = Engine.Assets?.CreationRecovery;
+        if (store is null)
+            return 0;
+        int accepted = 0;
+        foreach (AssetCreationRecoveryOperation operation in store.GetOperations())
+        {
+            if (operation.State != EAssetCreationRecoveryState.RecoveryRequired)
+                continue;
+            if (operation.Manifest is null)
+            {
+                Debug.LogWarning($"[AssetRecovery] Operation {operation.Id} has no readable manifest. Inspect '{operation.Directory}' by hand.");
+                continue;
+            }
+            Debug.LogWarning($"[AssetRecovery] Accepting operation {operation.Id} as found: {operation.Problem} " +
+                $"Paths: {string.Join(", ", operation.PublicPaths)}. Records: '{operation.Directory}'.");
+            store.AcceptRecovery(operation, "Accepted from the native asset browser; files kept as found.");
+            accepted++;
+        }
+        return accepted;
     }
 
     /// <summary>Removes every released operation that passes the ownership check. Returns the count removed.</summary>

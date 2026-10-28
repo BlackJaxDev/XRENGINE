@@ -102,6 +102,19 @@ manifest, a journal, and a 4 KiB journal reserve. The limits are 512 MiB and
 1,024 files. Prepare throws `AssetRecovery.QuotaExceeded` before it writes when
 a limit would be exceeded.
 
+## Native Asset Browser
+
+The asset row menu has a **Create New...** submenu. It lists the creatable asset
+types by category. The new asset goes into the row folder, or into the folder
+that contains the row file, through `NativeAssetCreation.CreateAsset`. Each
+creation is one `Create Asset` Undo action. The submenu is disabled for engine
+assets and when no recovery journal is open.
+
+The **Accept Recovery** command records an explicit acceptance for each
+recovery-required operation with a readable manifest and logs its paths. The
+files stay where they are. The **Clean Recovery** command removes released
+operations that pass the ownership check.
+
 ## Viewport File Drop
 
 `EditorFileDropHandler` resolves the target material before it creates any

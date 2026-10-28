@@ -334,6 +334,8 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         AddCommand("New Folder", CreateFolder);
         AddCommand("Rename", RenameSelection);
         AddCommand("Import", () => _ = ImportSelectionAsync());
+        AddCommand("Accept Recovery", AcceptRecoveryRecords);
+        AddCommand("Clean Recovery", CleanRecoveryRecords);
         SceneNode nameNode = commands.NewChild();
         nameNode.SetTransform<UIBoundableTransform>().Width = 140;
         var (nameInput, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(nameNode);
@@ -563,6 +565,22 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         {
             Debug.UI($"[NativeAssets] Could not create folder: {exception.Message}");
         }
+    }
+
+    // Records explicit acceptance of recovery-required creations. Files stay where they are.
+    private void AcceptRecoveryRecords()
+    {
+        if (!AcceptsActiveInput) return;
+        try { Debug.UI($"[NativeAssets] Accepted {NativeAssetCreation.AcceptRecoveryRecords()} asset recovery record(s)."); }
+        catch (Exception exception) { Debug.UI($"[NativeAssets] Could not accept recovery records: {exception.Message}"); }
+    }
+
+    // Removes released creation records. Unknown or unresolved records stay.
+    private void CleanRecoveryRecords()
+    {
+        if (!AcceptsActiveInput) return;
+        try { Debug.UI($"[NativeAssets] Removed {NativeAssetCreation.CleanReleased()} released asset recovery record(s)."); }
+        catch (Exception exception) { Debug.UI($"[NativeAssets] Could not clean recovery records: {exception.Message}"); }
     }
 
     private void RenameSelection()

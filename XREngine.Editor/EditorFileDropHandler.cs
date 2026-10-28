@@ -130,7 +130,7 @@ internal static class EditorFileDropHandler
         if (File.Exists(assetPath))
             assetPath = AssetManager.GetUniqueAssetPath(assetPath);
         texture.FilePath = assetPath;
-        byte[] assetBytes = SerializeAsset(texture);
+        byte[] assetBytes = NativeAssetCreation.SerializeAsset(texture);
 
         var files = new List<NativeAssetCreationFile>(2);
         if (!insideAssets)
@@ -154,22 +154,6 @@ internal static class EditorFileDropHandler
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or IOException)
         {
             return false;
-        }
-    }
-
-    private static byte[] SerializeAsset(XRAsset asset)
-    {
-        string temp = Path.Combine(Path.GetTempPath(), "xre-asset-" + Guid.NewGuid().ToString("N") + ".asset");
-        try
-        {
-            asset.SerializeTo(temp, AssetManager.Serializer);
-            return File.ReadAllBytes(temp);
-        }
-        finally
-        {
-            try { File.Delete(temp); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
         }
     }
 

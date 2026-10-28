@@ -95,7 +95,8 @@ public partial class AssetsPanel
                 new ContextMenuItem(directory ? "Open in Explorer" : "Show in Explorer",
                     () => RevealMenuAsset(request)),
                 new ContextMenuItem("Rename", () => PrepareMenuRename(request)),
-                new ContextMenuItem("Reimport", () => ReimportMenuAsset(request), enabled: importable));
+                new ContextMenuItem("Reimport", () => ReimportMenuAsset(request), enabled: importable),
+                CreateAssetSubmenu(request, directory));
             if (IsCurrentAssetMenu(request) && popup.IsOpen)
                 request.AwaitingShow = false;
         }
@@ -195,6 +196,50 @@ public partial class AssetsPanel
     {
         _renameMenuDraft = null;
         if (AcceptsActiveInput && ReferenceEquals(_nameInput, field)) field.Text = string.Empty;
+    }
+
+    // Groups creatable asset types by category. The menu is built once per show, not per frame.
+    private ContextMenuItem CreateAssetSubmenu(NativeAssetMenuRequest request, bool directory)
+    {
+        bool available = Engine.Assets?.CreationRecovery is not null && !UseEngineAssets;
+        IReadOnlyList<(Type Type, string DisplayName, string Category)> choices =
+            available ? EditorImGuiUI.GetNativeAssetTypeChoices() : [];
+        if (choices.Count == 0)
+            return new ContextMenuItem("Create New...", null, enabled: false);
+        var categories = new List<ContextMenuItem>();
+        var items = new List<ContextMenuItem>();
+        string? category = null;
+        foreach ((Type type, string displayName, string itemCategory) in choices)
+        {
+            if (category is not null && !string.Equals(category, itemCategory, StringComparison.OrdinalIgnoreCase))
+            {
+                categories.Add(ContextMenuItem.Submenu(category, [.. items]));
+                items.Clear();
+            }
+            category = itemCategory;
+            items.Add(new ContextMenuItem(displayName, () => CreateMenuAsset(request, directory, type, displayName)));
+        }
+        if (category is not null && items.Count > 0)
+            categories.Add(ContextMenuItem.Submenu(category, [.. items]));
+        return ContextMenuItem.Submenu("Create New...", [.. categories]);
+    }
+
+    private void CreateMenuAsset(NativeAssetMenuRequest request, bool directory, Type type, string displayName)
+    {
+        if (!SelectMenuAsset(request)) return;
+        string folder = directory ? request.Path : Path.GetDirectoryName(request.Path) ?? CurrentFolder;
+        try
+        {
+            string created = NativeAssetCreation.CreateAsset(RootFolder, folder, type, displayName);
+            if (!AcceptsActiveInput) return;
+            SelectedPath = created;
+            NativeAssetSelection.Select(created);
+            if (AcceptsActiveInput) RefreshRows();
+        }
+        catch (Exception exception)
+        {
+            Debug.UI($"[NativeAssets] Could not create {displayName}: {exception.Message}");
+        }
     }
 
     private void ReimportMenuAsset(NativeAssetMenuRequest request)
