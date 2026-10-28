@@ -826,6 +826,11 @@ function decodeShadowScreenshot(data, requireTime) {
     return image;
 }
 
+// SwiftShader needs one full native frame and one screenshot for each capture. Measured single-attempt
+// captures take 4 to 10 s at the small extent and more at the full extent, so a 10 s budget fails
+// healthy captures. The budget still bounds a stalled capture well inside the job timeout.
+const shadowCaptureBudgetMs = 30000;
+
 // Records the elapsed time of every shadow capture, pass or fail, so that the report shows the margin to the budget.
 const shadowCaptureTimings = [];
 const recordShadowCaptureTiming = (diagnostics, state, outcome) => shadowCaptureTimings.push({
@@ -837,7 +842,7 @@ const recordShadowCaptureTiming = (diagnostics, state, outcome) => shadowCapture
 
 async function captureShadowSurface(page, config, imageAnalysis, slot, name, failure, captureContext,
     reference = null, observeResize = false) {
-    const budget = Math.min(config.timeout, 10000);
+    const budget = Math.min(config.timeout, shadowCaptureBudgetMs);
     const startedAt = Date.now();
     const deadline = startedAt + budget;
     const { programs, state, extent, afterSerial, expectedPage } = captureContext;
