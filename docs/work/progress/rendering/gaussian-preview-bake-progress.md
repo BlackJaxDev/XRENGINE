@@ -95,6 +95,12 @@ Two changes keep the files identical:
   A chunk that is accepted already does not throw `GaussianCache.ChunkOutOfOrder` any more.
 - The cache reader checks every header against the format limits of `GaussianCacheHeader` and rejects a chunk path
   that is not relative to the folder of the root asset.
+- A chunk decodes its triangle sections before its other sections, and `CheckBindings` bounds the triangle indices by
+  the decoded triangle count (`GaussianCacheRuntimeData.Decode.cs`). Other readers of the format, for example a WGSL
+  port, must decode in the same order.
+- A loose cooked cache root cannot load through `Engine.Assets.Load` in a build that is not published: the load goes to
+  the YAML reader (`AssetManager.Loading.Core.cs`). A runtime viewer must load the root from a published archive, or
+  the engine must get a direct cooked read. The bake read-back uses `PublishedCookedAssetReader`.
 
 ## Open Items
 
