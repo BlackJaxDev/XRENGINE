@@ -298,12 +298,13 @@ namespace XREngine
         private T? Load3rdPartyWithCache<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
             bool useCache = ShouldUseThirdPartyCache(typeof(T));
-            bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Asset cache load");
+            bool hasTimestamp = TryGetSourceTimestamp(filePath, files, out DateTime timestampUtc);
             string cachePath = string.Empty;
             string? cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(T), explicitVariantKey: null);
             bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out cachePath);
 
-            if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
+            if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, files, out T? cachedAsset))
             {
                 if (!IsIncompleteThirdPartyCache(cachedAsset!, ext))
                 {
@@ -327,7 +328,7 @@ namespace XREngine
                 asset.OriginalLastWriteTimeUtc = timestampUtc;
 
             if (hasTimestamp && hasCachePath)
-                TryWriteCacheAsset(cachePath, asset);
+                TryWriteCacheAsset(cachePath, asset, files);
 
             return asset;
         }
@@ -343,12 +344,13 @@ namespace XREngine
         private XRAsset? Load3rdPartyWithCache(string filePath, string ext, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
         {
             bool useCache = ShouldUseThirdPartyCache(type);
-            bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Asset cache load");
+            bool hasTimestamp = TryGetSourceTimestamp(filePath, files, out DateTime timestampUtc);
             string cachePath = string.Empty;
             string? cacheVariantKey = ResolveDefaultCacheVariantKey(type, explicitVariantKey: null);
             bool hasCachePath = useCache && TryResolveCachePath(filePath, type, cacheVariantKey, out cachePath);
 
-            if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, type, out XRAsset? cachedAsset))
+            if (hasTimestamp && hasCachePath && TryLoadCachedAsset(cachePath, filePath, timestampUtc, type, files, out XRAsset? cachedAsset))
             {
                 if (!IsIncompleteThirdPartyCache(cachedAsset!, ext))
                 {
@@ -372,7 +374,7 @@ namespace XREngine
                 asset.OriginalLastWriteTimeUtc = timestampUtc;
 
             if (hasTimestamp && hasCachePath)
-                TryWriteCacheAsset(cachePath, asset);
+                TryWriteCacheAsset(cachePath, asset, files);
 
             return asset;
         }
@@ -387,14 +389,15 @@ namespace XREngine
         private async Task<T?> Load3rdPartyWithCacheAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] T>(string filePath, string ext) where T : XRAsset, new()
         {
             bool useCache = ShouldUseThirdPartyCache(typeof(T));
-            bool hasTimestamp = TryGetSourceTimestamp(filePath, out DateTime timestampUtc);
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Asset cache load");
+            bool hasTimestamp = TryGetSourceTimestamp(filePath, files, out DateTime timestampUtc);
             string cachePath = string.Empty;
             string? cacheVariantKey = ResolveDefaultCacheVariantKey(typeof(T), explicitVariantKey: null);
             bool hasCachePath = useCache && TryResolveCachePath(filePath, typeof(T), cacheVariantKey, out cachePath);
 
             if (hasTimestamp && hasCachePath)
             {
-                var cached = await TryLoadCachedAssetAsync<T>(cachePath, filePath, timestampUtc).ConfigureAwait(false);
+                var cached = await TryLoadCachedAssetAsync<T>(cachePath, filePath, timestampUtc, files).ConfigureAwait(false);
                 if (cached is not null && !IsIncompleteThirdPartyCache(cached, ext))
                 {
                     cached.OriginalLastWriteTimeUtc = timestampUtc;
@@ -416,7 +419,7 @@ namespace XREngine
                 asset.OriginalLastWriteTimeUtc = timestampUtc;
 
             if (hasTimestamp && hasCachePath)
-                await TryWriteCacheAssetAsync(cachePath, asset).ConfigureAwait(false);
+                await TryWriteCacheAssetAsync(cachePath, asset, files).ConfigureAwait(false);
 
             return asset;
         }
@@ -430,9 +433,11 @@ namespace XREngine
         /// <param name="filePath">The file path of the source file.</param>
         /// <param name="timestampUtc">The last write time of the source file in UTC.</param>
         /// <returns><c>true</c> if the timestamp was successfully retrieved; otherwise, <c>false</c>.</returns>
-        private static bool TryGetSourceTimestamp(string filePath, out DateTime timestampUtc)
+        /// <param name="files">The metadata provider retained by the cache operation.</param>
+        private static bool TryGetSourceTimestamp(
+            string filePath, IAssetMetadataFileBackend files, out DateTime timestampUtc)
         {
-            timestampUtc = File.GetLastWriteTimeUtc(filePath);
+            timestampUtc = files.GetLastWriteTimeUtc(filePath);
             return timestampUtc != DateTime.MinValue;
         }
 
@@ -452,7 +457,8 @@ namespace XREngine
 
             EnsureHostFileAssetAccess();
 
-            if (!File.Exists(normalizedPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Asset cache authority");
+            if (!files.FileExists(normalizedPath))
                 return normalizedPath;
 
             IThirdPartyCacheCodec? codec = ThirdPartyCacheCodecRegistry.FindByAuthorityRole(
@@ -470,7 +476,7 @@ namespace XREngine
             if (!TryResolveCachePath(normalizedPath, assetType, cacheVariantKey, out string cachePath))
                 return normalizedPath;
 
-            if (IsCacheAssetFresh(cachePath, normalizedPath, assetType))
+            if (IsCacheAssetFresh(cachePath, normalizedPath, assetType, files))
                 return cachePath;
 
             if (!IsTextureStreamingCacheWarmupEnabled())
@@ -517,8 +523,9 @@ namespace XREngine
             IEnumerable CacheImportRoutine()
             {
                 EnsureHostFileAssetAccess();
-                if (!IsCacheAssetFresh(cachePath, sourcePath, assetType))
-                    TryImportThirdPartyCacheAsset(sourcePath, assetType, importOptions: null, cacheVariantKey, cachePath);
+                IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Asset cache warmup");
+                if (!IsCacheAssetFresh(cachePath, sourcePath, assetType, files))
+                    TryImportThirdPartyCacheAsset(sourcePath, assetType, importOptions: null, cacheVariantKey, cachePath, files);
 
                 yield break;
             }
@@ -553,7 +560,8 @@ namespace XREngine
 
             EnsureHostFileAssetAccess();
 
-            if (!File.Exists(normalizedPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Asset cache authority");
+            if (!files.FileExists(normalizedPath))
                 return normalizedPath;
 
             if (GetThirdPartyCacheCodecOwnership(typeof(T)) == CacheCodecOwnership.Exclusive)
@@ -563,10 +571,10 @@ namespace XREngine
             if (!TryResolveCachePath(normalizedPath, typeof(T), cacheVariantKey, out string cachePath))
                 return normalizedPath;
 
-            if (IsCacheAssetFresh(cachePath, normalizedPath, typeof(T)))
+            if (IsCacheAssetFresh(cachePath, normalizedPath, typeof(T), files))
                 return cachePath;
 
-            return TryImportThirdPartyCacheAsset(normalizedPath, typeof(T), importOptions, cacheVariantKey, cachePath)
+            return TryImportThirdPartyCacheAsset(normalizedPath, typeof(T), importOptions, cacheVariantKey, cachePath, files)
                 ? cachePath
                 : normalizedPath;
         }
@@ -600,13 +608,14 @@ namespace XREngine
         {
             EnsureHostFileAssetAccess();
             filePath = Path.GetFullPath(filePath);
-            if (!File.Exists(filePath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Asset cache import");
+            if (!files.FileExists(filePath))
             {
                 AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load3rdPartyVariantWithCache)}");
                 return null;
             }
 
-            if (!TryGetSourceTimestamp(filePath, out DateTime timestampUtc))
+            if (!TryGetSourceTimestamp(filePath, files, out DateTime timestampUtc))
                 return null;
 
             bool useCache = ShouldUseThirdPartyCache(typeof(T));
@@ -620,7 +629,7 @@ namespace XREngine
                 out cachePath))
                 return null;
 
-            if (useCache && TryLoadCachedAsset(cachePath, filePath, timestampUtc, out T? cachedAsset))
+            if (useCache && TryLoadCachedAsset(cachePath, filePath, timestampUtc, files, out T? cachedAsset))
             {
                 cachedAsset!.FilePath = filePath;
                 cachedAsset.OriginalPath = filePath;
@@ -643,7 +652,7 @@ namespace XREngine
                 return null;
 
             if (useCache)
-                TryWriteCacheAsset(cachePath, asset);
+                TryWriteCacheAsset(cachePath, asset, files);
             return asset;
         }
 
@@ -656,17 +665,19 @@ namespace XREngine
         /// <param name="cacheVariantKey">An optional key used to differentiate cache variants for the same source file and asset type, allowing for multiple cached versions of an asset based on different import settings or contexts.</param>
         /// <param name="cachePath">The file path where the cached asset should be written if the import is successful.</param>
         /// <returns><c>true</c> if the asset was successfully imported and the cache was written; otherwise, <c>false</c>.</returns>
+        /// <param name="files">The metadata provider retained by the cache operation.</param>
         private bool TryImportThirdPartyCacheAsset(
             string filePath,
             [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type assetType,
             object? importOptions,
             string? cacheVariantKey,
-            string cachePath)
+            string cachePath,
+            IAssetMetadataFileBackend files)
         {
             if (!ShouldUseThirdPartyCache(assetType))
                 return false;
 
-            if (!TryGetSourceTimestamp(filePath, out DateTime timestampUtc))
+            if (!TryGetSourceTimestamp(filePath, files, out DateTime timestampUtc))
                 return false;
 
             XRAsset? asset;
@@ -696,8 +707,8 @@ namespace XREngine
             if (!asset.Load3rdParty(filePath, importOptions, context))
                 return false;
 
-            TryWriteCacheAsset(cachePath, asset);
-            return File.Exists(cachePath);
+            TryWriteCacheAsset(cachePath, asset, files);
+            return files.FileExists(cachePath);
         }
 
         /// <summary>
@@ -908,32 +919,34 @@ namespace XREngine
         /// <param name="sourcePath">The file path of the source asset.</param>
         /// <param name="assetType">The type of the asset.</param>
         /// <returns><c>true</c> if the cached asset is fresh; otherwise, <c>false</c>.</returns>
-        private bool IsCacheAssetFresh(string cachePath, string sourcePath, Type assetType)
+        /// <param name="files">The metadata provider retained by the cache operation.</param>
+        private bool IsCacheAssetFresh(
+            string cachePath, string sourcePath, Type assetType, IAssetMetadataFileBackend files)
         {
             if (GetThirdPartyCacheCodecOwnership(assetType) == CacheCodecOwnership.Exclusive)
                 return false;
 
-            if (!File.Exists(cachePath))
+            if (!files.FileExists(cachePath))
                 return false;
 
             IThirdPartyCacheCodec? codec = FindThirdPartyCacheCodec(assetType);
             if (codec is not null && !codec.IsCacheUsable(cachePath))
                 return false;
 
-            DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);
+            DateTime cacheTimestampUtc = files.GetLastWriteTimeUtc(cachePath);
             if (cacheTimestampUtc == DateTime.MinValue)
                 return false;
 
-            if (!TryGetSourceTimestamp(sourcePath, out DateTime sourceTimestampUtc))
+            if (!TryGetSourceTimestamp(sourcePath, files, out DateTime sourceTimestampUtc))
                 return false;
 
             if (cacheTimestampUtc < sourceTimestampUtc)
                 return false;
 
             if (TryResolveImportOptionsPath(sourcePath, assetType, out string importOptionsPath)
-                && File.Exists(importOptionsPath))
+                && files.FileExists(importOptionsPath))
             {
-                DateTime importOptionsTimestampUtc = File.GetLastWriteTimeUtc(importOptionsPath);
+                DateTime importOptionsTimestampUtc = files.GetLastWriteTimeUtc(importOptionsPath);
                 if (importOptionsTimestampUtc != DateTime.MinValue && cacheTimestampUtc < importOptionsTimestampUtc)
                     return false;
             }
@@ -972,17 +985,18 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Attempts to load a cached asset of type <typeparamref name="T"/> from the specified cache path, validating its freshness against the source asset's timestamp. If the cached asset is successfully loaded and deemed fresh, it is returned via the out parameter and the method returns true; otherwise, the out parameter is set to null and the method returns false. Exceptions during the load process are caught and logged as warnings, but not re-thrown, to avoid disrupting the calling code. This method is intended to be used for loading cached assets on the main thread; for asynchronous cache loads, use <see cref="TryLoadCachedAssetAsync{T}(string, string, DateTime)"/> instead.
+        /// Attempts to load a cached asset of type <typeparamref name="T"/> from the specified cache path, validating its freshness against the source asset's timestamp. If the cached asset is successfully loaded and deemed fresh, it is returned via the out parameter and the method returns true; otherwise, the out parameter is set to null and the method returns false. Exceptions during the load process are caught and logged as warnings, but not re-thrown, to avoid disrupting the calling code. This method is intended to be used for loading cached assets on the main thread; for asynchronous cache loads, use <see cref="TryLoadCachedAssetAsync{T}(string, string, DateTime, IAssetMetadataFileBackend)"/> instead.
         /// </summary>
         /// <param name="cachePath">The file path of the cached asset to load. This should be a path within the cache directory structure.</param>
         /// <param name="originalPath">The original file path of the source asset corresponding to the cached asset. This is used for validation and is assigned to the loaded asset's <see cref="XRAsset.OriginalPath"/> property if the load is successful.</param>
         /// <param name="sourceTimestampUtc">The last write time of the source asset in UTC, used to validate the freshness of the cached asset. If the cached asset's timestamp is older than this value, it is considered stale and will not be loaded.</param>
         /// <param name="asset">When this method returns, contains the loaded asset of type <typeparamref name="T"/> if the load is successful and the cached asset is fresh; otherwise, null.</param>
         /// <returns>true if the cached asset was successfully loaded and is fresh; otherwise, false.</returns>
-        private static bool TryLoadCachedAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc, out T? asset) where T : XRAsset, new()
+        /// <param name="files">The metadata provider retained by the cache operation.</param>
+        private static bool TryLoadCachedAsset<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc, IAssetMetadataFileBackend files, out T? asset) where T : XRAsset, new()
         {
             asset = null;
-            if (!File.Exists(cachePath))
+            if (!files.FileExists(cachePath))
                 return false;
 
             CacheReadResult registeredResult = ReadRegisteredCachePayload(
@@ -1021,8 +1035,8 @@ namespace XREngine
                 Debug.LogWarning($"Failed to read cached asset '{cachePath}'. {ex.Message}");
                 try
                 {
-                    if (File.Exists(cachePath))
-                        File.Delete(cachePath);
+                    if (files.FileExists(cachePath))
+                        files.DeleteFile(cachePath);
                 }
                 catch
                 {
@@ -1033,17 +1047,18 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Attempts to load a cached asset of the specified type from the given cache path, validating its freshness against the source asset's timestamp. If the cached asset is successfully loaded and deemed fresh, it is returned via the out parameter and the method returns true; otherwise, the out parameter is set to null and the method returns false. Exceptions during the load process are caught and logged as warnings, but not re-thrown, to avoid disrupting the calling code. This method is intended to be used for loading cached assets on the main thread; for asynchronous cache loads, use <see cref="TryLoadCachedAssetAsync{T}(string, string, DateTime)"/> instead.
+        /// Attempts to load a cached asset of the specified type from the given cache path, validating its freshness against the source asset's timestamp. If the cached asset is successfully loaded and deemed fresh, it is returned via the out parameter and the method returns true; otherwise, the out parameter is set to null and the method returns false. Exceptions during the load process are caught and logged as warnings, but not re-thrown, to avoid disrupting the calling code. This method is intended to be used for loading cached assets on the main thread; for asynchronous cache loads, use <see cref="TryLoadCachedAssetAsync{T}(string, string, DateTime, IAssetMetadataFileBackend)"/> instead.
         /// </summary>
         /// <param name="cachePath">The file path of the cached asset to load. This should be a path within the cache directory structure.</param>
         /// <param name="originalPath">The original file path of the source asset corresponding to the cached asset. This is used for validation and is assigned to the loaded asset's <see cref="XRAsset.OriginalPath"/> property if the load is successful.</param>
         /// <param name="sourceTimestampUtc">The last write time of the source asset in UTC, used to validate the freshness of the cached asset. If the cached asset's timestamp is older than this value, it is considered stale and will not be loaded.</param>
         /// <param name="asset">When this method returns, contains the loaded asset of the specified type if the load is successful and the cached asset is fresh; otherwise, null.</param>
         /// <returns>true if the cached asset was successfully loaded and is fresh; otherwise, false.</returns>
-        private static bool TryLoadCachedAsset(string cachePath, string originalPath, DateTime sourceTimestampUtc, Type type, out XRAsset? asset)
+        /// <param name="files">The metadata provider retained by the cache operation.</param>
+        private static bool TryLoadCachedAsset(string cachePath, string originalPath, DateTime sourceTimestampUtc, Type type, IAssetMetadataFileBackend files, out XRAsset? asset)
         {
             asset = null;
-            if (!File.Exists(cachePath))
+            if (!files.FileExists(cachePath))
                 return false;
 
             CacheReadResult registeredResult = ReadRegisteredCachePayload(
@@ -1087,16 +1102,17 @@ namespace XREngine
         /// <summary>
         /// Asynchronously attempts to load a cached asset of type <typeparamref name="T"/> from the specified cache path, validating its freshness against the source asset's timestamp.
         /// If the cached asset is successfully loaded and deemed fresh, it is returned; otherwise, null is returned. Exceptions during the load process are caught and logged as warnings, but not re-thrown, to avoid disrupting the calling code.
-        /// This method is intended to be used for loading cached assets without blocking the main thread; for synchronous cache loads, use <see cref="TryLoadCachedAsset{T}(string, string, DateTime, out T)"/> instead.
+        /// This method is intended to be used for loading cached assets without blocking the main thread; for synchronous cache loads, use <see cref="TryLoadCachedAsset{T}(string, string, DateTime, IAssetMetadataFileBackend, out T)"/> instead.
         /// </summary>
         /// <typeparam name="T">The type of the asset to load, which must be a subclass of <see cref="XRAsset"/> and have a public parameterless constructor.</typeparam>
         /// <param name="cachePath">The file path of the cached asset to load. This should be a path within the cache directory structure.</param>
         /// <param name="originalPath">The original file path of the source asset corresponding to the cached asset. This is used for validation and is assigned to the loaded asset's <see cref="XRAsset.OriginalPath"/> property if the load is successful.</param>
         /// <param name="sourceTimestampUtc">The last write time of the source asset in UTC, used to validate the freshness of the cached asset. If the cached asset's timestamp is older than this value, it is considered stale and will not be loaded.</param>
         /// <returns>A task that represents the asynchronous load operation. The task result contains the loaded asset of type <typeparamref name="T"/> if the load is successful and the cached asset is fresh; otherwise, the result is null.</returns>
-        private async Task<T?> TryLoadCachedAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc) where T : XRAsset, new()
+        /// <param name="files">The metadata provider retained by the cache operation.</param>
+        private async Task<T?> TryLoadCachedAssetAsync<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string cachePath, string originalPath, DateTime sourceTimestampUtc, IAssetMetadataFileBackend files) where T : XRAsset, new()
         {
-            if (!File.Exists(cachePath))
+            if (!files.FileExists(cachePath))
                 return null;
 
             (CacheReadResult Result, bool AllowGenericFallback) registeredDecision = await Task
@@ -1146,19 +1162,20 @@ namespace XREngine
         /// but not re-thrown, to avoid disrupting the calling code.
         /// This method ensures that any necessary directories are created before attempting to write the file.
         /// This method is intended to be used for writing cached assets on the main thread;
-        /// for asynchronous cache writes, use <see cref="TryWriteCacheAssetAsync(string, XRAsset)"/> instead.
+        /// for asynchronous cache writes, use <see cref="TryWriteCacheAssetAsync(string, XRAsset, IAssetMetadataFileBackend)"/> instead.
         /// </summary>
         /// <param name="cachePath">The file path where the asset should be written.
         /// This should be a path within the cache directory structure.</param>
         /// <param name="asset">The XRAsset instance to be serialized and written to the cache.
         /// The asset's data will be serialized using the AssetManager's configured Serializer.</param>
-        private void TryWriteCacheAsset(string cachePath, XRAsset asset)
+        /// <param name="files">The metadata provider retained by the cache operation.</param>
+        private void TryWriteCacheAsset(string cachePath, XRAsset asset, IAssetMetadataFileBackend files)
         {
             try
             {
                 string? directory = Path.GetDirectoryName(cachePath);
                 if (!string.IsNullOrWhiteSpace(directory))
-                    Directory.CreateDirectory(directory);
+                    files.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
                 if (ShouldSuppressGenericCacheWrite(cachePath, cacheAsset, asset))
@@ -1183,13 +1200,14 @@ namespace XREngine
         /// </summary>
         /// <param name="cachePath">The file path where the asset should be written. This should be a path within the cache directory structure.</param>
         /// <param name="asset">The XRAsset instance to be serialized and written to the cache. The asset's data will be serialized using the AssetManager's configured Serializer.</param>
-        private async Task TryWriteCacheAssetAsync(string cachePath, XRAsset asset)
+        /// <param name="files">The metadata provider retained by the cache operation.</param>
+        private async Task TryWriteCacheAssetAsync(string cachePath, XRAsset asset, IAssetMetadataFileBackend files)
         {
             try
             {
                 string? directory = Path.GetDirectoryName(cachePath);
                 if (!string.IsNullOrWhiteSpace(directory))
-                    Directory.CreateDirectory(directory);
+                    files.CreateDirectory(directory);
 
                 XRAsset cacheAsset = PrepareCacheAssetForWrite(cachePath, asset);
                 if (ShouldSuppressGenericCacheWrite(cachePath, cacheAsset, asset))

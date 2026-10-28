@@ -155,6 +155,20 @@ operations. Metadata ID lookup keeps its warning and false result when this
 fallback is unavailable. Browser, catalog, and caller-thread restrictions remain;
 this interface does not add synchronous metadata access to those modes.
 
+Third-party cache metadata uses the same capability. `AssetManager` captures
+one provider for each load or cache-authority operation, after host-file
+admission. It passes that provider through source timestamps, cache and
+import-options probes, corrupt-cache deletion, and cache-directory creation.
+Async loads retain the provider across awaits. A queued warmup captures its
+provider when the job runs. The existing best-effort cleanup and directory-write
+catches remain in place. Custom native hosts need the metadata capability even
+when a cache file is absent; there is no implicit physical-file fallback.
+
+This ownership covers metadata operations only. Codec content checks, YAML
+reads, importers, and payload serialization keep their own service boundaries.
+The captured metadata provider is not an atomic file snapshot or a source
+retirement lease. Browser and catalog paths keep their existing admission rules.
+
 Direct authored YAML reads and the bounded asset-header scans use the optional
 `IRuntimeHostFileReadBackend` capability on the installed file discovery
 provider. Runtime.Core keeps YAML parsing, type resolution, and prefab load
