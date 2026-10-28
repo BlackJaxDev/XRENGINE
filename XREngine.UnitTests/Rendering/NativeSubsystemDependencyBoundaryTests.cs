@@ -194,7 +194,7 @@ public sealed class NativeSubsystemDependencyBoundaryTests
             .Descendants("ProjectReference")
             .Select(static element => (string?)element.Attribute("Include"))
             .Where(static include => !string.IsNullOrWhiteSpace(include))
-            .Select(static include => Path.GetFileNameWithoutExtension(include!))
+            .Select(static include => Path.GetFileNameWithoutExtension(include!.Replace('\\', '/')))
             .ToArray();
 
     private static string FindRepositoryRoot()

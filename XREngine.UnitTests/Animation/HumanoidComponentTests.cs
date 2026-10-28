@@ -691,7 +691,10 @@ public sealed class HumanoidComponentTests
         InvokeApplyMusclePose(humanoid);
         AssertLastNativeFrameAccepted(humanoid);
 
-        float yawDeg = GetExpectedDeg(humanoid, EHumanoidValue.LeftUpperLegTwistInOut, 0.25f);
+        // The upper leg keeps only its share of the twist. The lower leg receives the remainder.
+        float upperLegTwistShare = humanoid.Settings.UpperLegTwistDistribution;
+        upperLegTwistShare.ShouldBeGreaterThan(0.0f);
+        float yawDeg = GetExpectedDeg(humanoid, EHumanoidValue.LeftUpperLegTwistInOut, 0.25f) * upperLegTwistShare;
         Quaternion combinedExpected = Quaternion.Normalize(zeroMuscleRotation * inverseBindRotation
             * CreateExpectedRotation(humanoid, leftLeg, customUpperLegMapping, yawDeg, pitchDeg, rollDeg: 0.0f));
         AssertEquivalent(Quaternion.Normalize(leftLegTransform.Rotation), combinedExpected);

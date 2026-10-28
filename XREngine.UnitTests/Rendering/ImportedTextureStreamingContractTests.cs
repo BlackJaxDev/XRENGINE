@@ -89,15 +89,24 @@ public sealed class ImportedTextureStreamingContractTests
     public void ImportedTextureStreaming_PrefersFreshCachedTextureAssetAuthority()
     {
         string assetManagerSource = ReadWorkspaceFile("XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs");
+        string codecSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Serialization/TextureStreamingCacheCodec.cs");
+        string registrationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Serialization/RenderingSerializationRegistration.cs");
         string streamingSource = ReadTextureStreamingSources();
 
-        assetManagerSource.ShouldContain("XRTexture2D.IsTextureStreamingAssetUsable(cachePath)");
-        assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheHit\"");
-        assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheMiss\"");
-        assetManagerSource.ShouldContain("\"Texture.CacheStale\"");
-        assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheFallbackToSource\"");
-        assetManagerSource.ShouldContain("LogTextureCacheEvent(\"Texture.CacheWrite\"");
-        assetManagerSource.ShouldContain("QueueTextureStreamingCacheImport(normalizedPath, cachePath, cacheVariantKey);");
+        // Core resolves the texture authority through the rendering-owned cache
+        // codec. A fresh, usable cache asset is the authority; otherwise the
+        // source stays the authority and the cache is warmed in the background.
+        registrationSource.ShouldContain("ThirdPartyCacheCodecRegistry.Install(new TextureStreamingCacheCodec())");
+        codecSource.ShouldContain("public string? AuthorityRole => ThirdPartyCacheAuthorityRoles.TextureStreaming;");
+        codecSource.ShouldContain("=> XRTexture2D.IsTextureStreamingAssetUsable(cachePath);");
+        assetManagerSource.ShouldContain("ThirdPartyCacheCodecRegistry.FindByAuthorityRole(");
+        assetManagerSource.ShouldContain("if (codec is not null && !codec.IsCacheUsable(cachePath))");
+        assetManagerSource.ShouldContain("if (IsCacheAssetFresh(cachePath, normalizedPath, assetType))\n                return cachePath;");
+        assetManagerSource.ShouldContain("QueueFeatureCacheImport(normalizedPath, cachePath, assetType, cacheVariantKey);");
+
+        // Cache read and write decisions other than a hit or a write are logged.
+        assetManagerSource.ShouldContain("\"[ThirdPartyCache] Cache read {0} for {1} '{2}'. reason={3}; detail={4}\"");
+        assetManagerSource.ShouldContain("$\"[ThirdPartyCache] Cache write {result.Status} for {assetType.Name} '{cachePath}'. \"");
         assetManagerSource.ShouldNotContain("ShouldSuppressTextureStreamingCacheWarmup");
         assetManagerSource.ShouldNotContain("cache warmup suppressed during active imported-model scope");
 
@@ -109,14 +118,12 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_CooksCachedMipChainsOnGpuBeforeCpuFallback()
     {
-        string assetManagerSource = ReadWorkspaceFile("XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs");
+        string codecSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Serialization/TextureStreamingCacheCodec.cs");
         string payloadSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.StreamingPayload.cs");
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Streaming/OpenGLRenderer.TextureStreamingCacheCook.cs");
         string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.TextureStreamingCacheCook.cs");
-        string normalizedAssetManagerSource = assetManagerSource.Replace("\r\n", "\n");
-
-        normalizedAssetManagerSource.ShouldContain("XRTexture2D.TryCreateTextureStreamingCacheAsset(\n                texture,");
-        assetManagerSource.ShouldContain("TextureStreaming_v3_preview");
+        codecSource.ShouldContain("XRTexture2D.TryCreateTextureStreamingCacheAsset(\n                texture,");
+        codecSource.ShouldContain("TextureStreaming_v3_preview");
 
         payloadSource.ShouldContain("TryCreateTextureStreamingCacheAssetGpu");
         payloadSource.ShouldContain("RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(");
@@ -218,15 +225,21 @@ public sealed class ImportedTextureStreamingContractTests
         managerSource.ShouldNotContain("includeMipChain = normalizedTarget > backend.PreviewMaxDimension;");
         imageTextureSource.ShouldNotContain("WaitForInFlightWorkBeforeImportedTextureReplacement(");
         imageTextureSource.ShouldNotContain("Renderer.WaitForAllInFlightWork();");
-        imageTextureSource.ShouldContain("Renderer.RetireImageResources(new RetiredImageResources(");
+        imageTextureSource.ShouldContain("BackendContext.Resources.Images.RetireOwnedResources(new RetiredImageResources(");
 
-        serviceSource.ShouldContain("internal sealed class VulkanTextureUploadService");
+        serviceSource.ShouldContain("internal sealed partial class VulkanTextureUploadService");
         serviceSource.ShouldContain("VulkanTextureUploadGenerationState");
         serviceSource.ShouldContain("RejectStaleOrCanceledResult(");
         serviceSource.ShouldContain("TryScheduleImportedTextureUpload(");
-        hookSource.ShouldContain("private readonly VulkanTextureUploadService _textureUploadService = new();");
+        // The resource runtime owns one upload service. The frame loop drives it
+        // and is the bound scheduler for synchronized imported texture uploads.
+        ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs")
+            .ShouldContain("Uploads = new VulkanTextureUploadService();");
+        hookSource.ShouldContain("_resourceRuntime.Uploads.ProcessPendingUploads(");
+        hookSource.ShouldContain("internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler");
         hookSource.ShouldContain("TryScheduleImportedTextureResidencyTransition(");
-        denseBackendSource.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderer ?? AbstractRenderer.Current");
+        denseBackendSource.ShouldContain("VulkanTextureStreamingBackendProvider.Instance.TryScheduleSynchronizedUpload(");
+        providerSource.ShouldContain("IVulkanTextureUploadScheduler? scheduler = Volatile.Read(ref _scheduler);");
         glBackendSource.ShouldContain("TextureStreamingBackendRegistry.TryGet(");
         glBackendSource.ShouldContain("RuntimeGraphicsApiKind.Vulkan");
     }
@@ -234,37 +247,51 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void VulkanTextureUploadFrameOps_DoNotPoisonReusablePrimaryCommandBufferCache()
     {
-        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferReuse.FrameData.cs");
+        string framePlanSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/FramePlan.cs");
+        string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
-        recordingSource.ShouldContain("if (hasTextureUploadFrameOps)");
-        recordingSource.ShouldContain("MarkCommandBufferVariantTransient(variant, \"transient texture upload\");");
-        recordingSource.ShouldContain("private static void MarkCommandBufferVariantTransient(CommandBufferCacheVariant variant, string reason)");
-        recordingSource.ShouldContain("variant.Dirty = true;");
-        recordingSource.ShouldContain("variant.DirtyReason = reason;");
-        recordingSource.ShouldContain("variant.RecordedSwapchainWriteCount <= 0 ||");
+        // The sealed frame plan keeps texture uploads in their own operation
+        // stream. Reusable primary content is recorded from the static stream only.
+        framePlanSource.ShouldContain("return new FrameOperationSequence(_operations);");
+        framePlanSource.ShouldContain("return new FrameOperationSequence(_textureUploadOperations);");
+
+        // Uploads record into a separate transient upload command buffer before
+        // the primary is reused or recorded.
+        recordingSource.ShouldContain("input.FramePlan.GetNativeTextureUploadOperationsForRecording();");
+        recordingSource.ShouldContain("!TryRecordTextureUploadCommandBuffer(");
+        recordingSource.ShouldContain("out uploadCommandBuffer,");
+        recordingSource.ShouldContain("TextureUploadCommandBuffer = uploadCommandBuffer,");
+        recordingSource.ShouldContain("\"texture-upload operations are not admitted by the executable output DAG\"");
+        int uploadRecording = recordingSource.IndexOf("!TryRecordTextureUploadCommandBuffer(", StringComparison.Ordinal);
+        int staticOperations = recordingSource.IndexOf("? input.FramePlan.GetNativeStaticOperationsForRecording()", StringComparison.Ordinal);
+        uploadRecording.ShouldBeGreaterThanOrEqualTo(0);
+        staticOperations.ShouldBeGreaterThan(uploadRecording);
     }
 
     [Test]
     public void VulkanTextureSamplers_EnableAnisotropyWhenDeviceFeatureIsEnabled()
     {
-        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
+        string imageTextureSource = SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
         string textureViewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTextureView.cs");
-        string samplerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Samplers/VKSampler.cs");
+        string samplerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Samplers/VkSampler.cs");
         string logicalDeviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
+        string capabilityPublicationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDevicePublication.cs");
 
         logicalDeviceSource.ShouldContain("deviceFeatures.SamplerAnisotropy = Vk.True;");
         logicalDeviceSource.ShouldContain("_supportsAnisotropy = true;");
+        // The enabled device feature is published as a device capability.
+        capabilityPublicationSource.ShouldContain("Include(ref capabilities, EVulkanDeviceCapability.Anisotropy, MutableCapabilities._supportsAnisotropy);");
 
-        imageTextureSource.ShouldContain("if (Renderer.SamplerAnisotropyEnabled)");
+        imageTextureSource.ShouldContain("if (BackendContext.Supports(EVulkanDeviceCapability.Anisotropy))");
         imageTextureSource.ShouldContain("AnisotropyEnable = anisotropyEnable");
         imageTextureSource.ShouldContain("MaxAnisotropy = maxAnisotropy");
 
-        textureViewSource.ShouldContain("if (Renderer.SamplerAnisotropyEnabled)");
+        textureViewSource.ShouldContain("if (BackendContext.Supports(EVulkanDeviceCapability.Anisotropy))");
         textureViewSource.ShouldContain("samplerInfo.AnisotropyEnable = Vk.True;");
         textureViewSource.ShouldContain("samplerInfo.MaxAnisotropy = MathF.Min(props.Limits.MaxSamplerAnisotropy, 16f);");
-        textureViewSource.ShouldNotContain("Renderer.SamplerAnisotropyEnabled && Data.NumLevels > 1");
+        textureViewSource.ShouldNotContain("EVulkanDeviceCapability.Anisotropy) && Data.NumLevels > 1");
 
-        samplerSource.ShouldContain("Data.EnableAnisotropy && Renderer.SamplerAnisotropyEnabled");
+        samplerSource.ShouldContain("Data.EnableAnisotropy && BackendContext.Supports(EVulkanDeviceCapability.Anisotropy)");
         samplerSource.ShouldContain("samplerInfo.AnisotropyEnable = Vk.True;");
         samplerSource.ShouldContain("samplerInfo.MaxAnisotropy = MathF.Min(samplerInfo.MaxAnisotropy, props.Limits.MaxSamplerAnisotropy);");
     }
@@ -332,51 +359,61 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void VulkanTextureUploadService_RecordsCopiesBarriersAndFrameSafePublication()
     {
-        string meshRendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Transfers/VulkanRenderer.TextureUploadRecording.cs")
-            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.FrameOperationDiagnostics.cs");
-        string serviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanTextureUploadService.cs");
-        string hookSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.TextureStreaming.cs");
-        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs")
-            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.ImportedUpload.cs");
-        string materialTableSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanRenderer.BindlessMaterialTextureTable.cs");
+        const string VulkanRoot = "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/";
+        string frameOpSource = ReadWorkspaceFile(VulkanRoot + "Commands/FrameOps/TextureUploadFrameOp.cs");
+        string frameOpStreamSource = ReadWorkspaceFile(VulkanRoot + "Commands/FrameOps/FrameOperationStream.cs");
+        string commandBufferSource = ReadWorkspaceFile(VulkanRoot + "Commands/Transfers/VulkanRenderer.TextureUploadRecording.cs");
+        string serviceSource = SourceContractWorkspace.ReadVulkanSourcesContaining("partial class VulkanTextureUploadService");
+        string pendingUploadSource = ReadWorkspaceFile(VulkanRoot + "Resources/Uploads/VulkanImportedTexturePendingUpload.cs");
+        string hookSource = ReadWorkspaceFile(VulkanRoot + "Frame/Loop/Authority/VulkanFrameLoop.TextureStreaming.cs");
+        string imageTextureSource = ReadWorkspaceFile(VulkanRoot + "BackendObjects/Textures/VkImageBackedTexture.ImportedUpload.cs");
+        string materialTableSource = ReadWorkspaceFile(VulkanRoot + "Resources/Authority/VulkanRenderer.BindlessMaterialTextureTable.cs");
         string backendSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/OpenGLTextureResidencyBackends.cs");
         string diagnosticsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/TextureRuntimeDiagnostics.cs");
-        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.ValidationDiagnostics.cs");
+        string deviceContextSource = ReadWorkspaceFile(VulkanRoot + "Bootstrap/Device/VulkanDeviceContext.Instance.cs");
 
-        meshRendererSource.ShouldContain("TextureUploadFrameOp");
-        meshRendererSource.ShouldContain("FrameOpKindTextureUpload");
-        commandBufferSource.ShouldContain("RecordTextureUploadOp(");
-        commandBufferSource.ShouldContain("ImageLayout.TransferDstOptimal");
-        commandBufferSource.ShouldContain("CmdCopyBufferToImageTracked(");
-        commandBufferSource.ShouldContain("ImageLayout.ShaderReadOnlyOptimal");
-        commandBufferSource.ShouldContain("PublishSynchronizedImportedTextureUpload(upload)");
-        commandBufferSource.ShouldContain("RetireTextureUploadStagingResources(upload)");
-        commandBufferSource.ShouldContain("VulkanTextureUploadGenerationState.Retired");
+        // Uploads are primary plan nodes with their own payload stream.
+        frameOpSource.ShouldContain("public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.TextureUpload;");
+        frameOpStreamSource.ShouldContain("case EVulkanPrimaryPlanNodeKind.TextureUpload: _payloads.TextureUploads[i] = new(((TextureUploadFrameOp)op).Upload); break;");
+
+        // Recording: transfer-destination barrier, buffer-to-image copies, and a
+        // barrier to the final layout. Publication waits for command completion.
+        commandBufferSource.ShouldContain("internal unsafe void RecordTextureUploadOp(");
+        commandBufferSource.ShouldContain("NewLayout = ImageLayout.TransferDstOptimal,");
+        commandBufferSource.ShouldContain("CopyPreparedUploadBufferToImage(");
+        commandBufferSource.ShouldContain("OldLayout = ImageLayout.TransferDstOptimal,");
+        commandBufferSource.ShouldContain("NewLayout = upload.FinalLayout,");
+        commandBufferSource.ShouldContain("VulkanTextureUploadGenerationState.DescriptorPublishPending");
+        commandBufferSource.ShouldContain("QueueRecordedTextureUploadForSubmit(upload);");
 
         serviceSource.ShouldContain("VulkanImportedTexturePendingUpload");
-        serviceSource.ShouldContain("StagingResources");
-        serviceSource.ShouldContain("PreparedTimestamp");
+        serviceSource.ShouldContain("upload.Texture.PublishSynchronizedImportedTextureUpload(");
+        serviceSource.ShouldContain("RetireTextureUploadStagingResources(resourceRuntime, upload);");
+        serviceSource.ShouldContain("VulkanTextureUploadGenerationState.Retired");
         serviceSource.ShouldNotContain("NewTransferCommandScope()");
         serviceSource.ShouldNotContain("NewCommandScope()");
+        pendingUploadSource.ShouldContain("StagingResources");
+        pendingUploadSource.ShouldContain("PreparedTimestamp");
         hookSource.ShouldContain("EnqueueImportedTextureUpload(");
+
         imageTextureSource.ShouldContain("TryCreateSynchronizedImportedUpload(");
         imageTextureSource.ShouldContain("ReleasePreparedImportedUploadResources(");
-        imageTextureSource.ShouldContain("Renderer.NotifyTextureDescriptorPublished(");
-        imageTextureSource.ShouldContain("ImportedTextureUploadPublished texture=");
-        imageTextureSource.ShouldContain("Renderer.SetDebugObjectName(ObjectType.Image");
-        imageTextureSource.ShouldContain("Renderer.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);");
+        imageTextureSource.ShouldContain("BackendContext.DeviceContext.SetDebugObjectName(\n                        ObjectType.Image,");
+        imageTextureSource.ShouldContain("MarkDescriptorDirty();");
         materialTableSource.ShouldContain("FlushGlobalMaterialTextureDescriptorUpdatesLocked();");
-        imageTextureSource.IndexOf(
-            "Renderer.RefreshGlobalMaterialTextureDescriptorForPublishedTexture(Data);",
-            StringComparison.Ordinal).ShouldBeLessThan(imageTextureSource.IndexOf(
-                "Renderer.RetireImageResources(previousResources);",
-                StringComparison.Ordinal));
-        imageTextureSource.ShouldContain("Renderer.SetDebugObjectName(ObjectType.Buffer");
+        // The new descriptor commits before the previous generation retires.
+        int descriptorPublication = imageTextureSource.IndexOf(
+            "BackendContext.Resources.Descriptors.PublishGlobalMaterialTextureDescriptor(",
+            StringComparison.Ordinal);
+        int previousRetirement = imageTextureSource.IndexOf(
+            "BackendContext.Resources.Images.RetireOwnedResources(\n                    in previousResources,",
+            StringComparison.Ordinal);
+        descriptorPublication.ShouldBeGreaterThanOrEqualTo(0);
+        previousRetirement.ShouldBeGreaterThan(descriptorPublication);
         backendSource.ShouldContain("TryScheduleVulkanSynchronizedUpload(");
         backendSource.ShouldContain("RuntimeGraphicsApiKind.Vulkan");
         diagnosticsSource.ShouldContain("Texture.VulkanUploadLatency");
-        validationSource.ShouldContain("SetDebugObjectName(ObjectType objectType");
+        deviceContextSource.ShouldContain("public unsafe void SetDebugObjectName(ObjectType objectType");
     }
 
     [Test]
@@ -436,35 +473,44 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void VulkanTextureUploadService_SizesPendingUploadsFromLogicalResidentLayout()
     {
-        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.cs");
-        string serviceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanTextureUploadService.cs");
+        string imageTextureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.ImportedUpload.cs");
+        string pendingUploadSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanImportedTexturePendingUpload.cs");
+        string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanImportedTextureUploadValidation.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Transfers/VulkanRenderer.TextureUploadRecording.cs");
-        string transferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.TextureUploadTransfer.cs");
 
-        imageTextureSource.ShouldContain("Extent3D extent = _layout.Extent;");
-        imageTextureSource.ShouldContain("uint mipLevels = Math.Max(_layout.MipLevels, 1u);");
-        imageTextureSource.ShouldContain("uint arrayLayers = Math.Max(_layout.ArrayLayers, 1u);");
-        imageTextureSource.ShouldContain("VulkanImportedTextureUploadValidation.TryValidateCopyRegions(");
-        imageTextureSource.ShouldContain("new TextureLayout(");
+        // The pending upload is sized from the logical layout of the applied
+        // resident data, not from the currently published image.
+        imageTextureSource.ShouldContain("XRTexture2D.ApplyResidentDataForVulkanPublication(texture, residentData, includeMipChain);");
+        imageTextureSource.ShouldContain("uploadLayout = NormalizeLayout(DescribeTexture());");
+        imageTextureSource.ShouldContain("Extent3D extent = uploadLayout.Extent;");
+        imageTextureSource.ShouldContain("uint mipLevels = Math.Max(uploadLayout.MipLevels, 1u);");
+        imageTextureSource.ShouldContain("uint arrayLayers = Math.Max(uploadLayout.ArrayLayers, 1u);");
+        imageTextureSource.ShouldContain("TextureLayout publishedLayout = new(");
         imageTextureSource.ShouldContain("Math.Max(pendingUpload.ArrayLayers, 1u)");
 
-        serviceSource.ShouldContain("public uint ArrayLayers { get; }");
-        serviceSource.ShouldContain("public bool TryValidateCopyRegions(out string? failureReason)");
-        serviceSource.ShouldContain("copy[{i}] extent");
+        pendingUploadSource.ShouldContain("public uint ArrayLayers { get; }");
+        pendingUploadSource.ShouldContain("public bool TryValidateCopyRegions(out string? failureReason)");
+        pendingUploadSource.ShouldContain("=> VulkanImportedTextureUploadValidation.TryValidateCopyRegions(");
+        // Transfer ownership validation also validates the copy regions.
+        pendingUploadSource.ShouldContain("return TryValidateCopyRegions(out failureReason);");
+        validationSource.ShouldContain("copy[{i}] extent");
         commandBufferSource.ShouldContain("if (!upload.TryValidateCopyRegions(out string? validationFailure))");
         commandBufferSource.ShouldContain("VulkanTextureUploadGenerationState.Failed");
-        transferSource.ShouldContain("if (!upload.TryValidateCopyRegions(out string? validationFailure))");
     }
 
     [Test]
     public void VulkanCommandChains_TreatImportedTextureUploadsAsPrimaryCommandWork()
     {
-        string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferReuse.FrameData.cs")
-            + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.FrameOperationDiagnostics.cs");
+        string commandBufferSource = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "EVulkanPrimaryPlanNodeKind.TextureUpload => operations.Stream.GetTextureUpload(index).GetHashCode()",
+            "EVulkanPrimaryPlanNodeKind.TextureUpload => RecordTextureUploadPayload(");
         string commandChainSource = SourceContractWorkspace.ReadVulkanSourcesContaining("case TextureUploadFrameOp upload:");
 
-        commandBufferSource.ShouldContain("private static bool HasTextureUploadFrameOps(FrameOp[] ops)");
-        commandBufferSource.ShouldContain("usingCommandChains && variant.FrameOpsSignature != frameOpsSignature");
+        // Texture uploads are primary plan nodes: the primary recorder records
+        // them and the reuse dependency signature includes each upload payload.
+        commandBufferSource.ShouldContain("EVulkanPrimaryPlanNodeKind.TextureUpload => operations.Stream.GetTextureUpload(index).GetHashCode()");
+        commandBufferSource.ShouldContain("EVulkanPrimaryPlanNodeKind.TextureUpload => RecordTextureUploadPayload(");
+        commandBufferSource.ShouldContain("RecordTextureUploadOp(state.CommandBuffer, payload.Upload);");
         commandChainSource.ShouldContain("case TextureUploadFrameOp upload:");
         commandChainSource.ShouldContain("hash.Add(upload.Upload.PublicationToken);");
         commandChainSource.ShouldContain("hash.Add(upload.Upload.Request.StreamingGeneration);");
@@ -492,7 +538,9 @@ public sealed class ImportedTextureStreamingContractTests
             + ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/TextureUploadScheduler.cs");
         string importedStreamingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.ImportedStreaming.cs");
 
-        textureSource.ShouldContain("ConcurrentDictionary<XRTexture2D, TextureUploadWorkItem>");
+        // The upload scheduler guards its registry with one lock.
+        textureSource.ShouldContain("private readonly Dictionary<XRTexture2D, TextureUploadWorkItem> _progressiveUploads = [];");
+        textureSource.ShouldContain("lock (_slotLock)\n            return _progressiveUploads.TryAdd(texture, workItem);");
         textureSource.ShouldContain("HasHigherPriorityProgressiveUpload(texture, workItem)");
         textureSource.ShouldContain("ReleaseProgressiveUploadSlot();");
         textureSource.ShouldContain("TextureUploadPriorityClass.VisibleNow => 3");

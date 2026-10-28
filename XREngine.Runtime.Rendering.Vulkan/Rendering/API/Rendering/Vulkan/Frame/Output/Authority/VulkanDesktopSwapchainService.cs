@@ -491,6 +491,13 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to fetch swapchain images ({result}).");
 
+        // A new generation can reuse a native image handle from a retired
+        // generation. Remove the submitted layout state for each handle, so
+        // that the first recording starts from an undefined layout.
+        Image[] generationImages = _output.Desktop.Images;
+        for (int index = 0; index < generationImages.Length; index++)
+            _resources.Images.ClearTrackedLayouts(generationImages[index]);
+
         _output.Desktop.PresentCompletion = new VulkanWsiPresentCompletion(
             _api, _device.Device, checked((int)imageCount), _output.Desktop.Maintenance1Enabled,
             _output.Desktop.StreamlineFrameGenerationActive);
@@ -714,7 +721,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         for (int index = 0; index < semaphores.Length; index++)
         {
             if (_api.CreateSemaphore(_device.Device, ref createInfo, null, out semaphores[index]) == Result.Success)
+            {
+                _device.SetDebugObjectName(ObjectType.Semaphore, semaphores[index].Handle, $"PresentBridge[{index}]");
                 continue;
+            }
             for (int created = 0; created < index; created++)
                 _api.DestroySemaphore(_device.Device, semaphores[created], null);
             throw new InvalidOperationException("Failed to create a desktop present bridge semaphore.");

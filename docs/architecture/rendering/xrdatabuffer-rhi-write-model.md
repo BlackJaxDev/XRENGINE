@@ -58,9 +58,6 @@ Backend implementations report the same state categories through:
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanDynamicUniformRingBuffer.cs`
 - `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanSceneDatabaseAddresses.cs`
 
-The migration audit remains useful for call-site ownership and policy
-classification:
-[XRDataBuffer RHI Write Model Audit](../../work/audit/COMPLETED/xrdatabuffer-rhi-write-model-audit.md).
 
 ## Buffer Identity
 
@@ -300,5 +297,4 @@ Compatibility `PushData`, `PushSubData`, and map APIs remain available for
 backend internals, serialized asset restore, diagnostics, and unmigrated legacy
 paths. New runtime code should prefer scoped writers or direct dirty commits.
 
-Remaining hardware, barrier, and strategy validation is tracked in
-[XRDataBuffer RHI Write Model Validation](../../work/testing/rendering/xrdatabuffer-rhi-write-model-validation.md).
+Hardware, barrier, and strategy validation remains open.

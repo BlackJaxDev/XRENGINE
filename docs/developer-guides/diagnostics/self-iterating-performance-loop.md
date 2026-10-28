@@ -160,8 +160,10 @@ Build/_AgentValidation/<timestamp>-self-iteration-<campaign>/
 
 The LLM receives paths to the clean formal summary, deterministic diagnosis,
 dense CPU hierarchy, every detailed GPU pipeline dump, and the two durable
-attempt ledgers. Raw machine evidence remains ignored and disposable; accepted
-and rejected decisions are durable Markdown under `docs/work/`.
+attempt ledgers. Raw machine evidence remains ignored and disposable. By
+default, the accepted and rejected ledgers are Markdown files under
+`Build/_AgentValidation/00000000-000000-shared/self-iteration/<campaign>/`.
+The ledgers must stay inside the workspace.
 
 ## Reload And Relaunch Rules
 
@@ -257,8 +259,7 @@ Required diagnostics fail closed. In particular, Vulkan per-pipeline timings
 currently require the dense detailed cohort; a clean formal cohort can remain
 coarse because its paired detailed evidence supplies attribution. If a backend
 cannot resolve its timestamp queries, the baseline is rejected before an LLM
-may edit source. The current OpenGL readiness finding is tracked in
-`docs/work/investigations/rendering/opengl-gpu-pipeline-timestamp-readiness-2026-07-28.md`.
+may edit source. OpenGL timestamp readiness is not yet confirmed.
 
 Accepted attempts append to `progressDocument` and become the next baseline.
 Rejected, invalid, crashing, or regressing attempts append to

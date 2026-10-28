@@ -679,18 +679,31 @@ public sealed class VulkanCommandChainDataModelTests
         string recordingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string secondarySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
 
+        // Frame-data refresh groups requests by planner key and passes each request's frame-op
+        // context explicitly. Recording no longer uses a thread-scoped planner readback scope.
         recordingSource.ShouldContain(
-            "private bool TryRefreshReusableCommandBufferFrameData(\n            uint imageIndex,\n            ReadOnlySpan<VulkanReusableFrameDataRefreshRequest> requests,");
+            "internal bool TryRefreshReusableCommandBufferFrameData(\n            uint imageIndex,\n            ReadOnlySpan<VulkanReusableFrameDataRefreshRequest> requests,");
         recordingSource.ShouldContain("VulkanFrameOpPlannerStateKey packetPlannerKey =");
         recordingSource.ShouldContain("packetRequest.PlannerKey;");
-        recordingSource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(packetContext);");
+        recordingSource.ShouldContain("activeRequests[packetEnd].PlannerKey == packetPlannerKey");
+        recordingSource.ShouldContain("VulkanProgramPlannerRequest plannerRequest = VulkanProgramPlannerRequest.From(request.Context);");
         recordingSource.ShouldNotContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(op.Context);");
-        recordingSource.ShouldContain("case IndirectDrawOp indirectDrawOp:");
-        recordingSource.ShouldContain("renderer = indirectDrawOp.MeshRenderer;");
+        recordingSource.ShouldContain("case EVulkanReusableFrameDataRefreshKind.IndirectMesh:");
         recordingSource.ShouldContain("request.MeshRenderer!");
 
-        recordingSource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(indirectOp.Context);");
-        secondarySource.ShouldContain("using var plannerScope = EnterFrameOpResourcePlannerReadbackScope(runOp.Context);");
+        recordingSource.ShouldContain("indirectOp.Context.PassMetadata,");
+        recordingSource.ShouldContain(
+            "private bool RecordIndirectDrawIntoSecondaryCommandBuffer(\n" +
+            "            CommandBuffer targetCommandBuffer,\n" +
+            "            in IndirectDrawPayload payload,\n" +
+            "            XRFrameBuffer? target,\n" +
+            "            in FrameOpContext context,");
+        secondarySource.ShouldContain(
+            "RecordIndirectDrawIntoSecondaryCommandBuffer(\n" +
+            "                        secondary,\n" +
+            "                        in indirect,\n" +
+            "                        target,\n" +
+            "                        in context,");
     }
 
     [Test]
@@ -961,7 +974,8 @@ public sealed class VulkanCommandChainDataModelTests
         string temporalStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalAccumulationStereo.fs").Replace("\r\n", "\n");
         string tsrStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/TemporalSuperResolutionStereo.fs").Replace("\r\n", "\n");
         string motionVectorStereoShader = ReadWorkspaceFile("Build/CommonAssets/Shaders/Scene3D/MotionVectorsStereo.fs").Replace("\r\n", "\n");
-        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs").Replace("\r\n", "\n");
+        // Per-view temporal matrices are captured in the immutable mesh draw view snapshot.
+        string meshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanMeshDrawViewSnapshot.cs").Replace("\r\n", "\n");
         string meshUniformsSource =
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Values.cs").Replace("\r\n", "\n") +
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.EngineUpload.cs").Replace("\r\n", "\n");
@@ -1006,7 +1020,7 @@ public sealed class VulkanCommandChainDataModelTests
         meshSource.ShouldContain("Matrix4x4 PreviousRightEyeViewMatrix");
         meshSource.ShouldContain("Matrix4x4 ViewProjectionMatrixUnjittered");
         meshSource.ShouldContain("Matrix4x4 RightEyeViewProjectionMatrixUnjittered");
-        meshSource.ShouldContain("previousRightEyeProjectionMatrixSnapshot = temporalData.RightEyePrevProjection;");
+        meshSource.ShouldContain("previousRightEyeProjectionMatrix =\n                    temporalData.RightEyePrevProjection;");
         meshUniformsSource.ShouldContain("case EEngineUniform.PrevRightEyeViewMatrix:");
         meshUniformsSource.ShouldContain("value = draw.PreviousRightEyeViewMatrix;");
         meshUniformsSource.ShouldContain("case nameof(EEngineUniform.PrevRightEyeProjMatrix):");
@@ -2440,27 +2454,35 @@ public sealed class VulkanCommandChainDataModelTests
     [Test]
     public void PersistentCommandChainWorkers_UsePreparedMutationGuardAndNoTasks()
     {
+        // Command-chain recording runs on the shared render-work lanes. Each lane records
+        // into a fixed lane arena, and the sealed frame plan validates the frozen planner
+        // stamp before recording.
         string workers = SourceContractWorkspace.ReadExactFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandChainWorkers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Secondary/Workers/VulkanRenderer.CommandChainWorkers.cs");
         string secondary = SourceContractWorkspace.ReadExactFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
-        string recording = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Secondary/VulkanRenderer.SecondaryCommandBuffers.cs");
+        string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string guard = SourceContractWorkspace.ReadExactFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.PreparedWorkerRecordingScope.cs");
+        string framePlan = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/FramePlan.RecordingResources.cs");
+        string primaryRecording = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
-        workers.ShouldContain("new Thread");
-        workers.ShouldContain("CommandChainWorkerWaitTimeoutMilliseconds");
-        workers.ShouldContain("VulkanWorkerSecondaryCommandArena");
-        workers.ShouldContain("worker.Arena.GetPool");
+        workers.ShouldContain("RenderWorkBatchLease lease = domain.RentBatch(activeLaneCount);");
+        workers.ShouldContain("result = domain.ExecuteAndWait(");
+        workers.ShouldContain("new(FrameTelemetry, EVulkanCpuStage.WorkerWait);");
+        workers.ShouldContain("InitializeRenderLaneCommandAttachments();");
+        workers.ShouldContain("It never creates a second thread domain.");
+        workers.ShouldNotContain("new Thread");
+        workers.ShouldNotContain("Task.Run");
         workers.ShouldNotContain("GraphicsCommandPoolsByFrameSlot");
         workers.ShouldNotContain("ParallelCommandChainWorkerRecordingSafe = false");
-        secondary.ShouldContain("EnterPreparedCommandChainEncodingScope");
         secondary.ShouldNotContain("EnterThreadResourcePlannerRuntimeStateScope");
         workers.ShouldNotContain("PlannerStates");
         workers.ShouldNotContain("PlannerSwitchingState");
-        guard.ShouldContain("CapturePreparedWorkerPlannerStamp");
-        guard.ShouldContain("mutated global resource-planner state");
+        framePlan.ShouldContain("internal bool MatchesRecordingPlannerStamp(");
+        primaryRecording.ShouldContain("input.FramePlan.MatchesRecordingPlannerStamp(");
+        primaryRecording.ShouldContain("the sealed logical-view planner owner does not match the resource stamp");
         secondary.ShouldNotContain("_frameOpResourcePlannerReadbackLock");
         secondary.ShouldNotContain("Task.Run");
         recording.ShouldNotContain("Task.Run(() => RecordSecondaryAt");

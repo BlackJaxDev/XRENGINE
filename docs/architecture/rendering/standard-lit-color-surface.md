@@ -84,8 +84,7 @@ canonical desktop coverage GLSL, exact factor/coverage binding, render state,
 sort priority and source-owned auxiliary passes. Its generated forward program
 uses the complete bounded local-shadow receiver ABI; normal and shadow replay
 require the matching canonical coverage programs and revalidate the generated
-source companion. The [authored coverage record](../../work/progress/platform/browser-authored-color-coverage-2026-10-03.md)
-details source verification, binary compatibility and pending device acceptance.
+source companion. Device acceptance is pending.
 
 The factory uses the existing material-construction target to choose an additive
 desktop GLSL shader or source-free cooked material. Both outputs use the same

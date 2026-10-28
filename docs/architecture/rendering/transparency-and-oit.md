@@ -2,7 +2,6 @@
 
 This document describes transparent surface routing, weighted blended order-independent transparency (OIT), and exact transparency experiments in `DefaultRenderPipeline` and `AdvancedRenderPipeline`.
 
-Related checks: [Default And Advanced Pipeline Validation](../../work/testing/rendering/default-and-advanced-pipeline-validation.md). Open work: [Transparency And OIT TODO](../../work/todo/rendering/transparency-and-oit-todo.md).
 
 ## Type And File Map
 | Type or shader | File | Responsibility |

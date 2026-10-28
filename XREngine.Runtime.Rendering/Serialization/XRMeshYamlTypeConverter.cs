@@ -150,15 +150,32 @@ public sealed class XRMeshYamlTypeConverter : IYamlTypeConverter
 
     private static bool TryExtractRuntimeCookedPayload(byte[] payload, out byte[]? runtimePayload)
     {
+        // Values of CookedBinaryTypeMarker.CustomObject and CookedBinaryTypeMarker.ReferenceDefinition.
         const byte cookedBinaryCustomObjectMarker = 24;
+        const byte cookedBinaryReferenceDefinitionMarker = 62;
+        const int referenceDefinitionHeaderSize = sizeof(byte) + sizeof(int);
 
         runtimePayload = null;
-        if (payload.Length < sizeof(byte) + sizeof(int) || payload[0] != cookedBinaryCustomObjectMarker)
+
+        // Generic cooked binary writes reference types as a reference-graph root:
+        // a ReferenceDefinition marker and the root id (0) come before the object.
+        int objectOffset = 0;
+        if (payload.Length >= referenceDefinitionHeaderSize &&
+            payload[0] == cookedBinaryReferenceDefinitionMarker)
+        {
+            if (System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(payload.AsSpan(sizeof(byte))) != 0)
+                return false;
+
+            objectOffset = referenceDefinitionHeaderSize;
+        }
+
+        if (payload.Length - objectOffset < sizeof(byte) + sizeof(int) ||
+            payload[objectOffset] != cookedBinaryCustomObjectMarker)
             return false;
 
         try
         {
-            using MemoryStream stream = new(payload, writable: false);
+            using MemoryStream stream = new(payload, objectOffset, payload.Length - objectOffset, writable: false);
             using BinaryReader reader = new(stream, System.Text.Encoding.UTF8);
             if (reader.ReadByte() != cookedBinaryCustomObjectMarker)
                 return false;

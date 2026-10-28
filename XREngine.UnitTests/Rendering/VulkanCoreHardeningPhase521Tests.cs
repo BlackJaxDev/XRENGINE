@@ -143,7 +143,8 @@ public sealed class VulkanCoreHardeningPhase521Tests
         harness.ShouldContain("frame_output_global_in_flight_wait_count");
         harness.ShouldContain("VulkanCommandBufferCleanReuseRatio");
         harness.ShouldContain("CaptureWorkloadIdentityCount");
-        harness.ShouldContain("Invalid Vulkan performance capture");
+        harness.ShouldContain("$invalidCaptureFailures = @($results | Where-Object {");
+        harness.ShouldContain("throw \"Invalid render-pipeline performance capture: $($details -join '; ')\"");
     }
 
     private static string ReadWorkspaceFile(string relativePath)

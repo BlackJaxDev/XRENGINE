@@ -33,12 +33,18 @@ public sealed class VulkanP02TelemetryTests
     public void RecordingStages_ExposeTimingAllocationAndHighWaterTelemetry()
     {
         string stageSource = ReadWorkspaceFile("XREngine.Data/Rendering/VulkanTelemetryEnums.cs");
-        string recordingSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
-        string submissionSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        // Stage scopes are owned by the renderer, the command runtime, and the frame loop.
+        string recordingSource = string.Concat(
+            SourceContractWorkspace.ReadVulkanRendererSource(),
+            SourceContractWorkspace.ReadVulkanCommandRuntimeSource(),
+            SourceContractWorkspace.ReadPartialType(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanFrameLoop.PrimaryRecordingPreparation.cs"));
+        string submissionSource = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "EVulkanCpuStage.SubmissionPreparation");
         string statsSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
+        string statsTelemetrySource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.FrameTelemetry.cs");
         string captureSource = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Engine.ProfileCapture.cs");
         string mcpSource = ReadWorkspaceFile(
             "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
@@ -63,20 +69,14 @@ public sealed class VulkanP02TelemetryTests
             stageSource.ShouldContain(stage);
 
         recordingSource.ShouldContain("EVulkanCpuStage.FrameOpPreparation");
-        recordingSource.ShouldContain("EVulkanCpuStage.ResourcePlanning");
         recordingSource.ShouldContain("EVulkanCpuStage.PacketConstruction");
         recordingSource.ShouldContain("EVulkanCpuStage.PrimaryRecording");
         recordingSource.ShouldContain("EVulkanCpuStage.FrameDataManifest");
-        recordingSource.ShouldContain("EVulkanCpuStage.DependencySnapshot");
-        recordingSource.ShouldContain("EVulkanCpuStage.ImageLayoutSnapshot");
         recordingSource.ShouldContain("EVulkanCpuStage.CommandBufferReuse");
+        recordingSource.ShouldContain("EVulkanCpuStage.QueueSubmit");
         submissionSource.ShouldContain("EVulkanCpuStage.SubmissionPreparation");
         submissionSource.ShouldContain("EVulkanCpuStage.SubmissionDiagnostics");
-        submissionSource.ShouldContain("EVulkanCpuStage.SubmissionImageStateValidation");
-        submissionSource.ShouldContain("EVulkanCpuStage.SubmissionResourceLifetimeValidation");
-        submissionSource.ShouldContain("EVulkanCpuStage.QueueSubmit");
         submissionSource.ShouldContain("EVulkanCpuStage.SubmissionPublication");
-        recordingSource.ShouldContain("EVulkanCpuStage.CommandChainFastSignature");
         recordingSource.ShouldContain("EVulkanCpuStage.CommandChainPacketLowering");
         recordingSource.ShouldContain("EVulkanCpuStage.CommandChainScheduleEvaluation");
         recordingSource.ShouldContain("EVulkanCpuStage.PrimaryFrameDataManifest");
@@ -121,12 +121,29 @@ public sealed class VulkanP02TelemetryTests
             "command_dirty_propagation = VulkanCpuStage(EVulkanCpuStage.CommandDirtyPropagation)");
         mcpSource.ShouldContain(
             "command_cache_scanning = VulkanCpuStage(EVulkanCpuStage.CommandCacheScanning)");
+        // Stages without a runtime scope stay in the capture and MCP schemas, so the field set does not change.
+        foreach (string stage in new[]
+        {
+            "ResourcePlanning", "DependencySnapshot", "ImageLayoutSnapshot",
+            "SubmissionImageStateValidation", "SubmissionResourceLifetimeValidation",
+            "CommandChainFastSignature",
+        })
+        {
+            captureSource.ShouldContain($"EVulkanCpuStage.{stage}, ref first");
+            mcpSource.ShouldContain($"= VulkanCpuStage(EVulkanCpuStage.{stage})");
+        }
+
+        statsTelemetrySource.ShouldContain(
+            "public static VulkanCpuStageTelemetry GetVulkanCpuStageTelemetry(EVulkanCpuStage stage)");
+        statsTelemetrySource.ShouldContain("Volatile.Read(ref _vulkanCpuStageInvocationCount[index])");
         mcpSource.ShouldContain(
-            "process_invocation_count = VulkanStats.VulkanCpuStageInvocationCount(stage)");
+            "VulkanCpuStageTelemetry telemetry = VulkanStats.GetVulkanCpuStageTelemetry(stage);");
         mcpSource.ShouldContain(
-            "process_elapsed_ms = VulkanStats.VulkanCpuStageCumulativeMs(stage)");
+            "process_invocation_count = telemetry.InvocationCount");
         mcpSource.ShouldContain(
-            "process_peak_ms = VulkanStats.VulkanCpuStagePeakMs(stage)");
+            "process_elapsed_ms = telemetry.CumulativeElapsed.TotalMilliseconds");
+        mcpSource.ShouldContain(
+            "process_peak_ms = telemetry.PeakElapsed.TotalMilliseconds");
     }
 
     [Test]
@@ -236,19 +253,38 @@ public sealed class VulkanP02TelemetryTests
     [Test]
     public void PrimaryReuseMiss_ReusesPreparedCommandChainFastSignatureDuringLowering()
     {
-        string recordingSource = SourceContractWorkspace.ReadVulkanRendererSource();
-        string loweringSource = SourceContractWorkspace.ReadVulkanSourcesContaining("ulong? preparedFastScheduleSignature = null");
+        // The prepared schedule identity replaces the old fast signature. The planner
+        // must try the cached schedule before it lowers packets again.
+        string planningSource = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "CommandChainScheduleCacheIdentity cacheIdentity = new(");
+        string preparationSource = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "private VulkanPreparedPrimaryCommandInput PreparePrimaryCommandInput(");
+        string cacheSource = SourceContractWorkspace.ReadVulkanSourcesContaining(
+            "internal bool TryReuseCachedCommandChainSchedule(");
 
-        recordingSource.ShouldContain(
-            "out state.PreparedCommandChainFastScheduleSignature");
-        recordingSource.ShouldContain(
-            "out state.HasPreparedCommandChainFastScheduleSignature");
-        recordingSource.ShouldContain(
-            "? state.PreparedCommandChainFastScheduleSignature");
-        loweringSource.ShouldContain(
-            "ulong? preparedFastScheduleSignature = null");
-        loweringSource.ShouldContain(
-            "if (!preparedFastScheduleSignature.HasValue)");
+        int identityIndex = planningSource.IndexOf(
+            "CommandChainScheduleCacheIdentity cacheIdentity = new(", StringComparison.Ordinal);
+        int reuseIndex = planningSource.IndexOf(
+            "if (TryReuseCachedCommandChainSchedule(", identityIndex, StringComparison.Ordinal);
+        int loweringIndex = planningSource.IndexOf(
+            "EVulkanCpuStage.CommandChainPacketLowering", reuseIndex, StringComparison.Ordinal);
+        identityIndex.ShouldBeGreaterThanOrEqualTo(0);
+        reuseIndex.ShouldBeGreaterThan(identityIndex);
+        loweringIndex.ShouldBeGreaterThan(reuseIndex);
+        planningSource.ShouldContain(
+            "RecordCommandChainScheduleDecision(EVulkanCommandChainScheduleDecision.ReusedSchedule);\n            return cachedSchedule;");
+        planningSource.ShouldContain("schedule.PublishCacheIdentity(in cacheIdentity);");
+
+        string preparation = Slice(
+            preparationSource,
+            "private VulkanPreparedPrimaryCommandInput PreparePrimaryCommandInput(",
+            "return new VulkanPreparedPrimaryCommandInput(");
+        preparation.ShouldContain("_commandRuntime.TryBuildCommandChainSchedule(");
+        preparation.ShouldContain("framePlan.StaticOperationSignature,");
+        preparation.ShouldContain("preparedRecordingTarget: authority.RecordingTargetSnapshot,");
+        preparation.ShouldContain("descriptorVersionSignature: framePlan.DescriptorVersionSignature);");
+
+        cacheSource.ShouldContain("if (!identity.IsReusable || CommandChainBenchmarkForceRerecord ||");
     }
 
     [Test]
@@ -259,22 +295,25 @@ public sealed class VulkanP02TelemetryTests
         loweringSource.ShouldContain("_commandChainDrawPacketScratch[0] = firstDraw;");
         loweringSource.ShouldContain("_commandChainDrawPacketScratch[runCount] = candidateDraw;");
         loweringSource.ShouldContain("DrawPacket draw = draws[i];");
-        loweringSource.ShouldContain("MeshDrawOp => preparedMeshDraw");
+        loweringSource.ShouldContain("preparedMeshDraw = firstDraw;");
+        loweringSource.ShouldContain("firstDraw = preparedMeshDraw;");
         loweringSource.ShouldContain("? firstDraw.StructuralSignature");
     }
 
     [Test]
     public void NormalRecordingPath_UsesNumericDecisionReasonsWithoutFormattingDiagnosticStrings()
     {
-        string source = SourceContractWorkspace.ReadVulkanRendererSource();
         string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining("if (traceCommandChains || CommandChainValidationEnabled)");
 
-        source.ShouldContain("string? dirtyReason = VulkanFrameDiagnosticsTraceEnabled");
-        source.ShouldContain("EVulkanCommandBufferDecisionReason.DescriptorGeneration");
-        source.ShouldContain("state.CurrentGenerations.Structural");
-        source.ShouldContain("state.CurrentGenerations.Descriptor");
-        source.ShouldContain("swapchainSlot: state.CommandBufferImageSlot");
+        lowering.ShouldContain("secondaryDecisionReasons |= EVulkanCommandBufferDecisionReason.DescriptorGeneration;");
+        lowering.ShouldContain(
+            "dirtyReason: null,\n            detailReasons: secondaryDecisionReasons,\n" +
+            "            structuralSignature: lastPacket.StructuralSignature,\n" +
+            "            descriptorGeneration: lastPacket.DescriptorSnapshot.DescriptorGeneration,\n" +
+            "            swapchainSlot: unchecked((int)imageIndex));");
         lowering.ShouldContain("if (traceCommandChains || CommandChainValidationEnabled)\n                    firstStructuralDirtyReason ??= DescribeCommandChainDirtyReason");
+        lowering.ShouldContain(
+            "(traceCommandChains || CommandChainValidationEnabled))\n                    firstDescriptorMismatch ??= $\"chain=");
     }
 
     private static string Slice(string source, string start, string end)

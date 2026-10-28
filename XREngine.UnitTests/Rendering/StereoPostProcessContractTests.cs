@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Numerics;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
@@ -253,7 +254,10 @@ public sealed class StereoPostProcessContractTests
             shader.ShouldContain("uniform float ScreenWidth");
             shader.ShouldContain("uniform float ScreenHeight");
             shader.ShouldContain("uniform vec2 ScreenOrigin");
-            shader.ShouldContain("XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))");
+            // A call can wrap after its opening parenthesis. Remove only that
+            // line break so that the exact argument list is still asserted.
+            Regex.Replace(shader, @"\(\s+", "(")
+                .ShouldContain("XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight))");
         }
     }
 
@@ -269,7 +273,11 @@ public sealed class StereoPostProcessContractTests
             source.ShouldContain("? currentColorRaw");
             source.ShouldContain("bool canUseHistory = TsrCanSampleHistory(HistoryReady, historyUV);");
             source.ShouldContain("mix(currentYCoCg, clippedHistory, historyWeight)");
-            source.ShouldContain("PreviousJitterUv - CurrentJitterUv");
+            // Jitter is converted to a framebuffer UV displacement before the
+            // history reprojection uses the previous and current offsets.
+            source.ShouldContain("vec2 currentJitter = TsrFramebufferUvDisplacement(CurrentJitterUv, FramebufferTextureYDirection);");
+            source.ShouldContain("vec2 previousJitter = TsrFramebufferUvDisplacement(PreviousJitterUv, FramebufferTextureYDirection);");
+            source.ShouldContain("+ previousJitter - currentJitter;");
             source.ShouldContain("#pragma snippet \"TemporalSuperResolutionCore\"");
             source.ShouldContain("TsrClipHistoryToNeighborhood");
             source.ShouldContain("TsrComputeHistoryWeight");
@@ -344,14 +352,19 @@ public sealed class StereoPostProcessContractTests
     [Test]
     public void TsrQuadMaterials_RequestViewportDimensions()
     {
-        foreach (string path in new[]
+        foreach ((string path, string factoryMarker) in new[]
         {
-            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs",
-            "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs",
+            (
+                "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs",
+                "private XRFrameBuffer CreateTsrUpscaleFBO()"),
+            (
+                // The advanced pipeline creates the TSR upscale target in stages.
+                "XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs",
+                "private IIncrementalFrameBufferFactory CreateTsrUpscaleFBOIncrementally()"),
         })
         {
             string source = ReadWorkspaceFile(path);
-            int methodStart = source.IndexOf("private XRFrameBuffer CreateTsrUpscaleFBO()", StringComparison.Ordinal);
+            int methodStart = source.IndexOf(factoryMarker, StringComparison.Ordinal);
             methodStart.ShouldBeGreaterThanOrEqualTo(0);
             int methodEnd = source.IndexOf("private XRFrameBuffer CreateTsrHistoryColorFBO()", methodStart, StringComparison.Ordinal);
             methodEnd.ShouldBeGreaterThan(methodStart);
@@ -365,11 +378,12 @@ public sealed class StereoPostProcessContractTests
     public void MotionVectorDrawSnapshot_UsesIndependentPerEyeCurrentMatricesAndExactKeyDiagnostics()
     {
         string meshSource = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanMeshDrawViewSnapshot.cs")
+            .Replace("\r\n", "\n");
         string uniformSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Values.cs");
-        meshSource.ShouldContain("viewProjectionMatrixUnjitteredSnapshot = temporalData.CurrViewProjectionUnjittered;");
-        meshSource.ShouldContain("rightEyeViewProjectionMatrixUnjitteredSnapshot = temporalData.RightEyeCurrViewProjectionUnjittered;");
+        meshSource.ShouldContain("viewProjectionMatrixUnjittered =\n                temporalData.CurrViewProjectionUnjittered;");
+        meshSource.ShouldContain("rightEyeViewProjectionMatrixUnjittered =\n                temporalData.RightEyeCurrViewProjectionUnjittered;");
         uniformSource.ShouldContain("draw.ViewProjectionMatrixUnjittered");
         uniformSource.ShouldContain("draw.RightEyeViewProjectionMatrixUnjittered");
         uniformSource.ShouldContain("draw.PreviousViewProjectionMatrixUnjittered");

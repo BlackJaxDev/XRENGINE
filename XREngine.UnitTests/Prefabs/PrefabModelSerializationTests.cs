@@ -799,7 +799,7 @@ MatchDestinationRenderArea: true
             asset.Camera.RenderPipeline.ShouldBeOfType<DefaultRenderPipeline>();
             DefaultRenderPipeline pipeline = (DefaultRenderPipeline)asset.Camera.RenderPipeline;
             pipeline.EnableDeferredMsaa.ShouldBeTrue();
-            pipeline.CommandChain.Count.ShouldBe(1);
+            AssertGeneratedDefaultCommandChain(pipeline);
         }
         finally
         {
@@ -807,6 +807,20 @@ MatchDestinationRenderArea: true
             DeleteDirectoryIfExists(assetDirectory);
             DeleteDirectoryIfExists(metadataDirectory);
         }
+    }
+
+    /// <summary>
+    /// The command chain is not serialized. The pipeline generates its chain
+    /// from its authored settings, so the loader ignores an authored YAML chain
+    /// (one if/else with one true command and no false commands).
+    /// </summary>
+    private static void AssertGeneratedDefaultCommandChain(DefaultRenderPipeline pipeline)
+    {
+        pipeline.CommandChain.Count.ShouldBe(2);
+        pipeline.CommandChain[0].ShouldBeOfType<VPRC_PrecomputeBRDF>();
+        VPRC_IfElse ifElse = pipeline.CommandChain[1].ShouldBeOfType<VPRC_IfElse>();
+        ifElse.TrueCommands.ShouldNotBeNull().Count.ShouldBeGreaterThan(1);
+        ifElse.FalseCommands.ShouldNotBeNull().Count.ShouldBeGreaterThan(0);
     }
 
     [Test]
@@ -884,7 +898,7 @@ MatchDestinationRenderArea: true
             asset.Canvas.Camera2D.RenderPipeline.ShouldBeOfType<DefaultRenderPipeline>();
             DefaultRenderPipeline pipeline = (DefaultRenderPipeline)asset.Canvas.Camera2D.RenderPipeline;
             pipeline.EnableDeferredMsaa.ShouldBeTrue();
-            pipeline.CommandChain.Count.ShouldBe(1);
+            AssertGeneratedDefaultCommandChain(pipeline);
         }
         finally
         {

@@ -17,7 +17,10 @@ public sealed class EngineTimerTests
         long roundTripTicks = EngineTimer.TimeSpanTicksToStopwatchTicks(timeSpanTicks);
 
         timeSpanTicks.ShouldBe((long)Math.Round(stopwatchTicks * (TimeSpan.TicksPerSecond / (double)Stopwatch.Frequency)));
-        roundTripTicks.ShouldBeInRange(stopwatchTicks - 1L, stopwatchTicks + 1L);
+        // A TimeSpan tick is 100 ns. When the stopwatch is finer than that, the
+        // round trip can lose up to one TimeSpan tick of stopwatch precision.
+        long tolerance = Math.Max(1L, (Stopwatch.Frequency + TimeSpan.TicksPerSecond - 1L) / TimeSpan.TicksPerSecond);
+        roundTripTicks.ShouldBeInRange(stopwatchTicks - tolerance, stopwatchTicks + tolerance);
     }
 
     [Test]

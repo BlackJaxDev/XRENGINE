@@ -687,8 +687,7 @@ namespace XREngine.Rendering.OpenGL
             // Debug → PushSubData Breakdown. Aggregates per-buffer (call count,
             // bytes requested) and dumps a sorted snapshot to log_rendering.txt
             // approximately once per second. Used to attribute render-thread
-            // PushSubData queue floods (see
-            // docs/work/design/rendering/render-submission-perf-debug-plan.md §5.4).
+            // PushSubData queue floods.
             private static bool _pushSubDataBreakdownEnabled => RenderDiagnosticsFlags.PushSubDataBreakdown;
 
             // ----- PushSubData per-call trace (AutoFlush) -----

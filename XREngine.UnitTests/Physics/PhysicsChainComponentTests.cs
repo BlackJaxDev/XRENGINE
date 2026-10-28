@@ -68,7 +68,7 @@ public sealed class PhysicsChainComponentTests
     }
 
     private static IList GetParticleTrees(PhysicsChainComponent component)
-        => GetFieldValue<IList>(component, "_particleTrees");
+        => GetPropertyValue<IList>(component, "_particleTrees");
 
     private static IList GetParticles(object particleTree)
         => GetPropertyValue<IList>(particleTree, "Particles");
