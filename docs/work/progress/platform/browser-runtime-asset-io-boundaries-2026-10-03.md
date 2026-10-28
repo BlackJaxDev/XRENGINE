@@ -1,5 +1,80 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Font atlas and cache file placement (2026-10-28)
+
+Implementation commit `dc4d8ed39292bfb02c192ef5c7eaf2f8c9995933` moves
+all direct file operations from `FontGlyphSet` to existing host capabilities.
+Distance-field output loading retains one metadata provider for existence probes
+and JSON text, then uses that same object as the read provider for atlas bytes.
+Bitmap output loading uses the read provider. Recovery and Windows font probes
+remain lazy; stale-cache deletion retains one metadata provider inside its
+best-effort catch. The [composition contract](../../../architecture/runtime/project-organization.md)
+records which capabilities a custom host must supply.
+
+The glyph parser, atlas formats, mip generation, sampling, cooked serialization,
+font generators, and cache schema are unchanged. The existing bitmap helper
+signature and source-test call expression remain intact. Valid cooked layout
+returns before provider lookup. Missing-layout recovery keeps its named
+`Font.CookedLayoutMissing` rejection on non-synchronous sources. These captures
+do not create an atomic snapshot or source-retirement lease.
+
+A disposable executable passes 17 checks against compiled Rendering:
+
+- MSDF and MTSDF metadata/image reads retain one provider through replacement;
+  both preserve glyph metrics, distance parameters, atlas size, and texture format
+  (six checks).
+- Missing outputs retain the diagnostic reprobes on that provider, and missing
+  atlas metadata leaves the texture uninitialized.
+- Bitmap reads preserve alpha coverage, R8 format, mip levels, and sampling.
+- Cache cleanup retains its provider through deletion; deletion errors remain
+  best effort.
+- Missing-layout recovery uses the read provider; valid cooked layout needs none.
+- Non-synchronous missing layout keeps its named failure, and a missing bitmap
+  read provider fails explicitly.
+- The Windows fallback exits before provider lookup on this non-Windows host.
+
+All nine unchanged `FontGlyphSetSerializationTests` pass through NUnitLite, with
+zero failures, warnings, or skips. The harness links the existing fixture and
+uses the public Data, Core, and Rendering serializer registrations. It links the
+unchanged `MagickRuntimeImageCodec` and resource policy with the already-pinned
+`Magick.NET-Q16-HDRI-x64` version `14.16.0`; no repository dependency or target
+framework changed. The image-codec project targets Windows and cannot be a
+reference from this `net10.0` Linux harness. An initial harness run also lacked
+the native logging registration; the final harness installs that existing
+backend before the checks. This evidence covers the linked codec and compiled
+portable rendering paths, not the full Windows imaging application.
+
+Rendering and the final harness build in Release with zero warnings and errors.
+Independent source review passed. No tracked test or assertion changed. Evidence
+uses `Build/_AgentValidation/20261028-120000-webgpu-io/`:
+`logs/font-rendering-build.log`, `logs/font-smoke-build.log`,
+`logs/font-smoke.log`, `reports/font-TestResult.xml`, and
+`reports/font-inventory.json`. Actual Windows UI-font probing, native font
+rasterization, browser rendering, and GPU text appearance were not exercised.
+
+The full local publication gate passes at this implementation source. Editor,
+Server, and VRClient Release builds report zero warnings and errors with
+`EnableWindowsTargeting=true` on Linux. All 19 manifest projects compile for
+`browser-wasm`. Browser publishes into a fresh directory with
+`WasmBuildNative=true`, the pinned Jolt inputs, and the unchanged interpreter
+mode. The browser gate reports no warning or error diagnostics. The unchanged
+`DesktopAssetFileSystemTests` fixture also passes: one test, zero failures,
+warnings, or skips.
+
+Logs are `logs/font-gate-Editor.log`, `logs/font-gate-Server.log`,
+`logs/font-gate-VRClient.log`, `logs/font-headless-build.log`,
+`logs/font-headless-test.log`, and `logs/font-full-gate.log`. The fresh output is
+`font-browser-publish/wwwroot/`; `reports/font-browser-publish-hashes.json`
+records one native runtime, Browser, and Rendering WASM resource with sizes and
+hashes. This does not establish Windows startup, GPU parity, or post-push CI.
+No shader source or recipe changed, so the previous production cook was not
+repeated.
+
+The source scan removes nine matching lines and one file. Core and Rendering
+now total 16 files / 46 direct-file matching lines. The four-root total is
+31 files / 105 lines. Blocking counts are unchanged. Both inventory requirements
+remain open; the checklist stays 122/163 complete, with 41 open requirements.
+
 ## Asset-load probe placement (2026-10-28)
 
 Implementation commit `cdd62f785d060b6621748a54717e1d8421841a12` moves
