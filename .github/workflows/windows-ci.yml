@@ -34,14 +34,7 @@ jobs:
           submodules: recursive
 
       # The SDK goes into a job folder, not Program Files. There the workload restore does not update the
-      # runner image's Visual Studio workloads, which the solution does not use, and the cache can keep the folder.
-      - name: Restore cached .NET SDK and workloads
-        id: dotnet-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ runner.temp }}\dotnet
-          key: dotnet-sdk-workloads-ci-${{ runner.os }}-${{ hashFiles('global.json', 'XRENGINE.slnx') }}
-
+      # runner image's Visual Studio workloads, which the solution does not use.
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v6
         env:
@@ -51,13 +44,6 @@ jobs:
 
       - name: Restore pinned .NET workloads
         run: dotnet workload restore XRENGINE.slnx
-
-      - name: Save .NET SDK and workloads
-        if: steps.dotnet-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ runner.temp }}\dotnet
-          key: ${{ steps.dotnet-cache.outputs.cache-primary-key }}
 
       - name: Read the Rive submodule commit
         id: rive-commit
@@ -70,7 +56,7 @@ jobs:
           "sha=$($Matches[1])" >> $env:GITHUB_OUTPUT
 
       # Most of the submodule step is the native Rive compile. OpenVR.NET and OscCore are project references,
-      # so the solution build compiles them when a cache hit skips this step.
+      # so the later builds compile them when a cache hit skips this step.
       - name: Restore cached Rive build
         id: rive-cache
         uses: actions/cache/restore@v6
