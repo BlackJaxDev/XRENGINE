@@ -214,6 +214,10 @@ public partial class ProfilerPanel
         CaptureSpatialTree(rows);
         CaptureResourceChurn(rows);
         CaptureShadowAtlasSolve(rows);
+        CaptureTransparencyDomains(rows);
+        CaptureGpuMeshlets(rows);
+        CaptureOpenXr(rows);
+        CaptureSkinnedBounds(rows);
         CaptureVulkanFrameDiagnostics(rows);
     }
 

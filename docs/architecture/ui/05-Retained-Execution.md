@@ -1351,7 +1351,11 @@ not elapsed time or engine snapshot acquisition.
 
 Selected diagnostic views show component timings, BVH work, jobs, allocations,
 main-thread invokes, FPS spikes, render counters, GPU timing, renderer state,
-assets, frame lifecycle, outputs, and settings. CPU-root aggregation reuses two
+assets, frame lifecycle, outputs, and settings. The render counters view also shows
+transparency domains, GPU meshlet task records, OpenXR timing, skinned-bounds
+refresh, and Vulkan command-chain, worker, retired-drain, and dirty-reason rows.
+These rows read the last completed render frame and are hidden when their
+subsystem reported no work. CPU-root aggregation reuses two
 buffers and caps distinct names at 4,096 with an explicit overflow row. Nested
 child aggregation uses a separate 4,096-path cap and the same bounded pump. Spike
 capture inspects at most 64 threads and 2,048 path nodes per frame and retains

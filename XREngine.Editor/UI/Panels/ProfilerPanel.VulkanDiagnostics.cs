@@ -49,6 +49,7 @@ public partial class ProfilerPanel
             $"total | draws {VulkanStats.VulkanDroppedDrawOps} | compute {VulkanStats.VulkanDroppedComputeOps} | FBO-only draws/blits {VulkanStats.VulkanFboOnlyDrawOps}/{VulkanStats.VulkanFboOnlyBlitOps} | missing scene writers {VulkanStats.VulkanMissingSceneSwapchainWriteFrames}"));
         rows.Add(new("Vulkan command buffers", VulkanStats.VulkanCommandBufferCleanReuseCount.ToString(CultureInfo.InvariantCulture),
             $"clean reuse | records {VulkanStats.VulkanCommandBufferRecordCount} | dirty forced/frame-op/planner/profiler {VulkanStats.VulkanCommandBufferForcedDirtyCount}/{VulkanStats.VulkanCommandBufferFrameOpSignatureDirtyCount}/{VulkanStats.VulkanCommandBufferPlannerDirtyCount}/{VulkanStats.VulkanCommandBufferProfilerDirtyCount}"));
+        CaptureVulkanCommandChains(rows);
         rows.Add(new("Vulkan GPU command buffer", VulkanStats.VulkanFrameGpuCommandBufferMs.ToString("F3", CultureInfo.InvariantCulture),
             $"ms | timing {VulkanStats.VulkanFrameGpuCommandBufferTimingAvailability}"));
 
