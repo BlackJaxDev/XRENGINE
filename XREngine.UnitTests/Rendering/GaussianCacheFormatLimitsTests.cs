@@ -4,6 +4,7 @@ using System.Text;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Data.Geometry;
+using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models.Gaussian.Baking.Build;
 using XREngine.Rendering.Models.Gaussian.Cache;
 
@@ -188,6 +189,22 @@ public sealed class GaussianCacheFormatLimitsTests
         cache.Runtime.GetLoadedNodeCount(0).ShouldBe(build.Root.Header.SplatLevelCounts[0]);
     }
 
+    [TestCase(typeof(EndOfStreamException))]
+    [TestCase(typeof(ArgumentOutOfRangeException))]
+    [TestCase(typeof(OverflowException))]
+    public void ApplyChunk_DecodeReadFails_ThrowsDecodeFailed(Type exceptionType)
+    {
+        GaussianCacheBuildResult build = GaussianCacheTestSphere.Shared.Build();
+        GaussianCacheRuntimeData runtime = GaussianCacheRuntimeData.Create(build.Root.Header);
+        Exception fault = (Exception)Activator.CreateInstance(exceptionType)!;
+
+        GaussianCacheFormatException failure = Should.Throw<GaussianCacheFormatException>(
+            () => runtime.ApplyChunk(build.Root.RootChunkData, new FaultyDecodeBackend(GaussianCacheTestSphere.Meshopt, fault)));
+
+        failure.DiagnosticCode.ShouldBe("GaussianCache.DecodeFailed");
+        failure.Message.ShouldContain(exceptionType.Name);
+    }
+
     private static string ReadCode(Action<GaussianCacheHeader> change)
     {
         GaussianCacheHeader header = CreateHeader();
@@ -234,4 +251,51 @@ public sealed class GaussianCacheFormatLimitsTests
                 new GaussianCacheChunkInfo(4, GaussianCacheChunkKind.DriverTemporal, 2, 2, 3, 4_000, new string('b', 64)),
             ],
         };
+
+    /// <summary>A backend that throws a given exception from the vertex decode, and gives every other call to a real backend.</summary>
+    private sealed class FaultyDecodeBackend(IMeshOptimizerBackend inner, Exception fault) : IMeshOptimizerBackend
+    {
+        public string VersionKey => inner.VersionKey;
+        public nuint BuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles) => inner.BuildMeshletsBound(indexCount, maxVertices, maxTriangles);
+        public nuint BuildNativeMeshletClusters(MeshletBuildMode buildMode, MeshOptimizerMeshlet[] meshlets, uint[] meshletVertices, byte[] meshletTriangles, uint[] indices, float[] vertexPositions, nuint vertexCount, uint maxVertices, uint minTriangles, uint maxTriangles, float coneWeight, float splitFactor, float fillWeight)
+            => inner.BuildNativeMeshletClusters(buildMode, meshlets, meshletVertices, meshletTriangles, indices, vertexPositions, vertexCount, maxVertices, minTriangles, maxTriangles, coneWeight, splitFactor, fillWeight);
+        public void OptimizeMeshletLevel(Span<uint> meshletVertices, Span<byte> meshletTriangles, int level) => inner.OptimizeMeshletLevel(meshletVertices, meshletTriangles, level);
+        public MeshOptimizerBounds ComputeMeshletBounds(ReadOnlySpan<uint> meshletVertices, ReadOnlySpan<byte> meshletTriangles, float[] vertexPositions, int vertexCount)
+            => inner.ComputeMeshletBounds(meshletVertices, meshletTriangles, vertexPositions, vertexCount);
+        public int EncodeMeshlet(uint[]? vertices, byte[] triangles, int maxVertices, int maxTriangles) => inner.EncodeMeshlet(vertices, triangles, maxVertices, maxTriangles);
+        public int Simplify(uint[] indices, float[] positions, int vertexCount, int targetIndexCount, float targetError, MeshOptimizerSimplifyOptions options, out float resultError)
+            => inner.Simplify(indices, positions, vertexCount, targetIndexCount, targetError, options, out resultError);
+        public int SimplifyWithAttributes(uint[] indices, float[] positions, int vertexCount, float[] attributeBuffer, int attributeStride, float[] attributeWeights, int targetIndexCount, float targetError, MeshOptimizerSimplifyOptions options, byte[]? vertexLock, out float resultError)
+            => inner.SimplifyWithAttributes(indices, positions, vertexCount, attributeBuffer, attributeStride, attributeWeights, targetIndexCount, targetError, options, vertexLock, out resultError);
+        public int SimplifyWithUpdate(uint[] indices, float[] positions, int vertexCount, float[] attributeBuffer, int attributeStride, float[] attributeWeights, int targetIndexCount, float targetError, MeshOptimizerSimplifyOptions options, byte[]? vertexLock, out float resultError)
+            => inner.SimplifyWithUpdate(indices, positions, vertexCount, attributeBuffer, attributeStride, attributeWeights, targetIndexCount, targetError, options, vertexLock, out resultError);
+        public int SimplifySloppy(uint[] indices, float[] positions, int vertexCount, int targetIndexCount, float targetError, byte[]? vertexLock, out float resultError)
+            => inner.SimplifySloppy(indices, positions, vertexCount, targetIndexCount, targetError, vertexLock, out resultError);
+        public float SimplifyScale(float[] positions, int vertexCount) => inner.SimplifyScale(positions, vertexCount);
+        public int EncodeVertexBufferBound(int vertexCount, int vertexSize) => inner.EncodeVertexBufferBound(vertexCount, vertexSize);
+        public int EncodeVertexBuffer(Span<byte> destination, ReadOnlySpan<byte> vertices, int vertexCount, int vertexSize, int level = 3, int version = 1)
+            => inner.EncodeVertexBuffer(destination, vertices, vertexCount, vertexSize, level, version);
+        public void DecodeVertexBuffer(Span<byte> destination, int vertexCount, int vertexSize, ReadOnlySpan<byte> encoded) => throw fault;
+        public int DecodeVertexVersion(ReadOnlySpan<byte> encoded) => inner.DecodeVertexVersion(encoded);
+        public int EncodeIndexBufferBound(int indexCount, int vertexCount) => inner.EncodeIndexBufferBound(indexCount, vertexCount);
+        public int EncodeIndexBuffer(Span<byte> destination, ReadOnlySpan<uint> indices) => inner.EncodeIndexBuffer(destination, indices);
+        public void DecodeIndexBuffer(Span<uint> destination, ReadOnlySpan<byte> encoded) => inner.DecodeIndexBuffer(destination, encoded);
+        public void OptimizeVertexCache(Span<uint> destination, ReadOnlySpan<uint> indices, int vertexCount) => inner.OptimizeVertexCache(destination, indices, vertexCount);
+        public void EncodeFilterQuat(Span<byte> destination, int count, int stride, int bits, ReadOnlySpan<float> quaternionsXyzw)
+            => inner.EncodeFilterQuat(destination, count, stride, bits, quaternionsXyzw);
+        public void EncodeFilterExp(Span<byte> destination, int count, int stride, int bits, ReadOnlySpan<float> data, MeshOptimizerExpMode mode)
+            => inner.EncodeFilterExp(destination, count, stride, bits, data, mode);
+        public void EncodeFilterColor(Span<byte> destination, int count, int stride, int bits, ReadOnlySpan<float> rgba) => inner.EncodeFilterColor(destination, count, stride, bits, rgba);
+        public void DecodeFilterQuat(Span<byte> buffer, int count, int stride) => inner.DecodeFilterQuat(buffer, count, stride);
+        public void DecodeFilterExp(Span<byte> buffer, int count, int stride) => inner.DecodeFilterExp(buffer, count, stride);
+        public void DecodeFilterColor(Span<byte> buffer, int count, int stride) => inner.DecodeFilterColor(buffer, count, stride);
+        public void SpatialSortRemap(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride)
+            => inner.SpatialSortRemap(destination, positions, vertexCount, positionsStride);
+        public void SpatialClusterPoints(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride, int clusterSize)
+            => inner.SpatialClusterPoints(destination, positions, vertexCount, positionsStride, clusterSize);
+        public void GeneratePositionRemap(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride)
+            => inner.GeneratePositionRemap(destination, positions, vertexCount, positionsStride);
+        public int FilterIndexBuffer(Span<uint> destination, ReadOnlySpan<uint> indices, ReadOnlySpan<float> vertices, int vertexCount, int vertexSize, int vertexStride)
+            => inner.FilterIndexBuffer(destination, indices, vertices, vertexCount, vertexSize, vertexStride);
+    }
 }
