@@ -38,6 +38,12 @@ public sealed class FfmpegEncoder
     /// <summary>The longest time that <c>ffmpeg -encoders</c> can take.</summary>
     private static readonly TimeSpan EncoderListTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>The scale filter options that convert RGB to BT.709 limited-range YUV.</summary>
+    private const string Bt709ScaleOptions = "out_color_matrix=bt709:out_range=tv";
+
+    /// <summary>The output options that tag a video with the BT.709 color space, primaries, and transfer.</summary>
+    private static readonly string[] Bt709Tags = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"];
+
     /// <summary>Creates an encoder.</summary>
     /// <param name="ffmpegPath">The ffmpeg executable: a path, or a command that the system finds on the PATH.</param>
     /// <param name="h264Encoder">
@@ -239,20 +245,33 @@ public sealed class FfmpegEncoder
             "-an", "-threads", "1", "-fflags", "+bitexact", "-flags:v", "+bitexact", "-map_metadata", "-1",
         ];
 
-        if (rendition.Height < height)
-            arguments.AddRange(["-vf", string.Create(CultureInfo.InvariantCulture, $"scale=-2:{rendition.Height}:flags=area")]);
+        // The videos convert RGB to BT.709 limited-range YUV and tag it, so that players do not use the BT.601
+        // default of the converter. The posters stay RGB for the WebP encoder.
+        bool video = rendition.Codec is LoopRendition.Vp9Codec or LoopRendition.H264Codec;
+        string? filter = rendition.Height < height
+            ? string.Create(CultureInfo.InvariantCulture, $"scale=-2:{rendition.Height}:flags=area")
+            : null;
+        if (video)
+            filter = filter is null ? "scale=" + Bt709ScaleOptions : filter + ":" + Bt709ScaleOptions;
+        if (filter is not null)
+            arguments.AddRange(["-vf", filter]);
 
         string bitrate = rendition.Height >= 1080 ? "4M" : "1M";
         switch (rendition.Codec)
         {
             case LoopRendition.Vp9Codec:
                 arguments.AddRange(["-c:v", Vp9EncoderName, "-b:v", "0", "-crf", "34", "-deadline", "good", "-cpu-used", "2", "-row-mt", "0", "-pix_fmt", "yuv420p"]);
+                arguments.AddRange(Bt709Tags);
                 break;
             case LoopRendition.H264Codec when h264Name == NvencEncoderName:
-                arguments.AddRange(["-c:v", NvencEncoderName, "-preset", "p5", "-b:v", bitrate, "-pix_fmt", "yuv420p", "-movflags", "+faststart"]);
+                arguments.AddRange(["-c:v", NvencEncoderName, "-preset", "p5", "-b:v", bitrate, "-pix_fmt", "yuv420p"]);
+                arguments.AddRange(Bt709Tags);
+                arguments.AddRange(["-movflags", "+faststart"]);
                 break;
             case LoopRendition.H264Codec:
-                arguments.AddRange(["-c:v", OpenH264EncoderName, "-b:v", bitrate, "-pix_fmt", "yuv420p", "-movflags", "+faststart"]);
+                arguments.AddRange(["-c:v", OpenH264EncoderName, "-b:v", bitrate, "-pix_fmt", "yuv420p"]);
+                arguments.AddRange(Bt709Tags);
+                arguments.AddRange(["-movflags", "+faststart"]);
                 break;
             case LoopRendition.WebpCodec:
                 arguments.AddRange(["-frames:v", "1", "-c:v", WebpEncoderName, "-quality", "85"]);
