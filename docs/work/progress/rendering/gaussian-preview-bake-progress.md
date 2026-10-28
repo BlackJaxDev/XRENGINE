@@ -83,6 +83,19 @@ Two changes keep the files identical:
 - The world fixture has the two directional lights and the ambient light of the default stage. A world bake keeps the
   lighting of the world, and with no light the loop was black.
 
+## Breaking Changes
+
+- `GaussianSplatComponent` is no longer a `ModelComponent`. Cooked content from an earlier engine version that holds a
+  `GaussianSplatComponent` with the members of `ModelComponent` does not load: under the runtime read budget the cooked
+  reader stops with `CookedBinary.UnknownMember`. Cook that content again.
+- `ShaderHelper.GaussianSplatVertex()` and `ShaderHelper.GaussianSplatFragment()` are removed. The splat renderer
+  (`GaussianSplatRenderer`) draws with `ShaderHelper.GaussianSplatQuadVertex()` and
+  `ShaderHelper.GaussianSplatQuadFragment()` (`Gaussian/GaussianSplatQuad.vs` and `.fs`).
+- `GaussianCache.AcceptChunk` returns a value: true when it decoded the chunk, false when the chunk was accepted before.
+  A chunk that is accepted already does not throw `GaussianCache.ChunkOutOfOrder` any more.
+- The cache reader checks every header against the format limits of `GaussianCacheHeader` and rejects a chunk path
+  that is not relative to the folder of the root asset.
+
 ## Open Items
 
 - The avatar inside the world fixture does not animate in the bake. The bake reports `clip-static` and makes a still
