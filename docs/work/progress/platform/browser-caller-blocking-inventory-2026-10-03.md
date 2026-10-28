@@ -2,6 +2,28 @@
 
 Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
 
+## Cache metadata follow-up (2026-10-28)
+
+The scan at implementation commit `d4930493443b3740e54f172d7b7d28a363fd530d`
+uses the same 19 roots, 5,254 tracked C# paths, and expressions as the refresh
+below. Cache metadata placement removes 16 direct-file matching lines and one
+matched file from Core. Current direct-file counts are:
+
+| Root | Matched files / matching lines |
+| --- | ---: |
+| Core | 11 / 32 |
+| Rendering | 9 / 31 |
+| Host | 2 / 5 |
+| Data | 13 / 54 |
+| **Total** | **35 / 122** |
+
+Core and Rendering total **20 files / 63 lines**. The asset-manager group below
+now has **8 files / 29 lines**. Blocking, thread, task, and Core asset-wrapper
+counts are unchanged. The [cache metadata record](browser-runtime-asset-io-boundaries-2026-10-03.md#third-party-cache-metadata-placement-2026-10-28)
+records the provider contract and bounded runtime evidence. The following
+refresh is retained as the preceding source snapshot. No whole-inventory
+requirement is complete.
+
 ## Committed-source refresh (2026-10-28)
 
 The published branch was still at `ff0eabf95a00f24776c07b1e7775d20191c77cda`

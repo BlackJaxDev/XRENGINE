@@ -1,5 +1,72 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Third-party cache metadata placement (2026-10-28)
+
+Implementation commit `d4930493443b3740e54f172d7b7d28a363fd530d` moves
+all direct file probes, timestamps, corrupt-cache deletion, and directory
+creation out of `AssetManager.Loading.SerializationAndCache`. The existing
+`IAssetMetadataFileBackend` owns these operations. No interface, dependency,
+cache format, shader, native UI, or reference-runtime source changed.
+
+Each load or authority operation captures one provider after host-file admission.
+The same provider serves source, cache, and import-options metadata, including
+cleanup and directory setup after asynchronous work. Deferred warmup captures a
+provider when its job starts. Cache codec decisions, timestamp ordering, generic
+corruption cleanup, and best-effort write catches retain their existing behavior.
+Custom native hosts now need this capability for the affected cache entry points,
+even for missing files. The [composition contract](../../../architecture/runtime/project-organization.md)
+records that requirement. Payload readers, codecs, importers, and serialization
+keep their own owners. This change does not create a graph-wide source lease or
+an atomic file snapshot.
+
+A disposable executable invokes the compiled Core cache methods with the existing
+publisher file adapter and a recording metadata wrapper. Its 15 checks pass:
+
+- Cold import and cache-directory creation.
+- Generic, type-based, and asynchronous warm-cache hits.
+- Source timestamp invalidation and reimport.
+- Corrupt generic-cache deletion and reimport.
+- Retained metadata ownership through synchronous and asynchronous provider replacement.
+- Fresh-cache acceptance, newer import-options rejection, and missing-cache rejection.
+- Best-effort directory failure with the imported asset returned.
+- Explicit missing-provider failure and non-synchronous-source rejection.
+- Cooked authority-path bypass without a provider.
+
+Core and the disposable executable compile in Release with zero warnings and
+errors. Independent source review found no missed helper caller or remaining
+direct `File` or `Directory` operation in this file. No tracked test source or
+assertion changed. Evidence uses
+`Build/_AgentValidation/20261028-120000-webgpu-io/`: `logs/cache-core-build.log`,
+`logs/cache-smoke-build.log`, `logs/cache-smoke.log`, and
+`reports/cache-inventory.json`. An initial disposable harness compile used
+`AssetManager` in a `using` declaration; the harness now calls its explicit
+`Dispose()` method. That correction changed no production source.
+
+The full local publication gate passes at that implementation source. Editor,
+Server, and VRClient Release builds report zero warnings and errors, with
+`EnableWindowsTargeting=true` on Linux. All 19 manifest projects compile for
+`browser-wasm`; Browser publishes with `WasmBuildNative=true`, the pinned Jolt
+managed sources and native archives, and the existing interpreter mode. The
+browser gate reports no warning or error diagnostics. The unchanged
+`DesktopAssetFileSystemTests` fixture passes through NUnitLite: one test, zero
+failures, warnings, or skips. The full `AssetCacheTests` fixture was not run.
+
+Logs are `logs/cache-gate-Editor.log`, `logs/cache-gate-Server.log`,
+`logs/cache-gate-VRClient.log`, `logs/cache-headless-build.log`,
+`logs/cache-headless-test.log`, and `logs/cache-full-gate.log` under the same run.
+The fresh output is `cache-browser-publish/wwwroot/`; its native runtime, Browser,
+and Core WASM sizes and hashes are in `reports/cache-browser-publish-hashes.json`.
+The output has one resource for each of those identities. These checks do not
+establish Windows startup, live browser rendering, GPU parity, or post-push CI.
+No shader source changed, so the previous production cook was not repeated.
+
+The immutable-source inventory removes 16 matching lines and one matched file.
+Core plus Rendering now have 20 files / 63 matching lines; the four-root total
+is 35 files / 122 lines. Blocking counts remain 108 files / 198 lines, with four
+explicit thread constructors and 61 task/parallel/pool lines across 30 files.
+These are lexical counts, not browser reachability or execution results.
+UR02.03b and UR03.02b2 remain open; the checklist stays 122/163 with 41 open.
+
 ## World identity file placement (2026-10-28)
 
 At implementation commit `9ccdbf7654bf320d1fa9c9de6d7c5d122664677e`,
