@@ -6,7 +6,8 @@ using XREngine.Scene;
 namespace XREngine.Rendering.UI;
 
 /// <summary>Reuses a bounded set of horizontal cell rows under UIListTransform virtualization.</summary>
-public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtualAccessibilityProvider, IVirtualListItemIndex
+public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtualAccessibilityProvider, IVirtualListItemIndex,
+    IVirtualListItemExtents
 {
     private sealed class RowState
     {
@@ -36,6 +37,8 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
     private readonly List<WeakReference<RowState>> _liveRows = [];
     private ulong? _selectedId;
     private ulong _selectionRevision;
+    private Func<T, float>? _itemExtent;
+    private ulong _extentRevision;
 
     public UIVirtualTableProvider(IUIVirtualTableSource<T> source,
         params UIVirtualTableColumn<T>[] columns)
@@ -52,6 +55,31 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
 
     public int Count => _source.Count;
     public ulong Revision => _source.Revision;
+
+    /// <summary>
+    /// Supplies the measured row height of each item. Null uses the list's fixed ItemSize.
+    /// The extent must be known before the row binds. See <see cref="IVirtualListItemExtents"/>.
+    /// </summary>
+    public Func<T, float>? ItemExtent
+    {
+        get => _itemExtent;
+        set
+        {
+            if (ReferenceEquals(_itemExtent, value))
+                return;
+            _itemExtent = value;
+            _extentRevision++;
+        }
+    }
+
+    public bool HasItemExtents => _itemExtent is not null;
+    public ulong ExtentRevision => _extentRevision;
+    public float GetItemExtent(int index)
+        => _itemExtent is { } extent ? extent(_source.GetItem(index)) :
+            throw new InvalidOperationException("This table has no measured item extents.");
+
+    /// <summary>Requests a new read of every item extent after the measured content changes.</summary>
+    public void InvalidateItemExtents() => _extentRevision++;
     public int AccessibilityItemCount => Count;
     public Func<T, string>? AccessibleRowName { get; set; }
     public bool TryGetAccessibilityItem(int index, out UIVirtualAccessibilityItem item)

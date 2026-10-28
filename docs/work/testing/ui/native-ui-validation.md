@@ -1140,6 +1140,23 @@ popups, focus during row recycling, exact-node replay, custom/variable-height
 fallback, and measured frame/allocation costs. No faster-than-ImGui claim is made.
 
 
+### Measured virtual row validation scope
+
+`UIVirtualMeasuredExtentTests` covers measured content extent, visible range,
+row placement, extent revision rereads, scroll-to with measured starts, rejected
+invalid extents, and the fixed `ItemSize` path when a provider disables extents.
+`EditorDictionaryRowPlanTests` covers separator normalization, line counts, the
+32-line limit, and row height. `EditorDictionaryVirtualizationTests` now expects
+measured virtual rows for a multiline read-only value and a multiline key, and an
+exact-key write with Undo through the multiline row. These cases replace the
+earlier eager-fallback expectations. Run them on Windows with `--no-build`.
+
+Live checks remain pending: scroll a dictionary with mixed one-line and
+multiline rows, confirm that rows do not overlap, and confirm that clipped text
+stays inside each row. Measure steady scrolling separately from the extent
+rebuild. No frame-time claim is made.
+
+
 ### Fixed-height dictionary validation scope
 
 `EditorDictionaryVirtualizationTests` adds four cases: bounded 10,000-entry

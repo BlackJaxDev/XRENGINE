@@ -560,10 +560,12 @@ internal static class UILayoutValueKernel
             int childIndex = children[node.FirstChild + i].NodeIndex;
             if (provider)
             {
-                float stride = itemSize + spacing;
-                float logical = children[node.FirstChild + i].Row * stride - offset;
-                Vector2 pos = horizontal ? new(logical, 0) : new(0, region.Height - logical - itemSize);
-                Vector2 extentSize = horizontal ? new(itemSize, region.Height) : new(region.Width, itemSize);
+                // The owner thread resolves fixed and measured row placement during synchronization.
+                ref readonly UILayoutChildInput edge = ref children[node.FirstChild + i];
+                float rowSize = edge.ListExtent;
+                float logical = edge.ListStart - offset;
+                Vector2 pos = horizontal ? new(logical, 0) : new(0, region.Height - logical - rowSize);
+                Vector2 extentSize = horizontal ? new(rowSize, region.Height) : new(region.Width, rowSize);
                 Arrange(childIndex, new BoundingRectangleF(pos, extentSize), pos + region.Translation,
                     visible, nodes, children, outputs, cache);
                 continue;

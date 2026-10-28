@@ -22,7 +22,7 @@ public static partial class InspectorPropertyEditors
             {
                 Type bindingType = typeof(LinkedListElementBinding<>).MakeGenericType(elementType);
                 PropertyInfo bindingProperty = bindingType.GetProperty(nameof(LinkedListElementBinding<object>.Value))!;
-                EditorFixedHeightRowContract contract = new(
+                EditorVirtualRowContract contract = new(
                     elementType,
                     bindingProperty,
                     values.Count,
@@ -33,10 +33,10 @@ public static partial class InspectorPropertyEditors
                     (index, rowWrite) => RemoveLinkedListElement(
                         CreateLinkedRowSources(sources, rowWrite), index, generation),
                     () => AddLinkedListElement(sources, generation));
-                RenderVirtualFixedHeightRows(contract, generation);
+                RenderVirtualRows(contract, generation);
             }
 
-            private void RenderVirtualFixedHeightRows(EditorFixedHeightRowContract contract,
+            private void RenderVirtualRows(EditorVirtualRowContract contract,
                 ulong generation)
             {
                 SceneNode branch = _container.NewChild();
@@ -72,7 +72,7 @@ public static partial class InspectorPropertyEditors
                     UIListTransform list = scrollNode.NewChild().SetTransform<UIListTransform>();
                     list.MinAnchor = Vector2.Zero;
                     list.MaxAnchor = Vector2.One;
-                    list.ItemSize = 28;
+                    list.ItemSize = EditorVirtualRowExtent.SingleLineHeight;
                     list.VirtualOverscan = 2;
                     list.ItemAlignment = EListAlignment.TopOrLeft;
                     _listRows.Reset(contract.Count);
@@ -85,6 +85,9 @@ public static partial class InspectorPropertyEditors
                             (cell, index, id) => BindVirtualCollectionCell(cell, index, id,
                                 contract, generation, branch),
                             UnbindVirtualCollectionCell));
+                    // Row items are indices, so the contract measures each row by index.
+                    if (contract.RowExtent is { } rowExtent)
+                        provider.ItemExtent = rowExtent;
                     list.VirtualProvider = provider;
                     if (!IsCurrentBuild(generation) && ReferenceEquals(list.VirtualProvider, provider))
                         list.DetachVirtualProviderForOwnerTeardown();
@@ -150,7 +153,7 @@ public static partial class InspectorPropertyEditors
             }
 
             private void BindVirtualCollectionCell(UIBoundableTransform cell, int index, ulong rowId,
-                EditorFixedHeightRowContract contract, ulong generation, SceneNode branch)
+                EditorVirtualRowContract contract, ulong generation, SceneNode branch)
             {
                 if (!IsCurrentBuild(generation) ||
                     !_virtualCells.TryGetValue(cell, out EditorVirtualCollectionRowCellState? state))

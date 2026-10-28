@@ -396,7 +396,7 @@ public static partial class InspectorPropertyEditors
                     sources.All(source => source.Adapter.KeyType == keyType &&
                         source.Adapter.ValueType == valueType);
                 if (!IsCurrentBuild(generation)) return;
-                // Wrapped labels and read-only values retain their existing layout.
+                // Multiline labels and read-only values use measured virtual rows.
                 if (canMutate && CanUseFixedHeightCollectionEditor(valueType))
                 {
                     EditorDictionarySnapshot primary = sources[0].Displayed;

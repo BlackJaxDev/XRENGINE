@@ -42,29 +42,63 @@ public sealed class EditorDictionaryRowPlanTests
         Assert.That(plan!.Count, Is.Zero);
     }
 
-    [TestCase('\r')]
-    [TestCase('\n')]
-    [TestCase('\u0085')]
-    [TestCase('\u2028')]
-    [TestCase('\u2029')]
-    public void MultilineKeyRejectsFixedHeightPlan(char separator)
+    [TestCase("\r")]
+    [TestCase("\n")]
+    [TestCase("\r\n")]
+    [TestCase("\u0085")]
+    [TestCase("\u2028")]
+    [TestCase("\u2029")]
+    public void MultilineKeyUsesNormalizedMeasuredRow(string separator)
     {
         Assert.That(EditorDictionaryRowPlan.TryCreate(
-            [new([$"first{separator}second"], [1], typeof(string))], out var plan), Is.False);
-        Assert.That(plan, Is.Null);
+            [new([$"first{separator}second", "single"], [1, 2], typeof(string))], out var plan), Is.True);
+        Assert.That(plan!.HasMultilineRows, Is.True);
+        Assert.That(plan.Label(0), Is.EqualTo("first\nsecond"));
+        Assert.That(plan.LineCount(0), Is.EqualTo(2));
+        Assert.That(plan.LineCount(1), Is.EqualTo(1));
     }
 
-    [TestCase('\r')]
-    [TestCase('\n')]
-    [TestCase('\u0085')]
-    [TestCase('\u2028')]
-    [TestCase('\u2029')]
-    public void MultilineReadOnlyValueRejectsWholePlan(char separator)
+    [Test]
+    public void MultilineReadOnlyValueSetsTheRowLineCount()
     {
         Assert.That(EditorDictionaryRowPlan.TryCreate(
-            [new(["common", "missing"], ["same", $"first{separator}second"], typeof(string)),
-             new(["common"], ["other"], typeof(string))], out var plan), Is.False);
-        Assert.That(plan, Is.Null);
+            [new(["common", "missing"], ["same", "a\r\nb\u2028c"], typeof(string)),
+             new(["common"], ["other"], typeof(string))], out var plan), Is.True);
+        Assert.That(plan!.ReadOnlyText(1), Is.EqualTo("a\nb\nc"));
+        Assert.That(plan.LineCount(0), Is.EqualTo(1));
+        Assert.That(plan.LineCount(1), Is.EqualTo(3));
+    }
+
+    [Test]
+    public void SingleLineRowsKeepTheFixedHeightPath()
+    {
+        Assert.That(EditorDictionaryRowPlan.TryCreate(
+            [new(["a", "b"], [1, 2], typeof(string))], out var plan), Is.True);
+        Assert.That(plan!.HasMultilineRows, Is.False);
+    }
+
+    [Test]
+    public void LongTextIsLimitedWithAHiddenLineCount()
+    {
+        string text = string.Join("\n", Enumerable.Range(0, 40));
+        string display = EditorDictionaryRowPlan.ToDisplayText(text, out int lines);
+        string[] shown = display.Split('\n');
+        Assert.That(lines, Is.EqualTo(EditorDictionaryRowPlan.MaxDisplayLines));
+        Assert.That(shown, Has.Length.EqualTo(EditorDictionaryRowPlan.MaxDisplayLines));
+        Assert.That(shown[^2], Is.EqualTo("30"));
+        Assert.That(shown[^1], Is.EqualTo("... (9 more lines)"));
+
+        string exact = string.Join("\n", Enumerable.Range(0, EditorDictionaryRowPlan.MaxDisplayLines));
+        Assert.That(EditorDictionaryRowPlan.ToDisplayText(exact, out lines), Is.EqualTo(exact));
+        Assert.That(lines, Is.EqualTo(EditorDictionaryRowPlan.MaxDisplayLines));
+    }
+
+    [Test]
+    public void RowExtentGrowsWithLineCount()
+    {
+        Assert.That(EditorVirtualRowExtent.ForLines(1, 14), Is.EqualTo(EditorVirtualRowExtent.SingleLineHeight));
+        Assert.That(EditorVirtualRowExtent.ForLines(3, 14), Is.EqualTo(EditorVirtualRowExtent.SingleLineHeight + 37));
+        Assert.That(EditorVirtualRowExtent.ForLines(3, float.NaN), Is.EqualTo(EditorVirtualRowExtent.SingleLineHeight));
     }
 
     [Test]

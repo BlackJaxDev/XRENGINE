@@ -17,6 +17,8 @@ namespace XREngine.Rendering.UI
             public int Index = -1;
             public UIVirtualRowLease Lease;
             public ulong Revision;
+            public float Start;
+            public float Extent;
         }
 
         private IVirtualListProvider? _virtualProvider;
@@ -38,6 +40,16 @@ namespace XREngine.Rendering.UI
         private ulong _virtualProviderIncarnation;
         private float _virtualViewportExtent;
         private float _virtualScrollOffset;
+        // Measured extents use prefix starts: item i covers [starts[i], starts[i + 1] - spacing).
+        // The array grows only when the item count grows and is rebuilt only on a revision change.
+        private double[] _virtualStarts = [];
+        private int _virtualStartsCount = -1;
+        private ulong _virtualStartsRevision;
+        private ulong _virtualStartsExtentRevision;
+        private ulong _virtualStartsIncarnation;
+        private double _virtualStartsSpacing;
+        private bool _virtualMeasured;
+        private float _virtualMeasuredExtent;
 
         /// <summary>
         /// Provider-backed rows use one subtree per visible item and do not use the legacy Virtual flag.
@@ -56,6 +68,7 @@ namespace XREngine.Rendering.UI
                 _virtualProviderIncarnation++;
                 SetField(ref _virtualProvider, value);
                 _virtualItemCount = 0;
+                ResetVirtualStarts();
                 InvalidateMeasure();
             }
         }
@@ -119,6 +132,7 @@ namespace XREngine.Rendering.UI
             _virtualEndIndex = 0;
             _virtualViewportExtent = 0;
             _virtualScrollOffset = 0;
+            ResetVirtualStarts();
             List<Exception>? failures = null;
             try { InvalidateMeasure(); }
             catch (Exception error) { (failures ??= []).Add(error); }
@@ -198,14 +212,31 @@ namespace XREngine.Rendering.UI
         public bool TryScrollToVirtualItem(ulong itemId, bool center = false)
         {
             if (itemId == 0 || _virtualProvider is not IVirtualListItemIndex lookup ||
-                ItemSize is not float size || !float.IsFinite(size) || size <= 0 ||
                 !lookup.TryGetIndexOfItemId(itemId, out int index) ||
                 (uint)index >= (uint)_virtualProvider.Count || _virtualProvider.GetItemId(index) != itemId)
                 return false;
-            GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+            IVirtualListProvider provider = _virtualProvider;
             double spacing = float.IsFinite(ItemSpacing) ? Math.Max(0, ItemSpacing) : 0;
-            double stride = size + spacing;
-            double start = index * stride;
+            double start, size, total;
+            int count = provider.Count;
+            if (provider is IVirtualListItemExtents { HasItemExtents: true } extents)
+            {
+                GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+                EnsureVirtualStarts(provider, extents, count, spacing);
+                start = _virtualStarts[index];
+                size = _virtualStarts[index + 1] - start - spacing;
+                total = count == 0 ? 0 : _virtualStarts[count] - spacing;
+            }
+            else
+            {
+                if (ItemSize is not float fixedSize || !float.IsFinite(fixedSize) || fixedSize <= 0)
+                    return false;
+                GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+                double stride = fixedSize + spacing;
+                start = index * stride;
+                size = fixedSize;
+                total = (double)count * stride - spacing;
+            }
             double end = start + size;
             double viewport = _virtualViewportExtent;
             double scroll = float.IsFinite(ContentScrollOffset) ? Math.Max(0, ContentScrollOffset) : 0;
@@ -215,7 +246,7 @@ namespace XREngine.Rendering.UI
                 scroll = start;
             else if (viewport <= 0 || end > scroll + viewport)
                 scroll = viewport > 0 ? end - viewport : start;
-            double maxScroll = Math.Max(0, (double)_virtualProvider.Count * stride - spacing - viewport);
+            double maxScroll = Math.Max(0, total - viewport);
             ContentScrollOffset = (float)Math.Clamp(scroll, 0, Math.Min(maxScroll, float.MaxValue));
             return true;
         }
@@ -242,13 +273,18 @@ namespace XREngine.Rendering.UI
         }
 
         /// <summary>
-        /// Gets extent from cached count and fixed item size. No source items are visited.
+        /// Gets extent from the cached count and fixed item size, or from the measured extents of
+        /// the last synchronization. No source items are visited.
         /// </summary>
         public float VirtualContentExtent
         {
             get
             {
-                if (_virtualProvider is null || _virtualItemCount == 0 || ItemSize is not float size || !float.IsFinite(size) || size <= 0)
+                if (_virtualProvider is null || _virtualItemCount == 0)
+                    return 0;
+                if (_virtualMeasured)
+                    return _virtualMeasuredExtent;
+                if (ItemSize is not float size || !float.IsFinite(size) || size <= 0)
                     return 0;
                 double spacing = float.IsFinite(ItemSpacing) ? Math.Max(0, ItemSpacing) : 0;
                 double extent = (double)_virtualItemCount * size + (double)(_virtualItemCount - 1) * spacing;
@@ -266,24 +302,45 @@ namespace XREngine.Rendering.UI
             if (provider is null)
                 return;
             GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
-            if (ItemAlignment != EListAlignment.TopOrLeft || ItemSize is not float size || !float.IsFinite(size) || size <= 0)
-                throw new InvalidOperationException("Provider-backed lists require a positive fixed ItemSize and TopOrLeft alignment.");
+            IVirtualListItemExtents? extents = provider is IVirtualListItemExtents { HasItemExtents: true } measured ? measured : null;
+            float size = 0;
+            if (ItemAlignment != EListAlignment.TopOrLeft ||
+                (extents is null && (ItemSize is not float fixedSize || !float.IsFinite(size = fixedSize) || size <= 0)))
+                throw new InvalidOperationException(
+                    "Provider-backed lists require TopOrLeft alignment and either measured item extents or a positive fixed ItemSize.");
 
             int count = provider.Count;
             if (count < 0)
                 throw new InvalidOperationException("Virtual list item count cannot be negative.");
             float spacing = float.IsFinite(ItemSpacing) ? Math.Max(0, ItemSpacing) : 0;
-            double stride = (double)size + spacing;
             double viewport = float.IsFinite(viewportExtent) ? Math.Max(0, viewportExtent) : 0;
             double scroll = float.IsFinite(ContentScrollOffset) ? Math.Max(0, ContentScrollOffset) : 0;
-            double maxScroll = Math.Max(0, (double)count * stride - spacing - viewport);
-            scroll = Math.Min(scroll, maxScroll);
-            int first = (int)Math.Min(count, Math.Max(0, Math.Floor(scroll / stride) - _virtualOverscan));
-            int end = (int)Math.Min(count, Math.Max(first, Math.Ceiling((scroll + viewport) / stride) + _virtualOverscan));
+            int first, end;
+            float measuredExtent = 0;
+            if (extents is not null)
+            {
+                EnsureVirtualStarts(provider, extents, count, spacing);
+                double total = count == 0 ? 0 : _virtualStarts[count] - spacing;
+                measuredExtent = (float)Math.Min(total, float.MaxValue);
+                scroll = Math.Min(scroll, Math.Max(0, total - viewport));
+                first = Math.Max(0, FindVirtualItemAt(scroll, count) - _virtualOverscan);
+                end = (int)Math.Min(count, Math.Max(first, (long)FindVirtualItemStartingAtOrAfter(scroll + viewport, count) + _virtualOverscan));
+            }
+            else
+            {
+                double stride = (double)size + spacing;
+                double maxScroll = Math.Max(0, (double)count * stride - spacing - viewport);
+                scroll = Math.Min(scroll, maxScroll);
+                first = (int)Math.Min(count, Math.Max(0, Math.Floor(scroll / stride) - _virtualOverscan));
+                end = (int)Math.Min(count, Math.Max(first, Math.Ceiling((scroll + viewport) / stride) + _virtualOverscan));
+            }
             if (end - first > 4096)
                 throw new InvalidOperationException("Virtual list viewport exceeds the 4096-row realization limit.");
 
-            bool countChanged = count != _virtualItemCount;
+            bool countChanged = count != _virtualItemCount || (extents is not null) != _virtualMeasured ||
+                (extents is not null && measuredExtent != _virtualMeasuredExtent);
+            _virtualMeasured = extents is not null;
+            _virtualMeasuredExtent = measuredExtent;
             bool rangeChanged = first != _virtualFirstIndex || end != _virtualEndIndex;
             bool positionChanged = _virtualViewportExtent != (float)viewport || _virtualScrollOffset != (float)scroll;
             _virtualItemCount = count;
@@ -344,10 +401,121 @@ namespace XREngine.Rendering.UI
                 }
             }
 
+            // Placement is read from the slot by owner arrangement and by worker edge capture.
+            bool placementChanged = false;
+            double fixedStride = (double)size + spacing;
+            for (int i = 0; i < _virtualSlots.Count; i++)
+            {
+                VirtualSlot slot = _virtualSlots[i];
+                if (slot.Index < 0)
+                    continue;
+                float start, extent;
+                if (extents is not null)
+                {
+                    start = (float)_virtualStarts[slot.Index];
+                    extent = (float)Math.Max(0, _virtualStarts[slot.Index + 1] - _virtualStarts[slot.Index] - spacing);
+                }
+                else
+                {
+                    start = (float)(slot.Index * fixedStride);
+                    extent = size;
+                }
+                if (slot.Start == start && slot.Extent == extent)
+                    continue;
+                slot.Start = start;
+                slot.Extent = extent;
+                placementChanged = true;
+            }
+
             if (countChanged)
                 InvalidateMeasure();
-            else if (rangeChanged || positionChanged)
+            else if (rangeChanged || positionChanged || placementChanged)
                 InvalidateArrange();
+        }
+
+        /// <summary>
+        /// Gets the logical main-axis start and extent of a realized row. The start does not include
+        /// the scroll offset. Layout capture uses these values so worker and owner placement agree.
+        /// </summary>
+        public bool TryGetVirtualRowPlacement(UIBoundableTransform row, out int index, out float start, out float extent)
+        {
+            if (_slotsByRow.TryGetValue(row, out VirtualSlot? slot) && slot.Index >= 0)
+            {
+                index = slot.Index;
+                start = slot.Start;
+                extent = slot.Extent;
+                return true;
+            }
+            index = -1;
+            start = 0;
+            extent = 0;
+            return false;
+        }
+
+        private void ResetVirtualStarts()
+        {
+            _virtualStartsCount = -1;
+            _virtualMeasured = false;
+            _virtualMeasuredExtent = 0;
+        }
+
+        private void EnsureVirtualStarts(IVirtualListProvider provider, IVirtualListItemExtents extents, int count, double spacing)
+        {
+            ulong extentRevision = extents.ExtentRevision;
+            if (_virtualStartsCount == count && _virtualStartsRevision == provider.Revision &&
+                _virtualStartsExtentRevision == extentRevision && _virtualStartsIncarnation == _virtualProviderIncarnation &&
+                _virtualStartsSpacing == spacing)
+                return;
+            if (count >= Array.MaxLength)
+                throw new InvalidOperationException("Virtual list item count exceeds the measured extent limit.");
+            if (_virtualStarts.Length < count + 1)
+                _virtualStarts = new double[Math.Max(count + 1L, Math.Min(Array.MaxLength, _virtualStarts.Length * 2L))];
+            _virtualStartsCount = -1;
+            double cursor = 0;
+            for (int index = 0; index < count; index++)
+            {
+                float extent = extents.GetItemExtent(index);
+                if (!float.IsFinite(extent) || extent < 0)
+                    throw new InvalidOperationException("Virtual list item extents must be finite and not negative.");
+                _virtualStarts[index] = cursor;
+                cursor += extent + spacing;
+            }
+            _virtualStarts[count] = cursor;
+            _virtualStartsCount = count;
+            _virtualStartsRevision = provider.Revision;
+            _virtualStartsExtentRevision = extentRevision;
+            _virtualStartsIncarnation = _virtualProviderIncarnation;
+            _virtualStartsSpacing = spacing;
+        }
+
+        /// <summary>Gets the first item whose slot, including spacing, ends after the position.</summary>
+        private int FindVirtualItemAt(double position, int count)
+        {
+            int low = 0, high = count;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                if (_virtualStarts[middle + 1] > position)
+                    high = middle;
+                else
+                    low = middle + 1;
+            }
+            return low;
+        }
+
+        /// <summary>Gets the first item that starts at or after the position, or the count.</summary>
+        private int FindVirtualItemStartingAtOrAfter(double position, int count)
+        {
+            int low = 0, high = count;
+            while (low < high)
+            {
+                int middle = low + ((high - low) >> 1);
+                if (_virtualStarts[middle] >= position)
+                    high = middle;
+                else
+                    low = middle + 1;
+            }
+            return low;
         }
 
         public bool TryGetVirtualRowLease(UIBoundableTransform row, out UIVirtualRowLease lease)
@@ -395,6 +563,8 @@ namespace XREngine.Rendering.UI
             slot.Index = -1;
             slot.Lease = default;
             slot.Revision = 0;
+            slot.Start = 0;
+            slot.Extent = 0;
         }
 
         private void ReleaseVirtualRows()
@@ -413,15 +583,14 @@ namespace XREngine.Rendering.UI
 
         private void ArrangeVirtualRows(BoundingRectangleF region)
         {
-            float size = ItemSize ?? 0;
-            float stride = size + (float.IsFinite(ItemSpacing) ? Math.Max(0, ItemSpacing) : 0);
             float offset = _virtualScrollOffset;
             for (int i = 0; i < _virtualSlots.Count; i++)
             {
                 VirtualSlot slot = _virtualSlots[i];
                 if (slot.Index < 0)
                     continue;
-                float position = slot.Index * stride - offset;
+                float size = slot.Extent;
+                float position = slot.Start - offset;
                 float x = _horizontal ? position : 0;
                 float y = _horizontal ? 0 : region.Height - position - size;
                 if (slot.Row.PlacementInfo is UIListChildPlacementInfo placement)

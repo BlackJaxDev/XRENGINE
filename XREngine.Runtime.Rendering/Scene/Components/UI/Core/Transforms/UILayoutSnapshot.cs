@@ -435,6 +435,7 @@ internal sealed class UILayoutSnapshot
     private static UILayoutChildInput CaptureEdge(UITransform parent, UITransform child, int childIndex)
     {
         int row = 0, column = 0, rowSpan = 1, columnSpan = 1;
+        float listStart = 0, listExtent = 0;
         if (child.PlacementInfo is UIGridTransform.UIGridChildPlacementInfo grid)
         {
             row = grid.Row;
@@ -443,9 +444,10 @@ internal sealed class UILayoutSnapshot
             columnSpan = grid.ColumnSpan;
         }
         else if (parent is UIListTransform list && list.VirtualProvider is not null &&
-            child is UIBoundableTransform rowTransform && list.TryGetVirtualRowIndex(rowTransform, out int rowIndex))
+            child is UIBoundableTransform rowTransform &&
+            list.TryGetVirtualRowPlacement(rowTransform, out int rowIndex, out listStart, out listExtent))
             row = rowIndex;
-        return new(childIndex, row, column, rowSpan, columnSpan);
+        return new(childIndex, row, column, rowSpan, columnSpan, listStart, listExtent);
     }
 
     private static int CaptureNode(

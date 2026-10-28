@@ -528,7 +528,21 @@ boundary does not imply tested Windows IME behavior or a Linux IME implementatio
 `IVirtualListProvider` supplies item count, stable IDs, and row binding.
 `UIListTransform` realizes the viewport plus overscan and a bounded reusable row
 pool. Source extent uses count and fixed row height. Leases distinguish a physical
-row from its current logical item. `UIVirtualTreeProvider` keeps cached visible
+row from its current logical item.
+
+A provider can also implement `IVirtualListItemExtents`. When `HasItemExtents` is
+true, the list ignores `ItemSize` and reads one main-axis extent per item. It keeps
+prefix starts in a reusable array and rebuilds them only when `Count`, `Revision`,
+`ExtentRevision`, the provider incarnation, or the spacing changes. The rebuild is
+one pass over all items. A synchronization without these changes reads no extents
+and allocates nothing. The visible range uses two binary searches. Each extent must
+be finite and not negative; otherwise synchronization throws. The provider must
+know an extent before the row binds: the list does not measure row content.
+Synchronization stores the logical start and extent of each realized row.
+Owner arrangement and layout snapshot edges (`UILayoutChildInput.ListStart` and
+`ListExtent`) both use these stored values, so worker and owner placement agree for
+fixed and measured rows. `UIVirtualTableProvider.ItemExtent` forwards a per-item
+extent function; `InvalidateItemExtents` requests a new read. `UIVirtualTreeProvider` keeps cached visible
 ranges for tree mutations.
 
 `RequestVirtualItemFocus` requests indexed item realization on the owner thread.
@@ -2393,10 +2407,10 @@ Row rebinding allocates bounded binding and admission state for the visible
 working set. This is not a zero-allocation or measured latency claim.
 
 
-## Fixed-Height Dictionary Inspector Rows
+## Dictionary Inspector Rows
 
-Supported dictionaries now share the retained fixed-height row presenter with
-linked lists. `EditorFixedHeightRowContract` supplies the value type, binding
+Supported dictionaries now share the retained virtual row presenter with
+linked lists. `EditorVirtualRowContract` supplies the value type, binding
 property, count, labels, and existing Add/Remove actions. Both routes use one
 `UIVirtualTableProvider`, cell reuse path, and control-lifetime admission path.
 There is no second dictionary-specific row lifecycle.
@@ -2407,10 +2421,16 @@ fixed-height editor. `EditorDictionaryRowPlan` retains primary key order and
 labels. A key present in every selected source stays editable. A key missing
 from any selected source displays the primary value as read-only text; it has
 no active value binding or Remove action. Secondary-only keys are not added.
-Admission requires single-line key labels and single-line read-only values.
-Multiline keys or read-only values, custom/tall editors, and unsupported
-dictionary sources keep their prior layout and behavior.
-This does not decide variable-height virtualization.
+Multiline key labels and read-only values use measured rows. The plan converts
+CR, LF, CR LF, NEL, LS, and PS separators to LF and limits each text to 32 lines.
+The last shown line then states the number of hidden lines. Each row stores the
+larger line count of its label and read-only value. `EditorVirtualRowContract.RowExtent`
+is the explicit measured-height contract: it returns the row height for an index
+before the row binds. `EditorVirtualRowExtent.ForLines` gives 28 units for one line
+plus 1.3 times the font size for each added line. When every row has one line, the
+contract is null and the list keeps the fixed 28-unit path. Editable values keep
+their fixed-height editors. Custom or tall editors and unsupported dictionary
+sources keep their prior layout and behavior.
 
 `RenderVirtualDictionary` uses the primary captured snapshot for row keys and
 count. Binding creation resolves each owner's actual key object from that

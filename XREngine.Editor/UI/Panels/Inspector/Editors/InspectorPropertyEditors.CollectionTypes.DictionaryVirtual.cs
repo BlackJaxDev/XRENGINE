@@ -17,7 +17,7 @@ public static partial class InspectorPropertyEditors
                 Type bindingType = typeof(DictionaryValueBinding<,>).MakeGenericType(keyType, valueType);
                 PropertyInfo bindingProperty = bindingType.GetProperty(
                     nameof(DictionaryValueBinding<object, object>.Value))!;
-                EditorFixedHeightRowContract contract = new(
+                EditorVirtualRowContract contract = new(
                     valueType,
                     bindingProperty,
                     primary.Keys.Length,
@@ -28,8 +28,16 @@ public static partial class InspectorPropertyEditors
                     (index, rowWrite) => RemoveDictionaryEntry(
                         CreateDictionaryRowSources(sources, rowWrite), primary.Keys[index], generation),
                     () => AddDictionaryEntry(sources, generation),
-                    plan.ReadOnlyText);
-                RenderVirtualFixedHeightRows(contract, generation);
+                    plan.ReadOnlyText,
+                    plan.HasMultilineRows ? CreateDictionaryRowExtent(plan) : null);
+                RenderVirtualRows(contract, generation);
+            }
+
+            /// <summary>Measures each row from the retained line counts of the plan.</summary>
+            private static Func<int, float> CreateDictionaryRowExtent(EditorDictionaryRowPlan plan)
+            {
+                float fontSize = EditorUI.Styles.PropertyNameFontSize;
+                return index => EditorVirtualRowExtent.ForLines(plan.LineCount(index), fontSize);
             }
 
             private static EditorDictionarySourceLease[] CreateDictionaryRowSources(

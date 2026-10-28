@@ -219,43 +219,66 @@ public sealed class EditorDictionaryVirtualizationTests
     }
 
     [Test]
-    public void MultilineMissingStringValueKeepsEagerReadonlyLayout()
+    public void MultilineMissingStringValueUsesMeasuredReadonlyRow()
     {
         using UITestShaderScope shaders = new();
         EditorStringDictionaryVirtualizationTestTarget first = new();
         first.Values.Add("common", "one");
-        first.Values.Add("missing", "line one\nline two");
+        first.Values.Add("missing", "line one\r\nline two");
         EditorStringDictionaryVirtualizationTestTarget second = new();
         second.Values.Add("common", "two");
         SceneNode detail = CreateString(first, second);
         try
         {
-            Assert.That(HasVirtualList(detail), Is.False);
+            UIListTransform list = VirtualList(detail);
+            list.SynchronizeVirtualRows(280);
+            float twoLines = EditorVirtualRowExtent.ForLines(2, EditorUI.Styles.PropertyNameFontSize);
+            Assert.That(RowExtent(list, RowForLabel(detail, "common")),
+                Is.EqualTo(EditorVirtualRowExtent.SingleLineHeight));
             SceneNode missing = RowForLabel(detail, "missing");
+            Assert.That(RowExtent(list, missing), Is.EqualTo(twoLines));
+            Assert.That(list.VirtualContentExtent, Is.EqualTo(EditorVirtualRowExtent.SingleLineHeight + twoLines));
             Assert.That(Nodes(missing).SelectMany(node =>
                 node.Components.OfType<UITextComponent>())
-                .Any(text => text.Text == "line one\nline two"), Is.True);
+                .Any(text => text.Text == "line one\nline two" && text.SceneNode.IsActiveSelf), Is.True);
             Assert.That(Nodes(missing).SelectMany(node =>
-                node.Components.OfType<UITextInputComponent>()), Is.Empty);
+                node.Components.OfType<UITextInputComponent>()).Any(input => input.SceneNode.IsActiveInHierarchy),
+                Is.False);
         }
         finally { detail.Destroy(true); }
     }
 
     [Test]
-    public void MultilineStringKeyKeepsEagerLabelLayout()
+    public void MultilineStringKeyUsesMeasuredLabelRowAndWritesTheExactKey()
     {
         using UITestShaderScope shaders = new();
         EditorDictionaryMutationTestTarget target = new();
-        string key = "first\nsecond";
+        string key = "first\r\nsecond";
         target.Values.Add(key, 4);
+        target.Values.Add("single", 5);
         SceneNode detail = Create(target);
         try
         {
-            Assert.That(HasVirtualList(detail), Is.False);
-            Assert.That(Nodes(detail).SelectMany(node => node.Components.OfType<UITextComponent>())
-                .Any(label => label.Text == key), Is.True);
+            UIListTransform list = VirtualList(detail);
+            list.SynchronizeVirtualRows(280);
+            SceneNode row = RowForLabel(detail, "first\nsecond");
+            Assert.That(RowExtent(list, row),
+                Is.EqualTo(EditorVirtualRowExtent.ForLines(2, EditorUI.Styles.PropertyNameFontSize)));
+            Assert.That(RowExtent(list, RowForLabel(detail, "single")),
+                Is.EqualTo(EditorVirtualRowExtent.SingleLineHeight));
+            InputForRow(row).Binding!.SetValue("9");
+            Assert.That(target.Values[key], Is.EqualTo(9));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(target.Values[key], Is.EqualTo(4));
         }
         finally { detail.Destroy(true); }
+    }
+
+    private static float RowExtent(UIListTransform list, SceneNode row)
+    {
+        Assert.That(list.TryGetVirtualRowPlacement((UIBoundableTransform)row.Transform,
+            out _, out _, out float extent), Is.True);
+        return extent;
     }
 
     private static SceneNode Create(params EditorDictionaryMutationTestTarget[] targets)
