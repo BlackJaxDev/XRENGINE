@@ -366,6 +366,10 @@ function Materialize-LicenseLink([string]$licLink, [string]$entityName, [string]
 function Format-LicenseCell([string]$licenseText, [string]$licenseLink) {
     $lt = if ($licenseText) { $licenseText } else { '(unknown)' }
     if ($licenseLink) {
+        # A Markdown link target cannot contain spaces or parentheses. Encode them in local license paths.
+        if (-not (Is-AbsoluteHttpUrl -s $licenseLink)) {
+            $licenseLink = $licenseLink.Replace(' ', '%20').Replace('(', '%28').Replace(')', '%29')
+        }
         return ('[{0}]({1})' -f $lt, $licenseLink)
     }
     return $lt
