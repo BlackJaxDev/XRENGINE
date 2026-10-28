@@ -95,7 +95,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             new UIVirtualTableColumn<NativeProfilerDisplayRow>("value", "Value", 100,
                 CreateValueCell, BindValueCell, UnbindValueCell, BindValueCell),
             UIVirtualTableColumn<NativeProfilerDisplayRow>.Text("details", "Details", 420, row => row.Self),
-            new UIVirtualTableColumn<NativeProfilerDisplayRow>("plot", "History (CPU Hz / GPU ms)", 160,
+            new UIVirtualTableColumn<NativeProfilerDisplayRow>("plot", "History (CPU Hz / GPU ms / stat)", 160,
                 CreatePlotCell, BindPlotCell, UnbindPlotCell, BindPlotCell));
         RowProviderOverride = _tableProvider;
         _tableProvider.Activated += OnProfilerRowActivated;
@@ -283,7 +283,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
     {
         SceneNode cell = new(parent) { Name = "plot" };
         UIBoundableTransform bounds = cell.SetTransform<UIBoundableTransform>();
-        NativeProfilerPlotCellState state = new(cell, _rows);
+        NativeProfilerPlotCellState state = new(cell, _rows, _statHistory);
         _plotCells.Add(bounds, state);
         _plotCellStates.Add(state);
         return bounds;
@@ -674,6 +674,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
             RefreshPlotLayouts();
             return;
         }
+        SampleStatHistory();
         DateTime now = DateTime.UtcNow;
         float interval = Engine.EditorPreferences.Debug.ProfilerPanelUpdateIntervalSeconds;
         if (!float.IsFinite(interval))

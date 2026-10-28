@@ -38,7 +38,7 @@ public partial class ProfilerPanel
         rows.Add(new("GPU meshlet dispatch", MeshletStats.LastDispatchTime.TotalMilliseconds.ToString("F3", CultureInfo.InvariantCulture), "ms"));
     }
 
-    private static void CaptureOpenXr(List<NativeProfilerDisplayRow> rows)
+    private void CaptureOpenXr(List<NativeProfilerDisplayRow> rows)
     {
         if (!VrStats.LastFrameHadVrWork)
             return;
@@ -59,6 +59,7 @@ public partial class ProfilerPanel
             $"ms | frustum pad {VrStats.VrXrCollectFrustumExpansionDegrees:F2} deg"));
         rows.Add(new("VR pacing idle", VrStats.VrXrPacingThreadIdleTimeMs.ToString("F3", CultureInfo.InvariantCulture),
             $"ms | handoff stalls {VrStats.VrXrPacingHandoffStalls}"));
+        CaptureOpenXrHistoryRows(rows);
     }
 
     private static void CaptureSkinnedBounds(List<NativeProfilerDisplayRow> rows)

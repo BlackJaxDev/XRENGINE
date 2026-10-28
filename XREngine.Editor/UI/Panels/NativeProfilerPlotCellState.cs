@@ -4,12 +4,13 @@ using XREngine.Scene;
 
 namespace XREngine.Editor;
 
-/// <summary>Draws one visible CPU frequency or GPU millisecond root history.</summary>
+/// <summary>Draws one visible CPU frequency, GPU millisecond, or render-stat history.</summary>
 internal sealed class NativeProfilerPlotCellState
 {
     private const int MaximumPoints = 32;
     private const int MaximumTransitions = 64;
     private readonly NativeProfilerRows _rows;
+    private readonly NativeProfilerStatHistory _statHistory;
     private readonly UIBoundableTransform _container;
     private readonly UIRetainedPlot _plot;
     private readonly float[] _cpuSamples = new float[NativeProfilerRootHistory.Capacity];
@@ -23,6 +24,7 @@ internal sealed class NativeProfilerPlotCellState
     private string? _boundCpuName;
     private string? _boundGpuName;
     private XREngine.Data.Profiling.ProfilerScopeKind _boundCpuKind;
+    private ENativeProfilerStatSeries _boundStatSeries;
     private int _lastCpuRevision = -1;
     private ulong _lastGpuFrameId;
     private long _lastGpuGeneration;
@@ -30,9 +32,10 @@ internal sealed class NativeProfilerPlotCellState
     private float _lastWidth;
     private float _lastHeight;
 
-    public NativeProfilerPlotCellState(SceneNode cell, NativeProfilerRows rows)
+    public NativeProfilerPlotCellState(SceneNode cell, NativeProfilerRows rows, NativeProfilerStatHistory statHistory)
     {
         _rows = rows;
+        _statHistory = statHistory;
         SceneNode container = cell.NewChildWithTransform(out UIBoundableTransform containerBounds, "Root plot");
         _container = containerBounds;
         _plot = new UIRetainedPlot(container, "History");
@@ -50,7 +53,10 @@ internal sealed class NativeProfilerPlotCellState
     {
         string? cpuName = row.CpuPlotName;
         string? gpuName = row.GpuPlotName;
-        if (cpuName is null && gpuName is null)
+        ENativeProfilerStatSeries statSeries = cpuName is null && gpuName is null
+            ? row.StatPlotSeries : ENativeProfilerStatSeries.None;
+        bool stat = statSeries != ENativeProfilerStatSeries.None;
+        if (cpuName is null && gpuName is null && !stat)
         {
             UnbindCore();
             return;
@@ -58,7 +64,7 @@ internal sealed class NativeProfilerPlotCellState
         _boundRow = row;
         bool sameSeries = string.Equals(cpuName, _boundCpuName, StringComparison.Ordinal) &&
             string.Equals(gpuName, _boundGpuName, StringComparison.Ordinal) &&
-            row.CpuPlotKind == _boundCpuKind;
+            row.CpuPlotKind == _boundCpuKind && statSeries == _boundStatSeries;
         if (!sameSeries)
         {
             _container.Visibility = EVisibility.Hidden;
@@ -78,7 +84,9 @@ internal sealed class NativeProfilerPlotCellState
         }
         int requested = Math.Clamp(Engine.EditorPreferences.Debug.ProfilerPanelGraphSampleCount,
             2, NativeProfilerRootHistory.Capacity);
-        if (cpuName is not null && sameSeries && _lastCpuRevision == _rows.RootHistoryRevision &&
+        // CPU roots and render stats use a revision counter; GPU pipelines use the frame and generation.
+        int revision = stat ? _statHistory.Revision : _rows.RootHistoryRevision;
+        if ((cpuName is not null || stat) && sameSeries && _lastCpuRevision == revision &&
             _lastRequested == requested && _lastWidth == width && _lastHeight == height)
         {
             _container.Visibility = EVisibility.Visible;
@@ -88,6 +96,8 @@ internal sealed class NativeProfilerPlotCellState
         long gpuGeneration = 0;
         int copied = cpuName is not null
             ? _rows.CopyRootHistory(cpuName, row.CpuPlotKind, _cpuSamples, requested)
+            : stat
+            ? _statHistory.CopyLatest(statSeries, _cpuSamples, requested)
             : Math.Min(_gpuSamples.Length, RuntimeEngine.Rendering.Stats.GpuPipelineProfiler
                 .CopyGpuRenderPipelineTimingHistory(gpuName!, _gpuSamples,
                     out gpuFrameId, out gpuGeneration));
@@ -104,7 +114,8 @@ internal sealed class NativeProfilerPlotCellState
         _boundCpuName = cpuName;
         _boundGpuName = gpuName;
         _boundCpuKind = row.CpuPlotKind;
-        _lastCpuRevision = _rows.RootHistoryRevision;
+        _boundStatSeries = statSeries;
+        _lastCpuRevision = revision;
         _lastGpuFrameId = gpuFrameId;
         _lastGpuGeneration = gpuGeneration;
         _lastRequested = requested;
@@ -112,7 +123,7 @@ internal sealed class NativeProfilerPlotCellState
         _lastHeight = height;
         _plot.Begin();
         int count = Math.Min(requested, copied);
-        int first = cpuName is not null ? 0 : copied - count;
+        int first = gpuName is null ? 0 : copied - count;
         if (count < 2)
         {
             _plot.End();
@@ -124,7 +135,7 @@ internal sealed class NativeProfilerPlotCellState
         float maximum = 0f;
         for (int index = 0; index < count; index++)
         {
-            float sample = cpuName is not null ? _cpuSamples[index] : (float)_gpuSamples[first + index];
+            float sample = gpuName is null ? _cpuSamples[index] : (float)_gpuSamples[first + index];
             if (!float.IsFinite(sample) || sample < 0f)
                 sample = 0f;
             int bucket = index * points / count;
@@ -135,9 +146,9 @@ internal sealed class NativeProfilerPlotCellState
         }
         for (int index = 0; index < points; index++)
             maximum = Math.Max(maximum, _points[index]);
-        maximum = Math.Max(maximum, 0.001f);
-        Vector4 color = cpuName is not null
-            ? new(0.48f, 0.9f, 0.5f, 1f) : new(0.32f, 0.7f, 1f, 1f);
+        maximum = Math.Max(Math.Max(maximum, NativeProfilerStatHistory.FixedMaximum(statSeries)), 0.001f);
+        Vector4 color = cpuName is not null ? new(0.48f, 0.9f, 0.5f, 1f)
+            : stat ? new(1f, 0.78f, 0.35f, 1f) : new(0.32f, 0.7f, 1f, 1f);
         for (int index = 1; index < points; index++)
         {
             _plot.AddLine(new((index - 1) * width / (points - 1),
@@ -178,6 +189,7 @@ internal sealed class NativeProfilerPlotCellState
         _boundRow = null;
         _boundCpuName = null;
         _boundGpuName = null;
+        _boundStatSeries = ENativeProfilerStatSeries.None;
         _lastCpuRevision = -1;
         _lastGpuFrameId = 0;
         _lastGpuGeneration = 0;

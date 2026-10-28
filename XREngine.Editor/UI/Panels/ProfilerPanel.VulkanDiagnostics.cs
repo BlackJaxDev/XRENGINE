@@ -52,6 +52,7 @@ public partial class ProfilerPanel
         CaptureVulkanCommandChains(rows);
         rows.Add(new("Vulkan GPU command buffer", VulkanStats.VulkanFrameGpuCommandBufferMs.ToString("F3", CultureInfo.InvariantCulture),
             $"ms | timing {VulkanStats.VulkanFrameGpuCommandBufferTimingAvailability}"));
+        CaptureVulkanHistoryRows(rows);
 
         rows.Add(new("Vulkan descriptor fallback", VulkanStats.VulkanDescriptorBindingFailures.ToString(CultureInfo.InvariantCulture),
             $"failures | sampled/storage image {VulkanStats.VulkanDescriptorFallbackSampledImages}/{VulkanStats.VulkanDescriptorFallbackStorageImages} | uniform/storage/texel buffers {VulkanStats.VulkanDescriptorFallbackUniformBuffers}/{VulkanStats.VulkanDescriptorFallbackStorageBuffers}/{VulkanStats.VulkanDescriptorFallbackTexelBuffers} | skipped draw/dispatch {VulkanStats.VulkanDescriptorSkippedDraws}/{VulkanStats.VulkanDescriptorSkippedDispatches}"));

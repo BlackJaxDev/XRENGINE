@@ -1669,6 +1669,19 @@ include request formats, solve failures, demotions, reuse, page allocation, and
 group placement. Native runtime acceptance and detailed Vulkan output
 diagnostics remain open.
 
+`NativeProfilerStatHistory` keeps 720 frames for each `ENativeProfilerStatSeries`
+value in one array that is allocated once. The panel samples it on each late tick
+while it is active and not paused, and adds at most one frame for each render
+frame ID. It samples only when the renderer is Vulkan or the last frame had VR
+work. The series are Vulkan pipeline and descriptor binds, the pipeline and
+descriptor skip percentages, the pipeline cache hit percentage, the Vulkan CPU
+frame, wait-fence, and record times, the GPU command-buffer time, and the OpenXR
+wait-frame block, end-frame submit, predicted-to-late pose delta, and predicted
+display lead. Render Stats shows each series as a row with the latest value, the
+average, and the maximum over the graph sample count. The row's plot cell draws
+the series with the same bounded line budget as root histories. Percent series
+use a fixed 0 to 100 scale.
+
 ## Frozen animation plot input
 
 An interactable can attach immutable managed metadata to its accepted pointer
