@@ -184,6 +184,9 @@ public sealed class UIWorldLiveClipTests
         component.RenderInfo3D.IsVisible = true;
         component.RenderInfo3D.CastsShadows = false;
         component.RenderPass = (int)EDefaultRenderPass.TransparentForward;
+        // A default quad has no mesh until its material is read. Read it, so that the live draw exists.
+        component.Material.ShouldNotBeNull();
+        component.Mesh.ShouldNotBeNull();
         return component;
     }
 
