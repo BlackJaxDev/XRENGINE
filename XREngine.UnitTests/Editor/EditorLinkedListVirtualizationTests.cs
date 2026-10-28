@@ -18,7 +18,14 @@ public sealed class EditorLinkedListVirtualizationTests
     public void ClearUndo() => Undo.ClearHistory();
 
     [TearDown]
-    public void ClearUndoAfter() => Undo.ClearHistory();
+    public void ClearUndoAfter()
+    {
+        Undo.ClearHistory();
+        // A bound property write queues a deferred editor refresh. The test host does not run the
+        // scene-edit queue, so remove the refresh of the destroyed detail before the next fixture.
+        ((System.Collections.Concurrent.ConcurrentQueue<Action>)typeof(EditorImGuiUI)
+            .GetField("_queuedSceneEdits", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!).Clear();
+    }
 
     [Test]
     public void LargeIntegerListUsesBoundedRowsAndKeepsSetUndoAndRemoveHistoryAfterRecycle()
