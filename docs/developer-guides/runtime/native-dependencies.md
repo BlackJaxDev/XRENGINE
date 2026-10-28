@@ -29,6 +29,7 @@ That bootstrap flow covers the standard repo bootstrap path, but it should be tr
 
 ### Usually manual
 
+- building the native meshoptimizer library one time (the build stops with an error that names the script when it is missing)
 - installing optional helper tools
 - rebuilding submodule-native binaries
 - supplying proprietary NVIDIA SDK binaries locally
@@ -56,6 +57,22 @@ There is also a legacy fetch script if you want prebuilt vendor binaries instead
 ```powershell
 pwsh Tools/Dependencies/Get-CoACD.ps1
 ```
+
+### meshoptimizer
+
+Used for the vertex and index codecs, filters, simplification, and clustering of `XREngine.Runtime.MeshProcessing.Meshoptimizer`, which the gaussian preview bake and the gaussian cache decode use. The release tag and commit are pinned in `Tools/Dependencies/Meshoptimizer.lock.json`.
+
+- Script: `Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64` (also in the `Deps` group of `ExecTool.bat`, so `ExecTool --bootstrap` runs it)
+- Requirements: `git`, `cmake`, and a C++ compiler toolchain (Visual Studio or Build Tools with Desktop development with C++ on Windows)
+- Output location: `Build/Dependencies/Meshoptimizer/<rid>/` (the library and `meshoptimizer.version`; ignored by Git, never committed)
+- Build behavior: a normal build of the project stops with one error that names the script when the library is missing. A design-time build (an IDE) does not stop.
+- `linux-x64`: the same script builds `libmeshoptimizer.so` with gcc or clang, but this build is not verified yet. Verify it in CI or on a Linux machine before a Linux server depends on it.
+
+```powershell
+pwsh Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
+```
+
+The script skips the build when the output already holds the pinned version. Pass `-ForceBuild` to build again.
 
 ### FastGltfBridge
 

@@ -27,8 +27,13 @@
   <ItemGroup>
     <InternalsVisibleTo Include="XREngine.UnitTests" />
   </ItemGroup>
-  <Target Name="EnsureMeshoptimizerNative" BeforeTargets="BeforeBuild;AssignTargetPaths">
+  <!--
+    The native library is not in the repository. Tools/Dependencies/Build-Meshoptimizer.ps1 builds it from the pinned
+    source into Build/Dependencies/Meshoptimizer/<rid>/, and ExecTool bootstrap runs that script. A design-time build
+    (an IDE) does not need the library, so only a real build stops when it is missing.
+  -->
+  <Target Name="EnsureMeshoptimizerNative" BeforeTargets="BeforeBuild" Condition="'$(DesignTimeBuild)' != 'true'">
     <Error Condition="!Exists('$(MeshoptimizerNativeDirectory)$(MeshoptimizerLibraryName)') or !Exists('$(MeshoptimizerNativeDirectory)meshoptimizer.version')"
-           Text="The native meshoptimizer library for $(MeshoptimizerRid) is missing. Run Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid $(MeshoptimizerRid) and build again." />
+           Text="The native meshoptimizer library for $(MeshoptimizerRid) is missing from $(MeshoptimizerNativeDirectory). Run 'pwsh Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid $(MeshoptimizerRid)' (or 'ExecTool --bootstrap') one time, and then build again. The script needs git, CMake, and a C++ compiler toolchain (on Windows: Visual Studio or Build Tools with Desktop development with C++)." />
   </Target>
 </Project>

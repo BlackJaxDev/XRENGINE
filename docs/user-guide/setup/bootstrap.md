@@ -139,6 +139,13 @@ Generate the local Unit Testing World settings before launching editor test-worl
 pwsh Tools/Generate-UnitTestingWorldSettings.ps1
 ```
 
+Build the native meshoptimizer library one time. The solution build stops with an error that names this script
+when the library is missing. The script needs git, CMake, and a C++ compiler toolchain:
+
+```powershell
+pwsh Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
+```
+
 Then build the solution:
 
 ```powershell
