@@ -60,3 +60,19 @@ acceptance. Browser trimming/AOT remains rejected until separately qualified;
 desktop NativeAOT has its own [cooked-launcher workflow](aot-final-game-builds.md).
 
 When changing a shared contract, retain dependency direction, update its callers and narrow boundary checks, and qualify the affected desktop and browser paths. A successful source review cannot replace evaluated graph/native-asset inspection or application execution. Current outstanding qualification is tracked in [Platform Validation](../../work/testing/platform/platform-validation.md).
+
+## Host-call source inventory
+
+Run `python3 Tools/Reports/audit_runtime_host_calls.py --revision HEAD` to report
+blocking, thread-creation, task/parallel/pool, and direct-file matches. The tool
+reads committed C# source under the portable manifest roots, including tracked
+files hidden by ignore rules. Direct-file matching uses Core, Rendering, Host,
+and Data. Use `--output Build/_AgentValidation/<run>/reports/runtime-host-calls.json`
+after reserving a validation run to save the JSON report. A revision is required
+in Git; the tool does not scan uncommitted changes.
+
+The report includes expressions, resolved commit, per-project totals, and every
+matched source line. It also reports literal synchronous asset-manager waits.
+Counts are lexical: comments and `string.Join` can match, while target-typed
+constructors and other APIs can be absent. Review admission, ownership, and
+call paths separately before changing a completion state or a runtime boundary.

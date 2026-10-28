@@ -1,6 +1,112 @@
 # Browser caller-thread blocking inventory
 
-Updated: 2026-10-08. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-08. Earlier sections retain their dated call-path and validation evidence.
+Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
+
+## Committed-source refresh (2026-10-28)
+
+The published branch was still at `ff0eabf95a00f24776c07b1e7775d20191c77cda`
+when work resumed. This scan uses local implementation commit
+`9ccdbf7654bf320d1fa9c9de6d7c5d122664677e`, its 19 manifest roots, and all
+5,254 tracked C# paths under those roots. The new
+[`audit_runtime_host_calls.py`](../../../../Tools/Reports/audit_runtime_host_calls.py)
+reads immutable Git blobs. It includes ignored-but-tracked `Assets` source and
+uses the original four expressions. Untracked generated files and external
+imports are outside this tracked-source scan. A tracked filename is never
+excluded because it looks generated. The JSON report includes every matching
+path, line number, source line, and expression, plus per-project counts.
+
+After reserving a validation run, reproduce the scan with:
+
+```sh
+python3 Tools/Reports/audit_runtime_host_calls.py --revision 9ccdbf7654bf320d1fa9c9de6d7c5d122664677e --output Build/_AgentValidation/<run>/reports/runtime-host-calls.json
+```
+
+`--revision` defaults to `HEAD`; it does not include uncommitted edits.
+The default output is JSON on stdout. Repeated scans and invocation from outside
+the repository give identical output. An invalid revision returns nonzero.
+The script also reproduces the recorded totals at `042bfdd5`.
+
+Counts below are **matched files / matching lines**, not calls or browser
+reachability results.
+
+| Project | Wait/result/join | `new Thread` | Task/parallel/pool |
+| --- | ---: | ---: | ---: |
+| `XREngine.Extensions` | 2 / 3 | 0 / 0 | 4 / 8 |
+| `XREngine.Data` | 10 / 12 | 0 / 0 | 6 / 11 |
+| `XREngine.Audio` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Animation` | 1 / 2 | 0 / 0 | 0 / 0 |
+| `XREngine.Input` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Modeling` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Core` | 23 / 42 | 1 / 1 | 6 / 17 |
+| `XREngine.Runtime.Rendering` | 42 / 87 | 2 / 2 | 9 / 14 |
+| `XREngine.Runtime.Host` | 17 / 34 | 1 / 1 | 3 / 9 |
+| `XREngine.Runtime.AudioIntegration` | 3 / 6 | 0 / 0 | 2 / 2 |
+| `XREngine.Runtime.AnimationIntegration` | 3 / 5 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.InputIntegration` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.ModelingIntegration` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Rendering.WebGPU` | 6 / 6 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Platform.Browser` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Browser` | 1 / 1 | 0 / 0 | 0 / 0 |
+| `XREngine.Audio.WebAudio` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Net.WebSockets` | 0 / 0 | 0 / 0 | 0 / 0 |
+| `XREngine.Runtime.Physics.Jolt` | 0 / 0 | 0 / 0 | 0 / 0 |
+| **Total** | **108 / 198** | **4 / 4** | **30 / 61** |
+
+The blocking counts match the published baseline `ff0eabf95`. The two fewer
+wait matches and one fewer thread constructor than `042bfdd5` come from the
+already-published profiler-worker extraction described below. No new scheduler
+or thread implementation changed in this batch. The remaining explicit thread
+constructors are in `RenderWorkDomain`, `EngineTimer`,
+`RuntimeEngine.Rendering.SecondaryContext`, and `RuntimeRenderThreadHost`.
+Their physical placement remains open. Existing caller-mode guards do not
+close that requirement.
+
+The direct-file expression retains its original four-root scope:
+
+| Root | Published baseline files / lines | Current files / lines |
+| --- | ---: | ---: |
+| Core | 13 / 52 | 12 / 48 |
+| Rendering | 9 / 31 | 9 / 31 |
+| Host | 2 / 5 | 2 / 5 |
+| Data | 13 / 54 | 13 / 54 |
+| **Total** | **37 / 142** | **36 / 138** |
+
+Core and Rendering together now have **21 files / 79 lines**, compared with
+22 / 83 at the published baseline. The four removed lines are the two existence
+probes, timestamp read, and hash stream open in `WorldAssetIdentityProvider`.
+The [runtime I/O record](browser-runtime-asset-io-boundaries-2026-10-03.md#world-identity-file-placement-2026-10-28)
+records the provider contract and bounded validation. This extraction does not
+remove a browser-visible wait or complete the whole I/O requirement.
+
+The Core asset subset has three literal `GetAwaiter().GetResult()` lines in two
+files: `AssetManager.RunOnJobThreadBlocking`, `Load<T>`, and `Load(Type, ...)`.
+The job helper rejects browser and caller-thread execution; both synchronous
+load overloads require synchronous asset work and host-file admission before
+remote waits. Their guarded implementations still reside in Core. The historical
+count of ten must not be presented as a current-source count.
+
+Remaining direct-file matches are grouped below by existing responsibility.
+The detailed path and line list comes from the JSON report. Existing guard
+analysis remains in the older sections and the linked I/O records; these groups
+are a placement backlog, not fresh runtime acceptance.
+
+| Responsibility | Core/Rendering files / lines | Remaining placement |
+| --- | ---: | --- |
+| Asset manager setup, save, published path, loading, cache and remote operations | 9 / 45 | Retain catalog/cache branches; extract admitted native probes, cache writers and remote persistence through their operation owners. |
+| Asset metadata comment | 1 / 1 | Lexical match in a comment; no physical operation. |
+| YAML reference fallback and convex-hull cache root | 2 / 2 | Preserve existing source admission while moving the remaining physical probes. |
+| Texture import, streaming source and streaming cache | 4 / 16 | Keep the cooked reader separate from native cache and import operations. |
+| Material shader path | 1 / 1 | Preserve shader source admission and capture the file provider. |
+| Font import and cache | 1 / 9 | Keep authored glyph generation and cache operations behind their native owner. |
+| Renderer module identity and uninstalled rendering host fallback | 2 / 3 | Review composition and missing-provider behavior before extraction. |
+| Occlusion diagnostics | 1 / 2 | `Directory.GetCurrentDirectory` path construction; not an asset content read. |
+
+The expressions include comments, `string.Join`, and result properties. They
+miss target-typed constructors and APIs not named by these expressions.
+No lexical count establishes that every browser-reachable operation has a safe
+owner. Both whole-inventory requirements remain open; requirement totals stay
+122 complete and 41 open. Reference runtime retirement and native UI work are
+unchanged.
 
 ## Committed-source refresh (2026-10-08)
 

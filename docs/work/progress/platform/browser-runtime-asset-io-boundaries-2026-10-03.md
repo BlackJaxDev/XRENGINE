@@ -1,5 +1,88 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## World identity file placement (2026-10-28)
+
+At local implementation commit `9ccdbf7654bf320d1fa9c9de6d7c5d122664677e`,
+`WorldAssetIdentityProvider` no longer performs physical existence checks,
+timestamp reads, or file opens. It uses the existing metadata and read
+capabilities of one lazily captured `IAssetFileSystem`. The
+[composition contract](../../../architecture/runtime/project-organization.md)
+describes the custom-native-host requirement. Desktop and smoke-publisher
+adapters already implement both capabilities; no adapter API changed.
+
+Verified package identity still returns first. Browser, non-synchronous source,
+and runtime-catalog worlds with paths still reject an unverified identity before
+provider lookup. Revision and hash overrides keep their order. Original
+last-write metadata still precedes a file timestamp, and a missing file still
+uses the existing generated fingerprint. Hashing uses a disposed
+`FileShare.Read` stream. Provider replacement during a callback does not retarget
+the current operation; this does not guarantee an atomic source-file snapshot
+or cancel an identity when its provider is retired.
+
+The repeatable [source inventory](browser-caller-blocking-inventory-2026-10-03.md#committed-source-refresh-2026-10-28)
+finds four fewer direct-file matching lines and one fewer matched file. The
+whole file-I/O and blocking requirements remain open. No thread implementation,
+reference browser runtime, shader, cooking format, or native UI source changed.
+
+### Bounded validation
+
+On Debian 13 x64, the pinned SDK `10.0.401` and PowerShell `7.6.8` run the
+serialized build wrapper from the existing environment checkout. Release builds
+of Core, the shared WebGPU closure, the headless test executable, and a disposable
+identity smoke executable pass with zero warnings and errors. The smoke invokes
+the actual compiled Core method and the publisher's unchanged local file adapter.
+All 13 checks pass:
+
+- Native UTC timestamp and the known SHA-256 of the bytes `abc`.
+- `FileShare.Read` and stream disposal after hashing.
+- Identity source metadata and required build version.
+- One retained provider when timestamp lookup replaces the installed provider.
+- Explicit failure when a file-backed identity has no file provider.
+- Revision and hash overrides without a file provider.
+- Original timestamp precedence with a hash override and no provider.
+- A pathless generated world without a provider.
+- A missing source file with the unchanged generated fingerprint.
+- Unverified path-backed rejection with a non-synchronous source.
+- A pathless world with that non-synchronous source.
+- Verified package identity without host-file capabilities.
+- Isolation of the returned verified-identity metadata copy.
+
+The unchanged `DesktopAssetFileSystemTests` fixture passes through NUnitLite:
+one test, zero failures, warnings, or skips. No test fixture or assertion changed.
+The smoke and logs are disposable evidence under
+`Build/_AgentValidation/20261028-120000-webgpu-io/`:
+`logs/core-build.log`, `logs/webgpu-build.log`, `logs/identity-smoke-build.log`,
+`logs/identity-smoke.log`, `logs/headless-build.log`, `logs/headless-test.log`,
+and `reports/TestResult.xml`. The scan report is
+`reports/current-inventory.json`; the prior published scan is
+`reports/baseline-inventory.json`.
+
+These checks establish bounded managed identity behavior and source placement.
+They do not establish Windows application startup, a rendered browser frame,
+native graphics parity, or the full publication gate.
+
+### Publication gate status
+
+The four broader commands ran through the same build wrapper at the local
+implementation source, in Release, with one task-owned artifacts directory:
+
+| Target | Observed result |
+| --- | --- |
+| Editor | Failed: the pinned `OpenVR.NET` and `OscCore-NET9` submodule projects are absent from this checkout. Their missing types cause compilation errors. |
+| Server | Failed with `NETSDK1100`: Windows targeting is required on this Linux host. |
+| VRClient | Failed on the same missing OpenVR and Osc project/type prerequisites. |
+| Browser publish with `XREngineJoltBrowser=true` | Failed in `JoltBrowserNative.targets`: the pinned browser Jolt native archives are missing. |
+
+The logs are `logs/gate-Editor.log`, `logs/gate-Server.log`,
+`logs/gate-VRClient.log`, and `logs/gate-Browser.log` under the run above.
+`dotnet workload list` also reports no installed workloads. The full 19-project
+`browser-wasm` compile lane was not run with these missing prerequisites.
+The source scan is not a substitute for that lane. No dependency pin, submodule
+revision, browser supply path, or reference runtime changed to bypass a gate.
+No change was pushed. The requested branch still resolved to `ff0eabf95` at the
+final remote check. Publication is pending the full gate on a prepared host.
+This is an environment/build prerequisite block, not an approval denial.
+
 ## Archive staleness source reads (2026-10-08)
 
 The source-file probes and byte reads in `AssetPacker.GetStalePaths` use one
