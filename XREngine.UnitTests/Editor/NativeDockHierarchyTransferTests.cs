@@ -140,22 +140,29 @@ public sealed class NativeDockHierarchyTransferTests
         SetView(panel, false, 30);
         Deactivate(destination.Host);
         bool threw = false;
-        UIListTransform? observedList = null;
-        void OnScrollChanged(object? _, XREngine.Data.Core.IXRPropertyChangedEventArgs change)
+        List<UIListTransform> observedLists = [];
+        void OnScrollChanged(object? sender, XREngine.Data.Core.IXRPropertyChangedEventArgs change)
         {
             if (threw || change.PropertyName != nameof(UIListTransform.ContentScrollOffset) ||
                 Get<Action?>(panel, "_requireHierarchyViewRestore") is null) return;
             threw = true;
-            Assert.That(observedList!.ContentScrollOffset, Is.EqualTo(120));
+            UIListTransform observedList = (UIListTransform)sender!;
+            Assert.That(observedList.ContentScrollOffset, Is.EqualTo(120));
             if (newerScroll) observedList.ContentScrollOffset = 180;
             throw new ApplicationException("After the hierarchy scroll committed.");
         }
-        void OnPanelActivated(SceneNode _)
+        void Observe(UIListTransform? list)
         {
-            observedList = List(panel);
-            observedList.PropertyChanged += OnScrollChanged;
+            if (list is null || observedLists.Contains(list)) return;
+            observedLists.Add(list);
+            list.PropertyChanged += OnScrollChanged;
         }
+        // Activation defers the row build, and the deferred build creates a new list.
+        // Observe each list that the panel adds, so that the restore writes to an observed list.
+        void OnPanelActivated(SceneNode _) => Observe(Get<UIListTransform?>(panel, "_treeListTransform"));
+        void OnPanelChildAdded(TransformBase child) => Observe(child as UIListTransform);
         panel.SceneNode.Activated += OnPanelActivated;
+        panel.Transform.Children.PostAnythingAdded += OnPanelChildAdded;
 
         try
         {
@@ -180,8 +187,9 @@ public sealed class NativeDockHierarchyTransferTests
         finally
         {
             panel.SceneNode.Activated -= OnPanelActivated;
-            if (observedList is not null)
-                observedList.PropertyChanged -= OnScrollChanged;
+            panel.Transform.Children.PostAnythingAdded -= OnPanelChildAdded;
+            foreach (UIListTransform list in observedLists)
+                list.PropertyChanged -= OnScrollChanged;
         }
     }
 

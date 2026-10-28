@@ -424,7 +424,10 @@ public sealed class NativeHierarchyMenuTests
         HierarchyMenuInputProbe input = canvas.AddComponent<HierarchyMenuInputProbe>()!;
         HierarchyPanel panel = new SceneNode(canvas, "Hierarchy").AddComponent<HierarchyPanel>()!;
         canvas.IsActiveSelf = true;
+        // The panel defers its row build while activation holds a world mutation. Complete it before you read the list.
+        panel.CompletePendingHierarchyRemake();
         UIListTransform list = Field<UIListTransform>(panel, "_treeListTransform");
+        Assert.That(list, Is.Not.Null);
         // The input probe supplies an accepted pointer. Give layout capture the same
         // viewport instead of realizing rows against an unapplied zero-size list.
         ApplyGeometry(transform, new Vector2(400));
