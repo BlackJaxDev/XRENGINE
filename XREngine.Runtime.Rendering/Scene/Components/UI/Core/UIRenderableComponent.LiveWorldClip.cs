@@ -78,7 +78,10 @@ namespace XREngine.Rendering.UI
                 return;
             }
 
-            BoundingRectangle? crop = UIClipRegion.ResolveCrop(bounds, ClipToBounds);
+            // An element without area draws nothing. Its scaled matrix is not invertible yet, which is not a failure.
+            BoundingRectangle? crop = bounds.ActualWidth > 0.0f && bounds.ActualHeight > 0.0f
+                ? UIClipRegion.ResolveCrop(bounds, ClipToBounds)
+                : null;
             if (crop is not { } region)
             {
                 ReleaseLiveWorldClip();
