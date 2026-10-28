@@ -1,6 +1,6 @@
 # Test Host Job Queue Exhaustion
 
-Status: Fix pushed; waiting for a full Windows run.
+Status: Fixed. The full filter passes on Windows.
 
 ## Problem
 
@@ -37,6 +37,13 @@ hierarchy test classes. Each runs clean together with the menu tests.
 
 Production behavior does not change. In the editor, the app loop runs these jobs every frame.
 
-## Next step
+## Validation
 
-Run the full editor test filter on Windows with `--blame-hang`. Record the counts here.
+At `5b0f52f8` on Windows, with `--blame-hang --blame-hang-timeout 5m`:
+
+- The native UI filter, which includes `NativeAnimationClipViewTests` and
+  `NativeAnimationPanelViewTransferTests`: 651 of 651 passed. No hang.
+- The whole `XREngine.UnitTests.Editor` namespace: 1058 of 1067 passed, 9 failed, no hang. The
+  failures are in `AnimationLengthAdapterTests`, `EditorListMutationTests`,
+  `HierarchyCloneReplayAdmissionTests`, and `RollingBallWorldAssetContractTests`. None of these files
+  changed in the fix. A check at the last passing commit will show whether they are older failures.
