@@ -12,43 +12,50 @@ $script:selectionWatch = $null
 $repository = 'BlackJaxDev/XRENGINE'
 $branch = 'codex/webgpu-readiness-audit'
 $workflowPath = '.github/workflows/portable-browser-compile.yml'
-$jobName = 'Publish RollingBall with the Windows Editor CLI'
-$bundleNames = @(
-    'windows-editor-rollingball-bundle',
-    'windows-editor-rendering-parity-bundle',
-    'windows-editor-advanced-rendering-parity-bundle',
-    'windows-editor-advanced-shadow-parity-bundle',
-    'windows-editor-advanced-shadow-parity-off-bundle',
-    'windows-editor-ui-parity-bundle',
-    'windows-editor-modular-pipeline-parity-bundle',
-    'windows-editor-static-meshlet-parity-bundle',
-    'windows-editor-static-meshlet-parity-cpu-bundle'
-)
-$producerSteps = @(
-    'Initialize pinned Editor project submodules',
-    'Stage the pinned Editor shader compiler',
-    'Install WebAssembly workload',
-    'Prepare pinned browser physics sources',
-    'Publish RollingBall through the Editor CLI',
-    'Verify activated game bundle and unchanged canonical inputs',
-    'Preserve exact Editor-published game bundle',
-    'Publish RenderingParity through the Editor CLI',
-    'Preserve exact Editor-published RenderingParity bundle',
-    'Publish Advanced rendering through the Editor CLI',
-    'Preserve exact Editor-published Advanced rendering bundle',
-    'Publish Advanced shadow comparison through the Editor CLI',
-    'Verify Advanced shadow startup settings through the cooked codec',
-    'Bind Advanced shadow source and published payload evidence',
-    'Preserve exact Editor-published Advanced shadow ON bundle',
-    'Preserve exact Editor-published Advanced shadow OFF reference',
-    'Publish shared UI through the Editor CLI',
-    'Preserve exact Editor-published shared UI bundle',
-    'Publish modular pipeline through the Editor CLI',
-    'Preserve exact Editor-published modular pipeline bundle',
-    'Publish static meshlet GPU and CPU worlds through the Editor CLI',
-    'Preserve exact Editor-published static meshlet GPU bundle',
-    'Preserve exact Editor-published static meshlet CPU reference'
-)
+# Each producer job must finish its required steps on attempt one and upload its bundles.
+$prepareStep = 'Prepare the Windows Editor CLI toolchain'
+$catalogStep = 'Download the shared browser shader catalog'
+$producers = [ordered]@{
+    'Publish RollingBall with the Windows Editor CLI' = @{
+        steps = @($prepareStep, 'Publish RollingBall through the Editor CLI',
+            'Verify activated game bundle and unchanged canonical inputs',
+            'Preserve exact Editor-published game bundle')
+        bundles = @('windows-editor-rollingball-bundle')
+    }
+    'Publish RenderingParity and Advanced with the Windows Editor CLI' = @{
+        steps = @($prepareStep, $catalogStep,
+            'Publish RenderingParity through the Editor CLI',
+            'Preserve exact Editor-published RenderingParity bundle',
+            'Publish Advanced rendering through the Editor CLI',
+            'Preserve exact Editor-published Advanced rendering bundle')
+        bundles = @('windows-editor-rendering-parity-bundle', 'windows-editor-advanced-rendering-parity-bundle')
+    }
+    'Publish Advanced shadow comparison with the Windows Editor CLI' = @{
+        steps = @($prepareStep, $catalogStep,
+            'Publish Advanced shadow comparison through the Editor CLI',
+            'Verify Advanced shadow startup settings through the cooked codec',
+            'Bind Advanced shadow source and published payload evidence',
+            'Preserve exact Editor-published Advanced shadow ON bundle',
+            'Preserve exact Editor-published Advanced shadow OFF reference')
+        bundles = @('windows-editor-advanced-shadow-parity-bundle', 'windows-editor-advanced-shadow-parity-off-bundle')
+    }
+    'Publish UI and modular pipeline with the Windows Editor CLI' = @{
+        steps = @($prepareStep, $catalogStep,
+            'Publish shared UI through the Editor CLI',
+            'Preserve exact Editor-published shared UI bundle',
+            'Publish modular pipeline through the Editor CLI',
+            'Preserve exact Editor-published modular pipeline bundle')
+        bundles = @('windows-editor-ui-parity-bundle', 'windows-editor-modular-pipeline-parity-bundle')
+    }
+    'Publish static meshlet worlds with the Windows Editor CLI' = @{
+        steps = @($prepareStep, $catalogStep,
+            'Publish static meshlet GPU and CPU worlds through the Editor CLI',
+            'Preserve exact Editor-published static meshlet GPU bundle',
+            'Preserve exact Editor-published static meshlet CPU reference')
+        bundles = @('windows-editor-static-meshlet-parity-bundle', 'windows-editor-static-meshlet-parity-cpu-bundle')
+    }
+}
+$bundleNames = @($producers.Values | ForEach-Object { $_.bundles })
 
 function Require([bool] $Condition, [string] $Reason) {
     if (-not $Condition) { throw $Reason }
@@ -167,36 +174,41 @@ function Safe-Time([object] $Value) {
     Require ([DateTimeOffset]::TryParse([string] $Value, [ref] $time)) 'Invalid GitHub timestamp.'
     return $time
 }
-function Get-Producer([object] $Run, [string] $RepositoryId) {
+function Get-Producers([object] $Run, [string] $RepositoryId) {
     $runId = Id $Run.id
     $jobs = Get-Api "repos/BlackJaxDev/XRENGINE/actions/runs/$runId/attempts/1/jobs?per_page=100"
     if ($jobs.total_count -gt 100 -or @($jobs.jobs).Count -ne $jobs.total_count) { return $null }
-    $matches = @($jobs.jobs | Where-Object { $_.name -ceq $jobName })
-    if ($matches.Count -ne 1) { return $null }
-    $job = $matches[0]
-    if ((Id $job.run_id) -cne $runId -or
-        $job.status -cne 'completed' -or $job.conclusion -cne 'success' -or
-        (Sha $job.head_sha) -cne (Sha $Run.head_sha)) { return $null }
-    $steps = @($job.steps)
-    foreach ($required in $producerSteps) {
-        $found = @($steps | Where-Object { $_.name -ceq $required })
-        if ($found.Count -ne 1 -or $found[0].status -cne 'completed' -or $found[0].conclusion -cne 'success') { return $null }
+    # Map each bundle name to the job that produced it.
+    $owners = @{}
+    foreach ($jobName in $producers.Keys) {
+        $matches = @($jobs.jobs | Where-Object { $_.name -ceq $jobName })
+        if ($matches.Count -ne 1) { return $null }
+        $job = $matches[0]
+        if ((Id $job.run_id) -cne $runId -or
+            $job.status -cne 'completed' -or $job.conclusion -cne 'success' -or
+            (Sha $job.head_sha) -cne (Sha $Run.head_sha)) { return $null }
+        $steps = @($job.steps)
+        foreach ($required in $producers[$jobName].steps) {
+            $found = @($steps | Where-Object { $_.name -ceq $required })
+            if ($found.Count -ne 1 -or $found[0].status -cne 'completed' -or $found[0].conclusion -cne 'success') { return $null }
+        }
+        foreach ($name in $producers[$jobName].bundles) { $owners[$name] = $job }
     }
-    return $job
+    return $owners
 }
-function Get-Bundles([object] $Run, [object] $Job, [string] $RepositoryId) {
+function Get-Bundles([object] $Run, [hashtable] $Owners, [string] $RepositoryId) {
     $runId = Id $Run.id
     $data = Get-Api "repos/BlackJaxDev/XRENGINE/actions/runs/$runId/artifacts?per_page=100"
     if ($data.total_count -gt 100 -or @($data.artifacts).Count -ne $data.total_count) { return $null }
-    $start = Safe-Time $Job.started_at
-    $end = Safe-Time $Job.completed_at
-    if ($end -lt $start) { return $null }
     $bundles = [ordered]@{}
     $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($name in $bundleNames) {
         $found = @($data.artifacts | Where-Object { $_.name -ceq $name })
         if ($found.Count -ne 1) { return $null }
         $artifact = $found[0]
+        $start = Safe-Time $Owners[$name].started_at
+        $end = Safe-Time $Owners[$name].completed_at
+        if ($end -lt $start) { return $null }
         if ($artifact.expired -ne $false -or $artifact.digest -cnotmatch '^sha256:[0-9a-f]{64}$' -or
             [long] $artifact.size_in_bytes -lt 1 -or [long] $artifact.size_in_bytes -gt 268435456 -or
             (Id $artifact.workflow_run.id) -cne $runId -or
@@ -440,15 +452,17 @@ try {
                     (Id $run.head_repository.id) -cne $repositoryId) { continue }
                 $source = Sha $run.head_sha
                 if (-not (Allowed-Diff $source $head)) { continue }
-                $job = Get-Producer $run $repositoryId
-                if ($null -eq $job) { continue }
-                $bundles = Get-Bundles $run $job $repositoryId
+                $owners = Get-Producers $run $repositoryId
+                if ($null -eq $owners) { continue }
+                $bundles = Get-Bundles $run $owners $repositoryId
                 if ($null -eq $bundles) { continue }
-                $selected = [ordered]@{ schema = 1; currentSha = $head; currentRunId = $currentRunId;
+                $producerJobIds = [ordered]@{}
+                foreach ($name in $bundleNames) { $producerJobIds[$name] = Id $owners[$name].id }
+                $selected = [ordered]@{ schema = 2; currentSha = $head; currentRunId = $currentRunId;
                     currentAttempt = 1; repositoryId = $repositoryId;
                     workflowId = $workflowId; workflowPath = $workflowPath; producerRunId = (Id $run.id);
-                    producerAttempt = 1; producerJobId = (Id $job.id); producerSha = $source;
-                    checks = @('exact-origin', 'successful-attempt-one-producer', 'allowed-complete-git-diff',
+                    producerAttempt = 1; producerJobIds = $producerJobIds; producerSha = $source;
+                    checks = @('exact-origin', 'successful-attempt-one-producers', 'allowed-complete-git-diff',
                         'nine-finalized-artifacts', 'nine-hash-and-size-verified-zips', 'safe-extraction-and-required-files');
                     bundles = $bundles }
                 break
@@ -483,7 +497,7 @@ try {
             $env:GITHUB_REF -ceq "refs/heads/$branch" -and $env:GITHUB_RUN_ATTEMPT -ceq '1') 'Reuse is unavailable on this attempt.'
         Require (-not [string]::IsNullOrWhiteSpace($Destination) -and -not [string]::IsNullOrWhiteSpace($env:REUSE_MANIFEST)) 'Missing verified reuse input.'
         $manifest = $env:REUSE_MANIFEST | ConvertFrom-Json -AsHashtable
-        Require ($manifest.schema -eq 1 -and (Sha $manifest.currentSha) -ceq (Sha $env:GITHUB_SHA) -and
+        Require ($manifest.schema -eq 2 -and (Sha $manifest.currentSha) -ceq (Sha $env:GITHUB_SHA) -and
             (Id $manifest.currentRunId) -ceq (Id $env:GITHUB_RUN_ID) -and $manifest.currentAttempt -eq 1 -and
             (Id $manifest.repositoryId) -ceq (Id $env:GITHUB_REPOSITORY_ID) -and
             $manifest.workflowPath -ceq $workflowPath -and $manifest.producerAttempt -eq 1 -and

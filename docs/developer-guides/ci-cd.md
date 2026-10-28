@@ -22,7 +22,7 @@ Windows CI runs for every pull request, regardless of its author or branch name.
 
 `dependency-review.yml` rejects pull requests that introduce dependencies with known vulnerabilities at moderate severity or higher. GitHub's dependency graph must be enabled. Private repositories also require the applicable GitHub Code Security entitlement.
 
-`portable-browser-compile.yml` compiles the portable project manifest, publishes the browser host, and runs browser qualification. Its Windows job publishes game bundles through the Editor CLI. Downstream Linux jobs qualify those exact bundles in Chromium. These checks cover the untrimmed interpreter; they do not qualify trimming or browser AOT. See [Portable Project Rules](runtime/portable-projects.md) for the enforced boundaries.
+`portable-browser-compile.yml` compiles the portable project manifest, publishes the browser host, and runs browser qualification. Its Windows jobs publish game bundles through the Editor CLI. One job cooks the shared browser shader catalog and uploads it as the `editor-browser-shader-catalog` artifact. Parallel publish jobs download that catalog, and each job prepares the Editor toolchain through the `.github/actions/prepare-windows-editor` composite action. A separate Windows job runs the runtime unit tests and the benchmark builds. Downstream Linux jobs qualify the exact bundles in Chromium. On `codex/webgpu-readiness-audit` pushes, `Tools/BrowserSmoke/Invoke-EditorBundleReuse.ps1` can select bundles from an earlier run when every producer job in that run passed. These checks cover the untrimmed interpreter; they do not qualify trimming or browser AOT. See [Portable Project Rules](runtime/portable-projects.md) for the enforced boundaries.
 
 ## Deploy Gate
 
