@@ -393,6 +393,35 @@ internal static partial class AnimationClipAuthoringActions
     public static bool AutoKeyTangents(AnimationClip clip, Keyframe key)
         => key is IPlanarKeyframe && AutoPlanarTangents(clip, key);
 
+    /// <summary>
+    /// Wraps a root that is not a group in a new "Root" group, or creates an empty root group
+    /// when the clip has no root. A group root is left unchanged. The animation count does not
+    /// change, because the new group has no animation.
+    /// </summary>
+    public static bool NormalizeRoot(AnimationClip clip)
+    {
+        AnimationMember? root = clip.RootMember;
+        if (root is { MemberType: EAnimationMemberType.Group })
+            return false;
+        AnimationMember group = new("Root", EAnimationMemberType.Group);
+        if (root is not null)
+            group.Children.Add(root);
+        Func<bool> live = CaptureClipLifetime(clip);
+        object[] owners = root is null ? [group] : [group, root];
+        return Apply(clip, "Normalize Animation Root",
+            () => { clip.RootMember = group;
+                if (!live() || !ReferenceEquals(clip.RootMember, group))
+                    throw new InvalidOperationException("Animation root changed during normalization."); },
+            () => { clip.RootMember = root;
+                if (!live() || !ReferenceEquals(clip.RootMember, root))
+                    throw new InvalidOperationException("Animation root changed during restore."); },
+            () => ReferenceEquals(clip.RootMember, group),
+            () => ReferenceEquals(clip.RootMember, root),
+            () => ReferenceEquals(clip.RootMember, root) || ReferenceEquals(clip.RootMember, group),
+            [(clip, nameof(AnimationClip.RootMember))],
+            owners);
+    }
+
     public static bool RemoveMember(AnimationClip clip, AnimationMember member)
     {
         AnimationMember? root = clip.RootMember;

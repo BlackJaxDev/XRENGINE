@@ -39,6 +39,11 @@ public sealed class NativeAnimationMemberDetailTests
                 .GetValue(panel)!;
             Assert.That(rows.Any(row => row.Text.Contains("<NativeAnimationThrowingDetail>")), Is.True);
             Assert.That(rows.First(row => row.Id == 101).Text.Length, Is.LessThan(160));
+            // Member detail rows must not reuse command row IDs, or a click runs a command.
+            ulong lastCommand = (ulong)typeof(AnimationPanel).GetField("LastCommandRowId",
+                BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+            Assert.That(rows.Where(row => row.Text.StartsWith("Selected: ", StringComparison.Ordinal))
+                .Select(row => row.Id), Has.All.GreaterThan(lastCommand));
         }
         finally
         {

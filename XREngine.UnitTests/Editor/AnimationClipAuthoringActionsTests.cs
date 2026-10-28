@@ -11,6 +11,34 @@ namespace XREngine.UnitTests.Editor;
 public class AnimationClipAuthoringActionsTests
 {
     [Test]
+    public void NormalizeRootWrapsAPropertyRootInOneUndoableGroup()
+    {
+        Undo.ClearHistory();
+        try
+        {
+            AnimationMember member = new("Value", EAnimationMemberType.Property,
+                new PropAnimFloat(2, false, true));
+            AnimationClip clip = new(member) { LengthInSeconds = 2 };
+            int animations = clip.TotalAnimCount;
+
+            Assert.That(AnimationClipAuthoringActions.NormalizeRoot(clip), Is.True);
+            Assert.Multiple(() =>
+            {
+                Assert.That(clip.RootMember!.MemberType, Is.EqualTo(EAnimationMemberType.Group));
+                Assert.That(clip.RootMember.Children.Single(), Is.SameAs(member));
+                Assert.That(clip.TotalAnimCount, Is.EqualTo(animations));
+                Assert.That(AnimationClipAuthoringActions.NormalizeRoot(clip), Is.False);
+            });
+            AnimationMember group = clip.RootMember!;
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(clip.RootMember, Is.SameAs(member));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(clip.RootMember, Is.SameAs(group));
+        }
+        finally { Undo.ClearHistory(); }
+    }
+
+    [Test]
     public void WeightedScalarClipEditPreservesWeightsAndRemovalPayload()
     {
         Undo.ClearHistory();

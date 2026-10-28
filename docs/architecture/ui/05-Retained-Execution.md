@@ -1489,6 +1489,13 @@ and formats projected rows on demand. Playback updates do not rebuild an
 unchanged member tree. Dirty clip changes still rebuild subscriptions and the
 member index; incremental source capture remains open.
 
+Fixed command rows use IDs 8 to 63. Selected-member detail rows use IDs 70 to 75
+and 100 to 132, so a click on a detail row never runs a command. The key time field
+also supplies an exact clip length (seconds) or sample rate (whole frames per
+second) through command rows. "Normalize root to a group" wraps a non-group root in
+a new "Root" group through one undoable `AnimationClipAuthoringActions.NormalizeRoot`
+step. "Copy clip file path" uses the host clipboard service when one is installed.
+
 `AnimationClipAuthoringActions` captures the exact clip, source asset, member
 route, child container, track order, and key payload needed by each edit.
 Structural Undo retains a guarded inverse before callbacks run and installs a

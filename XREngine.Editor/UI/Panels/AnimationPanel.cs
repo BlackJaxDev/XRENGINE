@@ -6,6 +6,7 @@ using XREngine.Components.Animation;
 using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Editor.UI;
+using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.UI.State;
 using XREngine.Scene;
@@ -17,7 +18,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 {
     private const int RowPageSize = 128;
     private const int MaxRetainedRowIds = 8192;
-    private const ulong LastCommandRowId = 59;
+    private const ulong LastCommandRowId = 63;
     private const ulong FirstDynamicRowId = 1024;
     private static readonly Vector4[] PlotPalette = [new(0.93f, 0.39f, 0.32f, 1),
         new(0.22f, 0.67f, 0.92f, 1), new(0.37f, 0.80f, 0.49f, 1), new(0.92f, 0.77f, 0.24f, 1)];
@@ -701,11 +702,16 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         _rows.Add((17, "Scan paths from selected scene node"));
         _rows.Add((18, "Add selected scene path to clip"));
         _rows.Add((19, "Remove selected member path"));
+        _rows.Add((62, "Normalize root to a group"));
+        if (!string.IsNullOrWhiteSpace(clip.FilePath))
+            _rows.Add((63, "Copy clip file path"));
         _rows.Add((20, "Play scene clip"));
         _rows.Add((21, "Stop scene clip"));
         _rows.Add((30, "Length -0.1 s"));
         _rows.Add((31, "Length +0.1 s"));
         _rows.Add((58, _stretchLengthEdits ? "Stretch keys with length: on" : "Stretch keys with length: off"));
+        _rows.Add((60, "Set length from key time field"));
+        _rows.Add((61, "Set sample rate from key time field"));
         _rows.Add((32, "Sample rate -1 fps"));
         _rows.Add((33, "Sample rate +1 fps"));
         _rows.Add((34, "Toggle clip loop"));
@@ -900,13 +906,13 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     private void AddSelectedMemberDetails(AnimationMember member)
     {
-        _rows.Add((59, $"Selected: {member.MemberName} [{member.MemberType}]"));
+        _rows.Add((70, $"Selected: {member.MemberName} [{member.MemberType}]"));
         if (member.MemberNotFound)
-            _rows.Add((60, "This member was not resolved at runtime."));
+            _rows.Add((71, "This member was not resolved at runtime."));
         if (member.MemberType == EAnimationMemberType.Method)
         {
             object?[] arguments = member.MethodArguments ?? [];
-            _rows.Add((61, $"Method: argument {member.AnimatedMethodArgumentIndex} is animated | Cache return: {member.CacheReturnValue}"));
+            _rows.Add((72, $"Method: argument {member.AnimatedMethodArgumentIndex} is animated | Cache return: {member.CacheReturnValue}"));
             int shown = Math.Min(arguments.Length, 32);
             for (int index = 0; index < shown; index++)
                 _rows.Add(((ulong)(100 + index),
@@ -916,16 +922,16 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         }
         if (member.Animation is not { } animation)
         {
-            _rows.Add((62, "No animation asset is attached to this member."));
+            _rows.Add((73, "No animation asset is attached to this member."));
             return;
         }
-        _rows.Add((62, $"Attached animation: {animation.GetType().Name} | {animation.LengthInSeconds:0.###} s | Loop: {animation.Looped}"));
+        _rows.Add((73, $"Attached animation: {animation.GetType().Name} | {animation.LengthInSeconds:0.###} s | Loop: {animation.Looped}"));
         if (animation is BasePropAnimBakeable bakeable)
-            _rows.Add((63, bakeable.IsBaked
+            _rows.Add((74, bakeable.IsBaked
                 ? $"Baked: {bakeable.BakedFrameCount} frames at {bakeable.BakedFramesPerSecond} fps"
                 : "Keyframed animation"));
         if (member.DefaultValue is { } defaultValue)
-            _rows.Add((64, "Member default: " + FormatDetailValue(defaultValue)));
+            _rows.Add((75, "Member default: " + FormatDetailValue(defaultValue)));
     }
 
     private void SetProjectedRows()
@@ -1125,6 +1131,10 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             case 57: EditSelectedKey(AnimationClipAuthoringActions.AutoKeyTangents); break;
             case 58: SetField(ref _stretchLengthEdits, !_stretchLengthEdits); break;
             case 59: CycleValueChannel(); break;
+            case 60: SetClipLengthFromField(); break;
+            case 61: SetClipSampleRateFromField(); break;
+            case 62: EditClipSettings(AnimationClipAuthoringActions.NormalizeRoot); break;
+            case 63: CopyClipPath(); break;
             case >= 49 and <= 56: SetSelectedInterpolation(id); break;
         }
     }
@@ -1223,6 +1233,34 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         if (TryGetCurrentKeyDraft(out AnimationClip? clip, out _,
                 out Keyframe? key))
             edit(clip!, key!);
+    }
+
+    /// <summary>Sets the clip length to the seconds in the key time field.</summary>
+    private void SetClipLengthFromField()
+    {
+        if (_timeInput is not { } input ||
+            !float.TryParse(input.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float seconds) ||
+            !float.IsFinite(seconds))
+            return;
+        EditClipSettings(clip => AnimationClipAuthoringActions.SetClipLength(
+            clip, Math.Clamp(seconds, 0, 3600), _stretchLengthEdits));
+    }
+
+    /// <summary>Sets the clip sample rate to the whole number in the key time field.</summary>
+    private void SetClipSampleRateFromField()
+    {
+        if (_timeInput is not { } input ||
+            !int.TryParse(input.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int framesPerSecond))
+            return;
+        EditClipSettings(clip => AnimationClipAuthoringActions.SetClipSampleRate(
+            clip, Math.Clamp(framesPerSecond, 1, 960)));
+    }
+
+    private void CopyClipPath()
+    {
+        if (CurrentClip() is not { FilePath: { Length: > 0 } path } clip || !ReferenceEquals(clip, _displayedClip))
+            return;
+        RuntimeClipboardServices.Current?.SetText(path);
     }
 
     private void EditClipSettings(Func<AnimationClip, bool> edit)
