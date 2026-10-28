@@ -879,6 +879,44 @@ public sealed partial class EditorNestedListDetailTests
     }
 
     [Test]
+    public void VectorNestedRowsEditOneComponentWithOneUndoStep()
+    {
+        using UITestShaderScope shaders = new();
+        EditorNestedVectorListTarget target = new()
+        {
+            Values = [[new System.Numerics.Vector2(1, 2), new System.Numerics.Vector2(3, 4)]]
+        };
+        SceneNode detail = new("Nested vector detail");
+        detail.SetTransform<UIBoundableTransform>();
+        PropertyInfo property = typeof(EditorNestedVectorListTarget)
+            .GetProperty(nameof(EditorNestedVectorListTarget.Values))!;
+        Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(
+            property.PropertyType, out var create), Is.True);
+        create!(detail, property, [target]);
+        try
+        {
+            UIListTransform outer = VirtualList(detail, 1);
+            outer.SynchronizeVirtualRows(280);
+            SceneNode nestedRoot = OpenNestedDetail(detail, outer, 0);
+            UIListTransform inner = VirtualList(nestedRoot, 2);
+            inner.SynchronizeVirtualRows(280);
+            UITextComponent label = Nodes(inner.SceneNode!).SelectMany(node => node.Components.OfType<UITextComponent>())
+                .Single(text => text.Text == "[1]");
+            SceneNode row = label.SceneNode.Transform.Parent!.Parent!.SceneNode!;
+            UITextInputComponent y = Nodes(row).SelectMany(node => node.Components.OfType<UITextInputComponent>())
+                .Single(input => input.SceneNode.Transform.Parent?.SceneNode?.Name == "Y");
+
+            y.Binding!.SetValue("9");
+
+            Assert.That(target.Values[0][1], Is.EqualTo(new System.Numerics.Vector2(3, 9)));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(target.Values[0][1], Is.EqualTo(new System.Numerics.Vector2(3, 4)));
+            Assert.That(target.Values[0][0], Is.EqualTo(new System.Numerics.Vector2(1, 2)));
+        }
+        finally { detail.Destroy(true); }
+    }
+
+    [Test]
     public void NestedWorldOwnerWithoutUniqueDocumentIsRejectedBeforeMutation()
     {
         using UITestShaderScope shaders = new();
@@ -1012,6 +1050,11 @@ public sealed partial class EditorNestedListDetailTests
     private sealed class EditorNestedWorldListTarget : XRComponent
     {
         public List<List<int>> Values { get; set; } = [];
+    }
+
+    private sealed class EditorNestedVectorListTarget
+    {
+        public List<List<System.Numerics.Vector2>> Values { get; set; } = [];
     }
 
     private sealed class EditorOrdinaryStringListTarget

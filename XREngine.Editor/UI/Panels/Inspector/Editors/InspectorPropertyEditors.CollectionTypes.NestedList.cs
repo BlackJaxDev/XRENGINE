@@ -74,12 +74,18 @@ public static partial class InspectorPropertyEditors
                 // Nested rows have a fixed height, so a multiline string cannot use them.
                 if (elementType == typeof(string))
                     return innerLists.All(list => AllSingleLine(list!));
+                if (IsNestedVectorType(elementType))
+                    return true;
                 TypeCode code = Type.GetTypeCode(elementType);
                 return code is TypeCode.Boolean or TypeCode.Byte or TypeCode.SByte or
                     TypeCode.Int16 or TypeCode.UInt16 or TypeCode.Int32 or TypeCode.UInt32 or
                     TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or
                     TypeCode.Decimal;
             }
+
+            private static bool IsNestedVectorType(Type type)
+                => type == typeof(Vector2) || type == typeof(Vector3) ||
+                    type == typeof(Vector4) || type == typeof(Quaternion);
 
             private static bool AllSingleLine(IList list)
             {
@@ -738,6 +744,18 @@ public static partial class InspectorPropertyEditors
                 if (valueType == typeof(bool))
                     return NativeUIElements.TryCreateCheckboxToggleGuarded(editor, bindingProperty,
                         targets, isCurrent, out _, retainFailedReceipt: retainFailedReceipt);
+                if (valueType == typeof(Vector2))
+                    return BuildNestedVectorEditor<Vector2Transformer>(editor, ["X", "Y"],
+                        bindingProperty, targets, isCurrent, retainFailedReceipt);
+                if (valueType == typeof(Vector3))
+                    return BuildNestedVectorEditor<Vector3Transformer>(editor, ["X", "Y", "Z"],
+                        bindingProperty, targets, isCurrent, retainFailedReceipt);
+                if (valueType == typeof(Vector4))
+                    return BuildNestedVectorEditor<Vector4Transformer>(editor, ["X", "Y", "Z", "W"],
+                        bindingProperty, targets, isCurrent, retainFailedReceipt);
+                if (valueType == typeof(Quaternion))
+                    return BuildNestedVectorEditor<QuaternionTransformer>(editor, ["Yaw", "Pitch", "Roll"],
+                        bindingProperty, targets, isCurrent, retainFailedReceipt);
 
                 bool created = Type.GetTypeCode(valueType) switch
                 {
@@ -768,6 +786,47 @@ public static partial class InspectorPropertyEditors
                     _ => false,
                 };
                 return created && isCurrent();
+            }
+
+            /// <summary>
+            /// Builds the same horizontal field layout as the ordinary vector editors. Each field node
+            /// has the name of its transformer property, so a recycled row can rebind it by name.
+            /// </summary>
+            private static bool BuildNestedVectorEditor<TTransformer>(SceneNode editor, string[] fields,
+                PropertyInfo bindingProperty, object[] targets, Func<bool> isCurrent,
+                Action<RuntimeComponentCreationReceipt> retainFailedReceipt)
+                where TTransformer : DataTransformerBase, new()
+            {
+                UIListTransform? layout = CreateNestedAttemptTransform<UIListTransform>(editor, isCurrent, replace: true);
+                if (layout is null || !isCurrent()) return false;
+                layout.DisplayHorizontal = true;
+                if (!isCurrent()) return false;
+                layout.Height = 25.0f;
+                if (!isCurrent()) return false;
+                layout.ItemAlignment = EListAlignment.TopOrLeft;
+                if (!isCurrent()) return false;
+                layout.ItemSpacing = 5.0f;
+                if (!isCurrent()) return false;
+                layout.ItemSize = null;
+                if (!isCurrent()) return false;
+                TTransformer? transformer = AddNestedAttemptComponent<TTransformer>(editor, isCurrent);
+                if (transformer is null || !isCurrent()) return false;
+                transformer.Property = bindingProperty;
+                if (!isCurrent()) return false;
+                transformer.Targets = targets;
+                if (!isCurrent()) return false;
+                object?[] transformerTargets = [transformer];
+                foreach (string field in fields)
+                {
+                    SceneNode? child = CreateNestedAttemptNode(editor, isCurrent);
+                    if (child is null || !isCurrent()) return false;
+                    child.Name = field;
+                    if (!isCurrent() || !NativeUIElements.TryCreateTextInputFieldGuarded<UIFloatInputComponent>(
+                        child, transformer.GetTransformedProperty(field), transformerTargets, isCurrent,
+                        out _, retainFailedReceipt) || !isCurrent())
+                        return false;
+                }
+                return isCurrent();
             }
 
             private static bool BuildNestedEnumEditor(SceneNode node, PropertyInfo property,

@@ -2797,7 +2797,8 @@ Partial conflicts keep guarded history instead of overwriting callback edits.
 
 A direct list, linked-list, or dictionary row can open a separate retained detail
 for one inner built-in list or array. The inner values must use a fixed-height
-Boolean, numeric, nonflags enum, or single-line string editor. A string list with a
+Boolean, numeric, nonflags enum, single-line string, `Vector2`, `Vector3`, `Vector4`, or
+`Quaternion` editor. Vector rows use the same transformer fields as ordinary vector editors. A string list with a
 line break (CR, LF, U+0085, U+2028, or U+2029) in any value cannot open the detail,
 because nested rows have a fixed height. Recursive objects, flags enums, custom
 collections, and variable-height editors keep their existing fallback.
