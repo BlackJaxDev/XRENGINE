@@ -345,7 +345,7 @@ public sealed class EditorListMutationTests
             .GetNestedType("CollectionEditorContext", BindingFlags.NonPublic)!;
         object context = Activator.CreateInstance(contextType,
             BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
-            binder: null, args: [property, new object?[] { target }, property.PropertyType, host],
+            binder: null, args: [property, new object?[] { target }, property.PropertyType, host, null],
             culture: null)!;
         Type bindingType = typeof(InspectorPropertyEditors.CollectionTypes)
             .GetNestedType(linked ? "LinkedListElementBinding`1" : "DictionaryValueBinding`2",
