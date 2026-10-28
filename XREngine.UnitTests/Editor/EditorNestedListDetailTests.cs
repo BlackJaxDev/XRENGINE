@@ -917,6 +917,45 @@ public sealed partial class EditorNestedListDetailTests
     }
 
     [Test]
+    public void RecursiveNestedRowsEditTwoLevelsDownWithOneUndoStep()
+    {
+        using UITestShaderScope shaders = new();
+        EditorRecursiveNestedListTarget target = new() { Values = [[[1, 2], [3]]] };
+        SceneNode detail = new("Recursive nested detail");
+        detail.SetTransform<UIBoundableTransform>();
+        PropertyInfo property = typeof(EditorRecursiveNestedListTarget)
+            .GetProperty(nameof(EditorRecursiveNestedListTarget.Values))!;
+        Assert.That(InspectorPropertyEditors.CollectionTypes.TryCreateEditor(
+            property.PropertyType, out var create), Is.True);
+        create!(detail, property, [target]);
+        try
+        {
+            UIListTransform outer = VirtualList(detail, 1);
+            outer.SynchronizeVirtualRows(280);
+            SceneNode firstRoot = OpenNestedDetail(detail, outer, 0);
+            UIListTransform first = VirtualList(firstRoot, 2);
+            first.SynchronizeVirtualRows(280);
+            SceneNode firstDetail = Nodes(firstRoot)
+                .First(node => node.GetComponent<InspectorListDetailRefreshComponent>() is not null);
+            InvokeNestedAction(firstDetail, 0);
+            SceneNode secondRoot = Nodes(firstRoot).Single(node => node.Name == "NestedListDetail" &&
+                !node.IsDestroyed && !node.IsDestroyQueued);
+            UIListTransform second = VirtualList(secondRoot, 2);
+            second.SynchronizeVirtualRows(280);
+
+            InputForRow(second, 1).Binding!.SetValue("7");
+
+            Assert.That(target.Values[0][0], Is.EqualTo(new[] { 1, 7 }));
+            Assert.That(target.Values[0][1], Is.EqualTo(new[] { 3 }));
+            Assert.That(Undo.TryUndo(), Is.True);
+            Assert.That(target.Values[0][0], Is.EqualTo(new[] { 1, 2 }));
+            Assert.That(Undo.TryRedo(), Is.True);
+            Assert.That(target.Values[0][0][1], Is.EqualTo(7));
+        }
+        finally { detail.Destroy(true); }
+    }
+
+    [Test]
     public void NestedWorldOwnerWithoutUniqueDocumentIsRejectedBeforeMutation()
     {
         using UITestShaderScope shaders = new();
@@ -1055,6 +1094,11 @@ public sealed partial class EditorNestedListDetailTests
     private sealed class EditorNestedVectorListTarget
     {
         public List<List<System.Numerics.Vector2>> Values { get; set; } = [];
+    }
+
+    private sealed class EditorRecursiveNestedListTarget
+    {
+        public List<List<List<int>>> Values { get; set; } = [];
     }
 
     private sealed class EditorOrdinaryStringListTarget

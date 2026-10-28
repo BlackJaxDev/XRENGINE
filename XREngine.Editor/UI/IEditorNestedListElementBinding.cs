@@ -4,6 +4,8 @@ namespace XREngine.Editor.UI;
 internal interface IEditorNestedListElementBinding : IEditorListElementBinding
 {
     EditorNestedListSourceLease[] Paths { get; }
+    /// <summary>The path of the inner list that holds this element for this binding's target.</summary>
+    EditorNestedListSourceLease SourcePath { get; }
     EditorNestedListMutationContext MutationContext { get; }
     bool IsRowCurrent { get; }
 }

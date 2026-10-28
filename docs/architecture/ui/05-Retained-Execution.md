@@ -2793,14 +2793,18 @@ their entered lifecycle work; editor checks run before and after those calls.
 Partial conflicts keep guarded history instead of overwriting callback edits.
 
 
-## One-level nested list details
+## Nested list details
 
 A direct list, linked-list, or dictionary row can open a separate retained detail
 for one inner built-in list or array. The inner values must use a fixed-height
 Boolean, numeric, nonflags enum, single-line string, `Vector2`, `Vector3`, `Vector4`, or
-`Quaternion` editor. Vector rows use the same transformer fields as ordinary vector editors. A string list with a
+`Quaternion` editor, or be a built-in list of such values. A list value gives the nested
+row its own detail button, so a detail can open a deeper detail, up to eight list
+levels below the row. The deeper source path holds the path of its parent detail,
+and each currency check walks the whole path to the owner. A list that contains
+itself on its own path cannot open a detail. Vector rows use the same transformer fields as ordinary vector editors. A string list with a
 line break (CR, LF, U+0085, U+2028, or U+2029) in any value cannot open the detail,
-because nested rows have a fixed height. Recursive objects, flags enums, custom
+because nested rows have a fixed height. Custom objects, flags enums, custom
 collections, and variable-height editors keep their existing fallback.
 Opening the detail captures the outer owner/property and exact slot or key. Row
 recycling does not invalidate that durable source path; replacement, changed

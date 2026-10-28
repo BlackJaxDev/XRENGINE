@@ -34,6 +34,7 @@ internal sealed class EditorNestedListElementBinding<T> : IEditorNestedListEleme
     }
 
     public EditorNestedListSourceLease[] Paths => _paths;
+    public EditorNestedListSourceLease SourcePath => _paths[_sourceIndex];
     public EditorNestedListMutationContext MutationContext => _nestedContext;
     public bool IsRowCurrent => _leased && _nestedContext.IsActive && _rowCurrent() &&
         _context.IsActive && _index >= 0 && _index < _context.Rows.Count &&

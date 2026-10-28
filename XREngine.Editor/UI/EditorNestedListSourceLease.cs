@@ -7,12 +7,18 @@ using XREngine.Scene;
 
 namespace XREngine.Editor.UI;
 
-/// <summary>Captures one direct collection-valued outer row and the durable path to its inner list.</summary>
+/// <summary>
+/// Captures one collection-valued outer row and the durable path to its inner list. The outer row
+/// can be a direct list, linked-list, or dictionary row, or a row of another nested list. A row of a
+/// nested list keeps the path of its parent, so each check walks the whole path to the owner.
+/// </summary>
 internal sealed class EditorNestedListSourceLease
 {
     private readonly IEditorListElementBinding? _listBinding;
     private readonly IEditorLinkedElementBinding? _linkedBinding;
     private readonly IEditorDictionaryElementBinding? _dictionaryBinding;
+    private readonly IEditorNestedListElementBinding? _nestedBinding;
+    private readonly EditorNestedListSourceLease? _parentPath;
     private readonly EditorListSourceAccessor? _listAccessor;
     private readonly IList? _outerList;
     private readonly object? _outerState;
@@ -103,6 +109,29 @@ internal sealed class EditorNestedListSourceLease
         _documentIdentity = _document is XRObjectBase document ? ObjectConstructionIdentity.Capture(document) : null;
     }
 
+    private EditorNestedListSourceLease(IEditorNestedListElementBinding binding, IList inner,
+        object?[] displayed, object state)
+    {
+        EditorNestedListSourceLease parent = binding.SourcePath;
+        _nestedBinding = binding;
+        _parentPath = parent;
+        _outerList = parent.Inner;
+        _outerIndex = binding.Index;
+        _outerRowId = binding.RowId;
+        _outerRevision = binding.ContextRevision;
+        Inner = inner;
+        _innerDisplayed = displayed;
+        _innerState = state;
+        Owner = parent.Owner;
+        Property = parent.Property;
+        _world = parent._world;
+        _document = parent._document;
+        _ownerNode = parent._ownerNode;
+        _ownerIdentity = parent._ownerIdentity;
+        _nodeIdentity = parent._nodeIdentity;
+        _documentIdentity = parent._documentIdentity;
+    }
+
     public object Owner { get; }
     public PropertyInfo Property { get; }
     public object? OwnerDocument => _document;
@@ -117,6 +146,7 @@ internal sealed class EditorNestedListSourceLease
     {
         IList inner = binding switch
         {
+            IEditorNestedListElementBinding nested when nested.DisplayedValue is IList value => value,
             IEditorListElementBinding list when list.DisplayedValue is IList value => value,
             IEditorLinkedElementBinding linked when linked.DisplayedValue is IList value => value,
             IEditorDictionaryElementBinding dictionary when dictionary.DisplayedValue is IList value => value,
@@ -126,6 +156,7 @@ internal sealed class EditorNestedListSourceLease
         object state = EditorListMutation.GetStateToken(inner);
         EditorNestedListSourceLease lease = binding switch
         {
+            IEditorNestedListElementBinding nested => new(nested, inner, snapshot, state),
             IEditorListElementBinding list => new(list, inner, snapshot, state),
             IEditorLinkedElementBinding linked => new(linked, inner, snapshot, state),
             IEditorDictionaryElementBinding dictionary => new(dictionary, inner, snapshot, state),
@@ -135,14 +166,22 @@ internal sealed class EditorNestedListSourceLease
             throw new InvalidOperationException("The scene owner has no unique writable source document.");
         if (!lease.IsCommandCurrent())
             throw new InvalidOperationException("The nested list path changed while it was captured.");
-        if (ReferenceEquals(lease._outerList, lease.Inner))
-            throw new InvalidOperationException("A list cannot be edited through a cycle to itself.");
+        for (EditorNestedListSourceLease? path = lease; path is not null; path = path._parentPath)
+            if (ReferenceEquals(path._outerList, lease.Inner) ||
+                !ReferenceEquals(path, lease) && ReferenceEquals(path.Inner, lease.Inner))
+                throw new InvalidOperationException("A list cannot be edited through a cycle to itself.");
         return lease;
     }
 
     public bool IsCommandCurrent()
     {
         if (!IsOwnerPathCurrent() || !IsInnerCurrent()) return false;
+        if (_nestedBinding is { } nested)
+            return _parentPath!.IsCommandCurrent() &&
+                (!_requiresOuterRowLease || nested.IsLeased && nested.IsRowCurrent &&
+                    nested.Context.Revision == _outerRevision) &&
+                nested.Index == _outerIndex && nested.RowId == _outerRowId &&
+                ReferenceEquals(nested.Collection, _outerList);
         if (_listBinding is { } list)
             return (!_requiresOuterRowLease || list.IsLeased && list.Context.IsActive &&
                 list.Context.Revision == _outerRevision) &&
@@ -178,6 +217,10 @@ internal sealed class EditorNestedListSourceLease
             Owner is XRComponent component && (_ownerNode is null || _ownerNode.IsDestroyed ||
                 _ownerNode.IsDestroyQueued || !_ownerNode.Components.Contains(component)))
             return false;
+        if (_parentPath is { } parent)
+            return parent.IsOwnerPathCurrent() && ReferenceEquals(parent.Inner, _outerList) &&
+                _outerIndex >= 0 && _outerIndex < _outerList!.Count &&
+                ReferenceEquals(_outerList[_outerIndex], Inner) && LifetimesCurrent();
         if (_listBinding is { } list)
             return ReferenceEquals(list.Owner, Owner) && Equals(list.OwnerProperty, Property) &&
                 _listAccessor is { } accessor && accessor.IsCurrent(Owner, _outerList!) &&

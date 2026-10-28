@@ -619,13 +619,7 @@ public static partial class InspectorPropertyEditors
                     return false;
                 if (typeof(IList).IsAssignableFrom(valueType))
                 {
-                    Type innerType = ResolveElementType(valueType, valueType);
-                    TypeCode innerCode = Type.GetTypeCode(innerType);
-                    return innerCode is TypeCode.Boolean or TypeCode.Byte or TypeCode.SByte or
-                        TypeCode.Int16 or TypeCode.UInt16 or TypeCode.Int32 or TypeCode.UInt32 or
-                        TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or
-                        TypeCode.Decimal or TypeCode.String || IsNestedVectorType(innerType) || innerType.IsEnum &&
-                        !innerType.IsDefined(typeof(FlagsAttribute), inherit: false);
+                    return IsNestedRowValueType(ResolveElementType(valueType, valueType), MaxNestedListDepth);
                 }
                 return CanRebindListEditor(valueType);
             }

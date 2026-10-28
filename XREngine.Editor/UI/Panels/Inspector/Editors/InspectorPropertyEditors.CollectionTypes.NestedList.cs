@@ -31,9 +31,8 @@ public static partial class InspectorPropertyEditors
             private ulong _nestedDetailVersion;
 
             private static bool IsNestedParentBinding(object? value)
-                => value is not IEditorNestedListElementBinding &&
-                    (value is IEditorListElementBinding or IEditorLinkedElementBinding or
-                    IEditorDictionaryElementBinding);
+                => value is IEditorListElementBinding or IEditorLinkedElementBinding or
+                    IEditorDictionaryElementBinding;
 
             private static EditorNestedListSourceLease[]? CaptureNestedSources(object?[]? objects)
             {
@@ -50,6 +49,8 @@ public static partial class InspectorPropertyEditors
                     !typeof(IList).IsAssignableFrom(collectionType) ||
                     bindings.Any(binding => binding switch
                     {
+                        IEditorNestedListElementBinding nested =>
+                            nested.Owner is XRWorldObjectBase && nested.OwnerDocument is null,
                         IEditorListElementBinding list =>
                             list.Owner is XRWorldObjectBase && list.OwnerDocument is null ||
                             !EditorListMutation.SupportsSource(list.OwnerProperty),
@@ -69,15 +70,32 @@ public static partial class InspectorPropertyEditors
                         ReferenceEquals(outer.Collection, innerLists[index])).Any())
                     return false;
                 Type elementType = ResolveElementType(collectionType, innerLists[0]!.GetType());
-                if (elementType.IsEnum)
-                    return !elementType.IsDefined(typeof(FlagsAttribute), inherit: false);
+                if (!IsNestedRowValueType(elementType, MaxNestedListDepth))
+                    return false;
                 // Nested rows have a fixed height, so a multiline string cannot use them.
-                if (elementType == typeof(string))
-                    return innerLists.All(list => AllSingleLine(list!));
-                if (IsNestedVectorType(elementType))
+                return elementType != typeof(string) || innerLists.All(list => AllSingleLine(list!));
+            }
+
+            /// <summary>
+            /// The maximum number of list levels below a nested row. A self-referential list type
+            /// cannot make the type check recurse without end.
+            /// </summary>
+            private const int MaxNestedListDepth = 8;
+
+            /// <summary>
+            /// Checks that a nested row can show a value of this type with a fixed-height editor.
+            /// A list value is accepted when its own elements are accepted, so a nested row can
+            /// open a deeper nested detail.
+            /// </summary>
+            private static bool IsNestedRowValueType(Type type, int depth)
+            {
+                if (type.IsEnum)
+                    return !type.IsDefined(typeof(FlagsAttribute), inherit: false);
+                if (type == typeof(string) || IsNestedVectorType(type))
                     return true;
-                TypeCode code = Type.GetTypeCode(elementType);
-                return code is TypeCode.Boolean or TypeCode.Byte or TypeCode.SByte or
+                if (IsNestedListType(type))
+                    return depth > 0 && IsNestedRowValueType(ResolveElementType(type, type), depth - 1);
+                return Type.GetTypeCode(type) is TypeCode.Boolean or TypeCode.Byte or TypeCode.SByte or
                     TypeCode.Int16 or TypeCode.UInt16 or TypeCode.Int32 or TypeCode.UInt32 or
                     TypeCode.Int64 or TypeCode.UInt64 or TypeCode.Single or TypeCode.Double or
                     TypeCode.Decimal;
@@ -821,6 +839,9 @@ public static partial class InspectorPropertyEditors
                     SceneNode? child = CreateNestedAttemptNode(editor, isCurrent);
                     if (child is null || !isCurrent()) return false;
                     child.Name = field;
+                    // The input field adds UI components that require a boundable transform.
+                    if (CreateNestedAttemptTransform<UIBoundableTransform>(child, isCurrent, replace: true) is null)
+                        return false;
                     if (!isCurrent() || !NativeUIElements.TryCreateTextInputFieldGuarded<UIFloatInputComponent>(
                         child, transformer.GetTransformedProperty(field), transformerTargets, isCurrent,
                         out _, retainFailedReceipt) || !isCurrent())
