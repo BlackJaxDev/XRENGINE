@@ -76,6 +76,12 @@ public sealed partial class GaussianBakePipeline
     /// </summary>
     public const string BindingErrorWarning = "binding-error-exceeded:";
 
+    /// <summary>
+    /// The warning when capture pixels are NaN or infinite. The color bake skips NaN and -Inf samples and clamps +Inf.
+    /// The number of these samples follows it.
+    /// </summary>
+    public const string NonFiniteCaptureWarning = "capture-non-finite:";
+
     /// <summary>The longest time to wait for the content thread when the bake puts back a pose or releases a player.</summary>
     private static readonly TimeSpan ReleaseTimeout = TimeSpan.FromSeconds(30);
 

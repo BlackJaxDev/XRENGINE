@@ -95,6 +95,62 @@ public sealed class LitProjectionColorTests
     }
 
     [Test]
+    public void Apply_UnseenLeafBetweenTwoSeen_TakesLowerIndexOnTie()
+    {
+        // Leaves 0 and 2 are in the frame. Leaf 1 is far outside it, at the same index distance from both.
+        BakedSplat[] leaves =
+        [
+            Leaf(new Vector3(-0.5f, 0, 0), Vector3.UnitZ),
+            Leaf(new Vector3(100, 0, 0), Vector3.UnitZ),
+            Leaf(new Vector3(0.5f, 0, 0), Vector3.UnitZ),
+        ];
+
+        LitProjectionColorMath.Apply(leaves, FarTriangleSurface(), [FrontCamera], [GradientImage()], Width, Height);
+
+        leaves[0].LinearColor.ShouldNotBe(leaves[2].LinearColor);
+        leaves[1].LinearColor.ShouldBe(leaves[0].LinearColor);
+    }
+
+    [Test]
+    public void Apply_NaNAndInfinitePixels_GivesFiniteColorsAndScale()
+    {
+        // In view 1, the left half of the image is NaN and the right half is +Inf. View 2 is 0.5 everywhere.
+        BakedSplat[] leaves = [Leaf(new Vector3(-0.5f, 0, 0), Vector3.UnitZ), Leaf(new Vector3(0.5f, 0, 0), Vector3.UnitZ)];
+        float[] broken = ConstantImage(0.5f, 0.5f, 0.5f);
+        for (int y = 0; y < Height; y++)
+        {
+            for (int x = 0; x < Width; x++)
+            {
+                float value = x < Width / 2 ? float.NaN : float.PositiveInfinity;
+                int offset = (y * Width + x) * 4;
+                broken[offset] = value;
+                broken[offset + 1] = value;
+                broken[offset + 2] = value;
+            }
+        }
+
+        LitProjectionColorAccumulator accumulator = new(leaves, FarTriangleSurface(), Width, Height);
+        accumulator.Accumulate([FrontCamera, FrontCamera], [broken, ConstantImage(0.5f, 0.5f, 0.5f)]);
+        float scale = accumulator.Finish();
+
+        float.IsFinite(scale).ShouldBeTrue();
+        scale.ShouldBeGreaterThanOrEqualTo(1.0f);
+        foreach (BakedSplat leaf in leaves)
+        {
+            float.IsFinite(leaf.LinearColor.X).ShouldBeTrue();
+            float.IsFinite(leaf.LinearColor.Y).ShouldBeTrue();
+            float.IsFinite(leaf.LinearColor.Z).ShouldBeTrue();
+        }
+
+        // The NaN sample is skipped, so leaf 0 has only the color of view 2. The infinite sample is clamped.
+        (leaves[0].LinearColor.X * scale).ShouldBe(0.5f, 1e-3f);
+        (leaves[1].LinearColor.X * scale).ShouldBeGreaterThan(1_000.0f);
+        (leaves[1].LinearColor.X * scale).ShouldBeLessThanOrEqualTo(LitProjectionColorAccumulator.MaxSampleValue);
+        accumulator.SeenLeafCount.ShouldBe(2);
+        accumulator.NonFiniteSampleCount.ShouldBe(2);
+    }
+
+    [Test]
     public void Apply_TenPercentHighlights_ScaleEqualsMaxAndKeepsColorsAtOrBelow1()
     {
         // 10 percent of the leaves are highlights, so p99 equals the maximum here. Colors fit in 1 only in this case.
