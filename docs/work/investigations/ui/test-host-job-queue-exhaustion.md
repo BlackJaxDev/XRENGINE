@@ -46,4 +46,9 @@ At `5b0f52f8` on Windows, with `--blame-hang --blame-hang-timeout 5m`:
 - The whole `XREngine.UnitTests.Editor` namespace: 1058 of 1067 passed, 9 failed, no hang. The
   failures are in `AnimationLengthAdapterTests`, `EditorListMutationTests`,
   `HierarchyCloneReplayAdmissionTests`, and `RollingBallWorldAssetContractTests`. None of these files
-  changed in the fix. A check at the last passing commit will show whether they are older failures.
+  changed in the fix. All 9 fail with the same messages at `b1332e60`, so they are older failures.
+  `7bb1c819` fixes the two `EditorListMutationTests` cases: the test now passes the optional owner
+  check to the `CollectionEditorContext` constructor. The other 7 remain open outside this work:
+  `AnimationLengthAdapterTests.AuthoredCadenceLengthKeepsFrameCadenceAndPlaybackBoundary`, four
+  `HierarchyCloneReplayAdmissionTests` cases ("The hierarchy edit did not preserve its requested
+  values."), and two `RollingBallWorldAssetContractTests` cases that check source text.
