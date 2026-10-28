@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 
-// Prints the advanced shadow capture failure evidence from smoke-report.json to the job log.
-// Readers without artifact access can then see the failing profile, the capture phase timings,
-// and the native and GPU snapshots. Large snapshot values are cut to keep the log readable.
+// Prints the advanced shadow capture timings and failure evidence from smoke-report.json to the job log.
+// Readers without artifact access can then see the margin of each capture to its budget, the failing
+// profile, and the native and GPU snapshots. Large snapshot values are cut to keep the log readable.
 const reportPath = process.argv[2];
 if (!reportPath) {
     console.error('Usage: node print-shadow-capture-failures.mjs <smoke-report.json>');
@@ -35,4 +35,11 @@ const failures = (report.advancedShadowFailures ?? []).map(failure => {
         gpu: bounded(failure.gpu), failureEvidence: bounded(failure.failure),
     };
 });
+const timings = report.advancedShadowCaptureTimings ?? [];
+for (const timing of timings) {
+    const slowest = Object.entries(timing.phases ?? {}).filter(([, elapsed]) => Number.isFinite(elapsed))
+        .sort((a, b) => b[1] - a[1]).slice(0, 3).map(([phase, elapsed]) => `${phase}=${elapsed}`).join(' ');
+    console.log(`${timing.outcome.padEnd(6)} ${String(timing.elapsedMs).padStart(6)} of ${timing.budgetMs} ms, ` +
+        `${timing.attempt} attempts: ${timing.name} (${timing.state}) ${slowest}`);
+}
 console.log(JSON.stringify({ profiles, failures }, null, 2));
