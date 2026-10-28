@@ -122,7 +122,12 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
         if (!HasSameOwner(panel, revision, generation))
             return;
         if (_pressedSnapshot is not { } snapshot || !IsPressed)
+        {
+            if (geometry.Metadata is AnimationPlotPointerSnapshot hovered &&
+                ReferenceEquals(hovered.PanelOwner, panel) && ReferenceEquals(hovered.InputOwner, this))
+                panel?.HoverPlotPointer(hovered, posLocal);
             return;
+        }
         if (_scrubbing)
         {
             _scrubbing = panel!.ScrubPlotFromPointer(snapshot, posLocal);
@@ -132,6 +137,12 @@ internal sealed class AnimationPlotInputComponent : UIInteractableComponent,
             return;
         _dragged = true;
         panel?.PanPlotFromPointer(snapshot, _pressPoint, posLocal);
+    }
+
+    protected override void OnMouseOverlapLeave()
+    {
+        base.OnMouseOverlapLeave();
+        Panel?.ClearPlotHover();
     }
 
     public override void PointerReleased(Vector2 localPoint, bool inside,

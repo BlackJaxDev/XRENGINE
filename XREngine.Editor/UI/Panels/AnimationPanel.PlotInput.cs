@@ -264,6 +264,54 @@ public partial class AnimationPanel
     }
 
     /// <summary>
+    /// Shows the time, frame, and value of the key under the pointer in the hover row. A stale
+    /// snapshot keeps the current text, because the next pointer move reads the new snapshot.
+    /// The row text changes in place, so a hover does not rebuild rows or end an edit.
+    /// </summary>
+    internal void HoverPlotPointer(AnimationPlotPointerSnapshot snapshot, Vector2 point)
+    {
+        if (_activePlotDrag is not null || _activePlotScrub is not null ||
+            !IsPlotSourceCurrent(snapshot) ||
+            !ReferenceEquals(_plotSnapshot, snapshot) ||
+            snapshot.BuildRevision != _plotBuildRevision ||
+            snapshot.ViewRevision != _plotViewRevision)
+            return;
+        if (snapshot.TryHitKey(point, out var hit) && hit.Member is { } member &&
+            ReferenceEquals(hit.Key.OwningTrack, hit.Track) && MemberContainsKey(member, hit.Key))
+            SetHoveredKey(member, hit.Key);
+        else
+            SetHoveredKey(null, null);
+    }
+
+    /// <summary>Clears the hover row when the pointer leaves the plot.</summary>
+    internal void ClearPlotHover() => SetHoveredKey(null, null);
+
+    private void SetHoveredKey(AnimationMember? member, Keyframe? key)
+    {
+        if (ReferenceEquals(_hoveredKey, key) && ReferenceEquals(_hoveredKeyMember, member))
+            return;
+        _hoveredKeyMember = member;
+        _hoveredKey = key;
+        if (_hoverRowIndex < 0)
+            return;
+        string text = FormatHoveredKey();
+        if (_projectedRows.UpdateTextAt(_hoverRowIndex, HoverRowId, text))
+        {
+            _rows[_hoverRowIndex] = (HoverRowId, text);
+            SignalRowsChanged(RowCount);
+        }
+    }
+
+    private string FormatHoveredKey()
+    {
+        if (_hoveredKey is not { } key || _hoveredKeyMember is not { } member ||
+            !MemberContainsKey(member, key))
+            return "Hovered key: none";
+        string frame = key.AuthoredFrameIndex >= 0 ? $" | frame {key.AuthoredFrameIndex}" : string.Empty;
+        return $"Hovered key: {member.MemberName} | {key.Second:0.###} s{frame} | {FormatKeyValue(key)}";
+    }
+
+    /// <summary>
     /// Zooms the curve graph value axis by one wheel step per unit of <paramref name="wheelDelta"/>.
     /// The value under <paramref name="point"/> keeps its vertical position unless the window
     /// reaches an edge of the auto-fit range. The key timeline has no value axis, so it does not

@@ -20,6 +20,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private const int MaxRetainedRowIds = 8192;
     private const ulong LastCommandRowId = 63;
     private const ulong FirstDynamicRowId = 1024;
+    private const ulong HoverRowId = 67;
     private static readonly Vector4[] PlotPalette = [new(0.93f, 0.39f, 0.32f, 1),
         new(0.22f, 0.67f, 0.92f, 1), new(0.37f, 0.80f, 0.49f, 1), new(0.92f, 0.77f, 0.24f, 1)];
     private readonly List<(ulong Id, string Text)> _rows = [];
@@ -50,6 +51,9 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private int _keyPage;
     private int _keyCount;
     private int _statusRowIndex = -1;
+    private int _hoverRowIndex = -1;
+    private AnimationMember? _hoveredKeyMember;
+    private Keyframe? _hoveredKey;
     private bool _projectionDirty = true;
     private bool _deferredCandidateRefresh;
     private bool _sourceTopologyDirty = true;
@@ -193,6 +197,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         _plotKeyHits.Clear();
         _plotSnapshot = null;
         _plotInput = null;
+        _hoveredKeyMember = null;
+        _hoveredKey = null;
         Attempt(() => base.OnDestroying());
         if (failures.Count != 0)
             throw new AggregateException("Animation panel teardown failed.", failures);
@@ -624,6 +630,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         _buildingSourceRevision = _sourceRevision;
         _rows.Clear();
         _statusRowIndex = -1;
+        _hoverRowIndex = -1;
         _memberDepths.Clear();
         _memberRows.Clear();
         _visiblePlotMembers.Clear();
@@ -648,6 +655,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             _plotZoom = 1;
             _plotWindowStart = 0;
             ResetPlotValueView();
+            _hoveredKeyMember = null;
+            _hoveredKey = null;
             // The checks below drop a remembered member or key that the clip no longer contains.
             if (clip is not null && _clipViews.TryTake(clip, out NativeAnimationClipView view))
             {
@@ -731,6 +740,8 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             MathF.Max(0, clip.LengthInSeconds - visibleDuration));
         float windowEnd = windowStart + visibleDuration;
         _rows.Add((66, $"Time axis: {windowStart:0.###}–{windowEnd:0.###} s | frames {MathF.Round(windowStart * clip.SampleRate)}–{MathF.Round(windowEnd * clip.SampleRate)}"));
+        _hoverRowIndex = _rows.Count;
+        _rows.Add((HoverRowId, FormatHoveredKey()));
         _rows.Add((26, "Previous member page"));
         _rows.Add((27, "Next member page"));
         if (SelectedComponent() is { } component && ReferenceEquals(component.Animation, clip))
@@ -910,13 +921,13 @@ public partial class AnimationPanel : NativeVirtualTextPanel
 
     private void AddSelectedMemberDetails(AnimationMember member)
     {
-        _rows.Add((70, $"Selected: {member.MemberName} [{member.MemberType}]"));
+        _rows.Add((80, $"Selected: {member.MemberName} [{member.MemberType}]"));
         if (member.MemberNotFound)
-            _rows.Add((71, "This member was not resolved at runtime."));
+            _rows.Add((81, "This member was not resolved at runtime."));
         if (member.MemberType == EAnimationMemberType.Method)
         {
             object?[] arguments = member.MethodArguments ?? [];
-            _rows.Add((72, $"Method: argument {member.AnimatedMethodArgumentIndex} is animated | Cache return: {member.CacheReturnValue}"));
+            _rows.Add((82, $"Method: argument {member.AnimatedMethodArgumentIndex} is animated | Cache return: {member.CacheReturnValue}"));
             int shown = Math.Min(arguments.Length, 32);
             for (int index = 0; index < shown; index++)
                 _rows.Add(((ulong)(100 + index),
@@ -926,16 +937,16 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         }
         if (member.Animation is not { } animation)
         {
-            _rows.Add((73, "No animation asset is attached to this member."));
+            _rows.Add((83, "No animation asset is attached to this member."));
             return;
         }
-        _rows.Add((73, $"Attached animation: {animation.GetType().Name} | {animation.LengthInSeconds:0.###} s | Loop: {animation.Looped}"));
+        _rows.Add((83, $"Attached animation: {animation.GetType().Name} | {animation.LengthInSeconds:0.###} s | Loop: {animation.Looped}"));
         if (animation is BasePropAnimBakeable bakeable)
-            _rows.Add((74, bakeable.IsBaked
+            _rows.Add((84, bakeable.IsBaked
                 ? $"Baked: {bakeable.BakedFrameCount} frames at {bakeable.BakedFramesPerSecond} fps"
                 : "Keyframed animation"));
         if (member.DefaultValue is { } defaultValue)
-            _rows.Add((75, "Member default: " + FormatDetailValue(defaultValue)));
+            _rows.Add((85, "Member default: " + FormatDetailValue(defaultValue)));
     }
 
     private void SetProjectedRows()

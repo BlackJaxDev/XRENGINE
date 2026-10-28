@@ -1496,8 +1496,13 @@ and formats projected rows on demand. Playback updates do not rebuild an
 unchanged member tree. Dirty clip changes still rebuild subscriptions and the
 member index; incremental source capture remains open.
 
-Fixed command rows use IDs 8 to 63. Selected-member detail rows use IDs 70 to 75
-and 100 to 132, so a click on a detail row never runs a command. The key time field
+Fixed command rows use IDs 8 to 63. Timeline lane rows use IDs 70 to 74, and
+selected-member detail rows use IDs 80 to 85 and 100 to 132, so a click on a
+detail row never runs a command and the two lists never share an ID. Row 67 shows
+the key under the pointer. A pointer move over the current plot snapshot runs a
+key hit test and replaces only that row's text in place; it does not rebuild rows
+or increment the authoring epoch, so an edit in progress stays current. A stale
+snapshot keeps the text, and leaving the plot clears it. The key time field
 also supplies an exact clip length (seconds) or sample rate (whole frames per
 second) through command rows. "Normalize root to a group" wraps a non-group root in
 a new "Root" group through one undoable `AnimationClipAuthoringActions.NormalizeRoot`
