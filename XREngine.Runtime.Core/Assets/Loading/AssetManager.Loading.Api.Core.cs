@@ -33,7 +33,8 @@ public partial class AssetManager
 
         EnsureHostFileLoadRoute(bypassJobThread);
 
-        if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
+        IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+        if (!files.FileExists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
             await TryDownloadAssetFromRemoteAsync(
                 filePath,
@@ -47,7 +48,7 @@ public partial class AssetManager
         return await RunOnJobThreadAsync(() =>
         {
             using IDisposable progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
-            return LoadCore<T>(filePath);
+            return LoadCore<T>(filePath, files);
         }, priority, bypassJobThread).ConfigureAwait(false);
     }
 
@@ -76,7 +77,8 @@ public partial class AssetManager
 
         EnsureHostFileLoadRoute(bypassJobThread);
 
-        if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
+        IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+        if (!files.FileExists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
             await TryDownloadAssetFromRemoteAsync(
                 filePath,
@@ -90,7 +92,7 @@ public partial class AssetManager
         return await RunOnJobThreadAsync(() =>
         {
             using IDisposable progressScope = AssetLoadProgressContext.Begin(filePath, progressCallback);
-            return LoadCore(filePath, type);
+            return LoadCore(filePath, type, files);
         }, priority, bypassJobThread).ConfigureAwait(false);
     }
 
@@ -105,7 +107,8 @@ public partial class AssetManager
 
         EnsureHostFileLoadRoute(bypassJobThread);
 
-        if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
+        IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+        if (!files.FileExists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
             TryDownloadAssetFromRemoteAsync(
                 filePath,
@@ -116,7 +119,7 @@ public partial class AssetManager
         }
 
         EnsureHostFileLoadRoute(bypassJobThread);
-        return RunOnJobThreadBlocking(() => LoadCore<T>(filePath), priority, bypassJobThread);
+        return RunOnJobThreadBlocking(() => LoadCore<T>(filePath, files), priority, bypassJobThread);
     }
 
     public XRAsset? Load(
@@ -131,7 +134,8 @@ public partial class AssetManager
 
         EnsureHostFileLoadRoute(bypassJobThread);
 
-        if (!File.Exists(filePath) && ShouldAttemptRemoteAssetDownload())
+        IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+        if (!files.FileExists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
             TryDownloadAssetFromRemoteAsync(
                 filePath,
@@ -142,7 +146,7 @@ public partial class AssetManager
         }
 
         EnsureHostFileLoadRoute(bypassJobThread);
-        return RunOnJobThreadBlocking(() => LoadCore(filePath, type), priority, bypassJobThread);
+        return RunOnJobThreadBlocking(() => LoadCore(filePath, type, files), priority, bypassJobThread);
     }
 
     public T? LoadImmediate<T>(string filePath) where T : XRAsset, new()

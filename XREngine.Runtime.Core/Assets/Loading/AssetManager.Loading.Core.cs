@@ -37,7 +37,7 @@ namespace XREngine
             }
         }
 
-        private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath) where T : XRAsset, new()
+        private T? LoadCore<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(string filePath, IRuntimeHostFileReadBackend? files = null) where T : XRAsset, new()
         {
             EnsureHostFileAssetAccess();
             T? file;
@@ -78,7 +78,8 @@ namespace XREngine
                         return publishedAsset;
                     }
 
-                    if (!File.Exists(filePath))
+                    files ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+                    if (!files.FileExists(filePath))
                     {
                         AssetDiagnostics.RecordMissingAsset(filePath, typeof(T).Name, $"{nameof(AssetManager)}.{nameof(Load)}");
                         return null;
@@ -106,7 +107,7 @@ namespace XREngine
             return file;
         }
 
-        private XRAsset? LoadCore(string filePath, Type type)
+        private XRAsset? LoadCore(string filePath, Type type, IRuntimeHostFileReadBackend? files = null)
         {
             EnsureHostFileAssetAccess();
             XRAsset? file;
@@ -147,7 +148,8 @@ namespace XREngine
                         return publishedAsset;
                     }
 
-                    if (!File.Exists(filePath))
+                    files ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+                    if (!files.FileExists(filePath))
                     {
                         AssetDiagnostics.RecordMissingAsset(filePath, type.Name, $"{nameof(AssetManager)}.{nameof(Load)}");
                         return null;

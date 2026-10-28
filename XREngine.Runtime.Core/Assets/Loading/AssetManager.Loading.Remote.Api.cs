@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using XREngine.Core.Engine;
 using XREngine.Core.Files;
+using XREngine.Data;
 
 namespace XREngine;
 
@@ -53,7 +54,8 @@ public partial class AssetManager
 
         EnsureHostFileAssetAccess();
 
-        if (TryResolveAssetPathById(assetId, out string? localPath) && File.Exists(localPath))
+        IRuntimeHostFileReadBackend? files = null;
+        if (TryResolveAssetPathById(assetId, out string? localPath) && (files ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend()).FileExists(localPath))
             return await LoadAsync<T>(localPath, priority).ConfigureAwait(false);
 
         if (mode == RemoteAssetLoadMode.None)
@@ -65,7 +67,7 @@ public partial class AssetManager
             priority,
             cancellationToken,
             metadata).ConfigureAwait(false);
-        return downloadedPath is not null && File.Exists(downloadedPath)
+        return downloadedPath is not null && (files ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend()).FileExists(downloadedPath)
             ? await LoadAsync<T>(downloadedPath, priority).ConfigureAwait(false)
             : null;
     }

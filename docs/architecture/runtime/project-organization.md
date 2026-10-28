@@ -186,6 +186,23 @@ the capability for these direct reads; a missing capability fails with
 `AssetSource.HostFileReadUnavailable`. Codec-only loads and packaged assets do
 not need it. This capability does not change metadata, cache, or writer APIs.
 
+Native public asset loads capture `IRuntimeHostFileReadBackend` after load-route
+admission. The same instance performs the preflight existence check and the
+scheduled core-load existence check, including after a remote-download await.
+The existing preflight runs before native path-cache and archive lookup. Custom
+native hosts therefore need the read capability even when the later lookup hits
+a cache or archive. No implicit physical-file fallback remains for these probes.
+Browser/catalog loads and non-synchronous path-cache hits return before capture.
+
+The private local-only core load captures a provider only when its path-cache and
+archive branches do not return an asset. Remote ID loading captures lazily at
+its first resolved-path probe and retains it for a later downloaded-path probe.
+Empty IDs and already-loaded matching IDs need no provider. Nested metadata,
+cache, payload, and deserialization operations keep their own provider boundaries;
+the retained probe provider is not a graph-wide lease or an atomic file snapshot.
+Remote payload persistence and the guarded synchronous waits keep their existing
+implementations.
+
 World file identities use the installed `IAssetFileSystem` with its existing
 `IAssetMetadataFileBackend` and `IRuntimeHostFileReadBackend` capabilities.
 Core retains verified-package admission, environment overrides, timestamp
