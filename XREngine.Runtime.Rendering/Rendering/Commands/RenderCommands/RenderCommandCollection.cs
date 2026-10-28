@@ -36,9 +36,11 @@ namespace XREngine.Rendering.Commands
     /// passes continue to use their existing order-preserving sorters.
     /// </summary>
     /// <remarks>
-    /// In a render pass collection, the buckets draw in the order of their first insertion. The order of the
-    /// identity keys is not the same in each process, so the collection uses the keys only to put the commands of
-    /// a bucket together.
+    /// In a render pass collection, the buckets keep the grouping of the key: all buckets of one shader list are
+    /// together, in them all buckets of one material, then of one render options object, then one bucket for each mesh
+    /// renderer. The order of the identity keys is not the same in each process, so the collection uses the keys only
+    /// to make these groups. At each level of the key, the groups draw in the order of their first insertion. Inside a
+    /// bucket, the commands draw near to far.
     /// </remarks>
     public sealed class OpaqueStateBucketRenderCommandSorter : IComparer<RenderCommand>
     {
@@ -75,6 +77,9 @@ namespace XREngine.Rendering.Commands
             int RenderStateIdentity,
             int MeshBindingIdentity) : IComparable<OpaqueStateBucketKey>
         {
+            /// <summary>The number of levels of the key: pass, shader list, material, render options, and mesh renderer.</summary>
+            public const int LevelCount = 5;
+
             public int CompareTo(OpaqueStateBucketKey other)
             {
                 int result = RenderPass.CompareTo(other.RenderPass);
@@ -83,6 +88,19 @@ namespace XREngine.Rendering.Commands
                 if (result == 0) result = RenderStateIdentity.CompareTo(other.RenderStateIdentity);
                 return result != 0 ? result : MeshBindingIdentity.CompareTo(other.MeshBindingIdentity);
             }
+
+            /// <summary>
+            /// Returns true when the two keys are equal in the levels from 0 to <paramref name="level"/>: 0 is the pass,
+            /// 1 the shader list, 2 the material, 3 the render options, and 4 the mesh renderer. A level below 0 is always
+            /// equal.
+            /// </summary>
+            public bool SharesGroup(in OpaqueStateBucketKey other, int level)
+                => level < 0
+                    || (RenderPass == other.RenderPass
+                        && (level < 1 || PipelineIdentity == other.PipelineIdentity)
+                        && (level < 2 || LayoutIdentity == other.LayoutIdentity)
+                        && (level < 3 || RenderStateIdentity == other.RenderStateIdentity)
+                        && (level < 4 || MeshBindingIdentity == other.MeshBindingIdentity));
         }
     }
 
@@ -100,10 +118,8 @@ namespace XREngine.Rendering.Commands
         private readonly bool _farToNear;
         private readonly bool _bucketOpaqueState;
         private readonly Comparison<Entry> _entryComparison;
-        private readonly List<(int Start, int Count, long FirstSortOrderKey)> _bucketRuns = [];
+        private readonly List<GroupRun> _groupRuns = [];
         private readonly List<Entry> _bucketScratch = [];
-        private static readonly Comparison<(int Start, int Count, long FirstSortOrderKey)> s_bucketRunComparison =
-            static (x, y) => x.FirstSortOrderKey.CompareTo(y.FirstSortOrderKey);
         private bool _sortDirty;
 
         public SnapshotSortedRenderCommandCollection(IComparer<RenderCommand> sorter)
@@ -162,6 +178,11 @@ namespace XREngine.Rendering.Commands
                 array[arrayIndex + i] = _entries[i].Command;
         }
 
+        /// <remarks>
+        /// The remove keeps the order of the other entries, so the sort is still valid: each state bucket stays one
+        /// contiguous run, and the runs of each group stay together. The group order can then differ from a new sort
+        /// only when the removed entry was the first insertion of its group.
+        /// </remarks>
         public bool Remove(RenderCommand item)
         {
             if (!_membership.Remove(item))
@@ -191,6 +212,11 @@ namespace XREngine.Rendering.Commands
         IEnumerator IEnumerable.GetEnumerator()
             => GetEnumerator();
 
+        /// <summary>
+        /// Sorts the entries when they changed. With state buckets, the key sort makes each state bucket one contiguous
+        /// run, and the runs of each group of the key (pass, shader list, material, render options) one contiguous
+        /// range. <see cref="OrderStateBucketsByFirstInsertion"/> moves only whole runs, so this stays true.
+        /// </summary>
         private void EnsureSorted()
         {
             if (!_sortDirty)
@@ -203,45 +229,90 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Puts the state buckets in the order of their first insertion. The keys of a bucket are identity hash
-        /// codes, and these codes can change from one process to a different process. Because of this, the key
-        /// sort only puts the entries of each bucket together. The insertion order comes from the collection order.
-        /// Thus, the same content that is collected in the same order draws in the same order in each process.
-        /// This is necessary because the draw order selects the visible surface when two surfaces have the same
-        /// depth. The order in a bucket does not change.
+        /// Puts the groups of the state buckets in the order of their first insertion, one level of the key at a time:
+        /// the passes, then the shader lists in each pass, the materials in each shader list, the render options in each
+        /// material, and the mesh renderers in each render options group. The first insertion of a group is its smallest
+        /// sort order key. The keys of a bucket are identity hash codes, and these codes can change from one process to a
+        /// different process, so the key sort only puts the entries of each group together. Thus, the same content that
+        /// is collected in the same order draws in the same order in each process, and the buckets that share a shader
+        /// list or a material stay together, so the renderer does not upload the same material again. This is necessary
+        /// because the draw order selects the visible surface when two surfaces have the same depth. The order in a
+        /// bucket does not change. The method uses lists that it keeps, so it does not allocate after the first frames.
         /// </summary>
         private void OrderStateBucketsByFirstInsertion()
         {
-            ReadOnlySpan<Entry> sorted = CollectionsMarshal.AsSpan(_entries);
-            _bucketRuns.Clear();
+            for (int level = 0; level < OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey.LevelCount; level++)
+                OrderGroupsAtLevel(level);
+        }
+
+        /// <summary>
+        /// Inside each group of the levels before <paramref name="level"/>, puts the groups of <paramref name="level"/> in
+        /// the order of their first insertion. Groups with the same first insertion keep their order.
+        /// </summary>
+        private void OrderGroupsAtLevel(int level)
+        {
+            Span<Entry> entries = CollectionsMarshal.AsSpan(_entries);
+            _groupRuns.Clear();
             int start = 0;
-            while (start < sorted.Length)
+            while (start < entries.Length)
             {
-                OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey bucket = sorted[start].StateBucket;
-                long firstSortOrderKey = sorted[start].SortOrderKey;
+                long first = entries[start].SortOrderKey;
                 int end = start + 1;
-                while (end < sorted.Length && sorted[end].StateBucket == bucket)
+                while (end < entries.Length && entries[end].StateBucket.SharesGroup(entries[start].StateBucket, level))
                 {
-                    firstSortOrderKey = Math.Min(firstSortOrderKey, sorted[end].SortOrderKey);
+                    first = Math.Min(first, entries[end].SortOrderKey);
                     end++;
                 }
 
-                _bucketRuns.Add((start, end - start, firstSortOrderKey));
+                _groupRuns.Add(new GroupRun(start, end - start, first));
                 start = end;
             }
 
-            if (_bucketRuns.Count < 2)
-                return;
-
-            _bucketRuns.Sort(s_bucketRunComparison);
-            _bucketScratch.Clear();
-            for (int i = 0; i < _bucketRuns.Count; i++)
+            int runIndex = 0;
+            while (runIndex < _groupRuns.Count)
             {
-                (int runStart, int runCount, _) = _bucketRuns[i];
-                _bucketScratch.AddRange(sorted.Slice(runStart, runCount));
+                OpaqueStateBucketRenderCommandSorter.OpaqueStateBucketKey parent = entries[_groupRuns[runIndex].Start].StateBucket;
+                int parentEnd = runIndex + 1;
+                while (parentEnd < _groupRuns.Count && entries[_groupRuns[parentEnd].Start].StateBucket.SharesGroup(parent, level - 1))
+                    parentEnd++;
+
+                if (parentEnd - runIndex > 1)
+                    ReorderRuns(entries, runIndex, parentEnd - runIndex);
+                runIndex = parentEnd;
+            }
+        }
+
+        /// <summary>Sorts the runs from <paramref name="firstRun"/> by first insertion and moves their entries in that order.</summary>
+        private void ReorderRuns(Span<Entry> entries, int firstRun, int runCount)
+        {
+            _groupRuns.Sort(firstRun, runCount, GroupRunComparer.Instance);
+            int destination = _groupRuns[firstRun].Start;
+            int length = 0;
+            _bucketScratch.Clear();
+            for (int i = firstRun; i < firstRun + runCount; i++)
+            {
+                GroupRun run = _groupRuns[i];
+                destination = Math.Min(destination, run.Start);
+                length += run.Count;
+                _bucketScratch.AddRange(entries.Slice(run.Start, run.Count));
             }
 
-            CollectionsMarshal.AsSpan(_bucketScratch).CopyTo(CollectionsMarshal.AsSpan(_entries));
+            CollectionsMarshal.AsSpan(_bucketScratch).CopyTo(entries.Slice(destination, length));
+        }
+
+        /// <summary>A run of entries that share one group of the key, and the smallest sort order key in the run.</summary>
+        private readonly record struct GroupRun(int Start, int Count, long FirstSortOrderKey);
+
+        /// <summary>Orders runs by first insertion, and runs with the same first insertion by their position.</summary>
+        private sealed class GroupRunComparer : IComparer<GroupRun>
+        {
+            public static readonly GroupRunComparer Instance = new();
+
+            public int Compare(GroupRun x, GroupRun y)
+            {
+                int result = x.FirstSortOrderKey.CompareTo(y.FirstSortOrderKey);
+                return result != 0 ? result : x.Start.CompareTo(y.Start);
+            }
         }
 
         private int CompareEntries(Entry x, Entry y)
