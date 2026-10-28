@@ -50,11 +50,15 @@ has an authored change.
 | Material, render pass, batching eligibility | Visual and topology. Clip eligibility also changes clip and hit domains. |
 | Canvas output space or camera | Transform, clip, hit test; output-space changes also mark topology. |
 
-`UILayoutSystem.InvalidateMeasure` and `InvalidateArrange` walk the source and
-its ancestors. They do not scan descendants or copy a canvas. The existing
-layout entry can still visit cached siblings. A minimal dirty-root scheduler is
-future work. `InvalidateCanvasLayout` remains an explicit global operation and
-can invalidate descendants. Do not use it for a local color or position change.
+`UILayoutSystem.InvalidateMeasure` and `InvalidateArrange` record the change and
+advance layout versions on the source and its ancestors. They do not scan
+descendants or copy a canvas. At the next request, `UILayoutCanvasSession` drains
+the journal. `UILayoutSnapshot.CaptureIncremental` then recaptures only the changed
+nodes and their ancestors from the previous snapshot. A removal, a `Topology`
+change, an unknown element, or an overflow causes a full capture.
+`InvalidateCanvasLayout` invalidates the canvas measure and counts a global
+invalidation. It does not scan descendants. Do not use it for a local color or
+position change.
 
 Nested mutable resources need explicit notification. Call
 `UITransform.RecordUIChange` on every affected owner **before** an authored write
@@ -81,10 +85,15 @@ default. Repeated writes combine domain flags and keep the latest parent.
 It returns false during a transaction or when the destination is too small.
 
 Overflow sets `RequiresFullResync`; it never grows storage or silently reports a
-complete delta. A future consumer must rebuild its indexed model from the owner
-at a safe boundary when this flag is returned. It must not apply the partial
-records as a complete update. No production delta consumer is enabled yet, so
-an unconsumed journal stays bounded even after overflow.
+complete delta. A consumer must rebuild its model from the owner at a safe
+boundary when this flag is returned. It must not apply the partial records as a
+complete update. `UILayoutCanvasSession` is the destructive drain consumer. When
+the flag is set, it captures the full canvas instead of an incremental snapshot.
+
+Publication readers use a separate committed log. `TryGetCommittedCursor` and
+`TryCopyCommittedSince` copy whole committed transactions without consuming
+layout records. An open transaction returns `Busy`. An evicted cursor returns
+`FullResync`. Sparse publication capture in `UICanvasComponent` reads this log.
 
 Recording and draining within warmed capacity allocate no managed storage.
 Opening a transaction allocates its scope once. Creating a canvas journal also
@@ -101,11 +110,16 @@ canvas. Each counter is atomic; a multi-counter sample is not one atomic frame.
 | Counter group | Meaning |
 |---|---|
 | Mutations, ancestors, global invalidations | Recorded change calls, ancestor cache invalidations, explicit global invalidation calls. Repeated calls can count the same element. |
-| Measure/arrange visits and cache hits | Layout entry calls and entries returned from a matching cache. Visits include cache hits. |
-| Hit queries and candidates | Live canvas tree queries and their returned candidate count, before later filtering. |
-| Glyph copies and glyphs copied | Snapshot and collection copy operations, plus copied glyph count. |
+| Measure/arrange visits and cache hits | Defined in `UIWorkCounter`, but no production path increments them. They stay zero. |
+| Hit queries and candidates | Hit tests against the accepted publication, and the count of hit records that each test scans. A repeated query with unchanged inputs does not count. |
+| Glyph copies and glyphs copied | Glyph buffer writes that changed at least one glyph, plus the changed glyph count. |
 | Batch entries and resets | Entries collected and collection-buffer reset operations. |
 | Buffer bytes and ranges committed | UI CPU buffer ranges committed by the collector, including capacity where that path commits capacity. These are not GPU-driver upload measurements. |
+| Publication record and segment counters | Record-store cells, paths, and claims copied or released, and flat cells and composition segment slots materialized or copied. |
+| Publication captures | Nodes visited by capture walks, full captures, sparse captures, sparse splices, and sparse fallbacks to a full capture. |
+| Text layout cache hits and misses | Text layouts that reused a cached glyph placement, and text layouts that placed glyphs again. |
+| Failures reported | Native UI failures reported through `UIFailureDiagnostics`. |
+| World unchecked draws | Direct-world UI draws that used the route without checked indexed-draw proof. |
 
 Use a profiler for main-thread and total CPU time, allocations, and latency. Use
 backend measurements for actual GPU uploads and GPU time. These counters supply
@@ -115,7 +129,8 @@ work counts; they do not prove a speed advantage over ImGui.
 
 - [Journal, value records, domains, counters](../../../XREngine.Runtime.Rendering/Rendering/UI/State/)
 - [Transform identity and mutation ownership](../../../XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UITransform.Changes.cs)
-- [Layout invalidation and cache counters](../../../XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UILayoutSystem.cs)
+- [Layout invalidation and invalidation counters](../../../XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UILayoutSystem.cs)
+- [Journal drain and incremental layout capture](../../../XREngine.Runtime.Rendering/Scene/Components/UI/Core/Transforms/UILayoutCanvasSession.cs)
 - [Component domain contract](../../../XREngine.Runtime.Rendering/Scene/Components/UI/Core/UIComponent.cs)
 - [Text notifications and copy counters](../../../XREngine.Runtime.Rendering/Scene/Components/UI/Text/UITextComponent.cs)
 - [Batch counters](../../../XREngine.Runtime.Rendering/Rendering/UI/UIBatchCollector.cs)

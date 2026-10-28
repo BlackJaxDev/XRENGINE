@@ -6,7 +6,7 @@ Scope: [Native UI TODO](../../todo/ui/native-ui-retained-performance-and-editor-
 Architecture: [Retained execution](../../../architecture/ui/05-Retained-Execution.md)
 Validation: [Native UI validation](../../testing/ui/native-ui-validation.md)
 
-Latest code reconciliation: **51 of 60 implementation items are complete**.
+Latest code reconciliation: **57 of 60 implementation items are complete**.
 The active TODO has nine code items and four owner decisions. Later sections
 record each checkpoint; earlier counts describe their historical source state.
 

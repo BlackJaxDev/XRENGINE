@@ -62,7 +62,7 @@ OpenGL and Vulkan visual results remain required acceptance checks.
 
 ## Output receipts
 
-`XRWindow` and the Vulkan receipt ledger track exact frame, output image, and
+`XRWindow` and `VulkanUiPublicationReceiptLedger` track exact frame, output image, and
 output generation. The pure receipt state rejects missing draws, unprepared or
 unrecorded work, and replay without an accepted source image. Artifact retirement
 and GPU completion are separate conditions for resource reuse.
@@ -73,16 +73,27 @@ recording, presentation, or replay correctness on a GPU.
 ## Camera and world canvases
 
 Non-screen canvases retain camera/canvas matrices for ray-plane input mapping.
-They support offscreen texture composition and direct scene rendering. Exact
-producer-to-consumer receipts and complete frozen direct-world submission remain
-open implementation work. An offscreen framebuffer completion alone does not
-prove that a world-space quad reached a presented window. Do not infer the screen
-canvas's publication guarantees for these unfinished paths.
+They support offscreen texture composition and direct scene rendering. Offscreen
+world canvases use render-command publication claims and separate producer and
+consumer receipts. Direct world UI uses the existing component route, unless a
+bounded OpenGL or Vulkan profile admits an exact frozen replacement. In these
+profiles, canonical solid, image, and text draws can carry a frozen canvas-local
+crop. Custom cropped shaders, cropped stereo text, and arbitrary 3D material or
+raster overrides stay outside these profiles. Direct-world draws without checked
+indexed-draw proof increment `UIWorkCounter.WorldUncheckedDraws`. An offscreen
+framebuffer completion alone does not prove that a world-space quad reached a
+presented window. Do not infer the screen canvas's publication guarantees for
+routes outside these profiles.
 
 ## Limits and diagnostics
 
-Independent composition layers, reusable static backend commands, shared backdrop
-captures, small-image atlasing, and full native editor parity remain in the
+`UICompositionLayerComponent` divides publication output into composition
+segments. Vulkan can admit supported screen-space chrome runs to its secondary
+command cache. `UIBackdropBlurComponent` shares one canvas-prefix capture on a
+supported OpenGL screen canvas; it is disabled by default. `UIImageAtlas` packs
+small images into fixed pages. See [retained execution](05-Retained-Execution.md)
+for the limits of each path. GPU acceptance of these paths is unverified. Native
+editor parity remains in the
 [code TODO](../../work/todo/ui/native-ui-retained-performance-and-editor-parity-todo.md).
 No faster-than-ImGui claim follows from the retained architecture alone.
 

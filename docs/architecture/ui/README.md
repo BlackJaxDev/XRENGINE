@@ -1,6 +1,7 @@
 # Native UI Architecture
 
-The native UI uses retained scene components and the existing FPS text renderer.
+The native UI uses retained scene components and the existing `UITextComponent`
+renderer.
 ImGui remains the default editor while native UI acceptance is open.
 
 | Document | Scope |
