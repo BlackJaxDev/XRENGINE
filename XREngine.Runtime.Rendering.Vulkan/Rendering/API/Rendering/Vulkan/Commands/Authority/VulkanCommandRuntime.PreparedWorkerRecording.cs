@@ -115,10 +115,13 @@ internal sealed partial class VulkanCommandRuntime
             &inheritedResourceHeapInfo,
             out inheritedDescriptorHeapBinding);
 
+        // Cached chain secondaries are shared by the primaries of all frames in
+        // flight. Record them for simultaneous use so that a primary can execute
+        // a secondary that is still pending in an earlier submission.
         CommandBufferBeginInfo beginInfo = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
-            Flags = CommandBufferUsageFlags.RenderPassContinueBit,
+            Flags = CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.SimultaneousUseBit,
             PInheritanceInfo = &inheritanceInfo,
         };
 

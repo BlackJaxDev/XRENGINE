@@ -75,6 +75,8 @@ internal sealed class VulkanCommandBufferState
     internal uint BoundIndexCount;
     internal VulkanIndirectDrawState? PendingIndirectDrawState;
     internal VulkanReadbackTaskTracker ReadbackTasks { get; } = new();
+    /// <summary>Serializes the per-frame capture of the material time values.</summary>
+    internal Lock MaterialUniformFrameTimeSync { get; } = new();
     internal ulong MaterialUniformFrameTimeFrameId = ulong.MaxValue;
     internal float MaterialUniformUpdateDeltaLive;
     internal float MaterialUniformSecondsLive;

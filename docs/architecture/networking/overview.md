@@ -20,7 +20,7 @@ for deployment policy and the unqualified browser/session integration boundary.
 
 For local development and tests, `XREngine.ControlPlane` now provides an in-process control-plane DLL with basic host registration, instance creation/listing, join handoff generation, opaque session tokens, and local world package manifest verification. It is a reusable control-plane substrate, not an engine realtime transport.
 
-For the stable developer guide, see [XRENGINE Networking](../../developer-guides/networking/networking.md). Planned peer-to-peer host switching is tracked in [Peer-To-Peer Host Switching Implementation](../../work/design/networking/peer-to-peer-host-switching.md).
+For the stable developer guide, see [XRENGINE Networking](../../developer-guides/networking/networking.md). Peer-to-peer host switching is planned and not implemented.
 
 ## Roles And Startup
 
@@ -255,7 +255,7 @@ It still does not browse, create, or join public rooms. The embedded control-pla
 - The engine assumes both sides already have the same world asset locally.
 - World downloads, manifests, signed URLs, chunk caches, and eviction policy are external to XRENGINE.
 - `Local` mode bypasses networking.
-- `P2PClient` and `PeerToPeerNetworkingManager` were removed from the current engine transport surface. The replacement design is peer mode with dynamic connection-host switching, tracked in [Peer-To-Peer Host Switching Implementation](../../work/design/networking/peer-to-peer-host-switching.md).
+- `P2PClient` and `PeerToPeerNetworkingManager` were removed from the current engine transport surface. The planned replacement is peer mode with dynamic connection-host switching.
 - `Tools\Start-NetworkTest.bat` launches the live realtime smoke paths:
   - default / `two-clients`: dedicated server plus two clients with the same handoff payload.
   - `mismatch`: dedicated server plus one good client and one client with an intentionally mismatched expected world hash.

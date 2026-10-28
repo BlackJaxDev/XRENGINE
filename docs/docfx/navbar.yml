@@ -7,7 +7,7 @@
 - name: Architecture
   href: ../architecture/README.md
 - name: API Reference
-  href: apiref/index.md
+  href: api/index.md
 - name: GitHub
   href: https://github.com/BlackJaxDev/XRENGINE
 

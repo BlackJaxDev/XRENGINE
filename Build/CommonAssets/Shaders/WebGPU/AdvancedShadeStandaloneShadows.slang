@@ -66,7 +66,7 @@ bool XR_WEB_ReconstructShadowHelper(XRAdvancedSurface surface, float2 pixel,
             normal = XR_ADV_EngineSurfaceMappedNormal(
                 XR_ADV_SampleEngineSurfaceRole(word, XR_ADV_ENGINE_SURFACE_NORMAL_ROLE, helper).rgb, helper);
     }
-    else if ((XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD) & 2u) != 0u &&
+    else if ((XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD) & 2u) != 0u &
         XR_ADV_SurfaceHasAttribute(helper, XR_ADV_ATTRIBUTE_TANGENT))
     {
         float3 normalTex = XR_ADV_StandardTexture(material, 1u, helper.texCoord0,
@@ -74,7 +74,7 @@ bool XR_WEB_ReconstructShadowHelper(XRAdvancedSurface surface, float2 pixel,
         normal = normalize(helper.tangent * normalTex.x + helper.bitangent * normalTex.y + normal * normalTex.z);
     }
     XR_ADV_ApplySelectedDecalReceiverNormals(helper, normal);
-    return XR_ADV_IsFinite(position) && XR_ADV_IsFinite(normal);
+    return XR_ADV_IsFinite(position) & XR_ADV_IsFinite(normal);
 }
 
 float3 XR_WEB_ShadowCoordinate(XRAdvancedShadowRecord record, float3 position, float3 normal, float mapWidth)
@@ -121,7 +121,7 @@ float XR_WEB_ShadowPlaneBias(XRAdvancedShadowRecord record, XRAdvancedSurface su
                 preparedPrimitive,
 #endif
                 position, normal);
-            valid = valid && helperValid;
+            valid = valid & helperValid;
             if (axis == 0u) { positionX = position; normalX = normal; }
             else { positionY = position; normalY = normal; }
         }
@@ -134,7 +134,7 @@ float XR_WEB_ShadowPlaneBias(XRAdvancedShadowRecord record, XRAdvancedSurface su
     }
     float3 coordinateDx = (XR_WEB_ShadowCoordinate(record, standaloneShadowPositionX, standaloneShadowNormalX, mapWidth) - coordinate) * sign.x;
     float3 coordinateDy = (XR_WEB_ShadowCoordinate(record, standaloneShadowPositionY, standaloneShadowNormalY, mapWidth) - coordinate) * sign.y;
-    if (!XR_ADV_IsFinite(coordinateDx) || !XR_ADV_IsFinite(coordinateDy))
+    if (!XR_ADV_IsFinite(coordinateDx) | !XR_ADV_IsFinite(coordinateDy))
     { textureFailure |= 1u << 16u; return 0.0; }
     float2 uvDx = coordinateDx.xy;
     float2 uvDy = coordinateDy.xy;
@@ -157,7 +157,7 @@ float XR_WEB_SampleStandalonePoint(XRAdvancedShadowRecord record, XRAdvancedText
     float normalOffset = receiverDistance * directionTexel * max(record.depthBiasAndFilter.z, 0.0);
     float3 shadowDirection = surface.worldPosition + normal * normalOffset - record.renderedLightPositionAndFar.xyz;
     float distance = length(shadowDirection);
-    if (receiverDistance >= farZ || distance >= farZ || distance <= record.depthRangeAndCascade.x + normalOffset)
+    if (receiverDistance >= farZ | distance >= farZ | distance <= record.depthRangeAndCascade.x + normalOffset)
         return 1.0;
     float noLSafe = max(noL, 0.05);
     float tanTheta = sqrt(max(1.0 - noLSafe * noLSafe, 0.0)) / noLSafe;
@@ -208,11 +208,11 @@ float XR_WEB_SampleStandaloneShadow(XRAdvancedShadowRecord record, XRAdvancedTex
     out uint reason)
 {
     reason = XR_ADV_SHADOW_OK;
-    if (record.encoding != 0u || (record.flags & 224u) != 96u ||
-        record.type > 3u || record.type == 2u ||
-        record.type == 0u && (textureRecord.dimension != 1u || reference.payload1 != 1u) ||
-        record.type == 1u && (textureRecord.dimension != 1u || reference.payload1 != 0u) ||
-        record.type == 3u && (textureRecord.dimension != 3u || reference.payload1 != 0u))
+    if (record.encoding != 0u | (record.flags & 224u) != 96u |
+        record.type > 3u | record.type == 2u |
+        record.type == 0u & (textureRecord.dimension != 1u | reference.payload1 != 1u) |
+        record.type == 1u & (textureRecord.dimension != 1u | reference.payload1 != 0u) |
+        record.type == 3u & (textureRecord.dimension != 3u | reference.payload1 != 0u))
     {
         reason = XR_ADV_SHADOW_UNSUPPORTED;
         return 1.0;
@@ -243,7 +243,7 @@ float XR_WEB_SampleStandaloneShadow(XRAdvancedShadowRecord record, XRAdvancedTex
     }
     float3 offsetPosition = surface.worldPosition + normal * normalOffset;
     float4 clip = XR_ADV_TransformRowVector(float4(offsetPosition, 1.0), record.worldToShadow);
-    if (clip.w <= 0.0 || !XR_ADV_IsFinite(clip)) { reason = XR_ADV_SHADOW_OUTSIDE; return 1.0; }
+    if (clip.w <= 0.0 | !XR_ADV_IsFinite(clip)) { reason = XR_ADV_SHADOW_OUTSIDE; return 1.0; }
     float3 ndc = clip.xyz / clip.w;
     float3 coordinate = float3(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, ndc.z);
     float slopeBias = XR_WEB_ShadowPlaneBias(record, surface,
@@ -253,7 +253,7 @@ float XR_WEB_SampleStandaloneShadow(XRAdvancedShadowRecord record, XRAdvancedTex
         coordinate,
         max(record.momentParameters.y, record.type == 1u ? 1.0 / mapSize.x : texelUv), mapSize.x);
     float receiver = coordinate.z - (constantBias + max(slopeBias, 0.0));
-    if (record.type == 1u && axisDistance >= farZ || any(coordinate < float3(0.0)) || any(coordinate > float3(1.0)))
+    if (record.type == 1u & axisDistance >= farZ | any(coordinate < float3(0.0)) | any(coordinate > float3(1.0)))
     { reason = XR_ADV_SHADOW_OUTSIDE; return 1.0; }
     float rotation = XR_WEB_ShadowRotation(surface.samplePixelPosition);
     float searchRadius = max(record.momentParameters.x, texelUv);

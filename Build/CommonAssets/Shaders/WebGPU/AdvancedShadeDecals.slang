@@ -32,7 +32,7 @@ void XR_ADV_ValidateAbsentDecalSelection()
     uint words, stride;
     TextureBindings.GetDimensions(words, stride);
     uint offset = Parameters.reserved0, count = Parameters.reserved1;
-    if (offset > words || count > words - offset)
+    if (offset > words | count > words - offset)
         textureFailure |= 1u << 17u;
 }
 

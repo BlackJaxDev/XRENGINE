@@ -25,7 +25,8 @@ public static class SourceToon93Catalog
     public static string GetMaterialName(string sourceAssetPath, string? sourceGuid = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceAssetPath);
-        string stem = SanitizeSegment(Path.GetFileNameWithoutExtension(sourceAssetPath));
+        // Source asset paths can use either separator, whatever the host OS is.
+        string stem = SanitizeSegment(Path.GetFileNameWithoutExtension(sourceAssetPath.Replace('\\', '/')));
         string collisionSuffix = GetGuidSuffix(sourceGuid);
         return $"{stem}.poiyomi-9_3_64{collisionSuffix}.uber";
     }

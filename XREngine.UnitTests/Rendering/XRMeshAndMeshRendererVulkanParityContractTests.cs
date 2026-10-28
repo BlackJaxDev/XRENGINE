@@ -56,6 +56,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
     {
         string resolverSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/MeshRenderMaterialResolver.cs");
         string vkBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Buffers.cs");
+        string glRenderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/MeshRendering/GLMeshRenderer.Rendering.cs");
 
         resolverSource.ShouldContain("GlobalOverride");
         resolverSource.ShouldContain("PipelineOverride");
@@ -68,7 +69,13 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         resolverSource.ShouldContain("ShadowUniformSourceMaterial");
         resolverSource.ShouldContain("UseDepthNormalMaterialVariants");
         resolverSource.ShouldContain("DepthNormalPrePassVariant");
-        resolverSource.ShouldContain("CanUseSharedUberShadowFallback");
+        // The shared Uber shadow fallback is an OpenGL linker workaround. It
+        // stays in the OpenGL renderer. The shared resolver keeps the exact
+        // shadow caster variants that Vulkan uses.
+        resolverSource.ShouldNotContain("CanUseSharedUberShadowFallback");
+        resolverSource.ShouldContain("GetDirectionalCascadeShadowCasterVariant(");
+        resolverSource.ShouldContain("GetPointShadowCasterVariant(GetPointLightGeometryFallbackKind(overrideKind))");
+        glRenderSource.ShouldContain("private static bool CanUseSharedUberShadowFallback(XRMaterial globalMaterialOverride, XRMaterial? shadowSourceMaterial)");
 
         vkBufferSource.ShouldContain("MeshRenderMaterialResolver.Resolve(");
         vkBufferSource.ShouldNotContain("shadowSourceMaterial?.ShadowCasterVariant");
@@ -105,10 +112,12 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
 
         mainSource.ShouldContain("IRenderPreparationState");
         mainSource.ShouldContain("public override bool IsGenerated => IsActive;");
-        mainSource.ShouldContain("TryPrepareForRendering(effectiveMaterial, out string prepareReason)");
+        mainSource.ShouldContain("prepared = TryPrepareForDrawEnqueue(");
         mainSource.ShouldContain("Skipping mesh draw enqueue");
 
         prepSource.ShouldContain("public bool IsPreparedForRendering");
+        prepSource.ShouldContain("private bool TryPrepareForDrawEnqueue(");
+        prepSource.ShouldContain("return SetPrepareResult(false, \"MaterialMissing\"");
         prepSource.ShouldContain("public string LastPrepareDetail => _lastPrepareDetail;");
         prepSource.ShouldContain("BuffersPending");
         prepSource.ShouldContain("ProgramsPending");
@@ -156,10 +165,9 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         string pipelineKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Pipelines/VkMeshRenderer.PipelineKey.cs");
         string compileKeySource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Pipelines/VkMeshRenderer.GraphicsPipelineCompileKey.cs");
         string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
-        string cacheSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanGraphicsPipelineCache.cs");
         string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineManager.cs");
         string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs");
-        string initializationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Initialization.cs");
+        string lifecycleSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.Lifecycle.cs");
 
         pipelineKeySource.ShouldContain("ulong DescriptorLayoutHash");
         pipelineKeySource.ShouldContain("ulong PipelineLayoutHandle");
@@ -168,22 +176,24 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         compileKeySource.ShouldContain("PipelineKey Pipeline");
         compileKeySource.ShouldNotContain("OwnerIdentity");
 
-        meshPipelineSource.ShouldContain("BackendContext.Pipelines.TryGetSharedGraphicsPipeline(key, out pipeline)");
+        meshPipelineSource.ShouldContain("BackendContext.Resources.PipelineManager.TryGetSharedGraphicsPipeline(key, out pipeline)");
         meshPipelineSource.ShouldContain("_program.PipelineLayout.Handle");
-        meshPipelineSource.ShouldContain("Renderer.StoreOrRetireSharedGraphicsPipeline(key, asyncResult.Pipeline)");
-        meshPipelineSource.ShouldContain("Renderer.StoreOrRetireSharedGraphicsPipeline(key, pipeline)");
+        meshPipelineSource.ShouldContain("BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, asyncResult.Pipeline)");
+        meshPipelineSource.ShouldContain("BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, foregroundResult.Pipeline)");
         meshPipelineSource.ShouldContain("Final graphics pipeline handles are owned by the renderer-level shared cache");
         meshPipelineSource.ShouldNotContain("Renderer.RetirePipeline(pipe)");
 
-        managerSource.ShouldContain("private readonly Dictionary<VkMeshRenderer.PipelineKey, Pipeline> _sharedGraphicsPipelines");
+        // The renderer-level shared cache now lives in the pipeline manager.
+        managerSource.ShouldContain("private readonly Dictionary<VulkanGraphicsPipelineKey, Pipeline> _sharedGraphicsPipelines");
         managerSource.ShouldContain("internal bool TryGetSharedGraphicsPipeline");
         managerSource.ShouldContain("internal Pipeline StoreSharedGraphicsPipeline");
-        cacheSource.ShouldContain("internal Pipeline StoreOrRetireSharedGraphicsPipeline");
-        cacheSource.ShouldContain("RetirePipeline(pipeline)");
-        cacheSource.ShouldContain("private void DestroySharedGraphicsPipelines()");
-        cacheSource.ShouldContain("Api.DestroyPipeline(device, pipeline, null)");
+        managerSource.ShouldContain("internal Pipeline StoreOrRetireSharedGraphicsPipeline");
+        managerSource.ShouldContain("RequireProgramServices().RetirePipeline(pipeline);");
+        managerSource.ShouldContain("internal int DestroySharedGraphicsPipelines()");
+        managerSource.ShouldContain("services.DestroyPipelineImmediate(pipeline);");
+        managerSource.ShouldContain("services.DestroyPipelineImmediate(superseded);");
         queueSource.ShouldContain("StoreOrRetireSharedGraphicsPipeline(job.Request.Key, result.Pipeline)");
-        initializationSource.ShouldContain("DestroySharedGraphicsPipelines();");
+        lifecycleSource.ShouldContain("_resourceRuntime.PipelineManager.DestroySharedGraphicsPipelines()");
     }
 
     [Test]
@@ -226,6 +236,7 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         string gpuSceneCommandBuffersSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.CommandBuffers.cs");
         string gpuSceneSoaSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.Soa.cs");
         string gpuSceneAddRemoveSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AddRemove.cs");
+        string gpuSceneMeshletGenerationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.MeshletBufferGenerations.cs");
         string gpuMeshletResourcesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPURendering/Resources/GPUMeshletResources.cs");
         string hybridSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
 
@@ -235,15 +246,27 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         gpuSceneCommandBuffersSource.ShouldContain("public XRDataBuffer DrawMetadataBuffer");
         gpuSceneCommandBuffersSource.ShouldContain("public XRDataBuffer MeshletRangeBuffer");
 
-        gpuSceneSoaSource.ShouldContain("UpdatingDrawMetadataBuffer.SetDataRawAtIndex(drawId, command.ToDrawMetadata(drawId));");
+        gpuSceneSoaSource.ShouldContain("private void WriteDrawMetadata(uint drawId, in DrawMetadata metadata)");
+        gpuSceneSoaSource.ShouldContain("published.DrawID = drawId;");
+        gpuSceneSoaSource.ShouldContain("UpdatingDrawMetadataBuffer.SetDataRawAtIndex(drawId, published);");
         gpuSceneSoaSource.ShouldContain("_drawMetadataDirtyRange.Mark(drawId);");
 
+        gpuSceneAddRemoveSource.ShouldContain("WriteDrawMetadata(index, commandValue);");
         gpuSceneAddRemoveSource.ShouldContain("EnsureMeshletRangeForMesh");
         gpuSceneAddRemoveSource.ShouldContain("MeshletPayload");
-        gpuSceneAddRemoveSource.ShouldContain("MeshletDescriptorBuffer.SetDataRawAtIndex");
-        gpuSceneAddRemoveSource.ShouldContain("MeshletVertexIndexBuffer.SetDataRawAtIndex");
-        gpuSceneAddRemoveSource.ShouldContain("MeshletTriangleIndexBuffer.SetDataRawAtIndex");
+        // Registration stages meshlet records on the CPU. The frame boundary publishes them as one new buffer generation.
+        gpuSceneAddRemoveSource.ShouldContain("_meshletDescriptors.Add(descriptor);");
+        gpuSceneAddRemoveSource.ShouldContain("_meshletVertexIndices.AddRange(payload.VertexIndices);");
+        gpuSceneAddRemoveSource.ShouldContain("_meshletTriangleIndices.AddRange(payload.TriangleIndices);");
+        gpuSceneAddRemoveSource.ShouldContain("_meshletBufferGenerationDirty = true;");
         gpuSceneAddRemoveSource.ShouldContain("FlushMeshletRangeDirtyRange");
+        gpuSceneCommandBuffersSource.ShouldContain("PublishMeshletBufferGenerationAtFrameBoundary();");
+        gpuSceneMeshletGenerationSource.ShouldContain("XRDataBuffer descriptorBuffer = CreateMeshletDescriptorBufferSnapshot(descriptors);");
+        gpuSceneMeshletGenerationSource.ShouldContain("XRDataBuffer vertexIndexBuffer = CreateMeshletVertexIndexBufferSnapshot(vertexIndices);");
+        gpuSceneMeshletGenerationSource.ShouldContain("XRDataBuffer triangleIndexBuffer = CreateMeshletTriangleIndexBufferSnapshot(triangleIndices);");
+        gpuSceneMeshletGenerationSource.ShouldContain("buffer.SetDataRawAtIndex((uint)index, descriptors[index]);");
+        gpuSceneMeshletGenerationSource.ShouldContain("buffer.SetDataRawAtIndex((uint)index, indices[index]);");
+        gpuSceneMeshletGenerationSource.ShouldContain("_retiredMeshletBufferGenerations.Enqueue(new RetiredMeshletBufferGeneration(");
 
         gpuMeshletResourcesSource.ShouldContain("public struct GpuMeshletTaskRecord");
         gpuMeshletResourcesSource.ShouldContain("MeshletTaskRecordStride");
@@ -271,20 +294,29 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         bufferSource.ShouldContain("RemoveCollectedBuffer($\"{ECommonBufferType.SkinPalette}Buffer\")");
         bufferSource.ShouldContain("RemoveCollectedBuffer($\"{ECommonBufferType.BlendshapeWeights}Buffer\")");
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass");
-        bufferSource.ShouldContain("MeshRenderer.HasValidPrecombinedBlendshapeDeltas");
+        bufferSource.ShouldContain("blendshapeState.IsPrecombinedValidFor(mesh)");
         bufferSource.ShouldContain("AddMeshDeformSourceBuffers");
         bufferSource.ShouldContain("\"DeformerPositionsBuffer\"");
         bufferSource.ShouldContain("assignBindingOverride: false");
-        bufferSource.ShouldContain("RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask");
-        bufferSource.ShouldContain("MarkIndexBuffersDirty");
+        // An async index build publishes one atomic readiness edge. The next
+        // buffer refresh consumes it while it holds the buffer-state lock.
+        bufferSource.ShouldContain("Interlocked.Exchange(ref _pendingAsyncIndexBufferReady, 1);");
+        bufferSource.ShouldContain("if (Interlocked.Exchange(ref _pendingAsyncIndexBufferReady, 0) != 0)");
+        bufferSource.ShouldContain("ApplyIndexBufferReadyNoLock();");
         bufferSource.ShouldContain("GetIndexBufferForBinding(EPrimitiveType.Triangles");
         bufferSource.ShouldContain("GetIndexBufferForBinding(EPrimitiveType.Lines");
         bufferSource.ShouldContain("GetIndexBufferForBinding(EPrimitiveType.Points");
-        bufferSource.ShouldContain("return mesh.GetIndexBuffer(type, out elementSize, EBufferTarget.ElementArrayBuffer, onReady);");
+        bufferSource.ShouldContain(
+            "return mesh.GetIndexBuffer(\n" +
+            "\t\t\ttype,\n" +
+            "\t\t\tout elementSize,\n" +
+            "\t\t\tEBufferTarget.ElementArrayBuffer,\n" +
+            "\t\t\tonReady,\n" +
+            "\t\t\trequireSynchronous);");
 
         string drawingSourceWithIndexTypes = drawingSource;
         string cleanupSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Cleanup.cs");
-        drawingSourceWithIndexTypes.ShouldContain("size == IndexSize.Byte && !Renderer.SupportsIndexTypeUint8");
+        drawingSourceWithIndexTypes.ShouldContain("size == IndexSize.Byte && !BackendContext.Supports(EVulkanDeviceCapability.IndexTypeUint8)");
         cleanupSource.ShouldContain("IndexSize.Byte => IndexType.Uint8Ext");
         cleanupSource.ShouldContain("IndexSize.TwoBytes => IndexType.Uint16");
         cleanupSource.ShouldContain("IndexSize.FourBytes => IndexType.Uint32");
@@ -306,10 +338,11 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
 
         bufferSource.ShouldContain("OverrideCollectedSkinPaletteWithActiveSource();");
         bufferSource.ShouldContain("MeshRenderer.ActiveSkinPaletteBuffer is not { } activeSkinPalette");
-        bufferSource.ShouldContain("_bufferCache[shaderName] = vkBuffer;");
+        bufferSource.ShouldContain("_bufferCache[shaderName] = ProgramCreationPort.GetOrCreateBuffer(activeSkinPalette, generateNow: false);");
         bufferSource.ShouldContain("_cachedActiveSkinPaletteBuffer = MeshRenderer.ActiveSkinPaletteBuffer;");
-        bufferSource.ShouldContain("!ReferenceEquals(_cachedActiveSkinPaletteBuffer, MeshRenderer.ActiveSkinPaletteBuffer)");
-        bufferSource.ShouldContain("_cachedActiveSkinPaletteIdentity != CaptureBufferStructuralIdentity(MeshRenderer.ActiveSkinPaletteBuffer)");
+        bufferSource.ShouldContain("XRDataBuffer? activeSkinPalette = MeshRenderer.ActiveSkinPaletteBuffer;");
+        bufferSource.ShouldContain("!ReferenceEquals(_cachedActiveSkinPaletteBuffer, activeSkinPalette)");
+        bufferSource.ShouldContain("_cachedActiveSkinPaletteIdentity != CaptureBufferStructuralIdentity(activeSkinPalette)");
     }
 
     [Test]
@@ -350,9 +383,31 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         snapshotSource.ShouldContain("public uint TriangleIndexCount { get; }");
         snapshotSource.ShouldContain("public uint FallbackVertexCount { get; }");
         AssertMethodLocksBefore(pipelineSource, "private void BuildVertexInputState", "foreach (var pair in _bufferCache)");
-        AssertMethodLocksBefore(drawingSource, "private bool TryRentVertexBufferSnapshot", "_vertexBuffersByBinding.TryGetValue");
-        AssertMethodLocksBefore(descriptorSource, "private ulong ComputeCachedBufferResourceFingerprintCore", "foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)");
-        AssertMethodLocksBefore(descriptorSource, "private bool TryResolveCachedBufferByName", "_bufferCache.TryGetValue");
+        AssertMethodLocksBefore(drawingSource, "private bool TryPrepareVertexBufferSnapshot", "_vertexBuffersByBinding.TryGetValue");
+        AssertMethodLocksBefore(drawingSource, "private bool TryCreateIndirectVertexBufferSnapshot", "_vertexBuffersByBinding.TryGetValue");
+        AssertMethodLocksBefore(drawingSource, "private bool BindVertexBuffersForCurrentPipeline(CommandBuffer commandBuffer, out string failureReason)", "_vertexBuffersByBinding.TryGetValue");
+
+        // The buffer fingerprint is published while the collection lock is held.
+        // Descriptor validation then reads the published value without a lock.
+        string descriptorFingerprintSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.DescriptorFingerprints.cs");
+        string descriptorBufferSource = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.DescriptorBuffers.cs");
+        descriptorSource.ShouldContain("ComputeCachedBufferResourceFingerprintCore()");
+        descriptorFingerprintSource.ShouldContain(
+            "private ulong ComputeCachedBufferResourceFingerprintCore()\n" +
+            "\t\t=> System.Threading.Volatile.Read(ref _cachedBufferResourceFingerprint);");
+        AssertMethodLocksBefore(bufferSource, "private void CollectBuffers", "PublishCachedBufferResourceFingerprint();");
+        int publishStart = descriptorFingerprintSource.IndexOf(
+            "private void PublishCachedBufferResourceFingerprint()",
+            StringComparison.Ordinal);
+        publishStart.ShouldBeGreaterThanOrEqualTo(0);
+        descriptorFingerprintSource.IndexOf(
+                "foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)",
+                publishStart,
+                StringComparison.Ordinal)
+            .ShouldBeGreaterThan(publishStart);
+        AssertMethodLocksBefore(descriptorBufferSource, "private bool TryResolveCachedBufferByName", "_bufferCache.TryGetValue");
     }
 
     [Test]
@@ -390,11 +445,11 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
             vkUniformSource.ShouldContain($"case {ToConstantName(uniformName)}:");
         }
 
-        vkUniformSource.ShouldContain("value = MeshRenderer.ActiveSkinPaletteBase;");
-        vkUniformSource.ShouldContain("value = MeshRenderer.ActiveSkinPaletteCount;");
-        vkUniformSource.ShouldContain("value = MeshRenderer.ActiveSkinningInfluenceCap;");
-        vkUniformSource.ShouldContain("value = MeshRenderer.ActiveBlendshapeCount;");
-        vkUniformSource.ShouldContain("value = MeshRenderer.BlendshapeActiveWeightThreshold;");
+        vkUniformSource.ShouldContain("return UploadUniform(buffer, MeshRenderer.ActiveSkinPaletteBase);");
+        vkUniformSource.ShouldContain("return UploadUniform(buffer, MeshRenderer.ActiveSkinPaletteCount);");
+        vkUniformSource.ShouldContain("return UploadUniform(buffer, MeshRenderer.ActiveSkinningInfluenceCap);");
+        vkUniformSource.ShouldContain("return UploadUniform(buffer, MeshRenderer.ActiveBlendshapeCount);");
+        vkUniformSource.ShouldContain("return UploadUniform(buffer, MeshRenderer.BlendshapeActiveWeightThreshold);");
         vkUniformSource.ShouldContain("MeshRenderer.HasValidPrecombinedBlendshapeDeltas");
         vkUniformSource.ShouldContain("SkinPaletteBaseUniformName or SkinPaletteCountUniformName or SkinningInfluenceCapUniformName");
     }
@@ -411,7 +466,8 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         dispatcherSource.ShouldContain("EmptyStorageBuffers emptyBuffers = GetEmptyStorageBuffers();");
         dispatcherSource.ShouldContain("private sealed class EmptyStorageBuffers");
         dispatcherSource.ShouldContain("apiBuffer.EnsureStorageAllocatedForGpuUse();");
-        dispatcherSource.ShouldContain("IApiDataBuffer apiBuffer");
+        dispatcherSource.ShouldContain("buffer.TryGetApiBufferForCurrentOwner(");
+        dispatcherSource.ShouldContain("!apiBuffer.BackendIsReadyForGpuUse)");
 
         bindingSource.ShouldContain("EmptyStorageBuffers emptyBuffers");
         bindingSource.ShouldContain("emptyBuffers.ZeroScalar");
@@ -422,7 +478,8 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
 
         residencySource.ShouldContain("apiBuffer.EnsureStorageAllocatedForGpuUse();");
         residencySource.ShouldContain("wrapper is IApiDataBuffer apiBuffer");
-        residencySource.ShouldContain("wrapper is IApiDataBuffer apiBuffer && !apiBuffer.BackendIsReadyForGpuUse");
+        residencySource.ShouldContain("buffer.TryGetApiBufferForCurrentOwner(");
+        residencySource.ShouldContain("!apiBuffer.BackendIsReadyForGpuUse)");
 
         resourcesSource.ShouldContain("_lastDispatchedPoseHash");
         resourcesSource.ShouldContain("_lastDispatchedPoseHash != _renderer.ComputeCurrentBonePoseHash()");

@@ -145,13 +145,7 @@ public sealed class LightProbeComponentYamlDeserializationTests : GpuTestBase
     }
 
     private static void ClearEngineShaderLoadTaskCache()
-    {
-        FieldInfo cacheField = typeof(XREngine.Rendering.Models.Materials.ShaderHelper).GetField(
-            "EngineShaderLoadTasks",
-            BindingFlags.Static | BindingFlags.NonPublic)!;
-        object cache = cacheField.GetValue(null)!;
-        cache.GetType().GetMethod("Clear")!.Invoke(cache, null);
-    }
+        => XREngine.Rendering.Models.Materials.ShaderHelper.ClearServiceBoundCaches();
 
     private sealed class FileSystemRuntimeShaderServices(string shaderBasePath) : IRuntimeShaderServices
     {

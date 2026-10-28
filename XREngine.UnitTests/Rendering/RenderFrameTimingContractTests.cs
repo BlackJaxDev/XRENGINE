@@ -44,12 +44,19 @@ public sealed class RenderFrameTimingContractTests
         string collectBody = source.Substring(collectStart, collectEnd - collectStart);
 
         int processRenderables = collectBody.IndexOf("ProcessPendingRenderableOperations();", StringComparison.Ordinal);
+        // The GPU dispatch path swaps without CPU skinned bounds. The CPU culling path
+        // must refresh skinned bounds before it swaps the CPU tree.
+        int cpuCullingPath = collectBody.IndexOf("if (!_isGpuDispatchActive)", StringComparison.Ordinal);
         int refreshSkinnedBounds = collectBody.IndexOf("RefreshSkinnedCpuCullingBounds();", StringComparison.Ordinal);
-        int swapCpuTree = collectBody.IndexOf("ActiveCpuRenderTree.Swap();", StringComparison.Ordinal);
+        int swapCpuTree = refreshSkinnedBounds < 0
+            ? -1
+            : collectBody.IndexOf("ActiveCpuRenderTree.Swap();", refreshSkinnedBounds, StringComparison.Ordinal);
 
         processRenderables.ShouldBeGreaterThanOrEqualTo(0);
-        refreshSkinnedBounds.ShouldBeGreaterThan(processRenderables);
+        cpuCullingPath.ShouldBeGreaterThan(processRenderables);
+        refreshSkinnedBounds.ShouldBeGreaterThan(cpuCullingPath);
         swapCpuTree.ShouldBeGreaterThan(refreshSkinnedBounds);
+        collectBody.LastIndexOf("RefreshSkinnedCpuCullingBounds();", StringComparison.Ordinal).ShouldBe(refreshSkinnedBounds);
     }
 
     [Test]

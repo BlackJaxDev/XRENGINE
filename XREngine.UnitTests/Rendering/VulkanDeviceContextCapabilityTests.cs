@@ -2,6 +2,7 @@ using NUnit.Framework;
 using Shouldly;
 using Silk.NET.Vulkan;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.Vulkan.DeviceBootstrap;
 
@@ -114,24 +115,34 @@ public sealed class VulkanDeviceContextCapabilityTests
     [Test]
     public void RendererFacade_DoesNotRetainMovedNativeLifetimeState()
     {
-        string instance = SourceContractWorkspace.ReadExactFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.Instance.cs");
+        // The renderer instance partial file is gone. Check every renderer
+        // facade partial file instead, so no file can bring the state back.
+        string instance = ReadVulkanRendererFacadeSources();
         string contextInstance = SourceContractWorkspace.ReadExactFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.Instance.cs");
         string validation = SourceContractWorkspace.ReadExactFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanValidationDiagnostics.cs");
-        string fault = SourceContractWorkspace.ReadExactFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Diagnostics/KhrDeviceFault/VulkanRenderer.KhrDeviceFault.cs");
+        // The device fault facility now owns KHR fault reporting. The renderer
+        // facade no longer has a KHR device-fault partial file.
+        string faultFacility = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceFaultFacility.cs");
+        string faultReporting = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceFaultFacility.Reporting.cs");
+        string contextFaults = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.DeviceFaults.cs");
 
         instance.ShouldNotContain("private Instance _instance");
         instance.ShouldNotContain("private ExtDebugUtils");
         contextInstance.ShouldContain("public Instance Instance { get; private set; }");
         contextInstance.ShouldContain("RendererNativeCallbackBridge.RegisterVulkanDebugHandler(HandleDebugMessage)");
         validation.ShouldNotContain("VulkanRenderer");
-        fault.ShouldContain("_deviceContext.DeviceFaultFacility.SupportsKhrDeviceFault;");
-        fault.ShouldContain("_deviceContext.DeviceFaultFacility.GetDeviceFaultReportsKhr;");
-        fault.ShouldNotContain("private bool _supportsKhrDeviceFault;");
-        fault.ShouldNotContain("private VkGetDeviceFaultReportsKhrDelegate? _vkGetDeviceFaultReportsKHR;");
+        faultFacility.ShouldContain("internal bool SupportsKhrDeviceFault { get; private set; }");
+        faultFacility.ShouldContain("internal VkGetDeviceFaultReportsKhrDelegate? GetDeviceFaultReportsKhr { get; private set; }");
+        faultReporting.ShouldContain("if (!SupportsKhrDeviceFault)");
+        faultReporting.ShouldContain("if (GetDeviceFaultReportsKhr is null)");
+        contextFaults.ShouldContain("DeviceFaultFacility.CaptureKhr(");
+        instance.ShouldNotContain("_supportsKhrDeviceFault");
+        instance.ShouldNotContain("_vkGetDeviceFaultReportsKHR");
     }
 
     [Test]
@@ -186,10 +197,10 @@ public sealed class VulkanDeviceContextCapabilityTests
     [Test]
     public void RendererFacade_DoesNotRetainMovedCapabilityState()
     {
-        string physical = SourceContractWorkspace.ReadExactFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.PhysicalDevice.cs");
-        string logical = SourceContractWorkspace.ReadExactFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+        // The renderer physical-device and logical-device partial files are
+        // gone. Check every renderer facade partial file instead.
+        string physical = ReadVulkanRendererFacadeSources();
+        string logical = physical;
         string context = SourceContractWorkspace.ReadExactFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.cs");
         string queueFamilies = SourceContractWorkspace.ReadExactFile(
@@ -205,6 +216,23 @@ public sealed class VulkanDeviceContextCapabilityTests
         context.ShouldContain("public bool QueuesPublished");
         context.ShouldContain("private static void ValidateQueueFamily(");
         queueFamilies.ShouldNotContain("partial class VulkanRenderer");
+    }
+
+    /// <summary>
+    /// Reads every Vulkan source file that declares a part of the
+    /// <c>VulkanRenderer</c> facade type.
+    /// </summary>
+    private static string ReadVulkanRendererFacadeSources()
+    {
+        Regex facadeDeclaration = new(@"\bpartial\s+class\s+VulkanRenderer\b", RegexOptions.CultureInvariant);
+        string[] sources =
+        [
+            .. SourceContractWorkspace.GetVulkanSourceFiles()
+                .Where(file => facadeDeclaration.IsMatch(file.Source))
+                .Select(static file => file.Source),
+        ];
+        sources.Length.ShouldBeGreaterThan(0, "No Vulkan source file declares the VulkanRenderer facade.");
+        return string.Join("\n", sources);
     }
 
     private static VulkanDeviceContext CreateContext(

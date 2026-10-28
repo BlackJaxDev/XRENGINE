@@ -325,8 +325,7 @@ namespace XREngine.Rendering.Commands
 
         // CPU Hi-Z visibility snapshot machinery removed (C-CPU-2). The CPU path now
         // owns its own occlusion via CpuRenderOcclusionCoordinator hardware queries;
-        // CpuDirect never consumes the GPU compute cull output. See
-        // docs/work/design/rendering/render-submission-perf-debug-plan.md section 10.
+        // CpuDirect never consumes the GPU compute cull output.
 
         private void ResetOcclusionFrameStats()
         {
