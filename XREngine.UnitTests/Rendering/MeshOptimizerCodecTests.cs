@@ -142,6 +142,19 @@ public sealed class MeshOptimizerCodecTests
     }
 
     [Test]
+    public void IndexCodec_DecodeCountNotMultipleOf3_ThrowsBeforeNativeDecode()
+    {
+        (uint[] indices, _, int vertexCount) = CreateGrid(4);
+        byte[] buffer = new byte[_meshopt.EncodeIndexBufferBound(indices.Length, vertexCount)];
+        int size = _meshopt.EncodeIndexBuffer(buffer, indices);
+
+        // The native decoder writes whole triangles, so a destination of 4 indices would receive 6.
+        uint[] destination = new uint[5];
+        Should.Throw<ArgumentException>(() => _meshopt.DecodeIndexBuffer(destination.AsSpan(0, 4), buffer.AsSpan(0, size)));
+        destination[4].ShouldBe(0u);
+    }
+
+    [Test]
     public void FilterQuat12_RoundTrip_AngleErrorBelowHalfDegree()
     {
         const int count = 10000;

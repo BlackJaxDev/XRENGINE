@@ -94,7 +94,11 @@ public sealed partial class GaussianCacheHeader
         }
     }
 
-    /// <summary>Reads a header. Counts and lengths are checked against the bytes that remain.</summary>
+    /// <summary>
+    /// Reads a header. Counts and lengths are checked against the bytes that remain, and the header is checked against
+    /// the limits of the format (see <see cref="Validate"/>).
+    /// </summary>
+    /// <exception cref="GaussianCacheFormatException">The header is not valid.</exception>
     public static GaussianCacheHeader Read(BinaryReader reader)
     {
         ArgumentNullException.ThrowIfNull(reader);
@@ -103,10 +107,10 @@ public sealed partial class GaussianCacheHeader
         try
         {
             header.FormatVersion = reader.ReadUInt16();
-            if (header.FormatVersion > CurrentFormatVersion)
+            if (header.FormatVersion != CurrentFormatVersion)
                 throw new GaussianCacheFormatException(
                     GaussianCacheFormatException.UnsupportedFormatVersionCode,
-                    $"Gaussian cache format version {header.FormatVersion} is newer than the supported version {CurrentFormatVersion}.");
+                    $"Gaussian cache format version {header.FormatVersion} is not supported. The supported version is {CurrentFormatVersion}.");
 
             byte representation = reader.ReadByte();
             if (representation != (byte)GaussianCacheRepresentation.BakedDriver)
@@ -157,6 +161,7 @@ public sealed partial class GaussianCacheHeader
             throw Malformed("the header ends early");
         }
 
+        header.Validate();
         return header;
     }
 

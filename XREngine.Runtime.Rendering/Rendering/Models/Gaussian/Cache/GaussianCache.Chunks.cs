@@ -13,10 +13,11 @@ public sealed partial class GaussianCache
     private int _nextChunkIndex = 1;
 
     /// <summary>
-    /// The decoded data. The first access checks the header and the hash of chunk 0, and decodes chunk 0. Set
-    /// <see cref="Header"/> and <see cref="RootChunkData"/> before the first access.
+    /// The decoded data. The first access checks the header, the chunk paths, and the hash of chunk 0, and decodes
+    /// chunk 0. Set <see cref="Header"/>, <see cref="RootChunkData"/>, and <see cref="ChunkAssetPaths"/> before the first
+    /// access.
     /// </summary>
-    /// <exception cref="GaussianCacheFormatException">The header or chunk 0 is not valid.</exception>
+    /// <exception cref="GaussianCacheFormatException">The header, a chunk path, or chunk 0 is not valid.</exception>
     [YamlIgnore]
     [MemoryPackIgnore]
     public GaussianCacheRuntimeData Runtime => _runtime ?? DecodeRoot();
@@ -63,8 +64,28 @@ public sealed partial class GaussianCache
         NextChunkIndex = chunk.Index + 1;
     }
 
+    /// <summary>
+    /// Returns true when a chunk asset path stays in the folder of the root asset: it is not empty, it is relative, it
+    /// has no drive, share, or stream part (no colon), and no segment is empty, <c>.</c>, or <c>..</c>. Both
+    /// <c>/</c> and <c>\</c> separate segments.
+    /// </summary>
+    public static bool IsValidChunkAssetPath(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || path.Contains(':') || path[0] is '/' or '\\')
+            return false;
+
+        foreach (string segment in path.Split('/', '\\'))
+        {
+            if (segment.Length == 0 || segment == "." || segment == "..")
+                return false;
+        }
+
+        return true;
+    }
+
     private GaussianCacheRuntimeData DecodeRoot()
     {
+        _header.Validate();
         GaussianCacheChunkInfo[] chunks = _header.Chunks;
         if (chunks.Length == 0 || chunks[0].Kind != GaussianCacheChunkKind.Root)
             throw Malformed("The chunk table has no root chunk.");
@@ -76,6 +97,13 @@ public sealed partial class GaussianCache
 
         if (_chunkAssetPaths.Length != chunks.Length - 1)
             throw Malformed($"The cache has {_chunkAssetPaths.Length} chunk paths for {chunks.Length - 1} chunks.");
+        for (int index = 0; index < _chunkAssetPaths.Length; index++)
+        {
+            if (!IsValidChunkAssetPath(_chunkAssetPaths[index]))
+                throw new GaussianCacheFormatException(
+                    GaussianCacheFormatException.InvalidChunkPathCode,
+                    $"The asset path of chunk {index + 1} is not a relative path in the folder of the root asset: '{_chunkAssetPaths[index]}'.");
+        }
 
         VerifyHash(_rootChunkData, chunks[0]);
         GaussianCacheRuntimeData runtime = GaussianCacheRuntimeData.Create(_header);

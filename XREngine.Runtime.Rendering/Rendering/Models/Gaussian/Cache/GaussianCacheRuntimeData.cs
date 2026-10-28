@@ -74,11 +74,14 @@ public sealed partial class GaussianCacheRuntimeData
     /// </summary>
     public int GetLoadedTriangleCount(int driverLevel) => _loadedTriangleCounts[driverLevel];
 
-    /// <summary>Makes empty runtime data for a header and checks that its counts agree.</summary>
-    /// <exception cref="GaussianCacheFormatException">The counts of the header do not agree.</exception>
+    /// <summary>Makes empty runtime data for a header and checks that its counts agree and obey the limits of the format.</summary>
+    /// <exception cref="GaussianCacheFormatException">The counts of the header do not agree or are above a limit.</exception>
     internal static GaussianCacheRuntimeData Create(GaussianCacheHeader header)
     {
         ArgumentNullException.ThrowIfNull(header);
+
+        // The limits of the format bound every allocation below.
+        header.Validate();
         int[] counts = header.SplatLevelCounts;
         int[] staticCounts = header.StaticSplatCounts;
         if (counts.Length == 0 || counts.Length > byte.MaxValue)

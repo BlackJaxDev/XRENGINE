@@ -156,6 +156,11 @@ internal static partial class NativeMeshOptimizer
 
     public static unsafe void DecodeIndexBuffer(Span<uint> destination, ReadOnlySpan<byte> encoded)
     {
+        // The native decoder writes whole triangles, and a release build has no check of the count, so a count that is
+        // not a multiple of 3 writes past the end of the destination.
+        if (destination.Length % 3 != 0)
+            throw new ArgumentException("The index count must be a multiple of 3.", nameof(destination));
+
         fixed (uint* destinationPtr = destination)
         fixed (byte* encodedPtr = encoded)
         {
