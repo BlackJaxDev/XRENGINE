@@ -514,6 +514,73 @@ public sealed class GaussianBakePipelineTests
     }
 
     [Test]
+    public async Task Pipeline_GlbAvatar_CacheFilesLoadThroughRuntimePath()
+    {
+        FakeRenderServices render = new();
+        string output = Path.Combine(_workRoot, "avatar-read-back");
+
+        BakeReport report = await CreatePipeline(render).RunAsync(AvatarOptions(output), CancellationToken.None);
+
+        report.Status.ShouldBe(BakeReport.ReadyStatus, report.FailureDetail);
+        GaussianCacheBuildResult built = render.LastCache.ShouldNotBeNull();
+
+        // The runtime reads a cooked cache asset with the published cooked asset reader, and the component load loop
+        // accepts the chunks in order.
+        string rootPath = Path.Combine(output, BakeCacheFiles.FolderName, BakeCacheFiles.RootFileName);
+        GaussianCache loaded = PublishedCookedAssetReader.LoadAsset<GaussianCache>(File.ReadAllBytes(rootPath)).ShouldNotBeNull();
+        await GaussianCacheChunkLoader.LoadChunksAsync(
+            loaded,
+            rootPath,
+            static (path, _) => Task.FromResult(PublishedCookedAssetReader.LoadAsset<GaussianCacheChunk>(File.ReadAllBytes(path))),
+            static () => true,
+            CancellationToken.None);
+        loaded.IsComplete.ShouldBeTrue();
+
+        GaussianCache expected = GaussianCacheTestSphere.Load(built);
+        HeaderBytes(loaded.Header).ShouldBe(HeaderBytes(built.Root.Header));
+        loaded.Header.LoopMode.ShouldBe(built.Root.Header.LoopMode);
+        loaded.Header.SplatLevelCounts.ShouldBe(built.Root.Header.SplatLevelCounts);
+        loaded.RootChunkData.ShouldBe(built.Root.RootChunkData);
+        GaussianCacheRuntimeData actualData = loaded.Runtime;
+        GaussianCacheRuntimeData expectedData = expected.Runtime;
+        for (int level = 0; level < expectedData.LevelRecords.Length; level++)
+        {
+            actualData.GetLoadedNodeCount(level).ShouldBe(built.Root.Header.SplatLevelCounts[level]);
+            actualData.LevelRecords[level].ShouldBe(expectedData.LevelRecords[level]);
+            actualData.ParentIndex[level].ShouldBe(expectedData.ParentIndex[level]);
+        }
+
+        for (int level = 0; level < expectedData.DriverLevelIndices.Length; level++)
+            actualData.DriverLevelIndices[level].ShouldBe(expectedData.DriverLevelIndices[level]);
+        actualData.Frames.FrameCount.ShouldBe(expectedData.Frames.FrameCount);
+        actualData.Frames.LoopMode.ShouldBe(expectedData.Frames.LoopMode);
+        actualData.Frames.Positions.ShouldBe(expectedData.Frames.Positions);
+        actualData.Frames.DecodedTemporalLevel.ShouldBe(expectedData.Frames.DecodedTemporalLevel);
+    }
+
+    [Test]
+    public async Task CacheFiles_DamagedChunkFile_FailsReadBackWithEncodeFailed()
+    {
+        FakeRenderServices render = new();
+        string output = Path.Combine(_workRoot, "avatar-damaged");
+        BakeReport report = await CreatePipeline(render).RunAsync(AvatarOptions(output), CancellationToken.None);
+        report.Status.ShouldBe(BakeReport.ReadyStatus, report.FailureDetail);
+        GaussianCacheBuildResult built = render.LastCache.ShouldNotBeNull();
+        BakeCacheFiles.VerifyReadBack(built, output);
+
+        // One byte of the last chunk changes, so its hash is not the hash in the chunk table.
+        string chunkPath = Path.Combine(output, BakeCacheFiles.FolderName, built.Root.ChunkAssetPaths[^1]);
+        byte[] bytes = File.ReadAllBytes(chunkPath);
+        bytes[^1] ^= 0x5A;
+        File.WriteAllBytes(chunkPath, bytes);
+
+        GaussianBakeException failure = Should.Throw<GaussianBakeException>(() => BakeCacheFiles.VerifyReadBack(built, output));
+
+        failure.FailureCode.ShouldBe(GaussianBakeFailureCodes.EncodeFailed);
+        failure.Message.ShouldContain("does not read back through the runtime path");
+    }
+
+    [Test]
     public async Task Pipeline_PreparedAvatar_RunsOneTime()
     {
         FakeRenderServices render = new();
@@ -774,6 +841,14 @@ public sealed class GaussianBakePipelineTests
         return document.RootElement.Clone();
     }
 
+    private static byte[] HeaderBytes(GaussianCacheHeader header)
+    {
+        using MemoryStream stream = new();
+        using (BinaryWriter writer = new(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+            header.Write(writer);
+        return stream.ToArray();
+    }
+
     private static string Sha256Of(string path)
         => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
 
@@ -807,6 +882,9 @@ public sealed class GaussianBakePipelineTests
         public int ContentCalls { get; private set; }
 
         public int LoopCalls { get; private set; }
+
+        /// <summary>Gets the cache of the last loop recording: the in-memory build result of the bake.</summary>
+        public GaussianCacheBuildResult? LastCache { get; private set; }
 
         public Task<float[][]> CaptureViewsAsync(
             CookedBakeInput input,
@@ -845,6 +923,7 @@ public sealed class GaussianBakePipelineTests
             CancellationToken cancellationToken)
         {
             LoopCalls++;
+            LastCache = cache;
             poses.Count.ShouldBeGreaterThan(0);
             Directory.CreateDirectory(outputDirectory);
             foreach (LoopRendition rendition in LoopRendition.All)

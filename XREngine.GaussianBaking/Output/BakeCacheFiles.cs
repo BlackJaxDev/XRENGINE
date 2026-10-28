@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using XREngine.Core.Files;
 using XREngine.Rendering.Models.Gaussian.Baking.Build;
+using XREngine.Rendering.Models.Gaussian.Cache;
 
 namespace XREngine.Rendering.Models.Gaussian.Baking.Output;
 
@@ -58,6 +59,57 @@ public static class BakeCacheFiles
         return folder;
     }
 
+    /// <summary>
+    /// Reads the cache files back through the runtime path, and checks that they hold the built cache. The runtime reads
+    /// a cooked cache asset with <see cref="PublishedCookedAssetReader"/>, and accepts the chunks in order with
+    /// <see cref="GaussianCacheChunkLoader.ResolveChunkPath"/> and <see cref="GaussianCache.AcceptChunk"/>. The check
+    /// compares the header bytes, the data of chunk 0, the chunk paths, and the index and data of each chunk with the
+    /// built cache, and decodes every chunk.
+    /// </summary>
+    /// <param name="build">The built cache.</param>
+    /// <param name="outputDirectory">The folder that holds the cache folder.</param>
+    /// <exception cref="GaussianBakeException">
+    /// The files cannot be read, do not decode, or do not hold the built cache
+    /// (<see cref="GaussianBakeFailureCodes.EncodeFailed"/>).
+    /// </exception>
+    public static void VerifyReadBack(GaussianCacheBuildResult build, string outputDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(build);
+        ArgumentException.ThrowIfNullOrWhiteSpace(outputDirectory);
+
+        string folder = Path.Combine(outputDirectory, FolderName);
+        string rootPath = Path.Combine(folder, RootFileName);
+        try
+        {
+            GaussianCache cache = PublishedCookedAssetReader.LoadAsset<GaussianCache>(File.ReadAllBytes(rootPath))
+                ?? throw ReadBackFailed(rootPath, "the file is not a gaussian cache asset");
+            if (!HeaderBytes(cache.Header).AsSpan().SequenceEqual(HeaderBytes(build.Root.Header)))
+                throw ReadBackFailed(rootPath, "the header is not the built header");
+            if (!cache.RootChunkData.AsSpan().SequenceEqual(build.Root.RootChunkData))
+                throw ReadBackFailed(rootPath, "chunk 0 is not the built chunk 0");
+            if (!cache.ChunkAssetPaths.SequenceEqual(build.Root.ChunkAssetPaths, StringComparer.Ordinal))
+                throw ReadBackFailed(rootPath, "the chunk paths are not the built chunk paths");
+
+            for (int i = 0; i < build.Chunks.Length; i++)
+            {
+                string chunkPath = GaussianCacheChunkLoader.ResolveChunkPath(rootPath, cache.ChunkAssetPaths[i]);
+                GaussianCacheChunk chunk = PublishedCookedAssetReader.LoadAsset<GaussianCacheChunk>(File.ReadAllBytes(chunkPath))
+                    ?? throw ReadBackFailed(chunkPath, "the file is not a gaussian cache chunk asset");
+                if (chunk.Index != build.Chunks[i].Index || !chunk.Data.AsSpan().SequenceEqual(build.Chunks[i].Data))
+                    throw ReadBackFailed(chunkPath, $"the chunk is not built chunk {build.Chunks[i].Index}");
+                if (!cache.AcceptChunk(chunk))
+                    throw ReadBackFailed(chunkPath, $"chunk {chunk.Index} was accepted before");
+            }
+
+            if (!cache.IsComplete)
+                throw ReadBackFailed(rootPath, "the cache is not complete after its last chunk");
+        }
+        catch (Exception ex) when (ex is not GaussianBakeException and not OutOfMemoryException)
+        {
+            throw ReadBackFailed(rootPath, $"{ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     /// <summary>Returns the ID of the cache asset with the given index: the first 16 bytes of SHA-256 of the content hash and the index.</summary>
     /// <param name="contentHash">The content hash of the cache.</param>
     /// <param name="index">0 for the root asset, otherwise the chunk index.</param>
@@ -79,6 +131,17 @@ public static class BakeCacheFiles
         return CookedAssetEnvelope.Serialize(new CookedAssetBlob(typeReference, CookedAssetFormat.RuntimeBinaryV1, payload));
     }
 #pragma warning restore IL2026, IL3050
+
+    private static byte[] HeaderBytes(GaussianCacheHeader header)
+    {
+        using MemoryStream stream = new();
+        using (BinaryWriter writer = new(stream, System.Text.Encoding.UTF8, leaveOpen: true))
+            header.Write(writer);
+        return stream.ToArray();
+    }
+
+    private static GaussianBakeException ReadBackFailed(string path, string reason)
+        => new(GaussianBakeFailureCodes.EncodeFailed, $"The cache file '{path}' does not read back through the runtime path: {reason}.");
 
     /// <summary>
     /// Replaces the bytes of the asset ID in the payload. The bytes must occur exactly one time, so that no other data
