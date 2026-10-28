@@ -826,6 +826,15 @@ function decodeShadowScreenshot(data, requireTime) {
     return image;
 }
 
+// Records the elapsed time of every shadow capture, pass or fail, so that the report shows the margin to the budget.
+const shadowCaptureTimings = [];
+const recordShadowCaptureTiming = (diagnostics, state, outcome) => shadowCaptureTimings.push({
+    name: diagnostics.name, state, outcome, budgetMs: diagnostics.budgetMs, elapsedMs: diagnostics.elapsedMs,
+    attempt: diagnostics.attempt,
+    phases: Object.fromEntries(Object.values(diagnostics.phases)
+        .filter(phase => phase.status !== 'unrun').map(phase => [phase.phase, phase.elapsedMs])),
+});
+
 async function captureShadowSurface(page, config, imageAnalysis, slot, name, failure, captureContext,
     reference = null, observeResize = false) {
     const budget = Math.min(config.timeout, 10000);
@@ -1185,6 +1194,8 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
                     latest.resizeCheckpoints = structuredClone(diagnostics.resizeCheckpoints);
                 }
                 requireCaptureTime();
+                diagnostics.elapsedMs = Date.now() - startedAt;
+                recordShadowCaptureTiming(diagnostics, state, 'passed');
                 return { image, pixels: latest, imageSha256, analysisSlot: slot,
                     receiverComparison: analyzed.comparison, comparedToHash: reference?.imageSha256 ?? null };
             }
@@ -1202,7 +1213,9 @@ async function captureShadowSurface(page, config, imageAnalysis, slot, name, fai
         // Preserve the capture error if bounded cleanup also fails.
         try { await detachCaptureSession(true); } catch { /* Cleanup remains unverified. */ }
         diagnostics.activePhase = failedPhase;
-        throw withCaptureEvidence(error);
+        const captureError = withCaptureEvidence(error);
+        recordShadowCaptureTiming(diagnostics, state, 'failed');
+        throw captureError;
     } finally { stopHalfwayCheckpoint(); }
 }
 
@@ -1316,6 +1329,7 @@ export async function advancedShadowParityGameCheck(browser, origin, report, con
     report.advancedShadowScope = 'Combined directional and point ON/OFF shadow effect on the pinned receiver; real 256px shadow production and full native consumption. Does not establish isolated point-shadow visual occlusion, exact PCSS or numeric material parity, native compile speed, or physical-GPU performance.';
     report.advancedShadowIterations = [];
     report.advancedShadowFailures = [];
+    report.advancedShadowCaptureTimings = shadowCaptureTimings;
     const profiles = [
         { name: 'small', initialViewport: { width: 640, height: 780 }, widths: [560, 600],
             extents: [[593, 334], [513, 289], [553, 311]] },
