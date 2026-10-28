@@ -763,8 +763,9 @@ contains. A clip matches only while it is the same live object with the same
 construction identity. Play mode clears the selection on enter and restores it
 on exit, so the view comes back when the restored component uses the same clip
 asset object. The graph mode, value channel, and stretch choice belong to the
-panel, not to a clip. Full timeline interaction
-and animation editor parity remain open. The profiler virtualizes the full source
+panel, not to a clip. Key copy and paste, multiple key selection, animation events,
+and clip create or rename are not in either the native or the ImGui editor. The
+profiler virtualizes the full source
 row set instead of truncating it at 1,000 rows.
 
 `UIRenderSurfacePool` owns up to four bounded leased color targets. Reservation and
@@ -1398,8 +1399,9 @@ only its candidate and displayed frame, resets on session changes and backward
 clock observations, and follows the canonical boundary-frame rule. Stale roots and child paths retain their last values for the configured persistence
 period. Same-frame reads do no index work until the next inactivity or expiry
 deadline. Current roots have priority at capacity, and session or clock changes
-reset carry state. All-root plots and detailed diagnostics remain open. Desktop test execution
-and live Windows/GPU acceptance remain separate.
+reset carry state. Every visible root row has a history plot cell (see Virtual
+profiler histories). Desktop test execution and live Windows/GPU acceptance
+remain separate.
 
 `EditorDictionaryMutation` supports exact BCL dictionaries with string keys and
 the default or ordinal comparer, or integer keys and the default comparer. The
@@ -1684,8 +1686,8 @@ counters. Resource event counts and the top 32 detail rows publish under one
 lock with an epoch and an omitted-key count. Frame publication uses fixed row
 buffers; the native panel copies into fixed scratch storage. Shadow diagnostics
 include request formats, solve failures, demotions, reuse, page allocation, and
-group placement. Native runtime acceptance and detailed Vulkan output
-diagnostics remain open.
+group placement. Detailed Vulkan stage, causal-wait, descriptor, and command-chain
+diagnostics use bounded rows. Native runtime acceptance remains open.
 
 `NativeProfilerStatHistory` keeps 720 frames for each `ENativeProfilerStatSeries`
 value in one array that is allocated once. The panel samples it on each late tick
