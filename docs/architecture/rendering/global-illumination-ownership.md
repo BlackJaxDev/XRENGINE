@@ -1,6 +1,6 @@
 # Global Illumination Ownership And Selection
 
-This document describes the modular GI contract that `DefaultRenderPipeline` and `AdvancedRenderPipeline` share. It covers provider selection, host adapters, the output signal, composition, lifetime domains, and submission rules. The authoring workflow is in the [Global Illumination Providers guide](../../developer-guides/gi/global-illumination.md). Open code work: [Modular GI Architecture TODO](../../work/todo/rendering/global-illumination/modular-gi-architecture-todo.md). Checks: [Global Illumination Validation](../../work/testing/rendering/global-illumination-validation.md).
+This document describes the modular GI contract that `DefaultRenderPipeline` and `AdvancedRenderPipeline` share. It covers provider selection, host adapters, the output signal, composition, lifetime domains, and submission rules. The authoring workflow is in the [Global Illumination Providers guide](../../developer-guides/gi/global-illumination.md).
 
 A logical world, component, or texture identity never proves that two GPU allocations can be shared.
 

@@ -148,7 +148,8 @@ public sealed class RenderCommandCollectionOrderingTests
         source.ShouldContain("SnapshotSortedRenderCommandCollection");
         source.ShouldContain("SnapshotSortedRenderCommandCollection : ICollection<RenderCommand>, IReadOnlyCollection<RenderCommand>");
         source.ShouldContain("Entry.Capture(item, renderDistance, sortOrderKey)");
-        source.ShouldContain("snapshotSet.Add(item, sortOrderKey, renderDistance)");
+        // The snapshot add reports the captured entry so that the caller can read its sort priority.
+        source.ShouldContain("snapshotSet.TryAdd(item, sortOrderKey, renderDistance,");
         source.ShouldContain("item.CaptureSortDistance(camera)");
         source.ShouldNotContain("_entries.Add(Entry.Capture(item));");
         source.ShouldNotContain("new SortedSet<RenderCommand>");

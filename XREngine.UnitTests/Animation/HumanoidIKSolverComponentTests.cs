@@ -128,17 +128,26 @@ public sealed class HumanoidIKSolverComponentTests
         solver.SetAnimatedIKPosition(ELimbEndEffector.LeftFoot, new Vector3(0.0f, -1.0f, 0.0f));
         solver.SetAnimatedIKPosition(ELimbEndEffector.LeftHand, new Vector3(0.0f, -1.0f, 0.0f));
 
+        // Animated goals are authored in the humanoid body frame and scaled by the
+        // animated motion scale. Contact compensation runs after that pose step.
+        Vector3 authoredGoal = new(0.0f, -1.0f, 0.0f);
+        humanoid.TryGetCommittedBodyFrameWorld(out Matrix4x4 bodyFrameWorld, out _).ShouldBeTrue();
+        Vector3 bodyFrameGoal = Vector3.Transform(authoredGoal * humanoid.EstimateAnimatedMotionScale(), bodyFrameWorld);
+        const float minimumContactY = 1.0f;
+        bodyFrameGoal.Y.ShouldBeLessThan(minimumContactY);
+
         HumanoidIKGoalDiagnosticState foot = solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftFoot);
         foot.Status.ShouldBe(EHumanoidIKGoalApplicationStatus.AppliedWithContactCompensation);
-        foot.AuthoredBodyLocalPosition.ShouldBe(new Vector3(0.0f, -1.0f, 0.0f));
-        foot.BodyFrameWorldPosition.ShouldBe(new Vector3(0.0f, -1.0f, 0.0f));
-        foot.ContactCompensationOffset.ShouldBe(new Vector3(0.0f, 1.0f, 0.0f));
-        foot.FinalWorldPosition.ShouldBe(Vector3.Zero);
+        foot.AuthoredBodyLocalPosition.ShouldBe(authoredGoal);
+        AssertClose(foot.BodyFrameWorldPosition, bodyFrameGoal);
+        Vector3 footOffset = new(0.0f, (minimumContactY - bodyFrameGoal.Y) * 0.5f, 0.0f);
+        AssertClose(foot.ContactCompensationOffset, footOffset);
+        AssertClose(foot.FinalWorldPosition, bodyFrameGoal + footOffset);
 
         HumanoidIKGoalDiagnosticState hand = solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftHand);
         hand.Status.ShouldBe(EHumanoidIKGoalApplicationStatus.AppliedAuthored);
         hand.ContactCompensationOffset.ShouldBe(Vector3.Zero);
-        hand.FinalWorldPosition.ShouldBe(new Vector3(0.0f, -1.0f, 0.0f));
+        AssertClose(hand.FinalWorldPosition, bodyFrameGoal);
 
         solver.ConfigureAnimatedGoalContactCompensation(
             EHumanoidContactCompensationMode.GroundPlaneFeetAndHands,
@@ -148,7 +157,14 @@ public sealed class HumanoidIKSolverComponentTests
 
         hand = solver.GetAnimatedIKGoalDiagnostic(ELimbEndEffector.LeftHand);
         hand.Status.ShouldBe(EHumanoidIKGoalApplicationStatus.AppliedWithContactCompensation);
-        hand.ContactCompensationOffset.ShouldBe(new Vector3(0.0f, 2.0f, 0.0f));
-        hand.FinalWorldPosition.ShouldBe(new Vector3(0.0f, 1.0f, 0.0f));
+        AssertClose(hand.ContactCompensationOffset, new Vector3(0.0f, minimumContactY - bodyFrameGoal.Y, 0.0f));
+        AssertClose(hand.FinalWorldPosition, new Vector3(bodyFrameGoal.X, minimumContactY, bodyFrameGoal.Z));
+    }
+
+    private static void AssertClose(Vector3 actual, Vector3 expected, float tolerance = 1e-4f)
+    {
+        actual.X.ShouldBe(expected.X, tolerance);
+        actual.Y.ShouldBe(expected.Y, tolerance);
+        actual.Z.ShouldBe(expected.Z, tolerance);
     }
 }

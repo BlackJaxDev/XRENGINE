@@ -161,8 +161,6 @@ Validate generated presentation with the output window visible and focused,
 including after swapchain recreation. Hardware runs have shown one presentation
 per rendered frame in the background and two after refocusing without changing
 rendering settings; record background behavior separately.
-See the [current live investigation](../../work/investigations/rendering/2026-09-24-vulkan-dlss-aa-frame-generation.md)
-for measured acceptance and remaining limitations.
 
 The native Vulkan Default and Advanced pipelines route DLSS Super Resolution through the main Vulkan renderer instead of the OpenGL bridge. `VPRC_VendorUpscale` resolves the source color, depth, motion-vector, and optional exposure textures from the active pipeline, validates that the DLSS inputs share the same internal extent, allocates a storage-capable output color texture at the final output extent, and enqueues a DLSS frame op before the final present quad samples that output. Selecting anti-aliasing mode `DLAA` requests the same DLSS/Streamline path at native internal resolution, so Streamline receives `DLAA` mode instead of an upscaling mode.
 
@@ -262,5 +260,4 @@ Manual hardware validation is still required for final runtime confidence:
 
 - [Default Render Pipeline Notes](../../architecture/rendering/default-render-pipeline-notes.md)
 - [OpenVR VRClient GPU Handoff](../../architecture/rendering/openvr-vrclient-gpu-handoff.md)
-- [Vulkan Core Frame Loop And Resident Rendering Master TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md)
 - [ReSTIR GI](../gi/restir-gi.md)

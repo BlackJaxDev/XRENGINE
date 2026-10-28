@@ -187,9 +187,7 @@ These defaults apply only to this world. Test names, descriptions, and point
 labels face the current render camera, including after camera movement.
 
 The three root toggles are mutually exclusive and temporarily apply the mode's
-renderer settings. Turning the active test off restores the prior settings. See
-[Math Intersections Occlusion Validation](../../work/testing/rendering/math-intersections-occlusion-tests.md)
-for scene layout, pass criteria, and current qualification status.
+renderer settings. Turning the active test off restores the prior settings.
 
 ### Compare continuous rendering and idle reuse
 
@@ -286,7 +284,6 @@ required and ignores `XRE_ADVANCED_RENDER_PIPELINE_MODE`, which applies to
 desktop outputs only. `Rvc` also needs `VR.RvcPipelineMode`. `Off`, or a mode
 that the RVC resolver cannot run on the current device, rejects the frame. These
 values apply to OpenXR. The OpenVR path does not read `VR.RenderPipeline` yet.
-See the [VR pipeline selection design](../../work/design/rendering/vr-pipeline-selection-design.md).
 
 ```jsonc
 {
@@ -377,7 +374,7 @@ Explicit runtime manifest command:
 powershell -ExecutionPolicy Bypass -File Tools\OpenXR\Run-OpenXrSteamVrSmoke.ps1 -RuntimeJson "C:\Program Files (x86)\Steam\steamapps\common\SteamVR\steamxr_win64.json" -Renderer Vulkan
 ```
 
-OpenGL can be checked with `-Renderer OpenGL`, but SteamVR OpenXR OpenGL session creation is known to be runtime/driver sensitive. When OpenGL fails and Vulkan succeeds, keep the Vulkan row as the primary hardware lane and record the OpenGL failure diagnostics in `docs/work/testing/`.
+OpenGL can be checked with `-Renderer OpenGL`, but SteamVR OpenXR OpenGL session creation is known to be runtime/driver sensitive. When OpenGL fails and Vulkan succeeds, keep the Vulkan row as the primary hardware lane and record the OpenGL failure diagnostics in `<work-docs-repo>/testing/`.
 
 The SteamVR smoke writes:
 
@@ -388,7 +385,7 @@ The SteamVR smoke writes:
 - `logs/editor.stdout.log`
 - `logs/editor.stderr.log`
 
-Record each hardware matrix pass under `docs/work/testing/` with the headset model, controller models, tracker count/roles, expected hand/finger data, runtime version, renderer, summary path, and relevant `Build/Logs/...` session path.
+Record each hardware matrix pass under `<work-docs-repo>/testing/` with the headset model, controller models, tracker count/roles, expected hand/finger data, runtime version, renderer, summary path, and relevant `Build/Logs/...` session path.
 
 ### Test networking pose sync
 

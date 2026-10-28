@@ -76,7 +76,7 @@ public sealed class PhysicsChainGpuResidencyTests
         source.ShouldContain("GPUPhysicsChainUploadPlan.Create");
         source.ShouldContain("IsDynamicHeaderDirty");
         source.ShouldContain("Span<GPUPerTreeParams> dirtyHeaders");
-        source.ShouldContain("WriteDataRaw(dirtyHeaders, (uint)dirtyStart)");
+        source.ShouldContain("TryWriteInputPage(_perTreeParamsBuffer, dirtyHeaders, dirtyStart)");
         source.ShouldContain("DeferArenaResource");
         source.ShouldContain("RetirementFence");
         source.ShouldNotContain("CopyResidentParticlesIntoCombinedBuffer");

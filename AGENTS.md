@@ -99,7 +99,7 @@ Temporary references are allowed **only when the associated todo document is act
 
 - Agent MCP work always uses a named isolated session via `Tools/Manage-McpEditorSession.ps1 Start|Stop -Name <name>`; never stop processes by name or an editor you did not start. Sessions build/run under `Build/_AgentValidation/00000000-000000-shared/mcp-sessions/<timestamp>-<name>/`, avoiding normal build locks.
 - For observable editor/rendering/scene/transform issues, follow the linked live-editor loop: configure the scene, start the isolated session, position the camera, capture and **view** PNGs from multiple positions, stop your session, inspect its logs, change one variable, and repeat. Use `Start -NoBuild` only when existing session binaries contain the change.
-- Track problems, findings, proposed/attempted fixes, validation, and user-reported success/failure in `docs/work/investigations/<subsystem>/`. Record ruled-out causes and next steps to avoid repeating work.
+- Track problems, findings, proposed/attempted fixes, validation, and user-reported success/failure in `<work-docs-repo>/investigations/<subsystem>/`. Record ruled-out causes and next steps to avoid repeating work.
 - For inconclusive Vulkan/OpenGL screenshots/logs, use RenderDoc per the workflow guide/skill. Inspect exported suspicious textures/targets visually, close capture sessions, and record findings.
 - After adding/renaming MCP tools, run `pwsh Tools/Reports/generate_mcp_docs.ps1`.
 
@@ -113,18 +113,20 @@ All AI-generated artifacts not intended for commit belong under `Build/_AgentVal
 - Never create scratch at the repository root, `McpCaptures/`, `Screenshots/`, `_verify_temp/`, or `Build/TempValidation/`. Relocate useful forced outputs and safely delete disposable originals.
 - Engine logs may remain in `Build/Logs/`; copy relevant evidence to the run's `logs/` or record the exact session path in a durable work doc. Evidence remains disposable even when linked; copy required findings into tracked docs.
 
-Use `docs/work/<purpose>/<subsystem>/`: `investigations` for debugging, `progress` for active status/validation/closeout, `design` for proposals, `todo` for checklists/backlog, and `testing` for validation plans/reproduction/matrices. Do not create top-level subsystem buckets such as `docs/work/rendering/`. Update relevant `README.md`, `docs/README.md`, and feature docs when behavior/workflows change.
+Work docs (investigations, designs, todos, progress, testing, and audits) live in the private `BlackJaxDev/XRENGINE-WORK-DOCS` repository, not in this repository. `<work-docs-repo>` is its local checkout, normally a sibling of `<repo-root>`. Commit work docs there. Public XRENGINE docs and code must not depend on work docs. If the checkout is not available, tell the user and keep notes under `Build/_AgentValidation/`.
+
+Use `<work-docs-repo>/<purpose>/<subsystem>/`: `investigations` for debugging, `progress` for active status/validation/closeout, `design` for proposals, `todo` for checklists/backlog, and `testing` for validation plans/reproduction/matrices. Do not create top-level subsystem buckets such as `<work-docs-repo>/rendering/`. Update relevant `README.md`, `docs/README.md`, and feature docs when behavior/workflows change.
 
 ### Todo And Validation Docs
 
 Keep code work and debugging/validation work in separate documents:
 
-- **Code todos** (`docs/work/todo/<subsystem>/`) list only open implementation items: code changes, refactors, and unit test code. Each item names the files or types and a done condition that a reviewer can confirm in the diff or a unit test. Keep one short "Current state" paragraph, open decisions, and links to the architecture, design, and validation docs.
-- **Validation docs** (`docs/work/testing/<subsystem>/`, one per area) own all manual, runtime, visual, hardware, profiler, benchmark, and soak checks, plus acceptance matrices. A failed check links to an investigation or creates a code item. It does not become a code checkbox in place.
+- **Code todos** (`<work-docs-repo>/todo/<subsystem>/`) list only open implementation items: code changes, refactors, and unit test code. Each item names the files or types and a done condition that a reviewer can confirm in the diff or a unit test. Keep one short "Current state" paragraph, open decisions, and links to the architecture, design, and validation docs.
+- **Validation docs** (`<work-docs-repo>/testing/<subsystem>/`, one per area) own all manual, runtime, visual, hardware, profiler, benchmark, and soak checks, plus acceptance matrices. A failed check links to an investigation or creates a code item. It does not become a code checkbox in place.
 - **Investigations** own debug history, build-by-build logs, hypotheses, and ruled-out causes. Do not keep these logs in todos.
 - **Architecture docs and guides** own finished design: ownership, invariants, data layouts, flags, environment variables, and type/file maps. When a code item is done, remove it from the todo and move its lasting facts there. Do not keep checked boxes as history.
 - Before you check, remove, or report a todo item, confirm its state in code. Correct stale "current state" text when you touch a todo.
-- `docs/work/todo/COMPLETED/` must not contain open code items. Reopened work moves back to an active todo.
+- `<work-docs-repo>/todo/COMPLETED/` must not contain open code items. Reopened work moves back to an active todo.
 - Do not copy standing rules, exit-criteria prose, or branch/merge steps into each todo. Link to one shared copy.
 - Use the templates in [work doc templates](docs/developer-guides/ai/work-doc-templates.md).
 

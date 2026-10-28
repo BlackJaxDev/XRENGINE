@@ -1,7 +1,7 @@
 param(
     [string]$PublishRoot = "Build/_AgentValidation/20260825-103925-runtime-modularization-p60/temp-build/publish",
 
-    [string]$OutputPath = "docs/work/progress/runtime/runtime-modularization-phase6-publish-layout-baseline.tsv"
+    [string]$OutputPath = "XREngine.UnitTests/TestData/RuntimeModularization/runtime-modularization-phase6-publish-layout-baseline.tsv"
 )
 
 $ErrorActionPreference = "Stop"

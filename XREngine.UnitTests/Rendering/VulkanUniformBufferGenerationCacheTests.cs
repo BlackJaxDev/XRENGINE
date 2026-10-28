@@ -124,37 +124,50 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     [Test]
     public void RecordingPathsSealCompleteManifestsBeforeVulkanBegin()
     {
+        string lifecycle = ReadWorkspaceFile(
+            VulkanRoot + "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.cs");
         string primary = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            VulkanRoot + "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Preparation.cs");
+        string primarySetup = ReadWorkspaceFile(
+            VulkanRoot + "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Setup.cs");
         string secondary = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+            VulkanRoot + "Commands/CommandBuffers/Recording/Secondary/VulkanRenderer.SecondaryCommandBuffers.cs");
         string arena = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanRenderer.MappedFrameArena.cs");
+            VulkanRoot + "Commands/Authority/VulkanCommandRuntime.NativeRecordingServices.cs");
 
+        // The primary lifecycle prepares and seals frame data before the
+        // encoding setup resets and begins the native command buffer.
+        AssertOrdered(lifecycle,
+            "if (!TryPreparePrimaryFrameData(",
+            "PreparePrimaryCommandEncoding(ref recordingState);");
         AssertOrdered(primary,
+            "private bool TryPreparePrimaryFrameData(",
             "frameDataManifest.Begin(",
             "TryPrewarmFrameDataForRecording",
             "frameDataManifest.TrySeal(",
-            "Api!.BeginCommandBuffer(commandBuffer");
+            "private void PreparePrimaryCommandEncoding(",
+            "ResetAndBeginPrimaryCommandBuffer(ref recordingState);");
+        primarySetup.ShouldContain("\"vkBeginCommandBuffer.Primary\");");
         AssertOrdered(secondary,
             "frameDataManifest.Begin(",
             "TryPrewarmFrameDataForRecording",
             "frameDataManifest.TrySeal(",
-            "Api!.BeginCommandBuffer(secondaryCommandBuffer");
-        primary.ShouldContain("private bool TryRecordCommandBuffer(");
-        primary.ShouldContain("out string recordingDeferredReason");
+            "\"vkBeginCommandBuffer.DynamicUiSecondary\"",
+            "BeginTrackedCommandBuffer(\n                        secondaryCommandBuffer,");
+        lifecycle.ShouldContain("private bool RecordCommandBufferLifecycle(");
+        lifecycle.ShouldContain("recordingState.RecordingDeferredReason = ref context.RecordingDeferredReason;");
         primary.ShouldContain("Mesh frame-data reservation deferred before command recording");
         primary.ShouldNotContain("$\"Mesh frame-data reservation failed before command recording for \" +");
-        primary.ShouldContain("EnterFrameOpResourcePlannerReadbackScope(ops[opIndex].Context)");
-        secondary.ShouldContain("EnterFrameOpResourcePlannerReadbackScope(drawOp.Context)");
-        primary.ShouldContain("commandBufferImageSlot,\n                        out string prewarmReason");
+        primary.ShouldContain("EnterRecordingResourceScope(recordingState.FramePlan, in operationContext)");
+        secondary.ShouldContain("PushRenderingPipelineOverride(\n                    drawContext.PipelineInstance)");
+        primary.ShouldContain("recordingState.FrameDataSlot,\n                            out string prewarmReason");
         secondary.ShouldContain("descriptorFrameIndex,\n                        out string reason");
         string drawing = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
+            VulkanRoot + "BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs");
         drawing.ShouldContain("_program?.ApplyBindingSnapshot(programBindingSnapshot)");
         drawing.ShouldContain("TryRefreshFrameSourceDescriptorSetsForDraw(");
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            VulkanRoot + "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.PrewarmValidation.cs");
         openXr.ShouldContain("private bool PrewarmOpenXrFrameOpResources(");
         openXr.ShouldContain("sealFrameManifest = false");
         openXr.ShouldContain("EnterFrameOpResourcePlannerReadbackScope(context)");
@@ -164,31 +177,35 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         primary.ShouldContain("TryRegisterFrameWideMeshFrameDataRequirements(");
         primary.ShouldContain("sealAfterRegister: true");
         secondary.ShouldContain(
-            "TryRegisterFrameWideMeshFrameDataRequirements(\n                    Array.Empty<FrameOp>(),\n                    dynamicUiBatchTextOps,");
+            "TryRegisterFrameWideMeshFrameDataRequirements(\n                    default,\n                    dynamicUiBatchTextOps,");
+        secondary.ShouldContain("sealAfterRegister: true");
     }
-
     [Test]
     public void EveryReusableRecordingClosesItsLeaseAtTheEndBoundary()
     {
         string tracking = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
+            VulkanRoot + "Commands/CommandBuffers/Tracking/VulkanRenderer.CommandBufferTrackingBatch.cs");
+        string lifetime = ReadWorkspaceFile(
+            VulkanRoot + "Resources/Authority/VulkanResourceRuntime.cs");
         string primary = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            VulkanRoot + "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Finalization.cs");
+        string primarySecondaries = ReadWorkspaceFile(
+            VulkanRoot + "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Secondaries.cs");
         string secondary = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+            VulkanRoot + "Commands/CommandBuffers/Recording/Secondary/VulkanRenderer.SecondaryCommandBuffers.cs");
         string openXr = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.cs");
+            VulkanRoot + "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.Blit.cs");
 
-        tracking.ShouldContain("private Result EndCommandBufferTracked(CommandBuffer commandBuffer, bool cacheVariant = true)");
-        tracking.ShouldContain("lifetime.FrameDataLease.CompleteRecording(cacheVariant)");
-        tracking.ShouldContain("lifetime.FrameDataLease.AbandonRecording()");
-        primary.ShouldContain("EndCommandBufferTracked(commandBuffer)");
-        primary.ShouldContain("EndCommandBufferTracked(secondary)");
+        tracking.ShouldContain("internal Result EndCommandBufferTracked(CommandBuffer commandBuffer, bool cacheVariant = true)");
+        tracking.ShouldContain("ResourceRuntime.CompleteCommandBufferRecording(commandBuffer, cacheVariant);");
+        tracking.ShouldContain("ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);");
+        lifetime.ShouldContain("lifetime.FrameDataLease.CompleteRecording(cacheVariant)");
+        lifetime.ShouldContain("lifetime.FrameDataLease.AbandonRecording()");
+        primary.ShouldContain("Result endResult = EndCommandBufferTracked(\n                    recordingState.CommandBuffer,\n                    cacheVariant: true,");
+        primarySecondaries.ShouldContain("EndCommandBufferTracked(secondary)");
         secondary.ShouldContain("EndCommandBufferTracked(secondaryCommandBuffer)");
-        secondary.ShouldContain("EndCommandBufferTracked(secondary)");
-        openXr.ShouldContain("Result endResult = EndCommandBufferTracked(commandBuffer);");
+        openXr.ShouldContain("Result endResult = _commandRuntime.EndCommandBufferTracked(commandBuffer);");
     }
-
     [Test]
     public void UniformStorageUsesRendererArenasWithoutHistoricalGenerationCache()
     {
@@ -282,7 +299,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     }
 
     [Test]
-    public void FrameWideManifest_DefersLateFamiliesAndPublishesThemAtTheNextFrameBoundary()
+    public void FrameWideManifest_AppendsLateFamiliesInTheSealedFrameWithoutMovingPublishedBases()
     {
         var renderer = (VkMeshRenderer)RuntimeHelpers.GetUninitializedObject(
             typeof(VkMeshRenderer));
@@ -337,6 +354,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         manifest.IsSealed.ShouldBeTrue();
         int eyeBase = familyBases[new(renderer, eyeFamily)];
 
+        // A new family that does not move a published base is appended to the
+        // sealed generation. The stream does not wait for the next frame.
         rendererFamilies.Clear();
         rendererFamilies[new(renderer, desktopFamily)] = 3;
         familyStrides.Clear();
@@ -348,11 +367,19 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 familyStrides,
                 familyBases,
                 sealAfterRegister: true,
-                out _,
+                out ulong appendGeneration,
+                out bool appendMovedExistingBase,
                 out string lateReason)
-            .ShouldBeFalse();
-        lateReason.ShouldContain("after frame-wide manifest generation");
+            .ShouldBeTrue();
+        lateReason.ShouldBeEmpty();
+        appendMovedExistingBase.ShouldBeFalse();
+        appendGeneration.ShouldBeGreaterThan(firstGeneration);
+        manifest.IsSealed.ShouldBeTrue();
+        manifest.LateRegistrationCount.ShouldBe(0);
+        int desktopBase = familyBases[new(renderer, desktopFamily)];
 
+        rendererFamilies[new(renderer, eyeFamily)] = 3;
+        familyStrides[eyeFamily] = 3;
         manifest.TryRegister(
                 101,
                 requirements,
@@ -361,12 +388,15 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 familyBases,
                 sealAfterRegister: true,
                 out ulong secondGeneration,
+                out bool nextFrameMovedExistingBase,
                 out _)
             .ShouldBeTrue();
-        secondGeneration.ShouldBeGreaterThan(firstGeneration);
-        int desktopBase = familyBases[new(renderer, desktopFamily)];
+        nextFrameMovedExistingBase.ShouldBeFalse();
+        secondGeneration.ShouldBe(appendGeneration);
         eyeBase.ShouldBe(0);
         desktopBase.ShouldBe(0);
+        familyBases[new(renderer, eyeFamily)].ShouldBe(eyeBase);
+        familyBases[new(renderer, desktopFamily)].ShouldBe(desktopBase);
         manifest.PublishedRendererCount.ShouldBe(1);
         manifest.PublishedFamilyCount.ShouldBe(2);
     }
@@ -654,7 +684,8 @@ public sealed class VulkanUniformBufferGenerationCacheTests
                 out _,
                 out string lateReason)
             .ShouldBeFalse();
-        lateReason.ShouldContain("after frame-wide manifest generation");
+        lateReason.ShouldContain("would relocate an existing frame-data family after manifest generation");
+        manifest.LateRegistrationCount.ShouldBe(1);
 
         manifest.TryRegister(
                 101,
@@ -675,24 +706,41 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     public void FrameWideManifestFamilyRelocation_InvalidatesEveryBakedDynamicOffsetCache()
     {
         string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            VulkanRoot + "Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferRecording.FrameData.cs");
+        string primaryRecording = ReadWorkspaceFile(
+            VulkanRoot + "Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
+        string reuse = ReadWorkspaceFile(
+            VulkanRoot + "Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferReuse.FrameData.cs");
+        string commandState = ReadWorkspaceFile(
+            VulkanRoot + "Commands/Authority/VulkanCommandBufferState.cs");
+        string openXrEye = ReadWorkspaceFile(
+            VulkanRoot + "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.EyeRendering.cs");
         string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
             "InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange()");
 
         recording.ShouldContain("if (registered && manifestLayoutChanged)\n                ObserveMeshFrameDataManifestGeneration(manifestGeneration);");
         recording.ShouldContain("InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange()");
-        recording.ShouldContain("MarkOpenXrPrimaryCommandBufferVariantsDirty()");
         recording.ShouldContain("MarkCommandBuffersDirty(\"mesh frame-data layout generation changed\")");
-        AssertOrdered(
-            recording,
-            "frameDataManifestRegistered = TryRegisterFrameWideMeshFrameDataRequirements(\n                    ops,\n                    dynamicUiBatchTextOps,",
-            "if (!imageForcedDirty && HaveCommandBuffersDirtiedSince(ensureStartDirtyGeneration))",
-            "TryReuseLastSwapchainWriterVariant(",
-            "TryReuseCleanCommandChainPrimaryVariant(");
-        lowering.ShouldContain(
-            "InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange()\n        => InvalidateCommandChainSecondaryCommandBuffers(CommandChainDirtyReason.Structure)");
-    }
 
+        // A dirty mark advances the dirty generation and marks every primary
+        // owner dirty. OpenXR eyes record fresh primaries, so they keep no
+        // baked dynamic offsets from an older layout.
+        commandState.ShouldContain("Interlocked.Increment(ref DirtyGeneration);");
+        commandState.ShouldContain("PrimaryOwners[i].Dirty = true;");
+        openXrEye.ShouldContain("AllowArtifactReuse: false,");
+
+        AssertOrdered(
+            primaryRecording,
+            "TryPreparePrimaryReuseFrameDataCohort(\n                in input,",
+            "if (TryReuseCleanCommandChainPrimaryVariant(");
+        AssertOrdered(
+            primaryRecording,
+            "private bool TryPreparePrimaryReuseFrameDataCohort(",
+            "registered = TryRegisterFrameWideMeshFrameDataRequirements(");
+        reuse.ShouldContain("if (variant.Dirty)");
+        lowering.ShouldContain(
+            "InvalidateCommandChainSecondaryCommandBuffersForFrameDataLayoutChange()\n        => InvalidateCommandChainSecondaryCommandBuffers(\n            CommandChainDirtyReason.Structure);");
+    }
     [Test]
     public void FrameWideManifest_AppendOnlyFamilyPublicationDoesNotRelocateExistingOffsets()
     {
@@ -768,45 +816,56 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     public void ReusableDescriptorRefresh_IndexesDescriptorSetsByFrameNotDynamicUniformSlot()
     {
         string descriptors = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
+            VulkanRoot + "BackendObjects/MeshRendering/VkMeshRenderer.Descriptors.cs");
         const string methodStart = "private bool TryActivateReusableDescriptorSetsForCapturedResources";
         const string methodEnd = "private bool TryActivateReusableDescriptorSetsFast";
+        const string matchStart = "private static bool DescriptorAllocationSlotsMatch(";
+        const string matchEnd = "private bool DescriptorAllocationMatchesProgram(";
         int start = descriptors.IndexOf(methodStart, StringComparison.Ordinal);
         int end = descriptors.IndexOf(methodEnd, start, StringComparison.Ordinal);
+        int slotMatchStart = descriptors.IndexOf(matchStart, StringComparison.Ordinal);
+        int slotMatchEnd = descriptors.IndexOf(matchEnd, slotMatchStart, StringComparison.Ordinal);
         start.ShouldBeGreaterThanOrEqualTo(0);
         end.ShouldBeGreaterThan(start);
+        slotMatchStart.ShouldBeGreaterThanOrEqualTo(0);
+        slotMatchEnd.ShouldBeGreaterThan(slotMatchStart);
 
         string capturedReuse = descriptors[start..end];
-        capturedReuse.ShouldContain(
-            "ResolveDescriptorFrameIndex(currentFrameIndex, allocation.Sets.Length)");
+        string slotMatch = descriptors[slotMatchStart..slotMatchEnd];
+        capturedReuse.ShouldContain("TryRefreshCapturedDescriptorAllocationResources(");
         capturedReuse.ShouldContain(
             "ResolveDescriptorFrameIndex(frameIndex, allocation.Sets.Length)");
-        capturedReuse.ShouldNotContain("ResolveUniformBufferIndex(currentFrameIndex");
-        capturedReuse.ShouldNotContain("ResolveUniformBufferIndex(frameIndex");
+        slotMatch.ShouldContain(
+            "ResolveDescriptorFrameIndex(requestedFrame, allocation.Sets.Length)");
+        capturedReuse.ShouldNotContain("ResolveUniformBufferIndex(");
+        slotMatch.ShouldNotContain("ResolveUniformBufferIndex(");
     }
-
     [Test]
     public void ReusableFrameDataSlotScratch_IsOwnedByTheRecordingThread()
     {
         string state = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferState.cs");
+            VulkanRoot + "Commands/Authority/VulkanCommandBufferState.cs");
+        string rendererState = ReadWorkspaceFile(
+            VulkanRoot + "Commands/CommandBuffers/State/VulkanRenderer.CommandBufferState.cs");
         string scratch = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecordingScratch.cs");
+            VulkanRoot + "Commands/CommandBuffers/Recording/Scratch/VulkanRenderer.CommandBufferRecordingScratch.cs");
         string primary = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+            VulkanRoot + "Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferRecording.FrameData.cs");
         string secondary = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+            VulkanRoot + "Commands/CommandBuffers/Recording/Secondary/VulkanRenderer.SecondaryCommandBuffers.cs");
 
+        state.ShouldContain("internal ThreadLocal<CommandBufferRecordingScratch> RecordingScratch { get; } =");
         state.ShouldNotContain("_refreshMeshDrawSlotsByRendererFamilyScratch");
         state.ShouldNotContain("_dynamicUiMeshDrawSlotsByRendererFamilyScratch");
+        rendererState.ShouldNotContain("_refreshMeshDrawSlotsByRendererFamilyScratch");
+        rendererState.ShouldNotContain("_dynamicUiMeshDrawSlotsByRendererFamilyScratch");
         scratch.ShouldContain("ReusableMeshDrawSlotsByRendererFamily");
         scratch.ShouldContain("DynamicUiMeshDrawSlotsByRenderer");
         scratch.ShouldContain("DynamicUiMeshDrawSlotsByRendererFamily");
-        primary.ShouldContain("recordingScratch.ReusableMeshDrawSlotsByRendererFamily");
+        primary.ShouldContain("scratch.ReusableMeshDrawSlotsByRendererFamily");
         secondary.ShouldContain("recordingScratch.DynamicUiMeshDrawSlotsByRenderer");
         secondary.ShouldContain("recordingScratch.DynamicUiMeshDrawSlotsByRendererFamily");
     }
-
     [Test]
     public void ReusableMeshFrameDataRefresh_SerializesWithDrawRecording()
     {
@@ -821,7 +880,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             prewarmStart,
             StringComparison.Ordinal);
         int refreshStart = drawing.IndexOf(
-            "internal bool TryRefreshReusableCommandBufferFrameData(\n\t\t\tuint imageIndex,",
+            "internal bool TryRefreshReusableCommandBufferFrameData(\n\t\tuint imageIndex,",
             StringComparison.Ordinal);
         int refreshEnd = drawing.IndexOf(
             "private bool TryRefreshReusableCommandBufferFrameDataNoLock(",
@@ -863,9 +922,9 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         string resolver = uniforms[resolverStart..legacyWriterStart];
         string legacyWriter = uniforms[legacyWriterStart..legacyWriterEnd];
         resolver.ShouldContain(
-            "case nameof(EEngineUniform.RootInvModelMatrix):\n\t\t\t\t\tMatrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);");
+            "case EEngineUniform.RootInvModelMatrix:\n\t\t\t\tMatrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);");
         legacyWriter.ShouldContain(
-            "case nameof(EEngineUniform.RootInvModelMatrix):\n\t\t\t\t\tMatrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);");
+            "case nameof(EEngineUniform.RootInvModelMatrix):\n\t\t\t\tMatrix4x4.Invert(draw.ModelMatrix, out Matrix4x4 inverseModel);");
         resolver.IndexOf("Matrix4x4.Invert(", StringComparison.Ordinal)
             .ShouldBe(resolver.LastIndexOf("Matrix4x4.Invert(", StringComparison.Ordinal));
         legacyWriter.IndexOf("Matrix4x4.Invert(", StringComparison.Ordinal)
@@ -876,7 +935,7 @@ public sealed class VulkanUniformBufferGenerationCacheTests
     public void TimeUniformResolution_UsesOneFrameStableTimerSnapshot()
     {
         string renderState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.RenderState.cs");
+            VulkanRoot + "Commands/Authority/VulkanCommandRuntime.MeshMaterialOperations.cs");
         string uniforms =
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.Values.cs") +
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.EngineUpload.cs");
@@ -902,13 +961,29 @@ public sealed class VulkanUniformBufferGenerationCacheTests
 
         renderState.ShouldContain("private void EnsureMaterialUniformFrameTime()");
         renderState.ShouldContain("ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;");
-        renderState.ShouldContain("_materialUniformSecondsLive = RuntimeEngine.ElapsedTime;");
-        renderState.ShouldNotContain("_materialUniformSecondsLive += RuntimeEngine.Time.Timer.Update.Delta;");
-        renderState.ShouldContain("program.Uniform(EEngineUniform.EngineTime.ToStringFast(), _materialUniformSecondsLive);");
+        renderState.ShouldContain("Volatile.Write(ref state.MaterialUniformSecondsLive, RuntimeEngine.ElapsedTime);");
+        renderState.ShouldContain("Volatile.Write(ref state.MaterialUniformFrameTimeFrameId, frameId);");
+        renderState.ShouldNotContain("MaterialUniformSeconds => RuntimeEngine.ElapsedTime;");
+        renderState.ShouldNotContain("MaterialUniformSecondsLive += RuntimeEngine.Time.Timer.Update.Delta;");
+        renderState.ShouldContain("program.Uniform(EEngineUniform.EngineTime.ToStringFast(), MaterialUniformSeconds);");
+        int secondsGetter = renderState.IndexOf(
+            "internal float MaterialUniformSeconds",
+            StringComparison.Ordinal);
+        secondsGetter.ShouldBeGreaterThanOrEqualTo(0);
+        int ensureCall = renderState.IndexOf(
+            "EnsureMaterialUniformFrameTime();",
+            secondsGetter,
+            StringComparison.Ordinal);
+        int liveRead = renderState.IndexOf(
+            "return Volatile.Read(ref CommandBuffers.MaterialUniformSecondsLive);",
+            secondsGetter,
+            StringComparison.Ordinal);
+        ensureCall.ShouldBeGreaterThan(secondsGetter);
+        liveRead.ShouldBeGreaterThan(ensureCall);
         resolver.ShouldNotContain("RuntimeEngine.ElapsedTime");
         legacyWriter.ShouldNotContain("RuntimeEngine.ElapsedTime");
-        resolver.ShouldContain("Renderer.EnsureMaterialUniformFrameTime();");
-        legacyWriter.ShouldContain("Renderer.EnsureMaterialUniformFrameTime();");
+        resolver.ShouldContain("value = CommandOperations.MaterialUniformSeconds;");
+        legacyWriter.ShouldContain("return UploadUniform(buffer, CommandOperations.MaterialUniformSeconds);");
     }
 
     [Test]
@@ -943,6 +1018,9 @@ public sealed class VulkanUniformBufferGenerationCacheTests
             previous = index;
         }
     }
+
+    private const string VulkanRoot =
+        "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/";
 
     private static string ReadWorkspaceFile(string relativePath)
         => SourceContractWorkspace.ReadFile(relativePath);

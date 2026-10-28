@@ -4,8 +4,6 @@ XRENGINE includes an OpenXR runtime path alongside the older OpenVR path. OpenVR
 
 The native API is owned by `XREngine.Runtime.XR.OpenXR`. Rendering and Bootstrap depend on `IOpenXrRuntime`, graphics-host contracts, and explicit backend registration. OpenGL and Vulkan keep their native graphics bindings in their renderer projects. This source organization does not by itself qualify a headset/runtime combination.
 
-This feature doc promotes the implemented reference review from `docs/work/design/VR/openxr-implementation-comparison.md`.
-
 ## Startup Behavior
 
 VR startup is controlled by `VRGameStartupSettings` and the selected `EVRRuntime`.
@@ -137,7 +135,7 @@ The visible simulated-HMD preview is the `monado-service.exe` windowed composito
 
 `--smoke-frames N` or `XRE_SMOKE_FRAMES=N` makes the editor exit after N submitted OpenXR frames. The editor then drains the session, destroys swapchains, destroys the session and instance, and writes a structured smoke summary with a `schemaVersion`. The runner fails if a required summary field is missing. The process exit code is zero only when the smoke criteria pass. The editor uses 21 for startup failure, 22 for frame timeout, 23 for summary failure, 24 for teardown failure, and 25 for an engine exception (`Program.OpenXrSmokeRunController.cs`). Runtime differences are gated by extension support or capability probes, not by runtime name, except in diagnostics.
 
-Monado lane baselines, CI promotion, and persistent smoke settings remain open decisions for XR validation. Checks are in [OpenXR Validation](../../work/testing/xr/openxr-validation.md).
+Monado lane baselines, CI promotion, and persistent smoke settings remain open decisions for XR validation.
 
 ## Implementation References
 

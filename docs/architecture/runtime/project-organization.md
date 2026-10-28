@@ -254,7 +254,7 @@ separation does not change desktop/VR clocks or the other job-domain workers.
 - `XREngine.Runtime.Bootstrap` holds composition only, not domain implementation.
 - Applications, samples, benchmarks, and tests reference the projects they use directly. No project or published output needs a former `XREngine.dll` facade.
 
-Dependency-boundary tests in `XREngine.UnitTests` enforce these rules. The [runtime modularization design](../../work/design/runtime-modularization-plan.md) records the migration history.
+Dependency-boundary tests in `XREngine.UnitTests` enforce these rules.
 
 ## Backend modules
 
@@ -336,6 +336,6 @@ Application roots install desktop composition before accessing `Engine.Assets`. 
 
 The owning module declares native build/copy/publish items. This does not require every binary's physical supply directory to match the module name: protected submodule and SDK sources, CoACD staging under Core, Steam Audio staging under Audio, and Rive staging under Rendering retain their established locations. A folder containing a native binary is not evidence that the portable project compiles or packages it. Consult the evaluated module project and [native dependency guide](../../developer-guides/runtime/native-dependencies.md) for supply and output ownership.
 
-Public namespaces and type names generally remain stable when source moves between assemblies. Runtime-facing vendor signatures use neutral contracts, so this is not a binary compatibility guarantee for old callers. Serialized backend enum values remain stable; moved CLR names and persisted-name searches are recorded in the [type identity audit](../../work/progress/platform/native-subsystem-type-identities.md).
+Public namespaces and type names generally remain stable when source moves between assemblies. Runtime-facing vendor signatures use neutral contracts, so this is not a binary compatibility guarantee for old callers. Serialized backend enum values remain stable. Moved CLR names are not persisted-name compatible.
 
-Package versions, notices, and review status are recorded in [DEPENDENCIES.md](../../DEPENDENCIES.md), not inferred from this project map. Application build/publish layouts and feature behavior require integration acceptance in [Platform Validation](../../work/testing/platform/platform-validation.md).
+Package versions, notices, and review status are recorded in [DEPENDENCIES.md](../../DEPENDENCIES.md), not inferred from this project map. Application build/publish layouts and feature behavior require separate integration acceptance.

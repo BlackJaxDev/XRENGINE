@@ -38,7 +38,7 @@
 [[vk::binding(27, 1)]] SamplerState NativeSampler11;
 float4 XR_ADV_TextureFallback(uint fallbackKind)
 {
-    if (fallbackKind == 1u || fallbackKind == 5u)
+    if (fallbackKind == 1u | fallbackKind == 5u)
         return float4(1.0);
     if (fallbackKind == 3u)
         return float4(0.5, 0.5, 1.0, 1.0);
@@ -51,40 +51,56 @@ bool ResolveTexturePairWithSampling(XRAdvancedGpuHandle texture, XRAdvancedGpuHa
     record = (XRAdvancedTextureRecord)0;
     encoded = XRAdvancedEncodedTextureReference(0u, 0u, fallback, XR_ADV_RESOURCE_FLAG_FALLBACK);
     if (!XR_ADV_IsValidHandle(texture)) return false;
+    // Keep one exit after the first validation. Some Vulkan drivers inline
+    // every call and lower each early return to an extra structured loop level.
+    bool resolved = false;
     uint dense = XR_ADV_ResolveVisibilityHandle(texture, VisibilityTextureLookupSegment, 0u);
-    if (dense == XR_ADV_INVALID_DENSE_INDEX) { textureFailure |= 1u << 19u; return false; }
-    record = XR_ADV_LoadTexture(dense);
-    if (record.stableTextureId != texture.index || record.generation != texture.generation)
-    { textureFailure |= 1u << 19u; return false; }
-    if (!XR_ADV_IsValidHandle(sampler)) { textureFailure |= 1u << 19u; return false; }
-    uint samplerDense = XR_ADV_ResolveVisibilityHandle(sampler, VisibilitySamplerLookupSegment, 0u);
-    if (samplerDense == XR_ADV_INVALID_DENSE_INDEX) { textureFailure |= 1u << 19u; return false; }
-    XRAdvancedSamplerRecord samplerRecord = XR_ADV_LoadSampler(samplerDense);
-    if (samplerRecord.stableSamplerId != sampler.index || samplerRecord.generation != sampler.generation)
-    { textureFailure |= 1u << 19u; return false; }
-    for (uint i = 0u; i < TextureBindingCount(); ++i)
+    if (dense != XR_ADV_INVALID_DENSE_INDEX)
     {
-        uint word = i * 8u;
-        if (TextureBindings[word] != texture.index || TextureBindings[word+1u] != texture.generation ||
-            TextureBindings[word+2u] != sampler.index || TextureBindings[word+3u] != sampler.generation ||
-            TextureBindings[word+7u] != samplingKey) continue;
-        uint dimension = TextureBindings[word+4u];
-        uint slot = TextureBindings[word+5u];
-        bool depth = (record.flags & 8u) != 0u;
-        if ((TextureBindings[word+6u] != 0u) != depth) break;
+        record = XR_ADV_LoadTexture(dense);
+        uint samplerDense = XR_ADV_INVALID_DENSE_INDEX;
+        if (record.stableTextureId == texture.index & record.generation == texture.generation & XR_ADV_IsValidHandle(sampler))
+            samplerDense = XR_ADV_ResolveVisibilityHandle(sampler, VisibilitySamplerLookupSegment, 0u);
+        if (samplerDense != XR_ADV_INVALID_DENSE_INDEX)
+        {
+            XRAdvancedSamplerRecord samplerRecord = XR_ADV_LoadSampler(samplerDense);
+            if (samplerRecord.stableSamplerId == sampler.index & samplerRecord.generation == sampler.generation)
+            {
+                // Find the first exact binding row, then validate that row.
+                uint word = XR_ADV_INVALID_DENSE_INDEX;
+                for (uint i = 0u; i < TextureBindingCount(); ++i)
+                {
+                    uint candidate = i * 8u;
+                    uint mismatch = (TextureBindings[candidate] ^ texture.index) | (TextureBindings[candidate+1u] ^ texture.generation) |
+                        (TextureBindings[candidate+2u] ^ sampler.index) | (TextureBindings[candidate+3u] ^ sampler.generation) |
+                        (TextureBindings[candidate+7u] ^ samplingKey);
+                    if (mismatch == 0u) { word = candidate; break; }
+                }
+                if (word != XR_ADV_INVALID_DENSE_INDEX)
+                {
+                    uint dimension = TextureBindings[word+4u];
+                    uint slot = TextureBindings[word+5u];
+                    bool depth = (record.flags & 8u) != 0u;
+                    bool valid = (TextureBindings[word+6u] != 0u) == depth;
 #if defined(XR_ADV_DEPTH_COMPARISON_BANK)
-        if (depth != (slot == 9u)) break;
+                    valid = valid & depth == (slot == 9u);
 #else
-        if (depth) break;
+                    valid = valid & !depth;
 #endif
-        if (dimension != record.dimension || !((dimension == 1u && slot < 10u) ||
-            (dimension == 3u && slot == 10u) || (dimension == 5u && slot == 11u))) break;
-        encoded = XRAdvancedEncodedTextureReference(slot, uint(depth), fallback, XR_ADV_RESOURCE_FLAG_RESIDENT);
-        return true;
+                    valid = valid & dimension == record.dimension & ((dimension == 1u & slot < 10u) |
+                        (dimension == 3u & slot == 10u) | (dimension == 5u & slot == 11u));
+                    if (valid)
+                    {
+                        encoded = XRAdvancedEncodedTextureReference(slot, uint(depth), fallback, XR_ADV_RESOURCE_FLAG_RESIDENT);
+                        resolved = true;
+                    }
+                }
+            }
+        }
     }
     // A valid published texture with no physical binding is never a neutral sample.
-    textureFailure |= 1u << 19u;
-    return false;
+    if (!resolved) textureFailure |= 1u << 19u;
+    return resolved;
 }
 bool ResolveTexturePair(XRAdvancedGpuHandle texture, XRAdvancedGpuHandle sampler, uint fallback,
     out XRAdvancedTextureRecord record, out XRAdvancedEncodedTextureReference encoded)
@@ -159,7 +175,7 @@ bool XR_ADV_ValidateTexture2DGradReference(XRAdvancedEncodedTextureReference ref
 }
 bool XR_ADV_ValidateTexture2DArrayGradReference(XRAdvancedEncodedTextureReference reference)
 {
-    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u || reference.payload0 == 11u) return true;
+    if ((reference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u | reference.payload0 == 11u) return true;
     textureFailure |= 1u << 19u;
     return false;
 }
@@ -252,7 +268,7 @@ float XR_ADV_LoadShadow2D(XRAdvancedEncodedTextureReference reference, int2 texe
 float XR_ADV_CompareShadow2D(XRAdvancedEncodedTextureReference reference, float2 uv, float receiver)
 {
 #if defined(XR_ADV_DEPTH_COMPARISON_BANK)
-    if (reference.payload0 == 9u && reference.payload1 == 1u)
+    if (reference.payload0 == 9u & reference.payload1 == 1u)
         return NativeTexture9.SampleCmpLevelZero(NativeSampler9, uv, receiver);
 #endif
     if (reference.payload1 != 0u) { textureFailure |= 1u << 19u; return 0.0; }

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
@@ -104,8 +105,27 @@ public sealed class VulkanCommandRecordingDependencyTests
     [Test]
     public void CommandChainPrimaryDependency_IgnoresBindingsOwnedBySecondaryBuffers()
     {
+        // A command-chain primary captures only the bindings that it encodes
+        // inline. Secondary-owned program, mesh, and descriptor identities are
+        // removed from the primary signature at capture time, so the remaining
+        // inline identities stay primary recording dependencies.
+        string recording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string primaryCapture = Slice(
+            recording,
+            "/// Replaces aggregate mesh identities with the exact subset encoded inline",
+            "private static ulong CaptureCommandChainPrimaryDescriptorBindingIdentity(");
+        primaryCapture.ShouldContain("commandChainPrimaryOnly: true,");
+        primaryCapture.ShouldContain("PipelineLayoutGeneration = preparedProgramIdentity,");
+        primaryCapture.ShouldContain("MeshBindingIdentity = meshBindingIdentity,");
+        primaryCapture.ShouldContain("BufferAllocationGeneration = 0,");
+        primaryCapture.ShouldContain("DescriptorPublicationGeneration = inlineDescriptorBindingIdentity,");
+        SourceContractWorkspace.ReadPartialType(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs")
+            .ShouldContain("CaptureCommandChainPrimaryPreparedBindingDependencies(");
+
         CommandRecordingDependencySignature recorded = CreateSignature();
-        CommandRecordingDependencySignature changedSecondaryBindings = recorded with
+        CommandRecordingDependencySignature changedInlineBindings = recorded with
         {
             PipelineLayoutGeneration = recorded.PipelineLayoutGeneration + 1UL,
             MeshBindingIdentity = recorded.MeshBindingIdentity + 1UL,
@@ -114,20 +134,21 @@ public sealed class VulkanCommandRecordingDependencyTests
             DescriptorPublicationGeneration = recorded.DescriptorPublicationGeneration + 1UL,
         };
 
-        recorded.Compare(changedSecondaryBindings).RequiresRecording.ShouldBeTrue();
-        recorded.CompareCommandChainPrimary(changedSecondaryBindings)
-            .ShouldBe(CommandRecordingDependencyMismatch.None);
-
-        recorded.CompareCommandChainPrimary(changedSecondaryBindings)
-            .ShouldBe(CommandRecordingDependencyMismatch.None);
+        recorded.Compare(changedInlineBindings).RequiresRecording.ShouldBeTrue();
+        recorded.CompareCommandChainPrimary(changedInlineBindings)
+            .Field.ShouldBe(CommandRecordingDependencyField.PipelineLayoutGeneration);
 
         CommandRecordingDependencySignature changedDescriptorPublication =
             recorded with
             {
                 DescriptorPublicationGeneration = recorded.DescriptorPublicationGeneration + 1UL,
             };
-        recorded.CompareCommandChainPrimary(changedDescriptorPublication)
-            .ShouldBe(CommandRecordingDependencyMismatch.None);
+        CommandRecordingDependencyMismatch descriptorPublicationMismatch =
+            recorded.CompareCommandChainPrimary(changedDescriptorPublication);
+        descriptorPublicationMismatch.Field
+            .ShouldBe(CommandRecordingDependencyField.DescriptorPublicationGeneration);
+        descriptorPublicationMismatch.InvalidationClass
+            .ShouldBe(CommandRecordingInvalidationClass.BindingIdentity);
 
         recorded.CompareCommandChainPrimary(recorded with
             {
@@ -287,12 +308,13 @@ public sealed class VulkanCommandRecordingDependencyTests
         string program = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.cs");
         string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
-            "pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp))",
+            "pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp.Draw, in ops.GetContext(startIndex + i)))",
             "hash.Add(program?.LinkGeneration ?? 0UL)");
 
         program.ShouldContain("internal ulong LinkGeneration");
         program.ShouldContain("Interlocked.Increment(ref _linkGeneration)");
-        lowering.ShouldContain("pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp))");
+        lowering.ShouldContain("pipelineGenerationHash.Add(ResolvePipelineGeneration(drawOp.Draw, in ops.GetContext(startIndex + i)))");
+        lowering.ShouldContain("AddProgramGeneration(ref hash, draw.PreparedProgram);");
         lowering.ShouldContain("hash.Add(program?.LinkGeneration ?? 0UL)");
     }
 
@@ -305,17 +327,28 @@ public sealed class VulkanCommandRecordingDependencyTests
         string fastReuse = Slice(
             recording,
             "private bool TryReuseCleanCommandChainPrimaryVariant(",
-            "private bool TryRefreshReusableCommandBufferFrameData(");
+            "private bool TryRevalidatePrimarySecondaryArtifactsAfterGlobalMutation(");
+        string primaryRecording = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
+        // Clean reuse does not build a second schedule key. It accepts only the
+        // prepared schedule that lowering published for this frame, and it
+        // compares that schedule identity with the identity of the cached primary.
+        fastReuse.ShouldContain("if (preparedSchedule is not { } cachedSchedule)");
+        fastReuse.ShouldContain("\"MissingPreparedSchedule\"");
         fastReuse.ShouldContain(
-            "FrameOp[] scheduledDynamicUiBatchTextOps = preserveSwapchainForOverlay\n" +
-            "                ? Array.Empty<FrameOp>()\n" +
-            "                : dynamicUiBatchTextOps;");
-        fastReuse.ShouldContain(
-            "imageIndex,\n" +
-            "                    ops,\n" +
-            "                    scheduledDynamicUiBatchTextOps,\n" +
-            "                    plannerRevision);");
+            "if (variant.RecordedCommandChainScheduleCacheIdentity !=\n" +
+            "                cachedSchedule.CacheIdentity)");
+        primaryRecording.ShouldContain(
+            "delayDynamicUiSecondaryRecording:\n" +
+            "                        input.Policy.PreserveSwapchainForOverlay,\n" +
+            "                    input.Policy.PreserveSwapchainForOverlay,");
+        primaryRecording.ShouldContain(
+            "input.CommandChainSchedule,\n" +
+            "                    input.RecordingTarget,");
+        primaryRecording.ShouldContain(
+            "owner.RecordedCommandChainScheduleCacheIdentity =\n" +
+            "                schedule.CacheIdentity;");
     }
 
     [Test]
@@ -330,50 +363,83 @@ public sealed class VulkanCommandRecordingDependencyTests
         string fastReuse = Slice(
             recording,
             "private bool TryReuseCleanCommandChainPrimaryVariant(",
-            "private bool TryRefreshReusableCommandBufferFrameData(");
+            "private bool TryRevalidatePrimarySecondaryArtifactsAfterGlobalMutation(");
+        string primaryRecording = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
+        string scheduleIdentity = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Planning/CommandChainScheduleCacheIdentity.cs");
 
         primaryDependency.ShouldContain("OutputPassAttachment: outputPassAttachmentHash.ToHash()");
         primaryDependency.ShouldContain("outputPassAttachmentHash.Add(context.OutputFrameBufferIdentity)");
         primaryDependency.ShouldContain("outputPassAttachmentHash.Add(context.OutputTargetIdentity)");
         primaryDependency.ShouldNotContain("staticStructuralSignature");
-        fastReuse.ShouldNotContain(
-            "variant.CommandChainScheduleSignature != cachedSchedule.StructuralSignature");
+
+        // The sealed schedule identity owns the render target and the operation
+        // topology. Secondary artifacts are proven by their exact recorded
+        // sequence, so the primary carries its group and skeleton identities
+        // forward instead of comparing the visible draw signature again.
+        scheduleIdentity.ShouldContain("VulkanRecordedRenderTargetSnapshot RecordingTarget)");
+        scheduleIdentity.ShouldContain("RecordingTarget.IsComplete;");
         fastReuse.ShouldContain(
-            "variant.CommandChainPrimaryGroupSignature != currentPrimaryGroupSignature");
+            "if (variant.RecordedCommandChainScheduleCacheIdentity !=\n" +
+            "                cachedSchedule.CacheIdentity)");
+        fastReuse.ShouldContain("TryRevalidatePrimarySecondaryArtifactsAfterGlobalMutation(");
+        fastReuse.ShouldContain(
+            "if (variant.CommandChainScheduleSignature !=\n" +
+            "                    cachedSchedule.StructuralSignature)");
         fastReuse.ShouldContain(
             "variant.CommandChainPrimaryGroupSignature = currentPrimaryGroupSignature");
         fastReuse.ShouldContain(
-            "CompareCommandChainPrimary(\n" +
-            "                        currentDependencySignature,\n" +
-            "                        allCommandChainGroupsUseSecondaryBuffers)");
+            "variant.CommandChainPrimarySkeletonSignature = currentPrimarySkeletonSignature");
+        fastReuse.ShouldContain(
+            "bool descriptorResourcesCapturedByFrameSignature =\n" +
+            "                cachedSchedule.CacheIdentity.IsReusable;");
         fastReuse.ShouldContain(
             "descriptorResourcesCapturedByFrameSignature:\n" +
-            "                                allCommandChainGroupsUseSecondaryBuffers");
+            "                                descriptorResourcesCapturedByFrameSignature,");
         fastReuse.ShouldContain(
-            "variant.CommandChainPrimarySkeletonSignature != currentPrimarySkeletonSignature");
-        fastReuse.ShouldNotContain("variant.PlannerRevision != plannerRevision");
+            "variant.RecordedDependencySignature = currentPrimaryDependencySignature;");
+        primaryRecording.ShouldContain(
+            "RenderTargetSnapshot = schedule.DependencySignature.RenderTargetSnapshot,");
+        primaryRecording.ShouldContain(
+            "owner.CommandChainPrimarySkeletonSignature =\n" +
+            "                ComputeCommandChainPrimarySkeletonSignature(staticOperations.Stream);");
     }
 
     [Test]
     public void RecordedPrimary_PublishesPostRecordingSecondaryArtifactIdentity()
     {
-        string recording = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        string recording = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
         int recordingEnd = recording.IndexOf(
-            "_commandRecorder.ExitRecordingScope();",
+            "Recorder.ExitRecordingScope();",
             StringComparison.Ordinal);
-        int recompute = recording.IndexOf(
-            "commandChainPrimaryIdentityComponents =",
+        recordingEnd.ShouldBeGreaterThanOrEqualTo(0);
+        int publishCall = recording.IndexOf(
+            "PublishRecordedPrimaryOwner(",
             recordingEnd,
             StringComparison.Ordinal);
+        int publishBody = recording.IndexOf(
+            "private void PublishRecordedPrimaryOwner(",
+            StringComparison.Ordinal);
+        publishBody.ShouldBeGreaterThanOrEqualTo(0);
+        int recompute = recording.IndexOf(
+            "ComputePrimaryCommandBufferGroupIdentity(schedule, commandChainCache);",
+            publishBody,
+            StringComparison.Ordinal);
         int publish = recording.IndexOf(
-            "variant.CommandChainPrimaryGroupSignature =",
+            "owner.CommandChainPrimaryGroupSignature = groupIdentity.Combined;",
             recompute,
             StringComparison.Ordinal);
+        int artifactSequence = recording.IndexOf(
+            "owner.RecordedSecondaryArtifactSequence.CopyFrom(",
+            publish,
+            StringComparison.Ordinal);
 
-        recordingEnd.ShouldBeGreaterThanOrEqualTo(0);
-        recompute.ShouldBeGreaterThan(recordingEnd);
+        publishCall.ShouldBeGreaterThan(recordingEnd);
+        recompute.ShouldBeGreaterThan(publishBody);
         publish.ShouldBeGreaterThan(recompute);
+        artifactSequence.ShouldBeGreaterThan(publish);
     }
 
     [Test]
@@ -415,10 +481,20 @@ public sealed class VulkanCommandRecordingDependencyTests
     public void ReusableChainRefreshAdvancesDataOnlyDependencyBaseline()
     {
         string source = SourceContractWorkspace.ReadVulkanSourcesContaining(
-            "chain.DependencySignature = BuildCommandChainDependencySignature(");
+            "internal static bool TryRefreshReusableCommandChainFrameData(");
+        string refresh = Slice(
+            source,
+            "internal static bool TryRefreshReusableCommandChainFrameData(",
+            "private static bool CanRefreshCommandChainFrameData(");
+        string currentDependency = Slice(
+            source,
+            "private static CommandRecordingDependencySignature BuildCurrentCommandChainDependencySignature(",
+            "private static CommandRecordingDependencySignature BuildCommandChainDependencySignature(");
 
-        source.ShouldContain("chain.DependencySignature = BuildCommandChainDependencySignature(");
-        source.ShouldContain("chain.Key,");
+        refresh.ShouldContain("chain.FrameDataSignature = packet.FrameDataSignature;");
+        refresh.ShouldContain("BuildCurrentCommandChainDependencySignature(packet, chain);");
+        refresh.ShouldContain("chain.SetDependencySignature(in dependencySignature);");
+        currentDependency.ShouldContain("BuildCommandChainDependencySignature(packet, chain.Key, in packetRecordedKey)");
     }
 
     [Test]
@@ -439,9 +515,14 @@ public sealed class VulkanCommandRecordingDependencyTests
             lowering,
             "internal static CommandRecordingDependencySignature BuildCommandChainDependencySignature(",
             "internal static void ValidateReusableCommandChainReferences(");
-        chainDependency.ShouldContain("SamplerAllocationGeneration: packet.DescriptorSnapshot.DescriptorSetSignature");
+        chainDependency.ShouldContain("if (resource.Type == ObjectType.Sampler)");
+        chainDependency.ShouldContain("samplerGeneration = resource.Generation;");
+        chainDependency.ShouldContain("SamplerAllocationGeneration: samplerGeneration,");
         chainDependency.ShouldNotContain("SamplerAllocationGeneration: packet.DescriptorSnapshot.DescriptorGeneration");
-        chainDependency.ShouldContain("DescriptorPublicationGeneration: packet.DescriptorSnapshot.DescriptorGeneration");
+        chainDependency.ShouldNotContain("SamplerAllocationGeneration: descriptorSetPublicationGeneration");
+        chainDependency.ShouldContain(
+            "descriptorSetPublicationGeneration = firstDescriptorSet.PublicationGeneration;");
+        chainDependency.ShouldContain("DescriptorPublicationGeneration: descriptorSetPublicationGeneration,");
     }
 
     [Test]
@@ -450,14 +531,15 @@ public sealed class VulkanCommandRecordingDependencyTests
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
-            "hash.Add(draw.Draw.PreparedProgram?.BindingId ?? 0u)",
-            "MixSignature(descriptorSetSignature, preparedProgram.BindingId)");
+            "hash.Add(draw.PreparedProgramIdentity); hash.Add(draw.PreparedProgram?.BindingId ?? 0u);",
+            "descriptorSetSignature = MixSignature(descriptorSetSignature, program.BindingId);");
         string manifest = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineVariantManifest.cs");
 
         recording.ShouldContain("programHash.Add(draw.PreparedProgram?.BindingId ?? 0u);");
-        lowering.ShouldContain("hash.Add(draw.Draw.PreparedProgram?.BindingId ?? 0u);");
-        lowering.ShouldContain("MixSignature(descriptorSetSignature, preparedProgram.BindingId)");
+        lowering.ShouldContain("hash.Add(draw.PreparedProgramIdentity); hash.Add(draw.PreparedProgram?.BindingId ?? 0u);");
+        lowering.ShouldContain(
+            "if (draw.PreparedProgram is { } program) descriptorSetSignature = MixSignature(descriptorSetSignature, program.BindingId);");
         lowering.ShouldContain("? unchecked((int)preparedProgram.BindingId)");
         manifest.ShouldContain("hash.Add(draw.PreparedProgram?.BindingId ?? 0u);");
     }
@@ -474,17 +556,24 @@ public sealed class VulkanCommandRecordingDependencyTests
         string fastReuse = Slice(
             recording,
             "private bool TryReuseCleanCommandChainPrimaryVariant(",
-            "private bool TryRefreshReusableCommandBufferFrameData(");
-        string cameraPoseDirtyCheck = Slice(
-            recording,
-            "// An inline desktop primary owns the swapchain writer and must be re-recorded",
-            "IsCommandBufferVariantImageLayoutStateDirty(");
+            "internal bool TryRefreshReusableCommandBufferFrameData(");
+        string primaryRecording = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
+        string reuseGate = Slice(
+            primaryRecording,
+            "if (owner is not null &&",
+            "if (TryReuseCleanCommandChainPrimaryVariant(");
 
-        fastReuse.ShouldNotContain("variant.RecordedGenerations.CameraPose != currentGenerations.CameraPose");
-        cameraPoseDirtyCheck.ShouldContain("_commandScheduler.HasCameraGenerationChanged(");
-        string scheduler = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanCommandScheduler.cs");
-        scheduler.ShouldContain("=> !usesCommandChains && recordedGeneration != currentGeneration;");
+        // A command-chain primary refreshes camera data in place, so a camera pose change alone must not re-record it.
+        fastReuse.ShouldNotContain("RecordedGenerations.CameraPose");
+        fastReuse.ShouldNotContain("CameraPose");
+
+        // Only a command-chain primary is a reuse candidate. An inline desktop primary owns the
+        // swapchain writer, so it is recorded again every frame and always sees the current camera.
+        reuseGate.ShouldContain("CommandChainsEnabledForCurrentRecording &&");
+        reuseGate.ShouldContain("input.CommandChainSchedule is not null &&");
+        reuseGate.ShouldContain("!input.CommandChainSchedule.RequiresFreshPrimary &&");
+        primaryRecording.ShouldNotContain("TryReuseInlinePrimary");
     }
 
     [Test]
@@ -500,7 +589,7 @@ public sealed class VulkanCommandRecordingDependencyTests
         cameraGeneration.ShouldContain("Span<ulong> uniqueCameraPoseSignatures = stackalloc ulong[128]");
         cameraGeneration.ShouldContain("TryGetPrimaryViewportCameraPoseDraw");
         cameraGeneration.ShouldContain("IsCameraAttachedToOutputViewport");
-        cameraGeneration.ShouldContain("case IndirectDrawOp indirectDraw");
+        cameraGeneration.ShouldContain("case EVulkanPrimaryPlanNodeKind.IndirectDraw when IsCameraAttachedToOutputViewport(");
         cameraGeneration.ShouldContain("SortCameraPoseSignatures(uniqueCameraPoseSignatures, uniqueCameraPoseCount)");
         cameraGeneration.ShouldContain("ComputeCameraPoseGenerationConservatively");
     }
@@ -508,15 +597,15 @@ public sealed class VulkanCommandRecordingDependencyTests
     [Test]
     public void DescriptorWriteBreadcrumbs_DoNotSplitFrameOpRecordingContexts()
     {
-        string plannerState = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerState.cs");
+        string plannerState = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/Authority/VulkanFramePlanner.ContextSignatures.cs");
         string descriptorGeneration = Slice(
             plannerState,
-            "private ulong ResolveFrameOpContextDescriptorGeneration(",
+            "internal static ulong ResolveFrameOpContextDescriptorGeneration(RenderResourceRegistry? registry)",
             "internal static ulong ComputeFrameOpContextRecordingFingerprint(");
 
         descriptorGeneration.ShouldContain("ComputeResourceRegistrySignature(registry)");
-        descriptorGeneration.ShouldContain("return unchecked((ulong)(uint)ComputeResourceRegistrySignature(registry));");
+        descriptorGeneration.ShouldContain("=> unchecked((ulong)(uint)ComputeResourceRegistrySignature(registry));");
     }
 
     [Test]
@@ -525,12 +614,14 @@ public sealed class VulkanCommandRecordingDependencyTests
         string chains = SourceContractWorkspace.ReadVulkanSourcesContaining(
             "CommandRecordingDependencySignature DependencySignature");
         string lowering = SourceContractWorkspace.ReadVulkanSourcesContaining(
-            "chain.DependencySignature = BuildCommandChainDependencySignature(",
+            "chain.SetDependencySignature(in dependencySignature);",
             "schedule.PublishDependencySignature(scheduleDependencySignature)",
             "affected-family");
 
         chains.ShouldContain("CommandRecordingDependencySignature DependencySignature");
-        lowering.ShouldContain("chain.DependencySignature = BuildCommandChainDependencySignature(");
+        chains.ShouldContain("internal void SetDependencySignature(in CommandRecordingDependencySignature signature)");
+        lowering.ShouldContain("BuildCommandChainDependencySignature(");
+        lowering.ShouldContain("chain.SetDependencySignature(in dependencySignature);");
         lowering.ShouldContain("schedule.PublishDependencySignature(scheduleDependencySignature)");
         lowering.ShouldContain("affected-family");
         lowering.ShouldContain("affected-range");
@@ -543,8 +634,8 @@ public sealed class VulkanCommandRecordingDependencyTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string transientMarker = Slice(
             recording,
-            "private static void MarkCommandBufferVariantTransient(",
-            "private static void MarkCommandBufferVariantDirtyAfterConcurrentInvalidation(");
+            "private static void MarkPrimaryCommandArtifactOwnerTransient(",
+            "private static void MarkPrimaryCommandArtifactOwnerDirtyAfterConcurrentInvalidation(");
 
         transientMarker.ShouldContain("variant.Dirty = true");
         transientMarker.ShouldContain("variant.DirtyReason = reason");
@@ -556,14 +647,20 @@ public sealed class VulkanCommandRecordingDependencyTests
     [Test]
     public void InvalidatedCommandBufferDrain_UsesCanonicalResetPredicate()
     {
-        string allocation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+        string runtime = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.cs");
         string drain = Slice(
-            allocation,
-            "private void DrainInvalidatedCommandBufferRecordings(",
-            "private void AllocateCommandBufferDirtyFlags(");
+            runtime,
+            "internal void DrainInvalidatedCommandBufferRecordings(",
+            "internal Result ResetCommandBufferWithLifetime(");
+        string resetPredicate = Slice(
+            runtime,
+            "private bool TryResetCommandBufferWithLifetime(",
+            "result = Api.ResetCommandBuffer(commandBuffer, 0);");
 
-        drain.ShouldContain("if (!CanResetVulkanCommandBuffer(commandBuffer, out _))");
+        drain.ShouldContain("if (!TryResetCommandBufferWithLifetime(");
+        drain.ShouldContain("\"InvalidatedCommandBufferDrain\"");
+        resetPredicate.ShouldContain("!ResourceRuntime.CanResetCommandBufferNoLock(handle)");
         drain.ShouldNotContain("lifetime.QueuedSubmissionCount != 0");
         drain.ShouldNotContain("UpdateVulkanResourceCompletionState_NoLock(commandResource)");
     }
@@ -572,21 +669,28 @@ public sealed class VulkanCommandRecordingDependencyTests
     public void OrdinaryDescriptorWrites_InvalidateRecordedDependentsBeforeReuse()
     {
         string descriptorSets = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanRenderer.DescriptorSets.cs");
-        string templates = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorUpdateTemplates.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
         string recording = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string allocation = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
 
-        descriptorSets.ShouldContain("TryCaptureDescriptorUpdateInvalidations_NoLock(");
-        descriptorSets.ShouldContain("PublishDescriptorSetContentUpdate(");
-        descriptorSets.ShouldContain("setState.UsesUpdateAfterBind");
-        descriptorSets.ShouldContain("CanUseUpdateAfterBind(write.DescriptorType)");
-        descriptorSets.ShouldContain("InvalidateCachedCommandBuffersByHandle(");
-        templates.ShouldContain("ValidateAndRecordVulkanDescriptorWrites(");
-        templates.ShouldContain("TryCaptureDescriptorUpdateInvalidations_NoLock(");
+        // Both the ordinary write path and the template path capture the
+        // recorded dependents before the native update and publish one content
+        // update with the exact command-buffer invalidation after it.
+        Regex.Matches(
+                descriptorSets,
+                Regex.Escape("invalidatesRecordedCommandBuffers = TryCaptureUpdateInvalidationsNoLock("))
+            .Count.ShouldBe(2);
+        descriptorSets.ShouldContain("device.Api.UpdateDescriptorSets(");
+        descriptorSets.ShouldContain("device.Api.UpdateDescriptorSetWithTemplate(");
+        descriptorSets.ShouldContain("ValidateAndRecordWritesNoLock(");
+        descriptorSets.ShouldContain("_descriptors.RecordDescriptorSetContentUpdate();");
+        descriptorSets.ShouldContain("!state.UsesUpdateAfterBind ||");
+        descriptorSets.ShouldContain("!CanUseUpdateAfterBind(write.DescriptorType);");
+        descriptorSets.ShouldContain(
+            "_resources.SynchronousCommands.CommandRuntime.InvalidateCachedCommandBuffers(\n" +
+            "                dependentCommandBuffers.AsSpan(0, dependentCommandBufferCount),");
         recording.ShouldContain("SnapshotDescriptorSetContentUpdateGeneration()");
         recording.ShouldContain("HaveDescriptorSetContentsUpdatedSince(descriptorSetContentUpdateGeneration)");
         recording.ShouldContain("descriptor contents changed without UPDATE_AFTER_BIND");

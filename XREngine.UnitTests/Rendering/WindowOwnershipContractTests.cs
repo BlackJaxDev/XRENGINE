@@ -573,7 +573,8 @@ public sealed class WindowOwnershipContractTests
         snapshotInputDevices.ShouldContain("WindowSnapshotMouse");
         snapshotInputDevices.ShouldContain("SetCaptureRequest(Action<bool>? captureRequest)");
         localPlayerController.ShouldContain("RefreshViewportInputBinding();");
-        localPlayerController.ShouldContain("WindowInputSnapshot snapshot = _viewport.ConsumeInputSnapshot();");
+        localPlayerController.ShouldContain("IRuntimeLocalPlayerViewport viewport = _viewport;");
+        localPlayerController.ShouldContain("WindowInputSnapshot snapshot = viewport.ConsumeInputSnapshot();");
         localPlayerController.ShouldContain("_viewport?.RequestMouseCapture(captured)");
         localPlayerController.ShouldNotContain("Silk.NET.Input");
         localPlayerController.ShouldNotContain("GetThreadAffinedDeviceSourceForBinding");

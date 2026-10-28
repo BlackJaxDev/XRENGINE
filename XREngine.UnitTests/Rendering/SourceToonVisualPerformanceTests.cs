@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Editor.MaterialAuthoring;
@@ -123,8 +124,15 @@ public sealed class SourceToonVisualPerformanceTests
         XRMaterial material = CreateMaximalMaterial();
         material.PrepareUberVariantImmediately().ShouldBeTrue();
         XRShader shader = material.FragmentShaders.Single();
+        // The active shader is a generated variant. The variant builder writes the variant
+        // source after include resolution, so the canonical shader keeps the include directives.
+        shader.IsGeneratedUberVariant.ShouldBeTrue();
+        UberShaderVariantBuilder.TryGetCanonicalShader(shader, out XRShader? canonical).ShouldBeTrue();
+        canonical.TryGetResolvedShaderSource(out ResolvedShaderSource canonicalSource).ShouldBeTrue();
+        canonicalSource.ResolvedByteCount.ShouldBeGreaterThan(canonicalSource.OriginalByteCount);
         shader.TryGetResolvedShaderSource(out ResolvedShaderSource source).ShouldBeTrue();
-        source.ResolvedByteCount.ShouldBeGreaterThan(source.OriginalByteCount);
+        Regex.IsMatch(source.OriginalSource, @"^\s*#include\b", RegexOptions.Multiline).ShouldBeFalse();
+        source.ResolvedByteCount.ShouldBeGreaterThan(canonicalSource.OriginalByteCount);
         source.ResolvedByteCount.ShouldBeLessThan(4 * 1024 * 1024);
         int directSamplerLimit = budgets.GetProperty("maxSamplerPressure").GetInt32();
         material.Textures.Count.ShouldBeGreaterThan(directSamplerLimit);

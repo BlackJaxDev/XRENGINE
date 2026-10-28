@@ -23,16 +23,6 @@ env:
 jobs:
   build-and-test:
     name: Build and test
-    if: >-
-      github.event_name != 'pull_request' ||
-      (
-        !contains(github.event.pull_request.user.login, 'codex') &&
-        !contains(github.event.pull_request.user.login, 'claude') &&
-        !contains(github.event.pull_request.user.login, 'copilot') &&
-        !startsWith(github.event.pull_request.head.ref, 'codex/') &&
-        !startsWith(github.event.pull_request.head.ref, 'claude/') &&
-        !startsWith(github.event.pull_request.head.ref, 'copilot/')
-      )
     runs-on: windows-latest
     timeout-minutes: 60
 
@@ -54,6 +44,10 @@ jobs:
       - name: Build managed and native submodules
         shell: cmd
         run: Tools\Build-Submodules.bat Release AnyCPU
+
+      - name: Stage pinned Streamline runtime and license files
+        shell: pwsh
+        run: ./Tools/Dependencies/Get-StreamlineSdk.ps1
 
       - name: Build native meshoptimizer
         shell: pwsh

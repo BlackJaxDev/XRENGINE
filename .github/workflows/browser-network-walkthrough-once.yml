@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up the existing Node version
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 

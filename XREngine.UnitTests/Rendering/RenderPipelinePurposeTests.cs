@@ -44,11 +44,25 @@ public sealed class RenderPipelinePurposeTests
                 RenderPipelineRequest.AdvancedOffscreenCapture(RenderPipelineOffscreenIntent.Thumbnail())))
             .Message.ShouldContain("Advanced offscreen capture is unavailable");
 
+        // An OpenXR eye uses only the selected VR pipeline family. The desktop
+        // Advanced policy and the debug opaque pipeline never replace it.
+        DefaultRenderPipeline defaultEye =
+            EngineRenderingSettingsApplication.NewRenderPipeline(
+                    RenderPipelineRequest.OpenXrEye(stereo: true),
+                    EAdvancedRenderPipelineMode.Available,
+                    capabilities,
+                    EVrRenderPipeline.Default,
+                    ERvcPipelineMode.Full,
+                    useDebugOpaquePipeline: true)
+                .ShouldBeOfType<DefaultRenderPipeline>();
+        defaultEye.Stereo.ShouldBeTrue();
+
         RvcRenderPipeline monoEye =
             EngineRenderingSettingsApplication.NewRenderPipeline(
                     RenderPipelineRequest.OpenXrEye(stereo: false),
                     EAdvancedRenderPipelineMode.Available,
                     capabilities,
+                    EVrRenderPipeline.Rvc,
                     ERvcPipelineMode.Off,
                     useDebugOpaquePipeline: true)
                 .ShouldBeOfType<RvcRenderPipeline>();
@@ -60,6 +74,7 @@ public sealed class RenderPipelinePurposeTests
                     RenderPipelineRequest.OpenXrEye(stereo: true),
                     EAdvancedRenderPipelineMode.Available,
                     capabilities,
+                    EVrRenderPipeline.Rvc,
                     ERvcPipelineMode.Full,
                     useDebugOpaquePipeline: false)
                 .ShouldBeOfType<RvcRenderPipeline>();
@@ -73,9 +88,13 @@ public sealed class RenderPipelinePurposeTests
     {
         ERvcPipelineMode previousMode =
             RuntimeEngine.Rendering.Settings.RvcPipelineMode;
+        EVrRenderPipeline previousVrPipeline =
+            RuntimeEngine.Rendering.Settings.VrRenderPipeline;
 
         try
         {
+            RuntimeEngine.Rendering.Settings.VrRenderPipeline =
+                EVrRenderPipeline.Rvc;
             RuntimeEngine.Rendering.Settings.RvcPipelineMode =
                 ERvcPipelineMode.Off;
             EngineRenderingSettingsApplication.InitializeSettingsApplicationBoundary();
@@ -106,6 +125,7 @@ public sealed class RenderPipelinePurposeTests
         finally
         {
             RuntimeEngine.Rendering.Settings.RvcPipelineMode = previousMode;
+            RuntimeEngine.Rendering.Settings.VrRenderPipeline = previousVrPipeline;
         }
     }
 

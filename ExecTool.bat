@@ -52,7 +52,7 @@ call :AddTool "Docs" "Tools\Start-DocFxServer.bat" "Build and serve DocFX docs l
 call :AddTool "Docs" "Tools\Invoke-GameProject.bat" "Helper for game-project workflows (compile/build/run/publish)"
 call :AddRunAll "Docs"
 call :AddSep
-call :AddTool "Reports" "Tools\Reports\Find-BuildWarnings.ps1" "Build solution and generate categorised warning report (docs\work\audit\warnings.md)"
+call :AddTool "Reports" "Tools\Reports\Find-BuildWarnings.ps1" "Build solution and generate categorised warning report (Build\Reports\warnings.md)"
 call :AddTool "Reports" "Tools\Reports\Find-NewAllocations.ps1" "Scan C# sources for heap allocations (new ...) in engine code"
 call :AddTool "Reports" "Tools\Reports\Find-StaticClasses.ps1" "Find static classes across the codebase"
 call :AddTool "Reports" "Tools\Reports\Find-ThreadTaskRuns.ps1" "Find Thread/Task.Run usage across the codebase"
@@ -350,7 +350,7 @@ echo    ExecTool --list       Print the tool list and exit
 echo    ExecTool --help       Show this help
 echo.
 echo  All scripts live under the Tools/ directory. Reports are written
-echo  to docs/work/audit/. Dependency installers place binaries under
+echo  to Build/Reports/. Dependency installers place binaries under
 echo  Build/Dependencies/ or the appropriate runtimes/ folder.
 echo.
 goto :End

@@ -983,12 +983,8 @@ The architecture depends on these invariants:
 
 ## Future Optimization Work
 
-Proposed changes, their Vulkan specification review, implementation phases, and
-acceptance gates live in the
-[Vulkan Command Recording Architecture Optimization TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership).
-The target command owner and its place in the complete frame lifecycle are
-defined by the
-[Vulkan Render Loop Target Architecture](../../work/design/rendering/vulkan-render-loop-target-architecture.md).
+Proposed changes to command recording and the target command owner are planned
+work and are not described here.
 
 ## Source Map
 

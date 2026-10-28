@@ -93,7 +93,14 @@ public sealed class GpuBvhAsyncOverflowReadbackTests
         readyGate.ShouldBeGreaterThanOrEqualTo(0);
         firstDispatch.ShouldBeGreaterThan(readyGate, "Vulkan must not capture compute descriptors while the reset upload is pending");
 
-        reset.ShouldContain("_overflowFlagBuffer?.IsReadyForGpuUse == true");
+        // The first program binding allocates the overflow buffer on its render
+        // owner. Readiness therefore requires only the committed CPU-side flag;
+        // the Morton shader resets the flag in-band after that.
+        reset.ShouldContain("EnsureOverflowFlagBuffer();");
+        reset.ShouldContain("return _overflowFlagBuffer is not null;");
+        string ensure = Slice(overflowSource, "private void EnsureOverflowFlagBuffer()", "private bool IsOverflowFlagBufferReady()", StringComparison.Ordinal);
+        ensure.ShouldContain("_overflowFlagBuffer.CommitDirtyBytes(0u, _overflowFlagBuffer.Length);");
+        ensure.ShouldNotContain(".Generate();");
         reset.ShouldNotContain("PushSubData");
         reset.ShouldNotContain("program.BindBuffer");
 

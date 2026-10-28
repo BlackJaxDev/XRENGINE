@@ -27,7 +27,7 @@
 
   <Target Name="PrepareFastGltfBridgeBuildState"
           BeforeTargets="BuildFastGltfBridge"
-          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(FastGltfBridgeProject)')">
+          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(DesignTimeBuild)' != 'true' and '$(NoBuild)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(FastGltfBridgeProject)')">
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(FastGltfBridgeBuildStateFile)'))" />
     <PropertyGroup>
       <FastGltfBridgeCurrentBuildState>$(Configuration)|x64</FastGltfBridgeCurrentBuildState>
@@ -39,7 +39,7 @@
           BeforeTargets="PrepareForBuild"
           Inputs="@(FastGltfBridgeBuildInput);$(FastGltfBridgeBuildStateFile)"
           Outputs="$(FastGltfBridgeNativeDll);$(FastGltfBridgeBuildStampFile)"
-          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(FastGltfBridgeProject)')">
+          Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(DesignTimeBuild)' != 'true' and '$(NoBuild)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(FastGltfBridgeProject)')">
     <PropertyGroup>
       <VsWhereExe>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWhereExe>
     </PropertyGroup>
