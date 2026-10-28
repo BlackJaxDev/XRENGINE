@@ -73,8 +73,11 @@ selection, and destroy their owning panel. Check that old rows cannot activate
 actions or reopen menus. The portable Hide test covers one earlier row callback
 that moves a later row to another owner; the transferred row and label survive
 with the old menu binding released. This does not establish general callback-time
-transfer safety, custom-content ownership, or concurrent destruction. Live input
-and visual acceptance remain pending.
+transfer safety or concurrent destruction. Portable tests cover the custom-content
+owned/borrowed contract: borrowed nodes return on Hide and menu destruction, and owned
+nodes are destroyed. On Windows, open a custom-content popup that borrows an existing
+panel node, then close it and destroy its owner panel; check that the borrowed node
+returns and stays usable. Live input and visual acceptance remain pending.
 
 ### Float animation inspector acceptance
 

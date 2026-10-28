@@ -1825,8 +1825,9 @@ Guarded creation holds a node and transform mutation lease before factory code
 runs. Reserved retirement therefore rejects a new factory before it allocates.
 Guarded abort prepares subscriptions only after lifetime admission succeeds.
 Menu child factories use this adapter for failed never-adopted leaves. Parent
-detachment, permitted ownership transitions, early owner-node teardown, and
-arbitrary custom content registration remain separate integration work.
+detachment, permitted ownership transitions, and early owner-node teardown remain
+separate integration work. Custom content uses the owned/borrowed contract in
+"Custom menu content ownership".
 
 Menu setup checks for newer queued Show/Hide requests at construction boundaries.
 An obsolete setup returns to the existing transition loop before invoking its old
@@ -2580,8 +2581,8 @@ unretirable leaf remains intact, and the menu retains its failed receipt for
 diagnosis. It does not retry cleanup or fall back to ordinary destruction.
 
 This contract covers the built-in row and decoration builders, plus the ordinary
-scroll root and list. Custom/provider content and retirement of adopted subtrees
-keep their existing contracts. Their broader ownership work remains open.
+scroll root and list. Custom content uses the owned/borrowed contract in
+"Custom menu content ownership" below. Provider content keeps its existing contract.
 Construction allocates receipts and setter delegates when a menu opens;
 it adds no per-frame loop or cache invalidation path.
 
