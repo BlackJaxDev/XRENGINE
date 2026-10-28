@@ -1245,6 +1245,16 @@ jobs:
           fi
           node Tools/BrowserSmoke/run.mjs --game-only --game-kind "$GAME_KIND" --game-publish "$VALIDATION_ROOT/published-game" --gpu-mode software --output "$VALIDATION_ROOT/game-evidence" "${trace_args[@]}" > >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stdout.log") 2> >(tee "$VALIDATION_ROOT/game-evidence/browser-process-stderr.log" >&2)
 
+      - name: Print shadow capture failure evidence
+        if: failure() && matrix.kind == 'advanced-shadow-parity'
+        run: |
+          report="$VALIDATION_ROOT/game-evidence/smoke-report.json"
+          if [[ -f "$report" ]]; then
+            node Tools/BrowserSmoke/print-shadow-capture-failures.mjs "$report"
+          else
+            echo "No smoke report was written."
+          fi
+
       - name: Preserve published game qualification evidence
         if: always()
         uses: actions/upload-artifact@v7
