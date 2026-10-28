@@ -7,6 +7,7 @@ namespace XREngine.Rendering.UI;
 public partial class UIContextMenuComponent
 {
     private readonly List<UIContextMenuBorrowedNode> _borrowedContent = [];
+    private SceneNode? _borrowWatchedNode;
 
     /// <summary>
     /// Moves a node that another owner keeps into the custom content of the current show.
@@ -42,6 +43,7 @@ public partial class UIContextMenuComponent
             home, home is null ? null : ObjectConstructionIdentity.Capture(home));
         // Record first, so a failed move cannot leave an unrecorded node under the content root.
         _borrowedContent.Add(record);
+        WatchMenuNodeDestruction();
         borrowed.Transform.SetParent(contentParent.Transform, false, EParentAssignmentMode.Immediate);
         if (!ReferenceEquals(borrowed.Transform.Parent, contentParent.Transform))
             throw new InvalidOperationException("The borrowed node changed ownership during attachment.");
@@ -64,7 +66,34 @@ public partial class UIContextMenuComponent
                     borrowed.Node.Transform.SetParent(borrowed.LiveHome, false, EParentAssignmentMode.Immediate);
             }
         }
-        finally { _borrowedContent.Clear(); }
+        finally { ClearBorrowedRecords(); }
+    }
+
+    /// <summary>
+    /// Watches the menu node while it holds borrowed content. The node destroys its children
+    /// before it destroys this component, so the borrowed nodes must leave before that.
+    /// </summary>
+    private void WatchMenuNodeDestruction()
+    {
+        if (_borrowWatchedNode is not null) return;
+        SceneNode node = SceneNode;
+        node.Destroying += OnMenuNodeDestroying;
+        _borrowWatchedNode = node;
+    }
+
+    private bool OnMenuNodeDestroying(XRObjectBase destroying)
+    {
+        SceneNode? root = _contentRoot;
+        ReleaseBorrowedContent(root, root is not null && OwnsContentRoot(root));
+        return true;
+    }
+
+    private void ClearBorrowedRecords()
+    {
+        _borrowedContent.Clear();
+        if (_borrowWatchedNode is not { } node) return;
+        _borrowWatchedNode = null;
+        node.Destroying -= OnMenuNodeDestroying;
     }
 
     /// <summary>
@@ -73,11 +102,11 @@ public partial class UIContextMenuComponent
     /// </summary>
     private void ReleaseBorrowedContent(SceneNode? root, bool owned)
     {
-        if (_borrowedContent.Count == 0) return;
+        if (_borrowedContent.Count == 0 && _borrowWatchedNode is null) return;
         if (owned && root is not null)
             ReturnBorrowedContent(root);
         else
-            _borrowedContent.Clear();
+            ClearBorrowedRecords();
     }
 
     private static bool IsUnder(SceneNode candidate, SceneNode ancestor)
