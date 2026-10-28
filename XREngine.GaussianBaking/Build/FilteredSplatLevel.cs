@@ -13,6 +13,8 @@ namespace XREngine.Rendering.Models.Gaussian.Baking.Build;
 /// <param name="Scale">Twelve bytes for each splat from the exponent filter.</param>
 /// <param name="Color">Four bytes for each splat from the color filter.</param>
 /// <param name="ChildCounts">One byte for each splat, or null for the last level.</param>
+/// <param name="BindingErrorCount">The number of bound splats whose packed binding at frame 0 is more than the largest position error from the splat.</param>
+/// <param name="MaxBindingErrorMeters">The largest distance between a packed binding at frame 0 and its splat, in meters.</param>
 internal sealed record FilteredSplatLevel(
     int Level,
     int Count,
@@ -21,4 +23,6 @@ internal sealed record FilteredSplatLevel(
     byte[] Rotation,
     byte[] Scale,
     byte[] Color,
-    byte[]? ChildCounts);
+    byte[]? ChildCounts,
+    int BindingErrorCount,
+    float MaxBindingErrorMeters);

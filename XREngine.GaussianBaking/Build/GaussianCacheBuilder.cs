@@ -71,7 +71,9 @@ public static partial class GaussianCacheBuilder
         uint[][] storedTriangles = new uint[input.Drivers.LevelCount][];
         ChunkPlanner planner = new(maxChunkDataBytes);
 
-        AppendRoot(planner, input, staticCounts, quantizer, storedTriangles, budget, meshopt);
+        FilteredSplatLevel rootSplats = AppendRoot(planner, input, staticCounts, quantizer, storedTriangles, budget, meshopt);
+        int bindingErrorCount = rootSplats.BindingErrorCount;
+        float maxBindingError = rootSplats.MaxBindingErrorMeters;
         if (animated)
         {
             for (byte temporal = 1; temporal < TemporalLevels.Count; temporal++)
@@ -92,8 +94,10 @@ public static partial class GaussianCacheBuilder
             }
 
             planner.BeginUnit(GaussianCacheChunkKind.SplatLevel, level, driverLevel, 0);
-            FilteredSplatLevel splats = FilterSplatLevel(input, level, staticCounts[level], storedTriangles, quantizer, meshopt);
+            FilteredSplatLevel splats = FilterSplatLevel(input, level, staticCounts[level], storedTriangles, quantizer, budget.MaxPositionErrorMeters, meshopt);
             AppendSplatLevel(planner, splats, input.Tree.ChildCounts[level - 1], meshopt);
+            bindingErrorCount += splats.BindingErrorCount;
+            maxBindingError = MathF.Max(maxBindingError, splats.MaxBindingErrorMeters);
 
             if (animated)
             {
@@ -105,11 +109,17 @@ public static partial class GaussianCacheBuilder
             }
         }
 
-        return Assemble(input, staticCounts, planner.Finish(), budget);
+        GaussianCacheBuildResult result = Assemble(input, staticCounts, planner.Finish(), budget);
+        result.BindingErrorCount = bindingErrorCount;
+        result.MaxBindingErrorMeters = maxBindingError;
+        return result;
     }
 
-    /// <summary>Writes chunk 0. Chunk 0 does not split, so it fails the budget when its sections are too large.</summary>
-    private static void AppendRoot(
+    /// <summary>
+    /// Writes chunk 0 and returns its splat level. Chunk 0 does not split, so it fails the budget when its sections are
+    /// too large.
+    /// </summary>
+    private static FilteredSplatLevel AppendRoot(
         ChunkPlanner planner,
         GaussianCacheBuildInput input,
         int[] staticCounts,
@@ -123,7 +133,7 @@ public static partial class GaussianCacheBuilder
         if (input.Drivers.LevelCount > 0)
             driverIndices = EncodeWholeDriverLevel(input.Drivers, 0, meshopt, out storedTriangles[0]);
 
-        FilteredSplatLevel splats = FilterSplatLevel(input, 0, staticCounts[0], storedTriangles, quantizer, meshopt);
+        FilteredSplatLevel splats = FilterSplatLevel(input, 0, staticCounts[0], storedTriangles, quantizer, budget.MaxPositionErrorMeters, meshopt);
         sections.Add(EncodeSplatSection(splats, 0, splats.Count, meshopt));
         if (driverIndices is { } indices)
         {
@@ -142,6 +152,7 @@ public static partial class GaussianCacheBuilder
         planner.BeginUnit(GaussianCacheChunkKind.Root, 0, 0, 0);
         foreach (GaussianCacheSection section in sections)
             planner.Append(section);
+        return splats;
     }
 
     /// <summary>Makes the header, checks the output budgets, and makes the assets and the content hash.</summary>

@@ -365,6 +365,75 @@ public sealed class DriverHierarchyTests
         maxWorldError.ShouldBeLessThanOrEqualTo(4.0f * (MathF.BitIncrement(1_024.0f) - 1_024.0f));
     }
 
+    [Test]
+    public void Bind_ClosestTriangleOutsidePackRange_PicksTriangleInsideRange()
+    {
+        // Triangle 0 is small and lies in the plane z = 0. Triangle 1 is large and lies in the plane z = 0.05. The splats
+        // are nearer to triangle 0, but on its plane they are 2 to 4 edge lengths from it, outside the pack range.
+        DeformedSurface rest = EvaluateMeshes((
+            [new(0, 0, 0), new(0.01f, 0, 0), new(0, 0.01f, 0), new(-1, -1, 0.05f), new(2, -1, 0.05f), new(-1, 2, 0.05f)],
+            [0, 1, 2, 3, 4, 5]));
+        uint[] weld = SeamWelder.CreateRemap(rest, _meshopt);
+        DriverHierarchy drivers = DriverHierarchyBuilder.Build(rest, [true], weld, [10], AvatarBudget, _meshopt);
+        uint[] triangles = drivers.LevelTriangleIndices[0];
+        triangles.Length.ShouldBe(6);
+        Vector3[] driverRest = new Vector3[drivers.SourceVertexOfDriverVertex.Length];
+        drivers.GatherPositions(rest, driverRest);
+        Quaternion tilt = Quaternion.CreateFromAxisAngle(Vector3.Normalize(new Vector3(1, 2, 3)), 0.7f);
+        BakedSplat[] splats = new BakedSplat[10];
+        for (int i = 0; i < splats.Length; i++)
+            splats[i] = new BakedSplat { Position = new Vector3(0.03f + 0.002f * i, 0.0f, 0.001f), Rotation = tilt, Scale = new Vector3(0.01f) };
+
+        SplatBinding[] bindings = SplatBinder.Bind(splats, drivers, 0, driverRest);
+
+        for (int i = 0; i < splats.Length; i++)
+        {
+            SplatBinding binding = bindings[i];
+            PlaneCoordinate.IsInRange(binding.U, binding.V).ShouldBeTrue($"splat {i} has u {binding.U} and v {binding.V}");
+            ReadTriangle(triangles, driverRest, binding.Triangle, out Vector3 a, out Vector3 b, out Vector3 c);
+            Vector3 reconstructed = TriangleFrame.Reconstruct(a, b, c, binding.U, binding.V, binding.H);
+            Vector3.Distance(reconstructed, splats[i].Position).ShouldBeLessThanOrEqualTo(ReconstructTolerance);
+        }
+    }
+
+    [Test]
+    public void Bind_AllTrianglesAreThinSlivers_FailsBudgetExceeded()
+    {
+        // Both triangles are slivers with a height of 1e-6 of the longest edge. The plane coordinates of the splats are
+        // about 1e5, so a float binding cannot reconstruct the splat centers.
+        DeformedSurface rest = EvaluateMeshes((
+            [new(0, 0, 0), new(1, 0, 0), new(0.5f, 1e-6f, 0), new(0, 0.5f, 0), new(1, 0.5f, 0), new(0.5f, 0.500001f, 0)],
+            [0, 1, 2, 3, 4, 5]));
+        uint[] weld = SeamWelder.CreateRemap(rest, _meshopt);
+        DriverHierarchy drivers = DriverHierarchyBuilder.Build(rest, [true], weld, [16], AvatarBudget, _meshopt);
+        drivers.LevelTriangleIndices[0].Length.ShouldBe(6);
+        Vector3[] driverRest = new Vector3[drivers.SourceVertexOfDriverVertex.Length];
+        drivers.GatherPositions(rest, driverRest);
+        BakedSplat[] splats = new BakedSplat[4];
+        for (int i = 0; i < splats.Length; i++)
+            splats[i] = new BakedSplat { Position = new Vector3(0.3f + 0.1f * i, 0.2f, 0.01f), Rotation = Quaternion.Identity, Scale = new Vector3(0.01f) };
+
+        GaussianBakeException failure = Should.Throw<GaussianBakeException>(() => SplatBinder.Bind(splats, drivers, 0, driverRest));
+
+        failure.FailureCode.ShouldBe(GaussianBakeFailureCodes.BudgetExceeded);
+        failure.Message.ShouldStartWith("bindings:");
+        TestContext.Out.WriteLine(failure.Message);
+    }
+
+    [Test]
+    public void Bind_NoTriangleHasAFrame_FailsBudgetExceeded()
+    {
+        // The three points of the triangle are on one line.
+        DeformedSurface rest = EvaluateMeshes(([new(0, 0, 0), new(2, 0, 0), new(1, 0, 0)], [0, 1, 2]));
+        DriverHierarchy drivers = new([3], [[0u, 1u, 2u]], [0, 1, 2], [3]);
+        Vector3[] driverRest = new Vector3[3];
+        drivers.GatherPositions(rest, driverRest);
+        BakedSplat[] splats = [new BakedSplat { Position = new Vector3(0.5f, 0.1f, 0.0f), Rotation = Quaternion.Identity, Scale = new Vector3(0.01f) }];
+
+        Should.Throw<GaussianBakeException>(() => SplatBinder.Bind(splats, drivers, 0, driverRest))
+            .FailureCode.ShouldBe(GaussianBakeFailureCodes.BudgetExceeded);
+    }
+
     /// <summary>A dome over the unit square, so the surface has curvature in both directions.</summary>
     private static float Height(float x, float y)
         => 0.25f * MathF.Sin(MathF.PI * x) * MathF.Sin(MathF.PI * y);

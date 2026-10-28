@@ -5,9 +5,28 @@
 /// </summary>
 public static class PlaneCoordinate
 {
-    private const float RangeMin = -1f;
-    private const float RangeSize = 3f;
+    /// <summary>The smallest value that packs without a clamp.</summary>
+    public const float MinValue = -1f;
+
+    /// <summary>The largest value that packs without a clamp.</summary>
+    public const float MaxValue = 2f;
+
+    private const float RangeMin = MinValue;
+    private const float RangeSize = MaxValue - MinValue;
     private const float MaxPacked = 65535f;
+
+    /// <summary>
+    /// Returns true when the barycentric weights (1 − u − v, u, v) are all in the range from <see cref="MinValue"/> to
+    /// <see cref="MaxValue"/>. Then u and v pack without a clamp for each corner order of the triangle, because a turn
+    /// of the corners makes 1 − u − v one of the stored values.
+    /// </summary>
+    public static bool IsInRange(float u, float v)
+    {
+        float w = 1f - u - v;
+        return u >= MinValue && u <= MaxValue
+            && v >= MinValue && v <= MaxValue
+            && w >= MinValue && w <= MaxValue;
+    }
 
     /// <summary>
     /// Packs a value with round-to-nearest. Values outside the range clamp to the border.

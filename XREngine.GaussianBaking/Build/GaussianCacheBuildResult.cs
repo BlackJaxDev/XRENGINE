@@ -21,4 +21,14 @@ public sealed class GaussianCacheBuildResult(GaussianCache root, GaussianCacheCh
 
     /// <summary>The header bytes plus the data bytes of chunk 0.</summary>
     public int Chunk0Bytes { get; } = chunk0Bytes;
+
+    /// <summary>
+    /// The number of bound splats, in all levels, whose stored binding puts the splat center at frame 0 more than the
+    /// largest position error of the budget from its rest position. The builder reconstructs each packed binding on the
+    /// dequantized frame 0 corners of its stored triangle, as the runtime does.
+    /// </summary>
+    public int BindingErrorCount { get; internal set; }
+
+    /// <summary>The largest distance, in meters, between a stored binding at frame 0 and the rest position of its splat.</summary>
+    public float MaxBindingErrorMeters { get; internal set; }
 }

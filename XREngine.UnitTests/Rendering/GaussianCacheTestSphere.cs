@@ -25,7 +25,7 @@ namespace XREngine.UnitTests.Rendering;
 /// levels and 64 frames of motion. The leaves below <see cref="StaticBelowY"/> do not move.
 /// </summary>
 /// <param name="Input">The input of <see cref="GaussianCacheBuilder.Build(GaussianCacheBuildInput, GaussianBakeBudget, IMeshOptimizerBackend)"/>.</param>
-/// <param name="DriverRest">The rest positions of the driver vertices.</param>
+/// <param name="DriverRest">The rest positions of the driver vertices that the bindings use: the dequantized frame 0.</param>
 /// <param name="StaticCounts">The number of static splats in each level.</param>
 internal sealed record GaussianCacheTestSphere(GaussianCacheBuildInput Input, Vector3[] DriverRest, int[] StaticCounts)
 {
@@ -122,10 +122,6 @@ internal sealed record GaussianCacheTestSphere(GaussianCacheBuildInput Input, Ve
         Vector3[] driverRest = new Vector3[drivers.VertexCount];
         drivers.GatherPositions(rest, driverRest);
 
-        SplatBinding[][] bindings = new SplatBinding[tree.LevelCount][];
-        for (int level = 0; level < tree.LevelCount; level++)
-            bindings[level] = SplatBinder.Bind(tree.Levels[level].AsSpan(staticCounts[level]), drivers, level, driverRest);
-
         // The bounds hold every driver vertex in every frame and every static splat.
         Vector3 min = new(float.MaxValue);
         Vector3 max = new(float.MinValue);
@@ -161,13 +157,22 @@ internal sealed record GaussianCacheTestSphere(GaussianCacheBuildInput Input, Ve
             }
         }
 
+        // Bind to the corners that the runtime uses: the dequantized frame 0.
+        Vector3[] boundRest = new Vector3[driverRest.Length];
+        for (int vertex = 0; vertex < boundRest.Length; vertex++)
+            boundRest[vertex] = quantizer.Dequantize(frames.Positions[vertex * 3], frames.Positions[vertex * 3 + 1], frames.Positions[vertex * 3 + 2]);
+
+        SplatBinding[][] bindings = new SplatBinding[tree.LevelCount][];
+        for (int level = 0; level < tree.LevelCount; level++)
+            bindings[level] = SplatBinder.Bind(tree.Levels[level].AsSpan(staticCounts[level]), drivers, level, boundRest);
+
         GaussianCacheBuildInput input = new()
         {
             Kind = GaussianBakeKind.Avatar,
             Tree = tree,
             Drivers = drivers,
             BindingsPerLevel = bindings,
-            DriverRestPositions = driverRest,
+            DriverRestPositions = boundRest,
             Frames = frames,
             Motion = new BakeMotionChoice([], BakeMotionSources.First, "wobble", FrameCount / FrameRate, FrameCount, FrameRate),
             LoopMode = GaussianCacheLoopMode.Loop,
@@ -176,7 +181,7 @@ internal sealed record GaussianCacheTestSphere(GaussianCacheBuildInput Input, Ve
             ColorScale = 1.25f,
             CameraHints = new GaussianCacheCameraHints { MinRadius = 0.6f, MaxRadius = 3.6f, DefaultRadius = 1.2f, DefaultPitchDegrees = 15.0f },
         };
-        return new GaussianCacheTestSphere(input, driverRest, staticCounts);
+        return new GaussianCacheTestSphere(input, boundRest, staticCounts);
     }
 
     /// <summary>Returns a copy of the input with another loop mode. The frames are copied into a store with that loop mode.</summary>

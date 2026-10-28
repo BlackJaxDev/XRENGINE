@@ -170,6 +170,32 @@ internal sealed class TriangleGrid
         return best >= 0;
     }
 
+    /// <summary>
+    /// Finds the closest candidate triangle on whose plane the point has plane coordinates u, v, and 1 − u − v in the
+    /// range of <see cref="PlaneCoordinate"/> (see <see cref="PlaneCoordinate.IsInRange"/>). The search tests every
+    /// candidate, so call it only when the closest triangle does not qualify.
+    /// </summary>
+    /// <param name="point">The point.</param>
+    /// <param name="triangle">The index of the closest qualified triangle in the triangle list.</param>
+    /// <returns>False when no candidate qualifies or the point is not finite.</returns>
+    public bool TryFindClosestInPackRange(Vector3 point, out uint triangle)
+    {
+        int best = -1;
+        float bestDistanceSquared = float.PositiveInfinity;
+        if (IsFinite(point))
+        {
+            for (int candidate = 0; candidate < _triangles.Length; candidate++)
+            {
+                SplatBinder.Project(point, _a[candidate], _b[candidate], _c[candidate], out float u, out float v, out _);
+                if (PlaneCoordinate.IsInRange(u, v))
+                    Test(point, candidate, ref best, ref bestDistanceSquared);
+            }
+        }
+
+        triangle = best >= 0 ? _triangles[best] : 0u;
+        return best >= 0;
+    }
+
     private void SearchRings(Vector3 point, ref int best, ref float bestDistanceSquared)
     {
         float fx = (point.X - _origin.X) / _cellSize;
