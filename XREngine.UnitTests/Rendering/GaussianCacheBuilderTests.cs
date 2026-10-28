@@ -16,6 +16,8 @@ using XREngine.Rendering.Models.Gaussian.Baking.Build;
 using XREngine.Rendering.Models.Gaussian.Baking.Driver;
 using XREngine.Rendering.Models.Gaussian.Baking.Lod;
 using XREngine.Rendering.Models.Gaussian.Baking.Motion;
+using XREngine.Rendering.Models.Gaussian.Baking.Pipeline;
+using XREngine.Rendering.Models.Gaussian.Baking.Report;
 using XREngine.Rendering.Models.Gaussian.Baking.Sampling;
 using XREngine.Rendering.Models.Gaussian.Baking.Surface;
 using XREngine.Rendering.Models.Gaussian.Cache;
@@ -177,6 +179,104 @@ public sealed class GaussianCacheBuilderTests
 
         exception.FailureCode.ShouldBe(GaussianBakeFailureCodes.BudgetExceeded);
         exception.Message.ShouldBe("splats: 50001 > 50000");
+    }
+
+    [Test]
+    public void Build_InRangeBindings_ReconstructWithinPositionError()
+    {
+        _cache.BindingErrorCount.ShouldBe(0);
+        _cache.MaxBindingErrorMeters.ShouldBeLessThanOrEqualTo(AvatarBudget.MaxPositionErrorMeters);
+
+        // The runtime reconstructs each bound splat on the dequantized frame 0 corners of its decoded triangle.
+        GaussianCache cache = CookRoundTrip(_cache.Root);
+        foreach (GaussianCacheChunk chunk in _cache.Chunks)
+            cache.AcceptChunk(CookRoundTrip(chunk));
+        GaussianCacheRuntimeData runtime = cache.Runtime;
+        GridQuantizer grid = new(cache.Header.Bounds, cache.Header.GridBits);
+        float worst = 0.0f;
+        int bound = 0;
+        for (int level = 0; level < runtime.LevelRecords.Length; level++)
+        {
+            uint[] triangles = runtime.DriverLevelIndices[level];
+            for (int node = _sphere.StaticCounts[level]; node < runtime.LevelRecords[level].Length; node++)
+            {
+                GaussianCacheSplatRecord record = runtime.LevelRecords[level][node];
+                PlaneCoordinate.IsInRange(PlaneCoordinate.Unpack(record.A), PlaneCoordinate.Unpack(record.B)).ShouldBeTrue($"level {level} node {node}");
+                Vector3 a = FrameZero(runtime.Frames, grid, triangles[record.Triangle * 3]);
+                Vector3 b = FrameZero(runtime.Frames, grid, triangles[record.Triangle * 3 + 1]);
+                Vector3 c = FrameZero(runtime.Frames, grid, triangles[record.Triangle * 3 + 2]);
+                Vector3 center = TriangleFrame.Reconstruct(
+                    a, b, c, PlaneCoordinate.Unpack(record.A), PlaneCoordinate.Unpack(record.B), (float)BitConverter.UInt16BitsToHalf(record.C));
+                worst = MathF.Max(worst, Vector3.Distance(center, _sphere.Input.Tree.Levels[level][node].Position));
+                bound++;
+            }
+        }
+
+        TestContext.Out.WriteLine($"{bound} bound splats, worst error {worst:E3} m, builder maximum {_cache.MaxBindingErrorMeters:E3} m");
+        bound.ShouldBeGreaterThan(0);
+        worst.ShouldBeLessThanOrEqualTo(AvatarBudget.MaxPositionErrorMeters);
+        worst.ShouldBe(_cache.MaxBindingErrorMeters, 1e-6f);
+    }
+
+    [Test]
+    public void Build_FarSplatOnSmallTriangle_ReportsBindingError()
+    {
+        // One small driver triangle in the plane z = 0. Splat 0 is on it. Splat 1 is 2 m away in its plane, so its plane
+        // coordinates are far outside the pack range, and no other triangle can take it.
+        Vector3[] corners = [new(0.0f, 0.0f, 0.0f), new(0.05f, 0.0f, 0.0f), new(0.0f, 0.05f, 0.0f)];
+        AABB bounds = new(new Vector3(-0.01f), new Vector3(0.06f, 0.06f, 0.01f));
+        byte gridBits = GridQuantizer.ChooseGridBits(bounds, AvatarBudget.MaxPositionErrorMeters);
+        GridQuantizer quantizer = new(bounds, gridBits);
+        const int frameCount = 8;
+        DriverHierarchy drivers = new([3], [[0u, 1u, 2u]], [0, 1, 2], [3]);
+        DriverFrameStore frames = new(drivers.CumulativeVertexCounts, frameCount, GaussianCacheLoopMode.Loop);
+        for (int frame = 0; frame < frameCount; frame++)
+        {
+            for (int vertex = 0; vertex < corners.Length; vertex++)
+            {
+                quantizer.Quantize(corners[vertex], out ushort x, out ushort y, out ushort z);
+                int offset = ((frame * corners.Length) + vertex) * 3;
+                (frames.Positions[offset], frames.Positions[offset + 1], frames.Positions[offset + 2]) = (x, y, z);
+            }
+        }
+
+        Vector3[] rest = new Vector3[corners.Length];
+        for (int vertex = 0; vertex < rest.Length; vertex++)
+            rest[vertex] = quantizer.Dequantize(frames.Positions[vertex * 3], frames.Positions[vertex * 3 + 1], frames.Positions[vertex * 3 + 2]);
+
+        BakedSplat[] leaves = CreateStaticLeaves(2, 5);
+        leaves[0].Position = new Vector3(0.01f, 0.01f, 0.001f);
+        leaves[1].Position = new Vector3(2.0f, 1.0f, 0.0f);
+        foreach (int i in new[] { 0, 1 })
+            leaves[i].IsStatic = false;
+        SplatLodTree tree = new([leaves], []);
+        SplatBinding[] bindings = SplatBinder.Bind(leaves, drivers, 0, rest);
+        PlaneCoordinate.IsInRange(bindings[0].U, bindings[0].V).ShouldBeTrue();
+        PlaneCoordinate.IsInRange(bindings[1].U, bindings[1].V).ShouldBeFalse();
+        BakeMotionChoice motion = new([], BakeMotionSources.First, "still", frameCount / FrameRate, frameCount, FrameRate);
+        GaussianCacheBuildInput input = new()
+        {
+            Kind = GaussianBakeKind.Avatar,
+            Tree = tree,
+            Drivers = drivers,
+            BindingsPerLevel = [bindings],
+            DriverRestPositions = rest,
+            Frames = frames,
+            Motion = motion,
+            LoopMode = GaussianCacheLoopMode.Loop,
+            Bounds = bounds,
+            GridBits = gridBits,
+        };
+
+        GaussianCacheBuildResult result = GaussianCacheBuilder.Build(input, AvatarBudget, _meshopt);
+
+        result.BindingErrorCount.ShouldBe(1);
+        result.MaxBindingErrorMeters.ShouldBeGreaterThan(1.0f);
+        BakeReport report = new();
+        GaussianBakePipeline.FillCacheReport(report, result, motion);
+        report.Splats.ShouldNotBeNull().BindingsOverError.ShouldBe(1);
+        report.Splats.MaxBindingErrorMeters.ShouldBe(result.MaxBindingErrorMeters);
+        report.Warnings.ShouldContain(GaussianBakePipeline.BindingErrorWarning + "1");
     }
 
     [Test]
@@ -414,6 +514,12 @@ public sealed class GaussianCacheBuilderTests
         }
 
         return leaves;
+    }
+
+    private static Vector3 FrameZero(DriverFrameStore frames, GridQuantizer grid, uint vertex)
+    {
+        int offset = (int)vertex * 3;
+        return grid.Dequantize(frames.Positions[offset], frames.Positions[offset + 1], frames.Positions[offset + 2]);
     }
 
     private static AABB BoundsOf(BakedSplat[] splats)

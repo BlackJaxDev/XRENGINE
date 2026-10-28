@@ -17,6 +17,12 @@ public static class SplatBinder
     public const float MaxReconstructErrorMeters = 1e-5f;
 
     /// <summary>
+    /// The start of the failure message of a binding that cannot be made. The failure code is
+    /// <see cref="GaussianBakeFailureCodes.BudgetExceeded"/>.
+    /// </summary>
+    public const string BindingLimit = "bindings";
+
+    /// <summary>
     /// Attaches each splat to the closest candidate triangle of the level. The binding keeps the plane coordinates of
     /// the projection of the splat center onto the triangle plane without a clamp, and the signed distance from the
     /// plane, so that <see cref="TriangleFrame.Reconstruct"/> gives the rest position again.
@@ -26,17 +32,25 @@ public static class SplatBinder
     /// a shape ratio of at least <see cref="MinTriangleShapeRatio"/>. A sliver is not a candidate, because its plane
     /// coordinates are badly conditioned and its frame turns fast when its vertices move. When no triangle of the level
     /// has that shape, the candidates are all triangles that have a frame.</para>
+    /// <para>The cache packs u, v, and 1 − u − v into the range of <see cref="PlaneCoordinate"/>. When the plane
+    /// coordinates on the closest candidate are outside that range, the splat goes to the closest candidate on which
+    /// they are inside the range. When no candidate has them inside the range, the splat stays on the closest
+    /// candidate, and the cache builder counts the error of its packed binding.</para>
     /// <para>Give only animated splats. Static splats (<see cref="BakedSplat.IsStatic"/>) do not move, so they keep
     /// their world position and get no binding. A closest-triangle tie goes to the triangle with the lower index.</para>
+    /// <para>Give the positions that the runtime uses at frame 0: the dequantized frame 0 of the cache. Then the
+    /// binding error is only the error of the packed binding.</para>
     /// </remarks>
     /// <param name="splats">The animated splats at the rest pose.</param>
     /// <param name="drivers">The driver hierarchy.</param>
     /// <param name="level">The driver level whose triangles receive the splats.</param>
-    /// <param name="driverRestPositions">The rest position of each driver vertex, in coarse-first order (see <see cref="DriverHierarchy.GatherPositions"/>).</param>
+    /// <param name="driverRestPositions">The position of each driver vertex at frame 0, in coarse-first order (see <see cref="DriverHierarchy.GatherPositions"/>).</param>
     /// <returns>One binding for each splat, in splat order.</returns>
-    /// <exception cref="InvalidOperationException">
-    /// The level has no triangle with a frame, or a binding is not finite or does not reconstruct the splat center
-    /// within <see cref="MaxReconstructErrorMeters"/>. The second case is a defect of the bake, not of the content.
+    /// <exception cref="GaussianBakeException">
+    /// <see cref="GaussianBakeFailureCodes.BudgetExceeded"/>: the level has no triangle with a frame, a splat position
+    /// is not finite, or a binding is not finite or does not reconstruct the splat center within
+    /// <see cref="MaxReconstructErrorMeters"/> (for example on a level of thin slivers). The message starts with
+    /// <see cref="BindingLimit"/> and a colon.
     /// </exception>
     public static SplatBinding[] Bind(ReadOnlySpan<BakedSplat> splats, DriverHierarchy drivers, int level, ReadOnlySpan<Vector3> driverRestPositions)
     {
@@ -51,20 +65,25 @@ public static class SplatBinder
         uint[] indices = drivers.LevelTriangleIndices[level];
         TriangleGrid grid = new(indices, driverRestPositions, MinTriangleShapeRatio);
         if (grid.CandidateCount == 0)
-            throw new InvalidOperationException($"Driver level {level} has no triangle with a frame, so the splats cannot be bound to it.");
+            throw Failed($"driver level {level} has no triangle with a frame, so its {splats.Length} splats cannot be bound to it.");
 
         SplatBinding[] bindings = new SplatBinding[splats.Length];
         for (int i = 0; i < splats.Length; i++)
         {
             ref readonly BakedSplat splat = ref splats[i];
             if (!grid.TryFindClosest(splat.Position, out uint triangle))
-                throw new ArgumentException($"Splat {i} has a position that is not finite.", nameof(splats));
+                throw Failed($"splat {i} of level {level} has a position that is not finite.");
 
-            Vector3 a = driverRestPositions[(int)indices[triangle * 3]];
-            Vector3 b = driverRestPositions[(int)indices[triangle * 3 + 1]];
-            Vector3 c = driverRestPositions[(int)indices[triangle * 3 + 2]];
-            TriangleFrame.TryCompute(a, b, c, out Quaternion frame);
+            ReadCorners(indices, driverRestPositions, triangle, out Vector3 a, out Vector3 b, out Vector3 c);
             Project(splat.Position, a, b, c, out float u, out float v, out float h);
+            if (!PlaneCoordinate.IsInRange(u, v) && grid.TryFindClosestInPackRange(splat.Position, out uint inRange) && inRange != triangle)
+            {
+                triangle = inRange;
+                ReadCorners(indices, driverRestPositions, triangle, out a, out b, out c);
+                Project(splat.Position, a, b, c, out u, out v, out h);
+            }
+
+            TriangleFrame.TryCompute(a, b, c, out Quaternion frame);
             SplatBinding binding = new()
             {
                 Triangle = triangle,
@@ -73,12 +92,22 @@ public static class SplatBinder
                 H = h,
                 LocalRotation = Quaternion.Normalize(Quaternion.Inverse(frame) * splat.Rotation),
             };
-            Verify(binding, splat.Position, a, b, c, i);
+            Verify(binding, splat.Position, a, b, c, i, level, grid.UsesShapeFallback);
             bindings[i] = binding;
         }
 
         return bindings;
     }
+
+    private static void ReadCorners(uint[] indices, ReadOnlySpan<Vector3> positions, uint triangle, out Vector3 a, out Vector3 b, out Vector3 c)
+    {
+        a = positions[(int)indices[triangle * 3]];
+        b = positions[(int)indices[triangle * 3 + 1]];
+        c = positions[(int)indices[triangle * 3 + 2]];
+    }
+
+    private static GaussianBakeException Failed(string detail)
+        => new(GaussianBakeFailureCodes.BudgetExceeded, BindingLimit + ": " + detail);
 
     /// <summary>
     /// Finds u, v, and h such that p = a + u(b − a) + v(c − a) + h·n̂, where n̂ is the unit normal of the triangle.
@@ -88,7 +117,7 @@ public static class SplatBinder
     /// 1 / sin θ of the triangle, not with 1 / sin² θ as a solve of the 2 × 2 Gram system does. The calculation uses
     /// double precision, because u and v are not clamped and can be far outside the triangle.
     /// </remarks>
-    private static void Project(Vector3 p, Vector3 a, Vector3 b, Vector3 c, out float u, out float v, out float h)
+    internal static void Project(Vector3 p, Vector3 a, Vector3 b, Vector3 c, out float u, out float v, out float h)
     {
         double abX = (double)b.X - a.X, abY = (double)b.Y - a.Y, abZ = (double)b.Z - a.Z;
         double acX = (double)c.X - a.X, acY = (double)c.Y - a.Y, acZ = (double)c.Z - a.Z;
@@ -123,23 +152,23 @@ public static class SplatBinder
     /// origin has a rounding step larger than the tolerance (2 steps at 128 m are 1.5e-5 m), and that rounding is
     /// the same for every way to store the splat. The offset test still finds a wrong u, v, or h.
     /// </remarks>
-    private static void Verify(SplatBinding binding, Vector3 position, Vector3 a, Vector3 b, Vector3 c, int splatIndex)
+    private static void Verify(SplatBinding binding, Vector3 position, Vector3 a, Vector3 b, Vector3 c, int splatIndex, int level, bool slivers)
     {
+        string triangles = slivers ? " The level has only sliver triangles." : string.Empty;
         Quaternion rotation = binding.LocalRotation;
         if (!float.IsFinite(binding.U) || !float.IsFinite(binding.V) || !float.IsFinite(binding.H)
             || !float.IsFinite(rotation.X) || !float.IsFinite(rotation.Y) || !float.IsFinite(rotation.Z) || !float.IsFinite(rotation.W))
         {
-            throw new InvalidOperationException(
-                $"The binding of splat {splatIndex} to driver triangle {binding.Triangle} is not finite. This is a defect of the bake.");
+            throw Failed($"the binding of splat {splatIndex} of level {level} to driver triangle {binding.Triangle} is not finite.{triangles}");
         }
 
         Vector3 offset = TriangleFrame.Reconstruct(Vector3.Zero, b - a, c - a, binding.U, binding.V, binding.H);
         float error = Vector3.Distance(offset, position - a);
         if (!(error <= MaxReconstructErrorMeters))
         {
-            throw new InvalidOperationException(
-                $"The binding of splat {splatIndex} to driver triangle {binding.Triangle} reconstructs its center {error:E3} m "
-                + $"from its rest position, which is more than {MaxReconstructErrorMeters:E0} m. This is a defect of the bake.");
+            throw Failed(
+                $"the binding of splat {splatIndex} of level {level} to driver triangle {binding.Triangle} reconstructs its center "
+                + $"{error:E3} m from its rest position, which is more than {MaxReconstructErrorMeters:E0} m.{triangles}");
         }
     }
 }

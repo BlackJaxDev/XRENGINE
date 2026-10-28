@@ -90,7 +90,7 @@ public sealed class GaussianBakePipelineTests
         ]);
         PropertyNames(root.GetProperty("input")).ShouldBe(["pak", "asset", "sha256"]);
         PropertyNames(root.GetProperty("clip")).ShouldBe(["name", "source", "durationSeconds", "loopMode"]);
-        PropertyNames(root.GetProperty("splats")).ShouldBe(["total", "static", "perLevel"]);
+        PropertyNames(root.GetProperty("splats")).ShouldBe(["total", "static", "perLevel", "bindingsOverError", "maxBindingErrorMeters"]);
         PropertyNames(root.GetProperty("driver")).ShouldBe(["verticesPerLevel", "trianglesPerLevel"]);
         PropertyNames(root.GetProperty("frames")).ShouldBe(["count", "rate"]);
         PropertyNames(root.GetProperty("cache")).ShouldBe(["contentHash", "chunk0Bytes", "totalBytes", "chunks"]);

@@ -172,7 +172,8 @@ public sealed partial class GaussianBakePipeline
     /// <summary>
     /// Makes the input of an animated cache. The loop mode is <see cref="GaussianCacheLoopMode.PingPong"/> when a driver
     /// vertex is more than two times the largest position error from its start position at the end of the motion, or
-    /// else <see cref="GaussianCacheLoopMode.Loop"/>. The bindings use the same driver rest positions as the cache.
+    /// else <see cref="GaussianCacheLoopMode.Loop"/>. The bindings use the driver positions that the runtime uses: the
+    /// dequantized frame 0 of the cache.
     /// </summary>
     private static GaussianCacheBuildInput CreateAnimatedInput(
         BakeRun run,
@@ -190,8 +191,11 @@ public sealed partial class GaussianBakePipeline
             : GaussianCacheLoopMode.Loop;
         DriverFrameStore frames = QuantizeFrames(drivers, trajectories, quantizer, loopMode);
 
+        // Bind to the corners that the runtime uses: the dequantized frame 0.
         Vector3[] driverRest = new Vector3[drivers.VertexCount];
-        drivers.GatherPositions(analysis.Rest, driverRest);
+        ushort[] grid = frames.Positions;
+        for (int vertex = 0; vertex < driverRest.Length; vertex++)
+            driverRest[vertex] = quantizer.Dequantize(grid[vertex * 3], grid[vertex * 3 + 1], grid[vertex * 3 + 2]);
         SplatBinding[][] bindings = new SplatBinding[tree.LevelCount][];
         for (int level = 0; level < tree.LevelCount; level++)
         {
@@ -283,15 +287,18 @@ public sealed partial class GaussianBakePipeline
         return false;
     }
 
-    /// <summary>Writes the motion, splat, driver, frame, grid, color, and cache sections of the report from the built cache.</summary>
-    private static void FillCacheReport(BakeReport report, CacheBuild build)
+    /// <summary>
+    /// Writes the motion, splat, driver, frame, grid, color, and cache sections of the report from the built cache. When
+    /// a stored binding is more than the largest position error from its splat, the report gets
+    /// <see cref="BindingErrorWarning"/> with the number of these bindings.
+    /// </summary>
+    internal static void FillCacheReport(BakeReport report, GaussianCacheBuildResult result, BakeMotionChoice motion)
     {
-        GaussianCacheBuildResult result = build.Result;
         GaussianCacheHeader header = result.Root.Header;
         report.Clip = new BakeReportClip
         {
-            Name = build.Motion.ClipName,
-            Source = build.Motion.Source,
+            Name = motion.ClipName,
+            Source = motion.Source,
             DurationSeconds = header.DurationSeconds,
             LoopMode = header.LoopMode.ToString(),
         };
@@ -300,7 +307,11 @@ public sealed partial class GaussianBakePipeline
             Total = header.SplatLevelCounts[^1],
             Static = header.StaticSplatCounts[^1],
             PerLevel = [.. header.SplatLevelCounts],
+            BindingsOverError = result.BindingErrorCount,
+            MaxBindingErrorMeters = result.MaxBindingErrorMeters,
         };
+        if (result.BindingErrorCount > 0)
+            report.Warnings.Add(BindingErrorWarning + result.BindingErrorCount.ToString(CultureInfo.InvariantCulture));
         report.Driver = new BakeReportDriver
         {
             VerticesPerLevel = [.. header.DriverVertexCounts],

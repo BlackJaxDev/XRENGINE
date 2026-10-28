@@ -70,6 +70,12 @@ public sealed partial class GaussianBakePipeline
     /// <summary>The warning when chunk 0 is too large and the bake builds again with a smaller level 0 target. The target follows it.</summary>
     public const string Chunk0RetryWarning = "chunk0-retry:";
 
+    /// <summary>
+    /// The warning when stored splat bindings put splat centers at frame 0 more than the largest position error of the
+    /// budget from their rest positions. The number of these bindings follows it.
+    /// </summary>
+    public const string BindingErrorWarning = "binding-error-exceeded:";
+
     /// <summary>The longest time to wait for the content thread when the bake puts back a pose or releases a player.</summary>
     private static readonly TimeSpan ReleaseTimeout = TimeSpan.FromSeconds(30);
 
@@ -332,7 +338,7 @@ public sealed partial class GaussianBakePipeline
         Stopwatch encodeWatch = Stopwatch.StartNew();
         BakeCacheFiles.Write(build.Result, run.StagingPath);
         report.TimingsMs.Encode += encodeWatch.ElapsedMilliseconds;
-        FillCacheReport(report, build);
+        FillCacheReport(report, build.Result, build.Motion);
         watch.Restart();
 
         GaussianCacheHeader header = build.Result.Root.Header;

@@ -28,13 +28,18 @@ public static partial class GaussianCacheBuilder
     private const int ColorBits = 8;
     private const int VertexCodecLevel = 3;
 
-    /// <summary>Makes the attribute streams of a level. Bound splats move to the stored driver triangles.</summary>
+    /// <summary>
+    /// Makes the attribute streams of a level. Bound splats move to the stored driver triangles. Each packed binding is
+    /// reconstructed on the dequantized frame 0 corners of its stored triangle, as the runtime does, and the result
+    /// counts the bindings whose center is more than <paramref name="maxErrorMeters"/> from the splat position.
+    /// </summary>
     private static FilteredSplatLevel FilterSplatLevel(
         GaussianCacheBuildInput input,
         int level,
         int staticCount,
         uint[][] storedTriangles,
         GridQuantizer quantizer,
+        float maxErrorMeters,
         IMeshOptimizerBackend meshopt)
     {
         BakedSplat[] splats = input.Tree.Levels[level];
@@ -49,6 +54,8 @@ public static partial class GaussianCacheBuilder
         float[] rotations = new float[count * 4];
         float[] scales = new float[count * 3];
         float[] colors = new float[count * 4];
+        int errorCount = 0;
+        float maxError = 0.0f;
         for (int node = 0; node < count; node++)
         {
             ref readonly BakedSplat splat = ref splats[node];
@@ -72,6 +79,11 @@ public static partial class GaussianCacheBuilder
                 flags = 0;
                 triangleIndex = bound.Triangle;
                 rotation = bound.LocalRotation;
+
+                float error = PackedBindingError(input.Frames, quantizer, storedTriangles[level], triangleIndex, a, b, c, splat.Position);
+                if (!(error <= maxErrorMeters))
+                    errorCount++;
+                maxError = MathF.Max(maxError, error);
             }
 
             Span<byte> bindingBytes = binding.AsSpan(node * BindingStride, BindingStride);
@@ -114,7 +126,44 @@ public static partial class GaussianCacheBuilder
                 childCounts[node] = checked((byte)counts[node]);
         }
 
-        return new FilteredSplatLevel(level, count, binding, triangle, rotation16, scale, color, childCounts);
+        return new FilteredSplatLevel(level, count, binding, triangle, rotation16, scale, color, childCounts, errorCount, maxError);
+    }
+
+    /// <summary>
+    /// Returns the distance between the splat position and the center that the runtime reconstructs at frame 0 from a
+    /// packed binding: the plane coordinates and the half-precision height on the dequantized frame 0 corners of the
+    /// stored triangle. A degenerate triangle uses the rule of the runtime: the plane offset from corner a without the
+    /// height. A distance that is not finite becomes <see cref="float.MaxValue"/>, so that the report stays valid JSON.
+    /// </summary>
+    private static float PackedBindingError(
+        DriverFrameStore frames,
+        GridQuantizer quantizer,
+        uint[] storedTriangles,
+        uint triangle,
+        ushort packedU,
+        ushort packedV,
+        ushort packedH,
+        Vector3 position)
+    {
+        Vector3 a = FrameZeroPosition(frames, quantizer, storedTriangles[triangle * 3]);
+        Vector3 b = FrameZeroPosition(frames, quantizer, storedTriangles[triangle * 3 + 1]);
+        Vector3 c = FrameZeroPosition(frames, quantizer, storedTriangles[triangle * 3 + 2]);
+        float u = PlaneCoordinate.Unpack(packedU);
+        float v = PlaneCoordinate.Unpack(packedV);
+        float h = (float)BitConverter.UInt16BitsToHalf(packedH);
+        Vector3 center = TriangleFrame.TryCompute(a, b, c, out _)
+            ? TriangleFrame.Reconstruct(a, b, c, u, v, h)
+            : a + (u * (b - a)) + (v * (c - a));
+        float error = Vector3.Distance(center, position);
+        return float.IsFinite(error) ? error : float.MaxValue;
+    }
+
+    /// <summary>Returns the dequantized position of a driver vertex at frame 0.</summary>
+    private static Vector3 FrameZeroPosition(DriverFrameStore frames, GridQuantizer quantizer, uint vertex)
+    {
+        ushort[] positions = frames.Positions;
+        int offset = (int)vertex * 3;
+        return quantizer.Dequantize(positions[offset], positions[offset + 1], positions[offset + 2]);
     }
 
     /// <summary>Appends the splats of a level above 0. A split falls only between the children of two parents.</summary>

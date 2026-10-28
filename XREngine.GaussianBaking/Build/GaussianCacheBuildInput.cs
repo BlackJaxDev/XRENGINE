@@ -31,7 +31,8 @@ public sealed class GaussianCacheBuildInput
 
     /// <summary>
     /// The rest position of each driver vertex, in coarse-first order. These are the positions that the bindings were
-    /// made with. The builder uses them to keep each rotation correct when the index codec turns the corners of a triangle.
+    /// made with: the dequantized frame 0 of <see cref="Frames"/>, which the runtime uses. The builder uses them to keep
+    /// each rotation correct when the index codec turns the corners of a triangle.
     /// </summary>
     public required Vector3[] DriverRestPositions { get; init; }
 
