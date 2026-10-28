@@ -2,6 +2,19 @@
 
 Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
 
+## Asset-load follow-up (2026-10-28)
+
+The scan at implementation commit `cdd62f785d060b6621748a54717e1d8421841a12`
+uses the same roots, tracked sources, and expressions. Load-probe placement
+removes eight matching lines and three files from Core. Current direct-file
+counts are Core **8 / 24**, Rendering **9 / 31**, Host **2 / 5**, and Data
+**13 / 54**, for **32 files / 114 lines**. Core plus Rendering total
+**17 files / 55 lines**. The asset-manager group now has **5 files / 21 lines**.
+Blocking counts and the three literal asset-wrapper waits are unchanged.
+The [load-probe record](browser-runtime-asset-io-boundaries-2026-10-03.md#asset-load-probe-placement-2026-10-28)
+contains the provider contract and bounded runtime checks. The sections below
+retain the preceding snapshots; neither inventory requirement is complete.
+
 ## Cache metadata follow-up (2026-10-28)
 
 The scan at implementation commit `d4930493443b3740e54f172d7b7d28a363fd530d`

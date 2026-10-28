@@ -1,5 +1,76 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Asset-load probe placement (2026-10-28)
+
+Implementation commit `cdd62f785d060b6621748a54717e1d8421841a12` moves
+eight direct existence checks from the native load APIs, core loader, and remote
+ID loader to the existing `IRuntimeHostFileReadBackend`. Each public load retains
+its preflight provider through remote download and job dispatch, then uses it
+for the core-load probe. The local-only private core entry captures lazily after
+cache and archive returns. ID loads capture at the first resolved-path probe.
+No interface, serializer, dependency, scheduler, native UI, or reference-runtime
+source changed.
+
+The [composition contract](../../../architecture/runtime/project-organization.md)
+records the custom-host impact. Native public loads now require the read
+capability before their existing preflight, including when a later path-cache
+or archive lookup would succeed. The order is unchanged: the preflight previously
+called `File.Exists` directly. Catalog routes, non-synchronous path-cache hits,
+empty IDs, and matching loaded IDs still return before provider capture.
+Nested metadata and payload operations retain their separate owners. This is
+probe ownership, not a graph-wide source lease or an atomic file snapshot.
+Physical remote payload persistence and guarded synchronous waits remain open.
+
+A disposable runtime executable passes 20 checks against compiled Core and the
+native worker leaf. It uses the existing publisher file adapter, a recording
+provider, and a controlled in-memory remote transport:
+
+- Generic and type-based synchronous/asynchronous loads retain the provider
+  when the first probe replaces the installed provider (four checks).
+- Each corresponding path-cache hit performs only the existing preflight
+  probe (four checks).
+- Synchronous and asynchronous native worker dispatch retain that provider.
+- A provider's missing-file result prevents physical source import.
+- A missing native read backend fails explicitly.
+- Empty and matching cached remote IDs need no provider.
+- Non-synchronous cached loads need no provider; a missing asset rejects first.
+- A remote ID response persists and loads through provider probes (two checks).
+- Synchronous and asynchronous remote downloads retain the preflight provider
+  across their wait/await (two checks).
+
+Core and the final executable build in Release with zero warnings and errors.
+No network server or socket is used. No tracked test or assertion changed.
+Independent source review confirmed all core-load callers and the custom-host
+requirement above. Evidence is under
+`Build/_AgentValidation/20261028-120000-webgpu-io/`: `logs/load-core-build.log`,
+`logs/load-smoke-build.log`, `logs/load-smoke.log`, and
+`reports/load-inventory.json`. The initial disposable harness incorrectly used
+`JobManager` in a `using` declaration and had an unused field warning. It now
+calls `Shutdown()` and initializes that field; production source was unaffected.
+
+The full local publication gate passes at this implementation source. Editor,
+Server, and VRClient Release builds report zero warnings and errors with
+`EnableWindowsTargeting=true` on Linux. All 19 manifest projects compile for
+`browser-wasm`. A fresh Browser publish passes with `WasmBuildNative=true`,
+the pinned Jolt inputs, and the unchanged interpreter mode. The browser gate
+reports no warning or error diagnostics. The unchanged
+`DesktopAssetFileSystemTests` fixture passes: one test, zero failures, warnings,
+or skips. No full asset, networking, or scheduler fixture run is claimed.
+
+Logs are `logs/load-gate-Editor.log`, `logs/load-gate-Server.log`,
+`logs/load-gate-VRClient.log`, `logs/load-headless-build.log`,
+`logs/load-headless-test.log`, and `logs/load-full-gate.log`. The fresh output is
+`load-browser-publish/wwwroot/`. `reports/load-browser-publish-hashes.json`
+records one native runtime, Browser, and Core WASM resource with their sizes
+and hashes. These results do not establish Windows startup, browser rendering,
+GPU parity, or post-push CI. Shader source and recipes did not change.
+
+The source scan now reports 17 Core/Rendering files with 55 direct-file matching
+lines, and 32 files / 114 lines across the original four roots. This removes eight
+lines and three files from the preceding cache snapshot. Blocking counts are
+unchanged. The whole-inventory requirements remain open at 122/163 complete,
+with 41 open requirements.
+
 ## Third-party cache metadata placement (2026-10-28)
 
 Implementation commit `d4930493443b3740e54f172d7b7d28a363fd530d` moves
