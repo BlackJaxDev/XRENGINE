@@ -158,7 +158,7 @@ public sealed class GaussianCacheSerializationTests
             StaticSplatCounts = [100, 400, 1500],
             DriverVertexCounts = [500, 2000, 6000],
             DriverTriangleCounts = [900, 3900, 11800],
-            FrameCount = 300,
+            FrameCount = 304,
             FrameRate = 30.0f,
             DurationSeconds = 10.0f,
             LoopMode = GaussianCacheLoopMode.PingPong,

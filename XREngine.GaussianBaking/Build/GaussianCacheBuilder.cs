@@ -32,7 +32,7 @@ public static partial class GaussianCacheBuilder
     public const int MaxChunkDataBytes = 4_128_768;
 
     /// <summary>The meshoptimizer vertex codec version of every encoded stream.</summary>
-    public const ushort MotionCodecVersion = 1;
+    public const ushort MotionCodecVersion = GaussianCacheHeader.CurrentMotionCodecVersion;
 
     /// <summary>
     /// The limit name of a chunk 0 that is too large. The budget message starts with this name and a colon, for example
@@ -163,6 +163,7 @@ public static partial class GaussianCacheBuilder
         GaussianBakeBudget budget)
     {
         GaussianCacheHeader header = CreateHeader(input, staticCounts, chunks);
+        ValidateHeader(header);
         byte[] headerBytes = SerializeHeader(header);
         byte[] rootData = chunks[0].Data;
 
@@ -223,6 +224,26 @@ public static partial class GaussianCacheBuilder
             CameraHints = CopyHints(input.CameraHints),
             Chunks = [.. chunks.Select(chunk => chunk.Info)],
         };
+
+    /// <summary>
+    /// Checks the header against the limits of the format, as the reader does. A count above a limit fails the budget,
+    /// and another error is a defect of the bake.
+    /// </summary>
+    private static void ValidateHeader(GaussianCacheHeader header)
+    {
+        try
+        {
+            header.Validate();
+        }
+        catch (GaussianCacheFormatException exception)
+        {
+            throw new GaussianBakeException(
+                exception.DiagnosticCode == GaussianCacheFormatException.LimitExceededCode
+                    ? GaussianBakeFailureCodes.BudgetExceeded
+                    : GaussianBakeFailureCodes.EncodeFailed,
+                $"format-limits: {exception.Message}");
+        }
+    }
 
     private static GaussianCacheCameraHints? CopyHints(GaussianCacheCameraHints? hints)
         => hints is null

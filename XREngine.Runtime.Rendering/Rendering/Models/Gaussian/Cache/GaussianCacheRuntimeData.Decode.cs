@@ -16,28 +16,45 @@ public sealed partial class GaussianCacheRuntimeData
 
     /// <summary>
     /// Decodes all sections of a chunk. The sections of a level must arrive in order and continue the data that is
-    /// already decoded. When the method throws, the data can hold part of the chunk.
+    /// already decoded. The triangle sections of the chunk decode first, because a splat section can only name triangles
+    /// that are decoded. When the method throws, the data can hold part of the chunk.
     /// </summary>
-    /// <exception cref="GaussianCacheFormatException">A section is not valid or arrives out of order.</exception>
+    /// <exception cref="GaussianCacheFormatException">
+    /// A section is not valid or arrives out of order. A read past the end, a value out of range, or an overflow in the
+    /// decode gives <see cref="GaussianCacheFormatException.DecodeFailedCode"/>.
+    /// </exception>
     internal void ApplyChunk(ReadOnlyMemory<byte> chunkData, IMeshOptimizerBackend meshopt)
     {
         ArgumentNullException.ThrowIfNull(meshopt);
-        foreach (GaussianCacheSection section in GaussianCacheChunkReader.Read(chunkData))
+        try
         {
-            switch (section.Kind)
+            IReadOnlyList<GaussianCacheSection> sections = GaussianCacheChunkReader.Read(chunkData);
+            foreach (GaussianCacheSection section in sections)
             {
-                case GaussianCacheSectionKind.SplatStreams:
-                    ApplySplats(section, meshopt);
-                    break;
-                case GaussianCacheSectionKind.DriverIndices:
+                if (section.Kind == GaussianCacheSectionKind.DriverIndices)
                     ApplyDriverIndices(section, meshopt);
-                    break;
-                case GaussianCacheSectionKind.DriverMotion:
-                    MotionBlockDescriptor block = new(
-                        section.Level, section.TemporalLevel, section.First, section.Count, section.FrameFirst, section.FrameCount, section.WideResiduals);
-                    MotionDecoder.DecodeBlock(block, section.Payload.Span, Frames, meshopt);
-                    break;
             }
+
+            foreach (GaussianCacheSection section in sections)
+            {
+                switch (section.Kind)
+                {
+                    case GaussianCacheSectionKind.SplatStreams:
+                        ApplySplats(section, meshopt);
+                        break;
+                    case GaussianCacheSectionKind.DriverMotion:
+                        MotionBlockDescriptor block = new(
+                            section.Level, section.TemporalLevel, section.First, section.Count, section.FrameFirst, section.FrameCount, section.WideResiduals);
+                        MotionDecoder.DecodeBlock(block, section.Payload.Span, Frames, meshopt);
+                        break;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is EndOfStreamException or ArgumentOutOfRangeException or OverflowException or IndexOutOfRangeException)
+        {
+            throw new GaussianCacheFormatException(
+                GaussianCacheFormatException.DecodeFailedCode,
+                $"A chunk of the gaussian cache cannot be decoded: {exception.GetType().Name}: {exception.Message}");
         }
     }
 
@@ -163,11 +180,14 @@ public sealed partial class GaussianCacheRuntimeData
             target[i].ColorRgba8 = BinaryPrimitives.ReadUInt32LittleEndian(bytes[(i * 4)..]);
     }
 
-    /// <summary>Checks that the static nodes come first and that each bound node names a triangle of its driver level.</summary>
+    /// <summary>
+    /// Checks that the static nodes come first and that each bound node names a decoded triangle of its driver level.
+    /// The GPU reads the pose of each corner, so a triangle that is not decoded yet must not be named.
+    /// </summary>
     private void CheckBindings(ReadOnlySpan<GaussianCacheSplatRecord> records, int level, int first)
     {
         int staticCount = _staticCounts[level];
-        uint triangleCount = level < DriverLevelIndices.Length ? (uint)(DriverLevelIndices[level].Length / 3) : 0u;
+        uint triangleCount = level < DriverLevelIndices.Length ? (uint)_loadedTriangleCounts[level] : 0u;
         for (int i = 0; i < records.Length; i++)
         {
             bool isStatic = (records[i].Flags & GaussianCacheSplatRecord.StaticFlag) != 0;
@@ -175,7 +195,7 @@ public sealed partial class GaussianCacheRuntimeData
                 ? isStatic && records[i].Triangle == GaussianCacheSplatRecord.StaticTriangle
                 : !isStatic && records[i].Triangle < triangleCount;
             if (!valid)
-                throw Malformed($"Node {first + i} of level {level} has a binding that does not agree with the static count or the driver triangles.");
+                throw Malformed($"Node {first + i} of level {level} has a binding that does not agree with the static count or the decoded driver triangles.");
         }
     }
 
