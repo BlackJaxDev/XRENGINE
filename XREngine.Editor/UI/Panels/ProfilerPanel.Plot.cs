@@ -8,7 +8,9 @@ namespace XREngine.Editor;
 public partial class ProfilerPanel
 {
     private const int TrendCapacity = 720;
-    private const int RenderPointCapacity = 64;
+    // Raw and smoothed lines use (points - 1) segments each. With the mode line, three grid lines,
+    // and four frame-budget guides, 60 points keep the total within UIRetainedPlot.MaximumSegments.
+    private const int RenderPointCapacity = 60;
     private readonly float[] _trend = new float[TrendCapacity];
     private readonly float[] _renderedTrend = new float[RenderPointCapacity];
     private readonly float[] _smoothedTrend = new float[RenderPointCapacity];
@@ -189,6 +191,7 @@ public partial class ProfilerPanel
             ProfilerTimingDisplayMode.Worst => worst,
             _ => smooth ? smoothed : newest,
         };
+        DrawTrendGuides(plot, width, height, maximum);
         plot.AddLine(new(0f, selected * height / maximum),
             new(width, selected * height / maximum), new(color.X, color.Y, color.Z, 0.3f), 1f);
         for (int index = 1; index < points; index++)
@@ -206,5 +209,32 @@ public partial class ProfilerPanel
                     new(color.X, color.Y, color.Z, 0.52f));
         }
         plot.End();
+    }
+
+    /// <summary>
+    /// Draws quarter grid lines and the 120, 90, 60, and 30 FPS frame-budget lines that fall inside the
+    /// plot range. The trend always shows milliseconds, so the budgets apply to every trend view.
+    /// </summary>
+    private static void DrawTrendGuides(UIRetainedPlot plot, float width, float height, float maximum)
+    {
+        Vector4 grid = new(1f, 1f, 1f, 0.08f);
+        for (int line = 1; line < 4; line++)
+        {
+            float y = height * line / 4f;
+            plot.AddLine(new(0f, y), new(width, y), grid, 1f);
+        }
+        DrawBudgetGuide(plot, width, height, maximum, 8.3333f, new(0.55f, 0.92f, 1f, 0.5f));
+        DrawBudgetGuide(plot, width, height, maximum, 11.1111f, new(0.42f, 0.88f, 0.88f, 0.5f));
+        DrawBudgetGuide(plot, width, height, maximum, 16.6667f, new(0.3f, 0.85f, 0.45f, 0.5f));
+        DrawBudgetGuide(plot, width, height, maximum, 33.3333f, new(0.95f, 0.55f, 0.2f, 0.5f));
+    }
+
+    private static void DrawBudgetGuide(UIRetainedPlot plot, float width, float height,
+        float maximum, float milliseconds, Vector4 color)
+    {
+        if (milliseconds > maximum)
+            return;
+        float y = milliseconds * height / maximum;
+        plot.AddLine(new(0f, y), new(width, y), color, 1f);
     }
 }

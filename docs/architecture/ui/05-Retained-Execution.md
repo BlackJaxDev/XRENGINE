@@ -1365,8 +1365,11 @@ and the "Sort order" row reverses the order. Measured columns start descending;
 thread and hot path start ascending. Equal keys keep the record order. The
 selected order stays in effect for new records and after a clear. GPU history contains 1,200 summaries and 24 worst frames; the visible
 tree shows 256 stages and offers a canonical dump. Output rows show 64 outputs
-and an explicit remainder. Plots retain up to 720 samples, reduce them to 64 peak
-bins, and use at most 128 segments.
+and an explicit remainder. Plots retain up to 720 samples, reduce them to 60 peak
+bins, and use at most 128 segments. The footer trend also draws quarter grid
+lines and the 120, 90, 60, and 30 FPS frame-budget lines that fall inside its
+millisecond range. The guide lines have no text labels; the colors match the
+ImGui guides.
 
 Setting drafts capture exact effective, override, global, and override-leaf
 owners. A replaced owner rejects commit. Worst-frame activation copies at most
