@@ -221,6 +221,21 @@ supplies both capabilities. Custom font-authoring hosts must supply the relevant
 capabilities; missing providers follow each caller's existing failure handling.
 These captures do not add an atomic file snapshot or a source-retirement lease.
 
+Texture streaming cache inspection captures `IRuntimeHostFileReadBackend` after
+host-file admission. The binary marker stream uses `FileShare.ReadWrite` and is
+disposed after inspection. Recognized binary cache reads use the same provider
+as `IAssetMetadataFileBackend` for the cache timestamp. Text, empty, and
+temporarily unreadable marker probes return before that metadata requirement.
+Direct binary asset reads need only the read capability for inspection.
+
+Texture cache source resolution captures metadata only after blank-path and
+authored-asset exits. It retains that provider for the existence probe and any
+source timestamp read. A stored source timestamp still bypasses source resolution
+on write. Desktop registration supplies both capabilities; custom cache hosts
+must supply each capability used by their path. Payload mapping, cache writing,
+and nested texture preparation keep their existing owners. These captures do
+not create an atomic file snapshot or a source-retirement lease.
+
 World file identities use the installed `IAssetFileSystem` with its existing
 `IAssetMetadataFileBackend` and `IRuntimeHostFileReadBackend` capabilities.
 Core retains verified-package admission, environment overrides, timestamp

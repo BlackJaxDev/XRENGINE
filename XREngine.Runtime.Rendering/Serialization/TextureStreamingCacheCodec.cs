@@ -1,5 +1,7 @@
 using XREngine.Core.Files;
 using XREngine.Core.Files.Caching;
+using XREngine.Data;
+using System.Diagnostics.CodeAnalysis;
 
 namespace XREngine.Rendering;
 
@@ -33,7 +35,9 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
 
     public CacheReadResult Read(string cachePath, string originalPath, DateTime sourceTimestampUtc)
     {
-        bool? looksLikeBinaryPayload = LooksLikeBinaryPayload(cachePath);
+        RuntimeAssetReadServices.EnsureHostFileAccess("Texture streaming cache inspection");
+        IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+        bool? looksLikeBinaryPayload = LooksLikeBinaryPayload(cachePath, files);
         if (!looksLikeBinaryPayload.HasValue)
         {
             return CacheReadResult.Rejected(
@@ -43,7 +47,10 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         if (!looksLikeBinaryPayload.Value)
             return CacheReadResult.Miss();
 
-        DateTime cacheTimestampUtc = File.GetLastWriteTimeUtc(cachePath);
+        IAssetMetadataFileBackend metadata = files as IAssetMetadataFileBackend
+            ?? throw new NotSupportedException(
+                "AssetSource.MetadataFileUnavailable: the texture cache read provider does not provide metadata file operations.");
+        DateTime cacheTimestampUtc = metadata.GetLastWriteTimeUtc(cachePath);
         if (cacheTimestampUtc < sourceTimestampUtc)
             return CacheReadResult.Miss();
 
@@ -76,8 +83,11 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         }
 
         DateTime sourceTimestampUtc = texture.OriginalLastWriteTimeUtc ?? DateTime.MinValue;
-        if (sourceTimestampUtc == DateTime.MinValue && TryResolveSourcePath(texture, out string sourcePath))
-            sourceTimestampUtc = File.GetLastWriteTimeUtc(sourcePath);
+        if (sourceTimestampUtc == DateTime.MinValue
+            && TryResolveSourcePath(texture, out string sourcePath, out IAssetMetadataFileBackend? files))
+        {
+            sourceTimestampUtc = files.GetLastWriteTimeUtc(sourcePath);
+        }
 
         return sourceTimestampUtc != DateTime.MinValue
             && XRTexture2D.WriteBinaryStreamingCacheFile(texture, cachePath, sourceTimestampUtc)
@@ -96,7 +106,9 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         if (assetType != typeof(XRTexture2D))
             return false;
 
-        bool? looksLikeBinaryPayload = LooksLikeBinaryPayload(filePath);
+        RuntimeAssetReadServices.EnsureHostFileAccess("Texture streaming asset inspection");
+        IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+        bool? looksLikeBinaryPayload = LooksLikeBinaryPayload(filePath, files);
         if (!looksLikeBinaryPayload.HasValue)
         {
             // Claim a temporarily unreadable texture file. If a binary cache is
@@ -128,10 +140,10 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         cacheAsset = asset;
         if (asset is not XRTexture2D texture || HasStreamableShape(texture))
             return false;
-        if (!TryResolveSourcePath(texture, out string sourcePath))
+        if (!TryResolveSourcePath(texture, out string sourcePath, out IAssetMetadataFileBackend? files))
             return false;
 
-        DateTime sourceTimestampUtc = texture.OriginalLastWriteTimeUtc ?? File.GetLastWriteTimeUtc(sourcePath);
+        DateTime sourceTimestampUtc = texture.OriginalLastWriteTimeUtc ?? files.GetLastWriteTimeUtc(sourcePath);
         if (sourceTimestampUtc == DateTime.MinValue
             || !XRTexture2D.TryCreateTextureStreamingCacheAsset(
                 texture,
@@ -147,11 +159,11 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         return true;
     }
 
-    private static bool? LooksLikeBinaryPayload(string cachePath)
+    private static bool? LooksLikeBinaryPayload(string cachePath, IRuntimeHostFileReadBackend files)
     {
         try
         {
-            using FileStream stream = new(cachePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using Stream stream = files.OpenRead(cachePath, FileShare.ReadWrite);
             int first = stream.ReadByte();
             return first >= 0
                 && first <= (byte)RuntimeCookedBinaryTypeMarker.CustomObject
@@ -185,8 +197,12 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
         return sourceMaxDimension <= previewMaxDimension || mipmaps.Length > 1;
     }
 
-    private static bool TryResolveSourcePath(XRTexture2D texture, out string sourcePath)
+    private static bool TryResolveSourcePath(
+        XRTexture2D texture,
+        out string sourcePath,
+        [NotNullWhen(true)] out IAssetMetadataFileBackend? files)
     {
+        files = null;
         sourcePath = texture.OriginalPath ?? texture.FilePath ?? string.Empty;
         if (string.IsNullOrWhiteSpace(sourcePath))
             return false;
@@ -199,6 +215,7 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
             return false;
         }
 
-        return File.Exists(sourcePath);
+        files = AssetFileSystemServices.CaptureMetadataFileBackend("Texture streaming source metadata");
+        return files.FileExists(sourcePath);
     }
 }
