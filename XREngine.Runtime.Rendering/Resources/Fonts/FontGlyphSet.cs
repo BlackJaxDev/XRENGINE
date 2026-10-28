@@ -235,13 +235,14 @@ namespace XREngine.Rendering
 
         private bool TryLoadDistanceFieldMetadata(string atlasPath, string metadataPath, EFontAtlasType atlasType)
         {
-            if (!File.Exists(atlasPath) || !File.Exists(metadataPath))
+            IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Font atlas metadata");
+            if (!files.FileExists(atlasPath) || !files.FileExists(metadataPath))
             {
-                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"MSDF metadata load failed: missing generated output. atlas='{atlasPath}' exists={File.Exists(atlasPath)}, metadata='{metadataPath}' exists={File.Exists(metadataPath)}");
+                Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"MSDF metadata load failed: missing generated output. atlas='{atlasPath}' exists={files.FileExists(atlasPath)}, metadata='{metadataPath}' exists={files.FileExists(metadataPath)}");
                 return false;
             }
 
-            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(metadataPath));
+            using JsonDocument document = JsonDocument.Parse(files.ReadAllText(metadataPath));
             JsonElement root = document.RootElement;
 
             if (!root.TryGetProperty("atlas", out JsonElement atlasElement))
@@ -290,7 +291,9 @@ namespace XREngine.Rendering
                 atlasType == EFontAtlasType.Mtsdf ? ESizedInternalFormat.Rgba8 : ESizedInternalFormat.Rgb8,
                 ETexMinFilter.Linear,
                 ETexMagFilter.Linear,
-                autoGenerateMipmaps: false);
+                autoGenerateMipmaps: false,
+                files as IRuntimeHostFileReadBackend ?? throw new NotSupportedException(
+                    "AssetSource.HostFileReadUnavailable: the font metadata provider does not provide direct host-file reads."));
             ConfigureDistanceFieldAtlasTexture(Atlas, atlasType, atlasPath);
 
             Glyphs = glyphs;
@@ -332,9 +335,10 @@ namespace XREngine.Rendering
             ESizedInternalFormat sizedInternalFormat,
             ETexMinFilter minFilter,
             ETexMagFilter magFilter,
-            bool autoGenerateMipmaps)
+            bool autoGenerateMipmaps,
+            IRuntimeHostFileReadBackend files)
         {
-            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(atlasPath));
+            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(files.ReadAllBytes(atlasPath));
             var atlasTexture = new XRTexture2D(atlasImage)
             {
                 FilePath = atlasPath,
@@ -362,7 +366,9 @@ namespace XREngine.Rendering
 
         private static XRTexture2D CreateBitmapAtlasTexture(string atlasPath)
         {
-            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(File.ReadAllBytes(atlasPath));
+            RuntimeAssetReadServices.EnsureHostFileAccess("Bitmap font atlas load");
+            IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+            using RuntimeImage atlasImage = RuntimeImageCodecs.Require().Decode(files.ReadAllBytes(atlasPath));
             byte[] coverage = ExtractAlphaCoverage(atlasImage);
 
             var atlasTexture = new XRTexture2D(
@@ -707,7 +713,8 @@ namespace XREngine.Rendering
                 try
                 {
                     string? sourcePath = !string.IsNullOrWhiteSpace(OriginalPath) ? OriginalPath : FilePath;
-                    if (!string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath))
+                    if (!string.IsNullOrWhiteSpace(sourcePath)
+                        && RuntimeFileDiscoveryServices.CaptureHostFileReadBackend().FileExists(sourcePath))
                     {
                         XRFontImportOptions options = ResolveImportOptions(sourcePath);
                         ImportFont(sourcePath, options, auxiliaryFileName => ResolveFallbackAuxiliaryPath(sourcePath, auxiliaryFileName));
@@ -1091,7 +1098,8 @@ namespace XREngine.Rendering
                 return null;
 
             string path = Path.Combine(fontsDirectory, fileName);
-            if (!File.Exists(path))
+            IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+            if (!files.FileExists(path))
                 return null;
 
             XRFontImportOptions options = CreateBitmapImportOptions(DefaultBitmapMipmapFontDrawSize);
@@ -1597,10 +1605,11 @@ namespace XREngine.Rendering
 
             try
             {
-                if (!File.Exists(cacheAssetPath))
+                IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Font cache cleanup");
+                if (!files.FileExists(cacheAssetPath))
                     return;
 
-                File.Delete(cacheAssetPath);
+                files.DeleteFile(cacheAssetPath);
                 Debug.WriteAuxiliaryLog(FontDiagnosticsLogName, $"DeleteFontCacheAsset: deleted stale font cache '{cacheAssetPath}' for '{sourcePath}' ({reason}).");
             }
             catch (Exception ex)

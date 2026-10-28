@@ -203,6 +203,24 @@ the retained probe provider is not a graph-wide lease or an atomic file snapshot
 Remote payload persistence and the guarded synchronous waits keep their existing
 implementations.
 
+Font atlas output reads use the installed file-system capabilities. Distance-field
+metadata loading captures one `IAssetMetadataFileBackend` for its existence probes
+and JSON text. After parsing, it uses that same object as
+`IRuntimeHostFileReadBackend` for the atlas image bytes. A provider replacement
+cannot mix those metadata and image reads. The read capability is needed only
+when the parsed metadata reaches image creation. Bitmap atlas loading captures a
+read provider after host-file admission. Atlas generation retains its existing
+native owner; these providers own the generated output reads.
+
+Font layout recovery captures a read provider only when it probes a source path.
+Valid cooked glyphs and atlas pixels need no provider. The Windows UI-font probe
+also uses the read provider, after its platform and font-directory checks. Stale
+font-cache cleanup captures one metadata provider inside its existing best-effort
+catch and uses it for the existence check and deletion. Desktop registration
+supplies both capabilities. Custom font-authoring hosts must supply the relevant
+capabilities; missing providers follow each caller's existing failure handling.
+These captures do not add an atomic file snapshot or a source-retirement lease.
+
 World file identities use the installed `IAssetFileSystem` with its existing
 `IAssetMetadataFileBackend` and `IRuntimeHostFileReadBackend` capabilities.
 Core retains verified-package admission, environment overrides, timestamp
