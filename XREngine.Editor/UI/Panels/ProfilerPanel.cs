@@ -147,6 +147,7 @@ public partial class ProfilerPanel : NativeVirtualTextPanel
         ClearGpuRankPage();
         _gpuTraversal.Clear();
         _trendPlot = null;
+        _trendHoverLabel = null;
         _invokesValid = false;
         _spikes.Release();
         _worstCpuFrame.Reset();

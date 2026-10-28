@@ -1369,7 +1369,13 @@ and an explicit remainder. Plots retain up to 720 samples, reduce them to 60 pea
 bins, and use at most 128 segments. The footer trend also draws quarter grid
 lines and the 120, 90, 60, and 30 FPS frame-budget lines that fall inside its
 millisecond range. The guide lines have no text labels; the colors match the
-ImGui guides.
+ImGui guides. A passive `NativePlotHoverComponent` on the trend reports pointer
+moves. The panel maps the pointer to one visible sample and shows its value, its
+age in samples, and the window average, minimum, and maximum in a text line at
+the top of the trend, with a marker line. The text is formatted only when the
+hovered sample changes or a new sample arrives, so animation redraws do not
+allocate. Leaving the trend hides the text and the marker. Virtual row plots show
+their summary in the row text instead.
 
 Setting drafts capture exact effective, override, global, and override-leaf
 owners. A replaced owner rejects commit. Worst-frame activation copies at most

@@ -1,4 +1,6 @@
+using System.Globalization;
 using System.Numerics;
+using XREngine.Data.Colors;
 using XREngine.Data.Profiling;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -9,13 +11,18 @@ public partial class ProfilerPanel
 {
     private const int TrendCapacity = 720;
     // Raw and smoothed lines use (points - 1) segments each. With the mode line, three grid lines,
-    // and four frame-budget guides, 60 points keep the total within UIRetainedPlot.MaximumSegments.
+    // four frame-budget guides, and the hover marker, 60 points keep the total within
+    // UIRetainedPlot.MaximumSegments.
     private const int RenderPointCapacity = 60;
     private readonly float[] _trend = new float[TrendCapacity];
     private readonly float[] _renderedTrend = new float[RenderPointCapacity];
     private readonly float[] _smoothedTrend = new float[RenderPointCapacity];
     private readonly double[] _gpuHistoryScratch = new double[TrendCapacity];
     private UIRetainedPlot? _trendPlot;
+    private UITextComponent? _trendHoverLabel;
+    private float _trendHoverX = -1f;
+    private int _trendHoverIndex = -1;
+    private int _trendHoverVisible;
     private string? _selectedGpuPipeline;
     private ulong _lastGpuHistoryFrameId = ulong.MaxValue;
     private long _lastGpuHistoryGeneration;
@@ -29,7 +36,83 @@ public partial class ProfilerPanel
     protected override float FooterHeight => 76;
 
     protected override void CreateFooter(SceneNode parent)
-        => _trendPlot = new UIRetainedPlot(parent, "Profiler trend");
+    {
+        UIRetainedPlot plot = new(parent, "Profiler trend");
+        _trendPlot = plot;
+        NativePlotHoverComponent hover = plot.Root.AddComponent<NativePlotHoverComponent>()!;
+        hover.MouseMove += OnTrendPointerMoved;
+        hover.MouseOverlapLeave += OnTrendPointerLeft;
+        plot.Root.NewChild<UITextComponent>(out UITextComponent label);
+        label.FontSize = 11;
+        label.Color = ColorF4.White;
+        label.HorizontalAlignment = EHorizontalAlignment.Left;
+        label.VerticalAlignment = EVerticalAlignment.Top;
+        label.BoundableTransform.Margins = new Vector4(6, 2, 6, 2);
+        label.ClipToBounds = true;
+        label.BoundableTransform.Visibility = EVisibility.Hidden;
+        _trendHoverLabel = label;
+    }
+
+    private void OnTrendPointerMoved(float x, float y, UIInteractableComponent _)
+    {
+        if (_terminal || !_ownerActive || !float.IsFinite(x))
+            return;
+        _trendHoverX = x;
+        if (UpdateTrendHover(force: false) && _trendPlot is { } plot)
+            DrawTrend(plot);
+    }
+
+    private void OnTrendPointerLeft(UIInteractableComponent _)
+    {
+        if (_trendHoverX < 0f)
+            return;
+        _trendHoverX = -1f;
+        _trendHoverIndex = -1;
+        if (_trendHoverLabel is { } label)
+            label.BoundableTransform.Visibility = EVisibility.Hidden;
+        if (_trendPlot is { } plot && !_terminal)
+            DrawTrend(plot);
+    }
+
+    /// <summary>
+    /// Shows the sample under the pointer and the window statistics. The text is formatted only when
+    /// the hovered sample changes or a new sample arrives, never on animation-only redraws.
+    /// </summary>
+    /// <returns><see langword="true"/> when the hovered sample changed.</returns>
+    private bool UpdateTrendHover(bool force)
+    {
+        if (_trendHoverX < 0f || _trendHoverLabel is not { } label || _trendPlot is not { } plot)
+            return false;
+        int visible = Math.Min(_trendCount, Math.Clamp(
+            Engine.EditorPreferences.Debug.ProfilerPanelGraphSampleCount, 2, TrendCapacity));
+        float width = plot.Width;
+        if (visible < 2 || width <= 0f)
+        {
+            label.BoundableTransform.Visibility = EVisibility.Hidden;
+            return false;
+        }
+        int index = Math.Clamp((int)MathF.Round(_trendHoverX / width * (visible - 1)), 0, visible - 1);
+        if (!force && index == _trendHoverIndex && visible == _trendHoverVisible)
+            return false;
+        _trendHoverIndex = index;
+        _trendHoverVisible = visible;
+        int first = (_trendNext - visible + TrendCapacity) % TrendCapacity;
+        float minimum = float.PositiveInfinity;
+        float maximum = 0f;
+        float sum = 0f;
+        for (int sample = 0; sample < visible; sample++)
+        {
+            float value = _trend[(first + sample) % TrendCapacity];
+            sum += value;
+            minimum = Math.Min(minimum, value);
+            maximum = Math.Max(maximum, value);
+        }
+        float hovered = _trend[(first + index) % TrendCapacity];
+        label.Text = string.Create(CultureInfo.InvariantCulture,
+            $"{hovered:F2} ms | {visible - 1 - index} samples ago | avg {sum / visible:F2} | min {minimum:F2} | max {maximum:F2}");
+        label.BoundableTransform.Visibility = EVisibility.Visible;
+        return true;
+    }
 
     private void ResetTrend(ENativeProfilerView view)
     {
@@ -40,6 +123,7 @@ public partial class ProfilerPanel
         _lastGpuHistoryGeneration = 0;
         _lastCpuPublicationId = long.MinValue;
         _newestSampleAt = default;
+        _trendHoverIndex = -1;
         _trendPlot?.Begin();
         _trendPlot?.End();
     }
@@ -79,6 +163,7 @@ public partial class ProfilerPanel
             for (int index = 0; index < copied; index++)
                 _trend[index] = (float)_gpuHistoryScratch[index];
             _newestSampleAt = DateTime.UtcNow;
+            UpdateTrendHover(force: true);
             DrawTrend(plot);
             return;
         }
@@ -114,6 +199,7 @@ public partial class ProfilerPanel
         _trendNext = (_trendNext + 1) % TrendCapacity;
         _trendCount = Math.Min(_trendCount + 1, TrendCapacity);
         _newestSampleAt = DateTime.UtcNow;
+        UpdateTrendHover(force: true);
         DrawTrend(plot);
     }
 
@@ -192,6 +278,11 @@ public partial class ProfilerPanel
             _ => smooth ? smoothed : newest,
         };
         DrawTrendGuides(plot, width, height, maximum);
+        if (_trendHoverIndex >= 0 && _trendHoverVisible == visible)
+        {
+            float x = _trendHoverIndex * width / (visible - 1);
+            plot.AddLine(new(x, 0f), new(x, height), new(1f, 1f, 1f, 0.35f), 1f);
+        }
         plot.AddLine(new(0f, selected * height / maximum),
             new(width, selected * height / maximum), new(color.X, color.Y, color.Z, 0.3f), 1f);
         for (int index = 1; index < points; index++)
