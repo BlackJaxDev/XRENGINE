@@ -17,8 +17,10 @@ namespace XREngine.Rendering.Models.Gaussian.Cache;
 /// <c>period = (FrameCount − 1) / FrameRate</c>, the time of the last stored frame. <see cref="GaussianCacheLoopMode.Once"/>
 /// clamps the time to that period.</para>
 /// <para><b>Driver pose.</b> Each driver vertex uses the step <c>8 >> DecodedTemporalLevel</c> of the driver level that
-/// adds it. With <c>a = floor(f / step) · step</c> and <c>b = NextNeighbor(a, step)</c>, the position is
-/// <c>mix(frame a, frame b, (f − a) / step)</c>. A driver level with no vertices of its own counts as decoded.</para>
+/// adds it. With <c>a = floor(f / step) · step</c> and <c>b = NextBlendFrame(a, step)</c>, the position is
+/// <c>mix(frame a, frame b, (f − a) / step)</c>. When <c>a + step</c> is after the last frame, loop playback blends
+/// to frame <c>a + step − FrameCount</c>, and the other modes hold frame <c>a</c> (<c>b = a</c>). A driver level with no
+/// vertices of its own counts as decoded.</para>
 /// <para><b>Cut.</b> A node refines when it is not in the last level, all of its children are loaded, and its projected
 /// 3σ radius is at least the LOD threshold. A loaded node is chosen when it does not refine and each ancestor
 /// refines. A level is not drawn until its driver levels have decoded motion (see <see cref="IsLevelReady"/>).</para>
@@ -137,7 +139,7 @@ public static class GaussianCachePoseReference
             }
 
             int a = Math.Clamp((int)MathF.Floor(frame / step) * step, 0, frames.FrameCount - 1);
-            int b = TemporalLevels.NextNeighbor(a, step, frames.FrameCount, header.LoopMode);
+            int b = TemporalLevels.NextBlendFrame(a, step, frames.FrameCount, header.LoopMode);
             if (b < 0 || b >= frames.FrameCount)
                 b = a;
             float weight = Math.Clamp((frame - a) / step, 0.0f, 1.0f);
