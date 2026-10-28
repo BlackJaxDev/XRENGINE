@@ -64,6 +64,7 @@ call :AddSep
 call :AddTool "Deps" "Tools\Dependencies\Get-VulkanMemoryAllocator.ps1" "Download pinned Vulkan Memory Allocator header and license"
 call :AddTool "Deps" "Tools\Dependencies\Get-CoACD.ps1" "Download CoACD convex decomposition native library"
 call :AddTool "Deps" "Tools\Dependencies\Build-CoACD.ps1" "Build CoACD from source (requires CMake + C++ compiler)"
+call :AddTool "Deps" "Tools\Dependencies\Build-Meshoptimizer.ps1" "Build the pinned meshoptimizer native library (requires git + CMake + C++ compiler; the build needs it)"
 call :AddTool "Deps" "Tools\Dependencies\Get-FfmpegFromFlyleaf.ps1" "Download FFmpeg DLLs from Flyleaf GitHub repo"
 call :AddTool "Deps" "Tools\Dependencies\Get-NvComp.ps1" "Download NVIDIA nvCOMP compression native binaries"
 call :AddTool "Deps" "Tools\Dependencies\Get-StreamlineSdk.ps1" "Download NVIDIA Streamline/DLSS SDK runtime binaries"
