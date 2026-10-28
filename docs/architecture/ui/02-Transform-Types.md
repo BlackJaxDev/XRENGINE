@@ -2,6 +2,10 @@
 
 Every UI element's position and size is determined by its transform. This document describes each transform type, its properties, and how it participates in layout.
 
+File paths are relative to `XREngine.Runtime.Rendering/Scene/Components/UI/Core/`.
+
+The canvas layout path does not call transform layout methods. `UILayoutSnapshot` maps each transform type to a `UILayoutOperator` and captures its values. `UILayoutValueKernel` computes measure and arrange from those values. `UILayoutCanvasSession` applies the accepted result. See [UI layout architecture](01-Architecture.md) and [retained execution](05-Retained-Execution.md).
+
 ---
 
 ## Inheritance Hierarchy
@@ -9,25 +13,29 @@ Every UI element's position and size is determined by its transform. This docume
 ```
 TransformBase
 └── UITransform                     (base: 2D translation, scale, rotation)
-    └── UIBoundableTransform        (adds: size, anchors, margins, padding)
-        ├── UICanvasTransform       (root: screen/camera/world space)
-        ├── UIFittedTransform       (stretch/center/fill fit modes)
-        ├── UIScrollableTransform   (scrollable container)
-        ├── UIDualSplitTransform    (two-panel split)
-        ├── UIMultiSplitTransform   (multi-panel split)
-        ├── UIDockingRootTransform  (center/left/right/bottom dock)
-        ├── UIListTransform         (vertical/horizontal list)
-        ├── UIGridTransform         (row/column grid)
-        ├── UITabTransform          (tabbed container, one child visible)
-        └── UIDockableTransform     (drag-drop docking support)
+    ├── UIBoundableTransform        (adds: size, anchors, margins, padding)
+    │   ├── UICanvasTransform       (root: screen/camera/world space)
+    │   ├── UIFittedTransform       (stretch/center/fill fit modes)
+    │   ├── UIScrollableTransform   (scrollable container)
+    │   ├── UIDualSplitTransform    (two-panel split)
+    │   ├── UIMultiSplitTransform   (multi-panel split)
+    │   ├── UIDockingRootTransform  (center/left/right/bottom dock)
+    │   ├── UIListTransform         (vertical/horizontal list)
+    │   ├── UIGridTransform         (row/column grid)
+    │   │   └── UITreeTransform     (uses the grid operator)
+    │   ├── UITreeItemTransform     (uses the boundable operator)
+    │   ├── UITabTransform          (tabbed container, one child visible)
+    │   └── UIDockableTransform     (drag-drop docking support)
     └── UIRotationTransform         (rotation-only wrapper, NOT boundable)
 ```
+
+`UILayoutSnapshot` matches the exact type. A subclass of a listed type that is not in this tree must implement `IUILayoutValueAdapter` and declare the `Transform` or `Boundable` operator. Otherwise capture throws `NotSupportedException`.
 
 ---
 
 ## UITransform
 
-**File**: `Transforms/UITransform.cs` (589 lines)
+**File**: `Transforms/UITransform.cs`
 
 The non-bounded base class. Has position but no inherent size.
 
@@ -40,9 +48,12 @@ The non-bounded base class. Has position but no inherent size.
 | `DepthTranslation` | `float` | `0` | Z-offset for depth sorting |
 | `Scale` | `Vector3` | `(1,1,1)` | Scale factor |
 | `RotationRadians` | `float` | `0` | Z-axis rotation |
+| `RotationDegrees` | `float` | `0` | `RotationRadians` in degrees |
 | `Visibility` | `EVisibility` | `Visible` | Visible/Hidden/Collapsed |
 | `ParentCanvas` | `UICanvasTransform?` | `null` | Root canvas (auto-set from parent chain) |
 | `PlacementInfo` | `UIChildPlacementInfo?` | `null` | Parent-supplied positioning (lazy-created) |
+| `StylingClass` | `string` | `""` | CSS class for styling |
+| `StylingID` | `string` | `""` | CSS ID for styling |
 
 ### Layout State
 
@@ -55,23 +66,29 @@ The non-bounded base class. Has position but no inherent size.
 | `_lastMeasureConstraint` | `Vector2` | Available size from last measure |
 | `_lastArrangeBounds` | `BoundingRectangleF` | Bounds from last arrange |
 
+`ApplyCalculatedLayout` writes these values from an accepted kernel output.
+
 ### Layout Behavior
 
-- **Measure**: Returns max of children's desired sizes
-- **Arrange**: Sets `_actualLocalBottomLeftTranslation = Translation`, then arranges children in same region
-- **FitLayout** (instance): **EMPTY** — does nothing! Only `UIBoundableTransform.FitLayout` calls into the layout system
-- **OnResizeChildComponents**: Iterates children, calls `child.FitLayout(parentRegion)` on each (OLD path)
+- **Measure**: Calls `UILayoutSystem.MeasureAcceptedOrDetached`. An attached transform requests canvas layout and returns its last accepted desired size. A detached tree measures with `UILayoutValueKernel`.
+- **Arrange** and **FitLayout**: Request canvas layout through `UILayoutSystem.RequestAttachedLayout`. They do not set geometry.
+- **Kernel operator**: `Transform`. The desired size is the largest child desired size. The transform receives its slot size and keeps `Translation` as its local position.
 - **CreateLocalMatrix**: `Scale * RotationZ * Translation3D`
 
 ### Invalidation Triggers
 
-`Translation`, `DepthTranslation`, `Scale`, `Visibility`, `ParentCanvas`, `Parent`, `PlacementInfo` → `InvalidateLayout()`
+| Properties | Method |
+|-----------|--------|
+| `Translation` | `InvalidateArrange()` |
+| `Children` | `InvalidateMeasure()` |
+| `Visibility`, `ParentCanvas`, `Parent`, `PlacementInfo`, `StylingClass`, `StylingID` | `InvalidateLayout()` |
+| `DepthTranslation`, `Scale`, `RotationRadians` | Records a transform change. Does not invalidate layout. |
 
 ---
 
 ## UIBoundableTransform
 
-**File**: `Transforms/UIBoundableTransform.cs` (765 lines)
+**File**: `Transforms/UIBoundableTransform.cs`
 
 The main base class for all sized UI elements. Adds size, anchors, margins, and padding.
 
@@ -91,30 +108,31 @@ The main base class for all sized UI elements. Adds size, anchors, margins, and 
 | `NormalizedPivot` | `Vector2` | `(0,0)` | Pivot for scale/rotation (normalized to own size) |
 | `Margins` | `Vector4` | `(0,0,0,0)` | Outside margins: X=left, Y=bottom, Z=right, W=top |
 | `Padding` | `Vector4` | `(0,0,0,0)` | Inside padding: X=left, Y=bottom, Z=right, W=top |
-| `CalcAutoWidthCallback` | `Func<..., float>?` | `null` | Custom auto-width calculator |
-| `CalcAutoHeightCallback` | `Func<..., float>?` | `null` | Custom auto-height calculator |
+| `CalcAutoWidthCallback` | `Func<UIBoundableTransform, float>?` | `null` | Custom auto-width calculator |
+| `CalcAutoHeightCallback` | `Func<UIBoundableTransform, float>?` | `null` | Custom auto-height calculator |
 | `ExcludeFromParentAutoCalcWidth` | `bool` | `false` | Skip this child when parent auto-sizes width |
 | `ExcludeFromParentAutoCalcHeight` | `bool` | `false` | Skip this child when parent auto-sizes height |
+| `BlocksInputBehind` | `bool` | `false` | Blocks UI input to elements behind this one |
+
+Canvas layout does not call the auto-size callbacks. `UITextComponent` sets them, and the kernel measures the captured text input instead. Capture throws `NotSupportedException` for any other callback on an auto-sized axis.
 
 ### Anchor Behavior
 
 When `MinAnchor == MaxAnchor` (point anchor):
-- Size = `Width ?? CalcAutoCallback ?? GetMaxChildWidth/Height()`
+- Size = `Width`/`Height`, else the text intrinsic size, else the measured child size. `Min`/`Max` constraints clamp it.
 - Position = anchor * parent size + Translation - pivot * size + margin offset
 
 When `MinAnchor != MaxAnchor` (stretched anchor):
-- Size = (maxAnchor * parent - rightMargin) - (minAnchor * parent + Translation + leftMargin)
-- `Width`/`Height` act as insets from the max anchor edge
+- Size = (maxAnchor * parent + Width) - (minAnchor * parent + Translation) - leftMargin - rightMargin
+- `Width`/`Height` move the max anchor edge. `Translation` moves the min anchor edge.
 - Position = minAnchor * parent - pivot * size + leftMargin
 
 ### Layout Behavior
 
-- **Measure**: Uses `UILayoutSystem.MeasureBoundable` — explicit size or auto from children
-- **Arrange**: Uses `UILayoutSystem.ArrangeBoundable` → `OnResizeActual` → `ArrangeChildren`
-- **ArrangeChildren** (virtual): Default calls `UILayoutSystem.ArrangeChildrenBoundable` — applies padding, passes same region to all children
-- **FitLayout** (instance): `UILayoutSystem.FitLayout(this, parentBounds)` → Measure + Arrange
-- **OnLocalMatrixChanged**: `OnResizeChildComponents(ApplyPadding(GetActualBounds()))` — triggers OLD path
-- **OnResizeChildComponents**: Inherited from `UITransform` — iterates children calling `FitLayout`
+- **Kernel operator**: `Boundable`. Children use the padded region. The default desired size is the largest child size plus margins.
+- **Measure**, **Arrange**, **FitLayout**: Same as `UITransform`. They request canvas layout. `UILayoutSystem.FitLayout` also marks the canvas layout invalid.
+- **ArrangeChildren**, **MeasureChildrenWidth**, **MeasureChildrenHeight**, **GetActualBounds** (virtual): The canvas layout path does not call these methods or their overrides.
+- **OnLocalMatrixChanged**: Does not start layout.
 
 ### CreateLocalMatrix
 ```
@@ -127,15 +145,15 @@ Translation(ActualLocalBottomLeftTranslation, DepthTranslation)
 
 | Properties | Method |
 |-----------|--------|
-| `Width`, `Height`, `Min/MaxWidth/Height`, `Margins`, `Padding`, `NormalizedPivot` | `InvalidateMeasure()` |
+| `Width`, `Height`, `Min/MaxWidth/Height`, `Margins`, `Padding`, `NormalizedPivot`, `CalcAutoWidthCallback`, `CalcAutoHeightCallback`, `ExcludeFromParentAutoCalcWidth/Height` | `InvalidateMeasure()` |
 | `MinAnchor`, `MaxAnchor` | `InvalidateArrange()` |
-| (Inherited from UITransform) | `InvalidateLayout()` |
+| (Inherited from UITransform) | See `UITransform` |
 
 ---
 
 ## UICanvasTransform
 
-**File**: `Transforms/UICanvasTransform.cs` (287 lines)
+**File**: `Transforms/UICanvasTransform.cs`
 
 Root of a UI hierarchy. Defines draw space and manages layout scheduling.
 
@@ -168,13 +186,13 @@ See [retained execution](05-Retained-Execution.md) for worker quotas and lifetim
 
 ### Size Management
 
-`SetSize(Vector2)` sets Width, Height, and anchors to (0,0) with pivot at (0,0). This is called by `UICanvasComponent.ResizeScreenSpace()` when the viewport dimensions change.
+`SetSize(Vector2)` sets Width, Height, and anchors to (0,0) with pivot at (0,0). `UICanvasComponent.ResizeScreenSpace()` calls it when the viewport dimensions change. `UICanvasComponent.ResizeCameraSpace()` calls it with the frustum size at `CameraDrawSpaceDistance`.
 
 ---
 
 ## UIDualSplitTransform
 
-**File**: `Transforms/UIDualSplitTransform.cs` (283 lines)
+**File**: `Transforms/UIDualSplitTransform.cs`
 
 Splits available space between two children along a horizontal or vertical axis.
 
@@ -182,27 +200,26 @@ Splits available space between two children along a horizontal or vertical axis.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `SplitDirection` | `ESplitDirection` | `Horizontal` | Split axis |
-| `SplitPercent` | `float` | `0.5` | Where to split (0–1) |
-| `FixedSize` | `float?` | `null` | Fixed size for first panel (overrides percent) |
+| `VerticalSplit` | `bool` | `false` | `true` splits along Y (first child on top). `false` splits along X (first child on the left). |
+| `SplitPercent` | `float` | `0.5` | First child's share of the axis (clamped to 0–1). Used when `FirstFixedSize` is `null`. |
+| `FirstFixedSize` | `bool?` | `null` | `null` uses `SplitPercent`. `true` gives the first child a fixed size. `false` gives the second child a fixed size. |
+| `FixedSize` | `float?` | `null` | Size of the fixed child. If `null`, the fixed child uses its measured size. |
 | `SplitterSize` | `float` | `0.0` | Gap between panels |
 | `CanUserResize` | `bool` | `true` | Allow interactive resize |
 
 ### PlacementInfo
 
-`UISplitChildPlacementInfo` — `Offset` property used in `GetRelativeItemMatrix()` to translate child along split axis.
+`UIDualSplitTransform.UISplitChildPlacementInfo` — `UILayoutCanvasSession` writes the accepted offset along the split axis to `Offset`. `GetRelativeItemMatrix()` translates the child by `Offset` along that axis.
 
 ### Layout Behavior
 
-**ArrangeChildren** (NEW path): Applies padding, computes split sizes, calls `UILayoutSystem.FitLayout()` on each child with their sub-region.
-
-**OnResizeChildComponents** (OLD path): Same logic using `child.FitLayout()` instance method.
+The kernel operator is `DualSplit`. With one child, the child gets the full padded region. With two children, the kernel divides the padded region along the split axis and arranges each child in its region.
 
 ---
 
 ## UIMultiSplitTransform
 
-**File**: `Transforms/UIMultiSplitTransform.cs` (503 lines)
+**File**: `Transforms/UIMultiSplitTransform.cs`
 
 Splits space into 2 or 3 regions with multiple arrangement patterns.
 
@@ -211,11 +228,12 @@ Splits space into 2 or 3 regions with multiple arrangement patterns.
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `Arrangement` | `UISplitArrangement` | `LeftMiddleRight` | Layout pattern |
-| `FixedSizeFirst` | `float?` | `null` | Fixed size for first region |
-| `FixedSizeSecond` | `float?` | `null` | Fixed size for last region |
-| `SplitPercentFirst` | `float` | `0.33` | Split point for first boundary |
-| `SplitPercentSecond` | `float` | `0.66` | Split point for second boundary |
-| `SplitterSize` | `float` | `0.0` | Gap between regions |
+| `FixedSizeFirst` | `float?` | `null` | Fixed size for first region (must be finite and nonnegative) |
+| `FixedSizeSecond` | `float?` | `null` | Fixed size for last region (must be finite and nonnegative) |
+| `SplitPercentFirst` | `float` | `0.33` | Split point for first boundary (clamped to 0–1) |
+| `SplitPercentSecond` | `float` | `0.66` | Split point for second boundary (clamped to 0–1) |
+| `SplitterSize` | `float` | `0.0` | Gap between regions (must be finite and nonnegative) |
+| `CanUserResize` | `bool` | `true` | Allow interactive resize |
 
 ### Arrangements
 
@@ -228,23 +246,19 @@ Splits space into 2 or 3 regions with multiple arrangement patterns.
 
 ### Size Calculation
 
-Fixed sizes take priority. Remaining space is distributed by split percentages. If child count < expected, falls back to simpler arrangements.
+The kernel operator is `MultiSplit`. Fixed sizes take priority. Split percentages give the size of each region that has no fixed size. In a three-region split, the middle region gets the remaining space. With one child, the child gets the full padded region. A three-region arrangement with two children uses two regions. The kernel rejects more than three children, three children in a two-region arrangement, and `SplitPercentSecond < SplitPercentFirst` in a three-region split.
 
 ### PlacementInfo
 
-`UISplitChildPlacementInfo` — same as DualSplit. `Offset` translates along the split direction. `Vertical` property checks arrangement type.
-
-### Layout Behavior
-
-Both `ArrangeChildren` (NEW) and `OnResizeChildComponents` (OLD) implement the same region calculation logic. Each calls `FitLayout` on children with computed sub-regions.
+`UIMultiSplitTransform.UISplitChildPlacementInfo` — a separate nested class with the same pattern as the dual split. `Offset` translates along the split direction. `Vertical` is `true` for `TopMiddleBottom` and `TopBottom`.
 
 ---
 
 ## UIDockingRootTransform
 
-**File**: `Transforms/UIDockingRootTransform.cs` (+ 158 lines total with related classes)
+**File**: `Transforms/UIDockingRootTransform.cs`
 
-Arranges exactly 4 children: center, left, right, bottom.
+Arranges up to 4 children: center, left, right, bottom.
 
 ### Properties
 
@@ -265,26 +279,30 @@ Arranges exactly 4 children: center, left, right, bottom.
 
 ### Region Calculation
 
+The kernel operator is `DockingRoot`. Regions are (x, y, width, height) in the padded region, with the origin at the bottom-left:
+
 ```
-Left:   (0, BottomSizeHeight, LeftSizeWidth, parentHeight)
-Right:  (parentWidth - RightSizeWidth, 0, RightSizeWidth, parentHeight)
-Bottom: (0, parentHeight - BottomSizeHeight, parentWidth, BottomSizeHeight)
-Center: (LeftSizeWidth, BottomSizeHeight, remaining width, parentHeight)
+Center: (LeftSizeWidth, BottomSizeHeight, width - LeftSizeWidth - RightSizeWidth, height - BottomSizeHeight)
+Left:   (0, BottomSizeHeight, LeftSizeWidth, height - BottomSizeHeight)
+Right:  (width - RightSizeWidth, BottomSizeHeight, RightSizeWidth, height - BottomSizeHeight)
+Bottom: (0, 0, width, BottomSizeHeight)
 ```
+
+The kernel rejects more than four children.
 
 ### PlacementInfo
 
-`UIDockingPlacementInfo` — `BottomLeft` property; `GetRelativeItemMatrix()` translates by BottomLeft.
+`UIDockingPlacementInfo` — `UILayoutCanvasSession` writes the accepted region position to `BottomLeft`. `GetRelativeItemMatrix()` translates by `BottomLeft`.
 
 ### Auto-Creation
 
-Both paths auto-create children up to 4 if SceneNode exists.
+`UIDockingRootComponent` creates four `UIBoundableTransform` children when it is constructed.
 
 ---
 
 ## UIListTransform
 
-**File**: `Arrangements/UIListTransform.cs` (617 lines)
+**File**: `Arrangements/UIListTransform.cs` (with `UIListTransform.Virtual.cs`)
 
 Arranges children sequentially — vertical or horizontal.
 
@@ -296,21 +314,23 @@ Arranges children sequentially — vertical or horizontal.
 | `DisplayHorizontal` | `bool` | `false` | Horizontal (true) or vertical (false) list |
 | `ItemSpacing` | `float` | `0.0` | Gap between items |
 | `ItemAlignment` | `EListAlignment` | `TopOrLeft` | TopOrLeft / Centered / BottomOrRight |
-| `Virtual` | `bool` | `false` | Cull items outside virtual bounds |
-| `UpperVirtualBound` | `float` | `0.0` | Upper visibility bound |
-| `LowerVirtualBound` | `float` | `0.0` | Lower visibility bound |
+| `ContentScrollOffset` | `float` | `0.0` | Scroll offset along the list axis |
+| `VirtualProvider` | `IVirtualListProvider?` | `null` | Provider for virtual rows |
+| `VirtualOverscan` | `int` | `2` | Extra virtual rows outside the viewport (clamped to 0–256) |
+| `Virtual` | `bool` | `false` | Legacy virtual flag. The layout kernel does not read it. |
+| `UpperVirtualBound` | `float` | `0.0` | Legacy upper bound. The layout kernel does not read it. |
+| `LowerVirtualBound` | `float` | `0.0` | Legacy lower bound. The layout kernel does not read it. |
 
 ### Custom Measure
 
-Overrides `MeasureChildrenWidth` and `MeasureChildrenHeight`:
-- For the list axis: **sums** child sizes + spacing (not max)
-- For the cross axis: uses base (max of children)
-- Each child is measured first if `NeedsMeasure`
-- Uses `ItemSize` if set, otherwise `child.DesiredSize`
+The kernel operator is `List`:
+- For the list axis: **sums** `ItemSize` or each child's desired size, plus spacing (not max)
+- For the cross axis: uses the largest child size
+- With a `VirtualProvider`, the list-axis size is `VirtualContentExtent`
 
 ### Custom Arrange
 
-Overrides `ArrangeChildren` with three alignment strategies:
+The kernel uses three alignment strategies:
 
 **TopOrLeft**: Starts from top (vertical) or left (horizontal), decrements Y or increments X.
 
@@ -318,27 +338,21 @@ Overrides `ArrangeChildren` with three alignment strategies:
 
 **BottomOrRight**: Starts from bottom/right, moves opposite direction.
 
-Each child gets `bc.Arrange(new BoundingRectangleF(...))` with computed position and size.
+Each child gets `ItemSize ?? DesiredSize` along the list axis and the full region along the cross axis. `ContentScrollOffset` shifts the start position.
 
 ### Virtualization
 
-When `Virtual = true`, items outside `LowerVirtualBound`–`UpperVirtualBound` get `Visibility = Hidden` and their scene node deactivated. Scrolling updates bounds.
+With a `VirtualProvider`, the list realizes one row subtree for each visible item, plus `VirtualOverscan` rows. `SynchronizeVirtualRows` runs on the owner during capture. The kernel places each row from its synchronized start and extent.
 
 ### PlacementInfo
 
-`UIListChildPlacementInfo` — `BottomOrLeftOffset` property; `GetRelativeItemMatrix()` translates along list axis.
-
-### Old Path
-
-`OnResizeChildComponents` — Three methods `SizeChildrenLeftTop/Centered/RightBottom` with same logic using `FitLayout` instead of `Arrange`.
-
-**Important difference**: OLD path uses `ItemSize ?? bc.ActualWidth/Height` while NEW path uses `ItemSize ?? bc.DesiredSize.X/Y`.
+`UIListChildPlacementInfo` — `Index` and `BottomOrLeftOffset` properties. `UILayoutCanvasSession` writes the accepted offset along the list axis to `BottomOrLeftOffset`. `GetRelativeItemMatrix()` translates along the list axis.
 
 ---
 
 ## UIGridTransform
 
-**File**: `Arrangements/UIGridTransform.cs` (515 lines)
+**File**: `Arrangements/UIGridTransform.cs`
 
 Arranges children in a grid defined by row and column sizing definitions.
 
@@ -352,55 +366,51 @@ Arranges children in a grid defined by row and column sizing definitions.
 
 ### Sizing Modes (UISizingDefinition)
 
+Each `UISizingDefinition` has a `Value` and optional `Min` and `Max`. Each is a `UISizingValue` with a `Mode` (`ESizingMode`) and a `Value` (`float`).
+
 | Mode | Behavior |
 |------|----------|
 | `Fixed` | Exact pixel size |
 | `Auto` | Size to content (max child size in that row/col) |
 | `Proportional` | Share remaining space proportionally |
 
-### Layout Algorithm (OnResizeChildComponents only — no ArrangeChildren override!)
+### Layout Algorithm
 
-1. **Pre-pass**: Set fixed sizes, collect auto-sized components, accumulate proportional denominators
-2. **Auto pass**: Calculate auto row heights and column widths from child content
-3. **Remaining space**: Subtract fixed + auto from parent, distribute to proportional
-4. **Arrange pass**: Iterate rows × columns, compute (x, y, width, height) for each cell, call `child.FitLayout()`
+The kernel operator is `Grid` (`UILayoutGridKernel`). A grid with children must have at least one row and one column.
+
+1. **Fixed pass**: Set fixed track sizes
+2. **Auto pass**: Grow auto tracks to fit the desired size of the children that span them
+3. **Remaining space**: Subtract fixed + auto from parent, distribute to proportional tracks
+4. **Arrange pass**: For each child, compute (x, y, width, height) from its row, column, and spans, and arrange the child in that cell
 
 ### PlacementInfo
 
-`UIGridChildPlacementInfo` — `Row`, `Column`, `RowSpan`, `ColumnSpan` properties. Grid uses an indices matrix `List<int>[rows, cols]` to map children to cells.
-
-### ⚠️ Note
-
-**UIGridTransform only overrides `OnResizeChildComponents` (OLD path)**. It does NOT override `ArrangeChildren`, so the NEW layout path uses the default `ArrangeChildrenBoundable` which stacks all children on top of each other.
+`UIGridChildPlacementInfo` — `Row`, `Column`, `RowSpan`, `ColumnSpan`, and `Offset` properties. `Row` and `Column` must be 0 or more. Spans must be 1 or more. `UILayoutCanvasSession` writes the accepted cell position to `Offset`, and `GetRelativeItemMatrix()` translates by `Offset`.
 
 ---
 
 ## UITabTransform
 
-**File**: `UIDockableTransform1.cs` (lines 1–77)
+**File**: `Transforms/UIDockableTransform1.cs`
 
-Shows one child at a time; other children are collapsed.
+Shows one child at a time.
 
 ### Properties
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `SelectedIndex` | `int` | `0` | Currently visible child |
-| `TabHeight` | `float` | `30.0` | Reserved height for tab bar |
+| `SelectedIndex` | `int` | `0` | Currently visible child (clamped to the child range) |
+| `TabHeight` | `float` | `30.0` | Tab bar height. The layout kernel does not read it. |
 
 ### Layout Behavior
 
-Only overrides `OnResizeChildComponents` (OLD path):
-- Selected child: `FitLayout(parentRegion)` + `Visibility = Visible`
-- Other children: `Visibility = Collapsed`
-
-**⚠️ Does NOT override `ArrangeChildren` (NEW path).**
+The kernel operator is `Tab`. Every child gets the full padded region. Only the child at `SelectedIndex` is visible in the layout output. Layout does not change the `Visibility` property of the children.
 
 ---
 
 ## UIFittedTransform
 
-**File**: `Transforms/UIFittedTransform.cs` (73 lines)
+**File**: `Transforms/UIFittedTransform.cs`
 
 Custom fit behavior within parent bounds.
 
@@ -408,7 +418,7 @@ Custom fit behavior within parent bounds.
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `FitType` | `EFitType` | `None` | Fit mode |
+| `FitType` | `UIFittedTransform.EFitType` | `None` | Fit mode |
 
 ### Fit Modes
 
@@ -421,20 +431,24 @@ Custom fit behavior within parent bounds.
 
 ### Extension Point
 
-Overrides `GetActualBounds` — after base calculation, modifies size based on fit type.
+The kernel operator is `Fitted`. After the standard bounds calculation, the kernel changes the size based on `FitType`.
 
 ---
 
 ## UIScrollableTransform
 
-**File**: `Transforms/UIScrollableTransform.cs` (97 lines)
+**File**: `Transforms/UIScrollableTransform.cs`
 
-A scrollable container. Currently delegates to base behavior.
+A scrollable container. The kernel shifts children by `ScrollOffset`.
 
 ### Properties
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
+| `ScrollOffset` | `Vector2` | `(0,0)` | Positive X scrolls right and positive Y scrolls down. Clamped to `MaxScrollOffset` after accepted layout. |
+| `ContentExtent` | `Vector2` | `(0,0)` | Accepted logical content size (read-only) |
+| `ViewportExtent` | `Vector2` | `(0,0)` | Accepted viewport size (read-only) |
+| `MaxScrollOffset` | `Vector2` | `(0,0)` | `ContentExtent - ViewportExtent`, not below zero (read-only) |
 | `Scrollable` | `bool` | `true` | Enable scrolling |
 | `ScrollableX/Y` | `bool` | `true` | Per-axis scrolling |
 | `ScrollableXMargin/YMargin` | `float` | `0.0` | Scroll margin |
@@ -443,17 +457,17 @@ A scrollable container. Currently delegates to base behavior.
 
 ### PlacementInfo
 
-`UIScrollablePlacementInfo` — `BottomLeftOffset` property; `GetRelativeItemMatrix()` translates by offset.
+`UIScrollableTransform` does not assign a placement info to its children. The kernel puts the scroll offset into each child's position.
 
 ### Layout Behavior
 
-`OnResizeChildComponents` calls `base.OnResizeChildComponents()` — no custom layout logic yet.
+The kernel operator is `Scrollable`. Every child gets the full padded region, shifted by `ScrollOffset`. A child `UIListTransform` with a `VirtualProvider` is not shifted; it receives the scroll offset as its `ContentScrollOffset`. `SynchronizeScroll` updates the scroll limits on the owner during capture. `ScrollIntoView` moves the viewport to include a content rectangle.
 
 ---
 
 ## UIRotationTransform
 
-**File**: `Transforms/UIRotationTransform.cs` (38 lines)
+**File**: `Transforms/UIRotationTransform.cs`
 
 Adds rotation to the transform chain. **Not a UIBoundableTransform** — it has no size/anchors.
 
@@ -472,7 +486,7 @@ RotationZ(DegreeRotation) * base.CreateLocalMatrix()
 
 ## UIDockableTransform
 
-**File**: `UIDockableTransform1.cs` (lines 78+)
+**File**: `Transforms/UIDockableTransform1.cs`
 
 Supports interactive drag-and-drop docking. Extends `UIBoundableTransform` with:
 
@@ -485,33 +499,33 @@ Supports interactive drag-and-drop docking. Extends `UIBoundableTransform` with:
 
 ### Behavior
 
-Calculates which edge a dragged item is near (`DragDrop(worldPoint)`) and sets `DropTarget` flags. Used for building dockable editor panels.
+Calculates which edge a dragged item is near (`DragDrop(worldPoint)`) and sets `DropTarget` flags. Used for building dockable editor panels. The `Dock*` methods that `Drop()` calls are empty.
 
 ---
 
 ## UIChildPlacementInfo
 
-**File**: `Transforms/UIChildPlacementInfo.cs` (21 lines)
+**File**: `Transforms/UIChildPlacementInfo.cs`
 
 Abstract base class for parent-specified child positioning.
 
 ```csharp
-public abstract class UIChildPlacementInfo(UITransform owner) : XRBase
+public abstract class UIChildPlacementInfo(UITransform owner) : XRBase, ITransformChildPlacementInfo
 {
     public UITransform Owner { get; }
-    public bool RelativePositioningChanged { get; set; }
+    public bool RelativePositioningChanged { get; set; } // default true
     public abstract Matrix4x4 GetRelativeItemMatrix();
 }
 ```
 
-Each parent transform type creates a subclass via `VerifyPlacementInfo()`. The matrix from `GetRelativeItemMatrix()` is multiplied into the child's local transform during `CreateLocalMatrix()`.
+Each parent transform type creates a subclass via `VerifyPlacementInfo()`. The matrix from `GetRelativeItemMatrix()` is multiplied into the child's local transform during `CreateLocalMatrix()`. Any other property change sets `RelativePositioningChanged` to `true`.
 
 ### Subclasses
 
 | Class | Parent Type | Key Property | Matrix Effect |
 |-------|-------------|-------------|---------------|
-| `UISplitChildPlacementInfo` | DualSplit, MultiSplit | `Offset` | Translate along split axis |
+| `UIDualSplitTransform.UISplitChildPlacementInfo` | DualSplit | `Offset` | Translate along split axis |
+| `UIMultiSplitTransform.UISplitChildPlacementInfo` | MultiSplit | `Offset` | Translate along split axis |
 | `UIDockingPlacementInfo` | DockingRoot | `BottomLeft` | Translate to dock position |
 | `UIListChildPlacementInfo` | List | `BottomOrLeftOffset` | Translate along list axis |
-| `UIGridChildPlacementInfo` | Grid | `Row`, `Column`, `RowSpan`, `ColumnSpan` | (Grid uses it for cell lookup, not matrix) |
-| `UIScrollablePlacementInfo` | Scrollable | `BottomLeftOffset` | Translate by scroll offset |
+| `UIGridChildPlacementInfo` | Grid | `Row`, `Column`, `RowSpan`, `ColumnSpan`, `Offset` | Translate by `Offset` to the cell position |

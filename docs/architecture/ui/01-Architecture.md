@@ -35,7 +35,10 @@ uses this same entry point. `PumpLayoutResults()` accepts completed work.
 
 1. The owner reserves a working-page lease before consuming dirty records.
 2. `UILayoutSnapshot` captures values, topology, element identities, font metrics,
-   and dependency versions. Auto-size callbacks run on the owner during capture.
+   and dependency versions. Scroll limits and virtual list rows synchronize on the
+   owner during capture. Capture does not call `CalcAutoWidthCallback` or
+   `CalcAutoHeightCallback`. Text size comes from the captured text input. Any
+   other auto-size callback causes a `NotSupportedException`.
 3. `UILayoutValueKernel` computes measure and arrange from those values. Serial
    reference checks use the same kernel.
 4. The owner checks lifetime, topology, versions, and constraints before application.
@@ -72,10 +75,14 @@ support is a separate adapter and validation concern.
 
 ## Legacy helpers and extensions
 
-Some owner-only `UILayoutSystem` measure/arrange helpers and transform virtual
-methods remain for callers outside the accepted canvas path. Do not call them
-from a worker or use them to apply an unvalidated canvas result. New custom layout
-behavior belongs in a captured value adapter and the shared kernel.
+The public `UILayoutSystem` measure, arrange, and `FitLayout` helpers and the
+transform `Measure`, `Arrange`, and `FitLayout` methods do not compute geometry.
+They request canvas layout or read the last accepted result. A detached tree
+measures with the same value kernel. The canvas path does not call the
+`ArrangeChildren`, `MeasureChildrenWidth`, `MeasureChildrenHeight`, or
+`GetActualBounds` overrides on transforms. Do not call them from a worker or use
+them to apply an unvalidated canvas result. New custom layout behavior belongs in
+a captured value adapter and the shared kernel.
 
 Runtime correctness, visual parity, allocations, and performance are recorded
 separately in the [validation plan](../../work/testing/ui/native-ui-validation.md).
