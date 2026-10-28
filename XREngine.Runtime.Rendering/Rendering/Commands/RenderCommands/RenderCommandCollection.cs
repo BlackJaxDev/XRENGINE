@@ -285,7 +285,7 @@ namespace XREngine.Rendering.Commands
         /// <summary>Sorts the runs from <paramref name="firstRun"/> by first insertion and moves their entries in that order.</summary>
         private void ReorderRuns(Span<Entry> entries, int firstRun, int runCount)
         {
-            _groupRuns.Sort(firstRun, runCount, GroupRunComparer.Instance);
+            CollectionsMarshal.AsSpan(_groupRuns).Slice(firstRun, runCount).Sort(s_groupRunComparison);
             int destination = _groupRuns[firstRun].Start;
             int length = 0;
             _bucketScratch.Clear();
@@ -303,17 +303,12 @@ namespace XREngine.Rendering.Commands
         /// <summary>A run of entries that share one group of the key, and the smallest sort order key in the run.</summary>
         private readonly record struct GroupRun(int Start, int Count, long FirstSortOrderKey);
 
-        /// <summary>Orders runs by first insertion, and runs with the same first insertion by their position.</summary>
-        private sealed class GroupRunComparer : IComparer<GroupRun>
+        /// <summary>Orders runs by first insertion, and runs with the same first insertion by their position. The delegate is kept, so a sort does not allocate.</summary>
+        private static readonly Comparison<GroupRun> s_groupRunComparison = static (x, y) =>
         {
-            public static readonly GroupRunComparer Instance = new();
-
-            public int Compare(GroupRun x, GroupRun y)
-            {
-                int result = x.FirstSortOrderKey.CompareTo(y.FirstSortOrderKey);
-                return result != 0 ? result : x.Start.CompareTo(y.Start);
-            }
-        }
+            int result = x.FirstSortOrderKey.CompareTo(y.FirstSortOrderKey);
+            return result != 0 ? result : x.Start.CompareTo(y.Start);
+        };
 
         private int CompareEntries(Entry x, Entry y)
         {
