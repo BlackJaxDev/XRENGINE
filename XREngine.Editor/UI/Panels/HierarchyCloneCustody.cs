@@ -260,6 +260,27 @@ internal sealed class HierarchyCloneCustody
             throw new InvalidOperationException("The retained clone cannot accept another history state.", Failure);
     }
 
+    /// <summary>
+    /// Releases an applied clone whose document ended before its history was released. The
+    /// ended document owns its authored nodes and destroys them, so this release destroys
+    /// nothing. Private constructor storage that the document never adopted stays for the
+    /// garbage collector. Later duplicates are not blocked.
+    /// </summary>
+    private void ReleaseEndedDocument()
+    {
+        Debug.LogWarning($"[Duplicate] The document of world '{Document.World.TargetWorld?.Name}' ended " +
+            "before its duplicate history was released. The history was released without destruction.");
+        _construction = null;
+        _forestConstruction = null;
+        _singleNodes = null;
+        _identities = null;
+        _operationShapes = null;
+        _selection = null;
+        _lifetime = null;
+        State = EHierarchyCloneCustodyState.Released;
+        _store.Settle(this);
+    }
+
     private void ReleaseHistory()
     {
         try
@@ -271,6 +292,11 @@ internal sealed class HierarchyCloneCustody
             {
                 State = EHierarchyCloneCustodyState.Released;
                 _store.Settle(this);
+                return;
+            }
+            if (State == EHierarchyCloneCustodyState.Applied && !Document.IsCurrent())
+            {
+                ReleaseEndedDocument();
                 return;
             }
             RequireIdentity();

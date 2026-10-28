@@ -1185,8 +1185,9 @@ visible and requires explicit recovery or reissue.
 
 The shared hierarchy spawn path supports first-time editor-scene allocation and
 hidden-scene parents. Native context/scene menus and single-root or grouped
-Duplicate use the guarded command routes. Broader clone profiles and document-end
-recovery remain open. Windows workflow acceptance is recorded separately.
+Duplicate use the guarded command routes. Applied history of an ended document is
+released without destruction (see the clone custody section). Broader clone
+profiles remain open. Windows workflow acceptance is recorded separately.
 
 ## Accepted text measurements and editor navigation
 
@@ -1594,7 +1595,11 @@ document claim. Unknown allocations, failed cleanup, or a document that ends
 without release retain the receipt and block new cloning. Exact owned-node
 destruction snapshots are suppressed during retirement; unrelated callback edits
 remain recordable. Single-root Duplicate is active through these guards.
-Document-end cleanup and broader duplication profiles remain open.
+When the document of an applied clone ends before its history is released, the
+release destroys nothing. The ended document owns and destroys its authored nodes;
+private constructor storage that it never adopted stays for the garbage collector.
+The entry is settled with a warning, and later duplicates are not blocked. Broader
+duplication profiles remain open.
 
 Native loop edits capture the full member tree, unique child animations, source
 owners, and prior values. The receipt checks prechange callbacks, commits all

@@ -260,6 +260,39 @@ public sealed class HierarchyCloneDocumentHandoffTests
         finally { spare.Destroying -= callback; Cleanup(ownership); source.Destroy(true); destination.Destroy(true); }
     }
 
+    [Test]
+    public void AppliedHistoryOfAnEndedDocumentReleasesWithoutDestructionOrBlocking()
+    {
+        SceneNode source = new("Source");
+        XRScene scene = new("Authored", source) { IsVisible = false };
+        RuntimeWorld world = new(new HierarchyTestPhysicsScene(), new XRWorld("Ended", scene));
+        HierarchyCloneCustodyStore store = new();
+        HierarchyCloneCustody custody = Clone(source, world, store, () => { });
+        SceneNode clone = custody.Node!;
+        ObjectConstructionOwnership original = custody.RetainedOwnership!;
+        try
+        {
+            Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Applied));
+            world.Dispose();
+
+            Undo.ClearHistory();
+
+            Assert.Multiple(() =>
+            {
+                Assert.That(custody.State, Is.EqualTo(EHierarchyCloneCustodyState.Released));
+                Assert.That(custody.Failure, Is.Null);
+                Assert.That(custody.RetainedOwnership, Is.Null);
+                Assert.That(store.CaptureEntries(), Is.Empty);
+                Assert.That(store.GetBlockReason(), Is.Null);
+                Assert.That(clone.IsDestroyed, Is.False);
+            });
+            using RuntimeWorld next = new(new HierarchyTestPhysicsScene(), new XRWorld("Next"));
+            store.Reserve(next).CompleteCommand();
+            Assert.That(store.CaptureEntries(), Is.Empty);
+        }
+        finally { Cleanup(original); source.Destroy(true); }
+    }
+
     private static HierarchyCloneCustody Clone(SceneNode source, RuntimeWorld world,
         HierarchyCloneCustodyStore store, Action allocate)
     {
