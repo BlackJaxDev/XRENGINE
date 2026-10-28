@@ -5,6 +5,7 @@ using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Cli;
 using XREngine.Rendering.Models.Gaussian.Baking.Imaging;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
+using XREngine.Rendering.Models.Gaussian.Baking.Output;
 using XREngine.Rendering.Models.Gaussian.Baking.Pipeline;
 using XREngine.Rendering.Models.Gaussian.Baking.Rendering;
 using XREngine.Rendering.Models.Gaussian.Baking.Report;
@@ -291,7 +292,7 @@ public static class BakeSplatPreviewCommand
         IReadOnlyList<BakeCameraPose> poses = BakeViewPlanner.PlanOrbitViews(bounds, ViewCount);
         float[][] views = await services.CaptureViewsAsync(input, poses, ViewWidth, ViewHeight, cancellationToken).ConfigureAwait(false);
 
-        string directory = Path.Combine(Path.GetFullPath(options.OutputDirectory), "debug", "views");
+        string directory = Path.Combine(Path.GetFullPath(options.OutputDirectory), BakeOutputDirectory.DebugFolderName, "views");
         try
         {
             WriteViews(views, directory, cancellationToken);
