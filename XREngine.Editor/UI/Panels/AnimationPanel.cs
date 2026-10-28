@@ -87,6 +87,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
     private float _plottedHeight;
     private float _plottedStart;
     private float _plottedDuration;
+    private readonly NativeAnimationClipViewMemory _clipViews = new();
     private float _plotZoom = 1;
     private float _plotWindowStart;
     private readonly float[,] _plotSamples = new float[4, UIRetainedPlot.MaximumSegments / 4 + 1];
@@ -149,6 +150,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         _searchLifecycleRevision++;
         _authoringEpoch++;
         _destroying = true;
+        _clipViews.Clear();
         _searchDraft?.Dispose();
         _searchDraft = null;
         UITextInputComponent? time = _timeInput;
@@ -628,6 +630,9 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         {
             if (owned)
                 throw new InvalidOperationException("The displayed clip changed during restore.");
+            if (_displayedClip is { } previous)
+                _clipViews.Remember(previous, new(_selectedMember, _selectedKey,
+                    _memberPage, _keyPage, _plotZoom, _plotWindowStart));
             ReleaseProjectionSources();
             _plotSnapshot = null;
             _plotViewRevision++;
@@ -638,6 +643,17 @@ public partial class AnimationPanel : NativeVirtualTextPanel
             _keyPage = 0;
             _plotZoom = 1;
             _plotWindowStart = 0;
+            // The checks below drop a remembered member or key that the clip no longer contains.
+            if (clip is not null && _clipViews.TryTake(clip, out NativeAnimationClipView view))
+            {
+                _selectedMember = view.Member;
+                _selectedKey = view.Key;
+                _memberPage = view.MemberPage;
+                _keyPage = view.KeyPage;
+                _plotZoom = view.PlotZoom;
+                _plotWindowStart = view.PlotWindowStart;
+                _valueInputRefreshPending = true;
+            }
             _ids.Clear();
         }
         if (clip is null)

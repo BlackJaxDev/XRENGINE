@@ -614,8 +614,9 @@ in the source runtime world. They clone camera projection and pose. The main paw
 alone owns the global selection subscription. Shared transform-tool drags belong
 to an exact pawn, viewport, camera, and world; foreign input cannot end that drag.
 Deactivation and direct destruction both retire subscriptions, picks, and drag
-ownership. Cross-window pointer drag, presented focus restoration, and full
-play-mode state persistence remain open.
+ownership. Native checks of cross-window pointer drag and presented focus are in the
+[validation plan](../../work/testing/ui/native-ui-validation.md).
+The play-mode contract for each panel is in the play-mode transitions section.
 
 Offscreen world canvases use render-command publication claims and separate
 producer and consumer receipts. Direct world UI uses the existing component
@@ -754,7 +755,15 @@ retains the inverse action and reports the failure.
 
 The native animation panel and ImGui panel share canonical key/member mutation
 actions and Undo recording. The native panel uses paged path discovery, stable
-key IDs, and a retained plot bounded to 512 segments. Full timeline interaction
+key IDs, and a retained plot bounded to 512 segments. `NativeAnimationClipViewMemory`
+keeps the selected member and key, the member and key pages, and the plot window
+of the eight most recent clips. When the panel shows one of these clips again,
+it restores that view, and it drops a member or key that the clip no longer
+contains. A clip matches only while it is the same live object with the same
+construction identity. Play mode clears the selection on enter and restores it
+on exit, so the view comes back when the restored component uses the same clip
+asset object. The graph mode, value channel, and stretch choice belong to the
+panel, not to a clip. Full timeline interaction
 and animation editor parity remain open. The profiler virtualizes the full source
 row set instead of truncating it at 1,000 rows.
 
@@ -792,6 +801,20 @@ Recycled rows cancel old drags before hover or drop dispatch. Play-mode selectio
 restoration belongs to `EditorPlayModeController`; each Inspector restores only
 its own targets. Keep-changes mode preserves play-time state. Deferred focus
 restoration checks the target and property identity and yields to new user focus.
+
+### Play-mode transitions
+
+Play mode clears the editor selection on enter. On exit, the restore modes
+replace scene node objects with new objects that keep the same IDs. Native
+panels keep their state across this replacement as follows:
+
+| Panel | Play-mode contract |
+| --- | --- |
+| All | `EditorPlayModeController` captures the selected node IDs on enter and selects the nodes with the same IDs after exit. Keep-changes mode keeps play-time state and does not restore the selection. |
+| Inspector | Each Inspector captures its own targets as stable IDs and restores them when its view is active. |
+| Hierarchy | Expansion and collapsed scene sections use node and scene IDs, so they survive the replacement. The source rebuild keeps the scroll offset, and the row highlight follows the restored selection. A focused row or rename draft is not moved to the replacement node, because its source object is gone. |
+| Animation | `NativeAnimationClipViewMemory` restores the clip view when the restored selection shows the same clip object. |
+| Assets, Console, Profiler | Their state does not depend on world objects, so a transition does not change it. |
 
 Undo keeps an action on its source stack until replay succeeds. Reentrant replay
 is rejected. A history revision prevents a callback from restoring an entry after
@@ -2215,8 +2238,8 @@ never changes selection. Receipt storage is transient and bounded to one owner;
 no saved layout or asset format changes.
 
 This contract checks exact current ownership and object lifetimes. It is not a
-history of every intermediate parent assignment. Cross-window focus transfer and
-complete play-mode restoration need separate work. Search drafts for the asset
+history of every intermediate parent assignment. Cross-window focus transfer needs
+separate work. A focused row is not moved to its replacement node after play mode. Search drafts for the asset
 browser, console filter, and Animation search transfer between dock hosts through
 their own contracts.
 
@@ -2267,8 +2290,8 @@ focus path also guards its display-text publication. There is no caret replay
 after focus callbacks.
 
 This is transient state for an ordinary rename input. IME preedit/composition is
-not retained. Cross-window state, persisted drafts, and complete play-mode
-restoration remain separate contracts. Current-parent checks do not claim to
+not retained. Cross-window state and persisted drafts remain separate contracts.
+A rename draft is not moved to the replacement node after play mode. Current-parent checks do not claim to
 record every intermediate parent assignment.
 
 The source receipt pins the original provider, row lease, input attachment, and
