@@ -954,6 +954,22 @@ Apply, Undo, and Redo check the placement owners and mark the owning scene dirty
 A viewport drop with a world position keeps that world position under a parent.
 A hover preview is detached before its spawn edit, so the edit records the complete
 placement. A refused edit destroys a subtree that stays detached and unselected.
+
+Every native drop that changes editor data uses one canonical mutation path:
+
+| Drop | Path |
+| --- | --- |
+| Scene node onto a node or the hierarchy root | `HierarchyMutation` reparent or move to root |
+| Model or prefab asset onto the hierarchy or viewport | `HierarchySpawn.Place` |
+| Asset onto an inspector property | Canonical property mutation on the scene-edit queue |
+| Component onto an inspector property | Canonical property mutation |
+| Asset file onto an asset browser folder | `NativeAssetFileMutations.MoveFileToDirectory` |
+| Material asset onto a model submesh | `ModelSubMeshMaterialAction` |
+| Operating-system image file onto a viewport mesh | Asset creation recovery journal and `MaterialTextureSlotAction` |
+
+Each path records one Undo action and marks its source document dirty on apply,
+Undo, and Redo. Asset file moves change files, not documents, so they do not mark
+a document dirty.
 Streaming volumes retain the exact attachment host and world. Direct destruction
 invalidates pending loads before detach, so late completion cannot attach to a
 replacement owner.
