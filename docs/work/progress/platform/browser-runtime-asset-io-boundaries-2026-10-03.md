@@ -2,7 +2,7 @@
 
 ## World identity file placement (2026-10-28)
 
-At local implementation commit `9ccdbf7654bf320d1fa9c9de6d7c5d122664677e`,
+At implementation commit `9ccdbf7654bf320d1fa9c9de6d7c5d122664677e`,
 `WorldAssetIdentityProvider` no longer performs physical existence checks,
 timestamp reads, or file opens. It uses the existing metadata and read
 capabilities of one lazily captured `IAssetFileSystem`. The
@@ -61,7 +61,7 @@ These checks establish bounded managed identity behavior and source placement.
 They do not establish Windows application startup, a rendered browser frame,
 native graphics parity, or the full publication gate.
 
-### Publication gate status
+### Initial publication gate attempt
 
 The four broader commands ran through the same build wrapper at the local
 implementation source, in Release, with one task-owned artifacts directory:
@@ -75,13 +75,118 @@ implementation source, in Release, with one task-owned artifacts directory:
 
 The logs are `logs/gate-Editor.log`, `logs/gate-Server.log`,
 `logs/gate-VRClient.log`, and `logs/gate-Browser.log` under the run above.
-`dotnet workload list` also reports no installed workloads. The full 19-project
+At that attempt, `dotnet workload list` reported no installed workloads. The full 19-project
 `browser-wasm` compile lane was not run with these missing prerequisites.
 The source scan is not a substitute for that lane. No dependency pin, submodule
 revision, browser supply path, or reference runtime changed to bypass a gate.
-No change was pushed. The requested branch still resolved to `ff0eabf95` at the
-final remote check. Publication is pending the full gate on a prepared host.
-This is an environment/build prerequisite block, not an approval denial.
+At this initial attempt, no change was pushed and the branch remained at
+`ff0eabf95`. These were environment/build prerequisite failures, not approval
+denials. The follow-up below records their recovery.
+
+### Build prerequisite recovery (2026-10-28)
+
+The follow-up prepared the missing inputs without changing repository pins or
+submodule revisions:
+
+- Used the workflow's `git submodule update --init --checkout` command for
+  `Build/Submodules/OpenVR.NET` and `Build/Submodules/OscCore-NET9`. Their clean
+  checkouts match the recorded gitlinks `e55a8cc0978ad65dfc2cc08d0a9ed9e86881ad35`
+  and `2be09497ffa8560b700d4793c3e4d344c49caf49`.
+- Installed `wasm-tools` from the repository root under the existing SDK and
+  workload-set pins. The resulting WebAssembly packs are `10.0.12`, with
+  Emscripten `3.1.56`.
+- Prepared the Jolt managed sources with
+  `Tools/Dependencies/Prepare-JoltBrowserManaged.ps1`. All checked source,
+  license, and patch hashes passed.
+- Downloaded local CMake `4.4.5` and Ninja `1.13.2` binaries from the official
+  [CMake release](https://github.com/Kitware/CMake/releases/tag/v4.4.5) and
+  [Ninja release](https://github.com/ninja-build/ninja/releases/tag/v1.13.2).
+  Both downloads matched their published SHA-256 values. The local package
+  metadata query and GitHub API metadata route were unavailable; the official
+  release download route worked. No system package configuration changed.
+- Ran `Tools/Dependencies/Build-JoltBrowser.ps1` with those tools and the pinned
+  .NET Emscripten packs. Both native archives built successfully.
+
+The downloaded CMake archive has SHA-256
+`ed85135c5a5135b45e50423cb406dea04ca3338da0b8ef3c9ede963559680be0`;
+the Ninja ZIP has
+`5749cbc4e668273514150a80e387a957f933c6ed3f5f11e03fb30955e2bbead6`.
+The resulting `libJolt.a` is 4,771,436 bytes, SHA-256
+`b4bea8094ae79e882ef2c8c929aeff37cf175156cc25ce81f6bd4eeb33ed718f`.
+`libjoltc.a` is 473,360 bytes, SHA-256
+`2e516d4104c6bbc71a868f58a8e2dd23fa02b019b9ccffbf5179084983437ae8`.
+These hashes identify this local build; they do not assert cross-host byte parity.
+The source pins and supply checks remain in force.
+
+The Editor, Server, and VRClient Release builds now pass with zero warnings and
+errors. All three commands use the serialized build wrapper and
+`-p:EnableWindowsTargeting=true` for Linux cross-compilation. No source, target
+framework, or build-policy check was changed to get these results. This is
+Windows-targeted compilation on Linux, not Windows application startup or
+native GPU/XR qualification.
+
+Evidence uses the same run: `logs/workload-install.log`,
+`logs/jolt-managed-prepare.log`, `logs/jolt-native-build.log`,
+`logs/prerequisite-Editor.log`, `logs/prerequisite-Server.log`,
+`logs/prerequisite-VRClient.log`, and `reports/build-tool-provenance.json`.
+The prepared managed sources and native archives are under `jolt/` in that run.
+
+### Recovered build gate and shader cooking
+
+All 19 projects in `Build/Portable/PortableProjects.tsv` compile for
+`browser-wasm` in Release, with the original project list, full source policy,
+and pinned Jolt source/archive properties. The run uses the same arguments as
+`Tools/Test-PortableBrowserCompile.ps1`, routed through the serialized build
+wrapper. The original helper invokes raw `dotnet`, so the disposable driver
+wraps each project build instead. A fresh Browser publish with
+`WasmBuildNative=true` also passes, including the native Jolt link and WASM
+optimization. The log is `logs/browser-full-gate.log`.
+
+The first Browser compile reported two existing `CS8601` warnings in
+`EngineMeshDiagnosticFixture`. The guard already rejects missing raster entry
+points, but nullable flow analysis does not preserve that result through the
+fixture's mode fields. Implementation commit
+`9cd52eb02ae2b7af144d3cc5df3ee69a64fe2fcc` captures both required entry-point
+strings before constructing either shader. The original admission check remains;
+no warning suppression or null-forgiving assignment was added. No unit-test
+assertion, native UI, or frozen reference-runtime feature changed.
+
+The affected Browser project was rebuilt and published after that source edit.
+Both commands passed with no warnings or errors; see
+`logs/browser-final-check.log`. The code files tested by these commands are the
+files recorded in the implementation commit; committing them changed no source.
+The other 18 manifest projects and all desktop build inputs were unchanged.
+Together with the shared WebGPU and desktop results above, the local compilation
+and publish gate is complete. This does not claim a post-publication CI result.
+
+The offline shader check uses the workflow-pinned Slang `2026.8` Linux archive,
+verified against SHA-256
+`b23af8f2569e7961ca143c6ecd9abf6d7ac14a9bda739a1c6281694f774fa3eb`.
+`ShaderCooker` builds in Release with zero warnings and errors. The cook uses the
+same production recipe selection and source staging as
+`Tools/Cook-EngineBrowserShaders.ps1`, but builds through the wrapper and executes
+the built DLL. All 184 production recipes cook successfully; both probe recipes
+are excluded. The manifest has 184 artifact entries and is 76,452 bytes, SHA-256
+`af241f900eafa26616b68136efe9a1e8719579561b6c5d665cc31a791203ac0d`.
+No shader source or recipe changed in this batch.
+
+The cooker log is `logs/production-shader-cook.log`; output is
+`production-shaders/manifest.json` under the same run. This establishes the
+existing selected-source cook and ABI checks. Browser execution, rendered
+known-value checks, Windows startup, and device performance remain separate.
+No whole-inventory or shader-coverage checkbox is closed by these results.
+
+The final Browser output is `browser-publish-clean/wwwroot/` under the run.
+It was published from implementation commit `9cd52eb02` into an empty directory,
+with no warning or error diagnostics. The earlier reused output retained an old
+hashed managed resource, so it is not the final artifact. A packaging-only
+`--no-build` attempt failed with `NETSDK1085` because this graph invokes project
+builds during publishing; the normal publish command resolved this without any
+build-target change. See `logs/browser-clean-output.log` for that failed attempt
+and `logs/browser-clean-publish.log` for the successful command.
+The clean output has exactly one native runtime WASM and one managed Browser
+resource. Their sizes and SHA-256 values are in
+`reports/browser-publish-hashes.json`.
 
 ## Archive staleness source reads (2026-10-08)
 
