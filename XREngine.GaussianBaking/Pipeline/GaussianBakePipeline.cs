@@ -343,6 +343,7 @@ public sealed partial class GaussianBakePipeline
         CacheBuild build = await BuildCacheAsync(run, analysis, leaves, quantizer, colorScale, budget, cancellationToken).ConfigureAwait(false);
         Stopwatch encodeWatch = Stopwatch.StartNew();
         BakeCacheFiles.Write(build.Result, run.StagingPath);
+        BakeCacheFiles.VerifyReadBack(build.Result, run.StagingPath);
         report.TimingsMs.Encode += encodeWatch.ElapsedMilliseconds;
         FillCacheReport(report, build.Result, build.Motion);
         watch.Restart();
