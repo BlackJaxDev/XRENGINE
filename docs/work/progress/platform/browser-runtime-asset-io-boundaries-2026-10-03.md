@@ -1725,3 +1725,25 @@ UI still failed its animation-frame check,
 and shadow ON exceeded 45 seconds with its native-depth-no-decals pipeline pending
 for 37.4 seconds and no recorded GPU resource failure. GL trace output and the
 two failing browser cases remain open, with no requirement-count change.
+
+
+## Native task completion for synchronous asset operations
+
+The three remaining literal `AssetManager` task waits now use
+`RuntimeBlockingTaskServices`. `ThreadedWorkerBackend.EnsureRegistered` installs
+the native completion provider without replacing a custom provider. Browser and
+caller-thread admission, and missing-provider detection, run before the operation
+factory. Remote downloads therefore cannot start through an unavailable blocking
+route. The native leaf retains `GetAwaiter().GetResult()` exception and
+cancellation behavior. Scheduled asset results use the same boundary. Nested
+worker jobs and explicitly requested inline work retain their existing behavior.
+
+The focused headless checks cover native completion, original exceptions,
+cancellation tokens, caller admission, and a nested asset job with one worker.
+A fresh-process probe also checks missing-provider rejection, custom-provider
+preservation, and caller scheduler admission independently of the raw-read flag.
+The working source scan reports 106 files / 195 wait-result-join lines across the
+portable closure, down from 108 / 198. Lexical matches are not reachability proof.
+Synchronous asset APIs remain, and this change does not add asynchronous raw-file
+import or qualify live remote asset delivery. The remaining physical I/O and
+shared wait inventory stays open.

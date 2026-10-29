@@ -73,9 +73,12 @@ namespace XREngine
             if (OperatingSystem.IsBrowser() || jobs.IsCallerThreadExecutor)
                 throw new NotSupportedException("AssetSource.BlockingJobUnavailable: a caller-thread host cannot wait for its own asset job; use the asynchronous operation or explicitly run completed CPU work inline.");
 
-            var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-            jobs.Schedule(() => JobRoutine(work, tcs), priority: priority);
-            return tcs.Task.GetAwaiter().GetResult();
+            return RuntimeBlockingTaskServices.Run(() =>
+            {
+                var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+                jobs.Schedule(() => JobRoutine(work, tcs), priority: priority);
+                return tcs.Task;
+            });
         }
 
         private Task RunOnJobThreadAsync(Action action, JobPriority priority = JobPriority.Normal, bool bypassJobThread = false)

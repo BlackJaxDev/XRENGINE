@@ -4,6 +4,7 @@ using XREngine.Core.Files;
 using XREngine.Core.Files.Caching;
 using XREngine.Data;
 using XREngine.Data.Core;
+using XREngine.Execution;
 
 namespace XREngine;
 
@@ -110,12 +111,12 @@ public partial class AssetManager
         IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
         if (!files.FileExists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
-            TryDownloadAssetFromRemoteAsync(
+            RuntimeBlockingTaskServices.Run(() => TryDownloadAssetFromRemoteAsync(
                 filePath,
                 typeof(T),
                 priority,
                 CancellationToken.None,
-                additionalMetadata: null).GetAwaiter().GetResult();
+                additionalMetadata: null));
         }
 
         EnsureHostFileLoadRoute(bypassJobThread);
@@ -137,12 +138,12 @@ public partial class AssetManager
         IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
         if (!files.FileExists(filePath) && ShouldAttemptRemoteAssetDownload())
         {
-            TryDownloadAssetFromRemoteAsync(
+            RuntimeBlockingTaskServices.Run(() => TryDownloadAssetFromRemoteAsync(
                 filePath,
                 type,
                 priority,
                 CancellationToken.None,
-                additionalMetadata: null).GetAwaiter().GetResult();
+                additionalMetadata: null));
         }
 
         EnsureHostFileLoadRoute(bypassJobThread);

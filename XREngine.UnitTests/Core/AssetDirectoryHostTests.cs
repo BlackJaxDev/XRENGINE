@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Execution;
 
 namespace XREngine.UnitTests.Core;
 
@@ -22,6 +23,7 @@ public sealed class AssetDirectoryHostTests
     private AssetDirectoryTestFileSystem _files = null!;
     private string _root = null!;
     private AssetManager? _manager;
+    private JobManager? _jobs;
 
     [SetUp]
     public void SetUp()
@@ -48,12 +50,47 @@ public sealed class AssetDirectoryHostTests
     {
         _manager?.Dispose();
         _manager = null;
+        if (_jobs is not null)
+        {
+            Assert.That(_jobs.Shutdown(waitForWorkers: true), Is.True);
+            _jobs = null;
+        }
         for (int i = 0; i < Variables.Length; i++)
             Environment.SetEnvironmentVariable(Variables[i], _previousVariables[i]);
         RuntimeAssetReadServices.SetSource(_previousSource);
         RuntimeAssetReadServices.IsCallerThread = _previousCaller;
         AssetFileSystemServices.Current = _previousFiles;
         RuntimeFileDiscoveryServices.Current = _previousDiscovery;
+    }
+
+    [Test]
+    public async Task NativeAssetJobsKeepNestedWorkerWorkInline()
+    {
+        ThreadedWorkerBackend.EnsureRegistered();
+        JobManager jobs = _jobs = new(workerCount: 1);
+        AssetManager manager = _manager = new AssetManager(Path.Combine(_root, "Engine"), () => jobs);
+        int result = await Task.Run(() => manager.RunAssetJobBlocking(() =>
+        {
+            int worker = Environment.CurrentManagedThreadId;
+            return manager.RunAssetJobBlocking(() =>
+            {
+                Assert.That(Environment.CurrentManagedThreadId, Is.EqualTo(worker));
+                return 42;
+            });
+        })).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.That(result, Is.EqualTo(42));
+    }
+
+    [Test]
+    public void CallerAssetJobsRejectSchedulingButAllowExplicitInlineWork()
+    {
+        JobManager jobs = _jobs = new(executionMode: JobExecutionMode.CallerThread);
+        AssetManager manager = _manager = new AssetManager(Path.Combine(_root, "Engine"), () => jobs);
+        int calls = 0;
+        int Work() => ++calls;
+        Assert.Throws<NotSupportedException>(() => manager.RunAssetJobBlocking(Work));
+        Assert.That(calls, Is.Zero);
+        Assert.That(manager.RunAssetJobBlocking(Work, bypassJobThread: true), Is.EqualTo(1));
     }
 
     [Test]

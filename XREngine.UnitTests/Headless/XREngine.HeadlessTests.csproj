@@ -12,6 +12,7 @@
     <ProjectReference Include="../../XREngine.Runtime.AnimationIntegration/XREngine.Runtime.AnimationIntegration.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
+    <ProjectReference Include="../../XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Rendering/TextureCookedSamplingTests.cs" Link="Rendering/TextureCookedSamplingTests.cs" />
@@ -25,6 +26,7 @@
     <Compile Include="../Rendering/TextureSamplingTestCodec.cs" Link="Rendering/TextureSamplingTestCodec.cs" />
     <EmbeddedResource Include="../Rendering/Fixtures/texture-streaming-legacy.bin" LogicalName="TextureCooking.Legacy" />
     <Compile Include="../Core/AssetDirectoryHostTests.cs" Link="Core/AssetDirectoryHostTests.cs" />
+    <Compile Include="../Core/RuntimeBlockingTaskTests.cs" Link="Core/RuntimeBlockingTaskTests.cs" />
     <Compile Include="../Core/AssetDirectoryTestFileSystem.cs" Link="Core/AssetDirectoryTestFileSystem.cs" />
     <Compile Include="../Animation/AnimationClipReferenceHostTests.cs" Link="Animation/AnimationClipReferenceHostTests.cs" />
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />

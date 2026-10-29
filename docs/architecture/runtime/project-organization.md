@@ -55,6 +55,16 @@ not request a pool. Browser hosts keep their sequential transform policy and
 reject frame logging. The `XRE_PUBLISHED` profiler stub creates no worker.
 Native zero-general-worker scheduling still has two auxiliary lanes.
 
+The same registration installs `IRuntimeBlockingTaskBackend` in an empty slot.
+`RuntimeBlockingTaskServices.Run` rejects browser and caller-thread execution,
+and requires a registered backend before it invokes the operation factory.
+The native leaf owns task waiting and preserves the original exception or
+cancellation. `AssetManager` uses this boundary for synchronous remote downloads
+and scheduled asset results. Nested asset jobs still run inline on a job worker;
+explicit inline work does not request a task waiter. This boundary does not pump
+caller-thread jobs or add synchronous browser I/O. Other shared wait sites remain
+separate placement work.
+
 `Engine.CodeProfiler` owns the cycle data and callbacks. Each cycle drains
 completed scopes, reads the timestamp, updates a due snapshot, checks the render
 stall, and returns an idle delay only when it processed no scope. The native

@@ -648,3 +648,14 @@ Current targeted review found no new browser-reachable blocking wait or explicit
 The [runtime I/O admission group](browser-runtime-io-admission-2026-10-04.md) adds source/epoch-owned asset response reads and guards missing-font host recovery, file capture/profiling/HiZ diagnostics, archive extraction and synchronous native-TLS startup. Its exact final Host build and production-method probes pass. The current Browser WebSocket composition does not subscribe the remote-job asset handler; the catalog-owner probe establishes the shared method's ownership contract, not live Browser remote-job delivery. The internal snapshot fallback remains classified under desktop edit/play transitions. A separate scan of the configured 177 managed Jolt source files found no lexical wait, thread/task-pool or direct-file candidates; it does not classify the native C++ implementation.
 
 Validation here includes source, managed-contract, and Node-hosted browser-wasm interpreter evidence. Over the reviewed `8300fa354511000119b0e45f6e19c4493122ebff` tree with only this group's 22 source files overlaid, the native-Jolt Browser Release build, including WASM native link, passed with **0 warnings and 0 errors**. The isolated production witness passed twelve cross-batch version publication, commit-window isolation, same-batch access, retry, abort and failure checks. Its commit-window observation first reproduced tentative-version escape before the publication guard was corrected. A separate browser-wasm event witness passed early-throw/later-listener, original-fault, boolean-result, and profiling-disposal checks for `XREvent`, `XREvent<T>`, and `XRBoolEvent<T>` all/any async methods. This does not establish browser page startup, feature pixels, disposal or physical-device behavior; those still require live acceptance.
+
+
+## Asset task completion placement
+
+The 2026-10-29 asset-task extraction moves three `AssetManager` wait expressions
+into `XREngine.Runtime.Execution.Threads`. The shared boundary rejects browser
+and caller-thread hosts before starting the operation. It keeps nested worker
+and explicit inline asset work unchanged. See the [asset I/O record](browser-runtime-asset-io-boundaries-2026-10-03.md#native-task-completion-for-synchronous-asset-operations).
+The current working-source scan reports 106 files / 195 wait-result-join lines;
+thread constructors remain 4 / 4 and task/parallel/pool sites remain 30 / 61.
+The historical immutable tables above retain their original revisions.
