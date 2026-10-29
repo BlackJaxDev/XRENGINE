@@ -128,3 +128,7 @@ current owner below explicitly adopts it.
 - [Published cube sky qualification](2026-10-29-published-cube-sky-qualification.md)
   connects canonical cube cooking to production browser loading and sky drawing.
   Current limits are in [platform validation](../../../testing/platform/platform-validation.md#published-cube-sky-loading--2026-10-29).
+
+- [Published image sky qualification](2026-10-29-published-image-sky-qualification.md)
+  connects canonical image cooking to browser rendering and removes duplicate decoder construction.
+  Current limits are in [platform validation](../../../testing/platform/platform-validation.md#published-image-sky-loading-and-decoder-ownership--2026-10-29).

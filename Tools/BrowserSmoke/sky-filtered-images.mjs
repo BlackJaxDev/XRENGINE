@@ -38,10 +38,11 @@ async function filteredCheck(args, projection) {
     await skyCheck(...args, {
         checkName: `engine-sky-${name}-filtered`, reportKey: `sky${projection}Filtered`,
         probe: `sky-${name}-filtered`, capturePrefix: `engine-sky-${name}-filtered`,
-        scope: 'sRGB decode before bilinear filtering, authored wrap/clamp behavior, and four explicit integer mip levels. Implicit LOD, trilinear blends, and seamless octahedral edge remapping remain unqualified.',
+        scope: 'Published canonical image loading, sRGB decode before bilinear filtering, authored wrap/clamp behavior, and four explicit integer mip levels. Implicit LOD, trilinear blends, and seamless octahedral edge remapping remain unqualified.',
         names: ['negative-z', 'positive-x', 'negative-x', 'positive-y', 'negative-y', 'positive-z',
             'translated', 'sky-rotation', 'hdr-intensity', 'restored', 'mip-1', 'mip-2', 'mip-3', 'mip-1-hdr-rotation', 'mip-restored'],
         semantic: `Skybox${projection}`, artifact: `engine-skybox-${name}`,
+        cookedAsset: { path: `/game/Sky${projection}Filtered.asset`, nativeBytes: projection === 'Equirectangular' ? 172 : 340 },
         imageExtent: [8, projection === 'Equirectangular' ? 4 : 8], imageFormat: 'rgba8unorm-srgb', imageMipLevels: 4,
         reference: (...values) => reference(projection, ...values),
         foregroundCases: [0, 7, 8, 9, 10, 11, 12, 13, 14],

@@ -25,7 +25,7 @@ public static partial class EngineMeshDiagnosticExports
     private static bool _debug;
     private static bool _sky;
     private static EngineSkyDiagnosticProfile _skyProfile;
-    private static XRTextureCube? _cookedSkyTexture;
+    private static XRTexture? _cookedSkyTexture;
     private static IDisposable? _assetRegistrations;
     private static bool _unlit;
     private static EngineUnlitDiagnosticProfile _unlitProfile = EngineUnlitDiagnosticProfile.Baseline;
@@ -201,13 +201,22 @@ public static partial class EngineMeshDiagnosticExports
             stage = "open asset catalog";
             _assetSource = await BrowserEngineAssetSource.OpenAsync(assetManifestUrl, cancellation.Token);
             EnsureCurrentCreation(requestedEpoch, cancellation.Token);
-            bool cookedCube = sky && skyProfile is EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap;
-            if (cookedCube)
+            string? skyTexturePath = sky ? skyProfile switch
             {
-                stage = "install published cube metadata";
+                EngineSkyDiagnosticProfile.Cubemap => "/game/SkyCubeHdr.asset",
+                EngineSkyDiagnosticProfile.FilteredCubemap => "/game/SkyCubeFiltered.asset",
+                EngineSkyDiagnosticProfile.Equirectangular => "/game/SkyEquirectangularHdr.asset",
+                EngineSkyDiagnosticProfile.Octahedral => "/game/SkyOctahedralHdr.asset",
+                EngineSkyDiagnosticProfile.FilteredEquirectangular => "/game/SkyEquirectangularFiltered.asset",
+                EngineSkyDiagnosticProfile.FilteredOctahedral => "/game/SkyOctahedralFiltered.asset",
+                _ => null,
+            } : null;
+            if (skyTexturePath is not null)
+            {
+                stage = "install published sky metadata";
                 if (_assetSource.PublishedMetadataPath is not { } metadataPath ||
                     _assetSource.PublishedMetadataFingerprint is not { } fingerprint)
-                    throw new InvalidDataException("PublishedMetadata.Missing: cooked cube diagnostics require verified type metadata.");
+                    throw new InvalidDataException("PublishedMetadata.Missing: cooked sky diagnostics require verified type metadata.");
                 using RuntimeAssetIntegration metadata = await _assetSource.ReadForIntegrationAsync(metadataPath, cancellation.Token);
                 EnsureCurrentCreation(requestedEpoch, cancellation.Token);
                 AotRuntimeMetadataStore.InstallVerifiedBrowserMetadata(metadata.Payload, fingerprint);
@@ -219,7 +228,7 @@ public static partial class EngineMeshDiagnosticExports
             _previousFileSystem = AssetFileSystemServices.Current;
             AssetFileSystemServices.Current = _assetSource.FileSystem;
             _fileSystemInstalled = true;
-            if (cookedCube)
+            if (skyTexturePath is not null)
                 _assetRegistrations = RuntimeAssetBootstrap.InstallEngineAssetServices();
             stage = "install capabilities";
             _capabilities = RuntimeApplicationCapabilityServices.Install(new RuntimeApplicationCapabilities(
@@ -240,15 +249,15 @@ public static partial class EngineMeshDiagnosticExports
             _renderingServices = RuntimeCallerThreadRenderingBootstrap.Install(_catalog,
                 new PhysicsBackendCatalog(), static _ => throw new NotSupportedException(
                     "EngineMeshDiagnostic.PipelineRequired: every diagnostic camera must use its explicit engine pipeline."));
-            if (cookedCube)
+            if (skyTexturePath is not null)
             {
-                stage = "load cooked sky cube";
-                string cubePath = skyProfile == EngineSkyDiagnosticProfile.FilteredCubemap
-                    ? "/game/SkyCubeFiltered.asset" : "/game/SkyCubeHdr.asset";
+                stage = "load cooked sky texture";
+                Type textureType = skyProfile is EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap
+                    ? typeof(XRTextureCube) : typeof(XRTexture2D);
                 using IDisposable wrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
-                _cookedSkyTexture = await Engine.Assets.LoadFromRuntimeSourceAsync(cubePath, typeof(XRTextureCube),
-                    cancellationToken: cancellation.Token) as XRTextureCube
-                    ?? throw new InvalidDataException("EngineMeshDiagnostic.CookedCubeInvalid: the authored asset is not a cube texture.");
+                _cookedSkyTexture = await Engine.Assets.LoadFromRuntimeSourceAsync(skyTexturePath, textureType,
+                    cancellationToken: cancellation.Token) as XRTexture
+                    ?? throw new InvalidDataException("EngineMeshDiagnostic.CookedSkyInvalid: the authored asset is not a sky texture.");
                 EnsureCurrentCreation(requestedEpoch, cancellation.Token);
             }
             stage = "create renderer";

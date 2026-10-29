@@ -485,7 +485,8 @@ export class EngineMeshDiagnosticHost {
             const value = entry.value;
             const identity = { slot, generation: entry.generation, label: value.label ?? '',
                 width: value.width, height: value.height, format: value.format, arrayLayerCount: value.arrayLayerCount };
-            if (entry.kind === 'texture' && ['Diagnostic HDR sky image', 'Diagnostic filtered sRGB sky image'].includes(value.label))
+            if (entry.kind === 'texture' && ['SkyEquirectangularHdr', 'SkyOctahedralHdr',
+                'SkyEquirectangularFiltered', 'SkyOctahedralFiltered'].includes(value.label))
                 state.skyImages.push({ ...identity, mipLevelCount: value.mipLevelCount, sampleCount: value.sampleCount });
             if (entry.kind === 'texture' && value.arrayLayerCount === 6)
                 state.cubeTextures.push({ ...identity, mipLevelCount: value.mipLevelCount, sampleCount: value.sampleCount });

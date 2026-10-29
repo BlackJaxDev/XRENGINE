@@ -42,7 +42,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false, bool debug = false,
         WebPipelineArtifactCatalog? effectArtifacts = null, bool unlit = false,
         EngineUnlitDiagnosticProfile? unlitProfile = null, bool sky = false,
-        EngineSkyDiagnosticProfile skyProfile = EngineSkyDiagnosticProfile.Gradient, XRTextureCube? cookedSkyTexture = null)
+        EngineSkyDiagnosticProfile skyProfile = EngineSkyDiagnosticProfile.Gradient, XRTexture? cookedSkyTexture = null)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");

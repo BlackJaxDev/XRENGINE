@@ -18,10 +18,11 @@ async function imageCheck(args, projection) {
     const name = projection.toLowerCase();
     await skyCheck(...args, {
         checkName: `engine-sky-${name}`, reportKey: `sky${projection}`, probe: `sky-${name}`, capturePrefix: `engine-sky-${name}`,
-        scope: `${projection} HDR image coordinates with nearest sampling; filtered seams, mip chains, and sRGB image decoding remain unqualified.`,
+        scope: `Published canonical ${projection} HDR image loading and coordinates with nearest sampling; filtered seams, mip chains, and sRGB decoding remain outside this profile.`,
         names: ['negative-z', 'positive-x', 'negative-x', 'positive-y', 'negative-y', 'positive-z',
             'translated', 'sky-rotation', 'hdr-intensity', 'restored'],
         semantic: `Skybox${projection}`, artifact: `engine-skybox-${name}`,
+        cookedAsset: { path: `/game/Sky${projection}Hdr.asset`, nativeBytes: projection === 'Equirectangular' ? 256 : 512 },
         imageExtent: [8, projection === 'Equirectangular' ? 4 : 8],
         reference: (...values) => reference(projection, ...values),
         foregroundCases: [0, 7, 8, 9],

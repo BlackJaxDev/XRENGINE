@@ -81,26 +81,42 @@ and runtime constructors for published loading. Existing reflection payloads can
 still be read, but their omitted pixels cannot be recovered. The separate
 `XRTexture2D` streamable mip format and YAML/MemoryPack contracts are unchanged.
 
-## Published cube asset path
+## Published sky texture assets
 
-The two cube diagnostics use authored assets from the engine content package.
-`BrowserSkyTextureFixtures` cooks `SkyCubeHdr.bin` and `SkyCubeFiltered.bin` through
-the canonical `BinaryV2` envelope with MemoryPack suppressed. The package exposes
-`/game/SkyCubeHdr.asset` and `/game/SkyCubeFiltered.asset` as immutable payloads.
+All six texture diagnostics use authored assets from the engine content package.
+`BrowserSkyTextureFixtures` cooks stable identities and canonical `BinaryV2`
+envelopes with MemoryPack suppressed. Cube payloads use explicit nested mip
+storage; image payloads use the existing full `XRTexture2D` reader, including
+its mip descriptors and sampling fields. These browser fixtures do not generate
+texture pixel buffers.
+
 The browser installs verified type metadata, catalog providers, and asset
 services, then calls `Engine.Assets.LoadFromRuntimeSourceAsync` in `Published`
-mode. It passes the loaded cube to the shared sky fixture; no local cube image
-is generated as a fallback. The fixture borrows the asset until its source owner
-ends the session.
+mode. It passes the loaded texture to the shared sky fixture. The fixture
+borrows the asset until its source owner ends the session. GPU diagnostic labels
+follow the production asset loader's file-derived names.
 
-The browser delivery ledger counts distinct owned cube-face `DataSource` buffers
-across all mips. The HDR fixture retains 768 pixel bytes; the three-level sRGB
-fixture retains 504. The checks require drained staging, one retained asset and
-object, the exact asset path, and zero surviving asset sources after stop.
+| Virtual asset under `/game/` | Pixel storage | Retained pixel bytes |
+|---|---|---|
+| `SkyCubeHdr.asset` | Six 4×4 RGBA16F faces | 768 |
+| `SkyCubeFiltered.asset` | Six sRGB faces, 4×4 through 1×1 | 504 |
+| `SkyEquirectangularHdr.asset` | 8×4 RGBA16F | 256 |
+| `SkyOctahedralHdr.asset` | 8×8 RGBA16F | 512 |
+| `SkyEquirectangularFiltered.asset` | sRGB, 8×4 through 1×1 | 172 |
+| `SkyOctahedralFiltered.asset` | sRGB, 8×8 through 1×1 | 340 |
+
+The browser delivery ledger counts distinct owned mip `DataSource` buffers.
+Checks require drained staging, one retained asset and object, the exact asset
+path, and zero surviving asset sources after stop. The canonical custom reader
+checks the legacy interface before constructing that branch. Runtime-custom
+objects are constructed only by their runtime reader; a discarded constructor
+probe must not enter the ownership ledger.
+
 These are source-retention estimates, not measurements of immediate native heap
 reclamation. The route uses the browser interpreter and canonical reflection
-loading; it does not establish an AOT cube codec or packaged Editor publication.
-See the [published cube record](../../work/investigations/rendering/archive/2026-10-29-published-cube-sky-qualification.md).
+loading; it does not establish AOT texture decoding or packaged Editor publication.
+See the [cube record](../../work/investigations/rendering/archive/2026-10-29-published-cube-sky-qualification.md)
+and [image ownership record](../../work/investigations/rendering/archive/2026-10-29-published-image-sky-qualification.md).
 
 ## Explicit limits
 

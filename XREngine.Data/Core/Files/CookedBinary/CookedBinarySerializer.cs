@@ -1207,7 +1207,8 @@ public static partial class CookedBinarySerializer
         string typeName = reader.ReadString();
         Type targetType = ResolveType(typeName) ?? expectedType ?? throw new InvalidOperationException($"Failed to resolve cooked asset type '{typeName}'.");
 
-        if (CreateInstance(targetType) is ICookedBinarySerializable instance)
+        if (typeof(ICookedBinarySerializable).IsAssignableFrom(targetType) &&
+            CreateInstance(targetType) is ICookedBinarySerializable instance)
         {
             using var referenceScope = reader.EnterIndependentReferenceScope();
             instance.ReadCookedBinary(reader);

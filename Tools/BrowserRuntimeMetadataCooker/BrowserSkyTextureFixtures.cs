@@ -5,34 +5,40 @@ using XREngine.Rendering;
 
 namespace XREngine.Publishing;
 
-/// <summary>Cooks authored cube fixtures for the browser asset and sky render paths.</summary>
-internal static class BrowserSkyTextureFixtures
+/// <summary>Cooks authored texture fixtures for the browser asset and sky render paths.</summary>
+internal static partial class BrowserSkyTextureFixtures
 {
     internal static void Write(string directory)
     {
         using IDisposable wrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
-        WriteCube(CreateHdrCube(), "SkyCubeHdr.bin", directory);
-        WriteCube(CreateFilteredCube(), "SkyCubeFiltered.bin", directory);
+        WriteTexture(CreateHdrCube(), "SkyCubeHdr.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae1"));
+        WriteTexture(CreateFilteredCube(), "SkyCubeFiltered.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae2"));
+        WriteTexture(CreateSkyImage(false), "SkyEquirectangularHdr.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae3"));
+        WriteTexture(CreateSkyImage(true), "SkyOctahedralHdr.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae4"));
+        WriteTexture(CreateFilteredSkyImage(false), "SkyEquirectangularFiltered.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae5"));
+        WriteTexture(CreateFilteredSkyImage(true), "SkyOctahedralFiltered.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae6"));
     }
 
-    private static void WriteCube(XRTextureCube cube, string name, string directory)
+    private static void WriteTexture(XRTexture texture, string name, string directory, Guid identity)
     {
         try
         {
-            cube.AdoptPersistentID(name == "SkyCubeHdr.bin"
-                ? new Guid("685a5e81-1521-445c-9502-6d83e7fdaae1")
-                : new Guid("685a5e81-1521-445c-9502-6d83e7fdaae2"));
-            byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(cube));
+            texture.AdoptPersistentID(identity);
+            byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(texture));
             byte[] envelope = CookedAssetEnvelope.Serialize(new CookedAssetBlob(
-                typeof(XRTextureCube).AssemblyQualifiedName!, CookedAssetFormat.BinaryV2, payload));
+                texture.GetType().AssemblyQualifiedName!, CookedAssetFormat.BinaryV2, payload));
             File.WriteAllBytes(Path.Combine(directory, name), envelope);
         }
         finally
         {
-            foreach (var level in cube.Mipmaps)
-                foreach (Mipmap2D face in level.Sides)
-                    face.Data?.Dispose();
-            cube.Destroy(true);
+            if (texture is XRTextureCube cube)
+                foreach (var level in cube.Mipmaps)
+                    foreach (Mipmap2D face in level.Sides)
+                        face.Data?.Dispose();
+            if (texture is XRTexture2D image)
+                foreach (Mipmap2D mip in image.Mipmaps)
+                    mip.Data?.Dispose();
+            texture.Destroy(true);
         }
     }
 

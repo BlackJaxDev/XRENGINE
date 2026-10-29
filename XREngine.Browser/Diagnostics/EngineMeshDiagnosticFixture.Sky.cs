@@ -17,17 +17,16 @@ internal sealed partial class EngineMeshDiagnosticFixture
     private XRPerspectiveCameraParameters? _skyCameraParameters;
     private int _skyCase;
 
-    private void InitializeSkyScene(XRTextureCube? cookedSkyTexture)
+    private void InitializeSkyScene(XRTexture? cookedSkyTexture)
     {
         _skyTexture = _skyProfile switch
         {
             EngineSkyDiagnosticProfile.Gradient or EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun or EngineSkyDiagnosticProfile.Moon => null,
-            EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap => cookedSkyTexture
+            EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap => cookedSkyTexture as XRTextureCube
                 ?? throw new InvalidOperationException("EngineMeshDiagnostic.CookedCubeRequired: load the authored cube through the asset source before drawing."),
-            EngineSkyDiagnosticProfile.Equirectangular => CreateSkyImage(false),
-            EngineSkyDiagnosticProfile.Octahedral => CreateSkyImage(true),
-            EngineSkyDiagnosticProfile.FilteredEquirectangular => CreateFilteredSkyImage(false),
-            EngineSkyDiagnosticProfile.FilteredOctahedral => CreateFilteredSkyImage(true),
+            EngineSkyDiagnosticProfile.Equirectangular or EngineSkyDiagnosticProfile.Octahedral or
+                EngineSkyDiagnosticProfile.FilteredEquirectangular or EngineSkyDiagnosticProfile.FilteredOctahedral => cookedSkyTexture as XRTexture2D
+                ?? throw new InvalidOperationException("EngineMeshDiagnostic.CookedImageRequired: load the authored image through the asset source before drawing."),
             _ => throw new ArgumentOutOfRangeException(nameof(_skyProfile)),
         };
         _skyComponent = CreateLightNode("Diagnostic sky background").AddComponent(() => new SkyboxComponent

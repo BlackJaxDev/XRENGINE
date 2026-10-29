@@ -497,6 +497,34 @@ immediate heap reclamation. Packaged Editor export, path-only sky dependencies,
 platform encoders, AOT cube decoding, hardware acceptance, and remaining shader
 coverage stay open. Requirement counts are unchanged.
 
+### Published image sky loading and decoder ownership — 2026-10-29
+
+The four image sky profiles now use canonical cooked assets through the
+production browser loader. Initial live draws exposed duplicate runtime-custom
+construction: each load retained two objects and three extra pixel bytes. The
+canonical reader now checks legacy interface assignability before construction.
+All 50 repeated live cases render with one retained object and the exact authored
+pixel totals: 256/512 bytes for HDR images and 172/340 for filtered images.
+Selected HDR and filtered-mip captures were viewed. The
+[image ownership record](../../investigations/rendering/archive/2026-10-29-published-image-sky-qualification.md)
+records the defect and correction.
+
+Regression checks now require exact published asset paths and ownership while
+retaining all numeric references, mip cases, tolerances, and GPU resource checks.
+All 60 focused texture tests pass, including two canonical decoder tests for
+single textures and shared graph references. All 24 build/publication gates pass
+with zero compiler warnings/errors. All 116 targeted image samples pass, with
+72 live GPU resources, zero retiring resources, exact pixel bytes, and two clean
+source teardowns per profile. Full browser regression passes 23 selected checks,
+with three explicit optional skips, 324 sky samples, and 24 strict indirect
+lifecycle stages. Fresh cooking packages 57 shaders, fourteen passes, and 118
+assets. Metadata, compiled closure, bundle, and final host/page byte checks pass.
+
+This is published interpreter work on a software adapter. Native byte counters
+measure source retention, not immediate heap reclamation. AOT decoding, packaged
+Editor export, external sky dependencies, platform encoders, hardware acceptance,
+and complete shader coverage remain open. Requirement counts are unchanged.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

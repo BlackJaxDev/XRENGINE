@@ -98,7 +98,7 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                             delivery.failedReads === 0 && delivery.activeRequests === 0 && delivery.queuedReads === 0 &&
                             delivery.javascriptStagingBytes === 0 && delivery.managedIntegrationStagingBytes === 0 &&
                             delivery.managedCompanionStagingBytes === 0 && delivery.integrationQueued === 0 && delivery.integrating === 0,
-                        'BrowserSmoke.SkyCookedOwnership: retain exactly the authored cube pixels after staging drains.');
+                        'BrowserSmoke.SkyCookedOwnership: retain exactly the authored texture pixels after staging drains.');
                     }
                     if (profile.cubeStorage || profile.probe === 'sky-cube') {
                         const storage = profile.cubeStorage ?? { label: 'Diagnostic six-face HDR sky', extent: 4,

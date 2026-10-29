@@ -31,6 +31,34 @@
       "encoding": "cooked-binary",
       "source": "SkyCubeFiltered.bin",
       "dependencies": []
+    },
+    {
+      "path": "/game/SkyEquirectangularHdr.asset",
+      "type": "XREngine.Rendering.XRTexture2D, XREngine.Runtime.Rendering",
+      "encoding": "cooked-binary",
+      "source": "SkyEquirectangularHdr.bin",
+      "dependencies": []
+    },
+    {
+      "path": "/game/SkyOctahedralHdr.asset",
+      "type": "XREngine.Rendering.XRTexture2D, XREngine.Runtime.Rendering",
+      "encoding": "cooked-binary",
+      "source": "SkyOctahedralHdr.bin",
+      "dependencies": []
+    },
+    {
+      "path": "/game/SkyEquirectangularFiltered.asset",
+      "type": "XREngine.Rendering.XRTexture2D, XREngine.Runtime.Rendering",
+      "encoding": "cooked-binary",
+      "source": "SkyEquirectangularFiltered.bin",
+      "dependencies": []
+    },
+    {
+      "path": "/game/SkyOctahedralFiltered.asset",
+      "type": "XREngine.Rendering.XRTexture2D, XREngine.Runtime.Rendering",
+      "encoding": "cooked-binary",
+      "source": "SkyOctahedralFiltered.bin",
+      "dependencies": []
     }
   ]
 }

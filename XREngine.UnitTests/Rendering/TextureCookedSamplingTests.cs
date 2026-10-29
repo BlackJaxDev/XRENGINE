@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using NUnit.Framework;
 using XREngine.Core.Files;
 using XREngine.Data;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using YamlDotNet.Serialization;
@@ -112,6 +113,36 @@ public sealed class TextureCookedSamplingTests
         {
             foreach (XRTexture2D clone in clones)
                 ((IDisposable)clone).Dispose();
+        }
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void CanonicalTextureDecodeOwnsOnlyTheReturnedTexture(bool sharedReferences)
+    {
+        using IDisposable wrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
+        using XRTexture2D source = ReadRaw(ReadLegacyFixture());
+        source.MaxAnisotropy = 4;
+        object graph = sharedReferences ? new[] { source, source } : source;
+        byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(graph));
+        using ObjectCachePublicationScope publication = XRObjectBase.BeginIndependentObjectCachePublication();
+        object decoded = CookedBinarySerializer.Deserialize(graph.GetType(), payload)!;
+        using ObjectCacheOwnership ownership = publication.CompleteWithOwnership();
+        XRTexture2D clone = sharedReferences ? ((XRTexture2D[])decoded)[0] : (XRTexture2D)decoded;
+        try
+        {
+            Assert.That(ownership.Objects, Has.Count.EqualTo(1), "Decoding must not retain an unused constructor probe.");
+            Assert.That(ownership.Objects[0], Is.SameAs(clone));
+            Assert.That(clone, Is.Not.SameAs(source));
+            if (sharedReferences)
+                Assert.That(((XRTexture2D[])decoded)[1], Is.SameAs(clone));
+            AssertSampling(source, clone);
+            Assert.That(clone.Mipmaps[0].Data!.GetBytes(), Is.EqualTo(source.Mipmaps[0].Data!.GetBytes()));
+        }
+        finally
+        {
+            foreach (Mipmap2D mip in clone.Mipmaps)
+                mip.Data?.Dispose();
         }
     }
 
