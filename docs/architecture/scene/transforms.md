@@ -52,6 +52,11 @@ subtree ranges and walks those ranges once. Ordinary world composition reads
 `local * parentWorld` from the arrays. Custom world owners retain their explicit
 virtual evaluator.
 
+`DeriveWorldMatrix` converts a world matrix to local space as
+`world * parentInverseWorld`. This reverses the same composition order and keeps
+world placement stable when a node moves beneath a translated or scaled parent.
+The local decomposition and its property callbacks still use the normal setters.
+
 `TransformBase.BeginHierarchyMutationBatch` returns a stack-only, allocation-free
 `TransformHierarchyMutationBatch`. Inside the batch, each changed transform still
 raises its property notifications and sets its local and world dirty flags, but

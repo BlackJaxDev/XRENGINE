@@ -929,7 +929,7 @@ namespace XREngine.Scene.Transforms
         /// Used by the physics system to derive a world matrix from a physics body into the components used by this transform.
         /// </summary>
         public void DeriveWorldMatrix(Matrix4x4 value, bool networkSmoothed = false)
-            => DeriveLocalMatrix(ParentInverseWorldMatrix * value, networkSmoothed);
+            => DeriveLocalMatrix(value * ParentInverseWorldMatrix, networkSmoothed);
 
         /// <summary>
         /// Derives components to create the local matrix from the given matrix.
