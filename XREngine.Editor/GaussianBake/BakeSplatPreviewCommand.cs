@@ -67,9 +67,9 @@ public static class BakeSplatPreviewCommand
 
     /// <summary>
     /// Runs the full bake. The option and encoder checks, the input load, and the stage load run before the engine
-    /// starts, as the load of a cooked world must complete before the engine runs. The rest of the pipeline then runs in
-    /// the hidden engine window. The exit code is 0 for a bake that is ready, or the exit code of the failure code of
-    /// the report.
+    /// starts, so that a failure in them exits with its failure code and does not race engine shutdown. The rest of the
+    /// pipeline then runs in the hidden engine window. The exit code is 0 for a bake that is ready, or the exit code of
+    /// the failure code of the report.
     /// </summary>
     private static int RunBake(BakeSplatPreviewOptions options)
     {
