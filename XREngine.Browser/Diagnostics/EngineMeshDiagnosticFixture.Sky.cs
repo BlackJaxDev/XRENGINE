@@ -22,6 +22,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
         {
             EngineSkyDiagnosticProfile.Gradient or EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun => null,
             EngineSkyDiagnosticProfile.Cubemap => CreateSkyCube(),
+            EngineSkyDiagnosticProfile.FilteredCubemap => CreateFilteredSkyCube(),
             EngineSkyDiagnosticProfile.Equirectangular => CreateSkyImage(false),
             EngineSkyDiagnosticProfile.Octahedral => CreateSkyImage(true),
             EngineSkyDiagnosticProfile.FilteredEquirectangular => CreateFilteredSkyImage(false),
@@ -66,6 +67,11 @@ internal sealed partial class EngineMeshDiagnosticFixture
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_sky || _skyComponent is null || _skyCameraTransform is null)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
+        if (_skyProfile == EngineSkyDiagnosticProfile.FilteredCubemap)
+        {
+            SetSkyFilteredCubeCase(sampleCase);
+            return;
+        }
         if (_skyProfile is EngineSkyDiagnosticProfile.FilteredEquirectangular or EngineSkyDiagnosticProfile.FilteredOctahedral)
         {
             SetSkyFilteredImageCase(sampleCase);

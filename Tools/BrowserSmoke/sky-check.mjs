@@ -77,16 +77,18 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                         state.authoredShaderCount === 0 && state.pipeline === 'DefaultRenderPipeline' &&
                         Object.entries(profile.expectedState(sampleCase)).every(([key, value]) => state[key] === value),
                     'BrowserSmoke.SkyIdentity: the real engine sky or its authored case changed.');
-                    if (profile.probe === 'sky-cube') {
-                        const textures = state.cubeTextures.filter(value => value.label === 'Diagnostic six-face HDR sky');
-                        const views = state.cubeViews.filter(value => value.label === 'Diagnostic six-face HDR sky');
+                    if (profile.cubeStorage || profile.probe === 'sky-cube') {
+                        const storage = profile.cubeStorage ?? { label: 'Diagnostic six-face HDR sky', extent: 4,
+                            format: 'rgba16float', mipLevels: 1 };
+                        const textures = state.cubeTextures.filter(value => value.label === storage.label);
+                        const views = state.cubeViews.filter(value => value.label === storage.label);
                         assert(textures.length === 1 && views.length === 1 &&
-                            textures[0].width === 4 && textures[0].height === 4 &&
-                            textures[0].format === 'rgba16float' && textures[0].arrayLayerCount === 6 &&
-                            textures[0].mipLevelCount === 1 && textures[0].sampleCount === 1 &&
-                            views[0].format === 'rgba16float' && views[0].arrayLayerCount === 6 &&
-                            views[0].baseArrayLayer === 0 && views[0].baseMip === 0 && views[0].mipCount === 1,
-                        'BrowserSmoke.SkyCubeStorage: the sky must retain its real six-face half-float cube and view.');
+                            textures[0].width === storage.extent && textures[0].height === storage.extent &&
+                            textures[0].format === storage.format && textures[0].arrayLayerCount === 6 &&
+                            textures[0].mipLevelCount === storage.mipLevels && textures[0].sampleCount === 1 &&
+                            views[0].format === storage.format && views[0].arrayLayerCount === 6 &&
+                            views[0].baseArrayLayer === 0 && views[0].baseMip === 0 && views[0].mipCount === storage.mipLevels,
+                        'BrowserSmoke.SkyCubeStorage: the sky must retain its authored six-face cube format, extent, mip chain, and view.');
                         const currentCube = JSON.stringify({ textures, views });
                         if (cubeResources !== undefined)
                             assert(currentCube === cubeResources, 'BrowserSmoke.SkyCubeRetention: camera, intensity, or resize replaced the cube.');

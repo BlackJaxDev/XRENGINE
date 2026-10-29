@@ -74,6 +74,17 @@ camera rays and cube coordinates. It checks the actual six-layer texture and
 cube view, retained program and texture ownership, and bounded resources.
 Filtered seams, mip chains, sRGB cubes, and other projections remain separate.
 
+The `engine-sky-cubemap-filtered` check uses the same cube artifact with three
+authored sRGB mip levels from 4x4 to 1x1. It samples all six face interiors and
+all twelve two-face edges at the first two levels, then selects a uniform final
+mip. Independent camera rays and decoded face colors predict edge interpolation.
+Authored rotation, HDR intensity, translation, resize, and restart produce 86
+samples over two sessions. The texture, cube view, and native programs must stay
+fixed. An LOD change may replace only the selected sky's managed pipeline handle.
+The camera excludes the foreground in this profile. Three-face corner weights,
+implicit/fractional LOD, automatic mip generation, and imported-image quality
+remain separate. The manual page selects this fixture with `probe=sky-cube-filtered`.
+
 The `engine-sky-equirectangular` and `engine-sky-octahedral` checks use asymmetric
 RGBA16F images through the corresponding cooked sky shaders. Their independent
 coordinate references cover longitude/latitude, the octahedral lower-hemisphere
@@ -267,7 +278,7 @@ Cook `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json`,
 `engine-debug-point.recipe.json`, `engine-debug-line.recipe.json`,
 `engine-debug-triangle.recipe.json`, `engine-skybox-gradient.recipe.json`,
 `engine-skybox-cubemap.recipe.json`, `engine-skybox-equirectangular.recipe.json`,
-and `engine-skybox-octahedral.recipe.json`
+`engine-skybox-octahedral.recipe.json`, and `engine-skybox-dynamic-procedural.recipe.json`
 with `Tools/ShaderCooker`; supply the directory
 containing its schema 3 `manifest.json`, hashed descriptors, and hashed WGSL. The
 shader artifacts are explicit runtime inputs to the smoke, not dependencies on

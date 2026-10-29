@@ -382,6 +382,33 @@ across octahedral seams, cube filtering/mip/color-space cases, imported asset
 quality, serialization, hardware, desktop parity, and integrated cooking remain
 open. Other procedural and full shader requirements remain open.
 
+### Filtered sRGB cubemap — 2026-10-29
+
+The real cube sky profile supplies six sRGB faces with three authored mip levels.
+It checks all six face interiors and all twelve two-face edges at levels zero
+and one, plus uniform final-mip selection, HDR intensity, authored rotation,
+translation, resize, restoration, and two device sessions. The independent
+reference decodes each face before interpolation and excludes three-face
+corners. Source alpha does not affect opaque sky alpha.
+
+All 86 targeted samples pass with the existing HDR and canvas tolerances.
+Each settled sample has 30 live resources and zero retiring resources. Cube
+storage, the sampled cube view, and all native programs remain fixed. Sampler
+changes may replace only the selected sky's managed pipeline handle. The
+[filtered cube record](../../investigations/rendering/archive/2026-10-29-filtered-cubemap-qualification.md)
+records the exact reference and coverage boundaries.
+
+All 24 build and publication gates pass with zero compiler warnings/errors.
+Fresh cooking packages 57 shaders and 112 assets; metadata and bundle checks pass.
+The final native-WASM bundle passes all 22 selected checks on explicit
+SwiftShader WebGPU: 296 sky samples and 24 indirect lifecycle/resize stages
+retain the existing strict ownership checks. Bare-host shipping autostart,
+the optional published game, and the separate Jolt spike are skipped explicitly.
+
+Three-face corner weights, implicit/fractional LOD, mip generation, anisotropy,
+imported images, serialization, hardware, desktop parity, and integrated cooking
+remain open. Other procedural and full shader requirements remain open.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

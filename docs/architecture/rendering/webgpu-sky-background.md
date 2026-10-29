@@ -128,8 +128,16 @@ selected draw's managed pipeline handle. See the
 [filtered image record](../../work/investigations/rendering/archive/2026-10-29-filtered-sky-image-qualification.md)
 for the authored-image and mip-selection boundaries.
 
+The `engine-sky-cubemap-filtered` profile checks six sRGB faces, all twelve
+two-face edges at two mip levels, and selection of a uniform final mip. The
+reference decodes face colors before edge interpolation. Cube storage, the
+sampled cube view, and native programs remain fixed across sampler changes,
+camera changes, intensity, resize, and restart. The
+[filtered cube record](../../work/investigations/rendering/archive/2026-10-29-filtered-cubemap-qualification.md)
+separates two-face blending from corner weights and imported-image quality.
+
 Known-value GPU acceptance remains open for implicit and fractional LOD,
 automatic mip generation, anisotropy, filtering across octahedral seams,
-filtered cube edges and cube mip/color-space cases, sky bloom, sorted transparency over sky, procedural
+three-face cube corner filtering, sky bloom, sorted transparency over sky, procedural
 clouds, stars, moon-disc shading, automatic cycling, retained sun/moon/ambient
 behavior, and hardware devices.

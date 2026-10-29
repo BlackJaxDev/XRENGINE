@@ -112,3 +112,7 @@ current owner below explicitly adopts it.
 - [Filtered sRGB sky image qualification](2026-10-29-filtered-sky-image-qualification.md)
   records bilinear decoding, repeat/clamp sampling, and authored mip selection.
   Current limits are in [platform validation](../../../testing/platform/platform-validation.md#filtered-srgb-sky-images--2026-10-29).
+
+- [Filtered sRGB cubemap qualification](2026-10-29-filtered-cubemap-qualification.md)
+  records authored cube mip selection and all twelve two-face edges.
+  Current limits are in [platform validation](../../../testing/platform/platform-validation.md#filtered-srgb-cubemap--2026-10-29).

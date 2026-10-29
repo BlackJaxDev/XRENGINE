@@ -101,6 +101,13 @@ public static partial class EngineMeshDiagnosticExports
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
             null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.Cubemap);
 
+    /// <summary>Starts an sRGB cube sky with authored mip levels through the shared pipeline.</summary>
+    [JSExport]
+    public static Task<int> CreateSkyFilteredCubemapAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
+            null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.FilteredCubemap);
+
     /// <summary>Starts an authored sky image through the shared HDR pipeline.</summary>
     [JSExport]
     public static Task<int> CreateSkyImageAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
@@ -266,7 +273,7 @@ public static partial class EngineMeshDiagnosticExports
                     {
                         EngineSkyDiagnosticProfile.Gradient => EngineMaterialSemanticIdentity.SkyboxGradientV1,
                         EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun => EngineMaterialSemanticIdentity.SkyboxDynamicProceduralV1,
-                        EngineSkyDiagnosticProfile.Cubemap => EngineMaterialSemanticIdentity.SkyboxCubemapV1,
+                        EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap => EngineMaterialSemanticIdentity.SkyboxCubemapV1,
                         EngineSkyDiagnosticProfile.Equirectangular or EngineSkyDiagnosticProfile.FilteredEquirectangular => EngineMaterialSemanticIdentity.SkyboxEquirectangularV1,
                         EngineSkyDiagnosticProfile.Octahedral or EngineSkyDiagnosticProfile.FilteredOctahedral => EngineMaterialSemanticIdentity.SkyboxOctahedralV1,
                         _ => throw new ArgumentOutOfRangeException(nameof(skyProfile)),
