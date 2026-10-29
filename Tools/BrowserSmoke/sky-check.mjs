@@ -51,7 +51,7 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
             assert(baseline.resources.live <= initialLive, 'BrowserSmoke.SkyRestartRetention: a new device session retained old resources.');
             const schedule = [...names.map((_, sampleCase) => ({ sampleCase, width: 512, height: 512 })),
                 { sampleCase: names.length - 1, width: 640, height: 384 }, { sampleCase: names.length - 1, width: 512, height: 512 }];
-            let previousWidth = 512, previousHeight = 512, programs, previousCase, nativePrograms, cubeResources;
+            let previousWidth = 512, previousHeight = 512, programs, previousCase, nativePrograms, cubeResources, imageResource;
             for (const { sampleCase, width, height } of schedule) {
                 const resize = width !== previousWidth || height !== previousHeight;
                 await page.evaluate(({ sampleCase, width, height, resize }) => {
@@ -82,6 +82,17 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                         if (cubeResources !== undefined)
                             assert(currentCube === cubeResources, 'BrowserSmoke.SkyCubeRetention: camera, intensity, or resize replaced the cube.');
                         cubeResources = currentCube;
+                    }
+                    if (profile.imageExtent) {
+                        const images = state.skyImages;
+                        assert(images.length === 1 && images[0].width === profile.imageExtent[0] &&
+                            images[0].height === profile.imageExtent[1] && images[0].format === 'rgba16float' &&
+                            images[0].arrayLayerCount === 1 && images[0].mipLevelCount === 1 && images[0].sampleCount === 1,
+                        'BrowserSmoke.SkyImageStorage: expected the authored single-layer half-float image.');
+                        const currentImage = JSON.stringify(images);
+                        if (imageResource !== undefined)
+                            assert(currentImage === imageResource, 'BrowserSmoke.SkyImageRetention: camera, intensity, or resize replaced the image.');
+                        imageResource = currentImage;
                     }
                     const currentPrograms = JSON.stringify({ shaders: state.shaders, pipelines: state.pipelines });
                     // Mode changes replace the material. Resize can replace managed

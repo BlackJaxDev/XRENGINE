@@ -13,7 +13,7 @@ export function inspectIndirectCacheOwnership(stage) {
         stage.profile === 'gpu-indirect-x4' ? 12 : 10;
     require(inventory && cache && inventory.owner === cache.owner && inventory.owner === stage.pause.session &&
         inventory.generation === cache.outputGeneration && cache.frameSequence === state.submittedFrame.sequence &&
-        cache.slotCapacity === 3 && cache.sourceCapacity === 256 && cache.drawCapacity === 256 &&
+        cache.pipelinePreparationSettled === true && cache.slotCapacity === 3 && cache.sourceCapacity === 256 && cache.drawCapacity === 256 &&
         cache.slots.length === 3 && cache.slots.some(slot => slot.selections.length === sources &&
             slot.works.length === sources), 'missing or mismatched accepted-frame owner map');
     const nodes = new Map(inventory.resources.map(node => [node.handle, node]));

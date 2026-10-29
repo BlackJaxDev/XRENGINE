@@ -74,6 +74,22 @@ camera rays and cube coordinates. It checks the actual six-layer texture and
 cube view, retained program and texture ownership, and bounded resources.
 Filtered seams, mip chains, sRGB cubes, and other projections remain separate.
 
+The `engine-sky-equirectangular` and `engine-sky-octahedral` checks use asymmetric
+RGBA16F images through the corresponding cooked sky shaders. Their independent
+coordinate references cover longitude/latitude, the octahedral lower-hemisphere
+fold, all six camera directions, translation, authored rotation, HDR intensity,
+and foreground depth. Each profile runs 24 samples across two sessions and
+non-square resize with restoration. Actual texture format, extent, layer/mip
+counts, retained texture handles, native programs, and resources are checked.
+These nearest-sampling profiles do not qualify filtered seams, mip chains,
+sRGB image decoding, or procedural sky behavior.
+
+Unlit sampling also waits for every retained indexed draw to finish pipeline
+preparation. A browser pipeline handle can exist before its managed acceptance
+continuation runs. The diagnostic pause keeps frames progressing until that
+handoff is complete, then the existing ownership check requires exact owners
+for all resources. Pending preparation is not an exception to that check.
+
 The `engine-unlit-materials` check starts a separate nine-tile board through the
 packaged material and pipeline catalogs. Factory-created V1 color, V2 linear and
 sRGB texture, V3 forced-opaque texture, V4 cutoff-boundary texture, and V5
@@ -249,8 +265,9 @@ Cook `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json`,
 `engine-standard-lit-color-directional-shadow.recipe.json`,
 `engine-shadow-depth.recipe.json`, `engine-tonemap.recipe.json`,
 `engine-debug-point.recipe.json`, `engine-debug-line.recipe.json`,
-`engine-debug-triangle.recipe.json`, `engine-skybox-gradient.recipe.json`, and
-`engine-skybox-cubemap.recipe.json`
+`engine-debug-triangle.recipe.json`, `engine-skybox-gradient.recipe.json`,
+`engine-skybox-cubemap.recipe.json`, `engine-skybox-equirectangular.recipe.json`,
+and `engine-skybox-octahedral.recipe.json`
 with `Tools/ShaderCooker`; supply the directory
 containing its schema 3 `manifest.json`, hashed descriptors, and hashed WGSL. The
 shader artifacts are explicit runtime inputs to the smoke, not dependencies on

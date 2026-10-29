@@ -87,6 +87,18 @@ public static partial class EngineMeshDiagnosticExports
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
             null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.Cubemap);
 
+    /// <summary>Starts an authored HDR sky image through the shared pipeline.</summary>
+    [JSExport]
+    public static Task<int> CreateSkyImageAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl, string projection)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
+            null, null, null, sky: true, skyProfile: projection switch
+            {
+                "equirectangular" => EngineSkyDiagnosticProfile.Equirectangular,
+                "octahedral" => EngineSkyDiagnosticProfile.Octahedral,
+                _ => throw new ArgumentException("Select an admitted sky image projection.", nameof(projection)),
+            });
+
     [JSExport]
     public static Task<int> CreateShadowAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
         string tonemapDescriptorJson, string tonemapWgsl, string shadowDepthDescriptorJson, string shadowDepthWgsl)
@@ -234,7 +246,14 @@ public static partial class EngineMeshDiagnosticExports
                     packagedTonemap.Identity != tonemap!.Identity)
                     throw new InvalidDataException("EngineMeshDiagnostic.EffectCatalogMismatch: the verified package must own the selected material and tonemap identities.");
                 if (sky && !variants.TryResolve(new EngineMaterialVariantKey(
-                    skyProfile == EngineSkyDiagnosticProfile.Cubemap ? EngineMaterialSemanticIdentity.SkyboxCubemapV1 : EngineMaterialSemanticIdentity.SkyboxGradientV1,
+                    skyProfile switch
+                    {
+                        EngineSkyDiagnosticProfile.Gradient => EngineMaterialSemanticIdentity.SkyboxGradientV1,
+                        EngineSkyDiagnosticProfile.Cubemap => EngineMaterialSemanticIdentity.SkyboxCubemapV1,
+                        EngineSkyDiagnosticProfile.Equirectangular => EngineMaterialSemanticIdentity.SkyboxEquirectangularV1,
+                        EngineSkyDiagnosticProfile.Octahedral => EngineMaterialSemanticIdentity.SkyboxOctahedralV1,
+                        _ => throw new ArgumentOutOfRangeException(nameof(skyProfile)),
+                    },
                     ShaderCompileTarget.WebGPUWgsl, "background", "fullscreen-sky-v1", "linear-hdr-v1"), out _))
                     throw new InvalidDataException("EngineMeshDiagnostic.SkyVariantMissing: the package must contain the selected sky artifact.");
                 if (effects)
@@ -439,6 +458,15 @@ public static partial class EngineMeshDiagnosticExports
     {
         RequireSession(session);
         (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).SetUnlitCase(sampleCase);
+    }
+
+    /// <summary>Rejects sampling while retained indexed draws await pipeline acceptance.</summary>
+    [JSExport]
+    public static bool IsUnlitCachePreparationSettled(int session)
+    {
+        RequireSession(session);
+        return (_renderer ?? throw new InvalidOperationException("EngineMeshDiagnostic.RendererRequired."))
+            .IsAuthoredIndexedCachePreparationSettled();
     }
 
     [JSExport]

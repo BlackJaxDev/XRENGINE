@@ -94,6 +94,13 @@ intensity, foreground depth, restart, and resize use the same retained scene.
 The [cubemap qualification record](../../work/investigations/rendering/archive/2026-10-29-cubemap-sky-qualification.md)
 records the raw half-float and nearest-sampling boundary.
 
-Known-value GPU acceptance remains open for filtered cube seams and mip chains,
-sRGB cube decoding, panorama/octahedral mapping, sky bloom, sorted transparency over sky, procedural
+`engine-sky-equirectangular` and `engine-sky-octahedral` check asymmetric HDR
+images through the real component and shared pipeline. Their coordinate
+references cover longitude/latitude and the lower-hemisphere octahedral fold,
+plus camera changes, authored rotation, HDR output, foreground depth, resize,
+and restart. The [image projection record](../../work/investigations/rendering/archive/2026-10-29-sky-image-projection-qualification.md)
+separates nearest-texel mapping from seam and pole filtering.
+
+Known-value GPU acceptance remains open for filtered seams and poles, mip chains,
+sRGB sky image decoding, sky bloom, sorted transparency over sky, procedural
 day/night controls, retained sun/moon/ambient behavior, and hardware devices.

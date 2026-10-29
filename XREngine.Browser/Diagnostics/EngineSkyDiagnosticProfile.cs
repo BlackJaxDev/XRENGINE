@@ -5,4 +5,6 @@ internal enum EngineSkyDiagnosticProfile
 {
     Gradient,
     Cubemap,
+    Equirectangular,
+    Octahedral,
 }

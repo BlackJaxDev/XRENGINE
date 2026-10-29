@@ -26,6 +26,18 @@ internal sealed class WebGpuAuthoredIndexedFrameSlot(WebGpuRendererHost renderer
     internal GPUScene? Scene { get; private set; }
     internal GpuMeshSubmissionPublication Publication => _lease.Publication;
 
+    /// <summary>Requires every retained draw to accept its asynchronous pipeline before sampling.</summary>
+    internal bool ArePipelinePreparationsSettled
+    {
+        get
+        {
+            for (int i = 0; i < _indirectWork.Count; i++)
+                if (!_indirectWork[i].IsPipelinePreparationSettled)
+                    return false;
+            return true;
+        }
+    }
+
     /// <summary>Appends retained indexed owners for an explicit between-frame diagnostic capture.</summary>
     internal void AppendCacheDiagnostics(StringBuilder output, int slot)
     {

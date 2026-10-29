@@ -232,9 +232,9 @@ bundle passes required-page, desktop-dependency exclusion, native-WASM, Jolt
 notice and pin, and browser restore-graph checks.
 
 This covers single-sample gradient and solid sky output on a software adapter.
-Other projections, procedural controls, sky bloom, transparency over sky,
-authored world serialization, desktop parity, and hardware acceptance remain
-open. It does not close the whole shader requirement.
+Cube and image-projection results follow below. Procedural controls, sky bloom,
+transparency over sky, authored world serialization, desktop parity, and hardware
+acceptance remain open. It does not close the whole shader requirement.
 
 ### HDR cubemap sky — 2026-10-29
 
@@ -259,9 +259,41 @@ and browser restore-graph checks.
 The [qualification record](../../investigations/rendering/archive/2026-10-29-cubemap-sky-qualification.md)
 records pixel checks, resource ownership, and the corrected placeholder count.
 This is single-mip, nearest-filtered, single-sample software coverage.
-Filtered seams, mip chains, sRGB cubes, other projections, procedural controls,
-sky bloom, transparency, world serialization, hardware, and desktop parity
-remain unqualified.
+Equirectangular and octahedral results follow below. Filtered seams, mip chains,
+sRGB cubes, procedural controls, sky bloom, transparency, world serialization,
+hardware, and desktop parity remain unqualified.
+
+### HDR sky image projections — 2026-10-29
+
+The equirectangular and octahedral BrowserSmoke profiles use the real sky
+component, cooked shaders, and asymmetric RGBA16F images through the shared
+default pipeline. Each first live run renders all six camera directions,
+translation, authored rotation, doubled intensity, and restoration. HDR reads
+retain authored image values and opaque sky alpha. Forward and pole-facing
+captures were viewed for both projections, including non-square resize.
+Both targeted and final full runs pass 24 samples for each projection over two sessions.
+Each settled sample has 72 live resources and zero retiring resources. Resize
+preserves the authored texture handle and native shader/pipeline objects.
+
+The initial full run exposed an indirect ownership sampling window during
+asynchronous pipeline acceptance. The diagnostic now waits for retained draw
+preparation before pausing, while keeping every ownership assertion. A probe
+with 31 delayed real pipeline handoffs reports pending preparation, then passes
+six settled resize/restart stages. The
+[image projection record](../../investigations/rendering/archive/2026-10-29-sky-image-projection-qualification.md)
+records the failure, baseline check, correction, and validation.
+
+The final full run passes all 17 selected checks and 90 total sky samples.
+All 24 indirect lifecycle/resize stages pass with settled preparation and strict
+ownership. Bare-host shipping autostart, the optional published game, and the
+separate Jolt spike are skipped. All 24 build and publish gates pass again after
+the correction: four desktop builds, 19 portable builds, and native-WASM
+publication. Builds report zero warnings and errors. Fresh cooking packages
+57 shaders and 112 assets. Separate bundle checks pass.
+
+This is nearest-filtered, single-mip, single-sample software coverage. Filtered seams
+and poles, mip chains, sRGB images, procedural sky, bloom, transparency,
+world serialization, hardware, and desktop parity remain unqualified.
 
 ### Requirement states
 

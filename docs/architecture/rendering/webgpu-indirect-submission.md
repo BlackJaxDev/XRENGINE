@@ -191,3 +191,19 @@ The October 3 reconstructed source passed fresh combined builds before its
 publication. Build/cook results establish source integration; browser execution,
 numeric deformation comparisons and completion/recovery behavior have separate
 acceptance records.
+
+## Diagnostic sampling boundary
+
+The unlit qualification pauses only after a successful submitted frame, drained
+retired resources, and completed pipeline preparation for every retained indexed
+draw. `IsAuthoredIndexedCachePreparationSettled` checks the draw readiness state
+without allocation or changes to renderer scheduling. Preparation faults still
+propagate. The diagnostic frame pump continues while preparation is pending and
+keeps its existing bounded pause deadline.
+
+This boundary matters because JavaScript can publish a physical pipeline handle
+before the managed async continuation accepts it into its draw. The ownership
+snapshot records `pipelinePreparationSettled`; qualification requires it to be
+true and still checks every physical resource against its exact managed owner.
+No unowned pipeline is accepted by label or by a presumed pending state. Partial
+buffer caches retain their separate exact-request ownership checks.

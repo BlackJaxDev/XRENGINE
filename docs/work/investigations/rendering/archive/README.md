@@ -96,3 +96,7 @@ current owner below explicitly adopts it.
 - [HDR cubemap sky qualification](2026-10-29-cubemap-sky-qualification.md)
   records six-face orientation and half-float rendering. Current acceptance
   limits are in [platform validation](../../../testing/platform/platform-validation.md#hdr-cubemap-sky--2026-10-29).
+
+- [HDR sky image projection qualification](2026-10-29-sky-image-projection-qualification.md)
+  records equirectangular and octahedral coordinate sampling. Current limits are
+  in [platform validation](../../../testing/platform/platform-validation.md#hdr-sky-image-projections--2026-10-29).
