@@ -16,9 +16,10 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces its older run. Push and manual runs finish in order.
 concurrency:
   group: portable-browser-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
@@ -260,11 +261,13 @@ jobs:
         uses: actions/checkout@v7
 
       # global.json pins a workload version, so every build needs the installed workload set.
+      # This job runs before the publish jobs, so it is the one job that saves the .NET cache.
       - name: Prepare the Windows Editor CLI toolchain
         uses: ./.github/actions/prepare-windows-editor
         with:
           browser-physics: 'false'
           build-editor: 'false'
+          save-dotnet-cache: 'true'
 
       - name: Cook the shared browser shader catalog
         shell: pwsh
