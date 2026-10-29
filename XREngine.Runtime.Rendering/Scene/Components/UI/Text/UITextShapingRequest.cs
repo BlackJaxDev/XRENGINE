@@ -7,6 +7,12 @@ public sealed class UITextShapingRequest
 {
     public UITextShapingRequest(string text, UIFontFaceSnapshot face, string language,
         UITextDirection direction, IEnumerable<string>? features = null)
+        : this(text, face, language, direction, features, null)
+    {
+    }
+
+    internal UITextShapingRequest(string text, UIFontFaceSnapshot face, string language,
+        UITextDirection direction, IEnumerable<string>? features, UITextParagraphAnalysis? paragraphAnalysis)
     {
         Text = text ?? throw new ArgumentNullException(nameof(text));
         Face = face ?? throw new ArgumentNullException(nameof(face));
@@ -15,6 +21,9 @@ public sealed class UITextShapingRequest
         if (!Enum.IsDefined(direction))
             throw new ArgumentOutOfRangeException(nameof(direction));
         Direction = direction;
+        if (paragraphAnalysis is not null && paragraphAnalysis.Breakpoints.Length != text.Length)
+            throw new ArgumentException("Paragraph analysis must cover the captured text.", nameof(paragraphAnalysis));
+        ParagraphAnalysis = paragraphAnalysis;
         ImmutableArray<string>.Builder builder = ImmutableArray.CreateBuilder<string>();
         if (features is not null)
             foreach (string feature in features)
@@ -31,4 +40,6 @@ public sealed class UITextShapingRequest
     public string Language { get; }
     public UITextDirection Direction { get; }
     public ImmutableArray<string> Features { get; }
+    /// <summary>Owned Windows paragraph values captured with this exact text, when available.</summary>
+    public UITextParagraphAnalysis? ParagraphAnalysis { get; }
 }

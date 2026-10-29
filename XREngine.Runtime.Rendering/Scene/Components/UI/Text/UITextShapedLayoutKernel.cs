@@ -18,10 +18,25 @@ internal static class UITextShapedLayoutKernel
     {
         UITextShapedRunInput run = input.ShapedRun ??
             throw new ArgumentException("A shaped run is required.", nameof(input));
-        if (input.Wrap != FontGlyphSet.EWrapMode.None || HasLineBreak(input.Text))
-            throw new NotSupportedException("UI.ShapedLineAnalysisUnavailable: wrapped and multiline shaping require line analysis.");
+        if (!string.Equals(run.SourceText, input.Text, StringComparison.Ordinal))
+            throw new InvalidOperationException("UI.ShapedSourceMismatch: glyphs do not match the placed text.");
+        if (input.Wrap != FontGlyphSet.EWrapMode.None)
+            throw new NotSupportedException("UI.ShapedLineAnalysisUnavailable: width wrapping requires measured line analysis.");
+        if (HasLineBreak(input.Text))
+            return UITextShapedHardLineLayoutKernel.Measure(input, availableSize);
         if (input.EmSize <= 0.0f || input.AtlasSize.X <= 0.0f || input.AtlasSize.Y <= 0.0f)
             throw new InvalidOperationException("UI.ShapedFontMetricsInvalid: the atlas or em size is empty.");
+
+        if (run.ParagraphAnalysis is { } paragraph)
+        {
+            if (paragraph.Breakpoints.Length != input.Text.Length)
+                throw new InvalidOperationException("UI.ShapedParagraphMismatch: analysis does not cover the placed text.");
+            int expectedParity = run.Direction == UITextDirection.RightToLeft ? 1 : 0;
+            foreach (UITextParagraphRun range in paragraph.Runs.Span)
+                if ((range.ResolvedBidiLevel & 1) != expectedParity)
+                    throw new NotSupportedException(
+                        "UI.BidiAnalysisUnavailable: resolved direction runs require paragraph placement.");
+        }
 
         float scale = (input.FontSize ?? 1.0f) / input.EmSize;
         UITextLayoutGlyph[] placed = new UITextLayoutGlyph[run.Glyphs.Length];
@@ -31,6 +46,8 @@ internal static class UITextShapedLayoutKernel
         float minY = float.PositiveInfinity;
         float maxY = float.NegativeInfinity;
         bool rtl = run.Direction == UITextDirection.RightToLeft;
+        bool hasParagraphAnalysis = run.ParagraphAnalysis is not null;
+        int nextClusterBoundary = rtl ? input.Text.Length : 0;
         for (int i = 0; i < run.Glyphs.Length;)
         {
             UITextShapedGlyph first = run.Glyphs[i];
@@ -38,6 +55,10 @@ internal static class UITextShapedLayoutKernel
             int end = checked(start + first.ClusterLength);
             if (start < 0 || end > input.Text.Length || end <= start)
                 throw new InvalidOperationException("UI.ShapedClusterInvalid: a glyph has no source cluster.");
+            if (hasParagraphAnalysis && (rtl ? end : start) != nextClusterBoundary)
+                throw new NotSupportedException(
+                    "UI.ShapedClusterOrderUnsupported: caret clusters must follow one visual direction.");
+            nextClusterBoundary = rtl ? start : end;
             AddCaret(rtl ? end : start, rtl ? UITextCaretAffinity.Upstream : UITextCaretAffinity.Downstream);
             do
             {
@@ -64,6 +85,10 @@ internal static class UITextShapedLayoutKernel
             if (i < run.Glyphs.Length)
                 x += input.Spacing * scale;
         }
+        if (hasParagraphAnalysis && run.Glyphs.Length > 0 &&
+            nextClusterBoundary != (rtl ? 0 : input.Text.Length))
+            throw new NotSupportedException(
+                "UI.ShapedClusterOrderUnsupported: caret clusters do not cover the text.");
         if (carets.Count == 0)
             AddCaret(0, UITextCaretAffinity.Downstream);
 

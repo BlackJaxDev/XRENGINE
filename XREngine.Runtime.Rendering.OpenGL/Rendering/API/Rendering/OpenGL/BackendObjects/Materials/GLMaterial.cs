@@ -48,22 +48,11 @@ namespace XREngine.Rendering.OpenGL
 
             protected override void LinkData()
             {
-                //foreach (var tex in Data.Textures)
-                //    if (Renderer.TryGetAPIRenderObject(tex, out var apiObj))
-                //        apiObj?.Generate();
-
-                Data.Textures.PostAnythingAdded += TextureAdded;
-                Data.Textures.PostAnythingRemoved += TextureRemoved;
             }
 
             protected override void UnlinkData()
             {
-                foreach (var tex in Data.Textures)
-                    if (tex is not null && Renderer.TryGetAPIRenderObject(tex, out var apiObj))
-                        apiObj?.Destroy();
-                
-                Data.Textures.PostAnythingAdded -= TextureAdded;
-                Data.Textures.PostAnythingRemoved -= TextureRemoved;
+                // Materials borrow textures. Only the texture owner can retire their native storage.
                 _separableProgramData = null;
                 InvalidateProgramBindingCaches();
             }
@@ -78,17 +67,6 @@ namespace XREngine.Rendering.OpenGL
                 _shadowBindingProgramBindingId = uint.MaxValue;
                 _shadowBindingSourceLayoutVersion = ulong.MaxValue;
                 _shadowBindingPlan = null;
-            }
-
-            private void TextureRemoved(XRTexture? tex)
-            {
-                if (tex is not null && Renderer.TryGetAPIRenderObject(tex, out var apiObj))
-                    apiObj?.Destroy();
-            }
-            
-            private void TextureAdded(XRTexture? tex)
-            {
-
             }
 
             public void SetUniforms(GLRenderProgram? materialProgram)

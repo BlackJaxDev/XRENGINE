@@ -26,6 +26,32 @@ namespace XREngine.Rendering.OpenGL
             public XRMeshRenderer MeshRenderer => Data.Parent;
             public XRMesh? Mesh => MeshRenderer.Mesh;
 
+            internal override bool IsGenerationOwnerLive
+            {
+                get
+                {
+                    XRMeshRenderer.BaseVersion data = Data;
+                    XRMeshRenderer? parent = data?.Parent;
+                    return base.IsGenerationOwnerLive && parent is not null && !parent.IsDestroyed;
+                }
+            }
+
+            internal override bool IsGenerationAttemptReady => TryGetGenerationMaterial(out _);
+
+            internal bool TryGetGenerationMaterial(out XRMaterial? material)
+            {
+                XRMeshRenderer.BaseVersion data = Data;
+                XRMeshRenderer? parent = data?.Parent;
+                material = parent?.Material;
+                if (!base.IsGenerationAttemptReady || parent is null
+                    || parent.IsDestroyed || parent.IsDestroyQueued)
+                    return false;
+                // Material can be replaced while the same parent/wrapper remains live.
+                // Use this captured reference for this readiness/preparation attempt.
+                return material is null || (!material.IsDestroyed && !material.IsDestroyQueued
+                    && material.IsApiWrapperPublicationReady);
+            }
+
             public override EGLObjectType Type => EGLObjectType.VertexArray;
 
             public delegate void DelSettingUniforms(GLRenderProgram vertexProgram, GLRenderProgram materialProgram);

@@ -184,6 +184,8 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public bool EnqueueGeneration(GLMeshRenderer renderer)
             {
+                if (!IsRendererAdmitted(renderer))
+                    return false;
                 if (renderer.IsPreparedForRendering || _pendingSet.ContainsKey(renderer))
                     return false;
 
@@ -257,6 +259,8 @@ namespace XREngine.Rendering.OpenGL
                     && _priorityQueue.TryDequeue(out var priorityRenderer))
                 {
                     _pendingSet.TryRemove(priorityRenderer, out _);
+                    if (!IsRendererAdmitted(priorityRenderer))
+                        continue;
 
                     if (!IsMaterialReadyForGeneration(priorityRenderer))
                     {
@@ -288,6 +292,8 @@ namespace XREngine.Rendering.OpenGL
                     && _normalQueue.TryDequeue(out var renderer))
                 {
                     _pendingSet.TryRemove(renderer, out _);
+                    if (!IsRendererAdmitted(renderer))
+                        continue;
 
                     // Defer renderers whose material's uber-variant preparation has not
                     // completed without consuming a per-frame slot. The synchronous
@@ -347,17 +353,40 @@ namespace XREngine.Rendering.OpenGL
             }
 
             /// <summary>
-            /// Forces all pending generations to complete immediately.
+            /// Attempts pending generations synchronously. Entries with pending lifecycle or material state
+            /// remain queued for a later attempt.
             /// </summary>
             public void FlushAll()
             {
+                List<GLMeshRenderer>? deferred = null;
                 while (_priorityQueue.TryDequeue(out var renderer))
                 {
                     _pendingSet.TryRemove(renderer, out _);
+                    if (!IsRendererAdmitted(renderer))
+                        continue;
+                    if (!renderer.IsGenerationAttemptReady)
+                    {
+                        (deferred ??= []).Add(renderer);
+                        continue;
+                    }
                     if (!renderer.IsPreparedForRendering && renderer.Data is not null)
                     {
                         try
                         {
+                            if (!renderer.IsGenerated)
+                                renderer.Generate();
+                            if (!IsRendererAdmitted(renderer))
+                                continue;
+                            if (!renderer.IsGenerationAttemptReady)
+                            {
+                                (deferred ??= []).Add(renderer);
+                                continue;
+                            }
+                            if (!renderer.IsGenerated)
+                            {
+                                _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
+                                continue;
+                            }
                             if (renderer.TryPrepareForRendering())
                                 _failureCount.TryRemove(renderer, out _);
                             else
@@ -374,10 +403,31 @@ namespace XREngine.Rendering.OpenGL
                 while (_normalQueue.TryDequeue(out var renderer))
                 {
                     _pendingSet.TryRemove(renderer, out _);
+                    if (!IsRendererAdmitted(renderer))
+                        continue;
+                    if (!renderer.IsGenerationAttemptReady)
+                    {
+                        (deferred ??= []).Add(renderer);
+                        continue;
+                    }
                     if (!renderer.IsPreparedForRendering && renderer.Data is not null)
                     {
                         try
                         {
+                            if (!renderer.IsGenerated)
+                                renderer.Generate();
+                            if (!IsRendererAdmitted(renderer))
+                                continue;
+                            if (!renderer.IsGenerationAttemptReady)
+                            {
+                                (deferred ??= []).Add(renderer);
+                                continue;
+                            }
+                            if (!renderer.IsGenerated)
+                            {
+                                _failureCount.AddOrUpdate(renderer, 1, (_, c) => c + 1);
+                                continue;
+                            }
                             if (renderer.TryPrepareForRendering())
                                 _failureCount.TryRemove(renderer, out _);
                             else
@@ -390,6 +440,8 @@ namespace XREngine.Rendering.OpenGL
                         }
                     }
                 }
+                if (deferred is not null)
+                    RequeueDeferred(deferred);
             }
 
             private void CountProcessResult(
@@ -418,6 +470,8 @@ namespace XREngine.Rendering.OpenGL
                 for (int i = 0; i < deferred.Count; i++)
                 {
                     GLMeshRenderer renderer = deferred[i];
+                    if (!IsRendererAdmitted(renderer))
+                        continue;
                     if (renderer.IsPreparedForRendering)
                         continue;
 
@@ -434,11 +488,23 @@ namespace XREngine.Rendering.OpenGL
                 }
             }
 
+            private bool IsRendererAdmitted(GLMeshRenderer renderer)
+            {
+                bool admitted = ReferenceEquals(renderer.Owner, _renderer) && renderer.IsGenerationOwnerLive;
+                if (!admitted)
+                    _failureCount.TryRemove(renderer, out _);
+                return admitted;
+            }
+
             private static bool UsesPriorityGenerationQueue(GLMeshRenderer renderer)
                 => renderer.MeshRenderer.GenerationPriority != EMeshGenerationPriority.Normal;
 
             private QueueProcessResult ProcessRenderer(GLMeshRenderer renderer)
             {
+                if (!IsRendererAdmitted(renderer))
+                    return QueueProcessResult.NoWork;
+                if (!renderer.IsGenerationAttemptReady)
+                    return QueueProcessResult.Pending;
                 if (renderer.IsPreparedForRendering)
                 {
                     _failureCount.TryRemove(renderer, out _);
@@ -467,6 +533,10 @@ namespace XREngine.Rendering.OpenGL
                         generateMs = ElapsedMilliseconds(generateStart);
                     }
 
+                    if (!IsRendererAdmitted(renderer))
+                        return QueueProcessResult.NoWork;
+                    if (!renderer.IsGenerationAttemptReady)
+                        return QueueProcessResult.Pending;
                     if (!renderer.IsGenerated)
                     {
                         double totalMs = ElapsedMilliseconds(processStart);
@@ -561,7 +631,8 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private static bool IsMaterialReadyForGeneration(GLMeshRenderer renderer)
             {
-                XRMaterial? material = renderer.MeshRenderer.Material;
+                if (!renderer.TryGetGenerationMaterial(out XRMaterial? material))
+                    return false;
                 return material is null || material.IsUberVariantReadyForRendering();
             }
 
@@ -570,7 +641,10 @@ namespace XREngine.Rendering.OpenGL
             /// one is not already in flight or complete. No-op for non-uber materials.
             /// </summary>
             private static void RequestMaterialPrepIfNeeded(GLMeshRenderer renderer)
-                => renderer.MeshRenderer.Material?.RequestUberVariantPreparationIfNeeded();
+            {
+                if (renderer.TryGetGenerationMaterial(out XRMaterial? material))
+                    material?.RequestUberVariantPreparationIfNeeded();
+            }
         }
 
         private GLMeshGenerationQueue? _meshGenerationQueue;

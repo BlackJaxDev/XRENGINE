@@ -11,7 +11,7 @@ using XREngine.Data.Transforms;
 
 namespace XREngine.Rendering
 {
-    public abstract class XRMaterialBase : GenericRenderObject
+    public abstract partial class XRMaterialBase : GenericRenderObject
     {
         private bool _materialTeardownRequested;
         protected void BeginMaterialTeardown() => _materialTeardownRequested = true;
@@ -202,6 +202,7 @@ namespace XREngine.Rendering
             get => _textures;
             set
             {
+                AdvanceTextureListWriteIntent();
                 ObjectDisposedException.ThrowIf(_materialTeardownRequested, this);
                 _textureSetterDepth++;
                 try { SetField(ref _textures, value ?? []); }

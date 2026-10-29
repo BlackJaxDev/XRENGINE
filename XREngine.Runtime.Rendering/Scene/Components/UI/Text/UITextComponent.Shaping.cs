@@ -47,11 +47,26 @@ public partial class UITextComponent
     }
 
     private UITextShapingRequest CaptureShapingRequest(string text, FontGlyphSet font,
-        string language, UITextDirection direction, string? featureSource)
+        string language, UITextDirection direction, string? featureSource,
+        IUITextWorkerShapingBackend backend)
     {
-        if (WrapMode != FontGlyphSet.EWrapMode.None || UITextShapedLayoutKernel.HasLineBreak(text))
-            throw new NotSupportedException("UI.ShapedLineAnalysisUnavailable: wrapped and multiline text require line analysis.");
+        bool hardLines = UITextShapedLayoutKernel.HasLineBreak(text);
+        if (WrapMode != FontGlyphSet.EWrapMode.None ||
+            hardLines && backend is not IUITextHardLineShapingBackend)
+            throw new NotSupportedException("UI.ShapedLineAnalysisUnavailable: this backend cannot place wrapped or hard-delimited text.");
         EnsureOneDirection(text, direction);
+        UITextParagraphAnalysis? paragraph = null;
+        if (UITextParagraphAnalyzerRegistry.Current is { } analyzer)
+        {
+            paragraph = analyzer.Analyze(text, language, direction);
+            int expectedParity = direction == UITextDirection.RightToLeft ? 1 : 0;
+            foreach (UITextParagraphRun run in paragraph.Runs.Span)
+                if ((run.ResolvedBidiLevel & 1) != expectedParity)
+                    throw new NotSupportedException(
+                        "UI.BidiAnalysisUnavailable: resolved direction runs require paragraph placement.");
+        }
+        if (hardLines && paragraph is null)
+            throw new NotSupportedException("UI.ShapedLineAnalysisUnavailable: hard lines require a registered paragraph analyzer.");
         if (featureSource is { Length: > 2048 })
             throw new NotSupportedException("UI.ShapingFeaturesExceeded: feature text exceeds 2048 characters.");
         int featureCount = 0;
@@ -74,7 +89,7 @@ public partial class UITextComponent
         }
         string[] features = string.IsNullOrWhiteSpace(featureSource) ? [] :
             featureSource.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return new UITextShapingRequest(text, GetRequiredShapingFace(font), language, direction, features);
+        return new UITextShapingRequest(text, GetRequiredShapingFace(font), language, direction, features, paragraph);
     }
 
     internal static void EnsureOneDirection(string text, UITextDirection direction)

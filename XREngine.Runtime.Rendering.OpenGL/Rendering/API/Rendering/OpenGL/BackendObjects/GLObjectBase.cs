@@ -35,6 +35,29 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public override bool IsGenerated => _bindingId.HasValue && _bindingId != InvalidBindingId;
 
+            internal virtual bool IsGenerationOwnerLive
+            {
+                get
+                {
+                    GenericRenderObject data = Data_Internal;
+                    return !IsRetired && Renderer.AcceptsBackendWork
+                        && OwnerGeneration == Renderer.BackendGeneration
+                        && data is not null && !data.IsDestroyed;
+                }
+            }
+
+            // Queued destruction can be vetoed. Construction can complete later.
+            // Neither state ends this wrapper's lifetime or consumes a retry.
+            internal virtual bool IsGenerationAttemptReady
+            {
+                get
+                {
+                    GenericRenderObject data = Data_Internal;
+                    return IsGenerationOwnerLive && !data.IsDestroyQueued
+                        && data.IsApiWrapperPublicationReady;
+                }
+            }
+
             internal uint? _bindingId;
             private long _nativeObjectIncarnation;
 
@@ -151,8 +174,14 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                // Queued work can outlive its owner or backend. Check on the render thread,
+                // including after cleanup callbacks, before allocating another native name.
+                if (!IsGenerationAttemptReady)
+                    return;
                 //Debug.Out($"Generating OpenGL object {Type}");
                 PreGenerated();
+                if (!IsGenerationAttemptReady)
+                    return;
                 _bindingId = CreateObject();
                 if (_bindingId is not null && _bindingId != InvalidBindingId)
                 {

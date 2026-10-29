@@ -583,41 +583,53 @@ public sealed class UIBatchCollectionTests
         {
             IsActiveSelf = false
         };
-        root.SetWorldContext(new XREngine.UnitTests.Physics.TestWorldContext());
+        XREngine.UnitTests.Physics.TestWorldContext context = new();
+        XREngine.Scene.VisualScene3D scene = new();
+        using RuntimeWorldRenderer world = new(context, scene);
+        root.SetWorldContext(context);
         XREngine.Components.UICanvasComponent canvas = root.AddComponent<XREngine.Components.UICanvasComponent>()!;
         XREngine.Scene.SceneNode parent = new(root) { Name = "Parent" };
         parent.SetTransform<UIBoundableTransform>();
         XREngine.Scene.SceneNode item = new(parent) { Name = "Item" };
         item.SetTransform<UIBoundableTransform>();
         UIMaterialComponent component = item.AddComponent<UIMaterialComponent>()!;
+        RenderInfo3D observed = component.RenderInfo3D;
+        IEnumerable<RenderInfo3D> ComponentEntries()
+            => scene.Renderables.Where(entry => ReferenceEquals(entry, observed));
         UICanvasTransform canvasTransform = (UICanvasTransform)root.Transform;
         UIBoundableTransform parentTransform = (UIBoundableTransform)parent.Transform;
-        RegistrationTargetProbe target = new();
         try
         {
             component.RenderInfo3D.IsVisible = true;
             component.RenderInfo3D.CastsShadows = true;
             root.IsActiveSelf = true;
-            component.RenderInfo3D.WorldInstance = target;
-            target.Entries.ShouldBeEmpty();
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldBeEmpty();
 
             canvasTransform.DrawSpace = ECanvasDrawSpace.World;
-            target.Entries.ShouldBeEmpty();
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldBeEmpty();
             canvas.PreferOffscreenRenderingForNonScreenSpaces = false;
-            target.Entries.ShouldContain(component.RenderInfo3D);
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldContain(component.RenderInfo3D);
 
             parentTransform.Visibility = EVisibility.Hidden;
-            target.Entries.ShouldBeEmpty();
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldBeEmpty();
             parentTransform.Visibility = EVisibility.Visible;
-            target.Entries.ShouldContain(component.RenderInfo3D);
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldContain(component.RenderInfo3D);
 
             canvas.IsActive = false;
-            target.Entries.ShouldBeEmpty();
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldBeEmpty();
             canvas.IsActive = true;
-            target.Entries.ShouldContain(component.RenderInfo3D);
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldContain(component.RenderInfo3D);
 
             component.IsActive = false;
-            target.Entries.ShouldBeEmpty();
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldBeEmpty();
             item.Transform.Parent = root.Transform;
             parentTransform.Visibility = EVisibility.Hidden;
             parentTransform.Visibility = EVisibility.Visible;
@@ -629,21 +641,26 @@ public sealed class UIBatchCollectionTests
             typeof(UIRenderableComponent).GetField("_worldCollectionCanvasNode",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(component).ShouldBeNull();
             component.IsActive = true;
-            target.Entries.ShouldContain(component.RenderInfo3D);
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldContain(component.RenderInfo3D);
 
             canvas.PreferOffscreenRenderingForNonScreenSpaces = true;
-            target.Entries.ShouldBeEmpty();
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldBeEmpty();
             canvasTransform.DrawSpace = ECanvasDrawSpace.Screen;
             canvas.PreferOffscreenRenderingForNonScreenSpaces = false;
-            target.Entries.ShouldBeEmpty();
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldBeEmpty();
 
             component.RenderInfo3D.IsVisible.ShouldBeTrue();
             component.RenderInfo3D.CastsShadows.ShouldBeTrue();
             canvasTransform.DrawSpace = ECanvasDrawSpace.World;
-            target.Entries.ShouldContain(component.RenderInfo3D);
+            scene.GlobalCollectVisible();
+            ComponentEntries().ShouldContain(component.RenderInfo3D);
         }
         finally { root.Destroy(true); }
-        target.Entries.ShouldBeEmpty();
+        scene.GlobalCollectVisible();
+        ComponentEntries().ShouldBeEmpty();
     }
 
     [Test]

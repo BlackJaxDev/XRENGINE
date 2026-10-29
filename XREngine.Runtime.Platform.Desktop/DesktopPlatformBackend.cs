@@ -6,6 +6,7 @@ using XREngine.Rendering;
 using XREngine.Runtime.Platform.Desktop.Windowing;
 using XREngine.Networking;
 using XREngine.Components;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Runtime.Platform.Desktop;
 
@@ -20,6 +21,8 @@ public static class DesktopPlatformBackend
 
     public static void Register()
     {
+        if (OperatingSystem.IsWindows())
+            UITextParagraphAnalyzerRegistry.Current ??= new WindowsDirectWriteParagraphAnalyzer();
         DesktopLoggingBackend.EnsureRegistered();
         DesktopWorkerBackend.EnsureRegistered();
         RuntimeWindowBackendRegistry.Install(new DesktopSilkWindowBackendFactory());

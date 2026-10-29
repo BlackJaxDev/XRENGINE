@@ -593,7 +593,7 @@ namespace XREngine.Rendering.UI
             if (shapedText && backend is null)
                 throw new NotSupportedException("UI.WorkerShapingBackendUnavailable: install a thread-safe shaping backend.");
             UITextShapingRequest? shapingRequest = shapedText ? CaptureShapingRequest(text, font,
-                language, direction, featureSource) : null;
+                language, direction, featureSource, backend!) : null;
             if (shapedText && (!ReferenceEquals(backendState, UITextShapingBackendRegistry.State) ||
                 !ReferenceEquals(font, _font) || (Text ?? string.Empty) != text ||
                 FontSize != fontSize || WrapMode != wrap || ShapeLanguage != language ||

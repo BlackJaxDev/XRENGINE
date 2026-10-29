@@ -55,6 +55,7 @@ namespace System.Collections.Generic
             get => _lock != null;
             set
             {
+                AdvanceMutationIntent();
                 if (_mutationAuthority is not null)
                 {
                     if (!value)
@@ -165,12 +166,12 @@ namespace System.Collections.Generic
         public bool AllowDuplicates
         {
             get => _allowDuplicates;
-            set => SetField(ref _allowDuplicates, value);
+            set { AdvanceMutationIntent(); SetField(ref _allowDuplicates, value); }
         }
         public bool AllowNull
         {
             get => _allowNull;
-            set => SetField(ref _allowNull, value);
+            set { AdvanceMutationIntent(); SetField(ref _allowNull, value); }
         }
 
         public EventList()
@@ -204,6 +205,7 @@ namespace System.Collections.Generic
         /// <param name="reportModified">If true, notifies subscribers that the list has changed.</param>
         public void Set(IEnumerable<T> items, bool reportRemoved = true, bool reportAdded = true, bool reportModified = true)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedSet(items, reportRemoved, reportAdded, reportModified); return; }
             Clear(reportRemoved, false);
             AddRange(items, reportAdded, reportModified);
@@ -212,6 +214,7 @@ namespace System.Collections.Generic
         public bool Add(T item) => Add(item, true, true);
         public bool Add(T item, bool reportAdded, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) return GuardedInsert(item, null, reportAdded, reportModified);
             if (!_allowNull && item == null)
                 return false;
@@ -296,6 +299,7 @@ namespace System.Collections.Generic
         public void AddRange(IEnumerable<T> collection) => AddRange(collection, true, true);
         public void AddRange(IEnumerable<T> collection, bool reportAddedRange, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedInsertRange(null, collection, reportAddedRange, reportModified); return; }
             if (collection is null)
                 return;
@@ -367,6 +371,7 @@ namespace System.Collections.Generic
         public bool Remove(T item) => Remove(item, true, true);
         public bool Remove(T item, bool reportRemoved, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) return GuardedRemove(item, null, reportRemoved, reportModified);
             if (!_updating)
             {
@@ -423,6 +428,7 @@ namespace System.Collections.Generic
         public void RemoveRange(int index, int count) => RemoveRange(index, count, true, true);
         public void RemoveRange(int index, int count, bool reportRemovedRange, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedRemoveRange(index, count, null, false, reportRemovedRange, reportModified); return; }
             List<IndexedItem> approvedRemovals = [];
             List<T> removedItems = [];
@@ -513,6 +519,7 @@ namespace System.Collections.Generic
         public void RemoveAt(int index) => RemoveAt(index, true, true);
         public void RemoveAt(int index, bool reportRemoved, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedRemove(default!, index, reportRemoved, reportModified); return; }
             T item = this[index];
 
@@ -564,6 +571,7 @@ namespace System.Collections.Generic
         public void Clear() => Clear(true, true);
         public void Clear(bool reportRemovedRange, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedRemoveRange(null, null, null, true, reportRemovedRange, reportModified); return; }
             List<IndexedItem> approvedRemovals = [];
             List<T> removedItems = [];
@@ -652,6 +660,7 @@ namespace System.Collections.Generic
         public void RemoveAll(Predicate<T> match) => RemoveAll(match, true, true);
         public void RemoveAll(Predicate<T> match, bool reportRemovedRange, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { ArgumentNullException.ThrowIfNull(match); GuardedRemoveRange(null, null, match, false, reportRemovedRange, reportModified); return; }
             List<IndexedItem> approvedRemovals = [];
             List<T> removedItems = [];
@@ -747,6 +756,7 @@ namespace System.Collections.Generic
         public void Insert(int index, T item) => Insert(index, item, true, true);
         public void Insert(int index, T item, bool reportInserted, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedInsert(item, index, reportInserted, reportModified); return; }
             if (!_allowNull && item == null)
                 return;
@@ -802,6 +812,7 @@ namespace System.Collections.Generic
         public void InsertRange(int index, IEnumerable<T> collection) => InsertRange(index, collection, true, true);
         public void InsertRange(int index, IEnumerable<T> collection, bool reportInsertedRange, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedInsertRange(index, collection, reportInsertedRange, reportModified); return; }
             if (collection is null)
                 return;
@@ -873,6 +884,7 @@ namespace System.Collections.Generic
         public void Reverse(int index, int count) => Reverse(index, count, true);
         public void Reverse(int index, int count, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedReorder(index, count, null, true, reportModified); return; }
             bool report = reportModified && !_updating;
             if (report)
@@ -901,6 +913,7 @@ namespace System.Collections.Generic
         public void Reverse() => Reverse(true);
         public void Reverse(bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedReorder(null, null, null, true, reportModified); return; }
             bool report = reportModified && !_updating;
             if (report)
@@ -929,6 +942,7 @@ namespace System.Collections.Generic
         public void Sort(int index, int count, IComparer<T> comparer) => Sort(index, count, comparer, true);
         public void Sort(int index, int count, IComparer<T> comparer, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedReorder(index, count, comparer, false, reportModified); return; }
             bool report = reportModified && !_updating;
             if (report)
@@ -957,6 +971,7 @@ namespace System.Collections.Generic
         public void Sort() => Sort(true);
         public void Sort(bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedReorder(null, null, null, false, reportModified); return; }
             bool report = reportModified && !_updating;
             if (report)
@@ -985,6 +1000,7 @@ namespace System.Collections.Generic
         public void Sort(IComparer<T> comparer) => Sort(comparer, true);
         public void Sort(IComparer<T> comparer, bool reportModified)
         {
+            AdvanceMutationIntent();
             if (_mutationAuthority is not null) { GuardedReorder(null, null, comparer, false, reportModified); return; }
             bool report = reportModified && !_updating;
             if (report)
@@ -1028,6 +1044,7 @@ namespace System.Collections.Generic
             }
             set
             {
+                AdvanceMutationIntent();
                 if (_mutationAuthority is not null) { GuardedSetIndex(index, value); return; }
                 if (!_allowNull && value == null)
                     return;
@@ -1098,7 +1115,7 @@ namespace System.Collections.Generic
         object? IList.this[int index]
         {
             get => this[index];
-            set => this[index] = CastObjectValue(value);
+            set { AdvanceMutationIntent(); this[index] = CastObjectValue(value); }
         }
 
         T IReadOnlyList<T>.this[int index]
@@ -1169,6 +1186,7 @@ namespace System.Collections.Generic
 
         public int Add(object? value)
         {
+            AdvanceMutationIntent();
             T item = CastObjectValue(value);
             if (!Add(item))
                 return -1;
@@ -1192,10 +1210,14 @@ namespace System.Collections.Generic
         }
 
         public void Insert(int index, object? value)
-            => Insert(index, CastObjectValue(value));
+        {
+            AdvanceMutationIntent();
+            Insert(index, CastObjectValue(value));
+        }
 
         public void Remove(object? value)
         {
+            AdvanceMutationIntent();
             if (value is null)
             {
                 if (default(T) is null)

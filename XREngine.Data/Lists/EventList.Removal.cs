@@ -12,6 +12,7 @@ public partial class EventList<T>
     /// </summary>
     public bool RemoveExactNonVetoable(T item)
     {
+        AdvanceMutationIntent();
         if (_mutationAuthority is not null)
             return GuardedRemove(item, null, reportRemoved: true, reportModified: true, nonVetoable: true);
         bool removed = false;

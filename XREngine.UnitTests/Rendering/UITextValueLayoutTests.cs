@@ -29,6 +29,132 @@ public sealed class UITextValueLayoutTests
         };
 
     [Test]
+    public void CollapsedMenuKeepsNestedTextOutOfRemeasureUntilItReopens()
+    {
+        FontGlyphSet font = CreateFont();
+        XREngine.Scene.SceneNode root = new("Menu layout canvas", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        UICanvasTransform canvas = (UICanvasTransform)root.Transform;
+        canvas.Width = 100;
+        canvas.Height = 40;
+        XREngine.Scene.SceneNode menuNode = new(root) { Name = "Menu" };
+        UIListTransform menu = menuNode.SetTransform<UIListTransform>();
+        menu.Width = 40;
+        menu.Height = 20;
+        XREngine.Scene.SceneNode labelNode = new(menuNode) { Name = "Menu label" };
+        labelNode.SetTransform<UIBoundableTransform>();
+        try
+        {
+            UITextComponent label = labelNode.AddComponent<UITextComponent>()!;
+            label.Font = font;
+            label.FontSize = 8;
+            label.Text = "AAAA";
+
+            List<UITransform> openTargets = [];
+            UILayoutSnapshot open = UILayoutSnapshot.Capture(canvas, openTargets);
+            UILayoutOutputPageView openOutput = UILayoutValueKernel.RunPaged(open, null, null);
+            openOutput[2].TextResult.ShouldNotBeNull();
+            openOutput[2].Visible.ShouldBeTrue();
+            UILayoutNodeOutput[] staleTextSize = openOutput.ToArray();
+            staleTextSize[2].RawSize.X += 100;
+            UILayoutOutputPageView previousOutput = UILayoutOutputPageView.CopyFrom(staleTextSize);
+
+            menu.Collapse();
+            List<UITransform> closedTargets = [];
+            UILayoutSnapshot closed = UILayoutSnapshot.CaptureIncremental(canvas,
+                open, openTargets, closedTargets,
+                [new UIElementChange(menu.ElementIdentity, canvas.ElementIdentity,
+                    UIChangeDomain.Measure | UIChangeDomain.Arrange)]);
+            UILayoutOutputPageView closedOutput = UILayoutValueKernel.RunPaged(closed, open, previousOutput);
+            closedOutput[1].Visible.ShouldBeFalse();
+            closedOutput[1].DesiredSize.ShouldBe(Vector2.Zero);
+            closedOutput[2].Visible.ShouldBeFalse();
+
+            menu.Show();
+            UILayoutSnapshot reopened = UILayoutSnapshot.CaptureIncremental(canvas,
+                closed, closedTargets, [],
+                [new UIElementChange(menu.ElementIdentity, canvas.ElementIdentity,
+                    UIChangeDomain.Measure | UIChangeDomain.Arrange)]);
+            UILayoutOutputPageView reopenedOutput = UILayoutValueKernel.RunPaged(reopened,
+                closed, closedOutput);
+            reopenedOutput[2].Visible.ShouldBeTrue();
+            reopenedOutput[2].TextResult.ShouldNotBeNull().Glyphs.Length.ShouldBe(4);
+        }
+        finally
+        {
+            root.Destroy(true);
+            font.Atlas?.Destroy(true);
+            font.Destroy(true);
+        }
+    }
+
+    [Test]
+    public void IncrementalTextCaptureCountsSharedFontMetricsOnce()
+    {
+        FontGlyphSet sharedFont = CreateFont();
+        FontGlyphSet otherFont = CreateFont();
+        XREngine.Scene.SceneNode root = new("Shared metrics canvas", new UICanvasTransform())
+        {
+            IsActiveSelf = false
+        };
+        UICanvasTransform canvas = (UICanvasTransform)root.Transform;
+        canvas.Width = 100;
+        canvas.Height = 40;
+        XREngine.Scene.SceneNode firstNode = new(root) { Name = "First" };
+        firstNode.SetTransform<UIBoundableTransform>();
+        XREngine.Scene.SceneNode secondNode = new(root) { Name = "Second" };
+        UIBoundableTransform secondBounds = secondNode.SetTransform<UIBoundableTransform>();
+        try
+        {
+            UITextComponent first = firstNode.AddComponent<UITextComponent>()!;
+            first.Font = sharedFont;
+            first.FontSize = 8;
+            first.Text = "A";
+            UITextComponent second = secondNode.AddComponent<UITextComponent>()!;
+            second.Font = sharedFont;
+            second.FontSize = 8;
+            second.Text = "A";
+
+            List<UITransform> sharedTargets = [];
+            UILayoutSnapshot shared = UILayoutSnapshot.Capture(canvas, sharedTargets);
+            ReferenceEquals(shared.Nodes[1].TextInput!.Runes,
+                shared.Nodes[2].TextInput!.Runes).ShouldBeTrue();
+            shared.Nodes[1].TextInput!.Runes.Count.ShouldBeGreaterThan(0);
+
+            second.Font = otherFont;
+            List<UITransform> separateTargets = [];
+            UILayoutSnapshot separate = UILayoutSnapshot.CaptureIncremental(canvas,
+                shared, sharedTargets, separateTargets,
+                [new UIElementChange(secondBounds.ElementIdentity,
+                    canvas.ElementIdentity, UIChangeDomain.Text | UIChangeDomain.Measure)]);
+            ReferenceEquals(separate.Nodes[1].TextInput!.Runes,
+                separate.Nodes[2].TextInput!.Runes).ShouldBeFalse();
+            separate.EstimatedWorkingBytes.ShouldBe(shared.EstimatedWorkingBytes +
+                separate.Nodes[2].TextInput!.Runes.Count * 256L);
+            separate.EstimatedWorkingBytes.ShouldBeLessThanOrEqualTo(UILayoutSnapshot.MaxWorkingBytes);
+
+            second.Font = sharedFont;
+            UILayoutSnapshot reunited = UILayoutSnapshot.CaptureIncremental(canvas,
+                separate, separateTargets, [],
+                [new UIElementChange(secondBounds.ElementIdentity,
+                    canvas.ElementIdentity, UIChangeDomain.Text | UIChangeDomain.Measure)]);
+            ReferenceEquals(reunited.Nodes[1].TextInput!.Runes,
+                reunited.Nodes[2].TextInput!.Runes).ShouldBeTrue();
+            reunited.EstimatedWorkingBytes.ShouldBe(shared.EstimatedWorkingBytes);
+        }
+        finally
+        {
+            root.Destroy(true);
+            sharedFont.Atlas?.Destroy(true);
+            otherFont.Atlas?.Destroy(true);
+            sharedFont.Destroy(true);
+            otherFont.Destroy(true);
+        }
+    }
+
+    [Test]
     public void ShapedInputReusesExactSettingsAndInvalidatesLanguageFeaturesSizeAndDpi()
     {
         FontGlyphSet font = CreateFont();

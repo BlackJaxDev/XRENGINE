@@ -13,7 +13,8 @@ public sealed class UICompositionSegment
     internal UICompositionSegment(ulong identity, ulong revision, UICompositionOwner owner,
         UIRecordStore<UIRenderRecord> store, int offset, int count)
     {
-        _range = UIRecordRange<UIRenderRecord>.Create(store, offset, count);
+        _range = UIRecordRange<UIRenderRecord>.Create(store, offset, count,
+            copyBoundaryRecords: true);
         Identity = identity;
         Revision = revision;
         Owner = owner;

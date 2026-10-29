@@ -8,6 +8,7 @@ internal sealed class UIRecordStoreNode<T> where T : struct
 {
     internal readonly UIRecordStoreNode<T>?[]? Children;
     internal readonly T[]? Values;
+    private readonly Action<T>? _retainRecord;
     private readonly Action<T>? _releaseRecord;
     private int _claims = 1;
 
@@ -24,6 +25,7 @@ internal sealed class UIRecordStoreNode<T> where T : struct
         Action<T>? releaseRecord)
     {
         Values = ownedValues;
+        _retainRecord = retainRecord;
         _releaseRecord = releaseRecord;
         int retained = 0;
         try
@@ -57,6 +59,15 @@ internal sealed class UIRecordStoreNode<T> where T : struct
             throw;
         }
         UIRuntimeCounters.Add(UIWorkCounter.PublicationRecordCellsCopied, Values.Length);
+    }
+
+    /// <summary>Copies a leaf slice and takes claims only for its records.</summary>
+    internal UIRecordStoreNode<T> CopySlice(int offset, int length)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _claims) == 0, this);
+        if (Values is not { } values || offset < 0 || length < 0 || offset > values.Length - length)
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        return new UIRecordStoreNode<T>(values.AsSpan(offset, length), _retainRecord, _releaseRecord);
     }
 
     internal void Retain()

@@ -28,4 +28,18 @@ public static class UITextShapingBackendRegistry
 
     public static long Generation => State.Generation;
     internal static UITextShapingBackendState State => System.Threading.Volatile.Read(ref _state);
+
+    /// <summary>Invalidate captured requests when a paragraph analyzer changes.</summary>
+    internal static void InvalidateCapturedRequests()
+    {
+        while (true)
+        {
+            UITextShapingBackendState old = State;
+            UITextShapingBackendState next = new(old.Backend, checked(old.Generation + 1));
+            if (!ReferenceEquals(System.Threading.Interlocked.CompareExchange(ref _state, next, old), old))
+                continue;
+            Changed?.Invoke();
+            return;
+        }
+    }
 }

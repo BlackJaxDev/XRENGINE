@@ -2956,3 +2956,22 @@ Structural rollback retains a scoped nonauthoring activation receipt for the exa
 captured search input/display. Reopening an active prior tab cannot republish old
 text over a callback's newer display or stale-draft edit. The scope restores the
 prior receipt in `finally`; normal activation bookkeeping remains unchanged.
+
+## Hard-line shaping and retained resources
+
+The desktop backend registers `WindowsDirectWriteParagraphAnalyzer`. It captures
+script, bidi, and line-break values for the exact UTF-16 source. These immutable
+values travel with the shaping request. Skia shapes each hard-delimited line
+independently. The layout kernel restores source offsets and assigns glyphs and
+carets to their lines. Wrapped shaping and mixed-direction paragraph placement
+remain unsupported and fail explicitly.
+
+Composition ranges copy partial boundary leaves. Their resource claims therefore
+cover only the records in that composition range. Other record ranges retain
+their original whole-leaf contract. Releasing one range must not retire a shared
+payload that another accepted range still owns.
+
+OpenGL materials borrow their textures. Removing a material binding or retiring
+the material wrapper does not retire the texture's native storage. Mesh generation
+queues reject retired renderer owners and retain pending work only while its
+captured generation owner remains live.

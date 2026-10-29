@@ -9,7 +9,7 @@ namespace XREngine.Rendering.UI;
 /// changes glyph placement: the text, the captured font metrics page and its revision,
 /// em and atlas size, font size, wrap, spacing, line spacing, alignment, margins, DPI scale,
 /// first-bearing trim, the shaped run (face content identity, language, direction,
-/// features, and glyphs), and the available size. Text and layout revisions are not part
+/// features, paragraph analysis identity, and glyphs), and the available size. Text and layout revisions are not part
 /// of the key. A hit with another text revision returns a result that shares the cached
 /// glyph and caret storage and carries the requested revisions.
 /// </summary>
@@ -83,9 +83,12 @@ internal static class UITextLayoutCache
         hash.Add(input.TrimFirstBearing);
         if (input.ShapedRun is { } run)
         {
+            hash.Add(run.SourceText, StringComparer.Ordinal);
             hash.Add(run.FaceContentIdentity, StringComparer.Ordinal);
             hash.Add(run.Language, StringComparer.Ordinal);
             hash.Add(run.Direction);
+            hash.Add(run.HasMeasuredHardLines);
+            hash.Add(run.ParagraphAnalysis is null ? 0 : RuntimeHelpers.GetHashCode(run.ParagraphAnalysis));
             hash.Add(run.Glyphs.Length);
         }
         hash.Add(availableSize);
@@ -115,9 +118,12 @@ internal static class UITextLayoutCache
         if (ReferenceEquals(left, right))
             return true;
         if (left is null || right is null ||
+            !string.Equals(left.SourceText, right.SourceText, StringComparison.Ordinal) ||
             !string.Equals(left.FaceContentIdentity, right.FaceContentIdentity, StringComparison.Ordinal) ||
             !string.Equals(left.Language, right.Language, StringComparison.Ordinal) ||
             left.Direction != right.Direction ||
+            left.HasMeasuredHardLines != right.HasMeasuredHardLines ||
+            !ReferenceEquals(left.ParagraphAnalysis, right.ParagraphAnalysis) ||
             !string.Equals(left.FeatureSource, right.FeatureSource, StringComparison.Ordinal) ||
             left.Features.Length != right.Features.Length ||
             left.Glyphs.Length != right.Glyphs.Length)

@@ -34,6 +34,8 @@ internal static class MaterialTextureSlotAction
         if (material.IsDestroyed || material.IsDestroyQueued || texture.IsDestroyed || texture.IsDestroyQueued)
             throw new InvalidOperationException("The material or texture is destroyed.");
         EventList<XRTexture?> textures = material.Textures;
+        ulong listIntent = textures.MutationIntentRevision;
+        ulong materialIntent = material.TextureListWriteIntent;
         if (slot < 0 || slot >= textures.Count)
             throw new ArgumentOutOfRangeException(nameof(slot), "The material has no texture slot at this index.");
         XRTexture? before = textures[slot];
@@ -53,7 +55,8 @@ internal static class MaterialTextureSlotAction
             for (int index = 0; index < assets.Length; index++)
                 if (!identities[index].IsCurrent || assets[index].IsDestroyed || assets[index].IsDestroyQueued)
                     return false;
-            return ReferenceEquals(material.SourceAsset, document) && ReferenceEquals(material.Textures, textures) &&
+            return material.TextureListWriteIntent == materialIntent && textures.MutationIntentRevision == listIntent &&
+                ReferenceEquals(material.SourceAsset, document) && ReferenceEquals(material.Textures, textures) &&
                 slot < textures.Count;
         }
         bool Matches(bool after) => Owns() && ReferenceEquals(textures[slot], after ? texture : before);
@@ -80,7 +83,14 @@ internal static class MaterialTextureSlotAction
         {
             if (!Matches(!forward))
                 throw new InvalidOperationException("The material texture slot changed after the edit.");
-            textures[slot] = forward ? texture : before;
+            listIntent = checked(listIntent + 1);
+            if (!material.SetTextureSlotGuarded<Func<bool>>(textures, slot, forward ? before : texture,
+                forward ? texture : before, Owns, static owns =>
+                {
+                    if (!owns())
+                        throw new InvalidOperationException("The material texture slot owner changed during the edit.");
+                }))
+                throw new InvalidOperationException("The material texture slot write was rejected.");
             if (!Matches(forward))
                 throw new InvalidOperationException("A texture slot callback changed the edit.");
         }
@@ -106,7 +116,7 @@ internal static class MaterialTextureSlotAction
         {
             admitting = false;
             if (Owns() && ReferenceEquals(textures[slot], texture))
-                textures[slot] = before;
+                Write(false);
             throw;
         }
         finally

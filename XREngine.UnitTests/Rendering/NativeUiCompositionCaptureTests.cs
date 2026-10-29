@@ -87,9 +87,12 @@ public sealed class NativeUiCompositionCaptureTests
     private static void Capture(UICanvasComponent canvas,
         UICanvasTransform transform)
     {
-        transform.UpdateLayoutAsync();
-        SpinWait.SpinUntil(() => transform.PumpLayoutResults(),
-            TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        if (transform.IsLayoutInvalidated)
+        {
+            transform.UpdateLayoutAsync();
+            SpinWait.SpinUntil(() => transform.PumpLayoutResults(),
+                TimeSpan.FromSeconds(5)).ShouldBeTrue();
+        }
         typeof(UICanvasComponent).GetMethod("CapturePublicationCandidate",
             BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(canvas, null);
     }

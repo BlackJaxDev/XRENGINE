@@ -84,6 +84,7 @@ public sealed class UIBatchScissorTests
             {
                 ActualSize = new Vector2(30), LocalTranslation = new Vector2(5)
             }, Vector2.Zero);
+            canvas.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true);
             outer.RefreshAxisAlignedRegion();
             inner.RefreshAxisAlignedRegion();
             content.RefreshAxisAlignedRegion();

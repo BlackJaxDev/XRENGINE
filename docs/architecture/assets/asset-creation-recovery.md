@@ -124,6 +124,12 @@ and the first material texture slot changes through
 `MaterialTextureSlotAction`. Both steps are one `Drop Texture` Undo action.
 Undo restores the slot first and then retains the files.
 
+Texture slot writes use `XRMaterialBase.SetTextureSlotGuarded` and
+`EventList.SetIndexValidated`. They validate the exact material, list, slot,
+resource lifetimes, and caller admission between callbacks. A newer mutation
+intent, including an equal-value assignment, rejects an older write or replay.
+Compensation uses the same guarded path. It cannot replace a newer callback edit.
+
 ## Tests
 
 `AssetCreationRecoveryStoreTests` covers publish, Undo and Redo bytes, reopen,
