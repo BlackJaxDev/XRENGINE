@@ -1002,7 +1002,12 @@ async function debugOverlayCheck(browser, origin, report, config) {
             'BrowserSmoke.EngineDebugResizePixels: non-square output lost point/triangle overlay color.');
         report.debugResize = { pixels: resized, state: await page.evaluate(() => window.engineMeshDiagnostic.debugState()) };
         previousReadyFrames = await page.evaluate(() => window.engineMeshDiagnostic.readyFrames);
-        await page.evaluate(() => window.engineMeshDiagnostic.resize(512, 512));
+        const resizeReadiness = await page.evaluate(() => {
+            const host = window.engineMeshDiagnostic;
+            host.resize(512, 512);
+            return host.lastReadySession;
+        });
+        assert(resizeReadiness === 0, 'BrowserSmoke.EngineDebugResizeReadiness: resize retained an earlier ready frame.');
         await waitReady(1, previousReadyFrames, session);
         await page.locator('#stop').click();
         assert(await page.evaluate(() => window.engineMeshDiagnostic.session === 0 && window.engineMeshDiagnostic.statistics() === null),

@@ -1,6 +1,8 @@
 using System.Numerics;
+using System.Text;
 using Newtonsoft.Json.Linq;
 using XREngine.Animation.Importers;
+using XREngine.Data;
 
 namespace XREngine.Components.Animation;
 
@@ -15,7 +17,14 @@ public static class ImportedHumanoidAvatarProfileImporter
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         string fullPath = Path.GetFullPath(filePath);
-        JObject root = JObject.Parse(File.ReadAllText(fullPath));
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+        read.EnsureHostFileAccess("Humanoid avatar profile import");
+        byte[] bytes = read.ReadAllBytes(fullPath);
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        string json = reader.ReadToEnd();
+        using IDisposable publication = read.BeginPublication();
+        JObject root = JObject.Parse(json);
 
         var profile = new ImportedHumanoidAvatarProfile
         {

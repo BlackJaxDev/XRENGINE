@@ -467,7 +467,7 @@ export class EngineMeshDiagnosticHost {
         this.unlitFrameEvidence?.invalidate();
         const generation = this.renderer.resize(width, height);
         this.exports.ResizeGraphics(this.session, width, height, generation);
-        if (this.kind === 'unlit') this.lastReadySession = 0;
+        if (this.kind === 'unlit' || this.kind === 'debug') this.lastReadySession = 0;
         if (this.kind === 'debug') this.settleFrames = 2;
         this.startedAt = performance.now();
         this.onState('Preparing resized engine render resources');

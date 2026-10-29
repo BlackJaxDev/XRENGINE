@@ -1,5 +1,34 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Humanoid avatar-profile host read and debug resize readiness (2026-10-29)
+
+The synchronous Unity humanoid avatar-profile importer captures the raw-read
+source after host-file admission. It reads JSON once and holds the publication
+guard through parsing and validation. UTF-8 without a BOM and UTF-16 with a BOM
+produce the same profile as a desktop file in the focused tests. Source changes
+during the read reject the result. The host must keep its source usable during
+the read; caller-side profile migration is a separate operation.
+
+Seven focused tests pass for the real conformance reference, custom sources,
+source replacement, unsupported reads, and missing desktop files. A separate
+production-path probe passed. Editor, Server, and VRClient Release builds pass
+on Linux with Windows targeting enabled. The desktop filesystem headless fixture
+passes. All 19 portable manifest projects compile for browser-wasm, and Browser
+publishes with native WASM and pinned Jolt inputs. These checks do not establish
+Windows startup, a live profile migration, or browser rendering.
+
+This removes one direct file read in AnimationIntegration, outside the historical
+four-root count. The four-root file count and blocking counts are unchanged; both
+inventory requirements stay open.
+
+A debug diagnostic resize now clears its prior ready-session stamp until settled
+frames have been submitted. A local diagnostic-host probe reproduced stale
+acceptance before the change and passed afterward. Browser smoke checks the
+invalidation on a resize of an already-ready session. Native WebGPU execution
+was not repeated in this environment. The desktop report's dark Advanced
+geometry remains unresolved. The shader ownership and YAML discovery lifetime
+investigations also remain open.
+
 ## Humanoid pose-audit host I/O (2026-10-29)
 
 Pose-audit report reads and writes use admitted host services. A reference check

@@ -230,6 +230,12 @@ installed output service. It opens at offset zero without truncation, sharing,
 or parent directory creation. The caller disposes the stream. The provider must
 remain usable for the save.
 
+Synchronous humanoid avatar-profile import requires host-file admission. It
+captures the raw-read source for one JSON read and holds publication through
+parsing and validation. UTF-8 is the default and byte-order marks select other
+supported encodings. The host must keep the captured source usable during the
+read; later caller-side profile migration is a separate operation.
+
 Humanoid pose-audit reports use admitted host reads and the optional
 `IHostAssetFileSharedOutput` capability. The desktop writer creates the parent
 directory and opens the report with `FileShare.Read`. JSON remains UTF-8 without
