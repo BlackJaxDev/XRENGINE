@@ -186,6 +186,16 @@ hidden until one root commit.
 - [`GenericRenderObject.BeginDeferredPublication`](../../../XREngine.Runtime.Rendering/RenderObjects/GenericRenderObject.cs)
   opens one. The cooked mesh reader uses it, for example.
 
+Outside a scope, a render object creates its backend wrappers in its
+constructor. A render object that a cooked binary read creates does not. The
+reader sets the members after the constructor, with property notifications
+suppressed, so a wrapper made in the constructor keeps the empty state. For
+example, an OpenGL texture wrapper keeps no mipmaps and uploads nothing. The
+renderer makes the wrapper at first use instead, as it does for an object that
+exists before the renderer starts.
+[`CookedBinarySerializer.IsDeserializing`](../../../XREngine.Data/Core/Files/CookedBinary/CookedBinarySerializer.cs)
+tells the constructor that a read is in progress.
+
 **Frame packages and command chains.** The backend-ready frame package is
 validated against collect, pipeline, resource, descriptor and render-graph
 generations before it is used. A mismatch is a counted rejection, never a
