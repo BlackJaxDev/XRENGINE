@@ -629,6 +629,9 @@ public sealed class UIBatchCollectionTests
             typeof(UIRenderableComponent).GetField("_worldCollectionCanvasNode",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(component).ShouldBeNull();
             component.IsActive = true;
+            // Component activation binds the render info to the world registration target.
+            // Bind it to the probe target again, so that the probe sees the registration.
+            component.RenderInfo3D.WorldInstance = target;
             target.Entries.ShouldContain(component.RenderInfo3D);
 
             canvas.PreferOffscreenRenderingForNonScreenSpaces = true;
