@@ -59,6 +59,13 @@
       "encoding": "cooked-binary",
       "source": "SkyOctahedralFiltered.bin",
       "dependencies": []
+    },
+    {
+      "path": "/game/SkyCubeImplicit.asset",
+      "type": "XREngine.Rendering.XRTextureCube, XREngine.Runtime.Rendering",
+      "encoding": "cooked-binary",
+      "source": "SkyCubeImplicit.bin",
+      "dependencies": []
     }
   ]
 }

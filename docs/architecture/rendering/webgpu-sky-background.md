@@ -83,7 +83,7 @@ still be read, but their omitted pixels cannot be recovered. The separate
 
 ## Published sky texture assets
 
-All six texture diagnostics use authored assets from the engine content package.
+All seven texture diagnostics use authored assets from the engine content package.
 The native fixture cooker first saves each texture under `authored-skies/` with
 the normal asset serializer. It releases the original object, then reloads the
 file through `AssetManager.DeserializeAssetFile` as `XRTexture`. The saved header
@@ -112,6 +112,7 @@ follow the production asset loader's file-derived names.
 |---|---|---|
 | `SkyCubeHdr.asset` | Six 4×4 RGBA16F faces | 768 |
 | `SkyCubeFiltered.asset` | Six sRGB faces, 4×4 through 1×1 | 504 |
+| `SkyCubeImplicit.asset` | Six sRGB faces, 256×256 through 1×1 | 2,097,144 |
 | `SkyEquirectangularHdr.asset` | 8×4 RGBA16F | 256 |
 | `SkyOctahedralHdr.asset` | 8×8 RGBA16F | 512 |
 | `SkyEquirectangularFiltered.asset` | sRGB, 8×4 through 1×1 | 172 |
@@ -213,6 +214,23 @@ camera changes, intensity, resize, and restart. The
 [filtered cube record](../../work/investigations/rendering/archive/2026-10-29-filtered-cubemap-qualification.md)
 separates two-face blending from corner weights and imported-image quality.
 
+The `engine-sky-cubemap-implicit` profile uses a saved cube with nine uniform,
+high-contrast mip colors. It retains the production shader's ordinary `Sample`
+operation. Camera field of view controls implicit LOD; resizing changes the
+footprint without changing the texture. Central samples check decoded-linear
+blends between adjacent mips, magnification, authored minimum/maximum clamps,
+translation, a second cube axis, HDR intensity, restart, and resize.
+
+For a face-axis camera, the continuous footprint is
+`rho = 256 * tan(verticalFov / 2) / canvasHeight`. The reference brackets the
+ideal `log2(rho)` with the lower half-step secant of that function. The lower
+bound covers the inspected SwiftShader approximation; this interval is not a
+universal hardware precision limit. It clamps each LOD endpoint, decodes the
+neighboring sRGB texels, then blends them. High-contrast mip colors distinguish
+this interval from a single mip and from interpolation before sRGB decoding.
+Existing HDR/display tolerances and all storage/ownership checks remain active.
+See the [implicit cube record](../../work/investigations/rendering/archive/2026-10-29-implicit-cubemap-mips.md).
+
 The `engine-sky-moon` profile checks exact off-disc corona and daytime values,
 plus analytic bounds for the noisy moon surface and its combined corona.
 Twelve authored cases cover day/night visibility, size, HDR intensity, camera
@@ -221,7 +239,8 @@ this does not establish exact maria/crater-pattern parity. The
 [moon bounds record](../../work/investigations/rendering/archive/2026-10-29-moon-radiance-bounds-qualification.md)
 records the failed float32 noise comparison and the unexercised phase/edge terms.
 
-Known-value GPU acceptance remains open for implicit and fractional LOD,
+Known-value GPU acceptance remains open for broader implicit/fractional LOD
+(including image projections and cube-edge derivatives),
 automatic mip generation, anisotropy, filtering across octahedral seams,
 three-face cube corner filtering, sky bloom, sorted transparency over sky, procedural
 clouds, stars, exact moon surface detail, nonzero lunar phase and soft-edge falloff,

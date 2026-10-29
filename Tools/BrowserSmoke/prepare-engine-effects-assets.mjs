@@ -39,7 +39,7 @@ assert.deepEqual(catalog.pipelineArtifacts.map(entry => [entry.scope ?? '', entr
 await fs.mkdir(outputDirectory,{recursive:true});
 const assets=new Map();
 for(const asset of base.assets) {
-    const root = ['EngineSmokeWorld.bin', 'AotRuntimeMetadata.bin', 'SkyCubeHdr.bin', 'SkyCubeFiltered.bin',
+    const root = ['EngineSmokeWorld.bin', 'AotRuntimeMetadata.bin', 'SkyCubeHdr.bin', 'SkyCubeFiltered.bin', 'SkyCubeImplicit.bin',
         'SkyEquirectangularHdr.bin', 'SkyOctahedralHdr.bin', 'SkyEquirectangularFiltered.bin', 'SkyOctahedralFiltered.bin'].includes(asset.source)
         ? fixtureRoot : recipeRoot;
     const source = await contained(root,asset.source);

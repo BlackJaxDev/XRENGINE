@@ -136,3 +136,7 @@ current owner below explicitly adopts it.
 - [Saved sky texture limits](2026-10-29-saved-sky-texture-limits.md)
   records native file cooking and preservation of authored zero LOD limits.
   Current limits are in [platform validation](../../../testing/platform/platform-validation.md#saved-sky-texture-limits--2026-10-29).
+
+- [Implicit cubemap mip qualification](2026-10-29-implicit-cubemap-mips.md)
+  records saved cube loading, camera-driven mip selection, and decoded-linear mip blends.
+  Current limits are in [platform validation](../../../testing/platform/platform-validation.md#implicit-cubemap-mips--2026-10-29).

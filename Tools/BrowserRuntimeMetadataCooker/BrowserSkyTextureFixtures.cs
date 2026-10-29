@@ -11,6 +11,7 @@ internal static partial class BrowserSkyTextureFixtures
     internal static void Write(string directory)
     {
         using IDisposable wrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
+        WriteTexture(CreateImplicitCube(), "SkyCubeImplicit.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae7"));
         WriteTexture(CreateHdrCube(), "SkyCubeHdr.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae1"));
         WriteTexture(CreateFilteredCube(), "SkyCubeFiltered.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae2"));
         WriteTexture(CreateSkyImage(false), "SkyEquirectangularHdr.bin", directory, new Guid("685a5e81-1521-445c-9502-6d83e7fdaae3"));

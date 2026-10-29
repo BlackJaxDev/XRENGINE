@@ -551,6 +551,31 @@ sky bindings, packaged Editor export, AOT decoding, platform compression, hardwa
 acceptance, and complete shader coverage remain open. Requirement counts are
 unchanged.
 
+### Implicit cubemap mips — 2026-10-29
+
+The new saved 256×256 sRGB cube has nine complete mip levels with uniform,
+high-contrast colors. It uses the real component, published asset source, and
+ordinary cooked sky sampling. Thirty-two live states pass with the existing HDR
+and display tolerances. They cover camera-driven fractional LOD, decoded-linear
+mip blending, magnification, authored LOD clamps, camera changes, intensity,
+resize, and two sessions. The profile retains 30 live GPU resources, zero
+retiring resources, one source asset/object, and exactly 2,097,144 pixel bytes.
+Both stops leave zero asset sources. Square and resized captures were viewed.
+
+The [implicit cube record](../../investigations/rendering/archive/2026-10-29-implicit-cubemap-mips.md)
+records the failed ideal-logarithm comparison and the independent bounded
+reference for the inspected SwiftShader approximation. This is a face-center
+software result, not a universal hardware precision bound. All 24 build/publication
+gates pass with zero compiler warnings/errors. The final targeted run passes all
+32 states. Seven saved/cooked assets repeat byte-identically; the previous six
+payloads remain unchanged. Fresh cooking packages 57 shaders, fourteen passes,
+and 119 assets. Metadata and bundle checks pass. Full software WebGPU regression
+passes 24 selected checks, with three explicit optional skips, 356 sky samples,
+and 24 strict indirect lifecycle/resize stages. Final host/page bytes match the
+tested source. Final captures were also viewed. Broader derivative coverage,
+platform cooking, and packaged Editor publication remain open. Requirement
+counts are unchanged.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

@@ -85,16 +85,26 @@ The camera excludes the foreground in this profile. Three-face corner weights,
 implicit/fractional LOD, automatic mip generation, and imported-image quality
 remain separate. The manual page selects this fixture with `probe=sky-cube-filtered`.
 
-All six texture sky profiles load canonical cooked assets through the production
+The `engine-sky-cubemap-implicit` check loads a saved 256×256 sRGB cube with nine
+uniform mip colors. It uses the ordinary cooked sky shader and an open mip range.
+Camera field of view and resize select fractional LODs. A bounded mathematical
+reference checks decoded-linear mip blends near the face center, plus authored
+LOD clamps, translation, intensity, and two start/stop cycles. The interval covers
+the inspected SwiftShader LOD approximation without changing the shared numeric
+tolerances. It does not qualify edge derivatives or hardware precision. The manual
+page selects this fixture with `probe=sky-cube-implicit`. Its retained source
+pixels total 2,097,144 bytes.
+
+All seven texture sky profiles load canonical cooked assets through the production
 async asset source in `Published` mode. The metadata fixture cooker emits their
-pixels and sampling settings after saving and reloading six native `.asset`
+pixels and sampling settings after saving and reloading seven native `.asset`
 files under its `authored-skies/` output. It releases the original objects before
 loading and requires unchanged concrete types, identities, and canonical bytes.
 This checks saved zero LOD clamps as well as pixel and sampling preservation.
-The recipe packages the two cubes plus HDR and filtered equirectangular/octahedral
+The recipe packages three cubes plus HDR and filtered equirectangular/octahedral
 images under `/game/Sky*.asset`. The checks
 require the exact asset path, one retained asset/object, drained staging, and
-exact native pixel estimates: 768/504 bytes for cubes, 256/512 for HDR images,
+exact native pixel estimates: 768/504/2,097,144 bytes for cubes, 256/512 for HDR images,
 and 172/340 for filtered images. Stop must remove every asset source. These
 counts describe retention, not immediate native heap reclamation. This does not
 qualify AOT texture decoding or full Editor publication. See the

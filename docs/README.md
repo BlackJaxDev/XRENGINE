@@ -21,7 +21,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Advanced TSR Sampling, History, And Diagnostics](architecture/rendering/default-render-pipeline-notes.md#advanced-tsr-sample-and-history-contract)
 - [Frame Lifecycle And Dispatch Paths](architecture/rendering/frame-lifecycle-and-dispatch-paths.md), including ordered snapshot-input edges and callback ownership
 - [Mesh Submission Strategies](architecture/rendering/mesh-submission-strategies.md)
-- [WebGPU Sky Backgrounds](architecture/rendering/webgpu-sky-background.md): authored sky profiles with HDR, sRGB image and cube-edge filtering, mip, day/night, sun-disc pixels, bounded moon radiance, cook-time CPU mip admission, saved texture LOD limits, and published image/cube asset loading.
+- [WebGPU Sky Backgrounds](architecture/rendering/webgpu-sky-background.md): authored sky profiles with HDR, sRGB image and cube-edge filtering, mip, day/night, sun-disc pixels, bounded moon radiance, cook-time CPU mip admission, saved texture LOD limits, bounded implicit cubemap mip blends, and published image/cube asset loading.
 - [Native Authored Material Vertex Functions](work/progress/rendering/browser-native-material-vertices-2026-10-03.md)
 
 - [Vulkan Scene Preparation And Publication](architecture/rendering/vulkan-scene-preparation-and-publication.md)

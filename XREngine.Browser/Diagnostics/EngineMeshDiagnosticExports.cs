@@ -117,6 +117,13 @@ public static partial class EngineMeshDiagnosticExports
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
             null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.FilteredCubemap);
 
+    /// <summary>Starts a cooked cube with derivative-driven mip selection.</summary>
+    [JSExport]
+    public static Task<int> CreateSkyImplicitCubemapAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
+            null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.ImplicitCubemap);
+
     /// <summary>Starts an authored sky image through the shared HDR pipeline.</summary>
     [JSExport]
     public static Task<int> CreateSkyImageAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
@@ -203,6 +210,7 @@ public static partial class EngineMeshDiagnosticExports
             EnsureCurrentCreation(requestedEpoch, cancellation.Token);
             string? skyTexturePath = sky ? skyProfile switch
             {
+                EngineSkyDiagnosticProfile.ImplicitCubemap => "/game/SkyCubeImplicit.asset",
                 EngineSkyDiagnosticProfile.Cubemap => "/game/SkyCubeHdr.asset",
                 EngineSkyDiagnosticProfile.FilteredCubemap => "/game/SkyCubeFiltered.asset",
                 EngineSkyDiagnosticProfile.Equirectangular => "/game/SkyEquirectangularHdr.asset",
@@ -252,7 +260,7 @@ public static partial class EngineMeshDiagnosticExports
             if (skyTexturePath is not null)
             {
                 stage = "load cooked sky texture";
-                Type textureType = skyProfile is EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap
+                Type textureType = skyProfile is EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap or EngineSkyDiagnosticProfile.ImplicitCubemap
                     ? typeof(XRTextureCube) : typeof(XRTexture2D);
                 using IDisposable wrappers = GenericRenderObject.EnterApiWrapperCreationSuppressionScope();
                 _cookedSkyTexture = await Engine.Assets.LoadFromRuntimeSourceAsync(skyTexturePath, textureType,
@@ -316,7 +324,7 @@ public static partial class EngineMeshDiagnosticExports
                     {
                         EngineSkyDiagnosticProfile.Gradient => EngineMaterialSemanticIdentity.SkyboxGradientV1,
                         EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun or EngineSkyDiagnosticProfile.Moon => EngineMaterialSemanticIdentity.SkyboxDynamicProceduralV1,
-                        EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap => EngineMaterialSemanticIdentity.SkyboxCubemapV1,
+                        EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap or EngineSkyDiagnosticProfile.ImplicitCubemap => EngineMaterialSemanticIdentity.SkyboxCubemapV1,
                         EngineSkyDiagnosticProfile.Equirectangular or EngineSkyDiagnosticProfile.FilteredEquirectangular => EngineMaterialSemanticIdentity.SkyboxEquirectangularV1,
                         EngineSkyDiagnosticProfile.Octahedral or EngineSkyDiagnosticProfile.FilteredOctahedral => EngineMaterialSemanticIdentity.SkyboxOctahedralV1,
                         _ => throw new ArgumentOutOfRangeException(nameof(skyProfile)),

@@ -22,7 +22,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
         _skyTexture = _skyProfile switch
         {
             EngineSkyDiagnosticProfile.Gradient or EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun or EngineSkyDiagnosticProfile.Moon => null,
-            EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap => cookedSkyTexture as XRTextureCube
+            EngineSkyDiagnosticProfile.Cubemap or EngineSkyDiagnosticProfile.FilteredCubemap or EngineSkyDiagnosticProfile.ImplicitCubemap => cookedSkyTexture as XRTextureCube
                 ?? throw new InvalidOperationException("EngineMeshDiagnostic.CookedCubeRequired: load the authored cube through the asset source before drawing."),
             EngineSkyDiagnosticProfile.Equirectangular or EngineSkyDiagnosticProfile.Octahedral or
                 EngineSkyDiagnosticProfile.FilteredEquirectangular or EngineSkyDiagnosticProfile.FilteredOctahedral => cookedSkyTexture as XRTexture2D
@@ -67,6 +67,11 @@ internal sealed partial class EngineMeshDiagnosticFixture
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_sky || _skyComponent is null || _skyCameraTransform is null)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
+        if (_skyProfile == EngineSkyDiagnosticProfile.ImplicitCubemap)
+        {
+            SetSkyImplicitCubeCase(sampleCase);
+            return;
+        }
         if (_skyProfile == EngineSkyDiagnosticProfile.FilteredCubemap)
         {
             SetSkyFilteredCubeCase(sampleCase);
