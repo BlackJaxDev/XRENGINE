@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using XREngine;
 using XREngine.Components;
 using XREngine.Core;
+using XREngine.Runtime.Platform.Desktop;
 using XREngine.Data.Core;
 using XREngine.Data.Core.Files;
 using XREngine.Data.Rendering;
@@ -978,7 +979,7 @@ namespace XREngine.Editor.Mcp
             string fileName = $"RenderPipeline_{safeTextureName}_{DateTime.Now:yyyyMMdd_HHmmss}.{GetPipelineCaptureExtension(format)}";
             string path = Path.Combine(folder, fileName);
 
-            Utility.EnsureDirPathExists(path);
+            DesktopPathUtility.EnsureDirPathExists(path);
 
             var tcs = new TaskCompletionSource<PipelineTextureCaptureResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             var companionResults = new PipelineTextureCaptureResult[companions.Length];
@@ -1183,7 +1184,7 @@ namespace XREngine.Editor.Mcp
             string safeEyeName = leftEye ? "LeftEye" : "RightEye";
             string fileName = $"OpenXRPreview_{safeEyeName}_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.{GetPipelineCaptureExtension(format)}";
             string path = Path.Combine(folder, fileName);
-            Utility.EnsureDirPathExists(path);
+            DesktopPathUtility.EnsureDirPathExists(path);
 
             string? capturedTextureName = null;
             ulong capturedFrameId = 0;
@@ -1311,7 +1312,7 @@ namespace XREngine.Editor.Mcp
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures", "OpenXR");
             string fileName = $"OpenXRDesktopMirror_{DateTime.Now:yyyyMMdd_HHmmss}.{GetPipelineCaptureExtension(format)}";
             string path = Path.Combine(folder, fileName);
-            Utility.EnsureDirPathExists(path);
+            DesktopPathUtility.EnsureDirPathExists(path);
 
             var tcs = new TaskCompletionSource<PipelineTextureCaptureResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             Action? deferredHandler = null;

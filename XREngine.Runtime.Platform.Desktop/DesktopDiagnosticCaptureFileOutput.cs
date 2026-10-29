@@ -113,7 +113,7 @@ internal sealed class DesktopDiagnosticCaptureFileOutput : IRuntimeDiagnosticCap
     {
         RuntimeAssetReadServices.EnsureHostFileAccess("Pipeline capture output");
         string filePath = Path.Combine(exportDirPath, fileName);
-        Utility.EnsureDirPathExists(exportDirPath);
+        DesktopPathUtility.EnsureDirPathExists(exportDirPath);
         File.WriteAllBytes(filePath, pngBytes);
     }
 }

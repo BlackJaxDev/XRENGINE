@@ -11,6 +11,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Core;
+using XREngine.Runtime.Platform.Desktop;
 using XREngine.Data.Colors;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -1131,7 +1132,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     static void ScreenshotCallback(RuntimeImage img, int index)
     {
         var path = GetScreenshotPath();
-        Utility.EnsureDirPathExists(path);
+        DesktopPathUtility.EnsureDirPathExists(path);
         if (img is null)
             throw new InvalidOperationException("Screenshot readback returned no image.");
         using (img)
@@ -1246,7 +1247,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
                 AbstractRenderer.Current?.GetScreenshotAsync(vp.Region, false, (img, index) =>
                 {
-                    Utility.EnsureDirPathExists(capturePath);
+                    DesktopPathUtility.EnsureDirPathExists(capturePath);
                     if (img is null)
                         throw new InvalidOperationException("Screenshot readback returned no image.");
                     using (img)

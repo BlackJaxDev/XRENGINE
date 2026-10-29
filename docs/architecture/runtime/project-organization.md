@@ -221,6 +221,11 @@ missing metadata. The probe and file-mapping backend have separate owners; hosts
 must keep them consistent and usable through archive opening. Desktop Unix file
 mapping uses an unnamed map for the file stream.
 
+Desktop diagnostic and editor directory preparation uses
+`DesktopPathUtility.EnsureDirPathExists` in the desktop platform assembly. It
+keeps the former path and extension handling from `Utility.EnsureDirPathExists`.
+Callers of the former public helper must use the desktop API.
+
 Synchronous VMD animation loading requires host-file admission and an installed
 `IRuntimeHostFileReadBackend`. It opens the file with `FileShare.Read` and
 disposes the stream after parsing. The captured provider is not a retirement

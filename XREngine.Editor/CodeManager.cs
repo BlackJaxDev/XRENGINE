@@ -10,6 +10,7 @@ using System.Xml.Linq;
 using XREngine;
 using XREngine.Components.Scripting;
 using XREngine.Core;
+using XREngine.Runtime.Platform.Desktop;
 using XREngine.Core.Files;
 using XREngine.Rendering;
 
@@ -320,7 +321,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             ));
 
         var project = new XDocument(new XElement("Project", content));
-        Utility.EnsureDirPathExists(projectFilePath);
+        DesktopPathUtility.EnsureDirPathExists(projectFilePath);
         project.Save(projectFilePath);
     }
 

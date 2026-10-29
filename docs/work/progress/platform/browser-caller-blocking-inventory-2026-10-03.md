@@ -2,6 +2,15 @@
 
 Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
 
+## Desktop directory helper follow-up (2026-10-29)
+
+Moving the directory helper to the desktop platform removes two matching lines
+and one file from Data. The original four-root direct-file expression finds
+**13 files / 60 lines**: Core **2 / 9**, Rendering **1 / 2**, Host **0 / 0**,
+and Data **10 / 49**. Blocking counts remain unchanged. These lexical counts
+include non-I/O matches and do not establish reachability. Both broad inventory
+requirements remain open.
+
 ## Cache-root and rendering fallback follow-up (2026-10-29)
 
 The scan at `16e33a906b738e5b9f963f24b91f253e16ef060c` uses the same roots

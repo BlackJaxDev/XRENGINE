@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using XREngine.Imaging;
 using XREngine;
 using XREngine.Core;
+using XREngine.Runtime.Platform.Desktop;
 using XREngine.Components;
 using XREngine.Data;
 using XREngine.Data.Core;
@@ -93,7 +94,7 @@ namespace XREngine.Editor.Mcp
             string fileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.png";
             string path = Path.Combine(folder, fileName);
 
-            Utility.EnsureDirPathExists(path);
+            DesktopPathUtility.EnsureDirPathExists(path);
 
             static void BeginCapture(
                 AbstractRenderer renderer,

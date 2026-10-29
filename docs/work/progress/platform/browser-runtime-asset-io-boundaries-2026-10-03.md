@@ -1,5 +1,25 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Desktop directory preparation (2026-10-29)
+
+The directory helper moves from portable Data to `DesktopPathUtility` in the
+desktop platform assembly. Desktop diagnostic capture and editor callers use
+the new API. The helper retains its separator, extension, empty-path, existing
+directory, and creation behavior. External callers of the former public helper
+must move to the desktop API.
+
+A desktop production-method probe passes for file-parent creation, a directory
+path, an existing directory, and an empty path. Editor, Server, and VRClient
+Release builds pass on Linux with Windows targeting enabled. The desktop
+filesystem headless fixture passes. All 19 portable manifest projects compile
+for browser-wasm, and Browser publishes with native WASM and pinned Jolt
+inputs. These checks do not establish Windows behavior, a live editor capture,
+or browser rendering.
+
+The two direct directory calls leave Data. The four-root lexical scan now finds 60 matching lines in 13 files;
+Core and Rendering remain at 11 lines in three files. Blocking counts do not
+change. Both broad inventories remain open.
+
 ## Humanoid avatar-profile host read and debug resize readiness (2026-10-29)
 
 The synchronous Unity humanoid avatar-profile importer captures the raw-read
