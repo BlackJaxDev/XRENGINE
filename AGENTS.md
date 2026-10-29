@@ -18,6 +18,7 @@ XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10,
 - Use STE for code comments and code member summaries, including XML documentation comments.
 - Use STE for documentation. This includes design documents, todo lists, architecture documents, developer guides, and user help documents.
 - Use short, clear sentences, active voice, and consistent technical terms. Give each instruction a clear action. Keep technical names, code identifiers, commands, and quoted source text exact.
+- Follow the [maintainer code and writing style](docs/developer-guides/ai/maintainer-style.md) when producing code, comments, XML summaries, commit messages, pull request text, documentation, or user summaries. Current explicit instructions take priority.
 
 ## Read On Demand
 
@@ -53,7 +54,8 @@ For every substantive task, assess whether a bounded broker reasoning/editor-evi
 
 ## Code Rules
 
-- Prefer explicit, readable code, guard clauses, and early returns. Use `=>` for single clear expressions; omit single-statement braces only when unambiguous.
+- Prefer explicit, readable code, guard clauses, and early returns. Use `=>` for single clear expressions.
+- Put block braces on separate lines (Allman style). For a single simple statement in a control-flow body, prefer no braces and put the statement on the next indented line. Keep braces when nested control flow, `if`/`else` association, scope, or mixed branch sizes would be difficult to read. Count statements, not displayed lines. See the [brace examples](docs/developer-guides/ai/maintainer-style.md#braces-and-control-flow).
 - One enum/interface/class/record/struct per matching filename. Suggest focused partial files for large classes and helpers for large methods; split when in scope and clearer without hiding coupling.
 - Put genuinely reusable helpers in cohesive shared types/projects, preserving dependency direction. Avoid miscellaneous utility collections and premature moves.
 - Add practical XML summaries; comments explain intent, invariants, assumptions, and non-obvious reasoning.
