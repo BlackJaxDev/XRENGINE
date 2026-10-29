@@ -2986,6 +2986,10 @@ new surface generation only after the viewport accepts the scene render. A
 deferred render retains the previous published surface and reports pending
 admission. This does not prove GPU or interactive acceptance.
 
+The native unit-world editor uses its docked profiler for frame diagnostics. It
+does not add the floating FPS label over the native editor canvas. Other editor
+modes retain that label.
+
 ## Saved native window ownership
 
 `NativeDockLayoutPersistence` reads the canonical primary key, then the exact
