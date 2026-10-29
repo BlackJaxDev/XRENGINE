@@ -19,6 +19,7 @@ import { staticMeshletParityGameCheck } from './static-meshlet-parity-game.mjs';
 import { runNativeCompileIsolation } from './native-compile-isolation.mjs';
 import { unlitMaterialsCheck } from './unlit-materials.mjs';
 import { unlitMsaaCheck, unlitIndirectCheck } from './unlit-msaa.mjs';
+import { skyProceduralCheck } from './sky-procedural.mjs';
 import { skyGradientCheck } from './sky-gradient.mjs';
 import { skyCubemapCheck } from './sky-cubemap.mjs';
 import { skyEquirectangularCheck, skyOctahedralCheck } from './sky-images.mjs';
@@ -1309,6 +1310,8 @@ async function main() {
             await check('engine-lit-hdr-tonemap', () => litCheck(browser, hosted.origin, report, config));
             await check('engine-sky-gradient', () => skyGradientCheck(browser, hosted.origin, report, config,
                 instrumentedPage, capturePixels, assertNoBrowserErrors));
+            await check('engine-sky-procedural', () => skyProceduralCheck(browser, hosted.origin, report, config,
+                instrumentedPage, capturePixels, assertNoBrowserErrors));
             await check('engine-sky-cubemap', () => skyCubemapCheck(browser, hosted.origin, report, config,
                 instrumentedPage, capturePixels, assertNoBrowserErrors));
             await check('engine-sky-equirectangular', () => skyEquirectangularCheck(browser, hosted.origin, report, config,
@@ -1324,7 +1327,7 @@ async function main() {
             await check('engine-shared-gtao-bloom', () => effectsCheck(browser, hosted.origin, report, config));
             await check('engine-directional-shadow', () => shadowCheck(browser, hosted.origin, report, config));
             await check('engine-shared-debug-overlay', () => debugOverlayCheck(browser, hosted.origin, report, config));
-        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-sky-gradient', 'engine-sky-cubemap', 'engine-sky-equirectangular', 'engine-sky-octahedral', 'engine-unlit-materials', 'engine-unlit-msaa', 'engine-unlit-indirect', 'engine-shared-gtao-bloom',
+        } else for (const name of ['engine-lit-hdr-tonemap', 'engine-sky-gradient', 'engine-sky-procedural', 'engine-sky-cubemap', 'engine-sky-equirectangular', 'engine-sky-octahedral', 'engine-unlit-materials', 'engine-unlit-msaa', 'engine-unlit-indirect', 'engine-shared-gtao-bloom',
             'engine-directional-shadow', 'engine-shared-debug-overlay'])
             report.checks.push({ name, status: 'skipped', reason: '--engine-manifest was not supplied' });
         if (config.gpuDiagnostics) {

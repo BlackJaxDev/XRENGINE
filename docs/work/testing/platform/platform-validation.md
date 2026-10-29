@@ -295,6 +295,34 @@ This is nearest-filtered, single-mip, single-sample software coverage. Filtered 
 and poles, mip chains, sRGB images, procedural sky, bloom, transparency,
 world serialization, hardware, and desktop parity remain unqualified.
 
+### Clear procedural sky — 2026-10-29
+
+The real procedural sky profile checks noon, sunrise, sunset, midnight, camera
+pitch/yaw/translation, authored rotation, HDR intensity, and restoration. Clouds,
+stars, automatic cycling, and sun/moon/ambient synchronization are disabled.
+An independent double-precision reference checks five 5-by-5 HDR and canvas
+regions per sample. HDR tolerance is the larger of 0.00002 and 0.2 percent;
+canvas tolerance is three byte values. Celestial disc samples are rejected.
+
+The rebuilt shader passes all 24 targeted samples over two device sessions,
+including non-square resize and restoration. Each settled sample has 69 live
+resources and zero retiring resources. Native programs remain stable through
+resize. Midnight and non-square restored captures were viewed. The
+[procedural sky record](../../investigations/rendering/archive/2026-10-29-clear-procedural-sky-qualification.md)
+records the first live result, explicit zero-cloud branch, stale local recipe
+rejection, corrected package, and reference boundary.
+
+The final published bundle passes all 18 selected browser checks, including
+114 sky samples and 24 indirect lifecycle/resize stages with strict ownership.
+Bare-host shipping autostart, the optional published game, and the separate
+Jolt spike are skipped explicitly. All 24 build and publish gates pass with
+zero compiler warnings/errors. Fresh cooking packages 57 shaders and 112 assets;
+metadata and bundle checks pass. Runtime uses explicit SwiftShader WebGPU.
+
+Clouds, stars, celestial discs, automatic cycling, lighting synchronization,
+bloom, transparency over sky, serialization, hardware, and desktop pixel parity
+remain unqualified. Full shader and platform-cooking requirements remain open.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

@@ -135,7 +135,7 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                         assert(hdr[index].format === 'rgba16float' && hdr[index].width === width && hdr[index].height === height,
                             'BrowserSmoke.SkyHdrTarget: expected the current engine RGBA16F scene target.');
                         for (let channel = 0; channel < 4; channel++) {
-                            const value = expected[index], tolerance = Math.max(0.002, value.hdr.max[channel] * 0.002);
+                            const value = expected[index], tolerance = Math.max(profile.hdrAbsoluteTolerance ?? 0.002, value.hdr.max[channel] * 0.002);
                             assert(hdr[index].min[channel] >= value.hdr.min[channel] - tolerance &&
                                 hdr[index].max[channel] <= value.hdr.max[channel] + tolerance,
                             `BrowserSmoke.SkyHdrMismatch: ${names[sampleCase]}, sample ${index}, channel ${channel}.`);

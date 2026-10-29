@@ -19,7 +19,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         _skyTexture = _skyProfile switch
         {
-            EngineSkyDiagnosticProfile.Gradient => null,
+            EngineSkyDiagnosticProfile.Gradient or EngineSkyDiagnosticProfile.Procedural => null,
             EngineSkyDiagnosticProfile.Cubemap => CreateSkyCube(),
             EngineSkyDiagnosticProfile.Equirectangular => CreateSkyImage(false),
             EngineSkyDiagnosticProfile.Octahedral => CreateSkyImage(true),
@@ -27,7 +27,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
         };
         _skyComponent = CreateLightNode("Diagnostic sky background").AddComponent(() => new SkyboxComponent
         {
-            Mode = _skyTexture is null ? ESkyboxMode.Gradient : ESkyboxMode.Texture,
+            Mode = _skyProfile == EngineSkyDiagnosticProfile.Procedural ? ESkyboxMode.DynamicProcedural
+                : _skyTexture is null ? ESkyboxMode.Gradient : ESkyboxMode.Texture,
             Projection = _skyProfile switch
             {
                 EngineSkyDiagnosticProfile.Equirectangular => ESkyboxProjection.Equirectangular,
@@ -38,6 +39,9 @@ internal sealed partial class EngineMeshDiagnosticFixture
             TopColor = new Vector3(1.2f, 0.15f, 0.05f),
             BottomColor = new Vector3(0.05f, 0.2f, 0.9f),
             AutoCycle = false,
+            CloudCoverage = 0,
+            CloudSpeed = 0,
+            StarIntensity = 0,
             SyncDirectionalLightWithSun = false,
             SyncDirectionalLightWithMoon = false,
             SyncGlobalAmbientLighting = false,
@@ -58,6 +62,11 @@ internal sealed partial class EngineMeshDiagnosticFixture
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_sky || _skyComponent is null || _skyCameraTransform is null)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
+        if (_skyProfile == EngineSkyDiagnosticProfile.Procedural)
+        {
+            SetSkyProceduralCase(sampleCase);
+            return;
+        }
         if (_skyProfile != EngineSkyDiagnosticProfile.Gradient)
         {
             SetSkyImageCase(sampleCase);
@@ -81,7 +90,30 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         if (!_sky || _skyComponent?.Material is not { } material)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
-        return FormattableString.Invariant($"{{\"sampleCase\":{_skyCase},\"semantic\":\"{material.EngineSemantic.Semantic}\",\"semanticVersion\":{material.EngineSemantic.Version},\"authoredShaderCount\":{material.Shaders.Count},\"intensity\":{_skyComponent.Intensity},\"mode\":\"{_skyComponent.Mode}\",\"projection\":\"{_skyComponent.Projection}\",\"rotation\":{_skyComponent.Rotation},\"pipeline\":\"DefaultRenderPipeline\"}}");
+        return FormattableString.Invariant($"{{\"sampleCase\":{_skyCase},\"semantic\":\"{material.EngineSemantic.Semantic}\",\"semanticVersion\":{material.EngineSemantic.Version},\"authoredShaderCount\":{material.Shaders.Count},\"intensity\":{_skyComponent.Intensity},\"mode\":\"{_skyComponent.Mode}\",\"projection\":\"{_skyComponent.Projection}\",\"rotation\":{_skyComponent.Rotation},\"timeOfDay\":{_skyComponent.TimeOfDay},\"cloudCoverage\":{_skyComponent.CloudCoverage},\"starIntensity\":{_skyComponent.StarIntensity},\"pipeline\":\"DefaultRenderPipeline\"}}");
+    }
+
+    private void SetSkyProceduralCase(int sampleCase)
+    {
+        if (sampleCase is < 0 or > 9)
+            throw new ArgumentOutOfRangeException(nameof(sampleCase));
+        _skyCase = sampleCase;
+        _skyComponent!.TimeOfDay = sampleCase switch
+        {
+            1 => 0,
+            2 => 0.5f,
+            3 => 0.75f,
+            _ => 0.25f,
+        };
+        _skyComponent.Intensity = sampleCase == 8 ? 4 : 1;
+        _skyComponent.Rotation = sampleCase == 7 ? 90 : 0;
+        _skyCameraTransform!.Translation = sampleCase == 5 ? new Vector3(100, 200, 300) : Vector3.Zero;
+        _skyCameraTransform.Rotation = sampleCase switch
+        {
+            4 => Quaternion.CreateFromAxisAngle(Vector3.UnitX, MathF.PI / 6),
+            6 => Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.PI / 2),
+            _ => Quaternion.Identity,
+        };
     }
 
     private void SetSkyImageCase(int sampleCase)

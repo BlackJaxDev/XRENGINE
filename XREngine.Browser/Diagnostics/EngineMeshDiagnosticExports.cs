@@ -80,6 +80,13 @@ public static partial class EngineMeshDiagnosticExports
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
             null, null, null, sky: true);
 
+    /// <summary>Starts a clear procedural sky through the shared HDR pipeline.</summary>
+    [JSExport]
+    public static Task<int> CreateSkyProceduralAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
+            null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.Procedural);
+
     /// <summary>Starts a six-face HDR cube sky through the shared pipeline.</summary>
     [JSExport]
     public static Task<int> CreateSkyCubemapAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
@@ -249,6 +256,7 @@ public static partial class EngineMeshDiagnosticExports
                     skyProfile switch
                     {
                         EngineSkyDiagnosticProfile.Gradient => EngineMaterialSemanticIdentity.SkyboxGradientV1,
+                        EngineSkyDiagnosticProfile.Procedural => EngineMaterialSemanticIdentity.SkyboxDynamicProceduralV1,
                         EngineSkyDiagnosticProfile.Cubemap => EngineMaterialSemanticIdentity.SkyboxCubemapV1,
                         EngineSkyDiagnosticProfile.Equirectangular => EngineMaterialSemanticIdentity.SkyboxEquirectangularV1,
                         EngineSkyDiagnosticProfile.Octahedral => EngineMaterialSemanticIdentity.SkyboxOctahedralV1,

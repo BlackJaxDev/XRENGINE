@@ -301,16 +301,21 @@ float4 skyFragment(SkyVertexOutput input) : SV_Target0
     color = lerp(night, color + night * 0.15, clamp(dayFactor + duskFactor * 0.35, 0.0, 1.0));
 
     // --- Seamless directional clouds ---
-    float timeAdvect = sky.cloudSpeed * sky.timeOfDay * 240.0;
-    float flowAngle = sky.timeOfDay * 0.35;
-    float3 windDir = SafeNormalize3(float3(cos(flowAngle), 0.12, sin(flowAngle)));
-    float3 cloudP = dir * sky.cloudScale * 3.0;
-    float3 warped = cloudP + windDir * timeAdvect * 0.25;
-    float cloudBase = Fbm3_6(warped);
-    float cloudDetail = Noise3(warped * 6.5 - windDir * timeAdvect * 0.35);
-    float cloudShape = cloudBase * 0.82 + cloudDetail * 0.18;
-    float cloudMask = smoothstep(-0.08, 0.12, dir.y);
-    float cloud = smoothstep(1.0 - sky.cloudCoverage, 1.0, pow(cloudShape, sky.cloudSharpness)) * cloudMask;
+    // Zero coverage is a clear sky. Do not evaluate smoothstep with equal edges.
+    float cloud = 0.0;
+    if (sky.cloudCoverage > 0.0)
+    {
+        float timeAdvect = sky.cloudSpeed * sky.timeOfDay * 240.0;
+        float flowAngle = sky.timeOfDay * 0.35;
+        float3 windDir = SafeNormalize3(float3(cos(flowAngle), 0.12, sin(flowAngle)));
+        float3 cloudP = dir * sky.cloudScale * 3.0;
+        float3 warped = cloudP + windDir * timeAdvect * 0.25;
+        float cloudBase = Fbm3_6(warped);
+        float cloudDetail = Noise3(warped * 6.5 - windDir * timeAdvect * 0.35);
+        float cloudShape = cloudBase * 0.82 + cloudDetail * 0.18;
+        float cloudMask = smoothstep(-0.08, 0.12, dir.y);
+        cloud = smoothstep(1.0 - sky.cloudCoverage, 1.0, pow(cloudShape, sky.cloudSharpness)) * cloudMask;
+    }
 
     // Cloud shading: Beer-Lambert powder effect + forward-scatter silver lining
     float muSun = dot(dir, sunDir);

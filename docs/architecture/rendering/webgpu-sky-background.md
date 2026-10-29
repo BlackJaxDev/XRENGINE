@@ -101,6 +101,17 @@ plus camera changes, authored rotation, HDR output, foreground depth, resize,
 and restart. The [image projection record](../../work/investigations/rendering/archive/2026-10-29-sky-image-projection-qualification.md)
 separates nearest-texel mapping from seam and pole filtering.
 
+`engine-sky-procedural` checks clear atmosphere at noon, sunrise, sunset, and
+midnight. Clouds and stars are disabled. Independent camera-ray calculations
+check atmospheric scattering, dusk weighting, night base, and off-disc celestial
+glow in HDR and after tonemapping. Camera pitch, yaw, translation, authored
+rotation, intensity, foreground depth, resize, and restart use the same scene.
+Zero cloud coverage explicitly skips the noise and density calculation, so it
+does not evaluate a smoothstep interval with equal edges. Positive coverage
+retains the existing formulas. See the
+[clear procedural sky record](../../work/investigations/rendering/archive/2026-10-29-clear-procedural-sky-qualification.md).
+
 Known-value GPU acceptance remains open for filtered seams and poles, mip chains,
 sRGB sky image decoding, sky bloom, sorted transparency over sky, procedural
-day/night controls, retained sun/moon/ambient behavior, and hardware devices.
+clouds, stars, celestial discs, automatic cycling, retained sun/moon/ambient
+behavior, and hardware devices.

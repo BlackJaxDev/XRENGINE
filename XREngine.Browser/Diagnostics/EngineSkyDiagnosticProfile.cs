@@ -4,6 +4,7 @@ namespace XREngine.Browser.Diagnostics;
 internal enum EngineSkyDiagnosticProfile
 {
     Gradient,
+    Procedural,
     Cubemap,
     Equirectangular,
     Octahedral,
