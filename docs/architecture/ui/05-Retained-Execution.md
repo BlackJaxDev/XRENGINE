@@ -2985,3 +2985,17 @@ Native viewport producers request an offscreen capture pipeline. They publish a
 new surface generation only after the viewport accepts the scene render. A
 deferred render retains the previous published surface and reports pending
 admission. This does not prove GPU or interactive acceptance.
+
+## Saved native window ownership
+
+`NativeDockLayoutPersistence` reads the canonical primary key, then the exact
+legacy title key, then the default title key. It does not infer a match from other
+index-zero records. Invalid, duplicate, or ambiguous records do not authorize an
+automatic primary save. A primary save must retain the exact layout returned by
+the current load and the same source JSON. A newer load revokes the older claim,
+even when the source text is equal.
+
+The preference setter checks its write intent and owner after callbacks. A refused
+save returns false. A failed save revokes only its own claim. Saves preserve other
+records and unknown fields in the selected record. This uses the existing JSON
+format; it does not rewrite user preferences at startup.
