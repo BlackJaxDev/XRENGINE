@@ -44,8 +44,9 @@ namespace XREngine
             {
 #endif
                 string path = VerifyAssetPath(asset, directory);
-                if (File.Exists(path) && !(AllowOverwriteCallback?.Invoke(path) ?? true))
-                    path = GetUniqueAssetPath(path);
+                IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+                if (files.FileExists(path) && !(AllowOverwriteCallback?.Invoke(path) ?? true))
+                    path = GetUniqueAssetPath(path, files);
 
                 asset.FilePath = path;
                 XRAssetGraphUtility.RefreshAssetGraph(asset);

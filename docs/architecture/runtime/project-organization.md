@@ -221,6 +221,13 @@ supplies both capabilities. Custom font-authoring hosts must supply the relevant
 capabilities; missing providers follow each caller's existing failure handling.
 These captures do not add an atomic file snapshot or a source-retirement lease.
 
+Asset save name selection captures the host-file read provider before its
+existence probe and retains it across the overwrite callback and unique-name
+search. Direct unique-name requests capture their own provider after host-file
+admission. Desktop registration supplies this capability. Custom authoring hosts
+must provide it. The provider capture does not reserve the selected name or
+make the subsequent save atomic.
+
 Texture streaming cache inspection captures `IRuntimeHostFileReadBackend` after
 host-file admission. The binary marker stream uses `FileShare.ReadWrite` and is
 disposed after inspection. Recognized binary cache reads use the same provider

@@ -1024,7 +1024,12 @@ namespace XREngine
         public static string GetUniqueAssetPath(string path)
         {
             EnsureDirectHostAssetFileAccess();
-            if (!File.Exists(path))
+            return GetUniqueAssetPath(path, RuntimeFileDiscoveryServices.CaptureHostFileReadBackend());
+        }
+
+        private static string GetUniqueAssetPath(string path, IRuntimeHostFileReadBackend files)
+        {
+            if (!files.FileExists(path))
                 return path;
 
             string? dir = Path.GetDirectoryName(path);
@@ -1038,7 +1043,7 @@ namespace XREngine
             do
             {
                 newPath = Path.Combine(dir, $"{name} ({i++}){ext}");
-            } while (File.Exists(newPath));
+            } while (files.FileExists(newPath));
             return newPath;
         }
 
