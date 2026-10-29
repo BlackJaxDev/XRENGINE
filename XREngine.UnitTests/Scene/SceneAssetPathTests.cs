@@ -51,12 +51,13 @@ public sealed class SceneAssetPathTests
     }
 
     [Test]
-    public void MissingProviderUsesDesktopRawReadFallback()
+    public void MissingProviderReportsMissingReadCapability()
     {
         RuntimeFileDiscoveryServices.Current = null;
         File.WriteAllText(Path.Combine(_root, "scene"), "test");
-        Assert.That(ResolveHost("scene"), Is.EqualTo(Path.Combine(_root, "scene")));
-        Assert.That(ResolveHost("missing"), Is.EqualTo(Path.Combine(_root, "missing.asset")));
+        Assert.That(Assert.Throws<NotSupportedException>(() => ResolveHost("scene"))!.Message,
+            Does.Contain("AssetSource.HostFileReadUnavailable"));
+        Assert.Throws<NotSupportedException>(() => ResolveHost("missing"));
     }
 
     [Test]

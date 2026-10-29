@@ -63,11 +63,12 @@ public sealed class YamlAssetPathAdmissionTests
     }
 
     [Test]
-    public void DesktopWithoutProviderUsesDefaultRawRead()
+    public void DesktopWithoutProviderReportsMissingReadCapability()
     {
         RuntimeFileDiscoveryServices.Current = null;
-        Assert.That(Exists(_path), Is.True);
-        Assert.That(Exists(_path + ".missing"), Is.False);
+        Assert.That(Assert.Throws<NotSupportedException>(() => Exists(_path))!.Message,
+            Does.Contain("AssetSource.HostFileReadUnavailable"));
+        Assert.Throws<NotSupportedException>(() => Exists(_path + ".missing"));
     }
 
     [Test]

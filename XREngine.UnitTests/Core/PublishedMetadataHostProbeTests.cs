@@ -63,12 +63,13 @@ public sealed class PublishedMetadataHostProbeTests
     }
 
     [Test]
-    public void MissingArchiveWithoutProviderOrMapperReturnsNoMetadata()
+    public void MissingProviderReportsMissingReadCapabilityBeforeArchiveMapping()
     {
         RuntimeFileDiscoveryServices.Current = null;
         FileMappingServices.Backend = null;
         XRRuntimeEnvironment.ConfigurePublishedPaths(Path.Combine(_root, "missing.archive"));
-        Assert.That(AotRuntimeMetadataStore.Metadata, Is.Null);
+        Assert.That(Assert.Throws<NotSupportedException>(() => _ = AotRuntimeMetadataStore.Metadata)!.Message,
+            Does.Contain("AssetSource.HostFileReadUnavailable"));
     }
 
     [Test]

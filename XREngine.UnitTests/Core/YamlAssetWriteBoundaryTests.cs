@@ -133,6 +133,31 @@ public sealed class YamlAssetWriteBoundaryTests
         Assert.That(_files.Probes + _files.Reads, Is.Zero);
     }
 
+    [Test]
+    public void MissingHostReadProviderKeepsEditedSavedAssetInline()
+    {
+        RuntimeFileDiscoveryServices.Current = null;
+        using TextFile text = CreateSavedText("edited shader");
+        string yaml = Serialize(text);
+        Assert.That(yaml, Does.Contain("Text: edited shader"));
+        Assert.That(yaml, Does.Not.Contain("Path: original.asset"));
+        Assert.That(_services.Probes, Is.Zero);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void UnsupportedProbeStillRejectsReplacedDiscovery(bool installedSource)
+    {
+        if (installedSource) RuntimeAssetReadServices.SetSource(new RawSource());
+        _files.OnProbe = () =>
+        {
+            RuntimeFileDiscoveryServices.Current = new Files();
+            throw new NotSupportedException("host read became unavailable");
+        };
+        using TextFile text = CreateSavedText("edited shader");
+        AssertStale(text);
+    }
+
     [TestCase(false)]
     [TestCase(true)]
     public void GenericConverterRetainsInlineSavedTextWhenBackingIsChangedOrUnreadable(bool unreadable)

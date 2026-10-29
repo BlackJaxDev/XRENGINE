@@ -77,14 +77,15 @@ public sealed class SnapshotHostPathTests
     }
 
     [Test]
-    public void RootedPathUsesProviderAndDefaultFallback()
+    public void RootedPathUsesProviderAndRejectsMissingReadCapability()
     {
         string path = Path.Combine(_engineRoot, "file.asset");
         _files.Found.Add(path);
         Assert.That(SnapshotAssetReference.HasLoadableFile(path), Is.True);
         Assert.That(_files.Seen, Is.EqualTo(new[] { path }));
         RuntimeFileDiscoveryServices.Current = null;
-        Assert.That(SnapshotAssetReference.HasLoadableFile(path), Is.False);
+        Assert.That(Assert.Throws<NotSupportedException>(() => SnapshotAssetReference.HasLoadableFile(path))!.Message,
+            Does.Contain("AssetSource.HostFileReadUnavailable"));
     }
 
     [Test]

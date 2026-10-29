@@ -222,12 +222,20 @@ not need it. This capability does not change metadata, cache, or writer APIs.
 YAML asset path lookup captures a raw-read lease before source selection. A
 catalog lookup uses catalog metadata. Other lookups require host-file admission
 and use the installed host-file read provider when available. Without that
-provider, the raw-read source supplies the existence check; with no source,
-the desktop raw-read fallback uses the local file system. A source or discovery
+provider, an installed raw-read source supplies the existence check. With no
+raw source, each lease captures the host discovery provider and its generation.
+Synchronous reads require `IRuntimeHostFileReadBackend`; asynchronous reads
+require `IRuntimeHostFileAsyncReadBackend` and pass the linked cancellation
+token. Missing capabilities fail with named exceptions. There is no implicit
+physical-file fallback. A source or discovery
 installation change invalidates a pending probe result, including reinstallation
 of the same provider. The final discovery check runs while the raw source has a
-publication reservation. The discovery generation check does not keep a
-replaced provider alive; hosts must coordinate provider disposal with its use.
+publication reservation. Null-source leases also reserve host installation
+changes during publication. No reservation spans I/O or an asynchronous wait.
+Installed raw sources retain their own ownership and ignore unrelated discovery
+changes. Discovery replacement rejects a pending host result but does not cancel
+the host I/O immediately. The generation check does not grant a provider-disposal
+lease; hosts must coordinate disposal with its use.
 
 Relative host scene paths use the same admitted host-file probe as YAML asset
 paths. Existing extensionless files keep their names; missing extensionless

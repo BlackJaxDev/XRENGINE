@@ -58,6 +58,7 @@
     <Compile Include="../Core/XRAssetSaveTransactionTests.cs" Link="Core/XRAssetSaveTransactionTests.cs" />
     <Compile Include="../Core/YamlAssetWriteBoundaryTests.cs" Link="Core/YamlAssetWriteBoundaryTests.cs" />
     <Compile Include="../Core/YamlAssetPathAdmissionTests.cs" Link="Core/YamlAssetPathAdmissionTests.cs" />
+    <Compile Include="../Core/RuntimeAssetReadLeaseHostTests.cs" Link="Core/RuntimeAssetReadLeaseHostTests.cs" />
     <Compile Include="../Animation/RecordingVrMovementComponent.cs" Link="Animation/RecordingVrMovementComponent.cs" />
     <Compile Include="../VR/VrDesktopRoutingTests.cs" Link="VR/VrDesktopRoutingTests.cs" />
     <!-- Reuse the same regression assertions as the desktop suite. -->

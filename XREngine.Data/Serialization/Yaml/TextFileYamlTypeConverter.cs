@@ -122,8 +122,20 @@ public sealed class TextFileYamlTypeConverter : IWriteOnlyYamlTypeConverter
         }
 
         IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long generation);
-        bool exists = RuntimeFileDiscoveryServices.HostFileExists(
-            read, path, "YAML text backing-file comparison", discovery, generation);
+        bool exists;
+        try
+        {
+            exists = RuntimeFileDiscoveryServices.HostFileExists(
+                read, path, "YAML text backing-file comparison", discovery, generation);
+        }
+        catch (NotSupportedException)
+        {
+            // An optional comparison must retain edited text when no read provider is installed.
+            using IDisposable unavailablePublication = read.BeginPublication();
+            if (!RuntimeFileDiscoveryServices.IsCurrent(discovery, generation))
+                throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the asset file discovery installation changed during the text comparison.");
+            return BackingFileState.Unavailable;
+        }
         if (!exists)
             return BackingFileState.Missing;
 

@@ -94,6 +94,16 @@ file owner for backing-text comparisons. Edited text remains inline when the
 backing file is unreadable or unsupported. The generic converter preserves that
 decision. All 28 write-boundary tests, 11 path-admission tests and five existing
 material/reference tests pass. The 11 save tests also pass after integration.
-The four-root lexical file scan now finds 17 lines in nine files, including
-comments and working-directory lookups. Raw-read fallback, the static Unity
-animation import and the separate mapping API still need placement work.
+The four-root lexical file scan now finds 14 lines in eight files, including
+comments and working-directory lookups. The static Unity animation import and
+the separate mapping API still need placement work.
+
+Raw reads without an installed asset source now capture the host file provider
+for the lease lifetime. Missing synchronous or asynchronous read capabilities
+fail explicitly. The desktop implementations retain cancellable asynchronous
+reads. Provider replacement rejects stale completion; short publication
+reservations prevent partial host installation. Installed raw sources retain
+their independent ownership. The focused headless checks pass, along with all
+22 existing scene, snapshot and metadata checks and five material/reference
+checks. This change removes the three direct file calls from the shared raw-read
+lease. It does not close the whole physical I/O inventory.
