@@ -119,6 +119,12 @@ false for incomplete work and reports collected errors after cleanup attempts.
 
 `Engine.ProfileCapture` stays in the shared Host project. It selects speed profile paths, labels, output data, and retention count. The optional `IRuntimeProfileCaptureFileOutput` contract stays in Rendering. The desktop platform leaf implements it through the existing diagnostic capture file output service. That leaf creates directories, applies the retention policy, and writes profile text with `Encoding.UTF8`. The Host still checks host-file admission and obtains the log run directory before it requests profile output. A host without the service or this capability reports a capture-start directory error; later profile writes keep their catch-all behavior.
 
+VR screenshot capture checks host-file admission and captures the diagnostic
+file output service before it requests a renderer screenshot. Its callback
+encodes the image, writes the existing indexed PNG name through the captured
+service, and disposes the image on success or failure. The captured service has
+no retirement lease; the host must keep it usable until the callback completes.
+
 `GLSubmitTracer` keeps level selection and line formatting in shared Rendering.
 Its optional `IRuntimeGLSubmitTraceFileOutput` host capability opens the log and
 returns an exclusive `IRuntimeOwnedTextLog` lease. Desktop owns directory and

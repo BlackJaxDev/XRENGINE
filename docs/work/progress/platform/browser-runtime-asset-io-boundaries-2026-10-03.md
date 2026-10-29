@@ -1,5 +1,28 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## VR screenshot output placement (2026-10-29)
+
+The VR player screenshot path checks host-file admission and captures the
+existing diagnostic output service before it requests an image. The callback
+encodes and writes through that service, keeps the indexed PNG filename, and
+disposes the image on success or failure. The captured service has no retirement
+lease; the host must retain it until the callback completes.
+
+Seven focused tests pass for captured service selection, image disposal,
+failure paths, caller-thread rejection, and the real desktop output adapter.
+The test and probe run without a renderer. Editor, Server, and VRClient Release
+builds pass on Linux with Windows targeting enabled. The desktop filesystem
+headless fixture passes. All 19 portable manifest projects compile for
+browser-wasm, and Browser publishes with native WASM and pinned Jolt inputs.
+Gate logs contain no warning or error diagnostics. These checks do not establish
+live VR screenshot capture, Windows startup, or browser rendering.
+
+This removes one direct file write from InputIntegration, outside the historical
+four-root direct-file count. The four-root count and blocking counts are unchanged.
+Both broad inventory requirements remain open. The [Unity static animation
+investigation](../../investigations/animation/2026-10-29-unity-static-anim-import.md)
+records a separate pre-existing importer failure and the normal import path.
+
 ## Published metadata archive probe (2026-10-29)
 
 Published config metadata checks its archive path through the shared admitted

@@ -1,5 +1,4 @@
 using System.Numerics;
-using XREngine.Core;
 using XREngine.Core.Attributes;
 using XREngine.Components.Physics;
 using XREngine.Data.Components.Scene;
@@ -162,19 +161,32 @@ namespace XREngine.Components
             if (pipeline is null)
                 return;
 
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null)
+                return;
+
+            IRuntimeDiagnosticCaptureFileOutput fileOutput = CaptureScreenshotOutput();
+
             string desktop = XREngine.Data.RuntimePlatformPaths.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             string capturePath = Path.Combine(desktop, $"{pipeline.GetType().Name}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}");
 
             BoundingRectangle vp = new BoundingRectangle();
-            AbstractRenderer.Current?.GetScreenshotAsync(vp, false, (img, index) =>
-            {
-                if (img is null)
-                    return;
-                Utility.EnsureDirPathExists(capturePath);
-                using (img)
-                    File.WriteAllBytes(Path.Combine(capturePath, $"Screenshot_{index:D4}.png"),
-                        RuntimeImageCodecs.Require().EncodePng(img));
-            });
+            renderer.GetScreenshotAsync(vp, false, (img, index) => WriteScreenshot(fileOutput, capturePath, img, index));
+        }
+
+        internal static IRuntimeDiagnosticCaptureFileOutput CaptureScreenshotOutput()
+        {
+            XREngine.Data.RuntimeAssetReadServices.EnsureHostFileAccess("VR screenshot output");
+            return RuntimeDiagnosticCaptureFileOutput.Require();
+        }
+
+        internal static void WriteScreenshot(IRuntimeDiagnosticCaptureFileOutput output, string directory, RuntimeImage? image, int index)
+        {
+            if (image is null)
+                return;
+
+            using (image)
+                output.WritePngInDirectory(directory, $"Screenshot_{index:D4}.png", RuntimeImageCodecs.Require().EncodePng(image));
         }
 
         public bool SpringEnabled
