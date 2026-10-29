@@ -52,8 +52,16 @@ namespace XREngine
             {
                 EnsureHostFileAssetAccess();
                 transferMode = RemoteJobTransferMode.PushDataToRemote;
-                if (File.Exists(filePath))
-                    payload = await DirectStorageIO.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
+                bool exists = ownerSource is not null
+                    ? ownerSource.Exists(filePath)
+                    : RuntimeFileDiscoveryServices.CaptureHostFileReadBackend().FileExists(filePath);
+                EnsureRemoteAssetResponseOwnerCurrent(ownerSource, ownerEpoch);
+                if (exists)
+                {
+                    if (ownerSource is null)
+                        throw new InvalidOperationException("Asset I/O requires an explicitly installed asset source.");
+                    payload = await ownerSource.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             var request = new RemoteJobRequest
@@ -64,6 +72,8 @@ namespace XREngine
                 Metadata = metadata,
             };
 
+            if (mode == RemoteAssetLoadMode.SendLocalCopy)
+                cancellationToken.ThrowIfCancellationRequested();
             EnsureRemoteAssetResponseOwnerCurrent(ownerSource, ownerEpoch);
             RemoteJobResponse response;
             try

@@ -221,6 +221,20 @@ supplies both capabilities. Custom font-authoring hosts must supply the relevant
 capabilities; missing providers follow each caller's existing failure handling.
 These captures do not add an atomic file snapshot or a source-retirement lease.
 
+Remote send-local-copy requests use the asset manager's captured runtime source
+for both existence and asynchronous bytes. This preserves the source's chosen
+read implementation, including an accelerated source. A global source change
+does not retarget the in-flight request. Source existence errors propagate; a
+custom source must implement its own path and error semantics. The asset owner
+epoch is checked after the probe and read, and cancellation is checked before
+remote submission. These checks do not lease or cancel a source when an
+independent global installation changes.
+
+When no asset source is bound, the request uses the installed host-file read
+capability for its existence probe. An absent file sends a request without a
+payload; an existing file still requires an installed asset source and fails
+explicitly. Custom native hosts must provide the read capability for this path.
+
 Remote asset download persistence uses the installed `IHostAssetFileOutput`
 as `IHostAssetFileAsyncOutput` after a successful, nonempty remote response and
 host-file admission. The desktop implementation creates the parent directory
@@ -229,8 +243,7 @@ Output errors, including cancellation during persistence, keep the existing
 best-effort false or null result. A custom authoring host that accepts remote
 downloads must provide the asynchronous output capability. Missing output
 capabilities follow the same failure path. This capture does not lease an output
-provider through replacement. Send-local-copy probing and source reading retain
-their existing owners.
+provider through replacement.
 
 Remote asset serving retains its captured runtime source and owner epoch. When
 no source is installed, it captures `IRuntimeHostFileReadBackend` lazily for
