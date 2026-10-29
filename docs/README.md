@@ -53,6 +53,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 
 ## Developer Guides
 
+- [Maintainer Code And Writing Style](developer-guides/ai/maintainer-style.md): code layout, comments, Git text, and summaries, with pre-2023 source evidence.
 - [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
 - [Test Suite Layout](developer-guides/testing/test-suite-layout.md)
 - [Work Doc Templates](developer-guides/ai/work-doc-templates.md)
