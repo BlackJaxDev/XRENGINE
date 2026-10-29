@@ -95,9 +95,9 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                     if (profile.imageExtent) {
                         const images = state.skyImages;
                         assert(images.length === 1 && images[0].width === profile.imageExtent[0] &&
-                            images[0].height === profile.imageExtent[1] && images[0].format === 'rgba16float' &&
-                            images[0].arrayLayerCount === 1 && images[0].mipLevelCount === 1 && images[0].sampleCount === 1,
-                        'BrowserSmoke.SkyImageStorage: expected the authored single-layer half-float image.');
+                            images[0].height === profile.imageExtent[1] && images[0].format === (profile.imageFormat ?? 'rgba16float') &&
+                            images[0].arrayLayerCount === 1 && images[0].mipLevelCount === (profile.imageMipLevels ?? 1) && images[0].sampleCount === 1,
+                        'BrowserSmoke.SkyImageStorage: expected the authored single-layer image format, extent, and mip count.');
                         const currentImage = JSON.stringify(images);
                         if (imageResource !== undefined)
                             assert(currentImage === imageResource, 'BrowserSmoke.SkyImageRetention: camera, intensity, or resize replaced the image.');
@@ -115,10 +115,18 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                     nativePrograms = currentNatives;
                     if (programs !== undefined && !replacesMaterial && !resize)
                     {
-                        if (currentPrograms !== programs)
+                        // A sampler change can replace the selected draw's managed
+                        // pipeline handle. Its native program was checked above.
+                        const bindingChange = profile.replacesBindings?.(previousCase, sampleCase) ?? false;
+                        const comparable = value => JSON.stringify({ shaders: value.shaders,
+                            pipelines: value.pipelines.filter(pipeline => pipeline.label !== profile.artifact) });
+                        const matches = bindingChange
+                            ? comparable(JSON.parse(currentPrograms)) === comparable(JSON.parse(programs))
+                            : currentPrograms === programs;
+                        if (!matches)
                             result.programMismatch = { iteration, sampleCase, width, height,
                                 previous: JSON.parse(programs), current: JSON.parse(currentPrograms) };
-                        assert(currentPrograms === programs, 'BrowserSmoke.SkyPrograms: numeric or camera updates replaced a cooked program handle.');
+                        assert(matches, 'BrowserSmoke.SkyPrograms: a change replaced an unexpected cooked program handle.');
                     }
                     programs = currentPrograms;
                     previousCase = sampleCase;

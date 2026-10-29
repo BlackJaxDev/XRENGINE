@@ -353,6 +353,35 @@ Moon-disc shading, clouds and sun occlusion, stars, automatic cycling, lighting
 synchronization, bloom, transparency, serialization, hardware, desktop parity,
 and integrated platform cooking remain open.
 
+### Filtered sRGB sky images — 2026-10-29
+
+Both image projections use actual sRGB texture storage with four authored mip
+levels, bilinear filtering, and pinned integer LODs. Independent camera-ray
+and texel references decode each texel before interpolation. Panorama U wraps;
+V and both octahedral axes clamp. Source alpha is ignored by the opaque sky.
+Camera, authored rotation/intensity, foreground depth, mip changes, resize,
+and restart all use the retained engine scene.
+
+Each profile passes all 34 targeted samples with the existing HDR tolerance of
+the larger of 0.002 and 0.2 percent, and three-byte canvas tolerance. Each settled
+sample has 72 live resources and zero retiring resources. Texture storage and
+native programs remain stable. Only the selected sky's managed pipeline handle
+may change at a sampler LOD transition; shader and unrelated pipeline handles
+remain checked. The [filtered image record](../../investigations/rendering/archive/2026-10-29-filtered-sky-image-qualification.md)
+records live images, numeric results, and that ownership boundary.
+
+The final published bundle passes all 21 selected checks on explicit SwiftShader
+WebGPU, including 210 sky samples and 24 indirect lifecycle/resize stages with
+strict ownership. Bare-host shipping autostart, the optional published game,
+and the separate Jolt spike are skipped explicitly. All 24 build and publish
+gates pass with zero compiler warnings/errors. Fresh cooking packages 57 shaders
+and 112 assets; metadata and bundle checks pass.
+
+Implicit LOD, fractional trilinear blends, mip generation, anisotropy, filtering
+across octahedral seams, cube filtering/mip/color-space cases, imported asset
+quality, serialization, hardware, desktop parity, and integrated cooking remain
+open. Other procedural and full shader requirements remain open.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

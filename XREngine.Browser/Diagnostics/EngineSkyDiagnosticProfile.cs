@@ -9,4 +9,6 @@ internal enum EngineSkyDiagnosticProfile
     Cubemap,
     Equirectangular,
     Octahedral,
+    FilteredEquirectangular,
+    FilteredOctahedral,
 }

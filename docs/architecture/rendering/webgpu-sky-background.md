@@ -119,7 +119,17 @@ input. Each resized extent samples both foreground and sun, so the full program
 inventory is active when resource retention is checked. See the
 [sun disc record](../../work/investigations/rendering/archive/2026-10-29-sun-disc-qualification.md).
 
-Known-value GPU acceptance remains open for filtered seams and poles, mip chains,
-sRGB sky image decoding, sky bloom, sorted transparency over sky, procedural
+The `engine-sky-equirectangular-filtered` and `engine-sky-octahedral-filtered`
+profiles check sRGB decoding before bilinear interpolation with four authored
+mips. They cover panorama U repetition and pole clamping, octahedral axis
+clamping, integer LOD selection, camera pose, intensity, resize, and restart.
+Texture storage and native programs stay fixed when sampler changes rebuild the
+selected draw's managed pipeline handle. See the
+[filtered image record](../../work/investigations/rendering/archive/2026-10-29-filtered-sky-image-qualification.md)
+for the authored-image and mip-selection boundaries.
+
+Known-value GPU acceptance remains open for implicit and fractional LOD,
+automatic mip generation, anisotropy, filtering across octahedral seams,
+filtered cube edges and cube mip/color-space cases, sky bloom, sorted transparency over sky, procedural
 clouds, stars, moon-disc shading, automatic cycling, retained sun/moon/ambient
 behavior, and hardware devices.

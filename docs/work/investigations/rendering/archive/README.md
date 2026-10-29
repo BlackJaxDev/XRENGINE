@@ -108,3 +108,7 @@ current owner below explicitly adopts it.
 - [Procedural sun disc qualification](2026-10-29-sun-disc-qualification.md)
   records HDR disc radiance, size, limb falloff, and foreground depth. Current
   limits are in [platform validation](../../../testing/platform/platform-validation.md#procedural-sun-disc--2026-10-29).
+
+- [Filtered sRGB sky image qualification](2026-10-29-filtered-sky-image-qualification.md)
+  records bilinear decoding, repeat/clamp sampling, and authored mip selection.
+  Current limits are in [platform validation](../../../testing/platform/platform-validation.md#filtered-srgb-sky-images--2026-10-29).

@@ -35,7 +35,7 @@ export class EngineMeshDiagnosticHost {
     async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe', executionProfile = 'cpu-x1') {
         if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color',
             'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug',
-            'engine-standard-lit-color-effects', 'engine-sky-gradient', 'engine-sky-procedural', 'engine-sky-sun', 'engine-sky-cubemap', 'engine-sky-equirectangular', 'engine-sky-octahedral', 'engine-unlit-materials'].includes(artifactName))
+            'engine-standard-lit-color-effects', 'engine-sky-gradient', 'engine-sky-procedural', 'engine-sky-sun', 'engine-sky-cubemap', 'engine-sky-equirectangular', 'engine-sky-octahedral', 'engine-sky-equirectangular-filtered', 'engine-sky-octahedral-filtered', 'engine-unlit-materials'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         if (!['cpu-x1', 'cpu-x4', 'cpu-x4-blended', 'cpu-x4-ao',
             'gpu-indirect-x1', 'gpu-indirect-x4', 'gpu-indirect-x4-blended', 'gpu-indirect-x4-ao'].includes(executionProfile) ||
@@ -53,7 +53,7 @@ export class EngineMeshDiagnosticHost {
         this.readyFrames = 0;
         this.settleFrames = 0;
         this.lastReadySession = 0;
-        this.kind = ['engine-sky-gradient', 'engine-sky-procedural', 'engine-sky-sun', 'engine-sky-cubemap', 'engine-sky-equirectangular', 'engine-sky-octahedral'].includes(artifactName) ? 'sky' :
+        this.kind = ['engine-sky-gradient', 'engine-sky-procedural', 'engine-sky-sun', 'engine-sky-cubemap', 'engine-sky-equirectangular', 'engine-sky-octahedral', 'engine-sky-equirectangular-filtered', 'engine-sky-octahedral-filtered'].includes(artifactName) ? 'sky' :
             artifactName === 'engine-unlit-materials' ? 'unlit' :
             artifactName === 'engine-standard-lit-color-effects' ? 'effects' :
             artifactName === 'engine-standard-lit-color-debug' ? 'debug' :
@@ -95,9 +95,9 @@ export class EngineMeshDiagnosticHost {
                 ? executionProfile === 'cpu-x1'
                     ? this.exports.CreateUnlitAsync(this.canvas.id, String(assetManifestUrl))
                     : this.exports.CreateUnlitProfileAsync(this.canvas.id, String(assetManifestUrl), executionProfile)
-                : ['engine-sky-equirectangular', 'engine-sky-octahedral'].includes(artifactName)
+                : ['engine-sky-equirectangular', 'engine-sky-octahedral', 'engine-sky-equirectangular-filtered', 'engine-sky-octahedral-filtered'].includes(artifactName)
                 ? this.exports.CreateSkyImageAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
-                    tonemap.descriptorJson, tonemap.source, artifactName === 'engine-sky-equirectangular' ? 'equirectangular' : 'octahedral')
+                    tonemap.descriptorJson, tonemap.source, artifactName.slice('engine-sky-'.length))
                 : this.kind === 'sky'
                 ? (artifactName === 'engine-sky-sun' ? this.exports.CreateSkySunAsync
                     : artifactName === 'engine-sky-procedural' ? this.exports.CreateSkyProceduralAsync
@@ -483,7 +483,7 @@ export class EngineMeshDiagnosticHost {
             const value = entry.value;
             const identity = { slot, generation: entry.generation, label: value.label ?? '',
                 width: value.width, height: value.height, format: value.format, arrayLayerCount: value.arrayLayerCount };
-            if (entry.kind === 'texture' && value.label === 'Diagnostic HDR sky image')
+            if (entry.kind === 'texture' && ['Diagnostic HDR sky image', 'Diagnostic filtered sRGB sky image'].includes(value.label))
                 state.skyImages.push({ ...identity, mipLevelCount: value.mipLevelCount, sampleCount: value.sampleCount });
             if (entry.kind === 'texture' && value.arrayLayerCount === 6)
                 state.cubeTextures.push({ ...identity, mipLevelCount: value.mipLevelCount, sampleCount: value.sampleCount });

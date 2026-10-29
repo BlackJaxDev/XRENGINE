@@ -101,7 +101,7 @@ public static partial class EngineMeshDiagnosticExports
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
             null, null, null, sky: true, skyProfile: EngineSkyDiagnosticProfile.Cubemap);
 
-    /// <summary>Starts an authored HDR sky image through the shared pipeline.</summary>
+    /// <summary>Starts an authored sky image through the shared HDR pipeline.</summary>
     [JSExport]
     public static Task<int> CreateSkyImageAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
         string tonemapDescriptorJson, string tonemapWgsl, string projection)
@@ -110,6 +110,8 @@ public static partial class EngineMeshDiagnosticExports
             {
                 "equirectangular" => EngineSkyDiagnosticProfile.Equirectangular,
                 "octahedral" => EngineSkyDiagnosticProfile.Octahedral,
+                "equirectangular-filtered" => EngineSkyDiagnosticProfile.FilteredEquirectangular,
+                "octahedral-filtered" => EngineSkyDiagnosticProfile.FilteredOctahedral,
                 _ => throw new ArgumentException("Select an admitted sky image projection.", nameof(projection)),
             });
 
@@ -265,8 +267,8 @@ public static partial class EngineMeshDiagnosticExports
                         EngineSkyDiagnosticProfile.Gradient => EngineMaterialSemanticIdentity.SkyboxGradientV1,
                         EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun => EngineMaterialSemanticIdentity.SkyboxDynamicProceduralV1,
                         EngineSkyDiagnosticProfile.Cubemap => EngineMaterialSemanticIdentity.SkyboxCubemapV1,
-                        EngineSkyDiagnosticProfile.Equirectangular => EngineMaterialSemanticIdentity.SkyboxEquirectangularV1,
-                        EngineSkyDiagnosticProfile.Octahedral => EngineMaterialSemanticIdentity.SkyboxOctahedralV1,
+                        EngineSkyDiagnosticProfile.Equirectangular or EngineSkyDiagnosticProfile.FilteredEquirectangular => EngineMaterialSemanticIdentity.SkyboxEquirectangularV1,
+                        EngineSkyDiagnosticProfile.Octahedral or EngineSkyDiagnosticProfile.FilteredOctahedral => EngineMaterialSemanticIdentity.SkyboxOctahedralV1,
                         _ => throw new ArgumentOutOfRangeException(nameof(skyProfile)),
                     },
                     ShaderCompileTarget.WebGPUWgsl, "background", "fullscreen-sky-v1", "linear-hdr-v1"), out _))

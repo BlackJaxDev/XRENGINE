@@ -35,7 +35,7 @@ const lit=params.get('probe')==='lit';
 const skySun=params.get('probe')==='sky-sun';
 const skyProcedural=params.get('probe')==='sky-procedural';
 const skyCube=params.get('probe')==='sky-cube';
-const skyProjection=['equirectangular','octahedral'].find(value=>params.get('probe')===`sky-${value}`);
+const skyProjection=['equirectangular','octahedral','equirectangular-filtered','octahedral-filtered'].find(value=>params.get('probe')===`sky-${value}`);
 const sky=params.get('probe')==='sky'||skySun||skyProcedural||skyCube||skyProjection;
 const shadow=params.get('probe')==='shadow';
 const debug=params.get('probe')==='debug';
