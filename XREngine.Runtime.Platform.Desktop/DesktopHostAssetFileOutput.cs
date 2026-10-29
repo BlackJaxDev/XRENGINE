@@ -4,7 +4,7 @@ using XREngine.Data;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Writes authoring asset files to desktop host paths.</summary>
-public sealed class DesktopHostAssetFileOutput : IHostAssetFileOutput
+public sealed class DesktopHostAssetFileOutput : IHostAssetFileOutput, IHostAssetFileAsyncOutput
 {
     public Stream CreateFileWithParentDirectory(string path)
     {
@@ -19,4 +19,12 @@ public sealed class DesktopHostAssetFileOutput : IHostAssetFileOutput
 
     public Task WriteAllTextAsync(string path, string text, Encoding encoding)
         => File.WriteAllTextAsync(path, text, encoding);
+
+    public Task WriteAllBytesWithParentDirectoryAsync(string path, byte[] bytes, CancellationToken cancellationToken)
+    {
+        string? directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+        return File.WriteAllBytesAsync(path, bytes, cancellationToken);
+    }
 }

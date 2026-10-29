@@ -272,11 +272,8 @@ namespace XREngine
             try
             {
                 filePath = Path.GetFullPath(filePath);
-                string? directory = Path.GetDirectoryName(filePath);
-                if (!string.IsNullOrWhiteSpace(directory))
-                    Directory.CreateDirectory(directory);
-
-                await File.WriteAllBytesAsync(filePath, response.Payload, cancellationToken).ConfigureAwait(false);
+                IHostAssetFileAsyncOutput output = RequireAsyncRemoteAssetOutput();
+                await output.WriteAllBytesWithParentDirectoryAsync(filePath, response.Payload, cancellationToken).ConfigureAwait(false);
                 return true;
             }
             catch (Exception ex)
@@ -338,11 +335,8 @@ namespace XREngine
 
             try
             {
-                string? directory = Path.GetDirectoryName(targetPath);
-                if (!string.IsNullOrWhiteSpace(directory))
-                    Directory.CreateDirectory(directory);
-
-                await File.WriteAllBytesAsync(targetPath, response.Payload, cancellationToken).ConfigureAwait(false);
+                IHostAssetFileAsyncOutput output = RequireAsyncRemoteAssetOutput();
+                await output.WriteAllBytesWithParentDirectoryAsync(targetPath, response.Payload, cancellationToken).ConfigureAwait(false);
                 return targetPath;
             }
             catch (Exception ex)
@@ -351,5 +345,9 @@ namespace XREngine
                 return null;
             }
         }
+
+        private static IHostAssetFileAsyncOutput RequireAsyncRemoteAssetOutput()
+            => HostAssetFileOutputServices.Required as IHostAssetFileAsyncOutput
+                ?? throw new NotSupportedException("HostAssetFileOutput.AsyncBytesUnavailable: the installed output service does not provide asynchronous byte writes.");
     }
 }

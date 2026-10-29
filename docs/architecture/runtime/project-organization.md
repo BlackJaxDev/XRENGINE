@@ -221,6 +221,17 @@ supplies both capabilities. Custom font-authoring hosts must supply the relevant
 capabilities; missing providers follow each caller's existing failure handling.
 These captures do not add an atomic file snapshot or a source-retirement lease.
 
+Remote asset download persistence uses the installed `IHostAssetFileOutput`
+as `IHostAssetFileAsyncOutput` after a successful, nonempty remote response and
+host-file admission. The desktop implementation creates the parent directory
+and delegates to `File.WriteAllBytesAsync` with the caller's cancellation token.
+Output errors, including cancellation during persistence, keep the existing
+best-effort false or null result. A custom authoring host that accepts remote
+downloads must provide the asynchronous output capability. Missing output
+capabilities follow the same failure path. This capture does not lease an output
+provider through replacement. Send-local-copy probing and source reading retain
+their existing owners.
+
 Remote asset serving retains its captured runtime source and owner epoch. When
 no source is installed, it captures `IRuntimeHostFileReadBackend` lazily for
 host-file existence checks and uses the same object as
