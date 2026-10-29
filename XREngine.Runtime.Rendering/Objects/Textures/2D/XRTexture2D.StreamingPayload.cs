@@ -178,7 +178,8 @@ public partial class XRTexture2D
     {
         RuntimeTextureSourceAccess.RequireHostFiles();
         texture = new XRTexture2D();
-        if (string.IsNullOrWhiteSpace(sourceFilePath) || !File.Exists(sourceFilePath))
+        if (string.IsNullOrWhiteSpace(sourceFilePath)
+            || !RuntimeFileDiscoveryServices.CaptureHostFileReadBackend().FileExists(sourceFilePath))
             return false;
 
         try
@@ -525,14 +526,13 @@ public partial class XRTexture2D
     {
         if (!RuntimeTextureSourceAccess.CanAccessHostFiles)
             return false;
-        if (string.IsNullOrWhiteSpace(assetPath) || !File.Exists(assetPath))
+        if (string.IsNullOrWhiteSpace(assetPath))
             return false;
 
         TextureStreamingSourceManifest manifest;
         try
         {
-            FileInfo assetInfo = new(assetPath);
-            if (assetInfo.Length <= 0)
+            if (!FileMappingServices.Required.TryGetFileLength(assetPath, out long length) || length <= 0)
                 return false;
 
             // Only the manifest is needed, so the cache file is mapped instead of read into an array.

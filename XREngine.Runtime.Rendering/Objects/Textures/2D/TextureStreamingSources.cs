@@ -63,7 +63,7 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
             return _fallbackSource.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
 
         cancellationToken.ThrowIfCancellationRequested();
-        if (_fallbackSource is not null && !File.Exists(assetPath))
+        if (_fallbackSource is not null && !RuntimeFileDiscoveryServices.CaptureHostFileReadBackend().FileExists(assetPath))
         {
             return LoadFallbackResidentData(
                 maxResidentDimension,

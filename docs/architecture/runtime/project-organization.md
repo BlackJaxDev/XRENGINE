@@ -271,6 +271,23 @@ admission. Desktop registration supplies this capability. Custom authoring hosts
 must provide it. The provider capture does not reserve the selected name or
 make the subsequent save atomic.
 
+Texture source import and streaming cache fallback use
+`IRuntimeHostFileReadBackend` for host-file existence probes after texture host
+admission. A failed asset load retains its captured probe provider through the
+source fallback. Batch entries, cache preparation, and streaming residency keep
+their existing admission, cancellation, and early-return rules. Texture-asset
+marker inspection opens a shared read stream and accepts non-seekable streams;
+the marker byte is replayed into the YAML reader, and the caller disposes the
+host stream once. Cache usability obtains file length from the existing mapping
+backend before mapping the payload.
+
+Desktop registration supplies the read and mapping capabilities. Custom native
+texture hosts must provide the capabilities used by their paths. Discovery,
+render asset reads, and mapping remain separate owners: hosts must keep their
+path identities consistent. A probe capture does not make later reads atomic or
+lease a provider. The length check and payload map can capture different mapping
+installations if a host replaces one during the operation.
+
 Texture streaming cache inspection captures `IRuntimeHostFileReadBackend` after
 host-file admission. The binary marker stream uses `FileShare.ReadWrite` and is
 disposed after inspection. Recognized binary cache reads use the same provider

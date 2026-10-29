@@ -72,7 +72,7 @@ namespace XREngine.Rendering
             return base.Load3rdPartyAsync(filePath, context);
         }
 
-        private bool Load3rdPartyCore(string filePath, string? originalSourcePath = null)
+        private bool Load3rdPartyCore(string filePath, string? originalSourcePath = null, IRuntimeHostFileReadBackend? files = null)
         {
             RuntimeTextureSourceAccess.RequireHostFiles();
             FilePath = string.IsNullOrWhiteSpace(filePath) ? filePath : Path.GetFullPath(filePath);
@@ -89,11 +89,11 @@ namespace XREngine.Rendering
                 {
                     fallbackSourcePath = Path.GetFullPath(fallbackSourcePath);
                     if (!string.Equals(fallbackSourcePath, FilePath, StringComparison.OrdinalIgnoreCase) &&
-                        File.Exists(fallbackSourcePath))
+                        (files ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend()).FileExists(fallbackSourcePath))
                     {
                         Debug.TexturesWarning(
                             $"Texture cache asset '{filePath}' is unusable. Loading source texture '{fallbackSourcePath}' instead.");
-                        return Load3rdPartyCore(fallbackSourcePath);
+                        return Load3rdPartyCore(fallbackSourcePath, files: files);
                     }
                 }
 
@@ -101,7 +101,8 @@ namespace XREngine.Rendering
                 return AssignFillerTexture(filePath);
             }
 
-            if (!File.Exists(filePath))
+            files ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+            if (!files.FileExists(filePath))
             {
                 Debug.TexturesWarning($"Texture file '{filePath}' does not exist. Falling back to filler texture.");
                 return AssignFillerTexture(filePath);
@@ -188,7 +189,9 @@ namespace XREngine.Rendering
                 if (!string.IsNullOrWhiteSpace(originalSourcePath))
                     target.OriginalPath ??= originalSourcePath;
                 cancellationToken.ThrowIfCancellationRequested();
-                if (string.IsNullOrWhiteSpace(resolvedPath) || !File.Exists(resolvedPath) || HasAssetExtension(resolvedPath))
+                if (string.IsNullOrWhiteSpace(resolvedPath)
+                    || !RuntimeFileDiscoveryServices.CaptureHostFileReadBackend().FileExists(resolvedPath)
+                    || HasAssetExtension(resolvedPath))
                 {
                     target.Load3rdParty(resolvedPath);
                     continue;
@@ -925,7 +928,8 @@ namespace XREngine.Rendering
             RuntimeTextureSourceAccess.RequireHostFiles();
             try
             {
-                using FileStream stream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+                using Stream stream = files.OpenRead(filePath, FileShare.ReadWrite);
                 int firstByte = stream.ReadByte();
                 if (firstByte < 0)
                     return false;
@@ -935,8 +939,7 @@ namespace XREngine.Rendering
                 if (IsBinaryTextureStreamingMarker((byte)firstByte))
                     return true;
 
-                stream.Position = 0;
-                using StreamReader reader = new(stream);
+                using StreamReader reader = new(new LeadingByteReadStream(stream, (byte)firstByte));
                 var yaml = new YamlStream();
                 yaml.Load(reader);
 
