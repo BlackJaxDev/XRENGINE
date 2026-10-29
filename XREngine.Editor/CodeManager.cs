@@ -1,3 +1,4 @@
+using EngineFacade = global::XREngine.Engine;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
@@ -69,19 +70,19 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
     private void BeginMonitoring()
     {
-        Engine.Assets.GameFileChanged += VerifyCodeFileModified;
-        Engine.Assets.GameFileCreated += VerifyCodeAssetsChanged;
-        Engine.Assets.GameFileDeleted += VerifyCodeAssetsChanged;
-        Engine.Assets.GameFileRenamed += VerifyCodeAssetsChanged;
+        EngineFacade.Assets.GameFileChanged += VerifyCodeFileModified;
+        EngineFacade.Assets.GameFileCreated += VerifyCodeAssetsChanged;
+        EngineFacade.Assets.GameFileDeleted += VerifyCodeAssetsChanged;
+        EngineFacade.Assets.GameFileRenamed += VerifyCodeAssetsChanged;
         XRWindow.AnyWindowFocusChanged += AnyWindowFocusChanged;
     }
 
     private void EndMonitoring()
     {
-        Engine.Assets.GameFileChanged -= VerifyCodeFileModified;
-        Engine.Assets.GameFileCreated -= VerifyCodeAssetsChanged;
-        Engine.Assets.GameFileDeleted -= VerifyCodeAssetsChanged;
-        Engine.Assets.GameFileRenamed -= VerifyCodeAssetsChanged;
+        EngineFacade.Assets.GameFileChanged -= VerifyCodeFileModified;
+        EngineFacade.Assets.GameFileCreated -= VerifyCodeAssetsChanged;
+        EngineFacade.Assets.GameFileDeleted -= VerifyCodeAssetsChanged;
+        EngineFacade.Assets.GameFileRenamed -= VerifyCodeAssetsChanged;
         XRWindow.AnyWindowFocusChanged -= AnyWindowFocusChanged;
     }
 
@@ -133,10 +134,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// </summary>
     /// <returns></returns>
     public string GetProjectName()
-        => !string.IsNullOrWhiteSpace(Engine.CurrentProject?.ProjectName)
-            ? Engine.CurrentProject.ProjectName
-            : !string.IsNullOrWhiteSpace(Engine.GameSettings.Name)
-                ? Engine.GameSettings.Name
+        => !string.IsNullOrWhiteSpace(EngineFacade.CurrentProject?.ProjectName)
+            ? EngineFacade.CurrentProject.ProjectName
+            : !string.IsNullOrWhiteSpace(EngineFacade.GameSettings.Name)
+                ? EngineFacade.GameSettings.Name
                 : "GeneratedProject";
 
     /// <summary>
@@ -151,9 +152,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// the authored project root so they are reproducible, disposable artifacts.
     /// </summary>
     private static string GetManagedProjectRootPath()
-        => !string.IsNullOrWhiteSpace(Engine.CurrentProject?.ProjectDirectory)
-            ? Path.Combine(Engine.CurrentProject.ProjectDirectory, "Intermediate", "Managed")
-            : Engine.Assets.LibrariesPath;
+        => !string.IsNullOrWhiteSpace(EngineFacade.CurrentProject?.ProjectDirectory)
+            ? Path.Combine(EngineFacade.CurrentProject.ProjectDirectory, "Intermediate", "Managed")
+            : EngineFacade.Assets.LibrariesPath;
 
     private string GetManagedGameProjectPath()
         => Path.Combine(GetManagedProjectRootPath(), $"{GetProjectName()}.csproj");
@@ -169,7 +170,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// <param name="compileNow"></param>
     public void RemakeSolutionAsDLL(bool compileNow = true)
     {
-        string sourceRootFolder = Engine.Assets.GameAssetsPath;
+        string sourceRootFolder = EngineFacade.Assets.GameAssetsPath;
         string projectName = GetProjectName();
 
         string dllProjPath = GetManagedGameProjectPath();
@@ -198,7 +199,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
     /// <param name="compileNow"></param>
     public void RemakeSolutionAsExe(bool compileNow = true)
     {
-        string sourceRootFolder = Engine.Assets.GameAssetsPath;
+        string sourceRootFolder = EngineFacade.Assets.GameAssetsPath;
         string projectName = GetProjectName();
 
         string dllProjPath = GetManagedGameProjectPath();
@@ -470,7 +471,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string projectName = GetProjectName();
         string dllName = $"{projectName}.dll";
         string primaryBuildRoot = Path.Combine(GetManagedProjectRootPath(), "Build");
-        string legacyBuildRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Build");
+        string legacyBuildRoot = Path.Combine(EngineFacade.Assets.LibrariesPath, projectName, "Build");
 
         foreach (string buildRoot in new[] { primaryBuildRoot, legacyBuildRoot })
         {
@@ -523,7 +524,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string? gameLaunchBootstrapTypeName = null)
     {
         string projectName = GetProjectName();
-        string launcherRoot = Path.Combine(Engine.Assets.LibrariesPath, projectName, "Launcher");
+        string launcherRoot = Path.Combine(EngineFacade.Assets.LibrariesPath, projectName, "Launcher");
         Directory.CreateDirectory(launcherRoot);
 
         string gameProjectPath = GetManagedGameProjectPath();
@@ -551,7 +552,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             string publishGameRoot = Path.Combine(launcherRoot, "Game");
             gameProjectPath = Path.Combine(publishGameRoot, $"{projectName}.Published.csproj");
             CreateCSProj(
-                Engine.Assets.GameAssetsPath,
+                EngineFacade.Assets.GameAssetsPath,
                 gameProjectPath,
                 projectName,
                 executable: false,
@@ -1281,7 +1282,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("#else");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
-        string? desktopRegistration = Engine.CurrentProject?.DesktopHostRegistrationType;
+        string? desktopRegistration = EngineFacade.CurrentProject?.DesktopHostRegistrationType;
         if (!string.IsNullOrWhiteSpace(desktopRegistration))
         {
             if (ResolveDesktopHostProject() is null || !System.Text.RegularExpressions.Regex.IsMatch(desktopRegistration, @"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$"))
@@ -1338,7 +1339,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        AssetManager.ConfigurePublishedArchives(null, null, null);");
         sb.AppendLine("#endif");
         sb.AppendLine();
-        sb.AppendLine($"        var startup = Engine.Assets.Load<GameStartupSettings>(\"{escapedStartup}\") ?? Engine.Assets.LoadGameAsset<GameStartupSettings>(\"{escapedStartup}\");");
+        sb.AppendLine($"        var startup = global::XREngine.Engine.Assets.Load<GameStartupSettings>(\"{escapedStartup}\") ?? global::XREngine.Engine.Assets.LoadGameAsset<GameStartupSettings>(\"{escapedStartup}\");");
         sb.AppendLine("        if (startup is null)");
         sb.AppendLine("        {");
         sb.AppendLine("#if XRE_PUBLISHED");
@@ -1364,11 +1365,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             sb.AppendLine("            ?? throw new InvalidOperationException(\"The game launch bootstrap returned null startup settings.\");");
         }
         sb.AppendLine();
-        sb.AppendLine($"        var userSettings = Engine.Assets.Load<UserSettings>(\"{escapedUser}\");");
+        sb.AppendLine($"        var userSettings = global::XREngine.Engine.Assets.Load<UserSettings>(\"{escapedUser}\");");
         sb.AppendLine("        if (userSettings is not null)");
-        sb.AppendLine("            Engine.UserSettings = userSettings;");
+        sb.AppendLine("            global::XREngine.Engine.UserSettings = userSettings;");
         sb.AppendLine();
-        sb.AppendLine("        Engine.ConfigureMemoryPolicy(startup is IVRGameStartupSettings ? EngineMemoryProfile.VRLowLatency : EngineMemoryProfile.PublishedDefault);");
+        sb.AppendLine("        global::XREngine.Engine.ConfigureMemoryPolicy(startup is IVRGameStartupSettings ? EngineMemoryProfile.VRLowLatency : EngineMemoryProfile.PublishedDefault);");
         if (string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
         {
             sb.AppendLine("        startupAssetServices.Dispose();");
@@ -1390,9 +1391,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("#endif");
         sb.AppendLine();
         if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
-            sb.AppendLine("        Engine.Run(startup, gameBootstrap.CreateInitialGameState());");
+            sb.AppendLine("        global::XREngine.Engine.Run(startup, gameBootstrap.CreateInitialGameState());");
         else
-            sb.AppendLine("        Engine.Run(startup, Engine.LoadOrGenerateGameState());");
+            sb.AppendLine("        global::XREngine.Engine.Run(startup, global::XREngine.Engine.LoadOrGenerateGameState());");
         if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
         {
             sb.AppendLine("        runtimeSmokeBootstrap?.CompleteRuntimeSmoke();");

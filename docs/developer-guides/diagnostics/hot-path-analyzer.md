@@ -185,6 +185,16 @@ The reference removes runtime, trimming, and AOT properties from the analyzer
 build. The browser publisher includes the analyzer sources and project in its
 source bundle.
 
+The generated markers use the `Engine.Diagnostics` namespace. Code in the
+global namespace or outside `XREngine` must not rely on an imported `Engine`
+type having priority
+over that root namespace. Editor entry points use
+`using EngineFacade = global::XREngine.Engine;` and `EngineFacade` member
+access. Generated launchers, the RollingBall sample, and the test setup use
+`global::XREngine.Engine` directly. Both forms
+select the engine type explicitly. This does not change the marker API or add
+a runtime dependency on the analyzer assembly.
+
 Both generated marker types use `Microsoft.CodeAnalysis.EmbeddedAttribute`.
 This prevents duplicate-type warnings across `InternalsVisibleTo` references.
 The generator emits the embedded attribute definition with the Roslyn 4.14

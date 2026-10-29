@@ -1,3 +1,4 @@
+using EngineFacade = global::XREngine.Engine;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Serialization;
@@ -230,7 +231,7 @@ internal partial class Program
                 smokeDiagnostics.ResetDesktopRejectionEvidence(injectDesktopRejection);
             }
 
-            Engine.Time.Timer.UpdateFrame += Update;
+            EngineFacade.Time.Timer.UpdateFrame += Update;
             _installed = true;
         }
 
@@ -417,7 +418,7 @@ internal partial class Program
 
             if (_installed)
             {
-                Engine.Time.Timer.UpdateFrame -= Update;
+                EngineFacade.Time.Timer.UpdateFrame -= Update;
                 _installed = false;
             }
         }
@@ -675,11 +676,11 @@ internal partial class Program
                         out IRenderBackendDiagnosticsCapability diagnostics)
                     && diagnostics.EffectiveRenderTargetMode is { } effectiveMode
                         ? effectiveMode
-                        : Engine.EffectiveSettings.VulkanRenderTargetMode.ToString();
-                _vulkanDiagnosticPresetEffective = Engine.EffectiveSettings.VulkanDiagnosticPreset.ToString();
-                _occlusionCullingModeEffective = Engine.EffectiveSettings.GpuOcclusionCullingMode.ToString();
+                        : EngineFacade.EffectiveSettings.VulkanRenderTargetMode.ToString();
+                _vulkanDiagnosticPresetEffective = EngineFacade.EffectiveSettings.VulkanDiagnosticPreset.ToString();
+                _occlusionCullingModeEffective = EngineFacade.EffectiveSettings.GpuOcclusionCullingMode.ToString();
                 _mirrorModeEffective = outputManifest.MirrorMode.ToString();
-                _antiAliasingModeEffective = Engine.EffectiveSettings.AntiAliasingMode.ToString();
+                _antiAliasingModeEffective = EngineFacade.EffectiveSettings.AntiAliasingMode.ToString();
 
                 _frameLedger[_frameLedgerCount] = new OpenXrSmokeFrameLedgerEntry
                 {
@@ -1395,7 +1396,7 @@ internal partial class Program
                 : [];
             summary.ExternallyOwnedValidationAllowlist = ResolveExternalValidationAllowlist();
             summary.AntiAliasingModeEffective = string.IsNullOrWhiteSpace(_antiAliasingModeEffective)
-                ? Engine.EffectiveSettings.AntiAliasingMode.ToString()
+                ? EngineFacade.EffectiveSettings.AntiAliasingMode.ToString()
                 : _antiAliasingModeEffective;
             summary.TsrResolutionScaleRequested = _tsrResolutionScaleRequested;
             summary.TsrResolutionScaleEffective = _subscribedApi?.SmokeEffectiveTsrRenderScale
@@ -2035,7 +2036,7 @@ internal partial class Program
             Environment.ExitCode = exitCode;
             EngineDebug.Out($"[OpenXRSmoke] {reason} Requesting engine shutdown.");
             EditorImGuiUI.ForceAllowWindowCloseForShutdown();
-            Engine.ShutDown();
+            EngineFacade.ShutDown();
         }
 
         private string ResolveSummaryPath(string? logDirectory)

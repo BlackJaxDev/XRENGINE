@@ -476,7 +476,7 @@ internal static class RollingBallRuntimeValidation
         }
 
         Log(passed ? "runtime-validation-passed" : "runtime-validation-failed", detail);
-        Engine.ShutDown();
+        global::XREngine.Engine.ShutDown();
     }
 
     private static string BuildFailure(string reason)

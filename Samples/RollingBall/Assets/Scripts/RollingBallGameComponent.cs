@@ -382,7 +382,7 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
         int ballColliderCount = CountEffectiveColliderShapes(_ballBody);
         float authoredTimestep =
             world.TargetWorld?.Settings.PhysicsTimestep ?? 0.0f;
-        float engineFixedDelta = Engine.FixedDelta;
+        float engineFixedDelta = global::XREngine.Engine.FixedDelta;
         bool authoredTimestepReady =
             MathF.Abs(authoredTimestep - RequiredPhysicsFixedDelta) <= PhysicsFixedDeltaTolerance;
         bool engineFixedDeltaReady =
@@ -605,7 +605,7 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
             _stageRotation,
             targetRotation,
             StageTiltInterpolationSpeed,
-            Engine.FixedDelta);
+            global::XREngine.Engine.FixedDelta);
         Vector3 ballPosition = GetBallPhysicsPosition();
         Vector3 translation = ResolveStagePivotTranslation(ballPosition, _stageRotation);
         var target = (translation, _stageRotation);
@@ -642,7 +642,7 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
     private void Tick()
     {
         TryRecordPossessionReady();
-        float delta = Math.Clamp(Engine.Delta, 0.0f, 0.1f);
+        float delta = Math.Clamp(global::XREngine.Engine.Delta, 0.0f, 0.1f);
         Vector3 position = GetBallRenderPosition();
         Vector3 velocity = GetBallCachedVelocity();
         IAbstractDynamicRigidBody? ballActor = _ballBody?.RigidBody;
@@ -690,7 +690,7 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
         UpdateDesktopCamera(
             GetBallRenderPosition(),
             GetBallCachedVelocity(),
-            Math.Clamp(Engine.Delta, 0.0f, 0.1f));
+            Math.Clamp(global::XREngine.Engine.Delta, 0.0f, 0.1f));
     }
 
     private void RecordDesktopCameraPresentation()
@@ -1042,7 +1042,7 @@ public sealed class RollingBallGameComponent : XRComponent, IRollingBallGameInpu
         if (_hud is null)
             return;
 
-        SetField(ref _hudRefreshTimer, _hudRefreshTimer - Engine.Delta, publishNotifications: false);
+        SetField(ref _hudRefreshTimer, _hudRefreshTimer - global::XREngine.Engine.Delta, publishNotifications: false);
         if (!force && _hudRefreshTimer > 0.0f && _lastHudState == _state)
             return;
         SetField(ref _hudRefreshTimer, 0.1f, publishNotifications: false);

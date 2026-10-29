@@ -1,3 +1,4 @@
+using EngineFacade = global::XREngine.Engine;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using System;
@@ -105,7 +106,7 @@ internal partial class Program
         RuntimeApplicationBootstrap.PrepareDesktopServices();
         long afterDesktopServicesMs = processEntryStopwatch.ElapsedMilliseconds;
         using IDisposable modelAssetPipelineRegistration =
-            ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
+            ModelAssetPipelineRegistration.Install(EngineFacade.Assets, typeof(XRPrefabSource));
         long afterModelPipelineMs = processEntryStopwatch.ElapsedMilliseconds;
         using IDisposable applicationServices =
             RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.Editor);
@@ -113,7 +114,7 @@ internal partial class Program
             EditorSerializedPrefabImportRegistration.Install();
         using IDisposable editorSceneImportServices =
             RuntimeSceneImportServices.Install(new EditorRuntimeSceneImportServices());
-        using IDisposable editorThirdPartyAssetWatcher = EditorThirdPartyAssetWatcher.Install(Engine.Assets);
+        using IDisposable editorThirdPartyAssetWatcher = EditorThirdPartyAssetWatcher.Install(EngineFacade.Assets);
         processEntryStopwatch.Stop();
         WriteBootstrapTrace(
             $"Editor process entry. Service registrations completed in {processEntryStopwatch.Elapsed.TotalMilliseconds:F0} ms " +
@@ -155,7 +156,7 @@ internal partial class Program
         // Initialize logging as early as possible to capture output from all subsystems, including during project initialization.
         InitLogging();
         WriteBootstrapTrace("Engine logging initialized.");
-        Engine.ConfigureMemoryPolicy(EngineMemoryProfile.EditorInteractive);
+        EngineFacade.ConfigureMemoryPolicy(EngineMemoryProfile.EditorInteractive);
         WriteBootstrapTrace("Engine memory policy configured for editor.");
 
         // Check for project initialization arguments and handle them if present. 
@@ -230,7 +231,7 @@ internal partial class Program
             WriteBootstrapTrace("BeforeCreateWindows callback entered.");
 
             // Unsubscribe self to ensure this only runs once, before the first window creation during engine startup
-            Engine.BeforeCreateWindows -= BeforeWindowsCreated;
+            EngineFacade.BeforeCreateWindows -= BeforeWindowsCreated;
 
             // Unit-test values were registered before Engine.Run. Loading project or
             // sandbox assets republishes the detached effective projections automatically.
@@ -258,7 +259,7 @@ internal partial class Program
         void AfterWindowsCreated(GameStartupSettings settings, GameState __)
         {
             WriteBootstrapTrace("AfterCreateWindows callback entered.");
-            Engine.AfterCreateWindows -= AfterWindowsCreated;
+            EngineFacade.AfterCreateWindows -= AfterWindowsCreated;
 
             EWorldMode worldMode = ResolveWorldMode(args);
             Stopwatch targetWorldStopwatch = Stopwatch.StartNew();
@@ -267,7 +268,7 @@ internal partial class Program
             {
                 targetWorld = GetTargetWorld(worldMode);
                 settings.StartupWindows[0].TargetWorld = targetWorld;
-                IRuntimeRenderWorld? renderWorld = targetWorld is null ? null : Engine.GetOrCreateRenderWorld(targetWorld);
+                IRuntimeRenderWorld? renderWorld = targetWorld is null ? null : EngineFacade.GetOrCreateRenderWorld(targetWorld);
                 foreach (XRWindow window in RuntimeEngine.Windows)
                     window.SetWorld(renderWorld);
                 BootstrapRenderSettings.ReapplyEditorRenderStateAfterBootstrap("AfterCreateWindows target world assigned");
@@ -276,15 +277,15 @@ internal partial class Program
             WriteBootstrapTrace($"Target world created in {targetWorldStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
             WriteBootstrapTrace($"AfterCreateWindows configured target world '{targetWorld?.Name ?? "<null>"}'.");
         }
-        Engine.BeforeCreateWindows += BeforeWindowsCreated;
-        Engine.AfterCreateWindows += AfterWindowsCreated;
+        EngineFacade.BeforeCreateWindows += BeforeWindowsCreated;
+        EngineFacade.AfterCreateWindows += AfterWindowsCreated;
         try
         {
             smokeRun.Install();
             WriteBootstrapTrace("Calling Engine.Run.");
             // The editor owns the Edit -> Play transition. Standalone Engine.Run startup
             // would otherwise begin every world immediately and suppress the editor UI.
-            Engine.Run(startupSettings, gameState, beginPlayingAllWorlds: false);
+            EngineFacade.Run(startupSettings, gameState, beginPlayingAllWorlds: false);
             WriteBootstrapTrace("Engine.Run returned normally.");
         }
         catch (Exception ex)
@@ -397,7 +398,7 @@ internal partial class Program
     private static XRWorld GetTargetWorld(EWorldMode mode)
     {
         XRWorld targetWorld;
-        XRWorld? managedWorld = ManagedClientWorldLoader.TryLoadFromEnvironment(Engine.GameSettings);
+        XRWorld? managedWorld = ManagedClientWorldLoader.TryLoadFromEnvironment(EngineFacade.GameSettings);
         if (managedWorld is not null)
         {
             targetWorld = managedWorld;
@@ -440,7 +441,7 @@ internal partial class Program
     private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
     {
         FbxTrace.LogSink = static message => EngineDebug.Meshes(message);
-        FbxTrace.ProfilerScopeFactory = static scopeName => Engine.Profiler.Start(scopeName);
+        FbxTrace.ProfilerScopeFactory = static scopeName => EngineFacade.Profiler.Start(scopeName);
 
         if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
             FbxTrace.RefreshFromEnvironment();
@@ -675,7 +676,7 @@ internal partial class Program
         Stopwatch gameStateStopwatch = Stopwatch.StartNew();
         try
         {
-            gameState = Engine.LoadOrGenerateGameState();
+            gameState = EngineFacade.LoadOrGenerateGameState();
             gameStateStopwatch.Stop();
             WriteBootstrapTrace($"InitializeEditor: game state ready in {gameStateStopwatch.Elapsed.TotalMilliseconds:F0} ms.");
         }
@@ -692,11 +693,11 @@ internal partial class Program
         UnitTest_VerifyPlayModeStart();
 
         UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
-        Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting(settings);
-        EngineDebug.Rendering($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
+        EngineFacade.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting(settings);
+        EngineDebug.Rendering($"[DebugPipeline] Re-applied before window creation: {EngineFacade.EditorPreferences.Debug.UseDebugOpaquePipeline}");
         WriteBootstrapTrace(
             $"UnitTest_Init: WorldKind={settings.WorldKind}, RenderPipeline={settings.Rendering.RenderPipeline}, " +
-            $"UseDebugOpaquePipeline={Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}.");
+            $"UseDebugOpaquePipeline={EngineFacade.EditorPreferences.Debug.UseDebugOpaquePipeline}.");
 
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
         {
@@ -716,12 +717,12 @@ internal partial class Program
     {
         ApplyProfileCaptureProfilerPreferences();
 
-        if (!Engine.EditorPreferences.Debug.StartExternalProfilerOnStartup)
+        if (!EngineFacade.EditorPreferences.Debug.StartExternalProfilerOnStartup)
             return;
 
-        if (!Engine.EditorPreferences.Debug.EnableProfilerUdpSending)
+        if (!EngineFacade.EditorPreferences.Debug.EnableProfilerUdpSending)
         {
-            Engine.EditorPreferences.Debug.EnableProfilerUdpSending = true;
+            EngineFacade.EditorPreferences.Debug.EnableProfilerUdpSending = true;
             WriteBootstrapTrace("Enabled profiler UDP sending from startup profiler preference.");
         }
 
@@ -748,17 +749,17 @@ internal partial class Program
 
         bool enableCodeProfiler = ResolveOptionalEnvironmentFlag(
             XREngineEnvironmentVariables.ProfileCodeProfiler) ?? true;
-        Engine.SetSessionSetting<EditorPreferences, bool>(
+        EngineFacade.SetSessionSetting<EditorPreferences, bool>(
             preferences => preferences.Debug.EnableProfilerFrameLogging,
             enableCodeProfiler);
-        Engine.SetSessionSetting<EditorPreferences, bool>(
+        EngineFacade.SetSessionSetting<EditorPreferences, bool>(
             preferences => preferences.Debug.EnableRenderStatisticsTracking,
             true);
-        Engine.SetSessionSetting<EditorPreferences, bool>(
+        EngineFacade.SetSessionSetting<EditorPreferences, bool>(
             preferences => preferences.Debug.EnableGpuRenderPipelineProfiling,
             true);
 
-        Engine.Profiler.EnableFrameLogging = enableCodeProfiler;
+        EngineFacade.Profiler.EnableFrameLogging = enableCodeProfiler;
         RuntimeEngine.Rendering.Stats.EnableTracking = true;
         WriteBootstrapTrace("Enabled profiler capture session overrides.");
     }
@@ -790,11 +791,11 @@ internal partial class Program
         if (!EditorUnitTests.Toggles.StartInPlayModeWithoutTransitions)
             return;
         
-        Engine.PlayMode.ForcePlayWithoutTransitions = true;
+        EngineFacade.PlayMode.ForcePlayWithoutTransitions = true;
         static void StartPlayOnce()
         {
             Time.Timer.PostUpdateFrame -= StartPlayOnce;
-            _ = Engine.PlayMode.EnterPlayModeAsync();
+            _ = EngineFacade.PlayMode.EnterPlayModeAsync();
         }
         Time.Timer.PostUpdateFrame += StartPlayOnce;
     }
@@ -815,7 +816,7 @@ internal partial class Program
             s_fontPrewarmStarted = 0;
             s_textShaderPrewarmStarted = 0;
             s_startupTimerStopped = 0;
-            Engine.StartupPresentationEnabled = true;
+            EngineFacade.StartupPresentationEnabled = true;
             s_startupStopwatch = Stopwatch.StartNew();
             RuntimeEngine.Windows.PostAdded += OnStartupWindowAdded;
         }
@@ -887,7 +888,7 @@ internal partial class Program
 
         s_startupWindow = window;
 
-        Engine.EnqueueRenderThreadTask(
+        EngineFacade.EnqueueRenderThreadTask(
             () =>
             {
                 IRuntimeRendererHost rendererHost = window.Renderer;
@@ -974,7 +975,7 @@ internal partial class Program
             return;
 
         s_startupStopwatch?.Stop();
-        Engine.StartupPresentationEnabled = false;
+        EngineFacade.StartupPresentationEnabled = false;
         var elapsed = s_startupStopwatch?.Elapsed.TotalMilliseconds ?? 0;
         EngineDebug.Out($"{messagePrefix} in {elapsed:F0} ms.");
         window.PostRenderViewportsCallback -= OnStartupPostRenderViewports;
@@ -988,7 +989,7 @@ internal partial class Program
             return;
 
         WriteBootstrapTrace("Flushing deferred startup work.");
-        bool queued = Engine.InvokeOnMainThread(
+        bool queued = EngineFacade.InvokeOnMainThread(
             FlushDeferredStartupWorkNow,
             "Program.FlushDeferredStartupWork",
             executeNowIfAlreadyMainThread: true);
@@ -1587,21 +1588,21 @@ internal partial class Program
         string projectFilePath = ResolveProjectFilePathForBuild(projectPathArg);
         Console.WriteLine($"Loading project from '{projectFilePath}'...");
 
-        if (!Engine.LoadProject(projectFilePath))
+        if (!EngineFacade.LoadProject(projectFilePath))
         {
             XRProject? fallbackProject = LoadProjectDescriptorFallback(projectFilePath);
-            if (fallbackProject is null || !Engine.LoadProject(fallbackProject))
+            if (fallbackProject is null || !EngineFacade.LoadProject(fallbackProject))
                 throw new InvalidOperationException($"Failed to load XRProject from '{projectFilePath}'.");
         }
 
-        EBuildConfiguration configuration = Engine.BuildSettings?.Configuration ?? EBuildConfiguration.Development;
+        EBuildConfiguration configuration = EngineFacade.BuildSettings?.Configuration ?? EBuildConfiguration.Development;
         if (!string.IsNullOrWhiteSpace(configurationArg) &&
             !Enum.TryParse(configurationArg, true, out configuration))
         {
             throw new ArgumentException($"Unknown build configuration '{configurationArg}'.");
         }
 
-        EBuildPlatform platform = Engine.BuildSettings?.Platform ?? EBuildPlatform.AnyCPU;
+        EBuildPlatform platform = EngineFacade.BuildSettings?.Platform ?? EBuildPlatform.AnyCPU;
         if (!string.IsNullOrWhiteSpace(platformArg) &&
             !Enum.TryParse(platformArg, true, out platform))
         {
@@ -1791,16 +1792,16 @@ internal partial class Program
         string projectFilePath = ResolveProjectFilePathForBuild(projectPathArg);
         Console.WriteLine($"Loading project from '{projectFilePath}'...");
 
-        if (!Engine.LoadProject(projectFilePath))
+        if (!EngineFacade.LoadProject(projectFilePath))
         {
             XRProject? fallbackProject = LoadProjectDescriptorFallback(projectFilePath);
-            if (fallbackProject is null || !Engine.LoadProject(fallbackProject))
+            if (fallbackProject is null || !EngineFacade.LoadProject(fallbackProject))
                 throw new InvalidOperationException($"Failed to load XRProject from '{projectFilePath}'.");
         }
 
         EnsureStartupSettingsLoadedForBuild();
 
-        BuildSettings settings = Engine.BuildSettings ?? new BuildSettings();
+        BuildSettings settings = EngineFacade.BuildSettings ?? new BuildSettings();
         settings.CookContent = true;
         settings.GenerateConfigArchive = true;
         settings.BuildLauncherExecutable = true;
@@ -1859,12 +1860,12 @@ internal partial class Program
             includePublishedBuild: settings.PublishLauncherAsNativeAot,
             includeAotRuntime: settings.PublishLauncherAsNativeAot);
 
-        Engine.BuildSettings = settings;
+        EngineFacade.BuildSettings = settings;
         Console.WriteLine($"Resolved build settings: BuildManagedAssemblies={settings.BuildManagedAssemblies}, CopyGameAssemblies={settings.CopyGameAssemblies}, BuildLauncherExecutable={settings.BuildLauncherExecutable}");
 
         Console.WriteLine(settings.Platform == EBuildPlatform.BrowserWebGPU
-            ? $"Publishing project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' as browser content..."
-            : $"Cooking project '{Engine.CurrentProject?.ProjectName ?? "Unknown"}' to launcher executable...");
+            ? $"Publishing project '{EngineFacade.CurrentProject?.ProjectName ?? "Unknown"}' as browser content..."
+            : $"Cooking project '{EngineFacade.CurrentProject?.ProjectName ?? "Unknown"}' to launcher executable...");
         ProjectBuilder.BuildCurrentProjectSynchronously(settings, progress =>
         {
             int percent = (int)Math.Clamp(progress.Value * 100f, 0f, 100f);
@@ -1872,10 +1873,10 @@ internal partial class Program
             Console.WriteLine($"[build {percent,3}%] {message}");
         });
 
-        if (Engine.CurrentProject?.BuildDirectory is null)
+        if (EngineFacade.CurrentProject?.BuildDirectory is null)
             return;
 
-        string buildRoot = Path.Combine(Engine.CurrentProject.BuildDirectory, settings.OutputSubfolder ?? string.Empty);
+        string buildRoot = Path.Combine(EngineFacade.CurrentProject.BuildDirectory, settings.OutputSubfolder ?? string.Empty);
         if (settings.Platform == EBuildPlatform.BrowserWebGPU)
         {
             string indexPath = Path.Combine(buildRoot, "index.html");
@@ -2021,26 +2022,26 @@ internal partial class Program
 
     private static void EnsureStartupSettingsLoadedForBuild()
     {
-        string? assetsDirectory = Engine.CurrentProject?.AssetsDirectory;
+        string? assetsDirectory = EngineFacade.CurrentProject?.AssetsDirectory;
         if (string.IsNullOrWhiteSpace(assetsDirectory))
             return;
 
         string startupPath = Path.Combine(assetsDirectory, "startup.asset");
         if (File.Exists(startupPath))
         {
-            var loadedSettings = Engine.Assets.Load<GameStartupSettings>(startupPath);
+            var loadedSettings = EngineFacade.Assets.Load<GameStartupSettings>(startupPath);
             if (loadedSettings is not null)
             {
-                loadedSettings.Name = Engine.CurrentProject?.ProjectName ?? loadedSettings.Name;
-                Engine.GameSettings = loadedSettings;
+                loadedSettings.Name = EngineFacade.CurrentProject?.ProjectName ?? loadedSettings.Name;
+                EngineFacade.GameSettings = loadedSettings;
                 return;
             }
         }
 
-        var fallback = Engine.PersistentGameSettings ?? new GameStartupSettings();
-        fallback.Name = Engine.CurrentProject?.ProjectName ?? fallback.Name;
+        var fallback = EngineFacade.PersistentGameSettings ?? new GameStartupSettings();
+        fallback.Name = EngineFacade.CurrentProject?.ProjectName ?? fallback.Name;
         fallback.FilePath ??= startupPath;
-        Engine.GameSettings = fallback;
+        EngineFacade.GameSettings = fallback;
     }
 
     private static bool TryParseBooleanArgument(string value, out bool parsed)

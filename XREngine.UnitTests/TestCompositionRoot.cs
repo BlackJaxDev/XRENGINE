@@ -28,7 +28,7 @@ public sealed class TestCompositionRoot
         _previousRenderingHostServices = RuntimeRenderingHostServices.Current;
         _previousShaderServices = RuntimeShaderServices.Current;
         _assetServices = RuntimeAssetBootstrap.InstallEngineAssetServices();
-        _modelAssetPipelineRegistration = ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
+        _modelAssetPipelineRegistration = ModelAssetPipelineRegistration.Install(global::XREngine.Engine.Assets, typeof(XRPrefabSource));
         IRuntimeRenderingHostServices renderingHost =
             RuntimeRenderingBootstrap.CreateEngineHostServices();
         _testRenderingHost = renderingHost as IDisposable;
