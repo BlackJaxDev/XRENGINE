@@ -120,3 +120,7 @@ current owner below explicitly adopts it.
 - [Procedural moon radiance bounds](2026-10-29-moon-radiance-bounds-qualification.md)
   records exact off-disc values, bounded surface radiance, and a failed exact noise model.
   Current limits are in [platform validation](../../../testing/platform/platform-validation.md#procedural-moon-radiance-bounds--2026-10-29).
+
+- [Sky texture storage admission](2026-10-29-sky-texture-cook-storage.md)
+  records cook-time rejection of unavailable pixels and preservation of cube mip bytes.
+  Current limits are in [platform validation](../../../testing/platform/platform-validation.md#sky-storage-admission-and-mip-serialization--2026-10-29).

@@ -19,6 +19,8 @@
     <Compile Include="../Audio/BrowserAudioCookingTests.cs" Link="Audio/BrowserAudioCookingTests.cs" />
     <Compile Include="../Audio/PcmRecordingTransport.cs" Link="Audio/PcmRecordingTransport.cs" />
     <Compile Include="../../XREngine.Editor/Publishing/BrowserAudioCookProfile.cs" Link="Publishing/BrowserAudioCookProfile.cs" />
+    <Compile Include="../Rendering/BrowserSkyTextureCookingTests.cs" Link="Rendering/BrowserSkyTextureCookingTests.cs" />
+    <Compile Include="../../XREngine.Editor/Publishing/BrowserSkyTextureCookProfile.cs" Link="Publishing/BrowserSkyTextureCookProfile.cs" />
     <Compile Include="../Rendering/TextureCookedSamplingTests.cs" Link="Rendering/TextureCookedSamplingTests.cs" />
     <Compile Include="../Rendering/TextureCacheSamplingTests.cs" Link="Rendering/TextureCacheSamplingTests.cs" />
     <Compile Include="../Rendering/TexturePreviewSamplingTests.cs" Link="Rendering/TexturePreviewSamplingTests.cs" />

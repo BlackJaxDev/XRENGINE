@@ -55,6 +55,32 @@ Authored mip ranges, filters, wrapping and LOD clamps use the shared texture
 backend. Automatic mip generation remains excluded; supply the required mip
 levels explicitly.
 
+## Cooked texture admission
+
+The Editor world audit validates static CPU mip storage before shader lookup.
+`BrowserSkyTextureCookProfile` accepts exact `XRTexture2D` and `XRTextureCube`
+sources with resident pixels. Mip dimensions must follow the natural halving
+chain. Partial chains are valid. Cubes require six square faces at each level.
+RGBA8 and sRGB RGBA8 require four RGBA unsigned bytes per texel. RGBA16F requires
+eight RGBA half-float bytes; cube faces can also use sixteen RGBA float bytes,
+which the layered upload backend converts to half-float.
+
+The audit rejects missing or malformed payloads, streaming upload buffers,
+GPU-written sources, external memory, and sRGB storage-image usage. The 2D path
+also reuses the canonical static-image settings check for sparse, grab-pass, and
+active upload state. Errors include the scene node and texture identity under
+`BrowserCook.SkyboxUnsupported` and `BrowserCook.SkyTextureStorageUnsupported`.
+Validation does not copy pixels or run in the frame loop. It does not generate
+mips, encode platform compression, or prove device-specific texture limits.
+
+`Mipmap2D` has an explicit runtime cooked payload for dimensions, pixel formats,
+and nullable CPU bytes. This retains cube faces when canonical cooking suppresses
+MemoryPack: reflection excludes both `Data` and `DataBytes`. The payload has a
+version and a checked byte length. Rendering serialization installs its canonical
+and runtime constructors for published loading. Existing reflection payloads can
+still be read, but their omitted pixels cannot be recovered. The separate
+`XRTexture2D` streamable mip format and YAML/MemoryPack contracts are unchanged.
+
 ## Explicit limits
 
 Preflight and runtime diagnostics identify the missing contract:

@@ -8,6 +8,7 @@ public static class RenderingPublishedCookedAssetRegistration
 {
     internal static void RegisterBrowserRuntimeFactories()
     {
+        CookedBinarySerializer.RegisterRuntimeFactory(typeof(Mipmap2D), static () => new Mipmap2D());
         CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedStandardLitTextureMaterial),
             static () => new PublishedStandardLitTextureMaterial());
         CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedTexturedAlphaMaterial),

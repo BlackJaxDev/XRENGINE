@@ -20,6 +20,8 @@ public static class RenderingSerializationRegistration
             RenderingPublishedCookedAssetRegistration.RegisterBrowserRuntimeFactories();
             leases.Add(global::XREngine.Generated.GeneratedRuntimeContracts_XREngine_Runtime_Rendering.Install());
             leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory<XRShader>(static () => new XRShader()));
+            leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory<Mipmap2D>(static () => new Mipmap2D()));
+            leases.Add(CookedBinaryFormatterRegistry.RegisterKnownType(typeof(Mipmap2D)));
             leases.Add(ThirdPartyCacheCodecRegistry.Install(new TextureStreamingCacheCodec()));
             leases.Add(ThirdPartyAssetTypeRegistry.Install("XREngine.Runtime.Rendering", typeof(XRTexture2D)));
             // .cs also names C# scripts; only an explicitly typed shader load may claim it.

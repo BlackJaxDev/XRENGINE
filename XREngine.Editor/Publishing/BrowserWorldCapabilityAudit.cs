@@ -205,7 +205,7 @@ internal static class BrowserWorldCapabilityAudit
                 {
                     Collect(() =>
                     {
-                        try { sky.ValidateWebGpuProfile(); }
+                        try { BrowserSkyTextureCookProfile.Validate(sky); }
                         catch (NotSupportedException error)
                         {
                             throw new NotSupportedException($"BrowserCook.SkyboxUnsupported: '{path}': {error.Message}", error);

@@ -440,6 +440,32 @@ samples and a separate page-title/help check pass against the final output.
 Exact moon detail, other procedural terms, lighting, serialization, hardware,
 desktop parity, and complete shader/cooking requirements remain open.
 
+### Sky storage admission and mip serialization — 2026-10-29
+
+The live Editor world audit originally accepted a 2D sky with no pixel payload.
+It now rejects that source, a missing cube face, GPU-written cubes, and sRGB
+storage-image usage. It accepts valid images, valid cubes, and a cube loaded
+through the canonical cooked envelope. Errors retain the scene node and texture
+identity. The [storage investigation](../../investigations/rendering/archive/2026-10-29-sky-texture-cook-storage.md)
+records the reproduction and the related cube serialization defect.
+
+Canonical reflection cooking excluded both `Mipmap2D` pixel accessors. The new
+explicit runtime payload preserves those bytes and registers its published type
+and constructors. All 58 targeted tests pass: 47 storage/payload tests and 11
+existing 2D cooked-sampling tests. These include canonical round trips and
+published-mode decoding on the desktop CLR. That test is not a browser cube-asset
+draw or a native AOT device qualification.
+
+All 24 final build/publication gates and three cooking/audit tool builds pass
+with zero compiler warnings/errors. Final metadata and bundle checks pass.
+Software browser regression passes 23 checks with three explicit skips,
+324 sky samples, and 24 strict indirect lifecycle stages. The runtime sky fixtures
+do not establish browser loading and drawing of the newly cooked cube asset.
+
+Platform texture encoders, integrated platform cooking, path-only sky dependency
+resolution, complete packaged Editor publication, and hardware acceptance remain
+open. The existing shader coverage limits also remain open.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.
