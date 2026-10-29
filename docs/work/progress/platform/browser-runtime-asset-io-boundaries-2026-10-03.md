@@ -1,5 +1,48 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Renderer file probe placement (2026-10-29)
+
+Implementation commit `0d400c37a1a95aa1e69c6c73394b9829f414bdbc` moves
+renderer module assembly existence and hash reads to
+`IRuntimeHostFileReadBackend`. One captured provider owns both operations and
+the hash stream uses `FileShare.Read` and is disposed. Locationless assemblies
+still return an empty hash before host admission or provider lookup.
+
+Uber canonical shader recovery uses the shader resolver's captured file backend
+for its existence probe. In-memory canonical and non-generated shaders still
+return before the probe. The subsequent `TextFile` load has its own read lease,
+so the probe and text read are not an atomic provider snapshot. The
+[composition contract](../../../architecture/runtime/project-organization.md)
+records custom-host requirements and the separate path owners.
+
+A disposable executable against compiled Rendering passes ten checks. It covers
+SHA-256 value, shared read and disposal, provider replacement, missing files,
+read errors, locationless and null assemblies, missing providers, non-synchronous
+host rejection, generated shader recovery and fields, the named non-host
+canonical-source rejection, and in-memory canonical early return. It uses a fake
+shader provider and local files. The final harness and Rendering build in Release
+with zero warnings and errors. Independent source review confirmed desktop
+composition installs the required providers before renderer registration. No
+tracked tests changed. Evidence is in
+`Build/_AgentValidation/20261028-120000-webgpu-io/logs/render-file-build.log`,
+`logs/render-file-smoke-build.log`, `logs/render-file-smoke.log`, and
+`reports/render-file-inventory.json`.
+
+The full local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `render-file-` prefix under the same run's `logs/`;
+the fresh output is `render-file-browser-publish/wwwroot/`. These checks do
+not establish Windows startup, rendered browser parity, live shader hot reload,
+or post-push CI. Shader sources and recipes did not change.
+
+The committed-source scan reports 21 files / 73 direct-file matching lines in
+the four roots. Core plus Rendering total 6 files / 14 lines. It removes three
+matching lines and two files. Blocking counts are unchanged. Both broad inventory
+requirements remain open.
+
 ## Texture cache replacement (2026-10-29)
 
 Implementation commit `1ad03bf11f1ab8e8219492b7ebaf59ffee8f5ee2` adds the
