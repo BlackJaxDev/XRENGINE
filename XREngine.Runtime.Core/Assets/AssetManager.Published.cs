@@ -20,13 +20,17 @@ namespace XREngine
             string? gameContentArchivePath,
             string? engineContentArchivePath)
         {
+            IRuntimeHostFileReadBackend? files = null;
             if (!string.IsNullOrWhiteSpace(configArchivePath)
                 || !string.IsNullOrWhiteSpace(gameContentArchivePath)
                 || !string.IsNullOrWhiteSpace(engineContentArchivePath))
+            {
                 EnsureDirectHostAssetFileAccess();
-            _publishedConfigArchivePath = NormalizeExistingArchivePath(configArchivePath);
-            _publishedGameContentArchivePath = NormalizeExistingArchivePath(gameContentArchivePath);
-            _publishedEngineContentArchivePath = NormalizeExistingArchivePath(engineContentArchivePath);
+                files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+            }
+            _publishedConfigArchivePath = NormalizeExistingArchivePath(configArchivePath, files);
+            _publishedGameContentArchivePath = NormalizeExistingArchivePath(gameContentArchivePath, files);
+            _publishedEngineContentArchivePath = NormalizeExistingArchivePath(engineContentArchivePath, files);
 
             PublishedArchiveRegistry.ConfigureRoot(EPublishedContentRoot.Config, _publishedConfigArchivePath);
             PublishedArchiveRegistry.ConfigureRoot(EPublishedContentRoot.GameContent, _publishedGameContentArchivePath);
@@ -204,7 +208,7 @@ namespace XREngine
             return string.IsNullOrWhiteSpace(candidate) ? null : candidate;
         }
 
-        private static string? NormalizeExistingArchivePath(string? path)
+        private static string? NormalizeExistingArchivePath(string? path, IRuntimeHostFileReadBackend? files)
         {
             if (string.IsNullOrWhiteSpace(path))
                 return null;
@@ -212,7 +216,7 @@ namespace XREngine
             try
             {
                 string fullPath = Path.GetFullPath(path);
-                return File.Exists(fullPath) ? fullPath : null;
+                return files!.FileExists(fullPath) ? fullPath : null;
             }
             catch
             {

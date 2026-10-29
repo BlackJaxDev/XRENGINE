@@ -221,6 +221,14 @@ supplies both capabilities. Custom font-authoring hosts must supply the relevant
 capabilities; missing providers follow each caller's existing failure handling.
 These captures do not add an atomic file snapshot or a source-retirement lease.
 
+Published archive configuration captures one host-file read provider when any
+archive path is supplied. It uses that provider for all three root existence
+probes. Missing, invalid, or inaccessible paths are cleared by the existing
+per-path handling. An empty configuration clears all roots without a provider.
+A nonempty configuration requires the read capability before it changes roots;
+custom native hosts must install it. Desktop registration supplies it. Archive
+opening and lifetime remain with the published archive registry.
+
 Asset save name selection captures the host-file read provider before its
 existence probe and retains it across the overwrite callback and unique-name
 search. Direct unique-name requests capture their own provider after host-file
