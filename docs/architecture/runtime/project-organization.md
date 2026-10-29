@@ -196,6 +196,12 @@ of the same provider. The final discovery check runs while the raw source has a
 publication reservation. The discovery generation check does not keep a
 replaced provider alive; hosts must coordinate provider disposal with its use.
 
+Synchronous VMD animation loading requires host-file admission and an installed
+`IRuntimeHostFileReadBackend`. It opens the file with `FileShare.Read` and
+disposes the stream after parsing. The captured provider is not a retirement
+lease; hosts must keep it usable until the load ends. VMD path saving keeps its
+existing output behavior.
+
 Native public asset loads capture `IRuntimeHostFileReadBackend` after load-route
 admission. The same instance performs the preflight existence check and the
 scheduled core-load existence check, including after a remote-download await.

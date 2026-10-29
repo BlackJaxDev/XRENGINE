@@ -1,5 +1,26 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## VMD host-file read placement (2026-10-29)
+
+Synchronous VMD animation loading now checks host-file admission and captures
+`IRuntimeHostFileReadBackend` before opening its input. The stream keeps the
+previous `FileShare.Read` mode and is disposed after parsing. Custom hosts must
+provide the capability and retain the provider during the load. VMD path saving
+still uses its existing direct file output and remains in the inventory.
+
+Five focused tests pass for provider capture, sharing and disposal, caller-thread
+rejection, a missing provider, invalid input, and a local-file load. A separate
+runtime probe passes the same bounded checks. Editor, Server, and VRClient
+Release builds pass on Linux with Windows targeting enabled. The desktop
+filesystem headless fixture passes. All 19 portable manifest projects compile
+for browser-wasm, and Browser publishes with native WASM and pinned Jolt inputs.
+The gate logs contain no warning or error diagnostics. These checks do not
+establish Windows startup, live animation playback, or browser rendering.
+
+The tracked-source scan reports 18 files / 69 direct-file matching lines across
+Data, Core, Rendering, and Host. The expression includes comments and misses
+target-typed constructors. Both broad inventory requirements remain open.
+
 ## YAML discovery generation (2026-10-29)
 
 YAML path probes now reject a discovery installation change while the raw-read

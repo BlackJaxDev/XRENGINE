@@ -16,7 +16,9 @@ namespace XREngine.Data.MMD
 
         public void Load(string path)
         {
-            using var reader = new BinaryReader(File.OpenRead(path));
+            RuntimeAssetReadServices.EnsureHostFileAccess("VMD animation load");
+            IRuntimeHostFileReadBackend files = RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+            using var reader = new BinaryReader(files.OpenRead(path, FileShare.Read));
 
             FilePath = path;
             Header = new VMDHeader();
