@@ -1,5 +1,7 @@
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Rendering.XRTexture2D), "xre.rendering.texture-2d", 1)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Rendering.XRMesh), "xre.rendering.mesh", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Rendering.Models.Gaussian.Cache.GaussianCache), "xre.rendering.gaussian-cache", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Rendering.Models.Gaussian.Cache.GaussianCacheChunk), "xre.rendering.gaussian-cache-chunk", 1)]
 [assembly: XREngine.RuntimeCookedAsset(typeof(XREngine.Rendering.XRMesh), XREngine.ERuntimeCookedAssetCodec.CookedBinaryMesh)]
 [assembly: XREngine.RuntimeCookedAsset(typeof(XREngine.Rendering.XRTexture2D), XREngine.ERuntimeCookedAssetCodec.TextureStreaming)]
 [assembly: XREngine.RuntimeClosedFormatter(typeof(System.Numerics.Vector2[]))]

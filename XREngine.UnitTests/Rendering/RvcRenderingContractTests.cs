@@ -466,6 +466,7 @@ public sealed class RvcRenderingContractTests
         string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RvcRenderPipeline.cs");
         string engineFactory = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.Preferences.cs");
         string engineSettingsApplication = ReadWorkspaceFile("XREngine.Runtime.Host/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.cs");
+        string eyeFactory = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/OpenXrEyeRenderPipelineFactory.cs");
         string settings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
         string openXrViewConfiguration = ReadWorkspaceFile("XREngine.Runtime.XR.OpenXR/OpenXRAPI.ViewConfiguration.cs");
         string openXrOpenGl = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs");
@@ -508,8 +509,10 @@ public sealed class RvcRenderingContractTests
         rvcPass.ShouldContain("RvcFrameGraphContract.SharedTemporalCache");
         rvcPass.ShouldContain("RenderGraphResourceNames.MakeTexture");
         engineFactory.ShouldContain("ERenderPipelinePurpose.OpenXrEye");
-        engineFactory.ShouldContain("NewRvcRenderPipeline(request.Stereo, rvcMode)");
-        engineFactory.ShouldContain("NewRvcRenderPipeline");
+        engineFactory.ShouldContain("NewOpenXrEyeRenderPipeline(request.Stereo, vrPipeline, rvcMode)");
+        engineFactory.ShouldContain("OpenXrEyeRenderPipelineFactory.Create(stereo, family, rvcMode)");
+        engineFactory.ShouldContain("if (pipeline is RvcRenderPipeline rvcPipeline)\n                    ApplyRvcSettings(rvcPipeline, rvcMode);");
+        eyeFactory.ShouldContain("EVrRenderPipeline.Rvc => new RvcRenderPipeline(stereo, rvcMode)");
         settings.ShouldContain("public ERvcPipelineMode RvcPipelineMode");
         settings.ShouldContain("public bool RvcStereoReuseEnabled");
         engineSettingsApplication.ShouldContain("IsRvcPipelineSetting");

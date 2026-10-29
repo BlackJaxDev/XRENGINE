@@ -5,14 +5,14 @@
 .DESCRIPTION
     Runs 'dotnet build' on XRENGINE.sln when present, otherwise falls back to
     the workspace's primary top-level entry projects, parses MSBuild warning
-    output, and writes a Markdown report to docs/work/audit/warnings.md grouped
+    output, and writes a Markdown report to Build/Reports/warnings.md grouped
     by project and warning code with file/line references.
 
 .PARAMETER Root
     Repository root. Defaults to current directory.
 
 .PARAMETER OutFile
-    Output Markdown path. Defaults to docs/work/audit/warnings.md under Root.
+    Output Markdown path. Defaults to Build/Reports/warnings.md under Root.
 
 .PARAMETER NoBuild
     Skip the build step and reuse the most recent build log at Build/Logs/warnings-build.log.
@@ -57,7 +57,7 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path $Root).Path
 
 if (-not $OutFile) {
-    $OutFile = Join-Path $Root "docs\work\audit\warnings.md"
+    $OutFile = Join-Path $Root "Build\Reports\warnings.md"
 }
 
 $logDir  = Join-Path $Root "Build\Logs"

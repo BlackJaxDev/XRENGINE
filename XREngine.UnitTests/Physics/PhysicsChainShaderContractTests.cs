@@ -95,12 +95,10 @@ public sealed class PhysicsChainShaderContractTests
 
         source.ShouldContain("#include \"Compute/PhysicsChain/PhysicsChainBonePose.glslinc\"");
         source.ShouldContain("layout(row_major, std430, binding = 4) readonly buffer BoneInvBindMatricesBuffer");
-
         // The include builds the bone world matrix in GLSL column-vector form.
         bonePose.ShouldContain("mat4 composeChainBoneWorld(");
         bonePose.ShouldContain(
             "return mat4(vec4(basis[0], 0.0), vec4(basis[1], 0.0), vec4(basis[2], 0.0), vec4(position, 1.0));");
-
         int columnMatrixIndex = source.IndexOf("mat4 boneWorldColumn = composeChainBoneWorld(", StringComparison.Ordinal);
         int transposeIndex = source.IndexOf("mat4 boneWorldRow = transpose(boneWorldColumn);", StringComparison.Ordinal);
         int composeIndex = source.IndexOf(
@@ -305,7 +303,6 @@ public sealed class PhysicsChainShaderContractTests
         palette.ShouldContain("if (!binding.DrivesCompleteBonePalette)");
         palette.ShouldContain("TryCopyBuffer(backend, copy, \"partial-palette-seed\")");
         palette.ShouldContain("PartialPaletteSeedCompletionPass");
-
         // Every registered request with GPU-driven renderers joins one output publication.
         dispatcher.ShouldContain("&& request.Component.HasGpuDrivenRenderers)");
         dispatcher.ShouldContain("_outputPublicationRequests.Add(request);");
@@ -318,6 +315,8 @@ public sealed class PhysicsChainShaderContractTests
 
         // No dispatcher path runs a per-component palette publication.
         ReadDispatcherPartialSources().ShouldNotContain("PublishGpuDrivenBoneMatrices(");
+        dispatcher.ShouldNotContain("batchedBonePalettePublished");
+        dispatcher.ShouldNotContain("includeCompletePalettes: !batchedBonePalettePublished");
     }
 
     [Test]

@@ -103,44 +103,78 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void OpenXrRecording_PublishesAcquireBeforeReuseAndReleaseBeforeEnd()
     {
-        string eyeRecording = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.EyeRendering.cs");
-        string primaryRecording = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
+        // OpenXR eyes record a fresh primary each frame. The acquire state must
+        // be published before the frame loop reads the tracked target layout,
+        // selects the primary owner, and freezes the recording input.
+        string eyeRecording = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.OpenXR.EyeRendering.cs");
+        string finalization = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Finalization.cs");
+        string primaryRecording = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.cs");
 
         int acquire = eyeRecording.IndexOf(
-            "PublishOpenXrExternalImageAcquireState(",
+            "_commandRuntime.PublishOpenXrExternalImageAcquireState(",
             StringComparison.Ordinal);
-        int reuse = eyeRecording.IndexOf(
-            "TryReuseOpenXrPrimaryCommandBuffer(",
-            acquire,
+        int layoutRead = eyeRecording.IndexOf(
+            "_commandRuntime.Synchronization.TryGetSubmittedImageLayout(",
+            Math.Max(acquire, 0),
+            StringComparison.Ordinal);
+        int ownerLookup = eyeRecording.IndexOf(
+            "GetOrCreateOpenXrPrimaryCommandBufferOwner(",
+            Math.Max(layoutRead, 0),
+            StringComparison.Ordinal);
+        int freshRecording = eyeRecording.IndexOf(
+            "AllowArtifactReuse: false,",
+            Math.Max(ownerLookup, 0),
             StringComparison.Ordinal);
         acquire.ShouldBeGreaterThanOrEqualTo(0);
-        reuse.ShouldBeGreaterThan(acquire);
+        layoutRead.ShouldBeGreaterThan(acquire);
+        ownerLookup.ShouldBeGreaterThan(layoutRead);
+        freshRecording.ShouldBeGreaterThan(ownerLookup);
 
-        int release = primaryRecording.IndexOf(
+        // The release-pending state is recorded during finalization, which runs
+        // before the primary command buffer ends.
+        int finalizationStart = finalization.IndexOf(
+            "private unsafe void FinalizePrimaryCommandRecording(",
+            StringComparison.Ordinal);
+        int release = finalization.IndexOf(
             "RecordOpenXrExternalImageReleasePending(",
+            Math.Max(finalizationStart, 0),
+            StringComparison.Ordinal);
+        finalizationStart.ShouldBeGreaterThanOrEqualTo(0);
+        release.ShouldBeGreaterThan(finalizationStart);
+        int finalize = primaryRecording.IndexOf(
+            "FinalizePrimaryCommandRecording(ref recordingState);",
             StringComparison.Ordinal);
         int end = primaryRecording.IndexOf(
-            "_commandRecorder.End(",
-            release,
+            "EndPrimaryCommandBuffer(ref recordingState)",
+            Math.Max(finalize, 0),
             StringComparison.Ordinal);
-        release.ShouldBeGreaterThanOrEqualTo(0);
-        end.ShouldBeGreaterThan(release);
+        finalize.ShouldBeGreaterThanOrEqualTo(0);
+        end.ShouldBeGreaterThan(finalize);
     }
 
     [Test]
     public void OpenXrRecording_SeedsUntouchedRuntimeImageStateAndAbandonsFailedRecordings()
     {
-        string synchronization = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
-        string tracking = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferTrackingBatch.cs");
-        string eyeRecording = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXR.EyeRendering.cs");
+        // The release-pending state seeds from the recorded or inherited entry
+        // state of an untouched runtime image.
+        string synchronization = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.NativeRecordingServices.cs");
+        string tracking = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Tracking/VulkanRenderer.CommandBufferTrackingBatch.cs");
+        string resourceRuntime = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
+        string primaryRecording = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.cs");
+        string eyeRecording = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanOpenXrCommandRecordingService.cs");
+        string eyeOwners = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.OpenXrMirrorPreview.cs");
 
         synchronization.ShouldContain(
-            "TryGetRecordedImageAccessState(\n                commandBuffer,\n                image,\n                range,");
+            "TryGetRecordedImageAccessState(\n                commandBuffer,\n                image,\n                in range,");
         synchronization.ShouldContain(
             "entryState.Layout != ImageLayout.Undefined");
         synchronization.ShouldContain(
@@ -148,86 +182,102 @@ public class VulkanPrimaryReuseStateContractTests
         tracking.ShouldContain(
             "private bool TryAbandonCommandBufferRecording(CommandBuffer commandBuffer)");
         tracking.ShouldContain(
+            "ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);");
+        resourceRuntime.ShouldContain(
             "lifetime.FrameDataLease.AbandonRecording();");
+
+        // The shared primary recorder abandons a failed eye recording. The eye
+        // recording service marks an unpublished eye owner dirty.
+        primaryRecording.ShouldContain(
+            "_ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);");
         eyeRecording.ShouldContain(
-            "_ = TryAbandonCommandBufferRecording(variant.PrimaryCommandBuffer);");
-        eyeRecording.ShouldContain("variant.Dirty = true;");
+            "commandRuntime.MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(");
+        eyeOwners.ShouldContain("owner.Dirty = true;");
     }
 
     [Test]
     public void ImageJournalPublication_RequiresAcceptedSubmissionAndCurrentImageGeneration()
     {
-        string synchronization = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        // The command runtime owns tracked submission and the image journal.
+        string trackedSubmission = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs");
+        string imageLayouts = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.ImageLayouts.cs");
         string submit = SliceMethod(
-            synchronization,
-            "private VulkanSubmissionReceipt SubmitToQueueTrackedCore(",
-            "internal Result WaitForQueueIdleTracked(");
+            trackedSubmission,
+            "internal VulkanSubmissionReceipt SubmitToQueueTrackedWithDisposition(",
+            "private static string GetSealedSubmissionFallbackLogKey(");
         string publication = SliceMethod(
-            synchronization,
-            "private void PublishRecordedImageLayouts(",
-            "private void AdvanceCompletedImageLayouts(");
+            trackedSubmission,
+            "private unsafe void PublishRecordedImageLayouts(",
+            "private void PublishSealedImageLayouts(");
         string clear = SliceMethod(
-            synchronization,
+            imageLayouts,
             "internal void ClearTrackedImageLayouts(Image image)",
-            "private int ClearAllTrackedImageLayouts()");
-        string swapchain = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
+            "internal int ReconcileResourcePlannerImageLayouts(");
+        string clearNoLock = SliceMethod(
+            imageLayouts,
+            "private void ClearTrackedImageLayoutsNoLock(ulong imageHandle)",
+            "private void RetireTrackedImageSlotsNoLock(");
+        string swapchain = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Output/Authority/VulkanDesktopSwapchainService.cs");
+        string platformWindowOutput = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Output/Authority/VulkanImGuiPlatformWindowOutputAuthority.cs");
 
+        // A rejected submit returns before the journal is published.
         int acceptedSubmission = submit.IndexOf(
-            "if (submissionAccepted)",
+            "submissionAccepted = result == Result.Success;",
+            StringComparison.Ordinal);
+        int rejectedSubmission = submit.IndexOf(
+            "if (!submissionAccepted)",
+            Math.Max(acceptedSubmission, 0),
+            StringComparison.Ordinal);
+        int rejectedReturn = submit.IndexOf(
+            "return VulkanSubmissionReceipt.Rejected(",
+            Math.Max(rejectedSubmission, 0),
             StringComparison.Ordinal);
         int publicationCall = submit.IndexOf(
             "PublishRecordedImageLayouts(",
-            acceptedSubmission,
-            StringComparison.Ordinal);
-        int failedSubmission = submit.IndexOf(
-            "else if (result == Result.ErrorDeviceLost)",
-            publicationCall,
+            Math.Max(rejectedReturn, 0),
             StringComparison.Ordinal);
         acceptedSubmission.ShouldBeGreaterThanOrEqualTo(0);
-        publicationCall.ShouldBeGreaterThan(acceptedSubmission);
-        failedSubmission.ShouldBeGreaterThan(publicationCall);
+        rejectedSubmission.ShouldBeGreaterThan(acceptedSubmission);
+        rejectedReturn.ShouldBeGreaterThan(rejectedSubmission);
+        publicationCall.ShouldBeGreaterThan(rejectedReturn);
 
         int generationRead = publication.IndexOf(
-            "GetCurrentVulkanResourceGeneration(",
+            "ResourceRuntime.GetPublishedGeneration(ObjectType.Image, pair.Key.ImageHandle)",
             StringComparison.Ordinal);
         int generationMismatch = publication.IndexOf(
-            "currentGeneration != pair.Value.ResourceGeneration",
-            generationRead,
+            "generation != pair.Value.ResourceGeneration",
+            Math.Max(generationRead, 0),
             StringComparison.Ordinal);
         int submittedStateWrite = publication.IndexOf(
             "state.Submitted = publishedState;",
-            generationMismatch,
+            Math.Max(generationMismatch, 0),
             StringComparison.Ordinal);
         generationRead.ShouldBeGreaterThanOrEqualTo(0);
         generationMismatch.ShouldBeGreaterThan(generationRead);
         submittedStateWrite.ShouldBeGreaterThan(generationMismatch);
 
-        clear.ShouldContain(
-            "RemoveImageKeys(_trackedImageSubresourceStates, imageHandle);");
-        clear.ShouldContain(
+        clear.ShouldContain("ClearTrackedImageLayoutsNoLock(imageHandle);");
+        clearNoLock.ShouldContain(
+            "RemoveImageKeys(Synchronization._trackedImageSubresourceStates, imageHandle);");
+        clearNoLock.ShouldContain(
             "RemoveImageKeys(recorded.Subresources, imageHandle);");
+        // Desktop swapchain replacement detaches the exact image generations, so
+        // the journal rejects a reused handle by generation. Detached platform
+        // windows clear their image journal entries directly.
         swapchain.ShouldContain(
-            "ClearTrackedImageLayouts(swapChainImages[i]);");
+            "_resources.DetachExternalImageLifetimesForHandleReuse(oldImages);");
+        platformWindowOutput.ShouldContain(
+            "commandRuntime.ClearTrackedImageLayouts(images[index]);");
     }
 
     [Test]
     public void DynamicUiSecondary_DefersBeforeResetAndAbandonsFailedRecordings()
     {
-        string source = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
-        int methodStart = source.IndexOf(
-            "private bool RecordDynamicUiBatchTextSecondaryCommandBuffer(",
-            StringComparison.Ordinal);
-        int methodEnd = source.IndexOf(
-            "private bool TryRecordDynamicUiBatchTextOverlayCommandBuffer(",
-            methodStart,
-            StringComparison.Ordinal);
-        methodStart.ShouldBeGreaterThanOrEqualTo(0);
-        methodEnd.ShouldBeGreaterThan(methodStart);
-
-        string method = source[methodStart..methodEnd];
+        string method = SliceDynamicUiSecondaryRecording();
         int prewarm = method.IndexOf(
             "TryPrewarmGraphicsPipelinesForRecording(",
             StringComparison.Ordinal);
@@ -235,7 +285,7 @@ public class VulkanPrimaryReuseStateContractTests
             "ResetVulkanCommandBufferTracked(secondaryCommandBuffer)",
             StringComparison.Ordinal);
         int begin = method.IndexOf(
-            "Api!.BeginCommandBuffer(secondaryCommandBuffer",
+            "BeginTrackedCommandBuffer(\n                        secondaryCommandBuffer,",
             StringComparison.Ordinal);
 
         prewarm.ShouldBeGreaterThanOrEqualTo(0);
@@ -248,39 +298,47 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void DynamicUiOverlay_ReleasesPreviousSecondaryReferenceBeforeRerecording()
     {
-        string source = SourceContractWorkspace.ReadPartialType(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
-        int methodStart = source.IndexOf(
-            "private bool TryRecordDynamicUiBatchTextOverlayCommandBuffer(",
-            StringComparison.Ordinal);
-        int methodEnd = source.IndexOf(
-            "private void RecordDynamicUiBatchTextStreamlineUi(",
-            methodStart,
-            StringComparison.Ordinal);
-        methodStart.ShouldBeGreaterThanOrEqualTo(0);
-        methodEnd.ShouldBeGreaterThan(methodStart);
+        // The delayed overlay primary is the parent of the dynamic UI secondary.
+        // The secondary recorder resets that parent through the lifetime-aware
+        // reset, which releases its recorded references, before it resets and
+        // rerecords the secondary.
+        string method = SliceDynamicUiSecondaryRecording();
+        string commandRuntime = SourceContractWorkspace.ReadFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.cs");
 
-        string method = source[methodStart..methodEnd];
-        int resetPrimary = method.IndexOf(
-            "ResetVulkanCommandBufferTracked(commandBuffer)",
+        int overlayParent = method.IndexOf(
+            "parentCommandBuffer = overlays[imageIndex];",
             StringComparison.Ordinal);
-        int releasePrimaryReferences = method.IndexOf(
-            "ResetCommandBufferBindState(commandBuffer)",
+        int resetParent = method.IndexOf(
+            "TryResetCommandBufferWithLifetime(\n                        parentCommandBuffer,",
+            Math.Max(overlayParent, 0),
             StringComparison.Ordinal);
-        int releaseDeferredSecondaries = method.IndexOf(
-            "ReleaseDeferredSecondaryCommandBuffers(imageIndex)",
+        int resetSecondary = method.IndexOf(
+            "ResetVulkanCommandBufferTracked(secondaryCommandBuffer)",
+            Math.Max(resetParent, 0),
             StringComparison.Ordinal);
-        int rerecordSecondary = method.IndexOf(
-            "RecordDynamicUiBatchTextSecondaryCommandBuffer(",
-            StringComparison.Ordinal);
+        overlayParent.ShouldBeGreaterThanOrEqualTo(0);
+        resetParent.ShouldBeGreaterThan(overlayParent);
+        resetSecondary.ShouldBeGreaterThan(resetParent);
 
-        resetPrimary.ShouldBeGreaterThanOrEqualTo(0);
-        releasePrimaryReferences.ShouldBeGreaterThan(resetPrimary);
-        releaseDeferredSecondaries.ShouldBeGreaterThan(releasePrimaryReferences);
-        rerecordSecondary.ShouldBeGreaterThan(releaseDeferredSecondaries);
-        method.LastIndexOf(
-            "ResetCommandBufferBindState(commandBuffer)",
-            StringComparison.Ordinal).ShouldBe(releasePrimaryReferences);
+        string lifetimeReset = SliceMethod(
+            commandRuntime,
+            "private bool TryResetCommandBufferWithLifetime(",
+            "internal unsafe void DrainRetiredCommandBuffers(");
+        int completeReset = lifetimeReset.IndexOf(
+            "ResourceRuntime.CompleteCommandBufferReset(handle);",
+            StringComparison.Ordinal);
+        int clearState = lifetimeReset.IndexOf(
+            "ClearCommandBufferStateAfterSuccessfulReset(commandBuffer);",
+            Math.Max(completeReset, 0),
+            StringComparison.Ordinal);
+        completeReset.ShouldBeGreaterThanOrEqualTo(0);
+        clearState.ShouldBeGreaterThan(completeReset);
+        SliceMethod(
+                commandRuntime,
+                "private void ClearCommandBufferStateAfterSuccessfulReset(CommandBuffer commandBuffer)",
+                "internal void DeferSecondaryCommandBufferFree(")
+            .ShouldContain("CommandBuffers.ClearBindStateAfterSuccessfulReset(commandBuffer);");
     }
 
 
@@ -296,16 +354,20 @@ public class VulkanPrimaryReuseStateContractTests
     [Test]
     public void SecondaryMergeAndReuse_KeepTypedUnknownAndConflictReasons()
     {
+        // Entry-state classification lives in the native recording services and
+        // the command-chain snapshot check, beside the overlay merge and publication.
         string source = SourceContractWorkspace.ReadVulkanSourcesContaining(
             "secondaryState.EntryStateFailure",
-            "PublishRecordedImageLayouts(");
+            "PublishRecordedImageLayouts(",
+            "private bool TryGetRecordedImageEntryStateMismatch(",
+            "private bool HasCompleteCommandChainImageEntrySnapshot(");
 
         source.ShouldContain("secondaryState.EntryStateFailure");
         source.ShouldContain("EVulkanPrimaryEntryStateMismatch.IncompleteSnapshot");
         source.ShouldContain("VulkanImageEntryStateContract.Compare(");
         source.ShouldContain("TryGetRecordedImageEntryStateMismatch(");
         source.ShouldContain("EVulkanPrimaryEntryStateMismatch.MissingSubmittedState");
-        source.ShouldContain("HasCompleteRecordedImageEntrySnapshot(");
+        source.ShouldContain("HasCompleteCommandChainImageEntrySnapshot(");
         // Receipt-based publication adds a containment scope; preserve the
         // semantic requirement without coupling this reuse contract to it.
         source.ShouldContain("PublishRecordedImageLayouts(");
@@ -319,7 +381,7 @@ public class VulkanPrimaryReuseStateContractTests
         string method = SliceMethod(
             source,
             "private void RecordFboAttachmentAccessState(",
-            "private void EmitInitialImageAspectBarriers(");
+            "private unsafe void EmitPlannedResourceBarrierBatch(");
 
         method.ShouldContain("ImageLayout accessLayout = layout;");
         method.ShouldNotContain(
@@ -417,6 +479,13 @@ public class VulkanPrimaryReuseStateContractTests
             serial,
             resourceGeneration,
             externalOwnership);
+
+    private static string SliceDynamicUiSecondaryRecording()
+        => SliceMethod(
+            SourceContractWorkspace.ReadFile(
+                "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Secondary/VulkanRenderer.SecondaryCommandBuffers.cs"),
+            "private unsafe bool RecordDynamicUiBatchTextSecondaryCommandBuffer(",
+            "internal static ulong ComputeCommandChainUniformSlotSignature(");
 
     private static string SliceMethod(
         string source,

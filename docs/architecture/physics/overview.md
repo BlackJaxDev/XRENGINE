@@ -206,6 +206,5 @@ Known gaps to keep in mind:
 - [Animation API](../../developer-guides/animation/animation-api.md)
 - [Physics API](../../developer-guides/physics/physics-api.md)
 - [Physics Chain Performance](../../developer-guides/rendering/physics-chain-performance.md)
-- [Physics Validation](../../work/testing/physics/physics-validation.md)
 - [Physics-chain output and readback](physics-chain-output-and-readback.md)
 - [Skinning](../../developer-guides/rendering/skinning.md)

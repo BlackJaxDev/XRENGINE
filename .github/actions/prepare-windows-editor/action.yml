@@ -1,0 +1,110 @@
+name: Prepare the Windows Editor CLI toolchain
+description: >-
+  Check out the pinned Editor submodules, stage the pinned shader compiler, set up .NET and the
+  WebAssembly workload from a cache when one exists, build the pinned native meshoptimizer, and optionally
+  prepare browser physics and build the Editor.
+inputs:
+  browser-physics:
+    description: Prepare the pinned Jolt browser sources that the Editor publisher reads.
+    required: false
+    default: 'true'
+  build-editor:
+    description: Build the Release Editor so that later publish steps can use --no-build.
+    required: false
+    default: 'true'
+  save-dotnet-cache:
+    description: >-
+      Save the .NET SDK and WebAssembly workload cache when no cache exists for this key. Set this in one job only,
+      so that parallel jobs do not race to save the same key.
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Initialize pinned Editor project submodules
+      shell: pwsh
+      run: |
+        $paths = @('Build/Submodules/OscCore-NET9', 'Build/Submodules/OpenVR.NET')
+        git submodule update --init --checkout -- Build/Submodules/OscCore-NET9 Build/Submodules/OpenVR.NET
+        if ($LASTEXITCODE -ne 0) { throw 'The recorded Editor submodules could not be checked out.' }
+        foreach ($path in $paths) {
+          $entry = (& git ls-tree HEAD -- $path).Trim()
+          if ($LASTEXITCODE -ne 0 -or $entry -notmatch '^160000 commit ([0-9a-f]{40})\s+') {
+            throw "No recorded gitlink commit for $path."
+          }
+          $expected = $Matches[1]
+          $actual = (& git -C $path rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+            throw "The $path checkout does not match its recorded gitlink commit."
+          }
+        }
+        foreach ($file in @(
+          'Build/Submodules/OscCore-NET9/OscCore.csproj',
+          'Build/Submodules/OpenVR.NET/OpenVR.NET/OpenVR.NET.csproj',
+          'Build/Submodules/OpenVR.NET/OpenVR.NET/openvr_api.dll')) {
+          if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing pinned Editor dependency: $file" }
+        }
+
+    - name: Stage the pinned Editor shader compiler
+      shell: pwsh
+      run: |
+        $shaderCompiler = 'XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/xr_shaderc.dll'
+        $expectedHash = 'f5753bf8c64930c6170f681ce649cc4515468b5b4fc81aa552d0d79a47b42cff'
+        $expectedBytes = 5520896
+        $pointer = (& git show "HEAD:$shaderCompiler") -join "`n"
+        if ($LASTEXITCODE -ne 0 -or $pointer -notmatch "(?m)^oid sha256:$expectedHash$" -or
+            $pointer -notmatch "(?m)^size $expectedBytes$") {
+          throw 'The Editor shader compiler does not match the reviewed source pin.'
+        }
+        git lfs pull --include="$shaderCompiler" --exclude=""
+        if ($LASTEXITCODE -ne 0) { throw 'The pinned Editor shader compiler could not be fetched.' }
+        if ((Get-Item -LiteralPath $shaderCompiler).Length -ne $expectedBytes -or
+            (Get-FileHash -LiteralPath $shaderCompiler -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
+          throw 'The staged Editor shader compiler does not match its recorded size and hash.'
+        }
+
+    # The SDK goes into a job folder, not Program Files, so the workload installs as files that the cache can keep.
+    - name: Restore cached .NET SDK and WebAssembly workload
+      id: dotnet-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}\dotnet
+        key: dotnet-sdk-wasm-tools-${{ runner.os }}-${{ hashFiles('global.json') }}
+
+    - name: Set up .NET 10
+      uses: actions/setup-dotnet@v6
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
+      with:
+        global-json-file: global.json
+
+    - name: Install WebAssembly workload
+      shell: pwsh
+      run: |
+        dotnet workload install wasm-tools
+        if ($LASTEXITCODE -ne 0) { throw 'The WebAssembly workload installation failed.' }
+
+    - name: Save .NET SDK and WebAssembly workload
+      if: ${{ inputs.save-dotnet-cache == 'true' && steps.dotnet-cache.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}\dotnet
+        key: ${{ steps.dotnet-cache.outputs.cache-primary-key }}
+
+    - name: Build native meshoptimizer
+      shell: pwsh
+      run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
+
+    - name: Prepare pinned browser physics sources
+      if: ${{ inputs.browser-physics == 'true' }}
+      shell: pwsh
+      run: |
+        ./Tools/Dependencies/Prepare-JoltBrowserManaged.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/managed"
+        ./Tools/Dependencies/Build-JoltBrowser.ps1 -OutputDirectory "$env:VALIDATION_ROOT/jolt/native" -DotNetRoot $env:DOTNET_ROOT
+
+    - name: Build the Release Editor
+      if: ${{ inputs.build-editor == 'true' }}
+      shell: pwsh
+      run: |
+        dotnet build XREngine.Editor/XREngine.Editor.csproj --configuration Release
+        if ($LASTEXITCODE -ne 0) { throw 'The Release Editor build failed.' }

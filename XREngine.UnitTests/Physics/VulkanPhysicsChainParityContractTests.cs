@@ -63,6 +63,7 @@ public sealed class VulkanPhysicsChainParityContractTests
         string commandBufferReuse = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/FrameData/VulkanRenderer.CommandBufferReuse.FrameData.cs");
         string primaryRecording = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
         string recordingPreparation = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanFrameLoop.PrimaryRecordingPreparation.cs");
+        string queue = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/VulkanFrameOperationQueue.cs");
         string preflightPolicy = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/VulkanRenderer.FrameLoop.Preflight.Policy.cs");
         string markers = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.SubmissionMarkerFences.cs")
             + ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.TrackedSubmission.cs")
@@ -74,7 +75,6 @@ public sealed class VulkanPhysicsChainParityContractTests
         dispatcher.ShouldContain("backend.BeginBatch()");
         dispatcher.ShouldContain("backend.CommitBatch()");
         dispatcher.ShouldContain("backend.RollbackBatch()");
-
         // An aborted primary recording fails the static and dynamic UI markers.
         ShouldContainCode(recordingPreparation, "if (!submissionMarkersTransferred)");
         ShouldContainCode(recordingPreparation, "acceptedPlan.SettleUnsubmittedSubmissionMarkers();");
@@ -91,7 +91,11 @@ public sealed class VulkanPhysicsChainParityContractTests
         ShouldContainCode(recorder, "existing[markerIndex].Fail(EGpuFenceFailureSite.CommandBufferReuse,");
         ShouldContainCode(recorder, "RegisterSubmissionMarkersNoLock(commandBuffer, frameOps);");
         ShouldContainCode(recorder, "RegisterSubmissionMarkersNoLock(commandBuffer, dynamicUiFrameOps);");
-
+        // A rolled-back ordered batch fails each submission marker that it captured.
+        string rollback = SliceMethod(queue, "internal void RollbackOrderedBatch()", "internal bool RequiredOrderedBatchHasWriter(");
+        rollback.ShouldContain("if (capture.Buffer[index] is SubmissionMarkerOp marker)");
+        rollback.ShouldContain("marker.Fence.Fail(EGpuFenceFailureSite.QueueRollback,");
+        markers.ShouldContain("marker.Fence.Fail(EGpuFenceFailureSite.UnsubmittedMarker,");
         markers.ShouldContain("RentTimelineGpuFence()");
         markers.ShouldContain("_timelineGpuFencePool");
         markers.ShouldContain("markers.Clear()");
@@ -217,7 +221,7 @@ public sealed class VulkanPhysicsChainParityContractTests
 
         // Batched and standalone chains use the same renderer-neutral submission.
         component.ShouldContain("RuntimePhysicsChainRendering.Current.Execute(this, new PhysicsChainGpuDispatchSnapshot(");
-        component.ShouldContain("loopCount, timeVar,");
+        component.ShouldContain("loopCount, timeVar, _gpuExecutionGeneration");
         component.ShouldNotContain("OpenGLRenderer");
         component.ShouldNotContain("RawGL");
         component.ShouldNotContain("FenceSync");
@@ -243,4 +247,12 @@ public sealed class VulkanPhysicsChainParityContractTests
 
     private static string RemoveWhiteSpace(string text)
         => new(text.Where(static character => !char.IsWhiteSpace(character)).ToArray());
+    private static string SliceMethod(string source, string startToken, string endToken)
+    {
+        int start = source.IndexOf(startToken, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        int end = source.IndexOf(endToken, start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start);
+        return source[start..end];
+    }
 }

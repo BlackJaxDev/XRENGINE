@@ -42,8 +42,6 @@ allow	XREngine.Runtime.Core/Scene/Components/XRComponent.cs	GetConstructor	Legac
 allow	XREngine.Runtime.Core/Scene/Components/XRComponent.cs	GetUninitializedObject	Legacy component factory; requires browser lifecycle exercise
 allow	XREngine.Runtime.Core/Scene/SceneNode.Components.cs	GetCustomAttributes	Component requirement attributes
 allow	XREngine.Runtime.Core/Scene/Transforms/TransformBase.cs	GetCustomAttribute	Transform display metadata
-allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetAssemblies	Development-only replication metadata scan; published runtime uses persisted table
-allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetTypes	Development-only loaded-assembly replication candidate inspection
 allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetProperties	Development-only replicable property discovery
 allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetProperty	Registered replication property resolution
 allow	XREngine.Runtime.Core/World/XRWorldObjectBase.cs	GetCustomAttribute	Replication attribute inspection

@@ -185,6 +185,20 @@ internal static class BrowserWorldCapabilityAudit
                                 lod.Material?.RenderPass.ToString(System.Globalization.CultureInfo.InvariantCulture),
                                 MaterialSourcePath(lod.Material));
                         }
+                else if (component is GaussianSplatComponent)
+                {
+                    // The sorted splat renderer has only desktop GLSL shaders.
+                    Collect(() => throw new NotSupportedException($"BrowserCook.ShaderUnsupported: '{path}' component '{nameof(GaussianSplatComponent)}' draws with the desktop GLSL gaussian splat shaders; the WebGPU splat renderer is not available yet."),
+                        scenePath, path, componentName,
+                        pass: ((int)XREngine.Data.Rendering.EDefaultRenderPass.TransparentForward).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+                else if (component is GaussianCacheComponent)
+                {
+                    // The animated splat cache uses desktop GLSL compute shaders and the same splat renderer.
+                    Collect(() => throw new NotSupportedException($"BrowserCook.ShaderUnsupported: '{path}' component '{nameof(GaussianCacheComponent)}' draws with the desktop GLSL gaussian cache and splat shaders; the WebGPU splat renderer is not available yet."),
+                        scenePath, path, componentName,
+                        pass: ((int)XREngine.Data.Rendering.EDefaultRenderPass.TransparentForward).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
                 else if (component is OctahedralBillboardComponent impostor)
                 {
                     Collect(() =>

@@ -23,7 +23,6 @@ public sealed class PhysicsChainDebugDefaultTests
         fields.ShouldContain("RuntimePhysicsChainRendering.Current.SetDebugDrawChains(this, value);");
         component.ShouldContain("if (DebugDrawChains)");
         gpu.ShouldContain("RuntimePhysicsChainRendering.Current.RenderDebug(this)");
-
         // The chain choice becomes the dispatcher selection at registration and on each change.
         renderingBridge.ShouldContain("GPUPhysicsChainDispatcher.Instance.SetDebugDrawChainsSelection(this, selected);");
         dispatcher.ShouldContain("request.DebugSelected = component.DebugDrawChains;");
@@ -36,6 +35,7 @@ public sealed class PhysicsChainDebugDefaultTests
         // Only selected chains add debug items.
         dispatcherDebug.ShouldContain("if (!request.DebugSelected");
         dispatcherDebug.ShouldContain("items.Add(new PhysicsChainGpuDebugItem(");
+        renderingBridge.ShouldContain("private volatile bool _debugDrawChains = chain.DebugDrawChains;");
         dispatcherDebug.IndexOf("if (!request.DebugSelected", StringComparison.Ordinal)
             .ShouldBeLessThan(dispatcherDebug.IndexOf("items.Add(new PhysicsChainGpuDebugItem(", StringComparison.Ordinal));
     }

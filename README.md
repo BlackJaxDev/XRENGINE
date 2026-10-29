@@ -16,6 +16,9 @@ See the [legal guide](LEGAL/README.md) and
 Contributions require the
 [XRENGINE Contributor Agreement](LEGAL/CONTRIBUTING.md).
 
+For code, comments, and change descriptions, see the
+[maintainer style guide](docs/developer-guides/ai/maintainer-style.md).
+
 Scroll down a bit to see technical details and how to bootstrap your own build. Fastest: run `./ExecTool --bootstrap` after cloning.
 
 ## THE WHO
@@ -103,6 +106,7 @@ for the shared `net10.0` compilation boundary and browser qualification limits.
 - Git (submodules are used for third-party deps)
 - LunarG Vulkan SDK with `VULKAN_SDK` set, used to build the VMA native bridge
 - Visual Studio 2022/2026 or Build Tools with Desktop development with C++ and the MSVC v143 x64/x86 build tools, used for native bridge builds
+- CMake on `PATH`, used to build the native meshoptimizer library (see [Build](#build))
 
 You probably also want to have a VR headset to try out a VR game engine properly.
 
@@ -125,6 +129,17 @@ git submodule update --init --recursive
 Or use the convenience script: `./Tools/Initialize-Submodules.bat`
 
 ### Build
+
+Build the native meshoptimizer library one time before the first build. The library is not in the repository, and a
+build of `XREngine.Runtime.MeshProcessing.Meshoptimizer` stops with an error that names this script when the library
+is missing. The script needs git, CMake, and a C++ compiler toolchain (Visual Studio or Build Tools with Desktop
+development with C++ on Windows). `ExecTool --bootstrap` runs it too.
+
+```powershell
+pwsh Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
+```
+
+The same script builds `-Rid linux-x64` with gcc or clang, but that build is not verified yet.
 
 ```powershell
 dotnet restore
@@ -311,7 +326,6 @@ Good starting points:
 - `docs/developer-guides/testing/unit-testing-world.md` - local validation world and pose/network test setups
 - `docs/user-guide/setup/bootstrap.md` - first-time setup and bootstrap scope
 - `docs/developer-guides/runtime/native-dependencies.md` - native and external setup reference
-- `docs/work/README.md` - active TODOs and design docs
 
 ## Project Links
 

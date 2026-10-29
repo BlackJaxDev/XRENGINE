@@ -64,7 +64,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             attachments[1] = depth.View;
             Framebuffer framebuffer = CreateSwapchainFramebuffer(attachments);
             _output.Desktop.Framebuffers[index] = framebuffer;
-            _resources.RegisterFramebuffer(framebuffer, attachments, $"Swapchain.Framebuffer[{index}]");
+            string framebufferName = $"Swapchain.Framebuffer[{index}]";
+            _resources.RegisterFramebuffer(framebuffer, attachments, framebufferName);
+            _device.SetDebugObjectName(ObjectType.Framebuffer, framebuffer.Handle, framebufferName);
         }
     }
 

@@ -34,6 +34,28 @@ After conversion, the result is an ordinary `XRPrefabSource`. Drag it from the
 Asset Explorer or instantiate it through the normal prefab workflow; there is
 no Unity-specific spawn path.
 
+## Unity Reference Capture Without Desktop Interaction
+
+Use the source project's Unity version in GPU-enabled batch mode for offline
+reference images. Supply a temporary Editor script through `-executeMethod`.
+The script must load the saved scene or instantiate the prefab, render a camera
+to a `RenderTexture`, read the pixels, and write a PNG plus capture settings.
+Use `-batchmode -quit` with an explicit graphics backend, such as
+`-force-d3d11`. Omit `-nographics`; it disables the required graphics device.
+See [Unity's command-line reference](https://docs.unity3d.com/2022.3/Documentation/Manual/EditorCommandLineArguments.html).
+
+Close only an owned Unity process before opening the same project in batch
+mode. In the disposable batch process, load each capture scene with single-scene
+loading and use Editor scene APIs. Do not save temporary cameras, lighting, or
+prefab instances to source assets. Remove the temporary script after capture.
+Check source hashes before and after the run.
+
+Record camera transforms, field of view, image size, lighting, HDR, anti-aliasing,
+post-processing, and color encoding. View every output image. A raw camera render
+with custom lighting or post-processing is a controlled reference, not proof
+that the saved Game view matches. These images avoid desktop screenshot capture
+and its display color conversion. Desktop access is not required for this path.
+
 ## Unit Testing World Startup
 
 Set `ModelsToImport[].Path` in `Assets/UnitTestingWorldSettings.jsonc` to a

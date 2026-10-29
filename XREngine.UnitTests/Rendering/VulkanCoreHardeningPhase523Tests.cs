@@ -75,17 +75,27 @@ public sealed class VulkanCoreHardeningPhase523Tests
     [Test]
     public void RetirementReverseIndex_DirtiesOnlyExactRecordedDependents()
     {
+        // The descriptor lifetime authority captures the exact current-generation
+        // dependents of a retiring resource. The command runtime dirties only the
+        // owners and chains that recorded one of those command buffers.
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
+        string trackingBatch = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Tracking/VulkanRenderer.CommandBufferTrackingBatch.cs");
         string allocation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Allocation/VulkanRenderer.CommandBufferAllocation.cs");
+        string commandRuntime = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.cs");
 
-        lifetime.ShouldContain("InvalidateCachedCommandBuffersForRetiringResource(key, generation, resourceOwner, dependentCommandBuffers)");
-        lifetime.ShouldContain("InvalidateCachedCommandBuffersByHandle(");
-        allocation.ShouldContain("VulkanExactInvalidationResult");
+        lifetime.ShouldContain("dependentCommandBuffers = CaptureCurrentGenerationDependentsNoLock(tracker, key, generation);");
+        lifetime.ShouldContain("_resources.SynchronousCommands.CommandRuntime.InvalidateCachedCommandBuffers(\n                dependentCommandBuffers,\n                $\"retiring {key} generation {generation}\");");
+        trackingBatch.ShouldContain("InvalidateCachedCommandBuffersByHandle(");
+        allocation.ShouldContain("private VulkanExactInvalidationResult InvalidateCachedCommandBuffersByHandle(");
         allocation.ShouldContain("ContainsCommandBufferHandle(");
-        allocation.ShouldContain("UnrelatedVariantsPreserved");
-        allocation.ShouldContain("GlobalFallbackInvalidations");
+        commandRuntime.ShouldContain("private VulkanExactInvalidationResult InvalidateCachedCommandBuffersCore(");
+        commandRuntime.ShouldContain("unrelatedVariantsPreserved++;");
+        commandRuntime.ShouldContain("UnrelatedVariantsPreserved");
+        commandRuntime.ShouldContain("GlobalFallbackInvalidations: 0);");
     }
 
     [Test]

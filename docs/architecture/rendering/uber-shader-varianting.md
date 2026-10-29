@@ -2,8 +2,7 @@
 
 This document is the implemented architecture for XRENGINE's Uber material
 variant system. It consolidates the completed variant builder optimization
-work and the shader-source optimization boundary described in
-[Resolved Shader Source Optimization Remaining Todos](../../work/todo/rendering/resolved-shader-source-optimization-todo.md).
+work and the shader-source optimization boundary.
 
 The short version: Uber materials store author intent as material state, build a
 deterministic variant request from that state, generate a smaller fragment
@@ -142,9 +141,6 @@ The Unity importer preserves transparent source blend and depth state and sets
 The late lane uses the existing filtered direct submission path. Imported Uber
 materials do not claim temporal replay until matching velocity and reactive
 variants exist. Unsupported scene-color dependencies return a diagnostic.
-
-Runtime and image acceptance are tracked in the
-[avatar validation matrix](../../work/testing/rendering/jax2031-advanced-parity-validation.md).
 
 ### Source Dissolve And Detail Color
 
@@ -768,4 +764,3 @@ resolved-source optimization pipeline rather than in Uber-only helpers.
 - [Uber Shader UI Annotations](uber-shader-ui-annotations.md)
 - [Uber Shader Materials](../../developer-guides/rendering/uber-shader-materials.md)
 - [OpenGL Program Linking](../../developer-guides/rendering/opengl-program-linking.md)
-- [World Shader Prewarm Graph](../../work/design/rendering/world-shader-prewarm-graph-design.md)

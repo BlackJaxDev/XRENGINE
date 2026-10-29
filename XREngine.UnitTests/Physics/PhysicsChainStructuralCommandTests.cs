@@ -51,14 +51,15 @@ public sealed class PhysicsChainStructuralCommandTests
         PhysicsChainRuntimeHandle originalHandle = component.RuntimeHandle;
         originalHandle.IsValid.ShouldBeTrue();
 
-        // Deactivation retires the live slot immediately. The next add can use
-        // the free slot again, but only with a new generation.
+        PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler).ShouldBeTrue();
+        scheduler.ShouldNotBeNull();
+        scheduler!.TryResolveRuntimeHandle(originalHandle, out _).ShouldBeTrue();
+
+        // Deactivation retires the live slot. A new registration uses a new generation.
         SetWorld(node, null);
         SetWorld(node, world);
         world.Invoke(ETickGroup.Normal);
 
-        PhysicsChainWorld.TryGet(world, out PhysicsChainWorld? scheduler).ShouldBeTrue();
-        scheduler.ShouldNotBeNull();
         scheduler!.RegisteredCount.ShouldBe(1);
         scheduler.SlotCapacity.ShouldBe(1);
         PhysicsChainRuntimeHandle currentHandle = component.RuntimeHandle;

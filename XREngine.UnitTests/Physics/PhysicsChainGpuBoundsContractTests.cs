@@ -39,7 +39,6 @@ public sealed class PhysicsChainGpuBoundsContractTests
             "uint PaletteCount;", "uint BoundsSlot;", "uint Flags;");
         GPUPhysicsChainDispatcher.BoundsWorkItemRejectedMaterialContract.ShouldBe(1u);
         boundsShader.ShouldContain("const uint BoundsWorkItemRejectedMaterialContract = 1u;");
-
         Marshal.SizeOf<GPUPhysicsChainDispatcher.PhysicsChainGpuBoundsCopyItem>().ShouldBe(8);
         var copyItem = new GPUPhysicsChainDispatcher.PhysicsChainGpuBoundsCopyItem(
             SourceSlot: 21u,
@@ -75,6 +74,7 @@ public sealed class PhysicsChainGpuBoundsContractTests
         source.ShouldContain("IncludePaletteBox(PreviousPaletteRows[row], PreviousPaletteRows[row + 1u],");
 
         // The material vertex-effect padding grows the reduced box.
+        source.ShouldContain("float effectPadding = item.LocalMinimum.w;");
         source.ShouldContain("finalMinimum -= numericMargin + vec3(effectPadding);");
         source.ShouldContain("finalMaximum += numericMargin + vec3(effectPadding);");
         source.ShouldContain("item.BoundsSlot * 2u");
@@ -90,7 +90,6 @@ public sealed class PhysicsChainGpuBoundsContractTests
             "Build/CommonAssets/Shaders/Compute/PhysicsChain/PhysicsChainBoundsToScene.comp");
 
         source.ShouldContain("_gpuBoundsSlotAllocator.Acquire(key, 1u)");
-
         // A scene route snapshot is copied again only when the scene publishes new routes.
         int generationCheckIndex = source.IndexOf(
             "routes.PublicationGeneration != scene.RendererCommandMaterialPublicationGeneration",
@@ -101,7 +100,6 @@ public sealed class PhysicsChainGpuBoundsContractTests
         generationCheckIndex.ShouldBeGreaterThanOrEqualTo(0);
         captureIndex.ShouldBeGreaterThan(generationCheckIndex);
         source.ShouldContain("routes.TryGetCommandIndices(binding.Renderer, _gpuBoundsCommandScratch)");
-
         source.ShouldContain("scene.SetRendererOwnsGpuCopiedAabb(binding.Renderer, true)");
         source.ShouldContain("scene.CommandAabbBuffer");
         source.ShouldContain("UsesCpuReadback: false");

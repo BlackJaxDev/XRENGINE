@@ -1,20 +1,65 @@
 using System.Runtime.InteropServices;
 namespace XREngine.Rendering.Meshlets;
 
-internal static class NativeMeshOptimizer
+internal static partial class NativeMeshOptimizer
 {
     private const string NativeLibraryName = "meshoptimizer";
+    private const string VersionFileName = "meshoptimizer.version";
     private const int InteropVersion = 3;
     private const uint SimplifyPermissiveWithSeamsMask = (uint)MeshOptimizerSimplifyOptions.Permissive;
     private static readonly Lazy<nint> s_nativeLibraryHandle = new(LoadNativeLibraryHandle, LazyThreadSafetyMode.ExecutionAndPublication);
-    private static readonly Lazy<MeshoptVersionDelegate?> s_version = new(() => TryLoadExport<MeshoptVersionDelegate>("meshopt_version"), LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly Lazy<string> s_versionText = new(ReadVersionText, LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<MeshoptOptimizeMeshletLevelDelegate?> s_optimizeMeshletLevel = new(() => TryLoadExport<MeshoptOptimizeMeshletLevelDelegate>("meshopt_optimizeMeshletLevel"), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<MeshoptOptimizeMeshletDelegate?> s_optimizeMeshlet = new(() => TryLoadExport<MeshoptOptimizeMeshletDelegate>("meshopt_optimizeMeshlet"), LazyThreadSafetyMode.ExecutionAndPublication);
     private static int s_loggedLegacyOptimizeLevelFallback;
     private static int s_loggedMissingOptimizeMeshletExport;
 
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate int MeshoptVersionDelegate();
+    static NativeMeshOptimizer()
+    {
+        try
+        {
+            NativeLibrary.SetDllImportResolver(typeof(NativeMeshOptimizer).Assembly, ResolveNativeLibrary);
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private static nint ResolveNativeLibrary(string libraryName, System.Reflection.Assembly assembly, DllImportSearchPath? searchPath)
+        => libraryName == NativeLibraryName ? s_nativeLibraryHandle.Value : IntPtr.Zero;
+
+    /// <summary>
+    /// Finds the native library file. Order: the assembly folder, the application base folder,
+    /// then runtimes/&lt;rid&gt;/native under each of them.
+    /// </summary>
+    internal static string? FindNativeLibraryFile(string? assemblyDirectory, string baseDirectory, string rid, string fileName)
+    {
+        foreach (string directory in EnumerateProbeDirectories(assemblyDirectory, baseDirectory, rid))
+        {
+            string path = Path.Combine(directory, fileName);
+            if (File.Exists(path))
+                return path;
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateProbeDirectories(string? assemblyDirectory, string baseDirectory, string rid)
+    {
+        if (!string.IsNullOrEmpty(assemblyDirectory))
+            yield return assemblyDirectory;
+
+        yield return baseDirectory;
+
+        if (!string.IsNullOrEmpty(assemblyDirectory))
+            yield return Path.Combine(assemblyDirectory, "runtimes", rid, "native");
+
+        yield return Path.Combine(baseDirectory, "runtimes", rid, "native");
+    }
+
+    private static string CurrentRid => OperatingSystem.IsWindows() ? "win-x64" : "linux-x64";
+
+    private static string NativeFileName => OperatingSystem.IsWindows() ? "meshoptimizer.dll" : "libmeshoptimizer.so";
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private unsafe delegate void MeshoptOptimizeMeshletLevelDelegate(uint* meshletVertices, nuint vertexCount, byte* meshletTriangles, nuint triangleCount, int level);
@@ -110,15 +155,50 @@ internal static class NativeMeshOptimizer
     private static extern unsafe float MeshoptSimplifyScale(float* vertexPositions, nuint vertexCount, nuint vertexPositionsStride);
 
     public static string VersionKey
-    {
-        get
-        {
-            if (s_version.Value is { } version)
-                return $"meshoptimizer:{version()};interop:{InteropVersion}";
+        => $"{s_versionText.Value};interop:{InteropVersion}";
 
-            return $"meshoptimizer:unknown;interop:{InteropVersion}";
+    private static string ReadVersionText()
+    {
+        foreach (string directory in EnumerateNativeLibraryDirectories())
+        {
+            string versionPath = Path.Combine(directory, VersionFileName);
+            if (!File.Exists(versionPath))
+                continue;
+
+            try
+            {
+                string text = File.ReadAllText(versionPath).Trim();
+                if (text.Length > 0)
+                    return text;
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
         }
+
+        return "unknown";
     }
+
+    private static IEnumerable<string> EnumerateNativeLibraryDirectories()
+    {
+        nint handle = s_nativeLibraryHandle.Value;
+        if (handle != IntPtr.Zero && OperatingSystem.IsWindows())
+        {
+            char[] buffer = new char[1024];
+            uint length = GetModuleFileNameW(handle, buffer, (uint)buffer.Length);
+            if (length > 0 && length < buffer.Length && Path.GetDirectoryName(new string(buffer, 0, (int)length)) is { Length: > 0 } loadedDirectory)
+                yield return loadedDirectory;
+        }
+
+        foreach (string directory in EnumerateProbeDirectories(Path.GetDirectoryName(typeof(NativeMeshOptimizer).Assembly.Location), AppContext.BaseDirectory, CurrentRid))
+            yield return directory;
+    }
+
+    [DllImport("kernel32", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern uint GetModuleFileNameW(nint module, [Out] char[] fileName, uint size);
 
     public static nuint BuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles)
         => MeshoptBuildMeshletsBound(indexCount, (nuint)maxVertices, (nuint)maxTriangles);
@@ -186,6 +266,20 @@ internal static class NativeMeshOptimizer
 
     private static nint LoadNativeLibraryHandle()
     {
+        try
+        {
+            string? assemblyDirectory = Path.GetDirectoryName(typeof(NativeMeshOptimizer).Assembly.Location);
+            if (FindNativeLibraryFile(assemblyDirectory, AppContext.BaseDirectory, CurrentRid, NativeFileName) is { } path
+                && NativeLibrary.TryLoad(path, out IntPtr explicitHandle)
+                && explicitHandle != IntPtr.Zero)
+            {
+                return explicitHandle;
+            }
+        }
+        catch
+        {
+        }
+
         try
         {
             if (NativeLibrary.TryLoad(NativeLibraryName, typeof(NativeMeshOptimizer).Assembly, null, out IntPtr assemblyHandle)

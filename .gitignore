@@ -441,6 +441,7 @@ Screenshots/
 Build/TempValidation/
 Build/Dependencies/MsdfAtlasGen/
 Cache/
+!XREngine.Runtime.Rendering/Rendering/Models/Gaussian/Cache/
 !XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Cache/
 !XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Scheduling/CommandChains/Cache/**
 XREngine.Gltf/runtimes/
@@ -532,3 +533,9 @@ Samples/BrowserUiParity/Assets/*
 # Build output from the former MonkeyBallVR sample.
 /Samples/MonkeyBallVR/Build/
 /Samples/MonkeyBallVR/Intermediate/
+# Gaussian preview bake fixtures and bake output.
+/Build/GaussianBakeFixtures/
+/Build/GaussianBakeOut/
+
+# Native meshoptimizer source and build output.
+Build/Dependencies/Meshoptimizer/

@@ -213,8 +213,7 @@ Use CPU shader exports and bounded offline compilation to compare compiler
 workload. Record source bytes, optimized instruction counts, elapsed time, and
 process memory separately. A smaller source can reduce compiler memory even if
 the optimized output is almost unchanged. These results do not establish an
-OpenGL driver-link memory limit. See the
-[Fishnet investigation](../../work/investigations/rendering/2026-10-15-unity-import-shader-compiler-pressure.md).
+OpenGL driver-link memory limit.
 
 ## Backend Decision
 
@@ -461,8 +460,8 @@ program remains renderable. Old handles are deferred for deletion for at least
 two render frames so queued draws and program pipelines cannot reference a
 destroyed handle.
 
-The [2026-09-14 runtime qualification](../../work/investigations/rendering/vulkan14-final-validation-2026-09-14.md)
-exercises a visible water-shader edit, a syntax error retaining the last valid
+The 2026-09-14 runtime qualification
+exercised a visible water-shader edit, a syntax error retaining the last valid
 output, and restoration of the authored shader.
 
 ## Separable Programs

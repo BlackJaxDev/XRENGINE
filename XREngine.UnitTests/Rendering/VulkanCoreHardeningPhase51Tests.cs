@@ -9,75 +9,100 @@ public sealed class VulkanCoreHardeningPhase51Tests
     [Test]
     public void UnknownPassInitialization_UsesExactRecordedSubresources()
     {
+        // A new engine image publishes its creation layout for every subresource, so a
+        // pass never sees an unknown subresource state.
+        string imageLayouts = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.ImageLayouts.cs");
+        string initialLayouts = SliceBetween(
+            imageLayouts,
+            "internal void RegisterTrackedImageInitialLayouts(",
+            "internal void ResetCommandBufferImageLayoutJournal(");
+
+        initialLayouts.ShouldContain("createInfo.InitialLayout");
+        initialLayouts.ShouldContain("for (uint mip = 0; mip < mipLevels; mip++)");
+        initialLayouts.ShouldContain("for (uint layer = 0; layer < arrayLayers; layer++)");
+        initialLayouts.ShouldContain("VulkanTrackedImageSubresource key = new(imageHandle, mip, layer, aspect);");
+        initialLayouts.ShouldContain("Synchronization._trackedImageSubresourceStates[key] = state;");
+        initialLayouts.ShouldNotContain("LastKnownLayout");
+
+        // Planned barriers take their old layout from the exact recorded subresource
+        // range of this command buffer generation.
         string source = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Synchronization/VulkanRenderer.BarrierEmission.cs");
         string method = SliceBetween(
             source,
-            "private void EmitInitialImageAspectBarriers(",
-            "private void EmitPlannedImageBarriers(");
+            "private uint BuildPlannedImageBarriers(",
+            "private static void BuildPlannedBufferBarriers(");
 
-        method.ShouldContain("for (uint mip = 0; mip < mipLevels; mip++)");
-        method.ShouldContain("TryGetRecordedImageAccessState(commandBuffer, group.Image, single, out _)");
-        method.ShouldContain("BaseArrayLayer = firstUnknownLayer");
-        method.ShouldContain("LayerCount = layer - firstUnknownLayer");
-        method.ShouldContain("OldLayout = ImageLayout.Undefined");
+        method.ShouldContain("BaseArrayLayer = planned.Range.BaseArrayLayer");
+        method.ShouldContain("LayerCount = Math.Max(1u, planned.Range.LayerCount)");
+        method.ShouldContain("includeEntryState: false");
+        method.ShouldContain("includeUndefinedState: true");
+        method.ShouldContain("effectiveOldLayout = recordedLayout;");
+        method.ShouldContain("OldLayout = effectiveOldLayout");
         method.ShouldNotContain("LastKnownLayout");
     }
 
     [Test]
     public void OrderedCommandBuffers_SeedEntryStateAndValidateGeneration()
     {
-        string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        string synchronization = SourceContractWorkspace.ReadVulkanCommandRuntimeSource();
         string imgui = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.Rendering.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanImGuiOverlayCommandRecorder.cs");
         string dynamicText = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanDynamicUiBatchTextOverlayRecorder.cs");
 
         synchronization.ShouldContain("EntrySubresources");
         synchronization.ShouldContain("EntryStateIncomplete");
-        synchronization.ShouldContain("SeedRecordedImageLayoutState(");
+        synchronization.ShouldContain("internal void SeedRecordedImageLayoutState(");
+        synchronization.ShouldContain("recorded.EntryStateIncomplete = predecessorState.EntryStateIncomplete;");
         synchronization.ShouldContain("ValidateOrderedCommandBufferImageStateContracts(");
         synchronization.ShouldContain("VulkanImageEntryStateContract.Compare(");
         synchronization.ShouldContain("TryGetRecordedImageEntryStateMismatch(");
-        imgui.ShouldContain("SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer)");
-        dynamicText.ShouldContain("SeedRecordedImageLayoutState(commandBuffer, predecessorCommandBuffer)");
+        imgui.ShouldContain("encoder.Runtime.SeedRecordedImageLayoutState(\n                input.OverlayCommandBuffer,\n                input.PredecessorCommandBuffer);");
+        dynamicText.ShouldContain("encoder.Runtime.SeedRecordedImageLayoutState(\n                input.OverlayCommandBuffer,\n                input.PredecessorCommandBuffer);");
     }
 
     [Test]
     public void PrimaryReuse_ValidatesOnlyTouchedImageEntryStates()
     {
         string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.ImageLayouts.cs");
         string allocation = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferAllocation.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanCommandRuntime.NativeRecordingServices.cs");
 
         string reuseValidation = SliceBetween(
             allocation,
             "private bool IsCommandBufferVariantImageLayoutStateDirty(",
-            "private void LogCommandChainSecondaryInheritanceMismatch(");
+            "private bool TryGetRecordedImageEntryStateMismatch(");
 
         reuseValidation.ShouldContain("TryGetRecordedImageEntryStateMismatch(");
         reuseValidation.ShouldContain("variant.PrimaryCommandBuffer");
         reuseValidation.ShouldNotContain("variant.RecordedImageLayoutStartSignature != imageLayoutStartSignature");
-        synchronization.ShouldContain("recorded.EntrySubresources[key] = submittedState.Submitted");
+        synchronization.ShouldContain("recorded.EntrySubresources[key] = entrySubmitted!.Submitted");
         synchronization.ShouldContain("recorded.EntryStateIncomplete = true");
     }
 
     [Test]
     public void ExplicitBarrierOldLayout_IsNeverRewrittenFromGlobalState()
     {
-        string synchronization = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
+        // The tracked encoder records the caller barriers unchanged. It only publishes
+        // the new layout after the native barrier.
+        string encoder = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanTrackedCommandEncoder.cs");
         string barrier = SliceBetween(
-            synchronization,
-            "private void ValidateRecordedImageBarrierOldLayout(",
-            "private void RecordImageAccess(");
+            encoder,
+            "internal void PipelineBarrier(",
+            "internal void ClearColorImage(");
 
-        barrier.ShouldContain(
-            "barrier.OldLayout == ImageLayout.Undefined");
-        barrier.ShouldContain("preserving the caller contract");
-        barrier.ShouldNotContain("barrier.OldLayout = recordedOldLayout");
+        int nativeBarrier = barrier.IndexOf("Api.CmdPipelineBarrier(", StringComparison.Ordinal);
+        nativeBarrier.ShouldBeGreaterThanOrEqualTo(0);
+        barrier.IndexOf("barrier.NewLayout,", nativeBarrier, StringComparison.Ordinal).ShouldBeGreaterThan(nativeBarrier);
+        barrier.ShouldNotContain("OldLayout =");
+        barrier.ShouldNotContain("recordedOldLayout");
+
+        string synchronization = SourceContractWorkspace.ReadVulkanCommandRuntimeSource();
+        synchronization.ShouldNotContain("barrier.OldLayout = recordedOldLayout");
         synchronization.ShouldNotContain("imageBarriers[i].OldLayout = recordedOldLayout");
     }
 
@@ -87,17 +112,29 @@ public sealed class VulkanCoreHardeningPhase51Tests
         string descriptorLayouts = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorImageLayouts.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Descriptors/VulkanDescriptorLifetimeAuthority.cs");
+        string barriers = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Synchronization/VulkanRenderer.BarrierEmission.cs");
         string imgui = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanRenderer.ImGui.Rendering.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/UI/VulkanImGuiTextureRegistryService.cs");
 
         descriptorLayouts.ShouldNotContain("TryTransitionDedicatedImageLayout");
-        lifetime.ShouldContain("ReflectedImageBindings");
-        lifetime.ShouldContain("if (setState.HasReflection && !setState.ReflectedImageBindings.Contains(binding))");
-        lifetime.ShouldContain("throw new InvalidOperationException(message)");
-        imgui.ShouldContain("TransitionImGuiSnapshotTexturesForSampling(commandBuffer, drawData)");
-        imgui.ShouldContain("drawCommand.TextureId");
-        imgui.ShouldContain("CmdPipelineBarrierTracked(");
+        lifetime.ShouldContain("state.HasReflection = reflectedBindings is not null;");
+        lifetime.ShouldContain("if (binding.Set == setIndex && IsLifetimeTrackedImageDescriptorType(binding.DescriptorType))");
+        lifetime.ShouldContain("state.ReflectedImageBindings.Add(binding.Binding);");
+
+        // Sampling transitions only cover image bindings that the consumer reflects.
+        string sampling = SliceBetween(
+            barriers,
+            "internal bool TransitionPublishedDescriptorSetImagesForSampling(",
+            "private bool TryPrepareSecondaryDescriptorImageRequirements(");
+        sampling.ShouldContain("if (snapshot.HasReflection && Array.IndexOf(snapshot.ReflectedImageBindings, published.Binding) < 0)\n                    continue;");
+        sampling.ShouldContain("TransitionDescriptorImageForSampling(");
+
+        // ImGui only binds descriptor-ready textures in the layout that their source publishes.
+        imgui.ShouldContain("if (!source.IsDescriptorReady)");
+        imgui.ShouldContain("status = EVulkanImGuiTextureRegistrationStatus.NeedsUpload;");
+        imgui.ShouldContain("descriptorLayout = VulkanProgramUtilities.ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);");
     }
 
     [Test]
@@ -106,12 +143,14 @@ public sealed class VulkanCoreHardeningPhase51Tests
         string frameLoop = string.Concat(
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Acquire.cs"),
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Recovery.cs"),
-            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.DesktopPresentationPolicy.cs"),
+            ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Desktop/Policy/VulkanRejectedDesktopFramePolicy.cs"),
             ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.FrameLoop.Presentation.cs"));
+        string tracker = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Lifetime/VulkanResourceLifetimeTracker.cs");
         string lifetime = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceLifetimeTracking.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.LifetimeLedger.cs");
         string retirement = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.ResourceRetirement.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Authority/VulkanResourceRuntime.cs");
 
         frameLoop.ShouldContain("case Result.SuboptimalKhr:");
         frameLoop.ShouldContain("TryRecoverRejectedDesktopImage");
@@ -120,9 +159,22 @@ public sealed class VulkanCoreHardeningPhase51Tests
         frameLoop.ShouldContain("ERejectedDesktopFramePolicyReason.NoCompletedFinalWrite");
         frameLoop.ShouldContain("PresentedWithoutValidFinalWrite");
         frameLoop.ShouldNotContain("OldLayout = ImageLayout.Undefined,\n                            NewLayout = ImageLayout.PresentSrcKhr");
-        lifetime.ShouldContain("_vulkanResourceCommandBufferDependencies");
-        lifetime.ShouldContain("InvalidateCachedCommandBuffersForRetiringResource(");
-        retirement.ShouldContain("TryBeginDestroyVulkanResourceGeneration(");
+
+        // Retirement fences new recording of the resource and publishes the command
+        // buffers that depend on it before it captures the retirement ticket.
+        tracker.ShouldContain("ResourceCommandBufferDependencies");
+        string captureTicket = SliceBetween(
+            lifetime,
+            "internal VulkanRetirementTicket CaptureRetirementTicket(",
+            "internal VulkanRetirementTicket CaptureImageViewRetirementTicket(");
+        int admissionFence = captureTicket.IndexOf("Lifetime.Tracker.FenceResourceRecordingAdmission(key, owner);", StringComparison.Ordinal);
+        admissionFence.ShouldBeGreaterThanOrEqualTo(0);
+        captureTicket.IndexOf("Lifetime.PublishTrackingDependenciesBeforeRetirement(key);", StringComparison.Ordinal)
+            .ShouldBeGreaterThan(admissionFence);
+        lifetime.ShouldContain("Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(");
+
+        retirement.ShouldContain("TryBeginDestroyResourceGeneration(");
+        lifetime.ShouldContain("internal bool TryBeginDestroyResourceGeneration(");
         retirement.ShouldContain("CompleteRetiredImageDeduplication(frameSlot, in entry)");
         retirement.ShouldNotContain("Api!.FreeMemory(device, memory, null)");
     }
@@ -130,14 +182,22 @@ public sealed class VulkanCoreHardeningPhase51Tests
     [Test]
     public void Vulkan14FeatureChains_AreGatedByCorePromotionOrEnabledExtension()
     {
+        string queries = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.FeatureQueries.cs");
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanRenderer.LogicalDevice.cs");
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
 
-        source.ShouldContain("promotedToCore = IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 4u)");
-        source.ShouldContain("if (!promotedToCore && !extensionEnabled)");
+        queries.ShouldContain("promotedToCore = IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 4u)");
+        queries.ShouldContain("if (!promotedToCore && !extensionEnabled)");
+        string maintenance5Query = SliceBetween(
+            queries,
+            "internal unsafe void QueryMaintenance5Capabilities(",
+            "featureSupported = featuresKhr.Maintenance5;");
+        maintenance5Query.ShouldContain("if (!promotedToCore && !extensionEnabled)\n            return;");
         source.ShouldContain("dynamicRenderingLocalReadFeatureSupported");
         source.ShouldContain("maintenance5FeatureSupported");
-        source.ShouldContain("if (enableMaintenance5Feature)");
+        source.ShouldContain("bool enableMaintenance5Feature = maintenance5FeatureSupported;");
+        source.ShouldContain("Maintenance5 = enableMaintenance5Feature,");
     }
 
     [Test]
@@ -149,6 +209,8 @@ public sealed class VulkanCoreHardeningPhase51Tests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string secondaries = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.SecondaryCommandBuffers.cs");
+        string primaryRecording = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/VulkanCommandRuntime.PrimaryRecording.cs");
 
         extensions.ShouldContain("VK_EXT_swapchain_colorspace");
         extensions.ShouldContain("IsInstanceExtensionAvailable(api, \"VK_EXT_swapchain_colorspace\")");
@@ -157,7 +219,7 @@ public sealed class VulkanCoreHardeningPhase51Tests
         recording.ShouldContain("ImageLayout depthOldLayout = hasRecordedDepthState");
         secondaries.ShouldContain("bool includeDepthAttachment = true");
         secondaries.ShouldContain("variant.DynamicUiSecondaryIncludesDepth == includeDepthAttachment");
-        secondaries.ShouldContain("includeDepthAttachment: false");
+        primaryRecording.ShouldContain("includeDepthAttachment: false");
     }
 
     [Test]

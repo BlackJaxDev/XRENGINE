@@ -14,8 +14,8 @@
     "XREngine.Runtime.Rendering.OpenGL",
     "XREngine.Runtime.Rendering.Vulkan"
   ],
-  "progressDocument": "docs/work/progress/rendering/render-pipeline-throughput-self-improvement.md",
-  "rejectedAttemptsDocument": "docs/work/investigations/rendering/render-pipeline-throughput-rejected-attempts.md",
+  "progressDocument": "Build/_AgentValidation/00000000-000000-shared/self-iteration/render-pipeline-throughput/accepted-attempts.md",
+  "rejectedAttemptsDocument": "Build/_AgentValidation/00000000-000000-shared/self-iteration/render-pipeline-throughput/rejected-attempts.md",
 
   // This uses the standalone Codex CLI protocol as an example. Any autonomous
   // agent command is valid if it reads the prompt from stdin, edits the current
