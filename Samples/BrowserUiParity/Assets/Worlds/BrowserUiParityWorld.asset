@@ -825,8 +825,90 @@ Scenes:
                 Components:
                   - __type: "XREngine.Rendering.UI.UIMaterialComponent"
                     ID: "3b1919a3-14b4-82e4-51f8-63d6e44b08da"
-                  - __type: "BrowserUiParity.BrowserUiParityImageComponent"
-                    ID: "d51bc1e2-f836-621e-7869-86b51c541013"
+                    Material:
+                      __assetType: XREngine.Rendering.XRMaterial
+                      Shaders:
+                      - &savedImageShader0
+                        __assetType: XREngine.Rendering.XRShader
+                        Source: Shaders/Common/UiTexturedForward.fs
+                        EntryPoint: main
+                        SlangOptions: {}
+                        ID: d8167198-bba0-416d-a1da-d8423476e9d1
+                        Name: UiTexturedForward
+                      UberAuthoredState: {}
+                      PassSet:
+                        SourceRenderQueue: -1
+                        ForwardAddPolicy: FoldedIntoForwardPlusBase
+                      AlphaCutoff: 0.5
+                      SurfaceTextureBindings:
+                      - Texture:
+                          __assetType: XREngine.Rendering.XRTexture2D
+                          ID: 6071fe90-7b13-40ca-92f1-8fe68dd49301
+                          Format: CookedBinary
+                          Version: 1
+                          Payload:
+                            Length: 891
+                            Encoding: ZstdHex
+                            Bytes: 28B52FFD607B02E50900228F3735606DD20121A03AC98C0D822008F61B0696CAB48FED988D5BD2361201027D2EF98F8475C78BEE0A596BB64428928D257FF9D586760ADAB76DDBBEFD37F86FF935ABA2EE220AB3293311F65CDA9A6B37989A9501E79C8073771C80BDE4E602CE094EF3E7D2C8190C6E3E5B612248E1A553A194049C7206EDFF7F674D54F57F3198F16BC914D25E9EF26922DEB519904A207021231D241E26200D221C07149E938F82186B4BBD1D5969EC8305C78A0AF1A00827ADDB52AC0E0FB2440A524BC6982BF1A08C69D7075D167656FAD96AB222AC79EED53B45DB8C3566B23C0801252050823352A31D15C017CC04BB0C2B72D009F828000E60933639BBA760D13887B3570E2F380882BC74EE4F0176106CD84323182130217E0BCE8ED65E2816302EAA9C90F0AC582C1CB130ACF1B4563D321BF196F0978CD6D8C413
+                        IsSrgb: true
+                        WrapU: ClampToEdge
+                        WrapV: ClampToEdge
+                        UvScaleOffset: 1 1 0 0
+                      TransmissionColor: 1 1 1
+                      RenderPass: 5
+                      RenderOptions: &savedImageOptions0
+                        __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+                        AlphaToCoverage: Disabled
+                        CullMode: None
+                        DepthTest:
+                          Enabled: Disabled
+                          Function: Always
+                        StencilTest:
+                          Enabled: Disabled
+                          FrontFace:
+                            BothFailOp: Keep
+                            StencilPassDepthFailOp: Keep
+                            BothPassOp: Keep
+                          BackFace:
+                            BothFailOp: Keep
+                            StencilPassDepthFailOp: Keep
+                            BothPassOp: Keep
+                        BlendModeAllDrawBuffers:
+                          Enabled: Enabled
+                          RgbEquation: FuncAdd
+                          AlphaEquation: FuncAdd
+                          RgbSrcFactor: SrcAlpha
+                          AlphaSrcFactor: SrcAlpha
+                          RgbDstFactor: OneMinusSrcAlpha
+                          AlphaDstFactor: OneMinusSrcAlpha
+                        ID: 81703adf-796e-4431-a71d-45a9ce71879f
+                      Parameters:
+                      - __type: XREngine.Rendering.Models.Materials.ShaderUInt
+                        Name: PpllMaxNodes
+                      - __type: XREngine.Rendering.Models.Materials.ShaderInt
+                        Name: DepthPeelLayerIndex
+                      - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                        Name: DepthPeelEpsilon
+                      - __type: XREngine.Rendering.Models.Materials.ShaderBool
+                        Name: DepthPeelReversedDepth
+                      - __type: XREngine.Rendering.Models.Materials.ShaderVector4
+                        Color: {}
+                        Value: 1 1 1 1
+                        Name: MatColor
+                      Textures:
+                      - __assetType: XREngine.Rendering.XRTexture2D
+                        ID: 6071fe90-7b13-40ca-92f1-8fe68dd49301
+                        Format: CookedBinary
+                        Version: 1
+                        Payload:
+                          Length: 891
+                          Encoding: ZstdHex
+                          Bytes: 28B52FFD607B02E50900228F3735606DD20121A03AC98C0D822008F61B0696CAB48FED988D5BD2361201027D2EF98F8475C78BEE0A596BB64428928D257FF9D586760ADAB76DDBBEFD37F86FF935ABA2EE220AB3293311F65CDA9A6B37989A9501E79C8073771C80BDE4E602CE094EF3E7D2C8190C6E3E5B612248E1A553A194049C7206EDFF7F674D54F57F3198F16BC914D25E9EF26922DEB519904A207021231D241E26200D221C07149E938F82186B4BBD1D5969EC8305C78A0AF1A00827ADDB52AC0E0FB2440A524BC6982BF1A08C69D7075D167656FAD96AB222AC79EED53B45DB8C3566B23C0801252050823352A31D15C017CC04BB0C2B72D009F828000E60933639BBA760D13887B3570E2F380882BC74EE4F0176106CD84323182130217E0BCE8ED65E2816302EAA9C90F0AC582C1CB130ACF1B4563D321BF196F0978CD6D8C413
+                      ID: 6071fe90-7b13-40ca-92f1-8fe68dd49303
+                      Name: Saved screen UI image
+                      EngineSemantic:
+                        Semantic: UIQuadBatchedTexture
+                        Version: 1
               - Name: "Screen Footer"
                 ID: "97b3af93-29b2-82ff-eb85-916655966a79"
                 Transform:
@@ -1003,8 +1085,90 @@ Scenes:
                 Components:
                   - __type: "XREngine.Rendering.UI.UIMaterialComponent"
                     ID: "14fb9783-a9dd-2bfc-ca80-91356ad742ea"
-                  - __type: "BrowserUiParity.BrowserUiParityImageComponent"
-                    ID: "af28897c-5586-0ee0-ebfb-db149fa8b7ea"
+                    Material:
+                      __assetType: XREngine.Rendering.XRMaterial
+                      Shaders:
+                      - &savedImageShader1
+                        __assetType: XREngine.Rendering.XRShader
+                        Source: Shaders/Common/UiTexturedForward.fs
+                        EntryPoint: main
+                        SlangOptions: {}
+                        ID: d8167198-bba0-416d-a1da-d8423476e9d1
+                        Name: UiTexturedForward
+                      UberAuthoredState: {}
+                      PassSet:
+                        SourceRenderQueue: -1
+                        ForwardAddPolicy: FoldedIntoForwardPlusBase
+                      AlphaCutoff: 0.5
+                      SurfaceTextureBindings:
+                      - Texture:
+                          __assetType: XREngine.Rendering.XRTexture2D
+                          ID: 6071fe90-7b13-40ca-92f1-8fe68dd49302
+                          Format: CookedBinary
+                          Version: 1
+                          Payload:
+                            Length: 891
+                            Encoding: ZstdHex
+                            Bytes: 28B52FFD607B02E50900228F3735606DD20121A03AC98C0D822008F61B0696CAEA713B66E396B48D4480409F4BFE2361DDF1A2BB42D69A2D118A6463C95F7E55B33B05DAB76DDBBEFD2FF87FF935ABA2EE220AB3293511F65CDA9B6B37989A1601E75C8073771DCA5E926301A744A7F97369640D0639195B65224821C663A99400BCF205EDFF7F674D54F57F3198F16BC914D25E9EF26D20DEB518904218A0848C7490789880308870184C7C4E3E0862AC2DF57A64A5B10E151C29EAC383229CB46E4BB1363CE81225482DF9626EC48332A65D1F8451D85969C656931561CD73AFDE29DA66AC3393F53908252050823352A31D15C017CC04BB0C2B72D009F828000E60933639BBA760D13887B3570E2F380882BC74EE4F0176106CD84323182130217E0BCE8ED65E2816302EAA9C90F0AC582C1CB130ACF1B4563D321BF196F0978CD6D8C413
+                        IsSrgb: true
+                        WrapU: ClampToEdge
+                        WrapV: ClampToEdge
+                        UvScaleOffset: 1 1 0 0
+                      TransmissionColor: 1 1 1
+                      RenderPass: 5
+                      RenderOptions: &savedImageOptions1
+                        __assetType: XREngine.Rendering.Models.Materials.RenderingParameters
+                        AlphaToCoverage: Disabled
+                        CullMode: None
+                        DepthTest:
+                          Enabled: Disabled
+                          Function: Always
+                        StencilTest:
+                          Enabled: Disabled
+                          FrontFace:
+                            BothFailOp: Keep
+                            StencilPassDepthFailOp: Keep
+                            BothPassOp: Keep
+                          BackFace:
+                            BothFailOp: Keep
+                            StencilPassDepthFailOp: Keep
+                            BothPassOp: Keep
+                        BlendModeAllDrawBuffers:
+                          Enabled: Enabled
+                          RgbEquation: FuncAdd
+                          AlphaEquation: FuncAdd
+                          RgbSrcFactor: SrcAlpha
+                          AlphaSrcFactor: SrcAlpha
+                          RgbDstFactor: OneMinusSrcAlpha
+                          AlphaDstFactor: OneMinusSrcAlpha
+                        ID: ec294997-0e11-4232-802a-0ac7f46583f6
+                      Parameters:
+                      - __type: XREngine.Rendering.Models.Materials.ShaderUInt
+                        Name: PpllMaxNodes
+                      - __type: XREngine.Rendering.Models.Materials.ShaderInt
+                        Name: DepthPeelLayerIndex
+                      - __type: XREngine.Rendering.Models.Materials.ShaderFloat
+                        Name: DepthPeelEpsilon
+                      - __type: XREngine.Rendering.Models.Materials.ShaderBool
+                        Name: DepthPeelReversedDepth
+                      - __type: XREngine.Rendering.Models.Materials.ShaderVector4
+                        Color: {}
+                        Value: 1 1 1 1
+                        Name: MatColor
+                      Textures:
+                      - __assetType: XREngine.Rendering.XRTexture2D
+                        ID: 6071fe90-7b13-40ca-92f1-8fe68dd49302
+                        Format: CookedBinary
+                        Version: 1
+                        Payload:
+                          Length: 891
+                          Encoding: ZstdHex
+                          Bytes: 28B52FFD607B02E50900228F3735606DD20121A03AC98C0D822008F61B0696CAEA713B66E396B48D4480409F4BFE2361DDF1A2BB42D69A2D118A6463C95F7E55B33B05DAB76DDBBEFD2FF87FF935ABA2EE220AB3293511F65CDA9B6B37989A1601E75C8073771DCA5E926301A744A7F97369640D0639195B65224821C663A99400BCF205EDFF7F674D54F57F3198F16BC914D25E9EF26D20DEB518904218A0848C7490789880308870184C7C4E3E0862AC2DF57A64A5B10E151C29EAC383229CB46E4BB1363CE81225482DF9626EC48332A65D1F8451D85969C656931561CD73AFDE29DA66AC3393F53908252050823352A31D15C017CC04BB0C2B72D009F828000E60933639BBA760D13887B3570E2F380882BC74EE4F0176106CD84323182130217E0BCE8ED65E2816302EAA9C90F0AC582C1CB130ACF1B4563D321BF196F0978CD6D8C413
+                      ID: 6071fe90-7b13-40ca-92f1-8fe68dd49304
+                      Name: Saved world UI image
+                      EngineSemantic:
+                        Semantic: UIQuadBatchedTexture
+                        Version: 1
               - Name: "Offscreen Action"
                 ID: "0a2adef8-0277-0cf8-4e8f-2ff0ea16ffb6"
                 Transform:

@@ -600,6 +600,41 @@ pass without compiler warnings or errors. Full software regression passes 24
 selected checks, with three optional skips and 356 sky cases. Both game
 packages pass separately. Requirement counts remain unchanged.
 
+### Saved UI image publication — 2026-10-29
+
+The source-checkout Editor builder now publishes BrowserUiParity with both
+saved image materials and embedded textures. Each final bundle contains
+366 assets, 181 shader artifacts and 84 pipeline artifacts. All asset hashes
+and lengths pass. The Roboto font and its license are present. All 343 staged
+inputs remain unchanged. Native cooked reading preserves both material and
+image IDs, sixteen bytes per image, white tint, sRGB roles, nearest/clamp
+sampling and the canonical texture-role reference. The carrier contains only
+`MatColor`. The original orientation pixels and browser assertions are intact.
+
+All 21 focused parameter-admission tests pass. The tests cover canonical
+defaults, source-free restrictions, source preservation, active values,
+nonfinite epsilon, wrong types, unknown parameters, duplicates and incomplete
+sets. Each source-preservation check snapshots the material's own array
+before projection.
+
+All 24 build/publication gates pass without compiler warnings or errors:
+WebGPU, Editor, Server, VRClient, the 19 portable projects and browser publish.
+The fresh canonical shader cook produces 184 artifacts; all 335 output files
+match the catalog used by the published UI bundle.
+The fresh software browser diagnostic suite passes 24 checks, with three
+explicit optional skips and 356 sky cases. Representative lighting and sky
+captures were viewed. These results use Chromium 154.0.8037.57 with explicit
+SwiftShader mode; they do not qualify physical GPUs.
+
+Baseline and final software browser runs both reach `running`, with 17 controls
+and 17 native proxies. Both fail the initial five-second animation-frame check
+and page-capture timeout. The final observer records two submitted frames and
+103 preparation-only frames. No UI image was captured. This is successful
+publication and payload evidence, not UI shader, pixel or input acceptance.
+See the [saved image investigation](../../investigations/platform/2026-10-29-saved-ui-image-publication.md)
+for the cook defect, native font prerequisites and exact evidence limits.
+Requirement counts remain unchanged.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

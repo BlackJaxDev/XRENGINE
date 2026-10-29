@@ -13,13 +13,14 @@ using XREngine.Scene.Physics;
 
 NativeDebugBackendRegistration.EnsureRegistered();
 if (args.Length is not (3 or 4))
-    throw new ArgumentException("Usage: RollingBallPublisher <canonical-project.xrproj> <editor.dll> <validation-root> [rollingball|rendering-parity]");
+    throw new ArgumentException("Usage: RollingBallPublisher <canonical-project.xrproj> <editor.dll> <validation-root> [rollingball|rendering-parity|ui-parity]");
 
 string fixture = args.Length == 4 ? args[3] : "rollingball";
 string worldName = fixture switch
 {
     "rollingball" => "RollingBallWorld",
     "rendering-parity" => "RenderingParityWorld",
+    "ui-parity" => "BrowserUiParityWorld",
     _ => throw new ArgumentException($"Unsupported publisher fixture: {fixture}"),
 };
 
@@ -122,6 +123,19 @@ try
             entry.GetProperty("kernel").GetString() == "packed-skinning");
         if (!sky || !mapped || !skinning)
             throw new InvalidDataException("The RenderingParity bundle requires authored sky, mapped surface, and packed deformation artifacts.");
+    }
+
+    if (fixture == "ui-parity")
+    {
+        foreach ((string semantic, int version) in new[] { ("UIQuadBatched", 2), ("UIQuadBatchedTexture", 2),
+            ("UITextBatchedBitmap", 2), ("UICanvasSurface", 1) })
+            if (!catalog.GetProperty("materialVariants").EnumerateArray().Any(entry =>
+                entry.GetProperty("semantic").GetString() == semantic &&
+                entry.GetProperty("semanticVersion").GetInt32() == version))
+                throw new InvalidDataException($"The UI bundle requires {semantic} v{version}.");
+        if (!catalog.GetProperty("assets").EnumerateArray().Any(entry =>
+            entry.GetProperty("path").GetString() == "/engine/Fonts/Roboto/Roboto-Regular.cooked.asset"))
+            throw new InvalidDataException("The UI bundle requires its authored bitmap font.");
     }
 
     Console.WriteLine($"PRODUCTION_PUBLISH_PASS output={output} assets={assets} shaders={shaders} pipelinePasses={passes}");

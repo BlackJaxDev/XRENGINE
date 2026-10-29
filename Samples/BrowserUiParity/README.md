@@ -17,12 +17,13 @@ screen canvas to the camera and installs ordinary button/text callbacks.
 
 Panel colors and property bindings are normal game initialization. The shared
 `UIToggleComponent` edits `ClippingEnabled` through its public property. Both
-image nodes have a sample component that constructs a real `XRTexture2D(2, 2,
-rgba)` and calls `UIMaterialComponent.CreateImageMaterial`. That image is runtime
-construction, not authored image-payload serialization coverage. Its explicit
-RGBA8/sRGB-role, nearest/clamp setup does not modify a cooked texture format.
-The image/material are detached and released when play ends. No new image
-codec, font dependency, custom cooked payload or serialization codec is added.
+image nodes save their material and embedded `XRTexture2D` payload in the world.
+The ordinary graph cooker projects the canonical desktop image material into
+the existing `PublishedUiImageMaterial` carrier. The RGBA8 pixels, sRGB role,
+nearest/clamp sampler and white tint retain the original orientation witnesses.
+The sample has no image-creation component or separate image cleanup callback.
+The loaded graph owns the saved assets. No image codec, font dependency or
+serialization format is added.
 
 The offscreen canvas uses the shared `PreRender` producer, owned framebuffer
 and transparent scene quad. Its target is transparent; empty regions show the
@@ -149,21 +150,21 @@ text fields. Do not infer glyph acceptance from solid rectangle pixels alone.
 
 ## Validation boundary
 
-This sample is source-staged. Managed build, Editor load/save/cook, complete
-browser publication, GPU pixels, interaction, restart/resource retirement and
-desktop captures remain pending in an environment with .NET and a browser.
-The normal Editor run on `e2c47497` gets past world type/component loading and
-stops at its default-font admission: without a project settings file it inherited
-Roboto Medium. The explicit Regular setting and matching staged Config copy
-correct that input. Successful cook, complete publication and browser interaction
-remain pending; source review is not a substitute for those live gates.
+The source-checkout Editor builder now completes normal graph cooking and
+browser publication, including the saved images and Roboto font. Native reading
+of the final world verifies image IDs, bytes, tint, sampling and role identity.
+See the [saved image investigation](../../docs/work/investigations/platform/2026-10-29-saved-ui-image-publication.md).
+The unchanged baseline and saved-image player both fail the initial animation
+frame check before capture. GPU pixels, interaction, restart/resource retirement,
+packaged Editor operation and desktop comparison remain unqualified.
 
 Source review found a normal-publishing gap: desktop `UIMaterialComponent`
 defaults create `UnlitColoredForward.fs` with UI state, which the scene-material
 projection rejected. The shared browser projection now recognizes exact
 UI-only solid consumers before scene classification, preserving shared material,
 parameter and raster-state identities in its source-free target. Mixed scene/UI
-profiles and arbitrary callbacks reject explicitly. The sample keeps its normal
-shared materials and introduces no fixture codec. Compilation, successful
-authored cooking/fresh hydration and runtime captures remain required before
-this becomes a shipping parity witness.
+profiles and arbitrary callbacks reject explicitly. The image projection also
+admits the canonical desktop shader's four typed inactive transparency defaults,
+then retains only `MatColor` in the cooked carrier. Active or unknown parameters
+still reject. The sample keeps normal shared materials and no fixture codec.
+Successful publication does not establish UI rendering or input acceptance.

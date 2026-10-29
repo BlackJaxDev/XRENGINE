@@ -518,7 +518,13 @@ original method. Synthetic composition checks event routing only. Two contexts
 and resize exercise this bounded fixture; physical IME, assistive technology,
 Move/Rotate actions and full GPU retirement remain separate acceptance.
 Normal publication uses the existing Roboto font cook and includes its license.
-Adding the fixture and harness does not establish a successful cook or browser run.
+The publisher driver accepts `ui-parity` as its optional fourth argument and
+checks the saved world, UI material variants and font entry. Both images now
+use saved materials and embedded pixels through the production graph cook.
+The [saved-image investigation](../../docs/work/investigations/platform/2026-10-29-saved-ui-image-publication.md)
+records successful publication and native payload checks. Baseline and saved
+players still fail the initial frame-clock check before capture. UI rendering
+and interaction acceptance remain open; all assertions and deadlines are intact.
 
 One separately approved `--ui-frame-trace` capture is limited to the first UI
 iteration on an exact non-forced branch push and workflow run, attempt one. The

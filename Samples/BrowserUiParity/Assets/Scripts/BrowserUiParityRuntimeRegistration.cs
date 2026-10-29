@@ -23,7 +23,6 @@ public static class BrowserUiParityRuntimeRegistration
             [
                 RuntimeCookedBinarySerializer.RegisterRuntimeFactory(static () => new BrowserUiParityGameMode()),
                 RuntimeCookedBinarySerializer.RegisterRuntimeFactory(static () => new BrowserUiParityPawnComponent()),
-                RuntimeCookedBinarySerializer.RegisterRuntimeFactory(static () => new BrowserUiParityImageComponent()),
             ];
         }
     }

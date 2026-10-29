@@ -2,6 +2,17 @@
 
 Runtime image pixels use `RuntimeImage`: width, height, mip level, pixel format, row stride, and tightly packed pixel memory. A caller may lend memory or pass an `IMemoryOwner<byte>` that the image releases on disposal. Cooked texture data can be read without starting an image decoder. Source image decoding and PNG encoding use the installed `IRuntimeImageCodec`; the desktop composition installs the ImageMagick implementation. A missing codec reports its registration requirement.
 
+Saved UI image materials use the existing `PublishedUiImageMaterial` browser
+carrier. The Editor first verifies the exact canonical desktop image fragment
+and its snippet closure. Its shader interface can expose four inactive uniforms:
+`PpllMaxNodes` (`uint`, zero), `DepthPeelLayerIndex` (`int`, zero),
+`DepthPeelEpsilon` (`float`, zero), and `DepthPeelReversedDepth` (`bool`, false).
+The cooker accepts this complete typed default set with one `MatColor` and
+retains only the borrowed tint in the source-free carrier. Missing, duplicate,
+unknown, mistyped or active parameters reject. A source-free input must already
+contain only `MatColor`. The source parameter array and image remain unchanged;
+the projection does not change desktop rendering or the runtime carrier format.
+
 The shared `XRTexture2D` cooked carrier preserves imported color space, pixel
 usage, normal-map green inversion, anisotropy, and depth-comparison settings.
 Non-default values use an optional versioned sampling header after the asset

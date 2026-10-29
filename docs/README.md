@@ -228,6 +228,8 @@ browser representations under one verified managed-admission identity.
 
 [Authored two-image alpha materials](work/progress/platform/browser-authored-textured-alpha-2026-10-03.md) records exact diffuse-alpha/red-mask coverage, additive authored and cooked carriers, matching receiver and auxiliary passes, native material roles, and real export/package evidence. Rendered coverage remains open.
 
+[Saved UI image publication](work/investigations/platform/2026-10-29-saved-ui-image-publication.md) records canonical desktop image parameter normalization, ordinary saved-world cooking, native payload checks, and the existing UI frame stall that still blocks pixel and input acceptance.
+
 [Authored forward normal and specular texture families](work/progress/platform/browser-authored-textured-families-2026-10-03.md) records six exact forward material families, shared RGB/height normal mapping, feature-specific raster companions, additive serialization and native source-basis preservation. Rendered acceptance remains separate.
 
 [Native generated PBR surfaces](work/progress/platform/browser-native-authored-lit-2026-10-03.md) records exact cooked provenance, owner-scoped native admission, frozen factors/maps/coverage and raster-state rejection, with GPU acceptance kept separate.

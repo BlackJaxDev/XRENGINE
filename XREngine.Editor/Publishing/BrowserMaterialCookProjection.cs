@@ -130,8 +130,7 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
     private XRMaterial ProjectUiImage(XRMaterial source)
     {
         if (_copies.TryGetValue(source, out XRMaterial? existing)) return existing;
-        if (source.GetType() != typeof(XRMaterial) || source.Parameters.Length != 1 ||
-            source.Parameters[0] is not ShaderVector4 { Name: "MatColor" } ||
+        if (source.GetType() != typeof(XRMaterial) ||
             source.Textures.Count != 1 || source.Textures[0] is not XRTexture2D image ||
             image.GetType() != typeof(XRTexture2D))
             throw new NotSupportedException($"BrowserCook.UiImageProjectionUnsupported: '{source.Name}' requires the exact built-in image material with MatColor and one XRTexture2D.");
@@ -145,6 +144,7 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
              binding.UvScaleOffset != new Vector4(1, 1, 0, 0) || binding.UvRotation != 0))
             throw new NotSupportedException($"BrowserCook.UiImageBindingUnsupported: '{source.Name}' requires one canonical BaseColor image binding when metadata is present.");
         if (source.Shaders.Count != 0) VerifyImageStage(source);
+        ShaderVector4 tint = ReadUiImageTint(source, hasCanonicalDesktopStage: source.Shaders.Count != 0);
 
         // The bounded carrier adds the existing shared settings record without
         // rewriting the borrowed image or the general texture payload. Material
@@ -157,7 +157,7 @@ internal sealed partial class BrowserMaterialCookProjection : IDisposable
         {
             copy.AdoptPersistentID(source.ID);
             copy.Name = source.Name;
-            copy.Parameters = source.Parameters;
+            copy.Parameters = source.Parameters.Length == 1 ? source.Parameters : [tint];
             copy.Textures = [image];
             copy.SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, image,
                 // Distinct YAML occurrences may be joined only after EquivalentTexture
