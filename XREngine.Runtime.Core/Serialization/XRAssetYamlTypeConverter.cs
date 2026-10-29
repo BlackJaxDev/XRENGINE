@@ -350,9 +350,21 @@ namespace XREngine
                || (scalar.Value.Length == 0 && scalar.Style == ScalarStyle.Plain);
 
         private static bool AssetPathExists(string path)
-            => DirectStorageIO.Source is IRuntimeAssetCatalog catalog
-                ? catalog.TryGetAsset(path, out _)
-                : File.Exists(path);
+        {
+            using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+            IRuntimeAssetSource? source = DirectStorageIO.Source;
+            read.EnsureCurrent();
+            if (source is IRuntimeAssetCatalog)
+                return read.Exists(path);
+
+            read.EnsureHostFileAccess("YAML asset path lookup");
+            if (RuntimeFileDiscoveryServices.Current is not IRuntimeHostFileReadBackend files)
+                return read.Exists(path);
+
+            bool exists = files.FileExists(path);
+            read.EnsureCurrent();
+            return exists;
+        }
 
         private static bool TryLoadUntrackedTextAsset(string resolvedPath, Type expectedType, out object? value)
         {

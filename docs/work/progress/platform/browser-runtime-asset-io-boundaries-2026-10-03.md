@@ -1,5 +1,27 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## YAML asset path admission (2026-10-29)
+
+YAML asset path lookup uses the captured raw-read owner and its host-file
+admission rules. Catalog metadata remains available without synchronous byte
+reads. An installed host-file provider handles desktop probes; the raw-read
+source supplies the fallback when that provider is absent. A source swap during
+the probe rejects the result. The [investigation](../../investigations/platform/2026-10-29-yaml-asset-path-probe.md)
+records the reproduced gap, the fix, and the remaining provider lifetime limit.
+
+Eight focused tests pass, including desktop and caller-thread YAML deserialization,
+catalog lookup, custom and missing providers, missing files, and source swap.
+Editor, Server, and VRClient Release builds pass on Linux with Windows targeting
+enabled. The desktop filesystem headless fixture passes. All 19 portable
+manifest projects compile for browser-wasm, and Browser publishes with native
+WASM and pinned Jolt inputs. The gate logs contain no warning or error
+diagnostics. These checks do not establish Windows startup or browser rendering.
+
+The tracked-source scan reports 18 files / 70 direct-file matching lines across
+Data, Core, Rendering, and Host. Core plus Rendering have 3 files / 11 lines.
+The expression includes comments and misses target-typed constructors. Both
+broad inventory requirements remain open.
+
 ## Cache-root and rendering fallback placement (2026-10-29)
 
 Implementation commit `16e33a906b738e5b9f963f24b91f253e16ef060c` moves

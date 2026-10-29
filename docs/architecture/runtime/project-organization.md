@@ -180,11 +180,19 @@ native line reads retain `File.ReadLines`: UTF-8 by default, BOM detection,
 and uses that provider for its related probes and reads. Provider replacement
 does not retarget queued I/O. Capture checks only capability; each caller keeps
 its operation owner's host-file admission rules. The converter retains its
-existing catalog branch and admission behavior. This capture is not an atomic
+catalog branch for type resolution. This capture is not an atomic
 lease against provider or asset-source replacement. Custom native hosts need
 the capability for these direct reads; a missing capability fails with
 `AssetSource.HostFileReadUnavailable`. Codec-only loads and packaged assets do
 not need it. This capability does not change metadata, cache, or writer APIs.
+
+YAML asset path lookup captures a raw-read lease before source selection. A
+catalog lookup uses catalog metadata. Other lookups require host-file admission
+and use the installed host-file read provider when available. Without that
+provider, the raw-read source supplies the existence check; with no source,
+the desktop raw-read fallback uses the local file system. A source replacement
+invalidates a pending probe result. The lease does not pin the separate file
+discovery provider.
 
 Native public asset loads capture `IRuntimeHostFileReadBackend` after load-route
 admission. The same instance performs the preflight existence check and the
