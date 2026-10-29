@@ -1,5 +1,51 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Cache-root and rendering fallback placement (2026-10-29)
+
+Implementation commit `16e33a906b738e5b9f963f24b91f253e16ef060c` moves
+the convex-hull cache-root directory probe to `IAssetMetadataFileBackend` and
+the uninstalled rendering facade's direct byte read to
+`IRuntimeHostFileReadBackend`. Cache overrides and roots named `Assets` return
+before metadata lookup. The uninstalled facade admits host-file access before
+reading. The [composition contract](../../../architecture/runtime/project-organization.md)
+records the custom-host requirements.
+
+A disposable executable against compiled Core and Rendering passes ten checks.
+They cover nested and missing `Assets` directories, explicit and environment
+cache overrides, missing metadata capability, an `Assets`-named root,
+async-only host admission, uninstalled facade bytes, and missing or inadmissible
+read capabilities. The executable uses local files and fake providers; it does
+not generate convex hulls or render a scene. Core and the final harness build in
+Release with zero warnings and errors. Independent source review found no
+internal regression and confirmed desktop registration precedes cache-root
+resolution. No tracked tests changed. Evidence is in
+`Build/_AgentValidation/20261028-120000-webgpu-io/logs/cache-root-build.log`,
+`logs/cache-root-smoke-build.log`, `logs/cache-root-smoke.log`, and
+`reports/cache-root-inventory.json`. An initial concurrent harness build logged
+a transient copy retry; the final serial shader-boundary probe build has zero
+warnings and errors.
+
+The [Uber canonical source investigation](../../investigations/rendering/2026-10-29-uber-canonical-source-owner.md)
+reproduces a provider swap between the shader probe and text read, and a missing
+file after a positive probe producing null shader text. It records the unresolved
+publication, retry, encoding, and object-lifetime constraints. This batch does
+not change that shader behavior.
+
+The full local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `cache-root-` prefix under the same run's `logs/`;
+the fresh output is `cache-root-browser-publish/wwwroot/`. These checks do not
+establish Windows startup, actual hull generation, rendered browser parity, or
+post-push CI. Shader sources and recipes did not change.
+
+The committed-source scan reports 19 files / 71 direct-file matching lines in
+the four roots. Core plus Rendering total 4 files / 12 lines. It removes two
+matching lines and two files. Blocking counts are unchanged. Both broad inventory
+requirements remain open.
+
 ## Renderer file probe placement (2026-10-29)
 
 Implementation commit `0d400c37a1a95aa1e69c6c73394b9829f414bdbc` moves

@@ -2,6 +2,15 @@
 
 Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
 
+## Cache-root and rendering fallback follow-up (2026-10-29)
+
+The scan at `16e33a906b738e5b9f963f24b91f253e16ef060c` uses the same roots
+and expressions. Direct-file counts are Core **3 / 10**, Rendering **1 / 2**,
+Host **2 / 5**, and Data **13 / 54**, for **19 files / 71 lines**. Core plus
+Rendering total **4 files / 12 lines**. Blocking counts remain unchanged. The
+[placement record](browser-runtime-asset-io-boundaries-2026-10-03.md#cache-root-and-rendering-fallback-placement-2026-10-29)
+records compatibility and runtime checks. Neither broad inventory is complete.
+
 ## Renderer file probe follow-up (2026-10-29)
 
 The scan at `0d400c37a1a95aa1e69c6c73394b9829f414bdbc` uses the same roots
