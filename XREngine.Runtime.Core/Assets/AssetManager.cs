@@ -156,13 +156,14 @@ namespace XREngine
                 EngineWatcher.Path = EngineAssetsPath;
                 return;
             }
+            IAssetMetadataFileBackend files = CaptureMetadataFileBackend().Files;
             string? resolvedEngineAssetsPath = null;
             string? engineAssetsOverridePath = Environment.GetEnvironmentVariable(EngineAssetsPathEnvVar);
             if (!string.IsNullOrWhiteSpace(engineAssetsOverridePath))
             {
                 resolvedEngineAssetsPath = Path.GetFullPath(engineAssetsOverridePath);
             }
-            else if (!string.IsNullOrWhiteSpace(engineAssetsDirPath) && Directory.Exists(engineAssetsDirPath))
+            else if (!string.IsNullOrWhiteSpace(engineAssetsDirPath) && files.DirectoryExists(engineAssetsDirPath))
             {
                 resolvedEngineAssetsPath = engineAssetsDirPath;
             }
@@ -173,7 +174,7 @@ namespace XREngine
                 while (basePath is not null)
                 {
                     string candidate = Path.Combine(basePath, "Build", "CommonAssets");
-                    if (Directory.Exists(candidate) && Directory.Exists(Path.Combine(candidate, "Shaders")))
+                    if (files.DirectoryExists(candidate) && files.DirectoryExists(Path.Combine(candidate, "Shaders")))
                     {
                         resolvedEngineAssetsPath = candidate;
                         break;
@@ -198,7 +199,7 @@ namespace XREngine
                 // Prefer an existing '<cwd>/Assets' over '<exe>/Assets' to avoid writing
                 // import options/cache next to the build output.
                 string cwdAssets = Path.Combine(Environment.CurrentDirectory, "Assets");
-                if (!Directory.Exists(GameAssetsPath) && Directory.Exists(cwdAssets))
+                if (!files.DirectoryExists(GameAssetsPath) && files.DirectoryExists(cwdAssets))
                     GameAssetsPath = cwdAssets;
             }
 
@@ -217,7 +218,7 @@ namespace XREngine
 
             EnsureGameMetadataPathInitialized();
             EnsureGameCachePathInitialized();
-            if (!Directory.Exists(EngineAssetsPath))
+            if (!files.DirectoryExists(EngineAssetsPath))
                 throw new DirectoryNotFoundException($"Could not find the engine assets directory at '{EngineAssetsPath}'.");
 
             _watcherSourceAtSubscription = _runtimeAssetSource;
@@ -268,6 +269,10 @@ namespace XREngine
         }
 
         private static bool VerifyDirectoryExists(string? directoryPath)
+            => VerifyDirectoryExists(directoryPath,
+                AssetFileSystemServices.CaptureMetadataFileBackend("Asset directory preparation"));
+
+        private static bool VerifyDirectoryExists(string? directoryPath, IAssetMetadataFileBackend files)
         {
             //If the path is null or empty, return false
             if (string.IsNullOrWhiteSpace(directoryPath))
@@ -284,13 +289,13 @@ namespace XREngine
             }
 
             //If the current directory exists, return true
-            if (Directory.Exists(directoryPath))
+            if (files.DirectoryExists(directoryPath))
                 return true;
 
             //Recursively create the parent directories
             string? parent = Path.GetDirectoryName(directoryPath);
-            if (VerifyDirectoryExists(parent))
-                Directory.CreateDirectory(directoryPath);
+            if (VerifyDirectoryExists(parent, files))
+                files.CreateDirectory(directoryPath);
 
             return true;
         }
@@ -351,7 +356,8 @@ namespace XREngine
                 }
 
                 // If GameAssetsPath is actually the project root, prefer it when it contains an Assets folder.
-                if (Directory.Exists(Path.Combine(assetsPath, "Assets")))
+                IAssetMetadataFileBackend files = CaptureMetadataFileBackend().Files;
+                if (files.DirectoryExists(Path.Combine(assetsPath, "Assets")))
                 {
                     projectRoot = assetsPath;
                     return true;

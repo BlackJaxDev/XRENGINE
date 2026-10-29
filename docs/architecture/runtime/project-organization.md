@@ -596,6 +596,16 @@ Shipping registration uses generated/static factories and cooked type metadata. 
 
 Application roots install desktop composition before accessing `Engine.Assets`. The shared facade's static constructor initializes managed defaults and hooks without registering native leaves. Explicit engine initialization requires `IRuntimeEngineStartupPolicy`; it applies host settings before resource creation and host launch ingress before shared networking admission checks. Headless world composition takes an explicit physics scene factory. Desktop dedicated servers retain their Jolt factory, independently of the desktop rendered-world physics default.
 
+`AssetManager` uses the installed `IAssetMetadataFileBackend` for engine asset
+discovery, working-directory asset selection, writable directory preparation,
+and project-root inference. Desktop composition supplies these operations through
+`DesktopAssetFileSystem`. Custom synchronous authoring hosts must install that
+capability before constructing an asset manager or preparing an asset path.
+Recursive directory preparation keeps one captured provider for all parent
+probes and creation calls. Provider capture does not add a retirement lease or
+an atomic directory snapshot. Catalog and asynchronous source startup retain
+their virtual roots and return before directory-provider capture.
+
 ## Native assets and source identity
 
 The owning module declares native build/copy/publish items. This does not require every binary's physical supply directory to match the module name: protected submodule and SDK sources, CoACD staging under Core, Steam Audio staging under Audio, and Rive staging under Rendering retain their established locations. A folder containing a native binary is not evidence that the portable project compiles or packages it. Consult the evaluated module project and [native dependency guide](../../developer-guides/runtime/native-dependencies.md) for supply and output ownership.

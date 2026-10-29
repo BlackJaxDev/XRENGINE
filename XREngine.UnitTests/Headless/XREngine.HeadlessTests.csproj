@@ -14,6 +14,9 @@
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Core/AssetDirectoryHostTests.cs" Link="Core/AssetDirectoryHostTests.cs" />
+    <Compile Include="../Core/AssetDirectoryTestFileSystem.cs" Link="Core/AssetDirectoryTestFileSystem.cs" />
+    <Compile Include="../Animation/AnimationClipReferenceHostTests.cs" Link="Animation/AnimationClipReferenceHostTests.cs" />
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />
     <Compile Include="../VR/VrTrackerBinderTests.cs" Link="VR/VrTrackerBinderTests.cs" />
     <Compile Include="../Animation/VRIKAdditionalTargetTests.cs" Link="Animation/VRIKAdditionalTargetTests.cs" />
