@@ -162,7 +162,11 @@ public abstract partial class GenericRenderObject : XRAsset
         RegisterInRenderObjectCache();
         Volatile.Write(ref _publicationState, (int)RenderObjectPublicationState.Published);
 
-        if (ApiWrapperCreationSuppressionDepth.Value == 0)
+        // A cooked binary read sets the members of this object after the constructor, with property
+        // notifications suppressed. A wrapper made now keeps the empty constructor state, for example a texture
+        // with no mipmaps, and never gets the read values. The renderer makes the wrapper at first use instead,
+        // as it does for objects that exist before the renderer starts.
+        if (ApiWrapperCreationSuppressionDepth.Value == 0 && !CookedBinarySerializer.IsDeserializing)
             GetWrappers();
     }
 
