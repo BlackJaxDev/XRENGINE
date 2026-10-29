@@ -12,8 +12,11 @@ public abstract partial class XRWorldObjectBase
     private OwnedHierarchyDestructionPermit? _ownedDestructionPermit;
     private Dictionary<IHierarchyListAuthority, int>? _hierarchyListOwners;
     private int _hasEnteredStructuralList;
+    private long _hierarchyMembershipRevision;
 
     internal bool HasEnteredStructuralList => Volatile.Read(ref _hasEnteredStructuralList) != 0;
+    internal long HierarchyMembershipRevision => Volatile.Read(ref _hierarchyMembershipRevision);
+    internal bool HasUsableHierarchyMembershipRevision => HierarchyMembershipRevision < long.MaxValue - 1;
     internal bool HasDestructionAdmission => HasActiveDestructionAdmission;
 
     /// <summary>Copies exact structural-list ownership at a mutation or release boundary.</summary>
@@ -158,7 +161,10 @@ public abstract partial class XRWorldObjectBase
     internal void AddHierarchyListOwner(IHierarchyListAuthority authority)
     {
         _hierarchyListOwners!.TryGetValue(authority, out int count);
+        long revision = _hierarchyMembershipRevision >= long.MaxValue - 1
+            ? long.MaxValue : _hierarchyMembershipRevision + 1;
         _hierarchyListOwners[authority] = checked(count + 1);
+        Volatile.Write(ref _hierarchyMembershipRevision, revision);
         Volatile.Write(ref _hasEnteredStructuralList, 1);
     }
 
@@ -166,7 +172,10 @@ public abstract partial class XRWorldObjectBase
     {
         if (_hierarchyListOwners is null || !_hierarchyListOwners.TryGetValue(authority, out int count))
             throw new InvalidOperationException("The structural list occurrence has no matching owner.");
+        long revision = _hierarchyMembershipRevision >= long.MaxValue - 1
+            ? long.MaxValue : _hierarchyMembershipRevision + 1;
         if (count == 1) _hierarchyListOwners.Remove(authority);
         else _hierarchyListOwners[authority] = count - 1;
+        Volatile.Write(ref _hierarchyMembershipRevision, revision);
     }
 }

@@ -16,6 +16,7 @@ internal sealed class OwnedHierarchyRetirementEntry
         Value = value;
         Id = identity.Id;
         LifetimeRevision = identity.LifetimeRevision;
+        MembershipRevision = value.HierarchyMembershipRevision;
         ExpectedWorld = value.World;
         switch (value)
         {
@@ -47,6 +48,7 @@ internal sealed class OwnedHierarchyRetirementEntry
     internal XRWorldObjectBase Value { get; }
     internal Guid Id { get; }
     internal long LifetimeRevision { get; set; }
+    internal long MembershipRevision { get; set; }
     internal IRuntimeWorldContext? ExpectedWorld { get; set; }
     internal TransformHierarchyStore? ExpectedStore { get; set; }
     internal TransformHandle ExpectedHandle { get; set; }
@@ -73,6 +75,7 @@ internal sealed class OwnedHierarchyRetirementEntry
     {
         ObjectConstructionIdentity expected = new(Value, Id, LifetimeRevision);
         if (!expected.IsCurrent || Value.IsDestroyed != Destroyed || Value.IsDestroyQueued ||
+            Value.HierarchyMembershipRevision != MembershipRevision ||
             !ReferenceEquals(Value.World, ExpectedWorld))
             throw new InvalidOperationException("An owned structural object's identity or lifetime changed during cleanup.");
         HierarchyListMembership[] memberships = Value.CaptureHierarchyListMemberships();

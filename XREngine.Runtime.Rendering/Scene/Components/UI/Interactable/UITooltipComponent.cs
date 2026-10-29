@@ -255,19 +255,20 @@ public sealed class UITooltipComponent : UIComponent
         Vector2 localPosition = parent.CanvasToLocal(canvasPosition);
         string label = _text;
         popup.PreferredWidth = Math.Clamp(label.Length * 7 + 16, 80, 360);
-        popup.ShowPassiveContent(localPosition, 24, list =>
+        popup.ShowPassiveOwnedContent(localPosition, 24, builder =>
         {
-            SceneNode line = new(list) { Name = "Tooltip text" };
-            UIBoundableTransform bounds = line.SetTransform<UIBoundableTransform>();
-            bounds.MinAnchor = Vector2.Zero;
-            bounds.MaxAnchor = new Vector2(1, 0);
-            bounds.Height = 24;
-            line.NewChild<UITextComponent>(out UITextComponent text);
-            text.Text = label;
-            text.FontSize = 12;
-            text.Color = ColorF4.White;
-            text.VerticalAlignment = EVerticalAlignment.Center;
-            text.BoundableTransform.Margins = new Vector4(6, 0, 6, 0);
+            builder.Add(builder.Root, "Tooltip text", new UIBoundableTransform(), leaf =>
+            {
+                leaf.Write(() => leaf.Transform.MinAnchor = Vector2.Zero);
+                leaf.Write(() => leaf.Transform.MaxAnchor = new Vector2(1, 0));
+                leaf.Write(() => leaf.Transform.Height = 24);
+                UITextComponent text = leaf.Add(() => new UITextComponent());
+                leaf.Write(() => text.Text = label);
+                leaf.Write(() => text.FontSize = 12);
+                leaf.Write(() => text.Color = ColorF4.White);
+                leaf.Write(() => text.VerticalAlignment = EVerticalAlignment.Center);
+                leaf.Write(() => text.BoundableTransform.Margins = new Vector4(6, 0, 6, 0));
+            });
         });
         if (!_tearingDown && !IsDestroyed && ReferenceEquals(_popup, popup))
             _showing = popup.IsOpen;

@@ -10,6 +10,7 @@ internal sealed class OwnedHierarchyRetirement
 {
     private readonly ObjectConstructionOwnership? _ownership;
     private readonly DetachedLeafRetirementReceipt? _leaf;
+    private readonly AdoptedLeafRetirementReceipt? _adopted;
     private readonly IReadOnlyList<XRObjectBase> _objects;
     private readonly IReadOnlyList<ObjectConstructionIdentity> _sourceIdentities;
     private readonly IRuntimeWorldContext? _sourceWorld;
@@ -39,6 +40,15 @@ internal sealed class OwnedHierarchyRetirement
         _sourceWorld = sourceWorld;
     }
 
+    internal OwnedHierarchyRetirement(AdoptedLeafRetirementReceipt adopted,
+        IReadOnlyList<XRObjectBase> objects, IReadOnlyList<ObjectConstructionIdentity> identities)
+    {
+        _adopted = adopted;
+        _objects = objects;
+        _sourceIdentities = identities;
+        _sourceWorld = adopted.SourceWorld;
+    }
+
     internal void Execute()
     {
         if (_ownership is not null && !_ownership.HasSealedIdentities)
@@ -59,7 +69,13 @@ internal sealed class OwnedHierarchyRetirement
                 throw new InvalidOperationException($"Owned cleanup retains unsupported allocation '{type.FullName}' ({value.ID}).");
         }
 
-        using HierarchyStructuralReservation reservation = HierarchyStructuralReservation.TryAcquire(objects) ??
+        List<XRWorldObjectBase> endpoints = [.. objects];
+        if (_adopted is not null)
+        {
+            endpoints.Add(_adopted.Parent);
+            if (_adopted.ParentNode is { } parentNode) endpoints.Add(parentNode);
+        }
+        using HierarchyStructuralReservation reservation = HierarchyStructuralReservation.TryAcquire(endpoints) ??
             throw new InvalidOperationException("An owned structural mutation is still in progress.");
         Reservation = reservation;
         lock (SceneRootCollection.MutationGate)
@@ -67,6 +83,8 @@ internal sealed class OwnedHierarchyRetirement
             foreach (ObjectConstructionIdentity identity in _sourceIdentities)
                 if (!identity.IsCurrent)
                     throw new InvalidOperationException("An allocation changed lifetime before owned cleanup admission.");
+            if (_adopted is not null && !_adopted.HasCurrentIdentity)
+                throw new InvalidOperationException("An adopted allocation changed membership before cleanup admission.");
             foreach (XRWorldObjectBase value in objects)
                 _entries.Add(value, new(value, _identities[value]));
             ValidateInitialGraph();
@@ -81,6 +99,8 @@ internal sealed class OwnedHierarchyRetirement
         foreach (OwnedHierarchyRetirementEntry entry in _entries.Values)
             if (entry.Value is XRComponent && entry.ListSlot is null && !entry.Destroyed)
                 DestroyTarget(entry.Value);
+        if (_adopted is not null)
+            RetireBranch(_adopted.Transform);
         foreach (OwnedHierarchyRetirementEntry entry in _entries.Values)
             if (entry.Value is TransformBase transform && entry.Parent is null && !entry.Destroyed)
                 RetireBranch(transform);
@@ -120,7 +140,9 @@ internal sealed class OwnedHierarchyRetirement
                     if (entry.Node is not null && (!TryEntry(entry.Node, out OwnedHierarchyRetirementEntry? node) ||
                         !ReferenceEquals(node.Transform, entry.Value)))
                         throw new InvalidOperationException("An owned transform points to a foreign node.");
-                    if (entry.Parent is not null) RequireLive(entry.Parent);
+                    if (entry.Parent is not null &&
+                        !(_adopted is not null && ReferenceEquals(entry.Value, _adopted.Transform) &&
+                          ReferenceEquals(entry.Parent, _adopted.Parent))) RequireLive(entry.Parent);
                     foreach (TransformBase childTransform in entry.Children!)
                     {
                         OwnedHierarchyRetirementEntry child = RequireLive(childTransform);
@@ -134,6 +156,12 @@ internal sealed class OwnedHierarchyRetirement
                         throw new InvalidOperationException("An owned component points to a foreign node.");
                     break;
             }
+        }
+        if (_adopted is not null)
+        {
+            OwnedHierarchyRetirementEntry root = _entries[_adopted.Transform];
+            _adopted.ValidateBoundary(attached: true);
+            SetInitialListOwner(root, _adopted.Parent, _adopted.ParentChildren);
         }
         foreach (OwnedHierarchyRetirementEntry entry in _entries.Values)
         {
@@ -151,8 +179,8 @@ internal sealed class OwnedHierarchyRetirement
                 if (!unboundOrphan && !ReferenceEquals(entry.ExpectedWorld, _sourceWorld))
                     throw new InvalidOperationException("Live owned cleanup requires the exact source world.");
                 if (entry.Value is TransformBase &&
-                    (!ReferenceEquals(entry.ExpectedStore, _leaf!.SourceStore) ||
-                     entry.ExpectedHandle != _leaf.SourceHandle))
+                    (!ReferenceEquals(entry.ExpectedStore, _leaf?.SourceStore ?? _adopted?.SourceStore) ||
+                     entry.ExpectedHandle != (_leaf?.SourceHandle ?? _adopted?.SourceHandle)))
                     throw new InvalidOperationException("Live owned cleanup requires the captured transform store.");
             }
             if (entry.Value is XRComponent component &&
@@ -164,7 +192,7 @@ internal sealed class OwnedHierarchyRetirement
             if (entry.Parent is not null && !ReferenceEquals(entry.ListOwner, entry.Parent))
                 throw new InvalidOperationException("An owned transform has no matching parent occurrence.");
             int remaining = _entries.Count;
-            for (TransformBase? parent = entry.Parent; parent is not null; parent = _entries[parent].Parent)
+            for (TransformBase? parent = entry.Parent; parent is not null && _entries.TryGetValue(parent, out var parentEntry); parent = parentEntry.Parent)
                 if (--remaining < 0)
                     throw new InvalidOperationException("An owned hierarchy contains a parent cycle.");
         }
@@ -172,7 +200,8 @@ internal sealed class OwnedHierarchyRetirement
 
     private void RequireOwnedList<T>(EventList<T> list) where T : XRWorldObjectBase
     {
-        bool retained = _ownership is not null ? _ownership.Contains(list) : _leaf?.Contains(list) == true;
+        bool retained = _ownership is not null ? _ownership.Contains(list) :
+            _leaf?.Contains(list) == true || _adopted?.Contains(list) == true;
         if (!retained ||
             list.GetType() != typeof(EventList<T>) ||
             list.GetMutationAuthority() is not HierarchyListAuthority<T>)
@@ -203,6 +232,7 @@ internal sealed class OwnedHierarchyRetirement
             throw new InvalidOperationException("Owned cleanup must remain on its synchronous owner thread.");
         lock (SceneRootCollection.MutationGate)
         {
+            _adopted?.ValidateBoundary(attached: !_adopted.IsDetached);
             foreach (OwnedHierarchyRetirementEntry entry in _entries.Values)
                 entry.Validate();
             foreach (ObjectConstructionIdentity identity in _sourceIdentities)
@@ -300,7 +330,7 @@ internal sealed class OwnedHierarchyRetirement
 
     private void PrepareLiveWorld()
     {
-        SceneNode node = _leaf?.Node ??
+        SceneNode node = _leaf?.Node ?? _adopted?.Node ??
             throw new InvalidOperationException("Live-world retirement requires an explicit leaf receipt.");
         IRuntimeWorldContext source = _sourceWorld!;
 
@@ -374,8 +404,17 @@ internal sealed class OwnedHierarchyRetirement
         => new(this, transform, EOwnedHierarchyRemoval.TransformNode, null, _entries[transform].Node!);
 
     internal void RemoveChild(TransformBase parent, TransformBase child)
-        => RemoveOccurrence(parent, child, EOwnedHierarchyRemoval.ChildOccurrence,
+    {
+        if (_adopted is not null && ReferenceEquals(parent, _adopted.Parent))
+        {
+            _adopted.ValidateBoundary(attached: true);
+            RemoveOccurrence(parent, child, EOwnedHierarchyRemoval.ChildOccurrence,
+                _adopted.ParentChildren, _adopted.ParentChildren);
+            return;
+        }
+        RemoveOccurrence(parent, child, EOwnedHierarchyRemoval.ChildOccurrence,
             _entries[parent].ChildList!, _entries[parent].Children!);
+    }
 
     internal void RemoveComponent(SceneNode node, XRComponent component)
         => RemoveOccurrence(node, component, EOwnedHierarchyRemoval.ComponentOccurrence,
@@ -394,6 +433,14 @@ internal sealed class OwnedHierarchyRetirement
 
     internal void Advance(OwnedHierarchyRemovalPermit permit)
     {
+        if (_adopted is not null && ReferenceEquals(permit.Owner, _adopted.Parent))
+        {
+            _adopted.MarkDetached();
+            _entries[permit.Removed].MembershipRevision = permit.Removed.HierarchyMembershipRevision;
+            _entries[permit.Removed].ListOwner = null;
+            _entries[permit.Removed].ListSlot = null;
+            return;
+        }
         OwnedHierarchyRetirementEntry entry = _entries[permit.Owner];
         switch (permit.Kind)
         {
@@ -401,11 +448,13 @@ internal sealed class OwnedHierarchyRetirement
             case EOwnedHierarchyRemoval.TransformNode: entry.Node = null; break;
             case EOwnedHierarchyRemoval.ChildOccurrence:
                 entry.Children!.RemoveAt(permit.Index);
+                _entries[permit.Removed].MembershipRevision = permit.Removed.HierarchyMembershipRevision;
                 _entries[permit.Removed].ListOwner = null;
                 _entries[permit.Removed].ListSlot = null;
                 break;
             case EOwnedHierarchyRemoval.ComponentOccurrence:
                 entry.Components!.RemoveAt(permit.Index);
+                _entries[permit.Removed].MembershipRevision = permit.Removed.HierarchyMembershipRevision;
                 _entries[permit.Removed].ListOwner = null;
                 _entries[permit.Removed].ListSlot = null;
                 break;

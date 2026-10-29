@@ -367,25 +367,28 @@ public class UIColorSelectorComponent : UIButtonComponent
         if (!BeginEdit())
             return false;
         _popup.PreferredWidth = 228;
-        _popup.ShowContent(PopupPosition, 9 * 8 + 6 * 26, BuildColorPopup);
+        _popup.ShowOwnedContent(PopupPosition, 9 * 8 + 6 * 26, BuildColorPopup);
         return true;
     }
 
-    private void BuildColorPopup(SceneNode list)
+    private void BuildColorPopup(UIContextMenuContentBuilder builder)
     {
+        SceneNode list = builder.Root;
         for (int rowIndex = 0; rowIndex < Palette.Length; rowIndex += 3)
         {
-            SceneNode row = new(list) { Name = "Color presets" };
-            UIListTransform rowTransform = row.SetTransform<UIListTransform>();
-            rowTransform.DisplayHorizontal = true;
-            rowTransform.ItemSize = 76;
-            rowTransform.Height = 24;
-            rowTransform.MinAnchor = Vector2.Zero;
-            rowTransform.MaxAnchor = new Vector2(1, 0);
+            UIListTransform rowTransform = new();
+            SceneNode row = builder.Add(list, "Color presets", rowTransform, leaf =>
+            {
+                leaf.Write(() => rowTransform.DisplayHorizontal = true);
+                leaf.Write(() => rowTransform.ItemSize = 76);
+                leaf.Write(() => rowTransform.Height = 24);
+                leaf.Write(() => rowTransform.MinAnchor = Vector2.Zero);
+                leaf.Write(() => rowTransform.MaxAnchor = new Vector2(1, 0));
+            });
             for (int index = rowIndex; index < Math.Min(rowIndex + 3, Palette.Length); index++)
             {
                 (string name, string presetHex) = Palette[index];
-                AddPopupButton(row, name, () =>
+                AddPopupButton(builder, row, name, () =>
                 {
                     if (PreviewHexSrgb(presetHex))
                     {
@@ -396,7 +399,7 @@ public class UIColorSelectorComponent : UIButtonComponent
             }
         }
 
-        UITextInputComponent hex = AddPopupInput(list, "Hex sRGB", ToHexSrgb(_linearColor));
+        UITextInputComponent hex = AddPopupInput(builder, list, "Hex sRGB", ToHexSrgb(_linearColor));
         UIByteInputComponent[] channels = new UIByteInputComponent[4];
         byte[] initial =
         [
@@ -408,7 +411,7 @@ public class UIColorSelectorComponent : UIButtonComponent
         for (int i = 0; i < channels.Length; i++)
         {
             UIByteInputComponent field = AddPopupInput<UIByteInputComponent>(
-                list, $"{names[i]} 0–255", initial[i].ToString(CultureInfo.InvariantCulture));
+                builder, list, $"{names[i]} 0-255", initial[i].ToString(CultureInfo.InvariantCulture));
             channels[i] = field;
             field.GotFocus += _ => hexLastEdited = false;
             field.Submitted += _ => PreviewChannels();
@@ -457,64 +460,77 @@ public class UIColorSelectorComponent : UIButtonComponent
             return true;
         }
 
-        SceneNode actions = new(list) { Name = "Color actions" };
-        UIListTransform actionsTransform = actions.SetTransform<UIListTransform>();
-        actionsTransform.DisplayHorizontal = true;
-        actionsTransform.ItemSize = 114;
-        actionsTransform.Height = 24;
-        actionsTransform.MinAnchor = Vector2.Zero;
-        actionsTransform.MaxAnchor = new Vector2(1, 0);
-        AddPopupButton(actions, "Apply", () =>
+        UIListTransform actionsTransform = new();
+        SceneNode actions = builder.Add(list, "Color actions", actionsTransform, leaf =>
+        {
+            leaf.Write(() => actionsTransform.DisplayHorizontal = true);
+            leaf.Write(() => actionsTransform.ItemSize = 114);
+            leaf.Write(() => actionsTransform.Height = 24);
+            leaf.Write(() => actionsTransform.MinAnchor = Vector2.Zero);
+            leaf.Write(() => actionsTransform.MaxAnchor = new Vector2(1, 0));
+        });
+        AddPopupButton(builder, actions, "Apply", () =>
         {
             if (!(hexLastEdited ? PreviewHex() : PreviewChannels()))
                 return;
             CommitEdit();
             _popup?.Hide();
         });
-        AddPopupButton(actions, "Cancel", () => _popup?.Hide());
+        AddPopupButton(builder, actions, "Cancel", () => _popup?.Hide());
     }
 
-    private static T AddPopupInput<T>(SceneNode parent, string label, string value)
+    private static T AddPopupInput<T>(UIContextMenuContentBuilder builder, SceneNode parent,
+        string label, string value)
         where T : UITextInputComponent, new()
     {
-        SceneNode row = new(parent) { Name = label };
-        UIBoundableTransform bounds = row.SetTransform<UIBoundableTransform>();
-        bounds.MinAnchor = Vector2.Zero;
-        bounds.MaxAnchor = new Vector2(1, 0);
-        bounds.Height = 26;
-        row.AddComponent<UIMaterialComponent>()!.SetBatchSolidColor(new ColorF4(0.18f, 0.18f, 0.18f, 1));
-        UITextComponent text = row.AddComponent<UITextComponent>()!;
-        text.FontSize = 12;
-        text.Color = ColorF4.White;
-        text.VerticalAlignment = EVerticalAlignment.Center;
-        T input = row.AddComponent<T>()!;
-        input.AccessibilityLabel = label;
-        input.SingleLineMode = true;
-        input.CommitOnSubmit = true;
-        input.Text = value;
+        T input = null!;
+        builder.Add(parent, label, new UIBoundableTransform(), leaf =>
+        {
+            leaf.Write(() => leaf.Transform.MinAnchor = Vector2.Zero);
+            leaf.Write(() => leaf.Transform.MaxAnchor = new Vector2(1, 0));
+            leaf.Write(() => leaf.Transform.Height = 26);
+            UIMaterialComponent background = leaf.Add(() => new UIMaterialComponent());
+            leaf.Write(() => background.SetBatchSolidColor(new ColorF4(0.18f, 0.18f, 0.18f, 1)));
+            UITextComponent text = leaf.Add(() => new UITextComponent());
+            leaf.Write(() => text.FontSize = 12);
+            leaf.Write(() => text.Color = ColorF4.White);
+            leaf.Write(() => text.VerticalAlignment = EVerticalAlignment.Center);
+            input = leaf.Add(() => new T());
+            leaf.Write(() => input.AccessibilityLabel = label);
+            leaf.Write(() => input.SingleLineMode = true);
+            leaf.Write(() => input.CommitOnSubmit = true);
+            leaf.Write(() => input.Text = value);
+        });
         return input;
     }
 
-    private static UITextInputComponent AddPopupInput(SceneNode parent, string label, string value)
-        => AddPopupInput<UITextInputComponent>(parent, label, value);
+    private static UITextInputComponent AddPopupInput(UIContextMenuContentBuilder builder,
+        SceneNode parent, string label, string value)
+        => AddPopupInput<UITextInputComponent>(builder, parent, label, value);
 
-    private static void AddPopupButton(SceneNode parent, string label, Action action)
+    private static void AddPopupButton(UIContextMenuContentBuilder builder, SceneNode parent,
+        string label, Action action)
     {
-        SceneNode row = parent.NewChild<UIButtonComponent, UIMaterialComponent>(
-            out UIButtonComponent button, out UIMaterialComponent background);
-        UIBoundableTransform bounds = row.GetTransformAs<UIBoundableTransform>(true)!;
-        bounds.MinAnchor = Vector2.Zero;
-        bounds.MaxAnchor = new Vector2(1, 0);
-        bounds.Height = 24;
-        background.SetBatchSolidColor(ColorF4.Transparent);
-        button.AccessibilityLabel = label;
-        button.RegisterClickActions(_ => action());
-        row.NewChild<UITextComponent>(out UITextComponent text);
-        text.Text = label;
-        text.FontSize = 12;
-        text.Color = ColorF4.White;
-        text.HorizontalAlignment = EHorizontalAlignment.Center;
-        text.VerticalAlignment = EVerticalAlignment.Center;
+        SceneNode row = builder.Add(parent, label, new UIBoundableTransform(), leaf =>
+        {
+            leaf.Write(() => leaf.Transform.MinAnchor = Vector2.Zero);
+            leaf.Write(() => leaf.Transform.MaxAnchor = new Vector2(1, 0));
+            leaf.Write(() => leaf.Transform.Height = 24);
+            UIButtonComponent button = leaf.Add(() => new UIButtonComponent());
+            UIMaterialComponent background = leaf.Add(() => new UIMaterialComponent());
+            leaf.Write(() => background.SetBatchSolidColor(ColorF4.Transparent));
+            leaf.Write(() => button.AccessibilityLabel = label);
+            leaf.Write(() => button.RegisterClickActions(_ => action()));
+        });
+        builder.Add(row, $"{label} text", new UIBoundableTransform(), leaf =>
+        {
+            UITextComponent text = leaf.Add(() => new UITextComponent());
+            leaf.Write(() => text.Text = label);
+            leaf.Write(() => text.FontSize = 12);
+            leaf.Write(() => text.Color = ColorF4.White);
+            leaf.Write(() => text.HorizontalAlignment = EHorizontalAlignment.Center);
+            leaf.Write(() => text.VerticalAlignment = EVerticalAlignment.Center);
+        });
     }
 
     private void OnPopupDismissed(UIContextMenuComponent source, long revision)

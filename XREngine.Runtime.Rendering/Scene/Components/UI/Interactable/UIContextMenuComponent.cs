@@ -121,6 +121,12 @@ namespace XREngine.Rendering.UI
         private float _separatorHeight = SeparatorHeight;
         private IVirtualListProvider? _virtualProvider;
         private Action<SceneNode>? _contentBuilder;
+        private Action<UIContextMenuContentBuilder>? _ownedContentBuilder;
+        private UIContextMenuContentBuilder? _activeOwnedContent;
+        private readonly List<UIContextMenuContentBuilder> _failedOwnedContents = [];
+        private readonly List<SceneNode> _failedOwnedRoots = [];
+        internal IReadOnlyList<UIContextMenuContentBuilder> FailedOwnedContents => _failedOwnedContents;
+        internal IReadOnlyList<SceneNode> FailedOwnedRoots => _failedOwnedRoots;
         private float _contentHeight;
         private float _requestedHeight;
         private UIListTransform? _virtualList;
@@ -147,6 +153,7 @@ namespace XREngine.Rendering.UI
         private ObjectConstructionIdentity _contentRootIdentity;
         private ObjectConstructionIdentity _contentTransformIdentity;
         private ObjectConstructionIdentity _contentParentIdentity;
+        private long _contentRootMembershipRevision;
 
         /// <summary>
         /// Whether the context menu is currently visible and accepting input.
@@ -202,6 +209,34 @@ namespace XREngine.Rendering.UI
             ShowCore(parentLocalPosition, [], null, buildContent, height, passive: true);
         }
 
+        /// <summary>Shows guarded custom content with exact ownership receipts.</summary>
+        public void ShowOwnedContent(Vector2 parentLocalPosition, float height,
+            Action<UIContextMenuContentBuilder> buildContent)
+        {
+            ArgumentNullException.ThrowIfNull(buildContent);
+            if (!float.IsFinite(height) || height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(height));
+            ShowOwnedCore(parentLocalPosition, height, buildContent, passive: false);
+        }
+
+        /// <summary>Shows guarded passive content with exact ownership receipts.</summary>
+        public void ShowPassiveOwnedContent(Vector2 parentLocalPosition, float height,
+            Action<UIContextMenuContentBuilder> buildContent)
+        {
+            ArgumentNullException.ThrowIfNull(buildContent);
+            if (!float.IsFinite(height) || height <= 0)
+                throw new ArgumentOutOfRangeException(nameof(height));
+            ShowOwnedCore(parentLocalPosition, height, buildContent, passive: true);
+        }
+
+        private void ShowOwnedCore(Vector2 position, float height,
+            Action<UIContextMenuContentBuilder> buildContent, bool passive)
+        {
+            if (_tearingDown || IsDestroyed || IsDestroyQueued) return;
+            RequestTransition(new(true, true, position, [], null, null, height, passive,
+                true, ItemHeight, SeparatorHeight, buildContent));
+        }
+
         public float PreferredWidth { get; set; } = MenuWidth;
 
         public UIListTransform? VirtualList => _virtualList;
@@ -232,6 +267,7 @@ namespace XREngine.Rendering.UI
             ContextMenuItem[] items = request.Items!;
             IVirtualListProvider? provider = request.Provider;
             Action<SceneNode>? contentBuilder = request.ContentBuilder;
+            Action<UIContextMenuContentBuilder>? ownedContentBuilder = request.OwnedContentBuilder;
             float contentHeight = request.ContentHeight;
             bool passive = request.Passive;
             bool subscribeForDismiss = request.SubscribeForDismiss;
@@ -250,7 +286,7 @@ namespace XREngine.Rendering.UI
             if (_pendingTransition is not null || !HasCurrentShowLifetime(showRevision))
                 return;
 
-            if ((items.Length == 0 && provider is null && contentBuilder is null) || provider is { Count: <= 0 })
+            if ((items.Length == 0 && provider is null && contentBuilder is null && ownedContentBuilder is null) || provider is { Count: <= 0 })
                 return;
             if (_pendingTransition is not null || !HasCurrentShowLifetime(showRevision))
                 return;
@@ -260,6 +296,7 @@ namespace XREngine.Rendering.UI
             _separatorHeight = separatorHeight;
             _virtualProvider = provider;
             _contentBuilder = contentBuilder;
+            _ownedContentBuilder = ownedContentBuilder;
             _contentHeight = contentHeight;
             IsOpen = true;
             if (!CanContinueConstruction(showRevision))
@@ -282,7 +319,7 @@ namespace XREngine.Rendering.UI
 
             // Calculate total height
             float totalHeight = 0f;
-            if (contentBuilder is not null)
+            if (contentBuilder is not null || ownedContentBuilder is not null)
                 totalHeight = contentHeight;
             else if (provider is not null)
                 totalHeight = Math.Min(provider.Count, 8) * itemHeight;
@@ -429,6 +466,7 @@ namespace XREngine.Rendering.UI
                 _items = [];
                 _virtualProvider = null;
                 _contentBuilder = null;
+                _ownedContentBuilder = null;
                 _contentHeight = 0;
                 _requestedHeight = 0;
                 _virtualList = null;
@@ -451,7 +489,7 @@ namespace XREngine.Rendering.UI
         {
             if (!CanContinueConstruction(showRevision))
                 return;
-            bool ordinaryItems = _contentBuilder is null && _virtualProvider is null;
+            bool ordinaryItems = _contentBuilder is null && _ownedContentBuilder is null && _virtualProvider is null;
             SceneNode? listNode;
             UIListTransform listTfm;
             if (ordinaryItems)
@@ -468,6 +506,9 @@ namespace XREngine.Rendering.UI
                 listNode = CreateContentRoot(new UIListTransform(), showRevision);
                 if (!CanContinueConstruction(showRevision))
                     return;
+                if (_ownedContentBuilder is not null)
+                    _activeOwnedContent = new(listNode,
+                        () => CanContinueConstruction(showRevision) && OwnsContentRoot(listNode));
                 listNode.Name = "ContextMenuList";
                 listTfm = (UIListTransform)listNode.Transform;
                 listTfm.DisplayHorizontal = false;
@@ -487,6 +528,12 @@ namespace XREngine.Rendering.UI
             if (_contentBuilder is not null)
             {
                 _contentBuilder(listNode);
+                return;
+            }
+
+            if (_ownedContentBuilder is not null)
+            {
+                _ownedContentBuilder(_activeOwnedContent!);
                 return;
             }
 
@@ -679,6 +726,28 @@ namespace XREngine.Rendering.UI
                 _contentRootIdentity = default;
                 _contentTransformIdentity = default;
                 _contentParentIdentity = default;
+                _contentRootMembershipRevision = 0;
+                UIContextMenuContentBuilder? ownedContent = _activeOwnedContent;
+                _activeOwnedContent = null;
+                if (ownedContent is not null)
+                {
+                    if (!owned)
+                    {
+                        if (root is not null && ownedContent.CanReleaseTransferredRoot(root))
+                            ownedContent.ReleaseTransferredRoot();
+                        else
+                            _failedOwnedContents.Add(ownedContent);
+                        return;
+                    }
+                    if (!ownedContent.Retire())
+                        _failedOwnedContents.Add(ownedContent);
+                    return;
+                }
+                if (_ownedContentBuilder is not null && root is not null)
+                {
+                    _failedOwnedRoots.Add(root);
+                    return;
+                }
                 // Only this menu's captured content belongs to this operation. A callback
                 // can move it or add another owner's child while the menu is open.
                 if (owned && root is { IsDestroyed: false })
@@ -693,6 +762,7 @@ namespace XREngine.Rendering.UI
         private bool OwnsContentRoot(SceneNode root)
             => ReferenceEquals(root, _contentRoot) && _contentRootIdentity.IsCurrent &&
                 _contentTransformIdentity.IsCurrent && _contentParentIdentity.IsCurrent &&
+                root.Transform.HierarchyMembershipRevision == _contentRootMembershipRevision &&
                 ReferenceEquals(root.Transform, _contentTransformIdentity.Target) &&
                 ReferenceEquals(root.Transform.Parent, _contentParentIdentity.Target) &&
                 ReferenceEquals(Transform, _contentParentIdentity.Target);
@@ -703,6 +773,7 @@ namespace XREngine.Rendering.UI
             _contentRootIdentity = ObjectConstructionIdentity.Capture(root);
             _contentTransformIdentity = ObjectConstructionIdentity.Capture(root.Transform);
             _contentParentIdentity = ObjectConstructionIdentity.Capture(Transform);
+            _contentRootMembershipRevision = checked(root.Transform.HierarchyMembershipRevision + 1);
         }
 
         private SceneNode CreateContentRoot(UIBoundableTransform transform, ulong showRevision)
@@ -1084,7 +1155,7 @@ namespace XREngine.Rendering.UI
             if (IsInsideMenuChain(clicked.SceneNode))
                 return;
 
-            // Otherwise it's an outside click — dismiss.
+            // Otherwise it's an outside click ΓÇö dismiss.
             Hide();
         }
 
@@ -1107,6 +1178,8 @@ namespace XREngine.Rendering.UI
 
         protected override void OnDestroying()
         {
+            if (_activeOwnedContent is not null)
+                ClearMenuItems();
             _tearingDown = true;
             _pendingTransition = null;
             _showRevision++;
@@ -1120,6 +1193,8 @@ namespace XREngine.Rendering.UI
             _items = [];
             _virtualProvider = null;
             _contentBuilder = null;
+            _ownedContentBuilder = null;
+            _activeOwnedContent = null;
             _virtualList = null;
             _placementCanvas = null;
             // Borrowed nodes belong to other owners, so they leave before this node is destroyed.
@@ -1129,6 +1204,7 @@ namespace XREngine.Rendering.UI
             _contentRootIdentity = default;
             _contentTransformIdentity = default;
             _contentParentIdentity = default;
+            _contentRootMembershipRevision = 0;
             ReleaseItemButtons();
             Dismissed = null;
             base.OnDestroying();

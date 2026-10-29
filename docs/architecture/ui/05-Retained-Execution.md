@@ -3004,3 +3004,6 @@ format; it does not rewrite user preferences at startup.
 
 The native editor root owns a background in the background render pass. Tab rows use fixed anchors so their explicit height does not also include the parent height. A full hit-publication capture starts with the canvas focus scope; sparse subtree captures retain the inherited scope.
 
+### Owned custom menu content
+
+ShowOwnedContent and ShowPassiveOwnedContent build explicit leaves under a captured menu root. Each leaf retains its original allocation and membership receipts. Cleanup retires leaves in reverse order and preserves transferred branches. A foreign child, changed lifetime, failed destruction or ownership change retains a failed receipt instead of retrying destruction. Color selectors and tooltips use this path. The existing BorrowContent path continues to return borrowed nodes before clearing ordinary custom content.

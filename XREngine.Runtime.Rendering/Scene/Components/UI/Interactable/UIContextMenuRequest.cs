@@ -9,7 +9,8 @@ internal readonly record struct UIContextMenuRequest(
     bool Show, bool ClearItems, Vector2 Position, ContextMenuItem[]? Items = null,
     IVirtualListProvider? Provider = null, Action<SceneNode>? ContentBuilder = null,
     float ContentHeight = 0, bool Passive = false, bool SubscribeForDismiss = true,
-    float ItemHeight = 0, float SeparatorHeight = 0)
+    float ItemHeight = 0, float SeparatorHeight = 0,
+    Action<UIContextMenuContentBuilder>? OwnedContentBuilder = null)
 {
     public ObjectConstructionIdentity Owner { get; init; }
     public ObjectConstructionIdentity Node { get; init; }

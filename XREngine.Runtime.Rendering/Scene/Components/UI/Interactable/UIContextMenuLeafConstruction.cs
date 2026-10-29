@@ -16,6 +16,11 @@ internal sealed class UIContextMenuLeafConstruction
     private readonly ObjectConstructionIdentity _parentTransformIdentity;
     private readonly ObjectConstructionIdentity _nodeIdentity;
     private readonly ObjectConstructionIdentity _transformIdentity;
+    private readonly ObjectConstructionIdentity _componentListIdentity;
+    private readonly ObjectConstructionIdentity _childListIdentity;
+    private readonly long _nodeMembershipRevision;
+    private readonly long _transformMembershipRevision;
+    private readonly List<long> _componentMembershipRevisions = [];
     private readonly Action _requireShow;
     private readonly List<RuntimeComponentCreationReceipt> _attempts = [];
 
@@ -31,12 +36,17 @@ internal sealed class UIContextMenuLeafConstruction
         Node = new(parent.World, name, transform ?? new UIBoundableTransform());
         _nodeIdentity = ObjectConstructionIdentity.Capture(Node);
         _transformIdentity = ObjectConstructionIdentity.Capture(Node.Transform);
+        _nodeMembershipRevision = Node.HierarchyMembershipRevision;
+        _transformMembershipRevision = Node.Transform.HierarchyMembershipRevision;
         Retirement = Node.World is { } world ? new(Node, world) : new(Node);
+        _componentListIdentity = ObjectConstructionIdentity.Capture(Node.OwnedRetirementComponents!);
+        _childListIdentity = ObjectConstructionIdentity.Capture(Node.Transform.OwnedRetirementChildren!);
     }
 
     internal SceneNode Node { get; }
     internal UIBoundableTransform Transform => (UIBoundableTransform)_transformIdentity.Target;
     internal DetachedLeafRetirementReceipt Retirement { get; }
+    internal IReadOnlyList<RuntimeComponentCreationReceipt> Attempts => _attempts;
 
     internal T Add<T>(Func<T> factory) where T : XRComponent
     {
@@ -46,6 +56,7 @@ internal sealed class UIContextMenuLeafConstruction
         _attempts.Add(attempt);
         T component = Node.AddComponentGuarded(factory, attempt) ??
             throw new InvalidOperationException("A menu component factory returned no component.");
+        _componentMembershipRevisions.Add(component.HierarchyMembershipRevision);
         RequireDetached();
         return component;
     }
@@ -82,19 +93,32 @@ internal sealed class UIContextMenuLeafConstruction
     {
         RequireParent();
         if (!IsLiveLeaf() || Transform.Parent is not null ||
-            Node.HasEnteredRootCollection || Node.HasEnteredStructuralList || Transform.HasEnteredStructuralList)
+            Node.HasEnteredRootCollection || Node.HasEnteredStructuralList || Transform.HasEnteredStructuralList ||
+            Node.HierarchyMembershipRevision != _nodeMembershipRevision ||
+            Transform.HierarchyMembershipRevision != _transformMembershipRevision ||
+            !Transform.HasUsableHierarchyMembershipRevision)
             throw new InvalidOperationException("A menu leaf was adopted during construction.");
-        foreach (RuntimeComponentCreationReceipt attempt in _attempts)
-            attempt.Validate();
+        for (int index = 0; index < _attempts.Count; index++)
+        {
+            _attempts[index].Validate();
+            if (index < _componentMembershipRevisions.Count &&
+                _attempts[index].Component?.HierarchyMembershipRevision != _componentMembershipRevisions[index])
+                throw new InvalidOperationException("A menu component changed membership during construction.");
+        }
     }
 
     private bool IsLiveLeaf()
         => _nodeIdentity.IsCurrent && _transformIdentity.IsCurrent &&
+            _componentListIdentity.IsCurrent && _childListIdentity.IsCurrent &&
             !Node.IsDestroyed && !Node.IsDestroyQueued &&
             !Transform.IsDestroyed && !Transform.IsDestroyQueued &&
             ReferenceEquals(Node.Transform, Transform) &&
+            ReferenceEquals(Node.OwnedRetirementComponents, _componentListIdentity.Target) &&
+            ReferenceEquals(Transform.OwnedRetirementChildren, _childListIdentity.Target) &&
             ReferenceEquals(Node.World, Retirement.SourceWorld) &&
-            ReferenceEquals(Transform.World, Retirement.SourceWorld);
+            ReferenceEquals(Transform.World, Retirement.SourceWorld) &&
+            ReferenceEquals(Transform.HierarchyStore, Retirement.SourceStore) &&
+            Transform.HierarchyHandle == Retirement.SourceHandle;
 
     internal bool OwnsAttachedNode()
     {
@@ -102,14 +126,22 @@ internal sealed class UIContextMenuLeafConstruction
             !ReferenceEquals(_parent.Transform, _parentTransform) ||
             !ReferenceEquals(_parentTransform.Parent, _grandparent) ||
             !ReferenceEquals(_parent.World, Retirement.SourceWorld) || !IsLiveLeaf() ||
-            !ReferenceEquals(Transform.Parent, _parentTransform))
+            !ReferenceEquals(Transform.Parent, _parentTransform) ||
+            Node.HierarchyMembershipRevision != _nodeMembershipRevision ||
+            !Transform.HasUsableHierarchyMembershipRevision ||
+            Transform.HierarchyMembershipRevision != _transformMembershipRevision + 1)
             return false;
-        foreach (RuntimeComponentCreationReceipt attempt in _attempts)
-            if (attempt.ClaimedIdentity is not { IsCurrent: true } || !attempt.IsInserted ||
+        for (int index = 0; index < _attempts.Count; index++)
+        {
+            RuntimeComponentCreationReceipt attempt = _attempts[index];
+            if (index >= _componentMembershipRevisions.Count ||
+                attempt.ClaimedIdentity is not { IsCurrent: true } || !attempt.IsInserted ||
                 attempt.Component is not { IsDestroyed: false, IsDestroyQueued: false } component ||
                 !ReferenceEquals(component.SceneNode, Node) || !Node.Components.Contains(component) ||
-                !ReferenceEquals(component.World, Retirement.SourceWorld))
+                !ReferenceEquals(component.World, Retirement.SourceWorld) ||
+                component.HierarchyMembershipRevision != _componentMembershipRevisions[index])
                 return false;
+        }
         return true;
     }
 
