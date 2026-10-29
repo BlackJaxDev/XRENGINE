@@ -1,5 +1,40 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Asset save-name probe placement (2026-10-29)
+
+Implementation commit `4c469c75ab6f39ec123e993d09a92c05fbbdaf3e` moves
+save collision and unique-name probes to `IRuntimeHostFileReadBackend`. The
+save operation retains the captured provider across the overwrite callback and
+all unique-name probes. Direct unique-name calls capture after host-file
+admission. The [composition contract](../../../architecture/runtime/project-organization.md)
+records the custom-host requirement and the limit of this capture.
+
+A disposable executable against compiled Core verifies three cases: the unique
+name advances past two existing files while retaining its provider through a
+global replacement; an unused name returns unchanged; and an absent provider
+fails explicitly. Core and the executable build in Release with zero warnings
+and errors. Independent source review found no concrete regression and confirms
+the callback order and retained provider. The callback path was reviewed, not
+executed by this harness. No tracked tests changed. Evidence is in
+`Build/_AgentValidation/20261028-120000-webgpu-io/logs/save-probe-build.log`,
+`logs/save-probe-smoke-build.log`, `logs/save-probe-smoke.log`, and
+`reports/save-probe-inventory.json`.
+
+The full local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and the pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `save-probe-` prefix under the same run's `logs/`;
+the fresh output is `save-probe-browser-publish/wwwroot/`. These checks do not
+establish Windows startup, rendered browser parity, or post-push CI. Shader
+sources and recipes did not change.
+
+The immutable-source scan reports 29 files / 98 direct-file matching lines across
+the four roots. Core plus Rendering have 14 files / 39 matching lines. The scan
+removes three matching lines and one file. Blocking counts remain unchanged.
+Both broad inventory requirements remain open.
+
 ## Texture cache inspection placement (2026-10-28)
 
 Implementation commit `fb66b55ab29f882c4fe6d68a63680a679cd97c69` moves

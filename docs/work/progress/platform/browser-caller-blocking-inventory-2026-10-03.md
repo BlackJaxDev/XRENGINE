@@ -2,6 +2,15 @@
 
 Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
 
+## Asset save-name follow-up (2026-10-29)
+
+The scan at `4c469c75ab6f39ec123e993d09a92c05fbbdaf3e` uses the same roots
+and expressions. Direct-file counts are Core **7 / 21**, Rendering **7 / 18**,
+Host **2 / 5**, and Data **13 / 54**, for **29 files / 98 lines**. Core plus
+Rendering total **14 files / 39 lines**. Blocking counts remain unchanged. The
+[save-name record](browser-runtime-asset-io-boundaries-2026-10-03.md#asset-save-name-probe-placement-2026-10-29)
+records the capability contract and validation. Neither broad inventory is complete.
+
 ## Texture cache inspection follow-up (2026-10-28)
 
 The scan at implementation commit `fb66b55ab29f882c4fe6d68a63680a679cd97c69`
