@@ -76,6 +76,7 @@ public partial class InspectorPanel
         InspectorPlayTarget[]? targetIds = _playInspectedTargets;
         if (targetIds is null || IsDestroyed || IsDestroyQueued)
             return;
+        ulong restoreIntent = _inspectedTargetIntentRevision;
         // A hidden panel keeps its snapshot until it can rebuild its view.
         if (!IsActiveInHierarchy &&
             Engine.PlayMode.Configuration.StateRestorationMode != EStateRestorationMode.PersistChanges)
@@ -93,8 +94,7 @@ public partial class InspectorPanel
         if (ownerWorldId is { } expectedOwnerWorld &&
             (Window?.TargetWorldInstance?.WorldContext as RuntimeWorld)?.TargetWorld?.ID != expectedOwnerWorld)
         {
-            _componentTargets = [];
-            InspectedObjects = null;
+            TryRestorePlayTargets(null, [], restoreIntent);
             return;
         }
         if (world is null || world.IsDisposing || world.TargetWorld?.ID != worldId)
@@ -102,8 +102,7 @@ public partial class InspectorPanel
                 .FirstOrDefault(candidate => !candidate.IsDisposing && candidate.TargetWorld?.ID == worldId);
         if (world is null)
         {
-            _componentTargets = [];
-            InspectedObjects = null;
+            TryRestorePlayTargets(null, [], restoreIntent);
             return;
         }
 
@@ -128,18 +127,34 @@ public partial class InspectorPanel
         }).ToArray();
         if (targets.Any(target => target is null))
         {
-            _componentTargets = [];
-            InspectedObjects = null;
+            TryRestorePlayTargets(null, [], restoreIntent);
             return;
         }
 
-        _componentTargets = targets.All(target => target is XRComponent)
+        SceneNode[] componentTargets = targets.All(target => target is XRComponent)
             ? targets.Cast<XRComponent>().Select(component => component.SceneNode)
                 .Distinct<SceneNode>(ReferenceEqualityComparer.Instance).ToArray()
             : [];
+        if (!TryRestorePlayTargets(targets, componentTargets, restoreIntent))
+            return;
         _savedViewTargets = targets.ToArray();
-        InspectedObjects = targets;
-        if (IsActiveInHierarchy && _propertyScroll is not null)
+        if (IsActiveInHierarchy && _propertyScroll is not null &&
+            IsCurrentTargetNotification(_inspectedTargetIntentRevision, targets))
             RestoreViewState();
+    }
+
+    private bool TryRestorePlayTargets(object?[]? targets, SceneNode[] componentTargets,
+        ulong expectedIntent)
+    {
+        if (_inspectedTargetIntentRevision != expectedIntent || _destroyingOwner ||
+            IsDestroyed || IsDestroyQueued)
+            return false;
+        SceneNode[] previousComponentTargets = _componentTargets;
+        _componentTargets = componentTargets;
+        SetInspectedObjects(targets);
+        bool accepted = IsCurrentTargetNotification(expectedIntent + 1, targets);
+        if (!accepted && _inspectedTargetIntentRevision == expectedIntent + 1)
+            _componentTargets = previousComponentTargets;
+        return accepted;
     }
 }

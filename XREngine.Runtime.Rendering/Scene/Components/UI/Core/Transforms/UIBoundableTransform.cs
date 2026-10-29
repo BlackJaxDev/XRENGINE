@@ -81,7 +81,11 @@ namespace XREngine.Rendering.UI
         public float? Width
         {
             get => _width;
-            set => SetField(ref _width, value);
+            set
+            {
+                AdvanceWidthWriteIntent();
+                SetField(ref _width, value);
+            }
         }
 
         private float? _height = null;

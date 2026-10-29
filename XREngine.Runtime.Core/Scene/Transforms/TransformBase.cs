@@ -1630,6 +1630,7 @@ namespace XREngine.Scene.Transforms
             switch (propName)
             {
                 case nameof(Parent):
+                    _activeLeafAttachment?.MarkCanonicalEffectsStarted(this, _activeParentAssignmentRevision);
                     TransformBase? changedParent = field as TransformBase;
                     RequireChangedParent(changedParent);
                     if (changedParent is not null)

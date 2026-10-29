@@ -3007,3 +3007,23 @@ The native editor root owns a background in the background render pass. Tab rows
 ### Owned custom menu content
 
 ShowOwnedContent and ShowPassiveOwnedContent build explicit leaves under a captured menu root. Each leaf retains its original allocation and membership receipts. Cleanup retires leaves in reverse order and preserves transferred branches. A foreign child, changed lifetime, failed destruction or ownership change retains a failed receipt instead of retrying destruction. Color selectors and tooltips use this path. The existing BorrowContent path continues to return borrowed nodes before clearing ordinary custom content.
+
+### Inspector detail ownership
+
+Inspector target writes retain an intent revision across callbacks. A newer target
+write cancels the older rebuild. Play-mode restoration uses the same admission.
+Detail closure preserves newer focus requests, transferred nodes, and destruction
+vetoes. A stale detail can remain hidden while the new property view becomes
+available. A deferred refresh waits for world transfer and pending focus to settle.
+
+String detail construction keeps the host and text leaves detached until their
+property bindings are ready. Attachment receipts can compensate a failed parent
+pointer write only before canonical attachment effects start. Published leaves
+retain exact allocation, component, and membership claims. Guarded text activation
+checks those claims between callbacks. Failed cleanup retains its receipt and does
+not retry destruction on a changed owner.
+
+Property columns use the current viewport width and captured virtual-row lease.
+Each width write checks the row binding, owner path, membership, and write intent
+after callbacks. A newer width request invalidates the older assignment even when
+the requested value is equal.

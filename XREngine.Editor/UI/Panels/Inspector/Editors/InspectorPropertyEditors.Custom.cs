@@ -321,7 +321,7 @@ public static partial class InspectorPropertyEditors
 
     private static UIListTransform EnsureVerticalLayout(SceneNode node)
     {
-        var list = node.SetTransform<UIListTransform>();
+        var list = node.GetTransformAs<UIListTransform>(true)!;
         list.DisplayHorizontal = false;
         list.ItemSpacing = 6.0f;
         list.ItemAlignment = EListAlignment.TopOrLeft;

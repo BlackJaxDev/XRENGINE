@@ -299,11 +299,24 @@ namespace XREngine.Scene
             get => _isActiveSelf;
             set
             {
-                if (_isActiveSelf == value)
-                    return;
-                using HierarchyMutationLease structural = new(this);
-                using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
-                SetField(ref _isActiveSelf, value);
+                AdvanceActivityIntent();
+                Action? previousGuard = _guardedLeafActivation;
+                long previousIntent = _guardedLeafActivationIntent;
+                _guardedLeafActivation = null;
+                _guardedLeafActivationIntent = 0;
+                try
+                {
+                    if (_isActiveSelf == value)
+                        return;
+                    using HierarchyMutationLease structural = new(this);
+                    using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
+                    SetField(ref _isActiveSelf, value);
+                }
+                finally
+                {
+                    _guardedLeafActivation = previousGuard;
+                    _guardedLeafActivationIntent = previousIntent;
+                }
             }
         }
 
@@ -626,11 +639,15 @@ namespace XREngine.Scene
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            Action? activationGuard = propName == nameof(IsActiveSelf) ? _guardedLeafActivation : null;
+            long activationIntent = _guardedLeafActivationIntent;
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
                 case nameof(IsActiveSelf):
-                    if (IsActiveSelf)
+                    if (activationGuard is not null)
+                        ActivateGuardedLeafCore(activationGuard, activationIntent);
+                    else if (IsActiveSelf)
                         OnActivated();
                     else
                         OnDeactivated();

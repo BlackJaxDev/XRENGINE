@@ -23,7 +23,6 @@ public partial class InspectorPanel
     private string _componentSearch = string.Empty;
     private UIScrollableTransform? _componentListView;
     private UIScrollableTransform? _componentPickerView;
-    private UIDualSplitTransform? _componentSplit;
     private UIListTransform? _componentList;
     private UIListTransform? _componentPicker;
     private UIVirtualTableProvider<XRComponent>? _componentTable;
@@ -58,9 +57,9 @@ public partial class InspectorPanel
         _componentStatusLabel = status;
     }
 
-    private void CreateComponentViews(SceneNode componentPane, SceneNode propertyPane)
+    private void CreateComponentViews(SceneNode propertyPane)
     {
-        (_componentListView, _componentList) = CreateModeList(componentPane, "Components");
+        (_componentListView, _componentList) = CreateModeList(propertyPane, "Components");
         _componentTable = new UIVirtualTableProvider<XRComponent>(_componentRows,
             UIVirtualTableColumn<XRComponent>.Text("component", "Component", 165,
                 component => component.Name ?? component.GetType().Name));
@@ -249,7 +248,8 @@ public partial class InspectorPanel
     {
         if (_componentTargets.Length == 0 && view != InspectorView.Properties)
             return;
-        HideDetailEditor();
+        if (!HideDetailEditor())
+            return;
         _inspectorView = view;
         if (view == InspectorView.Components)
             RefreshComponentViews();
@@ -262,15 +262,15 @@ public partial class InspectorPanel
     {
         if (_propertyScroll is null)
             return;
-        if (_componentSplit is not null)
-            _componentSplit.FixedSize = _componentTargets.Length > 0 ? 170 : 0;
-        _propertyScroll.Visibility = _inspectorView == InspectorView.Properties && _detailProperty is null
+        bool showComponents = _componentTargets.Length > 0 && _inspectorView == InspectorView.Components;
+        bool showDetail = _detailProperty is not null && !_staleDetailSuspended;
+        _propertyScroll.Visibility = _inspectorView == InspectorView.Properties && !showDetail
             ? EVisibility.Visible : EVisibility.Collapsed;
         if (_detailTransform is not null)
-            _detailTransform.Visibility = _inspectorView == InspectorView.Properties && _detailProperty is not null
+            _detailTransform.Visibility = _inspectorView == InspectorView.Properties && showDetail
                 ? EVisibility.Visible : EVisibility.Collapsed;
         if (_componentListView is not null)
-            _componentListView.Visibility = _componentTargets.Length > 0
+            _componentListView.Visibility = showComponents
                 ? EVisibility.Visible : EVisibility.Collapsed;
         if (_componentPickerView is not null)
             _componentPickerView.Visibility = _inspectorView == InspectorView.AddComponent
@@ -320,7 +320,6 @@ public partial class InspectorPanel
             _componentPicker.VirtualProvider = null;
         _componentListView = null;
         _componentPickerView = null;
-        _componentSplit = null;
         _componentList = null;
         _componentPicker = null;
         _componentTable = null;

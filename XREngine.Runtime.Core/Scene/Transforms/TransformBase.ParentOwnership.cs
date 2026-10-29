@@ -5,6 +5,44 @@ namespace XREngine.Scene.Transforms;
 
 public abstract partial class TransformBase
 {
+    private long _parentAssignmentRevision;
+    private DetachedLeafAttachmentReceipt? _activeLeafAttachment;
+    private long _activeParentAssignmentRevision;
+
+    internal long ParentAssignmentRevision => Volatile.Read(ref _parentAssignmentRevision);
+
+    private long AdvanceParentAssignmentRevision()
+    {
+        while (true)
+        {
+            long previous = Volatile.Read(ref _parentAssignmentRevision);
+            if (previous == long.MaxValue)
+                throw new InvalidOperationException("The parent assignment history is exhausted.");
+            long next = previous + 1;
+            if (Interlocked.CompareExchange(ref _parentAssignmentRevision, next, previous) == previous)
+                return next;
+        }
+    }
+
+    internal void AttachDetachedLeaf(DetachedLeafAttachmentReceipt receipt)
+        => SetParentValue(receipt.Parent, attachment: receipt);
+
+    internal void CompensateDetachedLeafParent(DetachedLeafAttachmentReceipt receipt,
+        HierarchyStructuralReservation reservation)
+    {
+        receipt.RequireCompensation(this, reservation);
+        EnterReservedHierarchyMutation(reservation);
+        try
+        {
+            receipt.RequireCompensation(this, reservation);
+            AdvanceParentAssignmentRevision();
+            SetField<TransformBase?>(ref _parent, null, publishNotifications: false,
+                propertyName: nameof(Parent));
+            receipt.ConsumeCompensation();
+        }
+        finally { ExitStructuralMutation(); }
+    }
+
     internal void ClearWorldForCanonicalUnlink(Action? validate)
         => SetWorldValue(null, validate);
 
@@ -25,9 +63,27 @@ public abstract partial class TransformBase
         });
     }
 
-    private void SetParentValue(TransformBase? value, Action? validate = null)
+    private void SetParentValue(TransformBase? value, Action? validate = null,
+        DetachedLeafAttachmentReceipt? attachment = null)
+    {
+        long revision = AdvanceParentAssignmentRevision();
+        DetachedLeafAttachmentReceipt? previousAttachment = _activeLeafAttachment;
+        long previousRevision = _activeParentAssignmentRevision;
+        _activeLeafAttachment = attachment;
+        _activeParentAssignmentRevision = revision;
+        try { SetParentValueCore(value, validate, attachment, revision); }
+        finally
+        {
+            _activeLeafAttachment = previousAttachment;
+            _activeParentAssignmentRevision = previousRevision;
+        }
+    }
+
+    private void SetParentValueCore(TransformBase? value, Action? validate,
+        DetachedLeafAttachmentReceipt? attachment, long revision)
     {
         using HierarchyMutationLease structural = new(this, _parent, value);
+        attachment?.BeginAssignment(this, value, revision);
         validate?.Invoke();
         HierarchyConstructionScope.RequireLink(this, value);
         if (ReferenceEquals(_parent, value)) return;
@@ -53,6 +109,7 @@ public abstract partial class TransformBase
                 validate?.Invoke();
                 HierarchyConstructionScope.RequireAssignment(this, original, _parent, value);
                 SetField(ref _parent, value, publishNotifications: false, propertyName: nameof(Parent));
+                attachment?.MarkPointerCommitted(this, revision);
             }
             if (notify) OnPropertyChanged(nameof(Parent), original, value);
         }

@@ -121,6 +121,17 @@ internal sealed class DetachedLeafRetirementReceipt
 
     internal bool Contains(XRObjectBase value) => _retainedObjects?.Contains(value) == true;
 
+    internal (IReadOnlyList<XRObjectBase> Objects, IReadOnlyList<ObjectConstructionIdentity> Identities)
+        CaptureAttachmentInput()
+    {
+        lock (_sync)
+        {
+            if (_state != EOwnedHierarchyLifetimeState.Retained)
+                throw new InvalidOperationException("The detached leaf is no longer available for attachment.");
+            return BuildInput();
+        }
+    }
+
     private (IReadOnlyList<XRObjectBase>, IReadOnlyList<ObjectConstructionIdentity>) BuildInput()
     {
         ValidateLeafShape();

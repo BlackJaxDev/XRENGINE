@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Numerics;
 using System.Reflection;
+using XREngine.Components;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
@@ -12,28 +13,86 @@ public partial class InspectorPanel : EditorPanel
 {
     private bool _destroyingOwner;
     private object?[]? _inspectedObjects;
+    private ulong _inspectedTargetIntentRevision;
+
+    private sealed class SupersededTargetWriteException : Exception { }
+
     public object?[]? InspectedObjects
     {
         get => _inspectedObjects;
-        set => SetField(ref _inspectedObjects, value);
+        set => SetInspectedObjects(value);
+    }
+
+    private bool SetInspectedObjects(object?[]? value)
+    {
+        ulong intent = ++_inspectedTargetIntentRevision;
+        try
+        {
+            return SetFieldValidated(ref _inspectedObjects, value, (Panel: this, Intent: intent),
+                static (state, original, current, _) =>
+                {
+                    if (state.Panel._destroyingOwner || state.Panel.IsDestroyed ||
+                        state.Panel.IsDestroyQueued || state.Panel._inspectedTargetIntentRevision != state.Intent ||
+                        !ReferenceEquals(original, current))
+                        throw new SupersededTargetWriteException();
+                }, propertyName: nameof(InspectedObjects));
+        }
+        catch (SupersededTargetWriteException)
+        {
+            return false;
+        }
     }
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
+        ulong acceptedIntent = _inspectedTargetIntentRevision;
+        object?[]? acceptedTargets = field as object?[];
         base.OnPropertyChanged(propName, prev, field);
         if (_destroyingOwner)
             return;
         switch (propName)
         {
             case nameof(InspectedObjects):
+                if (!IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                    return;
                 if (prev is object?[] previous &&
                     (field is not object?[] next || previous.Length != next.Length ||
                      previous.Where((item, index) => !ReferenceEquals(item, next[index])).Any()))
-                    HideDetailEditor();
-                RemakeChildren();
+                {
+                    if (!HideDetailEditor())
+                    {
+                        if (IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                        {
+                            bool waitsForFocus = _detailHideWaitsForFocus;
+                            if (PhysicsChainWorld.IsWorldMutationActive)
+                            {
+                                // Revoke old row bindings now. Structural view changes must wait.
+                                List<PropertyInfo> properties = GetMatchingProperties(acceptedTargets);
+                                if (!IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                                    return;
+                                Properties = properties;
+                                _virtualPropertyProvider?.Reset(properties, acceptedTargets);
+                                QueueDeferredTargetRefresh();
+                                return;
+                            }
+                            SuspendStaleDetailEditor();
+                            if (_virtualPropertyList is not null)
+                                RemakeChildren();
+                            if (waitsForFocus && IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                                QueueDeferredTargetRefresh();
+                        }
+                        return;
+                    }
+                }
+                if (IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                    RemakeChildren();
                 break;
         }
     }
+
+    private bool IsCurrentTargetNotification(ulong intent, object?[]? targets)
+        => !_destroyingOwner && !IsDestroyed && !IsDestroyQueued &&
+           _inspectedTargetIntentRevision == intent && ReferenceEquals(_inspectedObjects, targets);
 
     private bool _isLocked = false;
     private bool _inspectingAsset;
@@ -58,6 +117,9 @@ public partial class InspectorPanel : EditorPanel
             RemakeChildren();
         if (!IsActiveInHierarchy || IsDestroyed || IsDestroyQueued)
             return;
+        if (_targetRefreshPending)
+            QueueDeferredTargetRefresh();
+        QueuePropertyColumnLayout();
         Selection.SelectionChanged += OnSelectionChanged;
         NativeAssetSelection.SelectionChanged += OnNativeAssetSelectionChanged;
         if (hadPlaySnapshot)
@@ -83,6 +145,7 @@ public partial class InspectorPanel : EditorPanel
 
     protected override void OnComponentDeactivated()
     {
+        CancelPropertyColumnLayoutTick();
         if (_destroyingOwner)
         {
             ReleaseSelectionSubscriptions();
@@ -92,6 +155,7 @@ public partial class InspectorPanel : EditorPanel
         if (_playInspectedTargets is null)
             CaptureViewState();
         StopDetailFocusRestore(clearSavedBinding: false);
+        PauseDeferredTargetRefresh();
         base.OnComponentDeactivated();
         ReleaseSelectionSubscriptions();
         ReleaseVirtualPropertyList();
@@ -103,6 +167,7 @@ public partial class InspectorPanel : EditorPanel
         UnsubscribePlayModeTransitions();
         ReleaseSelectionSubscriptions();
         StopDetailFocusRestore();
+        StopDeferredTargetRefresh();
         DetachTerminalProvider(_virtualPropertyList);
         DetachTerminalProvider(_componentList);
         DetachTerminalProvider(_componentPicker);
@@ -168,6 +233,11 @@ public partial class InspectorPanel : EditorPanel
 
     private void RemakeChildren()
     {
+        if (PhysicsChainWorld.IsWorldMutationActive)
+        {
+            QueueDeferredTargetRefresh();
+            return;
+        }
         using var sample = Engine.Profiler.Start("InspectorPanel.RemakeChildren");
         if (_virtualPropertyList is not null)
         {
