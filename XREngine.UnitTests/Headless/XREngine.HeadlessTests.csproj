@@ -7,6 +7,11 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../XREngine.Editor/UI/Panels/ENativeProfilerStatSeries.cs" Link="Editor/ENativeProfilerStatSeries.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/NativeTextFieldDraft.cs" Link="Editor/NativeTextFieldDraft.cs" />
+    <Compile Include="../../XREngine.Editor/UI/EditorVirtualRowExtent.cs" Link="Editor/EditorVirtualRowExtent.cs" />
+    <Compile Include="../../XREngine.Editor/UI/Panels/IEditorMeasuredRowEditor.cs" Link="Editor/IEditorMeasuredRowEditor.cs" />
+    <Compile Include="../Rendering/UITestAppThreadHostScope.cs" Link="Rendering/UITestAppThreadHostScope.cs" />
     <Compile Include="../../XREngine.Editor/UI/Panels/NativeAnimationSearchViewValues.cs" Link="Editor/NativeAnimationSearchViewValues.cs" />
     <Compile Include="../Rendering/UITextGuardedCanvasFocusTests.Presented.cs" Link="Rendering/UITextGuardedCanvasFocusTests.Presented.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/Windowing/DesktopDragPointerState.cs" Link="Rendering/DesktopDragPointerState.cs" />
