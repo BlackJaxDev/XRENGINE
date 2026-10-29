@@ -706,6 +706,7 @@ public partial class XRTexture2D
 
     private void ReadTextureStreamingSettings(CookedBinaryReader reader)
     {
+        ReadCookedSampling(reader);
         SamplerName = reader.ReadValue<string>();
         FrameBufferAttachment = reader.ReadValue<EFrameBufferAttachment?>() ?? FrameBufferAttachment;
         MinLOD = ReadStructOrDefault(reader, MinLOD);

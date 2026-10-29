@@ -2154,6 +2154,7 @@ namespace XREngine.Rendering
         void ICookedBinarySerializable.WriteCookedBinary(CookedBinaryWriter writer)
         {
             WriteTextureAssetBase(writer);
+            WriteCookedSampling(writer);
 
             writer.WriteValue(SamplerName);
             writer.WriteValue(FrameBufferAttachment);
@@ -2199,6 +2200,7 @@ namespace XREngine.Rendering
         long ICookedBinarySerializable.CalculateCookedBinarySize()
         {
             long size = CalculateTextureAssetBaseSize();
+            size += CalculateCookedSamplingSize();
 
             size += CookedBinarySerializer.CalculateSize(SamplerName);
             size += CookedBinarySerializer.CalculateSize(FrameBufferAttachment);
@@ -2236,28 +2238,7 @@ namespace XREngine.Rendering
         void ICookedBinarySerializable.ReadCookedBinary(CookedBinaryReader reader)
         {
             ReadTextureAssetBase(reader);
-
-            SamplerName = reader.ReadValue<string>();
-            FrameBufferAttachment = reader.ReadValue<EFrameBufferAttachment?>() ?? FrameBufferAttachment;
-            MinLOD = ReadStructOrDefault(reader, MinLOD);
-            MaxLOD = ReadStructOrDefault(reader, MaxLOD);
-            LargestMipmapLevel = ReadStructOrDefault(reader, LargestMipmapLevel);
-            SmallestAllowedMipmapLevel = ReadStructOrDefault(reader, SmallestAllowedMipmapLevel);
-            AutoGenerateMipmaps = ReadStructOrDefault(reader, AutoGenerateMipmaps);
-            AlphaAsTransparency = ReadStructOrDefault(reader, AlphaAsTransparency);
-            InternalCompression = ReadStructOrDefault(reader, InternalCompression);
-
-            MagFilter = ReadStructOrDefault(reader, MagFilter);
-            MinFilter = ReadStructOrDefault(reader, MinFilter);
-            UWrap = ReadStructOrDefault(reader, UWrap);
-            VWrap = ReadStructOrDefault(reader, VWrap);
-            Rectangle = ReadStructOrDefault(reader, Rectangle);
-            Resizable = ReadStructOrDefault(reader, Resizable);
-            MultiSampleCount = ReadStructOrDefault(reader, MultiSampleCount);
-            FixedSampleLocations = ReadStructOrDefault(reader, FixedSampleLocations);
-            ExclusiveSharing = ReadStructOrDefault(reader, ExclusiveSharing);
-            LodBias = ReadStructOrDefault(reader, LodBias);
-            SizedInternalFormat = ReadStructOrDefault(reader, SizedInternalFormat);
+            ReadTextureStreamingSettings(reader);
 
             GrabPass = ReadGrabPass(reader, this);
             Mipmaps = ReadMipmaps(reader);

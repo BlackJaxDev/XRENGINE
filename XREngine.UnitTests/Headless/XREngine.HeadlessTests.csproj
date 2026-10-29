@@ -14,6 +14,8 @@
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Rendering/TextureCookedSamplingTests.cs" Link="Rendering/TextureCookedSamplingTests.cs" />
+    <EmbeddedResource Include="../Rendering/Fixtures/texture-streaming-legacy.bin" LogicalName="TextureCooking.Legacy" />
     <Compile Include="../Core/AssetDirectoryHostTests.cs" Link="Core/AssetDirectoryHostTests.cs" />
     <Compile Include="../Core/AssetDirectoryTestFileSystem.cs" Link="Core/AssetDirectoryTestFileSystem.cs" />
     <Compile Include="../Animation/AnimationClipReferenceHostTests.cs" Link="Animation/AnimationClipReferenceHostTests.cs" />
