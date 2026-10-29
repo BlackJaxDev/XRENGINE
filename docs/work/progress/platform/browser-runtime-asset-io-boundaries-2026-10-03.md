@@ -1,5 +1,55 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Texture cache replacement (2026-10-29)
+
+Implementation commit `1ad03bf11f1ab8e8219492b7ebaf59ffee8f5ee2` adds the
+optional `ITextureStreamingCacheReplaceBackend` to the existing cache-file
+backend. Desktop and the smoke publisher use it. Each call writes a unique
+same-directory file, applies the timestamp before publication on a best-effort
+basis, then moves it over the destination. The operation cleans up its own
+staging file on failure when possible. Final paths, raw payload bytes, and cache
+format are unchanged. The payload lease stays alive until the replacement call
+returns. A legacy custom backend keeps its existing staged-write path. The
+[composition contract](../../../architecture/runtime/project-organization.md)
+records the requirements and remaining limitations.
+
+A disposable executable against compiled Rendering passes 14 checks. It covers
+legacy backend order and provider replacement, exact large payload bytes and
+stamp, missing capability, host admission, native replacement, failed replacement
+onto an existing directory and staging cleanup, replacement-backend provider
+retention, and two concurrent writers with a concurrent reader. The reader
+observed only complete payloads; after 40 writes the final payload and timestamp
+matched, and no replacement staging files remained. The harness links the same
+native helper used by desktop and the publisher and uses local Linux files. It
+does not test a locked destination file, native timestamp failure, process crash,
+Windows sharing, a network filesystem, or hardware rendering. The final harness
+and smoke publisher build in Release with zero warnings and errors. No tracked
+test code or assertion changed. Independent review found no concrete defect.
+Evidence is in `Build/_AgentValidation/20261028-120000-webgpu-io/logs/texture-replace-smoke-build.log`,
+`logs/texture-replace-smoke.log`, `logs/texture-replace-publisher-build.log`, and
+`reports/texture-replace-inventory.json`.
+
+The full local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `texture-replace-` prefix under the same run's `logs/`;
+the fresh output is `texture-replace-browser-publish/wwwroot/`. These checks do
+not establish Windows startup, rendered browser parity, actual GPU texture
+appearance, network filesystem behavior, or post-push CI. Shader sources and
+recipes did not change.
+
+Concurrent replacement is last-writer-wins. An older cook may still publish
+last; timestamp precision can limit stale-cache detection. A filesystem can
+reject replacement of an open file. Existing custom backends without the new
+capability retain their earlier shared temporary path and delete-then-move gap.
+Provider capture is not a retirement lease, and the operation does not claim
+crash durability. The committed-source scan is unchanged: 23 files / 76
+matching direct-file lines across four roots, including 8 files / 17 lines in
+Core and Rendering. Blocking counts are unchanged. Both broad inventory
+requirements remain open.
+
 ## Texture cache write placement (2026-10-29)
 
 Implementation commit `7983f642e439080071f7947cf31dd6accaa68a78` moves
@@ -9,7 +59,7 @@ writer captures one backend and retains the original order: prepare the parent,
 rent and serialize the payload, write the temporary file, release the payload
 lease, then publish and stamp. Desktop and the smoke publisher use the same
 native helper. The [composition contract](../../../architecture/runtime/project-organization.md)
-records custom-host requirements and the existing replacement limitations.
+records custom-host requirements and the later replacement capability.
 
 The cache path, binary payload, temporary-file flags, delete-then-move order,
 and best-effort timestamp remain unchanged. This does not add an atomic replace,
