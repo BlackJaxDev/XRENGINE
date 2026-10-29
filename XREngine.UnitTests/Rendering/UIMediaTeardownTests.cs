@@ -396,9 +396,10 @@ public sealed class UIMediaTeardownTests
     }
 
     [Test]
-    public async Task BlankUrlClosesPendingSessionAndRejectsDelayedOpenFailure()
+    public void BlankUrlClosesPendingSessionAndRejectsDelayedOpenFailure()
     {
         using UITestShaderScope shaders = new();
+        using UITestAppThreadHostScope appThread = UITestAppThreadHostScope.Install();
         RuntimeRenderingHostServices.FrameTiming.IsAppThread.ShouldBeTrue();
         SceneNode root = new("Pending video open", new UIBoundableTransform()) { IsActiveSelf = false };
         try
@@ -420,7 +421,8 @@ public sealed class UIMediaTeardownTests
             session.DisposeCount.ShouldBe(1);
 
             session.FailOpen();
-            await completionDispatch.WaitAsync(TimeSpan.FromSeconds(5));
+            completionDispatch.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+            appThread.DrainAppTasks();
             session.OpenCount.ShouldBe(1);
             session.CloseCount.ShouldBe(1);
         }

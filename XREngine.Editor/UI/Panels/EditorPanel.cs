@@ -22,6 +22,6 @@ public partial class EditorPanel : XRComponent
     public static void ApplyBackground(UIMaterialComponent target)
     {
         ArgumentNullException.ThrowIfNull(target);
-        target.SetBatchSolidColor(new ColorF4(166 / 255.0f, 179 / 255.0f, 178 / 255.0f, 1.0f));
+        target.SetBatchSolidColor(new ColorF4(0.035f, 0.04f, 0.045f, 1.0f));
     }
 }

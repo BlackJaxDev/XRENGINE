@@ -99,6 +99,7 @@ namespace XREngine.Rendering.UI
             _invalidateViewportVisual = InvalidateViewportVisual;
             DisableBatching = true;
             SetBlendModeAllDrawBuffers(BlendMode.Disabled());
+            Viewport.PipelineRequest = RenderPipelineRequest.OffscreenCapture();
             Viewport.AutomaticallyCollectVisible = false;
             Viewport.AutomaticallySwapBuffers = false;
             Viewport.UseDirectFboTargetCommandsWhenRenderingToFbo = false;
@@ -440,7 +441,12 @@ namespace XREngine.Rendering.UI
                 RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
                 try
                 {
-                    Viewport.Render(_fbo, null, null, false);
+                    if (!Viewport.TryRender(_fbo, null, null, false))
+                    {
+                        _lastProducerFailure = "UI.Viewport.RenderAdmissionPending: scene commands were not accepted for this surface.";
+                        _renderSkipped++;
+                        return;
+                    }
                     if (Volatile.Read(ref _viewportProducerDestroyed) != 0)
                         return;
                     AbstractRenderer.Current?.PublishFrameBufferAttachmentsForSampling(_fbo);

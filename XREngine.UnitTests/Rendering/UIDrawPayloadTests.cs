@@ -65,6 +65,7 @@ public sealed class UIDrawPayloadTests
     [Test]
     public void SourceObserversNotifyChangesAndDetachAfterReplacementAndDispose()
     {
+        using UITestAppThreadHostScope appThread = UITestAppThreadHostScope.Install();
         RenderCommandMesh2D first = CreateDraw();
         RenderCommandMesh2D second = CreateDraw();
         using UIDrawPayloadBuilder builder = new();
@@ -135,6 +136,7 @@ public sealed class UIDrawPayloadTests
     [Test]
     public void DisabledCommandEligibilityStillInvalidatesItsCanvas()
     {
+        using UITestAppThreadHostScope appThread = UITestAppThreadHostScope.Install();
         UICanvasTransform transform = new() { Width = 100, Height = 100 };
         XREngine.Scene.SceneNode root = new("Disabled draw", transform);
         root.SetWorldContext(new XREngine.UnitTests.Physics.TestWorldContext());
@@ -456,6 +458,7 @@ public sealed class UIDrawPayloadTests
     [Test]
     public void PixelInvalidationCreatesNewTextureSnapshotAndPreservesOldPixels()
     {
+        using UITestAppThreadHostScope appThread = UITestAppThreadHostScope.Install();
         XRTexture2D source = new(1, 1, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, true);
         source.Mipmaps[0].DataBytes = [1, 2, 3, 4];
         UITextureSnapshot.TryAcquire(source, out UITextureSnapshot? first, out string? reason).ShouldBeTrue(reason);

@@ -171,7 +171,7 @@ public partial class UIToolbarComponent : UIComponent
                 }
             if (generation != _bindingGeneration || _bindingsStopped || IsDestroyed)
                 return;
-            CreateMenu(SceneNode, true, null, SubmenuItemHeight, RootMenuOptions, false, SubmenuItemHeight, this);
+            CreateMenu(SceneNode, true, null, null, RootMenuOptions, false, SubmenuItemHeight, this);
         }
         finally
         {
@@ -217,8 +217,9 @@ public partial class UIToolbarComponent : UIComponent
         UIToolbarComponent toolbar)
     {
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
+        if (!horizontal)
+            menuMat.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
         EditorPanel.ApplyBackground(menuMat);
-        menuMat.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = horizontal;
         listTfm.ItemSpacing = 0.0f;
@@ -269,8 +270,9 @@ public partial class UIToolbarComponent : UIComponent
         if (!toolbar.BindItem(tbd, button))
             return;
         button.Name = tbd.Text;
+        if (alignSubmenuToSide)
+            background.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
         background.SetBatchSolidColor(ColorF4.Transparent);
-        background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
         buttonTfm.Margins = new Vector4(Margin);
@@ -280,6 +282,8 @@ public partial class UIToolbarComponent : UIComponent
         textTfm.Margins = new Vector4(10.0f, Margin, 10.0f, Margin);
         text.FontSize = 14;
         text.Text = tbd.Text;
+        if (alignSubmenuToSide)
+            text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
 
         if (tbd.Options.Length > 0)
         {
@@ -312,6 +316,8 @@ public partial class UIToolbarComponent : UIComponent
     private void CreateSeparator(SceneNode listNode, bool alignSubmenuToSide, UIToolbarComponent toolbar, ToolbarSeparator tbs)
     {
         var separatorNode = listNode.NewChild<UIMaterialComponent>(out var separatorMat);
+        if (alignSubmenuToSide)
+            separatorMat.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
         EditorPanel.ApplyBackground(separatorMat);
         var separatorTfm = separatorNode.SetTransform<UIBoundableTransform>();
         separatorTfm.Padding = new Vector4(0.0f);
@@ -327,8 +333,9 @@ public partial class UIToolbarComponent : UIComponent
             return;
         button.Name = tbb.Text;
 
+        if (alignSubmenuToSide)
+            background.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
         background.SetBatchSolidColor(ColorF4.Transparent);
-        background.RenderPass = (int)EDefaultRenderPass.TransparentForward;
 
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
@@ -342,6 +349,8 @@ public partial class UIToolbarComponent : UIComponent
         text.FontSize = 14;
         text.Text = tbb.Text;
         text.Color = EditorUI.Styles.ButtonTextColor;
+        if (alignSubmenuToSide)
+            text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
 
         if (tbb.ChildOptions.Count > 0)
         {

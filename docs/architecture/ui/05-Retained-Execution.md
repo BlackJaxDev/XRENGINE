@@ -2975,3 +2975,13 @@ OpenGL materials borrow their textures. Removing a material binding or retiring
 the material wrapper does not retire the texture's native storage. Mesh generation
 queues reject retired renderer owners and retain pending work only while its
 captured generation owner remains live.
+
+Native menu backgrounds, text, and separators use the same overlay pass. The
+solid-color API accepts only the transparent and overlay passes and rejects a
+callback that replaces the selected pass during a write. Root menus use the
+available toolbar height instead of imposing a submenu row height.
+
+Native viewport producers request an offscreen capture pipeline. They publish a
+new surface generation only after the viewport accepts the scene render. A
+deferred render retains the previous published surface and reports pending
+admission. This does not prove GPU or interactive acceptance.

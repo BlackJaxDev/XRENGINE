@@ -34,6 +34,30 @@ namespace XREngine.Rendering.UI
         private readonly HashSet<Action<XRMaterialBase, XRRenderProgram>> _allowedBatchUniformHandlers = [];
         private bool _renderParametersEscaped;
         private bool _reportedMissingBatchColor;
+        private int _batchSolidRenderPass = (int)EDefaultRenderPass.TransparentForward;
+        private ulong _batchSolidRenderPassIntent;
+
+        /// <summary>Selects the pass used by the next solid color write.</summary>
+        public int BatchSolidRenderPass
+        {
+            get => _batchSolidRenderPass;
+            set
+            {
+                if (value != (int)EDefaultRenderPass.TransparentForward && value != (int)EDefaultRenderPass.OnTopForward)
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                SetField(ref _batchSolidRenderPassIntent, checked(_batchSolidRenderPassIntent + 1),
+                    publishNotifications: false);
+                ulong intent = _batchSolidRenderPassIntent;
+                SetFieldValidated(ref _batchSolidRenderPass, value, (Owner: this, Intent: intent),
+                    static (state, original, current, _) =>
+                    {
+                        if (state.Owner._batchSolidRenderPassIntent != state.Intent || original != current)
+                            throw new InvalidOperationException("A newer solid pass request replaced this write.");
+                    }, propertyName: nameof(BatchSolidRenderPass));
+                if (_batchSolidRenderPassIntent != intent || _batchSolidRenderPass != value)
+                    throw new InvalidOperationException("A newer solid pass request replaced this write.");
+            }
+        }
         private ShaderVector4? _observedMatColor;
         private readonly bool _intrinsicDefault;
         private Vector4 _intrinsicColor = Color.Magenta.ToVector4();
@@ -82,6 +106,7 @@ namespace XREngine.Rendering.UI
         /// <summary>Sets the fill of the component's shared solid-quad primitive.</summary>
         public void SetBatchSolidColor(Vector4 color)
         {
+            ulong passIntent = _batchSolidRenderPassIntent;
             if (_intrinsicDefault && !TryDetachOwnedDefaultMaterial())
                 throw new InvalidOperationException("Batch solids cannot replace an authored custom UI material.");
             if (_intrinsicDefault && base.Material is null)
@@ -92,13 +117,18 @@ namespace XREngine.Rendering.UI
                 SetField(ref _intrinsicImage, null);
                 SetField(ref _batchImageUv, new Vector4(0, 0, 1, 1));
                 SetField(ref _batchBorderEnabled, false);
-                RenderPass = (int)EDefaultRenderPass.TransparentForward;
+                if (passIntent != _batchSolidRenderPassIntent)
+                    throw new InvalidOperationException("A newer solid pass request replaced this color write.");
+                RenderPass = _batchSolidRenderPass;
                 RecordQuadVisualChange();
                 return;
             }
             if (Material is not { } material || !OwnsDefaultMaterial(material))
                 throw new InvalidOperationException("Batch solids require the component's default UI quad material.");
             ConfigureOwnedBatchTransparency(material);
+            if (passIntent != _batchSolidRenderPassIntent || !ReferenceEquals(base.Material, material))
+                throw new InvalidOperationException("The solid color material or pass changed during this write.");
+            RenderPass = _batchSolidRenderPass;
             material.SetVector4("MatColor", color);
             SetField(ref _batchBorderEnabled, false);
             RecordQuadVisualChange();
