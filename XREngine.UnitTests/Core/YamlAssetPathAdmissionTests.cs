@@ -10,7 +10,7 @@ namespace XREngine.UnitTests.Core;
 public sealed class YamlAssetPathAdmissionTests
 {
     private IRuntimeFileDiscovery? _previousFiles;
-    private IRuntimeAssetSource? _previousSource;
+    private IRuntimeAssetReadSource? _previousSource;
     private bool _previousCallerThread;
     private string _path = null!;
     private ProbeFiles _files = null!;
@@ -19,7 +19,7 @@ public sealed class YamlAssetPathAdmissionTests
     public void SetUp()
     {
         _previousFiles = RuntimeFileDiscoveryServices.Current;
-        _previousSource = DirectStorageIO.Source;
+        _previousSource = RuntimeAssetReadServices.Source;
         _previousCallerThread = RuntimeAssetReadServices.IsCallerThread;
         _path = Path.GetTempFileName();
         File.WriteAllText(_path, "shader source");
@@ -33,7 +33,7 @@ public sealed class YamlAssetPathAdmissionTests
     public void TearDown()
     {
         RuntimeAssetReadServices.IsCallerThread = _previousCallerThread;
-        DirectStorageIO.Source = _previousSource;
+        RuntimeAssetReadServices.SetSource(_previousSource);
         RuntimeFileDiscoveryServices.Current = _previousFiles;
         File.Delete(_path);
     }
@@ -74,6 +74,33 @@ public sealed class YamlAssetPathAdmissionTests
     public void SourceReplacementDuringProbeRejectsResult()
     {
         _files.OnProbe = () => DirectStorageIO.Source = new Catalog();
+        Assert.Throws<OperationCanceledException>(() => Exists(_path));
+    }
+
+    [Test]
+    public void DiscoveryReplacementDuringProbeRejectsResult()
+    {
+        _files.OnProbe = () => RuntimeFileDiscoveryServices.Current = new ProbeFiles();
+        Assert.Throws<OperationCanceledException>(() => Exists(_path));
+    }
+
+    [Test]
+    public void DiscoveryReinstallationDuringProbeRejectsResult()
+    {
+        _files.OnProbe = () =>
+        {
+            RuntimeFileDiscoveryServices.Current = new ProbeFiles();
+            RuntimeFileDiscoveryServices.Current = _files;
+        };
+        Assert.Throws<OperationCanceledException>(() => Exists(_path));
+    }
+
+    [Test]
+    public void DiscoveryInstallationDuringFallbackRejectsResult()
+    {
+        RuntimeFileDiscoveryServices.Current = null;
+        RuntimeAssetReadServices.SetSource(new ProbeReadSource(
+            () => RuntimeFileDiscoveryServices.Current = new ProbeFiles()));
         Assert.Throws<OperationCanceledException>(() => Exists(_path));
     }
 
@@ -119,6 +146,15 @@ public sealed class YamlAssetPathAdmissionTests
     }
 
     public sealed class Container { public TextFile? Source { get; set; } }
+
+    private sealed class ProbeReadSource(Action onProbe) : IRuntimeAssetReadSource
+    {
+        public bool SupportsSynchronousReads => true;
+        public bool SupportsHostFileAccess => true;
+        public bool Exists(string path) { onProbe(); return true; }
+        public byte[] ReadAllBytes(string path) => throw new NotSupportedException();
+        public Task<byte[]> ReadAllBytesAsync(string path, CancellationToken token = default) => throw new NotSupportedException();
+    }
 
     private sealed class ProbeFiles : IRuntimeFileDiscovery, IRuntimeHostFileReadBackend
     {

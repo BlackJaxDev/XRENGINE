@@ -33,3 +33,18 @@ fallback, missing files, a source replacement during a probe, caller-thread
 rejection, catalog metadata, and desktop and caller-thread YAML deserialization.
 The test build has zero warnings and errors. This does not verify a live browser
 deserialization flow or provider lifetime after an unrelated filesystem swap.
+
+## Discovery replacement
+
+The discovery service records an installation generation, including an absent
+provider and reinstallation of the same instance. YAML path lookup checks that
+generation while it holds a raw-read publication reservation. It rejects a result
+if discovery changed during the probe or raw-read fallback. The catalog branch
+does not use host discovery. Focused tests cover replacement, reinstallation,
+and provider installation during fallback, in addition to the earlier cases.
+
+This check does not pin the discovery provider during its callback. The provider
+contract has no retirement or disposal lease. Browser teardown also has paths
+that clear owner state and dispose the source after service replacement errors.
+Making replacement reject while a provider is in use needs a coordinated host
+teardown and retry contract first. No such rejection is added here.

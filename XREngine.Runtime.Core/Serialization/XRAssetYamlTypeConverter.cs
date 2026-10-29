@@ -358,11 +358,13 @@ namespace XREngine
                 return read.Exists(path);
 
             read.EnsureHostFileAccess("YAML asset path lookup");
-            if (RuntimeFileDiscoveryServices.Current is not IRuntimeHostFileReadBackend files)
-                return read.Exists(path);
-
-            bool exists = files.FileExists(path);
-            read.EnsureCurrent();
+            IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long generation);
+            bool exists = discovery is IRuntimeHostFileReadBackend files
+                ? files.FileExists(path)
+                : read.Exists(path);
+            using IDisposable publication = read.BeginPublication();
+            if (!RuntimeFileDiscoveryServices.IsCurrent(discovery, generation))
+                throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the asset file discovery installation changed during the path lookup.");
             return exists;
         }
 

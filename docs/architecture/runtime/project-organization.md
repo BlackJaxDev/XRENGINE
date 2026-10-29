@@ -190,9 +190,11 @@ YAML asset path lookup captures a raw-read lease before source selection. A
 catalog lookup uses catalog metadata. Other lookups require host-file admission
 and use the installed host-file read provider when available. Without that
 provider, the raw-read source supplies the existence check; with no source,
-the desktop raw-read fallback uses the local file system. A source replacement
-invalidates a pending probe result. The lease does not pin the separate file
-discovery provider.
+the desktop raw-read fallback uses the local file system. A source or discovery
+installation change invalidates a pending probe result, including reinstallation
+of the same provider. The final discovery check runs while the raw source has a
+publication reservation. The discovery generation check does not keep a
+replaced provider alive; hosts must coordinate provider disposal with its use.
 
 Native public asset loads capture `IRuntimeHostFileReadBackend` after load-route
 admission. The same instance performs the preflight existence check and the

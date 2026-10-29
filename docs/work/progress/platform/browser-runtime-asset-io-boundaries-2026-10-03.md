@@ -1,5 +1,21 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## YAML discovery generation (2026-10-29)
+
+YAML path probes now reject a discovery installation change while the raw-read
+source has a publication reservation. This covers replacement, reinstallation
+of the same provider, and provider installation during the raw-read fallback.
+The check does not retain a replaced provider's lifetime. The [investigation](../../investigations/platform/2026-10-29-yaml-asset-path-probe.md)
+records why provider disposal needs a separate coordinated host contract.
+
+The focused YAML fixture passes 11 tests. Editor, Server, and VRClient Release
+builds pass on Linux with Windows targeting enabled. The desktop filesystem
+headless fixture passes. All 19 portable manifest projects compile for
+browser-wasm, and Browser publishes with native WASM and pinned Jolt inputs.
+The gate logs contain no warning or error diagnostics. These checks do not
+establish Windows startup or browser rendering. The direct-file and blocking
+inventory counts are unchanged, and both broad requirements remain open.
+
 ## YAML asset path admission (2026-10-29)
 
 YAML asset path lookup uses the captured raw-read owner and its host-file
