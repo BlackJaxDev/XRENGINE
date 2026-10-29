@@ -1,5 +1,6 @@
 using XREngine.Imaging;
 using MemoryPack;
+using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
@@ -221,6 +222,7 @@ namespace XREngine.Rendering
         public abstract uint MaxDimension { get; }
 
         private int _minLOD = -1000;
+        [DefaultValue(-1000)]
         public int MinLOD
         {
             get => _minLOD;
@@ -228,6 +230,7 @@ namespace XREngine.Rendering
         }
 
         private int _maxLOD = 1000;
+        [DefaultValue(1000)]
         public int MaxLOD
         {
             get => _maxLOD;
@@ -242,6 +245,7 @@ namespace XREngine.Rendering
         }
 
         private int _smallestAllowedMipmapLevel = 1000;
+        [DefaultValue(1000)]
         public int SmallestAllowedMipmapLevel
         {
             get => _smallestAllowedMipmapLevel;

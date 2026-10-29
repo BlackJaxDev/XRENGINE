@@ -84,6 +84,18 @@ still be read, but their omitted pixels cannot be recovered. The separate
 ## Published sky texture assets
 
 All six texture diagnostics use authored assets from the engine content package.
+The native fixture cooker first saves each texture under `authored-skies/` with
+the normal asset serializer. It releases the original object, then reloads the
+file through `AssetManager.DeserializeAssetFile` as `XRTexture`. The saved header
+must restore the concrete type and persistent identity. The reloaded canonical
+payload must match the original bytes before the cooker writes the envelope.
+Only the cooked envelope enters the browser content package.
+
+`XRTexture` declares the construction defaults for `MinLOD`, `MaxLOD`, and
+`SmallestAllowedMipmapLevel` as YAML default values. This preserves authored zero
+limits when the serializer omits defaults. Previously saved files that omitted
+those zeros still load construction defaults; the lost values cannot be inferred.
+
 `BrowserSkyTextureFixtures` cooks stable identities and canonical `BinaryV2`
 envelopes with MemoryPack suppressed. Cube payloads use explicit nested mip
 storage; image payloads use the existing full `XRTexture2D` reader, including
@@ -117,6 +129,8 @@ reclamation. The route uses the browser interpreter and canonical reflection
 loading; it does not establish AOT texture decoding or packaged Editor publication.
 See the [cube record](../../work/investigations/rendering/archive/2026-10-29-published-cube-sky-qualification.md)
 and [image ownership record](../../work/investigations/rendering/archive/2026-10-29-published-image-sky-qualification.md).
+The [saved texture record](../../work/investigations/rendering/archive/2026-10-29-saved-sky-texture-limits.md)
+describes the native file round trip and its compatibility limit.
 
 ## Explicit limits
 

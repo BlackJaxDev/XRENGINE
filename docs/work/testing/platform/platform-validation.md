@@ -525,6 +525,32 @@ measure source retention, not immediate heap reclamation. AOT decoding, packaged
 Editor export, external sky dependencies, platform encoders, hardware acceptance,
 and complete shader coverage remain open. Requirement counts are unchanged.
 
+### Saved sky texture limits — 2026-10-29
+
+The six sky fixture assets now pass through native file save and reload before
+canonical cooking. The original object is released first. The cooker rejects
+changed concrete types, persistent identities, or canonical payload bytes.
+Native save/load exposed zero `MinLOD` and `MaxLOD` values omitted by YAML;
+correct default annotations preserve these values and zero
+`SmallestAllowedMipmapLevel`. The [saved texture record](../../investigations/rendering/archive/2026-10-29-saved-sky-texture-limits.md)
+records the before/after values and the ruled-out type-loss hypothesis.
+
+All 66 focused tests pass, including six default/zero/nonzero YAML cases.
+All six saved assets repeat byte-identically. Their cooked payloads also repeat
+identically and match the prior direct-cook bytes. All 24 build/publication gates
+pass with zero compiler warnings/errors. All 226 targeted texture samples pass,
+with exact published paths and source ownership, drained staging, and two clean
+source stops per profile. Selected captures were viewed. The full software
+WebGPU run passes 23 selected checks, with three explicit optional skips,
+324 sky samples, and 24 strict indirect lifecycle/resize stages. Fresh cooking
+packages 57 shaders, fourteen passes, and 118 assets. Metadata verification,
+compiled closure, bundle, and final host/page byte checks pass.
+
+Old files with omitted zeros cannot recover the authored values. Global world
+sky bindings, packaged Editor export, AOT decoding, platform compression, hardware
+acceptance, and complete shader coverage remain open. Requirement counts are
+unchanged.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

@@ -132,3 +132,7 @@ current owner below explicitly adopts it.
 - [Published image sky qualification](2026-10-29-published-image-sky-qualification.md)
   connects canonical image cooking to browser rendering and removes duplicate decoder construction.
   Current limits are in [platform validation](../../../testing/platform/platform-validation.md#published-image-sky-loading-and-decoder-ownership--2026-10-29).
+
+- [Saved sky texture limits](2026-10-29-saved-sky-texture-limits.md)
+  records native file cooking and preservation of authored zero LOD limits.
+  Current limits are in [platform validation](../../../testing/platform/platform-validation.md#saved-sky-texture-limits--2026-10-29).

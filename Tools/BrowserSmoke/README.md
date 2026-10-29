@@ -87,8 +87,12 @@ remain separate. The manual page selects this fixture with `probe=sky-cube-filte
 
 All six texture sky profiles load canonical cooked assets through the production
 async asset source in `Published` mode. The metadata fixture cooker emits their
-pixels and sampling settings. The recipe packages the two cubes plus HDR and
-filtered equirectangular/octahedral images under `/game/Sky*.asset`. The checks
+pixels and sampling settings after saving and reloading six native `.asset`
+files under its `authored-skies/` output. It releases the original objects before
+loading and requires unchanged concrete types, identities, and canonical bytes.
+This checks saved zero LOD clamps as well as pixel and sampling preservation.
+The recipe packages the two cubes plus HDR and filtered equirectangular/octahedral
+images under `/game/Sky*.asset`. The checks
 require the exact asset path, one retained asset/object, drained staging, and
 exact native pixel estimates: 768/504 bytes for cubes, 256/512 for HDR images,
 and 172/340 for filtered images. Stop must remove every asset source. These

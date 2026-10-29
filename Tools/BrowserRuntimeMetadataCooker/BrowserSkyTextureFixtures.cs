@@ -21,25 +21,55 @@ internal static partial class BrowserSkyTextureFixtures
 
     private static void WriteTexture(XRTexture texture, string name, string directory, Guid identity)
     {
+        Type expectedType = texture.GetType();
+        string authoredDirectory = Path.Combine(directory, "authored-skies");
+        Directory.CreateDirectory(authoredDirectory);
+        string assetPath = Path.Combine(authoredDirectory, Path.GetFileNameWithoutExtension(name) + ".asset");
+        byte[] expectedPayload;
         try
         {
             texture.AdoptPersistentID(identity);
-            byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(texture));
+            expectedPayload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(texture));
+            texture.SerializeTo(assetPath, AssetManager.Serializer);
+        }
+        finally
+        {
+            DestroyTexture(texture);
+        }
+
+        XRTexture? restored = null;
+        try
+        {
+            // Read from disk after releasing the source. The normal native asset
+            // reader must resolve the concrete texture type from its saved header.
+            restored = AssetManager.DeserializeAssetFile(assetPath, typeof(XRTexture)) as XRTexture
+                ?? throw new InvalidDataException($"Saved sky '{name}' did not restore a texture.");
+            if (restored.GetType() != expectedType || restored.ID != identity)
+                throw new InvalidDataException($"Saved sky '{name}' changed its concrete type or persistent identity.");
+            byte[] payload = CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(() => CookedBinarySerializer.Serialize(restored));
+            if (!payload.AsSpan().SequenceEqual(expectedPayload))
+                throw new InvalidDataException($"Saved sky '{name}' changed its canonical texture payload.");
             byte[] envelope = CookedAssetEnvelope.Serialize(new CookedAssetBlob(
-                texture.GetType().AssemblyQualifiedName!, CookedAssetFormat.BinaryV2, payload));
+                expectedType.AssemblyQualifiedName!, CookedAssetFormat.BinaryV2, payload));
             File.WriteAllBytes(Path.Combine(directory, name), envelope);
         }
         finally
         {
-            if (texture is XRTextureCube cube)
-                foreach (var level in cube.Mipmaps)
-                    foreach (Mipmap2D face in level.Sides)
-                        face.Data?.Dispose();
-            if (texture is XRTexture2D image)
-                foreach (Mipmap2D mip in image.Mipmaps)
-                    mip.Data?.Dispose();
-            texture.Destroy(true);
+            if (restored is not null)
+                DestroyTexture(restored);
         }
+    }
+
+    private static void DestroyTexture(XRTexture texture)
+    {
+        if (texture is XRTextureCube cube)
+            foreach (var level in cube.Mipmaps)
+                foreach (Mipmap2D face in level.Sides)
+                    face.Data?.Dispose();
+        if (texture is XRTexture2D image)
+            foreach (Mipmap2D mip in image.Mipmaps)
+                mip.Data?.Dispose();
+        texture.Destroy(true);
     }
 
     /// <summary>Creates distinct face, column, and row values in exact half-float storage.</summary>
