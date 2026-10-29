@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Rendering;
 using XREngine.Scene;
 
@@ -183,9 +184,15 @@ internal sealed class EngineRuntimeSceneStreamingHostServices : IRuntimeSceneStr
         if (Path.IsPathFullyQualified(trimmed) || Path.IsPathRooted(trimmed))
             return trimmed;
 
+        return ResolveHostSceneAssetPath(trimmed, Engine.Assets.GameAssetsPath);
+    }
+
+    internal static string ResolveHostSceneAssetPath(string trimmed, string gameAssetsPath)
+    {
         string relativePath = trimmed.Replace('/', Path.DirectorySeparatorChar);
-        string fromGameAssets = Path.Combine(Engine.Assets.GameAssetsPath, relativePath);
-        if (File.Exists(fromGameAssets))
+        string fromGameAssets = Path.Combine(gameAssetsPath, relativePath);
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+        if (RuntimeFileDiscoveryServices.HostFileExists(read, fromGameAssets, "Scene asset path lookup"))
             return fromGameAssets;
 
         if (Path.HasExtension(fromGameAssets))

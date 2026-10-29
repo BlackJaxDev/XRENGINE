@@ -1,5 +1,28 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Scene path host-file probe (2026-10-29)
+
+Relative host scene paths now use the admitted, source-owned discovery probe
+shared with YAML path resolution. A discovery or raw-source replacement during
+that probe rejects its result. Existing extensionless paths keep their names;
+missing extensionless paths gain the asset extension. Rooted paths and catalog
+identities keep their prior routes. Caller-thread hosts cannot run the relative
+host-file probe. The discovery provider still has no retirement lease.
+
+Seven focused scene-path tests and all 11 YAML path tests pass. They cover
+extension handling, rooted paths, catalog lookup, caller-thread admission,
+desktop fallback, and source and discovery replacement. A separate runtime
+probe passes the bounded path checks. Editor, Server, and VRClient Release
+builds pass on Linux with Windows targeting enabled. The desktop filesystem
+headless fixture passes. All 19 portable manifest projects compile for
+browser-wasm, and Browser publishes with native WASM and pinned Jolt inputs.
+The gate logs contain no warning or error diagnostics. These checks do not
+establish Windows startup, live scene loading, or browser rendering.
+
+The tracked-source scan reports 16 files / 67 direct-file matching lines across
+Data, Core, Rendering, and Host. The expression includes comments and misses
+target-typed constructors. Both broad inventory requirements remain open.
+
 ## VMD host-file output placement (2026-10-29)
 
 VMD path saving now checks host-file admission and captures the optional

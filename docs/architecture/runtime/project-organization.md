@@ -196,6 +196,12 @@ of the same provider. The final discovery check runs while the raw source has a
 publication reservation. The discovery generation check does not keep a
 replaced provider alive; hosts must coordinate provider disposal with its use.
 
+Relative host scene paths use the same admitted host-file probe as YAML asset
+paths. Existing extensionless files keep their names; missing extensionless
+paths gain the asset extension. Rooted paths keep their existing direct route,
+and catalog scene identities use catalog metadata. A caller-thread host cannot
+perform the relative host-file probe.
+
 Synchronous VMD animation loading requires host-file admission and an installed
 `IRuntimeHostFileReadBackend`. It opens the file with `FileShare.Read` and
 disposes the stream after parsing. The captured provider is not a retirement

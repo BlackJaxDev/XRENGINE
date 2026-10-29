@@ -37,6 +37,21 @@ public static class RuntimeFileDiscoveryServices
             return ReferenceEquals(_current, provider) && _generation == generation;
     }
 
+    /// <summary>Checks a host file against one raw-read and discovery installation.</summary>
+    public static bool HostFileExists(RuntimeAssetReadLease read, string path, string operation)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        read.EnsureHostFileAccess(operation);
+        IRuntimeFileDiscovery? discovery = Capture(out long generation);
+        bool exists = discovery is IRuntimeHostFileReadBackend files
+            ? files.FileExists(path)
+            : read.Exists(path);
+        using IDisposable publication = read.BeginPublication();
+        if (!IsCurrent(discovery, generation))
+            throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the asset file discovery installation changed during the path lookup.");
+        return exists;
+    }
+
     public static IRuntimeFileDiscovery Required => Current ?? throw new NotSupportedException(
         "File discovery is not installed. The host must provide its storage enumeration capability.");
 

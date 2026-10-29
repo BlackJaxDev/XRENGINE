@@ -357,15 +357,7 @@ namespace XREngine
             if (source is IRuntimeAssetCatalog)
                 return read.Exists(path);
 
-            read.EnsureHostFileAccess("YAML asset path lookup");
-            IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long generation);
-            bool exists = discovery is IRuntimeHostFileReadBackend files
-                ? files.FileExists(path)
-                : read.Exists(path);
-            using IDisposable publication = read.BeginPublication();
-            if (!RuntimeFileDiscoveryServices.IsCurrent(discovery, generation))
-                throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the asset file discovery installation changed during the path lookup.");
-            return exists;
+            return RuntimeFileDiscoveryServices.HostFileExists(read, path, "YAML asset path lookup");
         }
 
         private static bool TryLoadUntrackedTextAsset(string resolvedPath, Type expectedType, out object? value)
