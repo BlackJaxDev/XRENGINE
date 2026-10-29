@@ -13,9 +13,9 @@ namespace XREngine.Rendering.Models.Gaussian.Baking.Pipeline;
 /// <see cref="GaussianBakePipeline.RunAsync(GaussianBakePreparation, CancellationToken)"/> continues the bake with it.
 /// </summary>
 /// <remarks>
-/// The editor command prepares the bake before the engine starts, as the content load of a world must complete before
-/// the engine runs. A preparation that failed already holds the failed report, and the output folder holds that
-/// report when <see cref="ReportPath"/> is not null.
+/// The editor command prepares the bake before the engine starts, so that a load failure exits with its failure code
+/// before the engine starts. A preparation that failed already holds the failed report, and the output folder holds
+/// that report when <see cref="ReportPath"/> is not null.
 /// </remarks>
 public sealed class GaussianBakePreparation
 {
