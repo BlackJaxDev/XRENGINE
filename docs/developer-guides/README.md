@@ -8,6 +8,7 @@ These docs are intentionally closer to the code than the user guide. They should
 
 ## Main Areas
 
+- [Maintainer Code And Writing Style](ai/maintainer-style.md)
 - [AI and MCP](ai/mcp-server.md)
 - [Local Agent Broker](ai/local-agent-broker.md)
 - [Work Doc Templates](ai/work-doc-templates.md)
