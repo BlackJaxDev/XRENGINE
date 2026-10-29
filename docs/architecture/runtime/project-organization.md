@@ -221,6 +221,17 @@ supplies both capabilities. Custom font-authoring hosts must supply the relevant
 capabilities; missing providers follow each caller's existing failure handling.
 These captures do not add an atomic file snapshot or a source-retirement lease.
 
+Remote asset serving retains its captured runtime source and owner epoch. When
+no source is installed, it captures `IRuntimeHostFileReadBackend` lazily for
+host-file existence checks and uses the same object as
+`IRuntimeHostFileAsyncReadBackend` for the cancellable byte read. Empty and
+missing paths return before an asynchronous read. Source-backed and catalog
+requests keep their own read paths. The owner is checked before response
+publication; provider capture itself is not a provider-retirement lease.
+Desktop and smoke-publisher hosts provide both file capabilities. Custom native
+hosts that serve host files must provide both. A missing async capability fails
+explicitly; it does not substitute a synchronous read.
+
 Published archive configuration captures one host-file read provider when any
 archive path is supplied. It uses that provider for all three root existence
 probes. Missing, invalid, or inaccessible paths are cleared by the existing

@@ -2,7 +2,7 @@ using XREngine.Core.Files;
 using XREngine.Data;
 
 /// <summary>Provides local authored-file discovery, metadata operations, and direct reads for the publisher.</summary>
-internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend
+internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend
 {
     public bool SupportsChangeNotifications => false;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption option)
@@ -17,6 +17,7 @@ internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
     public bool FileExists(string path) => File.Exists(path);
     public Stream OpenRead(string path, FileShare share) => new FileStream(path, FileMode.Open, FileAccess.Read, share);
     public byte[] ReadAllBytes(string path) => File.ReadAllBytes(path);
+    public Task<byte[]> ReadAllBytesAsync(string path, CancellationToken cancellationToken) => File.ReadAllBytesAsync(path, cancellationToken);
     public IEnumerable<string> ReadLines(string path) => File.ReadLines(path);
     public bool DirectoryExists(string path) => Directory.Exists(path);
     public void CreateDirectory(string path) => Directory.CreateDirectory(path);

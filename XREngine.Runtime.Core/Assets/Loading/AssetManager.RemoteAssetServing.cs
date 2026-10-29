@@ -1,4 +1,5 @@
 using XREngine.Core.Files;
+using XREngine.Data;
 
 namespace XREngine;
 
@@ -28,6 +29,9 @@ public partial class AssetManager
         {
             lifetime.Token.ThrowIfCancellationRequested();
             string? path = null;
+            IRuntimeHostFileReadBackend? hostFiles = null;
+            bool HostFileExists(string filePath)
+                => (hostFiles ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend()).FileExists(filePath);
 
             // Existence and metadata-root lookup are synchronous. Keep their owner
             // stable without holding the gate through source callbacks or file probes.
@@ -65,15 +69,15 @@ public partial class AssetManager
                     {
                         if (TryGetAssetByID(assetId, out XRAsset? asset) && !asset.IsDestroyed
                             && !string.IsNullOrWhiteSpace(asset.FilePath)
-                            && (!SupportsSynchronousAssetWork || (source?.Exists(asset.FilePath) ?? File.Exists(asset.FilePath))))
+                            && (!SupportsSynchronousAssetWork || (source?.Exists(asset.FilePath) ?? HostFileExists(asset.FilePath))))
                             path = asset.FilePath;
                         else if (SupportsSynchronousAssetWork && TryResolveAssetPathById(assetId, out string? resolved)
                             && !string.IsNullOrWhiteSpace(resolved)
-                            && (source?.Exists(resolved) ?? File.Exists(resolved)))
+                            && (source?.Exists(resolved) ?? HostFileExists(resolved)))
                             path = resolved;
                     }
                     else if (!string.IsNullOrWhiteSpace(requestedPath)
-                        && (!SupportsSynchronousAssetWork || (source?.Exists(requestedPath) ?? File.Exists(requestedPath))))
+                        && (!SupportsSynchronousAssetWork || (source?.Exists(requestedPath) ?? HostFileExists(requestedPath))))
                         path = requestedPath;
 
                     if (string.IsNullOrWhiteSpace(path))
@@ -91,9 +95,15 @@ public partial class AssetManager
             byte[] payload;
             try
             {
-                payload = source is null
-                    ? await File.ReadAllBytesAsync(path, lifetime.Token).ConfigureAwait(false)
-                    : await source.ReadAllBytesAsync(path, lifetime.Token).ConfigureAwait(false);
+                if (source is null)
+                {
+                    hostFiles ??= RuntimeFileDiscoveryServices.CaptureHostFileReadBackend();
+                    IRuntimeHostFileAsyncReadBackend asyncFiles = hostFiles as IRuntimeHostFileAsyncReadBackend
+                        ?? throw new NotSupportedException("AssetSource.HostFileAsyncReadUnavailable: the installed file system does not provide asynchronous host-file reads.");
+                    payload = await asyncFiles.ReadAllBytesAsync(path, lifetime.Token).ConfigureAwait(false);
+                }
+                else
+                    payload = await source.ReadAllBytesAsync(path, lifetime.Token).ConfigureAwait(false);
             }
             catch (FileNotFoundException) when (source is not IRuntimeAssetCatalog && source is { SupportsSynchronousReads: false })
             {
