@@ -238,6 +238,8 @@ browser representations under one verified managed-admission identity.
 
 [Browser engine-frame diagnostics](work/progress/rendering/browser-engine-frame-diagnostics-2026-10-02.md) records bounded per-frame validation receipts, retained labels, explicit WebGPU/Promise object counts and opt-in managed allocation/crossing measurements.
 
+[Browser tool host startup](work/investigations/platform/2026-10-29-browser-tool-host-startup.md) records explicit native provider installation, metadata-cooker validation, and the source-checkout publisher result.
+
 [Modular browser pipeline requirements](work/design/platform/modular-browser-render-pipelines-2026-10-02.md) records the shared Default, Advanced and authored-pipeline scope, including GPU-driven zero-readback submission. The [implementation record](work/progress/rendering/browser-modular-pipeline-contracts-2026-10-02.md) distinguishes generic asset/catalog contracts from pending Advanced stage execution.
 
 [Engine color MSAA resolve](work/progress/rendering/browser-color-msaa-resolve-2026-10-02.md) records shared renderbuffer ownership, retained four-to-one color resolves, precise unsupported combinations and remaining GPU acceptance.

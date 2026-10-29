@@ -9,5 +9,7 @@ For rendering, use [Rendering Investigations](rendering/README.md).
 
 Runtime input: [Browser snapshot transient input edges](runtime/browser-snapshot-transient-edges-2026-10-02.md).
 
+- [Browser tool host startup](platform/2026-10-29-browser-tool-host-startup.md): explicit file-provider installation before engine asset registration, fresh-process metadata checks, and source-checkout game publication.
+
 - [Windows CI Build Preparation](platform/windows-ci-build-preparation-2026-10-05.md): workload provisioning, native symbols, and Visual Studio discovery; hosted-runner confirmation pending.
 - [Skinned GPU Chain Benchmark](physics/skinned-gpu-chain-benchmark-2026-10-06.md): GPU palette, bounds, repeated benchmark lifecycle, and scale measurements.

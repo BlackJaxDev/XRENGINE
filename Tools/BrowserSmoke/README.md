@@ -323,6 +323,12 @@ not a separate scene DTO. It qualifies the headless world lifecycle, published
 binary hydration, and hash-verified asset path; it is not a representative game,
 renderer, or physical-device parity result.
 
+The metadata cooker and native publisher driver install their host file
+provider before engine asset registration. See [native tool host
+services](../BrowserToolHost/README.md) for writable folder ownership and
+the shared source include. In cook, verify, and scan modes, metadata-cooker
+host state stays beside the payload directory, outside its contents.
+
 Optional `--jolt-spike <jolt-browser-spike-wwwroot>` mounts the separately published
 native spike, runs its existing native assertions twice, requires native teardown
 completion, and rejects any worker starts in this single-threaded profile. Omitted

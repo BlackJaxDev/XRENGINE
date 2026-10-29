@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Reflection;
 using XREngine;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Execution;
 using XREngine.Publishing;
 using XREngine.Rendering;
@@ -12,6 +13,17 @@ using XREngine.Runtime.Diagnostics.Native;
 using XREngine.Scene;
 
 NativeDebugBackendRegistration.EnsureRegistered();
+if (!(args.Length == 3 && args[0] == "--scan") && args.Length != 2)
+    throw new ArgumentException("Usage: BrowserRuntimeMetadataCooker <world-yaml> <output-directory> | --verify <fixture-directory> | --scan <browser-binaries> <site-directory>");
+
+// Engine asset registration initializes AssetManager and requires the host first.
+// Keep writable state beside the payload so verify and scan do not change it.
+string hostRoot = Path.GetFullPath(args[^1]).TrimEnd(Path.DirectorySeparatorChar) + ".host";
+AssetFileSystemServices.Current = new LocalAssetFileSystem();
+RuntimePlatformPaths.Current = new LocalPlatformPaths(hostRoot);
+Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.GameAssetsPath, Path.Combine(hostRoot, "Assets"));
+Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.GameCachePath, Path.Combine(hostRoot, "Cache"));
+Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.GameMetadataPath, Path.Combine(hostRoot, "Metadata"));
 ThreadedWorkerBackend.EnsureRegistered();
 if (args.Length == 3 && args[0] == "--scan")
 {
@@ -50,9 +62,6 @@ if (args.Length == 2 && args[0] == "--verify")
     Console.WriteLine($"Verified published browser smoke world '{verifiedWorld.Name}' and metadata {fingerprint}.");
     return;
 }
-if (args.Length != 2)
-    throw new ArgumentException("Usage: BrowserRuntimeMetadataCooker <world-yaml> <output-directory> | --verify <fixture-directory> | --scan <browser-binaries> <site-directory>");
-
 string worldSource = Path.GetFullPath(args[0]);
 string outputDirectory = Path.GetFullPath(args[1]);
 Directory.CreateDirectory(outputDirectory);

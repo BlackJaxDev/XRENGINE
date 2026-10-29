@@ -1,0 +1,8 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)LocalAssetFileSystem.cs" Link="Host/LocalAssetFileSystem.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)LocalPlatformPaths.cs" Link="Host/LocalPlatformPaths.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Runtime.Platform.Desktop/TextureStreamingCacheFileWriter.cs" Link="Host/TextureStreamingCacheFileWriter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Runtime.Platform.Desktop/HostBinaryCacheFileWriter.cs" Link="Host/HostBinaryCacheFileWriter.cs" />
+  </ItemGroup>
+</Project>

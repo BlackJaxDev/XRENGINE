@@ -162,6 +162,51 @@ Architecture: [Browser renderer module design](../../design/rendering/browser-wa
 
 ## Unified Runtime UR Verification View
 
+### Native tool and software browser follow-up — 2026-10-29
+
+The [native tool startup investigation](../../investigations/platform/2026-10-29-browser-tool-host-startup.md)
+records the provider-order fix and fresh-process metadata checks. The native
+publisher driver also completed the real Editor build path from the source
+checkout: canonical RollingBall output contains 83 assets, 40 shader artifacts,
+and 9 pipeline passes. All 187 canonical inputs remain unchanged. This is not
+the packaged Editor CLI or Editor UI qualification.
+
+The existing `Tools/BrowserSmoke/run.mjs` ran against the native-WASM browser
+publish and a freshly cooked engine fixture. It used Slang 2026.8, Playwright
+1.63.0, Chromium 154.0.8037.57, and explicit SwiftShader software mode on Linux.
+All 13 selected checks passed without changing their assertions:
+
+| Check group | Result |
+|---|---|
+| Depth and transforms | Known pixels and occlusion pass. |
+| Texture sampling and lifetime | Five cases pass. |
+| Lit HDR and tonemap | Fourteen numeric cases and resize checks pass. |
+| Unlit materials | Material board, mutation, resize, and restart checks pass. |
+| Unlit MSAA | Color resolve, blended coverage, and AO profiles pass. |
+| Unlit indirect | GPU indexed-indirect profiles, MSAA, AO, and lifecycle checks pass. |
+| Shared GTAO and bloom | Twenty-one cases, resize, occluded emission, and restart checks pass. |
+| Directional shadow | Seven cases, map resize, toggles, and restart checks pass. |
+| Shared debug overlay | Fifteen cases, warm frame, resize, and restart checks pass. |
+| World start and stop | Two real engine world lifecycle iterations pass. |
+| Audio stream samples | Offline production audio executor checks pass. |
+| Asset delivery and lifetime | Verified reads and owner lifetime checks pass. |
+| Local delivery | No external or failed resource requests. |
+
+The run retained 118 PNG captures. Depth, HDR, and shadow captures were viewed.
+The bare-host autostart, optional game, and separate Jolt spike checks were
+skipped in this run. A separate `--game-only --game-kind rollingball` run against
+the newly activated bundle passes both game and local-delivery checks. It uses
+two fresh shipping-player contexts with Jolt physics. Tilt and reset change the
+canvas, pause/resume changes the authored HUD, and both resize checks retain
+the world. The game canvas was viewed.
+
+This result establishes software API and shader behavior
+for the selected fixtures. Hardware performance, mobile devices, desktop parity,
+sky projections, and complete shader coverage remain open. No requirement count
+changes with this evidence.
+
+### Requirement states
+
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.
 
 | ID | State | Procedure, expected result, and evidence boundary |

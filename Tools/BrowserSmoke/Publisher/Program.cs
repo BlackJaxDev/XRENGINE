@@ -25,10 +25,10 @@ CanonicalProjectSnapshot snapshot = CanonicalProjectSnapshot.Copy(canonicalProje
 try
 {
     ThreadedWorkerBackend.EnsureRegistered();
-    using IDisposable services = RuntimeAssetBootstrap.InstallEngineAssetServices();
     AssetFileSystemServices.Current = new LocalAssetFileSystem();
     ShaderSourceFileBackendServices.Current = new LocalShaderSourceFileBackend();
     RuntimePlatformPaths.Current = new LocalPlatformPaths(validationRoot);
+    using IDisposable services = RuntimeAssetBootstrap.InstallEngineAssetServices();
     RollingBallRuntimeRegistration.Register();
 
     string projectFile = snapshot.ProjectFile;

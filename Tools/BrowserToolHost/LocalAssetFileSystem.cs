@@ -3,7 +3,7 @@ using XREngine.Data;
 using XREngine.Rendering;
 using XREngine.Runtime.Platform.Desktop;
 
-/// <summary>Provides local authored-file discovery, metadata operations, and direct reads for the publisher.</summary>
+/// <summary>Provides local authored-file discovery, metadata operations, and direct reads for native browser tools.</summary>
 internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, IHostBinaryCacheFileBackend, ITextureStreamingCacheFileBackend, ITextureStreamingCacheReplaceBackend
 {
     public bool SupportsChangeNotifications => false;
@@ -14,7 +14,7 @@ internal sealed class LocalAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
     public IEnumerable<string> EnumerateFileSystemEntries(string path)
         => Directory.EnumerateFileSystemEntries(path);
     public IAssetChangeMonitor CreateChangeMonitor()
-        => throw new NotSupportedException("The publisher qualifier does not monitor source changes.");
+        => throw new NotSupportedException("The browser tool host does not monitor source changes.");
 
     public bool FileExists(string path) => File.Exists(path);
     public Stream OpenRead(string path, FileShare share) => new FileStream(path, FileMode.Open, FileAccess.Read, share);

@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <Import Project="../BrowserToolHost/BrowserToolHost.props" />
   <ItemGroup>
     <ProjectReference Include="../../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.Rendering/XREngine.Runtime.Rendering.csproj" />

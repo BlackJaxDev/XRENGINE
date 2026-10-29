@@ -46,7 +46,7 @@ The completed UR00 reference-harness requirements and their evidence are in the 
 
 ### UR11 — Editor Browser Publishing On The Unified Path
 
-- [ ] **UR11.04** Keep the CLI entry point (`--build-project <project> --build-platform BrowserWebGPU`) and the editor Build Project action stable. Browser publishing must also work from a packaged editor, not only a source checkout. At `7636cee44`, the packaged source payload compiles and publishes native WebAssembly with external build outputs; its 5,606 files remain unchanged. Full packaged Editor CLI and game publication remain unverified.
+- [ ] **UR11.04** Keep the CLI entry point (`--build-project <project> --build-platform BrowserWebGPU`) and the editor Build Project action stable. Browser publishing must also work from a packaged editor, not only a source checkout. At `7636cee44`, the packaged source payload compiles and publishes native WebAssembly with external build outputs; its 5,606 files remain unchanged. The native tool host startup fix now lets the source-checkout publisher complete canonical RollingBall publication; see the [live tool results](../../investigations/platform/2026-10-29-browser-tool-host-startup.md). Full packaged Editor CLI and game publication remain unverified.
 
 
 ### UR13 — Performance, Runtime Mode, And Size
