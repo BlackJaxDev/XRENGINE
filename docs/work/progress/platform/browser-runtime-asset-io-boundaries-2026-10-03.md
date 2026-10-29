@@ -1,5 +1,60 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Texture cache write placement (2026-10-29)
+
+Implementation commit `7983f642e439080071f7947cf31dd6accaa68a78` moves
+staged texture cache file operations to the optional
+`ITextureStreamingCacheFileBackend` on the installed asset file system. The
+writer captures one backend and retains the original order: prepare the parent,
+rent and serialize the payload, write the temporary file, release the payload
+lease, then publish and stamp. Desktop and the smoke publisher use the same
+native helper. The [composition contract](../../../architecture/runtime/project-organization.md)
+records custom-host requirements and the existing replacement limitations.
+
+The cache path, binary payload, temporary-file flags, delete-then-move order,
+and best-effort timestamp remain unchanged. This does not add an atomic replace,
+a provider-retirement lease, or same-path write serialization. A failed move can
+leave the previous file deleted, and failed writes can leave the temporary file.
+The payload span must be consumed before the backend returns. The host admission
+check remains outside the cache-write failure catch.
+
+A disposable executable against compiled Rendering passes nine checks. They
+cover exact large payload bytes, directory creation, timestamp, staged publish,
+replacement of an existing cache, retained provider through global replacement,
+prepare/write/publish failure handling, missing file system and optional
+capability, and async-only host rejection before backend calls. The fake backend
+links the same native helper used by desktop and the publisher. It does not
+exercise a failed native delete, move, or timestamp operation, or concurrent writes.
+The final harness builds with zero warnings and errors. The smoke publisher
+builds in Release with zero warnings and errors. Independent review found no
+format migration requirement and identified the existing replacement gap. No
+test code or assertion changed. The headless test project links the new native
+helper because it already links the desktop filesystem source. Evidence is in
+`Build/_AgentValidation/20261028-120000-webgpu-io/logs/texture-write-smoke-build.log`,
+`logs/texture-write-smoke.log`, `logs/texture-write-publisher-build.log`, and
+`reports/texture-write-inventory.json`.
+
+The initial full gate passed Editor, Server, and VRClient but the headless
+build failed: its source-linked desktop filesystem did not include the new
+helper. Commit `3ae35e0e0` adds that source link. The corrected headless build
+passes with zero warnings and errors, and the unchanged desktop filesystem
+fixture passes one test. The desktop builds do not consume that headless project
+and remain valid for the same implementation source. The browser gate resumes
+separately after the fix. All 19 manifest projects compile for `browser-wasm`;
+Browser publishes with native WASM and pinned Jolt inputs. The browser gate
+reports no warning or error diagnostics. Logs are
+`logs/texture-write-full-gate.log`, `logs/texture-write-headless-build.log`,
+`logs/texture-write-headless-test.log`, and `logs/texture-write-browser-gate.log`.
+Fresh output is `texture-write-browser-publish/wwwroot/`. These checks do not
+establish Windows startup, actual GPU texture appearance, rendered browser
+parity, or post-push CI. Shader sources and recipes did not change.
+
+The committed-source scan reports 23 files / 76 direct-file matching lines in
+the four roots. Core plus Rendering total 8 files / 17 lines. It removes six
+matching lines and one file. The target-typed temporary `FileStream` constructor
+was not counted by the historical expression. Blocking counts are unchanged.
+Both broad inventory requirements remain open.
+
 ## Texture source probe placement (2026-10-29)
 
 Implementation commit `f85fb46daca8856a5ec242f10d43243dceb38854` moves
