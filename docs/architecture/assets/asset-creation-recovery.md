@@ -102,6 +102,19 @@ manifest, a journal, and a 4 KiB journal reserve. The limits are 512 MiB and
 1,024 files. Prepare throws `AssetRecovery.QuotaExceeded` before it writes when
 a limit would be exceeded.
 
+Prepare counts the retained files again while it holds the cooperating-writer
+lock. Unknown files and the lock file count toward the quota. A failed file-size
+read stops the operation; it cannot reduce the recorded total.
+
+On Windows, the store captures the installed `IAssetRecoveryCapacityBackend`
+and its installation generation. `DesktopAssetFileSystem` supplies the scanner.
+It holds directory handles, checks file identities, rejects linked entries, and
+limits the directory stack to 64 frames. An inspection failure or a changed
+provider stops new work without a path-based fallback. Opening an over-quota
+store remains read-only and exposes its records. The quota prevents new staging;
+it does not delete retained files. This scan does not make publication or other
+filesystem writers atomic.
+
 ## Native Asset Browser
 
 The asset row menu has a **Create New...** submenu. It lists the creatable asset

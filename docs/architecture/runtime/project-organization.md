@@ -171,6 +171,15 @@ operations. Metadata ID lookup keeps its warning and false result when this
 fallback is unavailable. Browser, catalog, and caller-thread restrictions remain;
 this interface does not add synchronous metadata access to those modes.
 
+Windows asset creation recovery uses `IAssetRecoveryCapacityBackend` on the
+installed `IAssetFileSystem`. Core owns the journal, quota, and reservations.
+Desktop owns the directory-handle walk and native calls. The store captures one
+provider and installation generation. Each capacity scan requires that same
+installation before and after the walk. Missing capability, stale installation,
+and inspection failure stop the operation without a path-based fallback.
+Non-Windows stores use the managed walk. These checks do not replace project
+ownership or make filesystem publication atomic.
+
 Direct authored YAML reads and the bounded asset-header scans use the optional
 `IRuntimeHostFileReadBackend` capability on the installed file discovery
 provider. Runtime.Core keeps YAML parsing, type resolution, and prefab load

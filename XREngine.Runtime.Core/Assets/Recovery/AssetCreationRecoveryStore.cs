@@ -23,7 +23,7 @@ namespace XREngine.Assets.Recovery;
 /// not control other writers. Full power-loss durability is not claimed.
 /// </para>
 /// </remarks>
-public sealed class AssetCreationRecoveryStore
+public sealed partial class AssetCreationRecoveryStore
 {
     /// <summary>The schema version that this store reads and writes.</summary>
     public const int SchemaVersion = 1;
@@ -54,6 +54,7 @@ public sealed class AssetCreationRecoveryStore
         Root = root;
         _maximumBytes = maximumBytes;
         _maximumFiles = maximumFiles;
+        CaptureCapacityBackend();
     }
 
     /// <summary>Gets the full project root path.</summary>
@@ -162,6 +163,7 @@ public sealed class AssetCreationRecoveryStore
         using FileStream fileLock = AcquireLock();
         lock (_gate)
         {
+            Recount();
             if (_usedBytes + reserveBytes > _maximumBytes || _usedFiles + reserveFiles > _maximumFiles)
                 throw new IOException($"AssetRecovery.QuotaExceeded: The recovery store needs {reserveBytes} bytes and {reserveFiles} files. " +
                     $"It holds {_usedBytes} of {_maximumBytes} bytes and {_usedFiles} of {_maximumFiles} files.");
@@ -377,6 +379,7 @@ public sealed class AssetCreationRecoveryStore
     {
         lock (_gate)
         {
+            Recount();
             _operations.Clear();
             if (Directory.Exists(Root))
             {
@@ -384,7 +387,6 @@ public sealed class AssetCreationRecoveryStore
                 foreach (string directory in Directory.EnumerateDirectories(Root))
                     _operations.Add(ReadOperation(directory));
             }
-            Recount();
         }
     }
 
@@ -522,6 +524,7 @@ public sealed class AssetCreationRecoveryStore
 
     private FileStream AcquireLock()
     {
+        RequireCapacityBackend();
         Directory.CreateDirectory(Root);
         RequireUnlinked(Root);
         string path = Path.Combine(Root, LockFileName);
@@ -543,15 +546,7 @@ public sealed class AssetCreationRecoveryStore
 
     private void Recount()
     {
-        long bytes = 0;
-        int count = 0;
-        if (Directory.Exists(Root))
-            foreach (string file in Directory.EnumerateFiles(Root, "*", SearchOption.AllDirectories))
-            {
-                try { bytes += new FileInfo(file).Length; }
-                catch (IOException) { }
-                count++;
-            }
+        (long bytes, int count) = CountRetainedFiles();
         _usedBytes = bytes;
         _usedFiles = count;
     }

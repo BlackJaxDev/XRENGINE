@@ -8,8 +8,13 @@ using XREngine.Rendering;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Provides host file discovery, metadata operations, and direct reads under ordinary filesystem permissions.</summary>
-public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetAuthoringPathBackend, IRuntimeHostFileReadBackend, IBvhDiskCacheBackend
+public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetAuthoringPathBackend, IAssetRecoveryCapacityBackend,
+    IRuntimeHostFileReadBackend, IBvhDiskCacheBackend
 {
+    (long Bytes, int Files) IAssetRecoveryCapacityBackend.Count(string root, long additionalBytes,
+        int additionalFiles, long maximumBytes, int maximumFiles)
+        => NativeAssetRecoveryCapacityWindows.Count(root, additionalBytes, additionalFiles, maximumBytes, maximumFiles);
+
     public bool SupportsChangeNotifications => true;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption searchOption)
         => Directory.EnumerateFiles(path, pattern, searchOption);
