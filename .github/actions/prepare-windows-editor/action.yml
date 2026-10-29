@@ -1,7 +1,7 @@
 name: Prepare the Windows Editor CLI toolchain
 description: >-
   Check out the pinned Editor submodules, stage the pinned shader compiler, set up .NET and the
-  WebAssembly workload, and optionally prepare browser physics and build the Editor.
+  WebAssembly workload from a cache when one exists, and optionally prepare browser physics and build the Editor.
 inputs:
   browser-physics:
     description: Prepare the pinned Jolt browser sources that the Editor publisher reads.
@@ -11,6 +11,12 @@ inputs:
     description: Build the Release Editor so that later publish steps can use --no-build.
     required: false
     default: 'true'
+  save-dotnet-cache:
+    description: >-
+      Save the .NET SDK and WebAssembly workload cache when no cache exists for this key. Set this in one job only,
+      so that parallel jobs do not race to save the same key.
+    required: false
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -56,8 +62,18 @@ runs:
           throw 'The staged Editor shader compiler does not match its recorded size and hash.'
         }
 
+    # The SDK goes into a job folder, not Program Files, so the workload installs as files that the cache can keep.
+    - name: Restore cached .NET SDK and WebAssembly workload
+      id: dotnet-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}\dotnet
+        key: dotnet-sdk-wasm-tools-${{ runner.os }}-${{ hashFiles('global.json') }}
+
     - name: Set up .NET 10
       uses: actions/setup-dotnet@v6
+      env:
+        DOTNET_INSTALL_DIR: ${{ runner.temp }}\dotnet
       with:
         global-json-file: global.json
 
@@ -66,6 +82,13 @@ runs:
       run: |
         dotnet workload install wasm-tools
         if ($LASTEXITCODE -ne 0) { throw 'The WebAssembly workload installation failed.' }
+
+    - name: Save .NET SDK and WebAssembly workload
+      if: ${{ inputs.save-dotnet-cache == 'true' && steps.dotnet-cache.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}\dotnet
+        key: ${{ steps.dotnet-cache.outputs.cache-primary-key }}
 
     - name: Prepare pinned browser physics sources
       if: ${{ inputs.browser-physics == 'true' }}

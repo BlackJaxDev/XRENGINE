@@ -53,6 +53,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 
 ## Developer Guides
 
+- [Maintainer Code And Writing Style](developer-guides/ai/maintainer-style.md): code layout, comments, Git text, and summaries.
 - [Hot-Path Analyzer](developer-guides/diagnostics/hot-path-analyzer.md): opt-in compiler allocation and local ownership checks.
 - [Software Vulkan Correctness Validation](developer-guides/testing/software-vulkan-validation.md)
 - [Test Suite Layout](developer-guides/testing/test-suite-layout.md)
