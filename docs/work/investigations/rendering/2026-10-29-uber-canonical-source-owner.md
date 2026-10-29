@@ -38,3 +38,17 @@ publication lease alone does not pin the shader backend or asset filesystem;
 point-in-time checks still allow a concurrent replacement before assignment.
 The host must keep path identities consistent across its shader and asset-read
 providers. No shader change is included in this batch.
+
+`RenderObjectPublicationScope` shares its batch with a parent scope. Disposing
+an incomplete nested scope aborts that batch, so a failed probe cannot simply
+use a nested scope and then continue with the fallback. A recovery design must
+also preserve the returned shader's lifetime if an enclosing publication fails.
+
+The shader backend and asset filesystem setters have no publication reservation.
+Adding a rejection to service setters requires a review of their teardown paths.
+For example, the runtime shader service installation disposes its installed
+service in a `finally` block after it attempts to restore the previous service.
+A new rejection there could leave the disposed service installed. Host-file
+admission also reads mutable caller-thread and shader-service state. The fix
+needs a coordinated lifetime and retry contract for these inputs, not only a
+second generation check.
