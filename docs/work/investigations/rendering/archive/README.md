@@ -104,3 +104,7 @@ current owner below explicitly adopts it.
 - [Clear procedural sky qualification](2026-10-29-clear-procedural-sky-qualification.md)
   records clear day/night atmosphere and the zero-cloud boundary. Current limits
   are in [platform validation](../../../testing/platform/platform-validation.md#clear-procedural-sky--2026-10-29).
+
+- [Procedural sun disc qualification](2026-10-29-sun-disc-qualification.md)
+  records HDR disc radiance, size, limb falloff, and foreground depth. Current
+  limits are in [platform validation](../../../testing/platform/platform-validation.md#procedural-sun-disc--2026-10-29).

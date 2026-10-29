@@ -13,13 +13,14 @@ internal sealed partial class EngineMeshDiagnosticFixture
     private SkyboxComponent? _skyComponent;
     private VisualScene3D? _skyVisual;
     private Transform? _skyCameraTransform;
+    private XRPerspectiveCameraParameters? _skyCameraParameters;
     private int _skyCase;
 
     private void InitializeSkyScene()
     {
         _skyTexture = _skyProfile switch
         {
-            EngineSkyDiagnosticProfile.Gradient or EngineSkyDiagnosticProfile.Procedural => null,
+            EngineSkyDiagnosticProfile.Gradient or EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun => null,
             EngineSkyDiagnosticProfile.Cubemap => CreateSkyCube(),
             EngineSkyDiagnosticProfile.Equirectangular => CreateSkyImage(false),
             EngineSkyDiagnosticProfile.Octahedral => CreateSkyImage(true),
@@ -27,7 +28,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
         };
         _skyComponent = CreateLightNode("Diagnostic sky background").AddComponent(() => new SkyboxComponent
         {
-            Mode = _skyProfile == EngineSkyDiagnosticProfile.Procedural ? ESkyboxMode.DynamicProcedural
+            Mode = _skyProfile is EngineSkyDiagnosticProfile.Procedural or EngineSkyDiagnosticProfile.Sun ? ESkyboxMode.DynamicProcedural
                 : _skyTexture is null ? ESkyboxMode.Gradient : ESkyboxMode.Texture,
             Projection = _skyProfile switch
             {
@@ -51,7 +52,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
 
     private void ConfigureSkyCamera(XRCamera camera, Transform transform)
     {
-        camera.Parameters = new XRPerspectiveCameraParameters(90, null, 0.1f, 10);
+        _skyCameraParameters = new XRPerspectiveCameraParameters(90, null, 0.1f, 10);
+        camera.Parameters = _skyCameraParameters;
         _skyCameraTransform = transform;
         SetSkyCase(0);
     }
@@ -62,6 +64,11 @@ internal sealed partial class EngineMeshDiagnosticFixture
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_sky || _skyComponent is null || _skyCameraTransform is null)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
+        if (_skyProfile == EngineSkyDiagnosticProfile.Sun)
+        {
+            SetSkySunCase(sampleCase);
+            return;
+        }
         if (_skyProfile == EngineSkyDiagnosticProfile.Procedural)
         {
             SetSkyProceduralCase(sampleCase);
@@ -90,7 +97,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         if (!_sky || _skyComponent?.Material is not { } material)
             throw new InvalidOperationException("EngineMeshDiagnostic.SkyCaseRequired.");
-        return FormattableString.Invariant($"{{\"sampleCase\":{_skyCase},\"semantic\":\"{material.EngineSemantic.Semantic}\",\"semanticVersion\":{material.EngineSemantic.Version},\"authoredShaderCount\":{material.Shaders.Count},\"intensity\":{_skyComponent.Intensity},\"mode\":\"{_skyComponent.Mode}\",\"projection\":\"{_skyComponent.Projection}\",\"rotation\":{_skyComponent.Rotation},\"timeOfDay\":{_skyComponent.TimeOfDay},\"cloudCoverage\":{_skyComponent.CloudCoverage},\"starIntensity\":{_skyComponent.StarIntensity},\"pipeline\":\"DefaultRenderPipeline\"}}");
+        return FormattableString.Invariant($"{{\"sampleCase\":{_skyCase},\"semantic\":\"{material.EngineSemantic.Semantic}\",\"semanticVersion\":{material.EngineSemantic.Version},\"authoredShaderCount\":{material.Shaders.Count},\"intensity\":{_skyComponent.Intensity},\"mode\":\"{_skyComponent.Mode}\",\"projection\":\"{_skyComponent.Projection}\",\"rotation\":{_skyComponent.Rotation},\"timeOfDay\":{_skyComponent.TimeOfDay},\"cloudCoverage\":{_skyComponent.CloudCoverage},\"starIntensity\":{_skyComponent.StarIntensity},\"sunDiscSize\":{_skyComponent.SunDiscSize},\"verticalFieldOfView\":{_skyCameraParameters!.VerticalFieldOfView},\"pipeline\":\"DefaultRenderPipeline\"}}");
     }
 
     private void SetSkyProceduralCase(int sampleCase)

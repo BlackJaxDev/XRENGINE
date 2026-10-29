@@ -111,7 +111,15 @@ does not evaluate a smoothstep interval with equal edges. Positive coverage
 retains the existing formulas. See the
 [clear procedural sky record](../../work/investigations/rendering/archive/2026-10-29-clear-procedural-sky-qualification.md).
 
+`engine-sky-sun` aims the real camera at the procedural sun and checks disc
+radiance, limb darkening, day-cycle color, authored size, and dimmed dawn before
+display clipping. It also checks translation and foreground occlusion. The
+shared clear-atmosphere reference evaluates the optional sun disc without GPU
+input. Each resized extent samples both foreground and sun, so the full program
+inventory is active when resource retention is checked. See the
+[sun disc record](../../work/investigations/rendering/archive/2026-10-29-sun-disc-qualification.md).
+
 Known-value GPU acceptance remains open for filtered seams and poles, mip chains,
 sRGB sky image decoding, sky bloom, sorted transparency over sky, procedural
-clouds, stars, celestial discs, automatic cycling, retained sun/moon/ambient
+clouds, stars, moon-disc shading, automatic cycling, retained sun/moon/ambient
 behavior, and hardware devices.

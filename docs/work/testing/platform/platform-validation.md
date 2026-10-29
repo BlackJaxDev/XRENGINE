@@ -323,6 +323,36 @@ Clouds, stars, celestial discs, automatic cycling, lighting synchronization,
 bloom, transparency over sky, serialization, hardware, and desktop pixel parity
 remain unqualified. Full shader and platform-cooking requirements remain open.
 
+### Procedural sun disc — 2026-10-29
+
+The real sun-disc profile checks noon, dawn, dusk, below-horizon weighting,
+authored disc size, dimmed dawn, camera translation, foreground depth, and
+restoration. Ten 5-by-5 HDR and canvas regions compare disc center, interior,
+edge, exterior glow, and corners with an independent analytic reference.
+The foreground reference intersects the real quad before applying sky rotation.
+HDR tolerance remains the larger of 0.00002 and 0.2 percent; canvas tolerance
+remains three byte values. No shader change was needed.
+
+All 28 targeted samples pass over two device sessions. Both foreground and sun
+are sampled at each resized extent, including 640 by 384 and restoration to
+512 by 512. Native program identities remain stable; each settled sample has
+69 live resources and zero retiring resources. Dim dawn and non-square
+foreground captures were viewed. The
+[sun disc record](../../investigations/rendering/archive/2026-10-29-sun-disc-qualification.md)
+records first-use warmup, the initial inactive-pipeline inventory failure, and
+the stronger resize schedule. No identity or ownership check was weakened.
+
+The final published bundle passes all 19 selected checks on explicit SwiftShader
+WebGPU, including 142 sky samples and 24 indirect lifecycle/resize stages with
+strict ownership. Bare-host shipping autostart, the optional published game,
+and the separate Jolt spike are skipped explicitly. All 24 build and publish
+gates pass with zero compiler warnings/errors. Fresh cooking packages 57 shaders
+and 112 assets; metadata and bundle checks pass.
+
+Moon-disc shading, clouds and sun occlusion, stars, automatic cycling, lighting
+synchronization, bloom, transparency, serialization, hardware, desktop parity,
+and integrated platform cooking remain open.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.

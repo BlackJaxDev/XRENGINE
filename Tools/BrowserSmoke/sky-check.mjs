@@ -36,6 +36,7 @@ async function settled(page) {
 /** Samples a real engine sky profile, its foreground depth, and HDR presentation. */
 export async function skyCheck(browser, origin, report, config, instrumentedPage, capturePixels, assertNoBrowserErrors, profile) {
     const { names } = profile;
+    const samplePositions = profile.positions ?? positions;
     const { page, context, events } = await instrumentedPage(browser, origin, report, profile.checkName, config);
     const result = report[profile.reportKey] = { scope: profile.scope, cases: [] };
     try {
@@ -46,11 +47,19 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
         for (let iteration = 0; iteration < 2; iteration++) {
             await page.locator('#start').click();
             await settled(page);
+            if (profile.warmupCase !== undefined) {
+                // Admit a draw that is outside the initial camera view before
+                // measuring retained programs and resources.
+                await page.evaluate(sampleCase => window.engineMeshDiagnostic.setSkyCase(sampleCase), profile.warmupCase);
+                await settled(page);
+            }
             const baseline = await page.evaluate(() => window.engineMeshDiagnostic.statistics());
             initialLive ??= baseline.resources.live;
             assert(baseline.resources.live <= initialLive, 'BrowserSmoke.SkyRestartRetention: a new device session retained old resources.');
+            const resizeCases = profile.resizeCases ?? [names.length - 1];
             const schedule = [...names.map((_, sampleCase) => ({ sampleCase, width: 512, height: 512 })),
-                { sampleCase: names.length - 1, width: 640, height: 384 }, { sampleCase: names.length - 1, width: 512, height: 512 }];
+                ...[[640, 384], [512, 512]].flatMap(([width, height]) =>
+                    resizeCases.map(sampleCase => ({ sampleCase, width, height })))];
             let previousWidth = 512, previousHeight = 512, programs, previousCase, nativePrograms, cubeResources, imageResource;
             for (const { sampleCase, width, height } of schedule) {
                 const resize = width !== previousWidth || height !== previousHeight;
@@ -116,7 +125,7 @@ export async function skyCheck(browser, origin, report, config, instrumentedPage
                     assert(state.shaders.filter(shader => shader.label === profile.artifact).length === 1 &&
                         state.pipelines.filter(pipeline => pipeline.label === profile.artifact).length === 1,
                     'BrowserSmoke.SkyArtifact: expected exactly one selected cooked sky shader and pipeline.');
-                    const samples = positions.map(([u, v], index) => ({ name: `sample-${index}`, u, v,
+                    const samples = samplePositions.map(([u, v], index) => ({ name: `sample-${index}`, u, v,
                         x: Math.floor(u * width), y: Math.floor(v * height) }));
                     const hdr = await page.evaluate(async samples => {
                         const result = [];
