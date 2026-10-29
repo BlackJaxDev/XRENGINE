@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Runtime.Platform.Desktop;
 
 namespace XREngine.UnitTests.Platform;
@@ -8,6 +9,32 @@ namespace XREngine.UnitTests.Platform;
 [TestFixture, NonParallelizable]
 public sealed class DesktopAssetFileSystemTests
 {
+    [Test]
+    public void MetadataReportsExistingAndMissingFiles()
+    {
+        string root = Path.GetFullPath(Path.Combine("Build", "_AgentValidation", "00000000-000000-shared", "scratch", "asset-metadata-" + Guid.NewGuid().ToString("N")));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string path = Path.Combine(root, "source.bin");
+            IRuntimeHostFileMetadataBackend files = new DesktopAssetFileSystem();
+            Assert.That(files.TryGetFileMetadata(path, out long ticks, out long length), Is.False);
+            Assert.That(ticks, Is.Zero);
+            Assert.That(length, Is.Zero);
+            File.WriteAllBytes(path, [1, 2, 3]);
+            Assert.That(files.TryGetFileMetadata(path, out ticks, out length), Is.True);
+            Assert.That(ticks, Is.EqualTo(File.GetLastWriteTimeUtc(path).Ticks));
+            Assert.That(length, Is.EqualTo(3));
+            File.WriteAllBytes(path, []);
+            Assert.That(files.TryGetFileMetadata(path, out _, out length), Is.True);
+            Assert.That(length, Is.Zero);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
     [Test]
     public void DiscoveryAndChangeMonitor_UseHostFilesystemAndReleaseWatcher()
     {

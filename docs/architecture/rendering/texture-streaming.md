@@ -51,6 +51,25 @@ Backend implementations:
 
 The `XRTS` payload stores a preview mip and per-mip offsets. Streamability checks read only the header and manifest. They do not hydrate mip blobs. See [Cooked Texture Payloads](../assets/cooked-texture-payloads.md) for payload layout, cache-key rules, compression plans, and known limits.
 
+Resident-data reuse asks the installed `RuntimeFileDiscoveryServices` provider
+for `IRuntimeHostFileMetadataBackend`. `DesktopAssetFileSystem` owns the physical
+metadata query. The shared cache has no physical-file fallback. Missing metadata,
+failed queries, unsupported providers, and invalid paths skip reuse. Existing
+host-file admission runs before the metadata provider is called.
+
+The reuse key contains the reported source path, discovery installation generation,
+write time, byte length, requested size, and mip-chain flag. All three native
+residency paths retain a key before decoding and compare it with fresh metadata
+before storing a deep copy. Replacement during a metadata query rejects the key.
+Reinstalling even the same provider invalidates prior keys. Cache expiry, byte
+limits, and independent pixel ownership remain unchanged.
+
+This metadata key is not a content hash or a raw-read ownership lease. A deferred
+source can resolve a cooked authority, and an asset source can decode a fallback,
+while reporting a different path. Discovery generation does not identify the raw
+read provider. Same-size edits with the same timestamp are also not detected.
+Effective source identity and full read/publication lifetime remain separate work.
+
 ## Residency Rules
 
 - Each texture starts at its preview residency (`XRTexture2D.GetPreviewResidentSize`). Promotion raises the resident size to the policy target; demotion lowers it.

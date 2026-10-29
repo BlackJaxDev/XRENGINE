@@ -264,16 +264,9 @@ internal static class TextureStreamingResidentDataReuseCache
     private const long MaxTotalBytes = 256L * 1024L * 1024L;
     private const double EntryLifetimeMilliseconds = 15_000.0;
 
-    private readonly record struct CacheKey(
-        string AuthorityPath,
-        long LastWriteUtcTicks,
-        long Length,
-        uint MaxResidentDimension,
-        bool IncludeMipChain);
-
     private sealed record CacheEntry(TextureStreamingResidentData Data, long CreatedTimestamp, long Bytes);
 
-    private static readonly Dictionary<CacheKey, CacheEntry> Entries = [];
+    private static readonly Dictionary<TextureResidentDataCacheKey, CacheEntry> Entries = [];
     private static readonly object Sync = new();
     private static long s_totalBytes;
 
@@ -284,11 +277,14 @@ internal static class TextureStreamingResidentDataReuseCache
         ITextureStreamingSource source,
         uint maxResidentDimension,
         bool includeMipChain,
-        out TextureStreamingResidentData residentData)
+        out TextureStreamingResidentData residentData,
+        out TextureResidentDataCacheKey? decodeKey)
     {
         residentData = default;
-        if (!TryCreateKey(source, maxResidentDimension, includeMipChain, out CacheKey key))
+        decodeKey = null;
+        if (!TryCreateKey(source, maxResidentDimension, includeMipChain, out TextureResidentDataCacheKey key))
             return false;
+        decodeKey = key;
 
         lock (Sync)
         {
@@ -308,11 +304,12 @@ internal static class TextureStreamingResidentDataReuseCache
 
     public static void Store(
         ITextureStreamingSource source,
-        uint maxResidentDimension,
-        bool includeMipChain,
+        TextureResidentDataCacheKey? decodeKey,
         TextureStreamingResidentData residentData)
     {
-        if (!TryCreateKey(source, maxResidentDimension, includeMipChain, out CacheKey key))
+        if (decodeKey is not { } expectedKey
+            || !TryCreateKey(source, expectedKey.MaxResidentDimension, expectedKey.IncludeMipChain, out TextureResidentDataCacheKey key)
+            || key != expectedKey)
             return;
 
         long bytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
@@ -349,7 +346,7 @@ internal static class TextureStreamingResidentDataReuseCache
         ITextureStreamingSource source,
         uint maxResidentDimension,
         bool includeMipChain,
-        out CacheKey key)
+        out TextureResidentDataCacheKey key)
     {
         key = default;
         if (!RuntimeTextureSourceAccess.CanAccessHostFiles)
@@ -357,30 +354,30 @@ internal static class TextureStreamingResidentDataReuseCache
         if (string.IsNullOrWhiteSpace(source.SourcePath))
             return false;
 
-        string authorityPath = Path.GetFullPath(source.SourcePath);
-        long lastWriteUtcTicks = 0L;
-        long length = 0L;
         try
         {
-            FileInfo info = new(authorityPath);
-            if (info.Exists)
-            {
-                lastWriteUtcTicks = info.LastWriteTimeUtc.Ticks;
-                length = info.Length;
-            }
+            RuntimeAssetReadServices.EnsureHostFileAccess("Texture resident cache metadata");
+            string authorityPath = Path.GetFullPath(source.SourcePath);
+            IRuntimeFileDiscovery? provider = RuntimeFileDiscoveryServices.Capture(out long generation);
+            if (provider is not IRuntimeHostFileMetadataBackend metadata
+                || !metadata.TryGetFileMetadata(authorityPath, out long lastWriteUtcTicks, out long length)
+                || lastWriteUtcTicks < 0 || length < 0
+                || !RuntimeFileDiscoveryServices.IsCurrent(provider, generation))
+                return false;
+
+            key = new TextureResidentDataCacheKey(
+                authorityPath,
+                generation,
+                lastWriteUtcTicks,
+                length,
+                maxResidentDimension,
+                includeMipChain);
+            return true;
         }
         catch
         {
             return false;
         }
-
-        key = new CacheKey(
-            authorityPath,
-            lastWriteUtcTicks,
-            length,
-            maxResidentDimension,
-            includeMipChain);
-        return true;
     }
 
     private static TextureStreamingResidentData CloneResidentData(TextureStreamingResidentData residentData)
@@ -405,9 +402,9 @@ internal static class TextureStreamingResidentDataReuseCache
         RemoveExpiredNoLock();
         while (Entries.Count > MaxEntries || Interlocked.Read(ref s_totalBytes) > MaxTotalBytes)
         {
-            CacheKey oldestKey = default;
+            TextureResidentDataCacheKey oldestKey = default;
             CacheEntry? oldestEntry = null;
-            foreach (KeyValuePair<CacheKey, CacheEntry> pair in Entries)
+            foreach (KeyValuePair<TextureResidentDataCacheKey, CacheEntry> pair in Entries)
             {
                 if (oldestEntry is null || pair.Value.CreatedTimestamp < oldestEntry.CreatedTimestamp)
                 {
@@ -425,8 +422,8 @@ internal static class TextureStreamingResidentDataReuseCache
 
     private static void RemoveExpiredNoLock()
     {
-        List<CacheKey>? expired = null;
-        foreach (KeyValuePair<CacheKey, CacheEntry> pair in Entries)
+        List<TextureResidentDataCacheKey>? expired = null;
+        foreach (KeyValuePair<TextureResidentDataCacheKey, CacheEntry> pair in Entries)
         {
             if (TextureRuntimeDiagnostics.ElapsedMilliseconds(pair.Value.CreatedTimestamp) > EntryLifetimeMilliseconds)
                 (expired ??= []).Add(pair.Key);
@@ -435,11 +432,11 @@ internal static class TextureStreamingResidentDataReuseCache
         if (expired is null)
             return;
 
-        foreach (CacheKey key in expired)
+        foreach (TextureResidentDataCacheKey key in expired)
             RemoveNoLock(key);
     }
 
-    private static void RemoveNoLock(CacheKey key)
+    private static void RemoveNoLock(TextureResidentDataCacheKey key)
     {
         if (!Entries.Remove(key, out CacheEntry? removed))
             return;

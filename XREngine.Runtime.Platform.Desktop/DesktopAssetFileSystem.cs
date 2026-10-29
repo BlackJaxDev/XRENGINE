@@ -8,7 +8,7 @@ using XREngine.Rendering;
 namespace XREngine.Runtime.Platform.Desktop;
 
 /// <summary>Provides host file discovery, metadata operations, and direct reads under ordinary filesystem permissions.</summary>
-public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileAsyncReadBackend, IHostBinaryCacheFileBackend, IBvhDiskCacheBackend, ITextureStreamingCacheFileBackend, ITextureStreamingCacheReplaceBackend
+public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFileBackend, IRuntimeHostFileReadBackend, IRuntimeHostFileMetadataBackend, IRuntimeHostFileAsyncReadBackend, IHostBinaryCacheFileBackend, IBvhDiskCacheBackend, ITextureStreamingCacheFileBackend, ITextureStreamingCacheReplaceBackend
 {
     public bool SupportsChangeNotifications => true;
     public IEnumerable<string> EnumerateFiles(string path, string pattern, SearchOption searchOption)
@@ -40,6 +40,19 @@ public sealed class DesktopAssetFileSystem : IAssetFileSystem, IAssetMetadataFil
     public string ReadAllText(string path) => File.ReadAllText(path);
     public void WriteAllText(string path, string contents) => File.WriteAllText(path, contents);
     public DateTime GetLastWriteTimeUtc(string path) => File.GetLastWriteTimeUtc(path);
+
+    public bool TryGetFileMetadata(string path, out long lastWriteTimeUtcTicks, out long length)
+    {
+        lastWriteTimeUtcTicks = 0;
+        length = 0;
+        FileInfo info = new(path);
+        if (!info.Exists)
+            return false;
+
+        lastWriteTimeUtcTicks = info.LastWriteTimeUtc.Ticks;
+        length = info.Length;
+        return true;
+    }
 
     public Guid TryExtractAssetGuid(string path)
     {

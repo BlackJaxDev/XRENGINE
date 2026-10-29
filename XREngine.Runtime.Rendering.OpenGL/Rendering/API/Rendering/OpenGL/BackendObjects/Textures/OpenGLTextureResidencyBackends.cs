@@ -193,7 +193,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     }
 
                     cancellationPhase = "during decode/cache read";
-                    if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData))
+                    if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData, out TextureResidentDataCacheKey? decodeKey))
                     {
                         TextureRuntimeDiagnostics.LogResidentDataReused(
                             RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
@@ -207,7 +207,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     else
                     {
                         residentData = source.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
-                        TextureStreamingResidentDataReuseCache.Store(source, maxResidentDimension, includeMipChain, residentData);
+                        TextureStreamingResidentDataReuseCache.Store(source, decodeKey, residentData);
                     }
                 }
                 finally
@@ -679,7 +679,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 
                     cancellationPhase = "during decode/cache read";
                     const bool cacheIncludeMipChain = true;
-                    if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, cacheIncludeMipChain, out residentData))
+                    if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, cacheIncludeMipChain, out residentData, out TextureResidentDataCacheKey? decodeKey))
                     {
                         TextureRuntimeDiagnostics.LogResidentDataReused(
                             RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
@@ -693,7 +693,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     else
                     {
                         residentData = source.LoadResidentData(maxResidentDimension, includeMipChain: true, cancellationToken);
-                        TextureStreamingResidentDataReuseCache.Store(source, maxResidentDimension, cacheIncludeMipChain, residentData);
+                        TextureStreamingResidentDataReuseCache.Store(source, decodeKey, residentData);
                     }
                 }
                 finally

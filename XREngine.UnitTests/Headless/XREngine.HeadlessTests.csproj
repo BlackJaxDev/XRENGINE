@@ -17,6 +17,8 @@
     <Compile Include="../Rendering/TextureCookedSamplingTests.cs" Link="Rendering/TextureCookedSamplingTests.cs" />
     <Compile Include="../Rendering/TextureCacheSamplingTests.cs" Link="Rendering/TextureCacheSamplingTests.cs" />
     <Compile Include="../Rendering/TexturePreviewSamplingTests.cs" Link="Rendering/TexturePreviewSamplingTests.cs" />
+    <Compile Include="../Rendering/TextureResidentCacheMetadataTests.cs" Link="Rendering/TextureResidentCacheMetadataTests.cs" />
+    <Compile Include="../Rendering/TextureMetadataTestFiles.cs" Link="Rendering/TextureMetadataTestFiles.cs" />
     <Compile Include="../Rendering/TextureSamplingTestHost.cs" Link="Rendering/TextureSamplingTestHost.cs" />
     <Compile Include="../Rendering/TextureSamplingTestCodec.cs" Link="Rendering/TextureSamplingTestCodec.cs" />
     <EmbeddedResource Include="../Rendering/Fixtures/texture-streaming-legacy.bin" LogicalName="TextureCooking.Legacy" />

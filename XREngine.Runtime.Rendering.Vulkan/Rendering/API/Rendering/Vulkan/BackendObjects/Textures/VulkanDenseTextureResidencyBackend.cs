@@ -249,7 +249,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                     }
 
                     cancellationPhase = "during decode/cache read";
-                    if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData))
+                    if (TextureStreamingResidentDataReuseCache.TryGet(source, maxResidentDimension, includeMipChain, out residentData, out TextureResidentDataCacheKey? decodeKey))
                     {
                         TextureRuntimeDiagnostics.LogResidentDataReused(
                             RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
@@ -263,7 +263,7 @@ internal sealed class VulkanDenseTextureResidencyBackend : ITextureResidencyBack
                     else
                     {
                         residentData = source.LoadResidentData(maxResidentDimension, includeMipChain, cancellationToken);
-                        TextureStreamingResidentDataReuseCache.Store(source, maxResidentDimension, includeMipChain, residentData);
+                        TextureStreamingResidentDataReuseCache.Store(source, decodeKey, residentData);
                     }
                 }
                 finally

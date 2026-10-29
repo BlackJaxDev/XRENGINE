@@ -45,7 +45,12 @@ Fallbacks must log why they happen. A missing, stale, unreadable, or incompatibl
 
 ## Cache Keys
 
-The current cache codec uses a v3 preview key. `TextureStreamingCacheCodec` contains the string pattern `TextureStreaming_v3_preview<preview-size>_rgba8_uncompressed_binary`.
+The current cache codec uses a v4 preview key. `TextureStreamingCacheCodec` contains the string pattern `TextureStreaming_v4_preview<preview-size>_rgba8_uncompressed_binary`. This version retains authored sampling during cache construction; see [image and texture boundaries](../rendering/image-media-font-boundaries.md).
+
+The short-lived resident-data reuse key is separate from the disk cache variant.
+It uses provider metadata captured before decoding and checked again before
+retaining a copy. See [texture streaming](../rendering/texture-streaming.md#cooked-cache-authority)
+for provider invalidation and the remaining source-identity limits.
 
 The next key must change when an import choice affects bytes, GPU format, or sampling. Include schema version, source dimensions or hash mode, role, color space, compression profile, backend profile, storage format, encoder id and version, encoder settings hash, mip policy, normal convention, and alpha mode.
 
