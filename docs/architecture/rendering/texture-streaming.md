@@ -57,18 +57,27 @@ metadata query. The shared cache has no physical-file fallback. Missing metadata
 failed queries, unsupported providers, and invalid paths skip reuse. Existing
 host-file admission runs before the metadata provider is called.
 
-The reuse key contains the reported source path, discovery installation generation,
+The reuse key contains the selected read path, discovery installation generation,
 write time, byte length, requested size, and mip-chain flag. All three native
 residency paths retain a key before decoding and compare it with fresh metadata
 before storing a deep copy. Replacement during a metadata query rejects the key.
 Reinstalling even the same provider invalidates prior keys. Cache expiry, byte
 limits, and independent pixel ownership remain unchanged.
 
-This metadata key is not a content hash or a raw-read ownership lease. A deferred
-source can resolve a cooked authority, and an asset source can decode a fallback,
-while reporting a different path. Discovery generation does not identify the raw
-read provider. Same-size edits with the same timestamp are also not detected.
-Effective source identity and full read/publication lifetime remain separate work.
+`ITextureStreamingSource.ResolveCacheSourcePath` selects the file for this key.
+A deferred source uses the same lazy authority as its decoder. Registration stays
+lazy; the first cache or resident read resolves the authority after host-file
+admission. An asset source switches its key to the original file when it selects
+fallback. The first fallback decode cannot enter the cache under its old asset
+key; a later request can reuse a copy keyed to the fallback file. Selection changes
+during metadata lookup also reject the key. `SourcePath` remains the diagnostic
+path and does not change when the selected read path changes.
+
+This metadata key is not a content hash or a raw-read ownership lease. Discovery
+generation does not identify the raw read provider. Same-size edits with the same
+timestamp are not detected. Existing lazy authority and sticky fallback lifetimes
+remain unchanged; this does not recook or reselect an existing source on every
+request. Full read/publication lifetime and source refresh remain separate work.
 
 ## Residency Rules
 

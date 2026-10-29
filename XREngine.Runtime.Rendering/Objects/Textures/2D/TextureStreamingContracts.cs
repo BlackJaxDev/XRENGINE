@@ -121,6 +121,10 @@ public readonly record struct ImportedTextureStreamingTextureTelemetry(
 internal interface ITextureStreamingSource
 {
     string SourcePath { get; }
+
+    /// <summary>Resolves the file selected for resident reads, including deferred authority and fallback selection.</summary>
+    string ResolveCacheSourcePath() => SourcePath;
+
     TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken);
 }
 

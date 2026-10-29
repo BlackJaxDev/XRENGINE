@@ -18,6 +18,8 @@
     <Compile Include="../Rendering/TextureCacheSamplingTests.cs" Link="Rendering/TextureCacheSamplingTests.cs" />
     <Compile Include="../Rendering/TexturePreviewSamplingTests.cs" Link="Rendering/TexturePreviewSamplingTests.cs" />
     <Compile Include="../Rendering/TextureResidentCacheMetadataTests.cs" Link="Rendering/TextureResidentCacheMetadataTests.cs" />
+    <Compile Include="../Rendering/TextureResidentSourceIdentityTests.cs" Link="Rendering/TextureResidentSourceIdentityTests.cs" />
+    <Compile Include="../Rendering/SwitchingTextureCacheSource.cs" Link="Rendering/SwitchingTextureCacheSource.cs" />
     <Compile Include="../Rendering/TextureMetadataTestFiles.cs" Link="Rendering/TextureMetadataTestFiles.cs" />
     <Compile Include="../Rendering/TextureSamplingTestHost.cs" Link="Rendering/TextureSamplingTestHost.cs" />
     <Compile Include="../Rendering/TextureSamplingTestCodec.cs" Link="Rendering/TextureSamplingTestCodec.cs" />

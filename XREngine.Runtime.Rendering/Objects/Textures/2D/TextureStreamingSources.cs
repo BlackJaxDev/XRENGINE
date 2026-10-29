@@ -40,6 +40,8 @@ internal sealed class DeferredAuthorityTextureStreamingSource(string sourcePath)
 
     public string SourcePath => sourcePath;
 
+    public string ResolveCacheSourcePath() => _source.Value.ResolveCacheSourcePath();
+
     public TextureStreamingResidentData LoadResidentData(
         uint maxResidentDimension,
         bool includeMipChain,
@@ -55,6 +57,11 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
     private int _preferFallback;
 
     public string SourcePath => assetPath;
+
+    public string ResolveCacheSourcePath()
+        => Volatile.Read(ref _preferFallback) != 0 && _fallbackSource is not null
+            ? _fallbackSource.SourcePath
+            : assetPath;
 
     public TextureStreamingResidentData LoadResidentData(uint maxResidentDimension, bool includeMipChain, CancellationToken cancellationToken)
     {
@@ -357,12 +364,17 @@ internal static class TextureStreamingResidentDataReuseCache
         try
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Texture resident cache metadata");
-            string authorityPath = Path.GetFullPath(source.SourcePath);
+            string authorityPath = Path.GetFullPath(source.ResolveCacheSourcePath());
             IRuntimeFileDiscovery? provider = RuntimeFileDiscoveryServices.Capture(out long generation);
             if (provider is not IRuntimeHostFileMetadataBackend metadata
                 || !metadata.TryGetFileMetadata(authorityPath, out long lastWriteUtcTicks, out long length)
                 || lastWriteUtcTicks < 0 || length < 0
                 || !RuntimeFileDiscoveryServices.IsCurrent(provider, generation))
+                return false;
+
+            // Fallback selection can change while metadata is read. Do not
+            // retain a key for a file this source no longer selects.
+            if (!string.Equals(authorityPath, Path.GetFullPath(source.ResolveCacheSourcePath()), StringComparison.Ordinal))
                 return false;
 
             key = new TextureResidentDataCacheKey(

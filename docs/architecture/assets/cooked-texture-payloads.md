@@ -51,6 +51,8 @@ The short-lived resident-data reuse key is separate from the disk cache variant.
 It uses provider metadata captured before decoding and checked again before
 retaining a copy. See [texture streaming](../rendering/texture-streaming.md#cooked-cache-authority)
 for provider invalidation and the remaining source-identity limits.
+Deferred and fallback sources now key resident reuse by the file selected for
+decoding, while retaining their original diagnostic path.
 
 The next key must change when an import choice affects bytes, GPU format, or sampling. Include schema version, source dimensions or hash mode, role, color space, compression profile, backend profile, storage format, encoder id and version, encoder settings hash, mip policy, normal convention, and alpha mode.
 
