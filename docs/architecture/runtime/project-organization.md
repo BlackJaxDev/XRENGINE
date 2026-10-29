@@ -199,8 +199,11 @@ replaced provider alive; hosts must coordinate provider disposal with its use.
 Synchronous VMD animation loading requires host-file admission and an installed
 `IRuntimeHostFileReadBackend`. It opens the file with `FileShare.Read` and
 disposes the stream after parsing. The captured provider is not a retirement
-lease; hosts must keep it usable until the load ends. VMD path saving keeps its
-existing output behavior.
+lease; hosts must keep it usable until the load ends. VMD path saving requires
+host-file admission and the optional `IHostAssetFileOpenWrite` capability on the
+installed output service. It opens at offset zero without truncation, sharing,
+or parent directory creation. The caller disposes the stream. The provider must
+remain usable for the save.
 
 Native public asset loads capture `IRuntimeHostFileReadBackend` after load-route
 admission. The same instance performs the preflight existence check and the

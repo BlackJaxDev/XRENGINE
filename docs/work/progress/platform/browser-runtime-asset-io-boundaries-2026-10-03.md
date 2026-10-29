@@ -1,5 +1,27 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## VMD host-file output placement (2026-10-29)
+
+VMD path saving now checks host-file admission and captures the optional
+`IHostAssetFileOpenWrite` capability from the installed output service. The
+desktop implementation uses the prior non-truncating, non-sharing open mode
+and does not create parent directories. Hosts without that capability receive
+an explicit error. The captured output provider has no retirement lease.
+
+The VMD fixture passes ten read and write tests. The save checks cover a local
+file with an unchanged tail, a missing parent, captured output ownership, stream
+disposal, caller-thread rejection, and a missing capability. A separate runtime
+probe passes the bounded output checks. Editor, Server, and VRClient Release
+builds pass on Linux with Windows targeting enabled. The desktop filesystem
+headless fixture passes. All 19 portable manifest projects compile for
+browser-wasm, and Browser publishes with native WASM and pinned Jolt inputs.
+The gate logs contain no warning or error diagnostics. These checks do not
+establish Windows startup, live animation playback, or browser rendering.
+
+The tracked-source scan reports 17 files / 68 direct-file matching lines across
+Data, Core, Rendering, and Host. The expression includes comments and misses
+target-typed constructors. Both broad inventory requirements remain open.
+
 ## VMD host-file read placement (2026-10-29)
 
 Synchronous VMD animation loading now checks host-file admission and captures

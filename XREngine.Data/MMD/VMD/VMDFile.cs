@@ -50,7 +50,10 @@ namespace XREngine.Data.MMD
                 throw new InvalidOperationException("Cannot save VMD file without loading it first.");
             
             path ??= FilePath ?? string.Empty;
-            using var writer = new BinaryWriter(File.OpenWrite(path));
+            RuntimeAssetReadServices.EnsureHostFileAccess("VMD animation save");
+            IHostAssetFileOpenWrite output = HostAssetFileOutputServices.Required as IHostAssetFileOpenWrite
+                ?? throw new NotSupportedException("HostAssetFileOutput.OpenWriteUnavailable: the installed output service does not support non-truncating file writes.");
+            using var writer = new BinaryWriter(output.OpenWrite(path));
             Header.Save(writer);
             BoneAnimation.Save(writer);
             ShapeKeyAnimation.Save(writer);
