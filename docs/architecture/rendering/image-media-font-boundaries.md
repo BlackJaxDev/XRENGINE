@@ -19,6 +19,20 @@ publish the matching runtime with newly cooked assets. Unknown header versions
 fail explicitly. This carrier support does not select browser texture formats,
 generate compressed variants, or replace authored sampler admission checks.
 
+When the texture cache cooker receives an authored `XRTexture2D`, both CPU and
+GPU mip-generation routes retain its sampler name, filters, wrapping, LOD clamps and bias,
+anisotropy, comparison settings, imported pixel interpretation, and alpha policy.
+The generated cache owns its mip range, format, and storage flags. Source-only
+image cooking keeps its existing default settings. The cache variant key is
+`TextureStreaming_v4_preview64_rgba8_uncompressed_binary`; older cache variants
+are rebuilt because their generated textures can lack authored sampling values.
+Explicit import variant keys remain part of the cache path.
+
+Texture asset copies use the same sampling copier, including comparison and
+sampler binding settings. The resident-data preview path still applies its own
+filter and mip-range policy and does not restore all authored sampling metadata.
+This cache change does not establish preview or live streaming sampling parity.
+
 Streamed media playback uses `HlsReferenceRuntime` as a renderer-facing entry point. The desktop composition installs the FFmpeg backend, which owns decoder/session implementation, native binary loading, and the existing HLS reference binary supply. The renderer's video component keeps the GPU upload and presentation logic. A missing media backend reports its registration requirement.
 
 Source font import asks the installed FreeType character enumerator for supported Unicode codepoints. Bitmap atlas creation asks the installed Skia rasterizer for a cooked PNG and glyph metrics. `FontGlyphSet` stores the resulting glyphs and texture without a SharpFont or Skia object in those public service contracts. The desktop authoring composition installs both services. Existing serialized `FontGlyphSet` names and fields remain unchanged.

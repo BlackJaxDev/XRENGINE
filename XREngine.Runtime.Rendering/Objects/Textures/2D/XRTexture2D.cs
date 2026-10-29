@@ -1178,12 +1178,22 @@ namespace XREngine.Rendering
             target.AutoGenerateMipmaps = source.AutoGenerateMipmaps;
             target.Resizable = source.Resizable;
             target.SizedInternalFormat = source.SizedInternalFormat;
+            CopyTextureSamplingSettings(source, target);
+        }
+
+        private static void CopyTextureSamplingSettings(XRTexture2D source, XRTexture2D target)
+        {
+            target.SamplerName = source.SamplerName;
             target.MagFilter = source.MagFilter;
             target.MinFilter = source.MinFilter;
             target.UWrap = source.UWrap;
             target.VWrap = source.VWrap;
+            target.MinLOD = source.MinLOD;
+            target.MaxLOD = source.MaxLOD;
             target.LodBias = source.LodBias;
             target.MaxAnisotropy = source.MaxAnisotropy;
+            target.EnableComparison = source.EnableComparison;
+            target.CompareFunc = source.CompareFunc;
             target.ImportedColorSpace = source.ImportedColorSpace;
             target.ImportedUsage = source.ImportedUsage;
             target.ImportedNormalMapFlipGreen = source.ImportedNormalMapFlipGreen;

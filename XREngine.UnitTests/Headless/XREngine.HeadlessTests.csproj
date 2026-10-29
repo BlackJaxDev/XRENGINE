@@ -15,6 +15,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="../Rendering/TextureCookedSamplingTests.cs" Link="Rendering/TextureCookedSamplingTests.cs" />
+    <Compile Include="../Rendering/TextureCacheSamplingTests.cs" Link="Rendering/TextureCacheSamplingTests.cs" />
+    <Compile Include="../Rendering/TextureSamplingTestHost.cs" Link="Rendering/TextureSamplingTestHost.cs" />
+    <Compile Include="../Rendering/TextureSamplingTestCodec.cs" Link="Rendering/TextureSamplingTestCodec.cs" />
     <EmbeddedResource Include="../Rendering/Fixtures/texture-streaming-legacy.bin" LogicalName="TextureCooking.Legacy" />
     <Compile Include="../Core/AssetDirectoryHostTests.cs" Link="Core/AssetDirectoryHostTests.cs" />
     <Compile Include="../Core/AssetDirectoryTestFileSystem.cs" Link="Core/AssetDirectoryTestFileSystem.cs" />

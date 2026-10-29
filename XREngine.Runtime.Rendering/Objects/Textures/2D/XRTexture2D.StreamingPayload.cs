@@ -154,21 +154,25 @@ public partial class XRTexture2D
         if (sourceTexture is null)
             return false;
 
-        if (TryCreateTextureStreamingCacheAssetGpu(
+        if (!TryCreateTextureStreamingCacheAssetGpu(
                 sourceTexture,
+                sourceFilePath,
+                cacheFilePath,
+                sourceLastWriteTimeUtc,
+                out texture)
+            && !TryCreateTextureStreamingCacheAsset(
                 sourceFilePath,
                 cacheFilePath,
                 sourceLastWriteTimeUtc,
                 out texture))
         {
-            return true;
+            return false;
         }
 
-        return TryCreateTextureStreamingCacheAsset(
-            sourceFilePath,
-            cacheFilePath,
-            sourceLastWriteTimeUtc,
-            out texture);
+        // Generated storage owns its format and mip range. Retain the source's
+        // sampling and pixel interpretation after either mip-generation route.
+        CopyTextureSamplingSettings(sourceTexture, texture);
+        return true;
     }
 
     internal static bool TryCreateTextureStreamingCacheAsset(

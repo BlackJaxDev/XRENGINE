@@ -109,14 +109,14 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_CooksCachedMipChainsOnGpuBeforeCpuFallback()
     {
-        string assetManagerSource = ReadWorkspaceFile("XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs");
+        string codecSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Serialization/TextureStreamingCacheCodec.cs");
         string payloadSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.StreamingPayload.cs");
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Streaming/OpenGLRenderer.TextureStreamingCacheCook.cs");
         string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.TextureStreamingCacheCook.cs");
-        string normalizedAssetManagerSource = assetManagerSource.Replace("\r\n", "\n");
+        string normalizedCodecSource = codecSource.Replace("\r\n", "\n");
 
-        normalizedAssetManagerSource.ShouldContain("XRTexture2D.TryCreateTextureStreamingCacheAsset(\n                texture,");
-        assetManagerSource.ShouldContain("TextureStreaming_v3_preview");
+        normalizedCodecSource.ShouldContain("XRTexture2D.TryCreateTextureStreamingCacheAsset(\n                texture,");
+        codecSource.ShouldContain("TextureStreaming_v4_preview");
 
         payloadSource.ShouldContain("TryCreateTextureStreamingCacheAssetGpu");
         payloadSource.ShouldContain("RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadTask(");

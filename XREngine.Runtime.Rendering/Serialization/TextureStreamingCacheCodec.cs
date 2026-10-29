@@ -22,7 +22,7 @@ internal sealed class TextureStreamingCacheCodec : IThirdPartyCacheCodec
     public string? ResolveDefaultVariantKey(string? explicitVariantKey)
     {
         string payloadKey =
-            $"TextureStreaming_v3_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary";
+            $"TextureStreaming_v4_preview{XRTexture2D.ImportedPreviewMaxDimensionInternal}_rgba8_uncompressed_binary";
         return string.IsNullOrWhiteSpace(explicitVariantKey)
             ? payloadKey
             : Path.Combine(payloadKey, explicitVariantKey);
