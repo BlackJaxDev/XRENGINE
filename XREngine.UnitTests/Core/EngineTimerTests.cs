@@ -1,13 +1,68 @@
 using System.Diagnostics;
 using System.Threading;
+using System.Runtime.CompilerServices;
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Core.Files;
+using XREngine.Data;
+using XREngine.Runtime.Platform.Desktop;
 using XREngine.Timers;
+using XREngine.Execution;
 
 namespace XREngine.UnitTests.Core;
 
+[NonParallelizable]
 public sealed class EngineTimerTests
 {
+    private static readonly string[] AssetPathVariables =
+    [
+        XREngineEnvironmentVariables.EngineAssetsPath,
+        XREngineEnvironmentVariables.GameAssetsPath,
+        XREngineEnvironmentVariables.GameCachePath,
+        XREngineEnvironmentVariables.GameMetadataPath,
+    ];
+    private string?[] _previousAssetPaths = null!;
+    private IAssetFileSystem? _previousFiles;
+    private IRuntimeFileDiscovery? _previousDiscovery;
+
+    [OneTimeSetUp]
+    public void ConfigureNativeHost()
+    {
+        _previousAssetPaths = AssetPathVariables.Select(Environment.GetEnvironmentVariable).ToArray();
+        _previousFiles = AssetFileSystemServices.Current;
+        _previousDiscovery = RuntimeFileDiscoveryServices.Current;
+        try
+        {
+            ThreadedWorkerBackend.EnsureRegistered();
+            string root = Path.Combine(TestContext.CurrentContext.WorkDirectory, "engine-timer-host-" + Guid.NewGuid().ToString("N"));
+            string[] directories = ["Engine", "Assets", "Cache", "Metadata"];
+            for (int index = 0; index < AssetPathVariables.Length; index++)
+            {
+                string path = Path.Combine(root, directories[index]);
+                Directory.CreateDirectory(path);
+                Environment.SetEnvironmentVariable(AssetPathVariables[index], path);
+            }
+            AssetFileSystemServices.Current = new DesktopAssetFileSystem();
+            // Initialize on the test thread so a missing host capability reports
+            // a fixture failure instead of terminating a background loop thread.
+            RuntimeHelpers.RunClassConstructor(typeof(Engine).TypeHandle);
+        }
+        catch
+        {
+            RestoreNativeHost();
+            throw;
+        }
+    }
+
+    [OneTimeTearDown]
+    public void RestoreNativeHost()
+    {
+        for (int index = 0; index < AssetPathVariables.Length; index++)
+            Environment.SetEnvironmentVariable(AssetPathVariables[index], _previousAssetPaths[index]);
+        AssetFileSystemServices.Current = _previousFiles;
+        RuntimeFileDiscoveryServices.Current = _previousDiscovery;
+    }
+
     [Test]
     public void ConversionHelpers_RoundTripStopwatchAndTimeSpanTicks()
     {
@@ -17,7 +72,9 @@ public sealed class EngineTimerTests
         long roundTripTicks = EngineTimer.TimeSpanTicksToStopwatchTicks(timeSpanTicks);
 
         timeSpanTicks.ShouldBe((long)Math.Round(stopwatchTicks * (TimeSpan.TicksPerSecond / (double)Stopwatch.Frequency)));
-        roundTripTicks.ShouldBeInRange(stopwatchTicks - 1L, stopwatchTicks + 1L);
+        // Conversion rounds once in each clock. A TimeSpan tick can span many stopwatch ticks.
+        long maximumRoundingError = (long)Math.Ceiling(Stopwatch.Frequency / (2.0 * TimeSpan.TicksPerSecond) + 0.5);
+        roundTripTicks.ShouldBeInRange(stopwatchTicks - maximumRoundingError, stopwatchTicks + maximumRoundingError);
     }
 
     [Test]
@@ -173,6 +230,8 @@ public sealed class EngineTimerTests
             var waitDuration = Stopwatch.StartNew();
             timer.StopAndWait(TimeSpan.FromMilliseconds(50)).ShouldBeFalse();
             waitDuration.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
+            Should.Throw<InvalidOperationException>(timer.RunGameLoop);
+            Should.Throw<InvalidOperationException>(() => timer.BeginExplicitFrame(0.01f));
         }
         finally
         {
@@ -180,5 +239,8 @@ public sealed class EngineTimerTests
             timer.StopAndWait(TimeSpan.FromSeconds(2)).ShouldBeTrue();
             timer.UpdateFrame -= BlockUpdate;
         }
+
+        timer.RunGameLoop();
+        timer.StopAndWait(TimeSpan.FromSeconds(2)).ShouldBeTrue();
     }
 }

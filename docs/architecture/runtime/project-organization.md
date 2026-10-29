@@ -55,6 +55,23 @@ not request a pool. Browser hosts keep their sequential transform policy and
 reject frame logging. The `XRE_PUBLISHED` profiler stub creates no worker.
 Native zero-general-worker scheduling still has two auxiliary lanes.
 
+The native worker factory also supplies `IEngineLoopDomainFactory` for
+`EngineTimer.RunGameLoop`. The timer captures an idle domain before it starts
+the clock. The native leaf owns the update, visibility, and fixed-update
+threads. It preserves their names, background status, above-normal priority,
+and start order. A factory without this capability fails before clock startup.
+The caller-thread loop does not require this capability.
+
+The timer signals stop before it joins the domain. All three joins use one
+non-negative timeout; a worker cannot join itself. Incomplete workers remain
+owned for a later join. Failed startup stops the callbacks and attempts a
+bounded join. The timer cannot restart or begin an explicit frame while
+startup or a worker remains active. A stop request during factory creation or
+clock setup cancels startup; initialization cannot clear that stop request.
+The startup gate and all native joins share the shutdown deadline.
+Loop callbacks, frame pacing, and visibility
+waits remain in Host; this boundary moves thread lifetime ownership only.
+
 The same registration installs `IRuntimeBlockingTaskBackend` in an empty slot.
 `RuntimeBlockingTaskServices.Run` rejects browser and caller-thread execution,
 and requires a registered backend before it invokes the operation factory.
@@ -611,15 +628,24 @@ discovery, working-directory asset selection, writable directory preparation,
 and project-root inference. Desktop composition supplies these operations through
 `DesktopAssetFileSystem`. Custom synchronous authoring hosts must install that
 capability before constructing an asset manager or preparing an asset path.
+Recursive directory preparation keeps one captured provider for all parent
+probes and creation calls. Provider capture does not add a retirement lease or
+an atomic directory snapshot. Catalog and asynchronous source startup retain
+their virtual roots and return before directory-provider capture.
+
 `XRAsset.SerializeTo` and `SerializeToAsync` also need an output provider with
 `IHostAssetFileTransactionalOutput`. `XRAsset` keeps the YAML serialization
 policy. The desktop output provider writes an adjacent temporary file, flushes
 it, and replaces the destination. It retries `File.Replace` up to four times.
 The browser tool hosts install this provider before they cook saved fixtures.
-Recursive directory preparation keeps one captured provider for all parent
-probes and creation calls. Provider capture does not add a retirement lease or
-an atomic directory snapshot. Catalog and asynchronous source startup retain
-their virtual roots and return before directory-provider capture.
+
+YAML writers use one captured serialization service for asset membership and
+portable reference emission. Shader text comparison reads one captured host
+provider and retains the existing BOM policy. Changed or unreadable text stays
+inline. Hosts without backing-file access also keep text inline, including when
+a saved asset path is present. Generic asset converters preserve that exact
+text object's inline decision. Source or provider replacement rejects the stale
+comparison; it does not grant a provider-disposal lease.
 
 ## Native assets and source identity
 

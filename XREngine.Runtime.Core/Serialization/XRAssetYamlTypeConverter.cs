@@ -956,11 +956,8 @@ namespace XREngine
         {
             AssetSerializationServices.Current.EnsureYamlAssetRuntimeSupported();
 
-            if (!_skipConverter && value is XRAsset asset2 && ShouldWriteReference(asset2))
-            {
-                WriteReference(emitter, asset2);
+            if (!_skipConverter && value is XRAsset asset2 && TryWriteAsReference.TryEmitReference(emitter, asset2))
                 return;
-            }
 
             bool previous = _skipConverter;
             _skipConverter = true;
@@ -976,11 +973,6 @@ namespace XREngine
             }
         }
 
-        private static bool ShouldWriteReference(XRAsset asset)
-            => TryWriteAsReference.ShouldWriteReference(asset);
-
-        private static void WriteReference(IEmitter emitter, XRAsset asset)
-            => TryWriteAsReference.WriteReference(emitter, asset);
     }
 
     public sealed class DelegateSkippingTypeInspector(ITypeInspector inner) : ITypeInspector

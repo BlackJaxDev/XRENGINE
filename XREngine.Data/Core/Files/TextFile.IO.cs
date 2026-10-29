@@ -183,7 +183,7 @@ public partial class TextFile
     public static unsafe Encoding GetEncoding(FileMap file, out int bomLength)
         => GetEncoding(new ReadOnlySpan<byte>((byte*)file.Address, (int)Math.Min(4, file.Length)), out bomLength);
 
-    private static Encoding GetEncoding(ReadOnlySpan<byte> bytes, out int bomLength)
+    internal static Encoding GetEncoding(ReadOnlySpan<byte> bytes, out int bomLength)
     {
         if (bytes is [0xFF, 0xFE, 0, 0, ..])
         {

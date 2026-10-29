@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Serialization;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
@@ -12,10 +13,13 @@ namespace XREngine;
 public sealed class TextFileYamlTypeConverter : IWriteOnlyYamlTypeConverter
 {
     [ThreadStatic]
-    private static bool _skip;
+    private static TextFile? _inlineTextFile;
 
     public bool Accepts(Type type)
-        => !_skip && type == typeof(TextFile);
+        => _inlineTextFile is null && type == typeof(TextFile);
+
+    internal static bool IsWritingInline(TextFile textFile)
+        => ReferenceEquals(_inlineTextFile, textFile);
 
     public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
         => throw new NotSupportedException($"{nameof(TextFileYamlTypeConverter)} is write-only; reading is handled by the registered XRAsset deserializer.");
@@ -31,41 +35,36 @@ public sealed class TextFileYamlTypeConverter : IWriteOnlyYamlTypeConverter
         if (value is not TextFile textFile)
             throw new YamlException($"Expected {nameof(TextFile)} but got '{value.GetType()}'.");
 
-        if (TryWriteBackingPath(emitter, textFile))
+        IAssetSerializationServices services = AssetSerializationServices.Current;
+        bool allowReference = true;
+        if (TryGetNonAssetBackingPath(textFile, services, out string? backingPath))
+        {
+            BackingFileState state = CompareBackingFile(backingPath!, textFile.Text ?? string.Empty, out bool unchanged);
+            allowReference = state == BackingFileState.Missing;
+            if (unchanged)
+            {
+                emitter.Emit(new Scalar(MakePortableAssetPath(backingPath!, services)));
+                return;
+            }
+        }
+
+        if (allowReference && TryWriteAsReference.TryEmitReference(emitter, textFile, services))
             return;
 
-        if (!HasNonAssetBackingFile(textFile) && TryWriteAsReference.TryEmitReference(emitter, textFile))
-            return;
-
-        bool previous = _skip;
-        _skip = true;
+        TextFile? previous = _inlineTextFile;
+        _inlineTextFile = textFile;
         try
         {
             serializer(value, value.GetType());
         }
         finally
         {
-            _skip = previous;
+            _inlineTextFile = previous;
         }
     }
 
-    private static bool TryWriteBackingPath(IEmitter emitter, TextFile textFile)
+    private static string MakePortableAssetPath(string absolutePath, IAssetSerializationServices services)
     {
-        if (!TryGetUnchangedBackingPath(textFile, out string? backingPath))
-            return false;
-
-        // Emit a workspace-portable form when the file lives under a known asset root so the
-        // serialized scalar survives moving the project to a different machine layout. Falls
-        // back to the absolute path when the file is outside all known roots; the reader's
-        // rebasing logic can still recover absolute paths that contain a known segment.
-        string scalarPath = MakePortableAssetPath(backingPath!);
-        emitter.Emit(new Scalar(scalarPath));
-        return true;
-    }
-
-    private static string MakePortableAssetPath(string absolutePath)
-    {
-        IAssetSerializationServices services = AssetSerializationServices.Current;
         string? relative = TryMakeRelativeUnderRoot(absolutePath, services.GameAssetsPath)
                            ?? TryMakeRelativeUnderRoot(absolutePath, services.EngineAssetsPath);
         return relative ?? absolutePath;
@@ -105,52 +104,54 @@ public sealed class TextFileYamlTypeConverter : IWriteOnlyYamlTypeConverter
         return relative.Replace('\\', '/');
     }
 
-    private static bool TryGetUnchangedBackingPath(TextFile textFile, out string? backingPath)
+    private enum BackingFileState { Missing, Present, Unavailable }
+
+    private static BackingFileState CompareBackingFile(string path, string currentText, out bool unchanged)
     {
-        backingPath = null;
-
-        string? candidatePath = GetPreferredBackingPath(textFile);
-        if (string.IsNullOrWhiteSpace(candidatePath))
-            return false;
-
-        string fullPath;
+        unchanged = false;
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
         try
         {
-            fullPath = Path.GetFullPath(candidatePath);
+            read.EnsureHostFileAccess("YAML text backing-file comparison");
         }
-        catch
+        catch (NotSupportedException)
         {
-            return false;
+            // A backing path is optional. Keep text inline on hosts without file access.
+            read.EnsureCurrent();
+            return BackingFileState.Unavailable;
         }
 
-        if (string.Equals(Path.GetExtension(fullPath), $".{AssetSerializationServices.Current.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-            return false;
+        IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long generation);
+        bool exists = RuntimeFileDiscoveryServices.HostFileExists(
+            read, path, "YAML text backing-file comparison", discovery, generation);
+        if (!exists)
+            return BackingFileState.Missing;
 
-        if (!File.Exists(fullPath))
-            return false;
-
-        string currentText = textFile.Text ?? string.Empty;
-        string diskText;
+        bool matches = false;
         try
         {
-            diskText = File.ReadAllText(fullPath, TextFile.GetEncoding(fullPath));
+            byte[] bytes = discovery is IRuntimeHostFileReadBackend files
+                ? files.ReadAllBytes(path)
+                : read.ReadAllBytes(path);
+            // Decode one owner's bytes with the same BOM policy as the original path read.
+            // StreamReader also preserves the legacy UTF-7 preamble behavior.
+            using var stream = new MemoryStream(bytes, writable: false);
+            using var reader = new StreamReader(stream, TextFile.GetEncoding(bytes, out _), detectEncodingFromByteOrderMarks: true);
+            matches = string.Equals(reader.ReadToEnd(), currentText, StringComparison.Ordinal);
         }
-        catch
+        catch (Exception error) when (error is not OperationCanceledException)
         {
-            return false;
+            // An unreadable backing file must not discard the in-memory text.
         }
 
-        if (!string.Equals(diskText, currentText, StringComparison.Ordinal))
-            return false;
-
-        backingPath = fullPath;
-        return true;
+        using IDisposable publication = read.BeginPublication();
+        if (!RuntimeFileDiscoveryServices.IsCurrent(discovery, generation))
+            throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the asset file discovery installation changed during the text comparison.");
+        unchanged = matches;
+        return BackingFileState.Present;
     }
 
-    private static bool HasNonAssetBackingFile(TextFile textFile)
-        => TryGetNonAssetBackingPath(textFile, out _);
-
-    private static bool TryGetNonAssetBackingPath(TextFile textFile, out string? backingPath)
+    private static bool TryGetNonAssetBackingPath(TextFile textFile, IAssetSerializationServices services, out string? backingPath)
     {
         backingPath = GetPreferredBackingPath(textFile);
         if (string.IsNullOrWhiteSpace(backingPath))
@@ -166,13 +167,13 @@ public sealed class TextFileYamlTypeConverter : IWriteOnlyYamlTypeConverter
             return false;
         }
 
-        if (string.Equals(Path.GetExtension(backingPath), $".{AssetSerializationServices.Current.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(Path.GetExtension(backingPath), $".{services.AssetExtension}", StringComparison.OrdinalIgnoreCase))
         {
             backingPath = null;
             return false;
         }
 
-        return File.Exists(backingPath);
+        return true;
     }
 
     private static string? GetPreferredBackingPath(TextFile textFile)

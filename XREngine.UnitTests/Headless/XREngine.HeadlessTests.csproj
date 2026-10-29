@@ -13,6 +13,7 @@
     <ProjectReference Include="../../XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
+    <ProjectReference Include="../../XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   </ItemGroup>
   <ItemGroup>
@@ -36,6 +37,9 @@
     <EmbeddedResource Include="../Rendering/Fixtures/texture-streaming-legacy.bin" LogicalName="TextureCooking.Legacy" />
     <Compile Include="../Core/AssetDirectoryHostTests.cs" Link="Core/AssetDirectoryHostTests.cs" />
     <Compile Include="../Core/RuntimeBlockingTaskTests.cs" Link="Core/RuntimeBlockingTaskTests.cs" />
+    <Compile Include="../Core/EngineLoopDomainTests.cs" Link="Core/EngineLoopDomainTests.cs" />
+    <Compile Include="../Core/EngineTimerLoopDomainTests.cs" Link="Core/EngineTimerLoopDomainTests.cs" />
+    <Compile Include="../Core/EngineTimerTests.cs" Link="Core/EngineTimerTests.cs" />
     <Compile Include="../Core/AssetDirectoryTestFileSystem.cs" Link="Core/AssetDirectoryTestFileSystem.cs" />
     <Compile Include="../Animation/AnimationClipReferenceHostTests.cs" Link="Animation/AnimationClipReferenceHostTests.cs" />
     <Compile Include="../Animation/VrCalibrationCaptureTests.cs" Link="Animation/VrCalibrationCaptureTests.cs" />
@@ -52,6 +56,8 @@
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetChangeMonitor.cs" Link="Platform/DesktopAssetChangeMonitor.cs" />
     <Compile Include="../Platform/DesktopAssetFileSystemTests.cs" Link="Platform/DesktopAssetFileSystemTests.cs" />
     <Compile Include="../Core/XRAssetSaveTransactionTests.cs" Link="Core/XRAssetSaveTransactionTests.cs" />
+    <Compile Include="../Core/YamlAssetWriteBoundaryTests.cs" Link="Core/YamlAssetWriteBoundaryTests.cs" />
+    <Compile Include="../Core/YamlAssetPathAdmissionTests.cs" Link="Core/YamlAssetPathAdmissionTests.cs" />
     <Compile Include="../Animation/RecordingVrMovementComponent.cs" Link="Animation/RecordingVrMovementComponent.cs" />
     <Compile Include="../VR/VrDesktopRoutingTests.cs" Link="VR/VrDesktopRoutingTests.cs" />
     <!-- Reuse the same regression assertions as the desktop suite. -->

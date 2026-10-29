@@ -12,8 +12,15 @@ public static class TryWriteAsReference
     private const string NativeAssetExtension = ".asset";
 
     public static bool ShouldWriteReference(XRAsset asset)
+        => ShouldWriteReference(asset, AssetSerializationServices.Current);
+
+    private static bool ShouldWriteReference(XRAsset asset, IAssetSerializationServices services)
     {
         ArgumentNullException.ThrowIfNull(asset);
+
+        // Generic converters and graph visitors must retain a text converter's inline decision.
+        if (asset is TextFile textFile && TextFileYamlTypeConverter.IsWritingInline(textFile))
+            return false;
 
         // CurrentDepth is 0 before the first MappingStart, so depth 0 means root object.
         if (DepthTrackingEventEmitter.CurrentDepth < 1)
@@ -34,10 +41,13 @@ public static class TryWriteAsReference
                 StringComparison.OrdinalIgnoreCase))
             return false;
 
-        return File.Exists(asset.FilePath);
+        return services.AssetPathExists(asset.FilePath);
     }
 
     public static void WriteReference(IEmitter emitter, XRAsset asset)
+        => WriteReference(emitter, asset, AssetSerializationServices.Current);
+
+    private static void WriteReference(IEmitter emitter, XRAsset asset, IAssetSerializationServices services)
     {
         ArgumentNullException.ThrowIfNull(emitter);
         ArgumentNullException.ThrowIfNull(asset);
@@ -46,7 +56,7 @@ public static class TryWriteAsReference
         emitter.Emit(new Scalar("ID"));
         emitter.Emit(new Scalar(asset.ID.ToString()));
 
-        if (AssetSerializationServices.Current.TryCreatePortableAssetReference(
+        if (services.TryCreatePortableAssetReference(
             asset.FilePath!,
             out string? portableReference))
         {
@@ -60,11 +70,14 @@ public static class TryWriteAsReference
     }
 
     public static bool TryEmitReference(IEmitter emitter, XRAsset? asset)
+        => TryEmitReference(emitter, asset, AssetSerializationServices.Current);
+
+    internal static bool TryEmitReference(IEmitter emitter, XRAsset? asset, IAssetSerializationServices services)
     {
-        if (asset is null || !ShouldWriteReference(asset))
+        if (asset is null || !ShouldWriteReference(asset, services))
             return false;
 
-        WriteReference(emitter, asset);
+        WriteReference(emitter, asset, services);
         return true;
     }
 }

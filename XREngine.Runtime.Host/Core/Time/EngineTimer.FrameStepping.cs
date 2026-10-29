@@ -21,9 +21,7 @@ public partial class EngineTimer
     public void StartCallerThreadLoop()
     {
         if (IsRunning || Volatile.Read(ref _explicitFrameOwnerThreadId) != 0 ||
-            UpdateThreadHandle is { IsAlive: true } ||
-            CollectVisibleThreadHandle is { IsAlive: true } ||
-            FixedUpdateThreadHandle is { IsAlive: true })
+            HasActiveLoopWorkers)
         {
             throw new InvalidOperationException("The previous engine timer lifecycle must stop before starting a caller-thread loop.");
         }

@@ -199,9 +199,12 @@ namespace XREngine.Timers
         public DeltaManager Collect { get; } = new();
         public DeltaManager FixedUpdateManager { get; } = new();
 
-        private Thread? UpdateThreadHandle = null;
-        private Thread? CollectVisibleThreadHandle = null;
-        private Thread? FixedUpdateThreadHandle = null;
+        private IEngineLoopDomain? _loopDomain;
+        private int _loopStartInProgress;
+        private long _loopStopGeneration;
+        private bool HasActiveLoopWorkers
+            => Volatile.Read(ref _loopStartInProgress) != 0 ||
+               Volatile.Read(ref _loopDomain) is { HasLiveThreads: true };
 
         //private static bool IsApplicationIdle() => NativeMethods.PeekMessage(out _, IntPtr.Zero, 0, 0, 0) == 0;
 
@@ -229,59 +232,65 @@ namespace XREngine.Timers
             if (IsRunning)
                 return;
 
-            if (UpdateThreadHandle is { IsAlive: true } ||
-                CollectVisibleThreadHandle is { IsAlive: true } ||
-                FixedUpdateThreadHandle is { IsAlive: true })
-                throw new InvalidOperationException(
-                    "The previous engine loop is still stopping. Call StopAndWait before restarting it.");
-
-            _usesExplicitFrameClock = false;
-            _watch.Start();
-            Interlocked.Exchange(ref _firstTerminalFault, null);
-            Volatile.Write(ref _collectVisiblePhase, "RunGameLoop");
-            _renderDone = new ManualResetEventSlim(false);
-            _visibilityGenerationGate.Reset();
-            _renderReadyForNextCollectSignaled = 0;
-            _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
-
-            // Critical engine loops must NOT run on the shared ThreadPool; bursts of mesh/asset
-            // import jobs were observed to starve them (see fps-drop diagnostics). Use dedicated
-            // background threads at AboveNormal priority so they are scheduled independently
-            // of ThreadPool saturation.
-            UpdateThreadHandle = StartEngineLoopThread(UpdateThread, "XRE-Update");
-            CollectVisibleThreadHandle = StartEngineLoopThread(CollectVisibleThread, "XRE-CollectVisible");
-            FixedUpdateThreadHandle = StartEngineLoopThread(FixedUpdateThread, "XRE-FixedUpdate");
-            // JobManager is now internally multi-threaded; no loop needed here.
-            //There are 4 main threads: Update, Collect Visible, Render, and FixedUpdate.
-            //Update runs as fast as requested without fences.
-            //Collect Visible waits for Render to finish swapping buffers.
-            //Render waits for Collect Visible to finish so it can swap buffers and then render.
-            //FixedUpdate runs at a fixed framerate for physics stability.
-
-            //SwapDone is set when the render thread finishes swapping buffers. This fence is set right before the render thread starts rendering.
-            //PreRenderDone is set when the prerender thread finishes collecting render commands. This fence is set right before the render thread starts swapping buffers.
-
-            Debug.Out($"Started game loop threads.");
-        }
-
-        /// <summary>
-        /// Creates and starts a dedicated background thread at <see cref="ThreadPriority.AboveNormal"/>
-        /// for one of the core engine loops (Update / CollectVisible / FixedUpdate).
-        /// These loops must not share the ThreadPool with asset-import / job work, since import
-        /// bursts can saturate the pool and starve the loop of scheduling opportunities.
-        /// </summary>
-        private static Thread StartEngineLoopThread(ThreadStart loop, string name)
-        {
-            var t = new Thread(loop)
+            long stopGeneration = Volatile.Read(ref _loopStopGeneration);
+            if (Interlocked.CompareExchange(ref _loopStartInProgress, 1, 0) != 0)
+                throw new InvalidOperationException("The engine loop is already starting.");
+            try
             {
-                Name = name,
-                // StopAndWait performs the orderly join. Background ownership is the final
-                // guarantee that a wedged callback cannot strand the process during shutdown.
-                IsBackground = true,
-                Priority = ThreadPriority.AboveNormal,
-            };
-            t.Start();
-            return t;
+                if (_loopDomain is { HasLiveThreads: true })
+                    throw new InvalidOperationException(
+                        "The previous engine loop is still stopping. Call StopAndWait before restarting it.");
+                if (EngineWorkerDomainServices.Factory is not IEngineLoopDomainFactory factory)
+                    throw new InvalidOperationException(
+                        "The registered worker-domain factory does not support dedicated engine loops. Register a loop-capable native worker factory before RunGameLoop.");
+
+                IEngineLoopDomain domain = factory.CreateLoopDomain(UpdateThread, CollectVisibleThread, FixedUpdateThread)
+                    ?? throw new InvalidOperationException("The engine loop factory returned no domain.");
+                SetField(ref _loopDomain, domain, publishNotifications: false);
+                try
+                {
+                    if (Volatile.Read(ref _loopStopGeneration) != stopGeneration)
+                    {
+                        WaitForLoopExit(domain, TimeSpan.Zero);
+                        return;
+                    }
+                    _usesExplicitFrameClock = false;
+                    _watch.Start();
+                    Interlocked.Exchange(ref _firstTerminalFault, null);
+                    Volatile.Write(ref _collectVisiblePhase, "RunGameLoop");
+                    _renderDone = new ManualResetEventSlim(false);
+                    _visibilityGenerationGate.Reset();
+                    _renderReadyForNextCollectSignaled = 0;
+                    _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
+                    // Stop can race with host initialization. Repeat its signals
+                    // after the last reset; no worker has started yet. A later
+                    // Stop runs after these resets and cannot be overwritten.
+                    if (Volatile.Read(ref _loopStopGeneration) != stopGeneration)
+                    {
+                        Stop();
+                        WaitForLoopExit(domain, TimeSpan.Zero);
+                        return;
+                    }
+                    domain.Start();
+                }
+                catch (Exception startupFailure)
+                {
+                    // Started callbacks still use the host signals. Stop them before
+                    // joining, and retain an incomplete domain for a later retry.
+                    Stop();
+                    try { WaitForLoopExit(domain, TimeSpan.FromSeconds(2)); }
+                    catch (Exception cleanupFailure)
+                    {
+                        throw new AggregateException(startupFailure, cleanupFailure);
+                    }
+                    throw;
+                }
+                Debug.Out("Started game loop threads.");
+            }
+            finally
+            {
+                Volatile.Write(ref _loopStartInProgress, 0);
+            }
         }
 
         private static ECollectVisibleLatePolicy ReadCollectVisibleLatePolicyFromEnvironment()
@@ -598,6 +607,7 @@ namespace XREngine.Timers
 
         public void Stop()
         {
+            Interlocked.Increment(ref _loopStopGeneration);
             _watch.Stop();
             Volatile.Write(ref _callerThreadLoopOwnerThreadId, 0);
 
@@ -624,55 +634,35 @@ namespace XREngine.Timers
             if (Volatile.Read(ref _explicitFrameOwnerThreadId) != 0)
                 return false;
 
-            Thread? updateThread = UpdateThreadHandle;
-            Thread? collectVisibleThread = CollectVisibleThreadHandle;
-            Thread? fixedUpdateThread = FixedUpdateThreadHandle;
-            long waitStarted = Stopwatch.GetTimestamp();
+            // Start can still create another worker. Do not release its owner
+            // until startup has returned, even if no thread is alive yet.
+            if (Volatile.Read(ref _loopStartInProgress) != 0)
+                return false;
+            return WaitForLoopExit(Volatile.Read(ref _loopDomain), timeout);
+        }
 
-            bool updateStopped = JoinWithinShutdownTimeout(updateThread, waitStarted, timeout);
-            bool collectVisibleStopped = JoinWithinShutdownTimeout(collectVisibleThread, waitStarted, timeout);
-            bool fixedUpdateStopped = JoinWithinShutdownTimeout(fixedUpdateThread, waitStarted, timeout);
-
-            if (updateStopped)
-                Interlocked.CompareExchange(ref UpdateThreadHandle, null, updateThread);
-            if (collectVisibleStopped)
-                Interlocked.CompareExchange(ref CollectVisibleThreadHandle, null, collectVisibleThread);
-            if (fixedUpdateStopped)
-                Interlocked.CompareExchange(ref FixedUpdateThreadHandle, null, fixedUpdateThread);
-
-            if (updateStopped && collectVisibleStopped && fixedUpdateStopped)
+        private bool WaitForLoopExit(IEngineLoopDomain? domain, TimeSpan timeout)
+        {
+            if (domain is null)
                 return true;
+            EngineLoopExitStatus status = domain.WaitForExit(timeout);
+            if (status.AllStopped)
+            {
+                Interlocked.CompareExchange(ref _loopDomain, null, domain);
+                return true;
+            }
 
             var lingeringThreads = new List<string>(3);
-            if (!updateStopped)
-                lingeringThreads.Add(updateThread?.Name ?? "XRE-Update");
-            if (!collectVisibleStopped)
-                lingeringThreads.Add(collectVisibleThread?.Name ?? "XRE-CollectVisible");
-            if (!fixedUpdateStopped)
-                lingeringThreads.Add(fixedUpdateThread?.Name ?? "XRE-FixedUpdate");
-
+            if (!status.UpdateStopped)
+                lingeringThreads.Add("XRE-Update");
+            if (!status.CollectVisibleStopped)
+                lingeringThreads.Add("XRE-CollectVisible");
+            if (!status.FixedUpdateStopped)
+                lingeringThreads.Add("XRE-FixedUpdate");
             Debug.LogWarning(
                 $"[EngineTimer] Timed out after {timeout.TotalMilliseconds:F0} ms waiting for core loops: " +
                 string.Join(", ", lingeringThreads));
             return false;
-        }
-
-        private static bool JoinWithinShutdownTimeout(Thread? thread, long waitStarted, TimeSpan timeout)
-        {
-            if (thread is null || !thread.IsAlive)
-                return true;
-            if (thread.ManagedThreadId == Environment.CurrentManagedThreadId)
-                return false;
-
-            TimeSpan remaining = timeout - Stopwatch.GetElapsedTime(waitStarted);
-            if (remaining <= TimeSpan.Zero)
-                return !thread.IsAlive;
-
-            TimeSpan maximumJoinTimeout = TimeSpan.FromMilliseconds(int.MaxValue);
-            if (remaining > maximumJoinTimeout)
-                remaining = maximumJoinTimeout;
-
-            return thread.Join(remaining);
         }
 
         /// <summary>

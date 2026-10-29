@@ -10,10 +10,10 @@ gate still apply to each code change.
 
 | Requirements | Remaining work and dependency |
 |---|---|
-| UR02.03b, UR03.02b2 | Finish the blocking, thread, synchronous asset and physical file inventories. Move reachable operations to an asynchronous owner, native leaf, or cook/editor boundary. Reduced search counts and admission guards do not complete physical separation. Archive writing now belongs to Editor. Canonical recovery retains one source installation through publication; successful shared generations still need a safe retirement contract. Asset-save transactions now belong to the desktop output provider. Continue with native loop ownership and the remaining physical boundaries. |
+| UR02.03b, UR03.02b2 | Finish the blocking, thread, synchronous asset and physical file inventories. Move reachable operations to an asynchronous owner, native leaf, or cook/editor boundary. Reduced search counts and admission guards do not complete physical separation. Archive writing now belongs to Editor. Canonical recovery retains one source installation through publication; successful shared generations still need a safe retirement contract. Asset-save transactions now belong to the desktop output provider. The native execution leaf now owns the three engine loop threads. Continue with the remaining file and wait boundaries. |
 | UR03.03 | Complete platform cooking, including texture variants, audio delivery and per-asset device requirements. ASTC/ETC2 production needs a reviewed encoder supply; no pinned encoder is currently available in this environment. Live streaming now preserves cooked sampling and retains raw-image target edits, with separate preview and fade state. |
-| UR06.09f2 | Connect the existing GPU LOD selector to normal renderable registration. Preserve native selected-variant coverage. The supported profile has one to four resident-table levels, equal primitive membership, admitted transforms/materials and coherent ownership. Do not remove rejection guards without the required producer data. |
-| UR11.04 | Include the engine assets in the packaged Editor. Keep the normal CLI and Editor action. Verify that the packaged publisher selects its sidecar build graph and produces the game bundle without changing source inputs. |
+| UR06.09f2 | The GPU LOD selector is connected to normal renderable registration. Native selected-variant coverage is preserved. The supported profile has one to four resident-table levels, equal primitive membership, admitted transforms/materials and coherent ownership. Do not remove rejection guards without the required producer data. |
+| UR11.04 | Engine assets and the source sidecar are included in the packaged Editor. The native publisher host selects the sidecar and produces the game bundle without changing source inputs. Windows CLI and live Editor action acceptance remain open. |
 | UR05.07 | Complete the remaining shader groups and fix known runtime defects. The saved UI player stall is fixed and its normal published bundle passes the unchanged software-browser harness. Finish coherent groups before extending narrow sky coverage. Record each group's known-value milestone before closing the whole requirement. |
 | UR13.03 | Complete trimming, lazy managed assembly loading and streamed delivery. Measure total published transfer. Retain the approved interpreter until the runtime-mode decision changes. |
 | UR15.05 | Finish user build, hosting, support and troubleshooting documentation when validated limits are known. |
@@ -82,3 +82,18 @@ serializer and replacement failures, provider capture and admission. The existin
 animation asset save-and-reload test also passes through the real YAML serializer. The shared
 asset type no longer creates files or sleeps during save. The larger physical
 I/O inventory remains open.
+
+The native execution leaf owns the update, visibility and fixed-update thread
+handles, start order and bounded joins. The timer keeps callbacks and pacing.
+Startup failure and shutdown timeout retain incomplete ownership; stop requests
+during startup remain effective. All 27 focused timer tests pass. Physical
+pacing waits and other rendering worker domains remain in shared code.
+
+YAML writing now captures the serialization owner for asset references and the
+file owner for backing-text comparisons. Edited text remains inline when the
+backing file is unreadable or unsupported. The generic converter preserves that
+decision. All 28 write-boundary tests, 11 path-admission tests and five existing
+material/reference tests pass. The 11 save tests also pass after integration.
+The four-root lexical file scan now finds 17 lines in nine files, including
+comments and working-directory lookups. Raw-read fallback, the static Unity
+animation import and the separate mapping API still need placement work.

@@ -47,9 +47,7 @@ public partial class EngineTimer
     private int BeginExplicitFrameClock(long deltaTicks, bool callerThreadLoop)
     {
         if (_watch.IsRunning || (!callerThreadLoop && IsCallerThreadLoop) ||
-            UpdateThreadHandle is { IsAlive: true } ||
-            CollectVisibleThreadHandle is { IsAlive: true } ||
-            FixedUpdateThreadHandle is { IsAlive: true })
+            HasActiveLoopWorkers)
         {
             throw new InvalidOperationException("Explicit frames require an EngineTimer with no active loop workers.");
         }
