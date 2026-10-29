@@ -1,5 +1,32 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Humanoid conformance source scanner (2026-10-29)
+
+The scanner admits host-file access and captures one discovery provider for
+root checks, recursive enumeration, and file reads. It uses the existing
+metadata-directory and shared-read capabilities. The desktop runner installs a
+provider with both; a custom host must provide both. The original text filters,
+UTF BOM detection, read sharing, line numbers, and error reporting remain.
+
+The raw-read lease and discovery generation reject owner changes observed before
+return. Discovery has no retirement lease or atomic publication guard. A host
+must keep the captured provider usable and coordinate replacement through the
+scan. This change does not resolve the separate YAML or shader ownership issues.
+
+The production-path probe passes for filtering, read sharing, owner replacement,
+and caller-thread admission. Seven focused tests pass for virtual-host reads,
+UTF-16 BOM detection, disposal, source and discovery changes, missing capability,
+read errors, and a missing root. Editor, Server, and VRClient Release builds
+pass on Linux with Windows targeting enabled. The desktop filesystem headless
+fixture passes. All 19 portable manifest projects compile for browser-wasm, and
+Browser publishes with native WASM and pinned Jolt inputs. These checks do not
+establish live conformance-runner execution, Windows behavior, or browser
+rendering.
+
+The two physical read and directory operations leave AnimationIntegration,
+outside the historical four-root lexical scan. The four-root and blocking
+counts stay unchanged; both inventory requirements remain open.
+
 ## Directory helper compatibility review (2026-10-29)
 
 The previous public `XREngine.Core.Utility.EnsureDirPathExists` method is absent

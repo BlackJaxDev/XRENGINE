@@ -244,6 +244,14 @@ parsing and validation. UTF-8 is the default and byte-order marks select other
 supported encodings. The host must keep the captured source usable during the
 read; later caller-side profile migration is a separate operation.
 
+The humanoid conformance source scanner requires admitted host-file access. It
+captures one discovery provider for directory probes, enumeration, and shared
+reads. That provider must implement `IAssetMetadataFileBackend` and
+`IRuntimeHostFileReadBackend`. A raw-read lease and discovery generation check
+reject changes observed before return. Discovery has no retirement lease or
+atomic publication guard: the host must keep the captured provider usable and
+coordinate replacement until the scan returns.
+
 Humanoid pose-audit reports use admitted host reads and the optional
 `IHostAssetFileSharedOutput` capability. The desktop writer creates the parent
 directory and opens the report with `FileShare.Read`. JSON remains UTF-8 without

@@ -1,4 +1,6 @@
 using System.Text;
+using XREngine.Core.Files;
+using XREngine.Data;
 
 namespace XREngine.Components.Animation;
 
@@ -15,14 +17,22 @@ public static class HumanoidConformanceSourceDependencyScanner
         ArgumentNullException.ThrowIfNull(allowedRoots);
         ArgumentNullException.ThrowIfNull(forbiddenIdentities);
 
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+        read.EnsureHostFileAccess("Humanoid conformance source scan");
+        IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long generation);
+        IAssetMetadataFileBackend directories = discovery as IAssetMetadataFileBackend
+            ?? throw new NotSupportedException("AssetSource.MetadataFileUnavailable: the installed asset file system does not provide directory probes.");
+        IRuntimeHostFileReadBackend files = discovery as IRuntimeHostFileReadBackend
+            ?? throw new NotSupportedException("AssetSource.HostFileReadUnavailable: the installed file system does not provide direct host-file reads.");
+
         var result = new HumanoidConformanceDependencyScanResult();
-        List<string> roots = NormalizeDirectories(productionRoots, "production", requireExisting: true, result);
-        List<string> allowed = NormalizeDirectories(allowedRoots, "allowed", requireExisting: false, result);
+        List<string> roots = NormalizeDirectories(productionRoots, "production", requireExisting: true, result, directories);
+        List<string> allowed = NormalizeDirectories(allowedRoots, "allowed", requireExisting: false, result, directories);
         List<string> forbidden = NormalizeTokens(forbiddenIdentities);
         if (forbidden.Count == 0)
         {
             result.Errors.Add("The source dependency scan was given no forbidden fixture identities.");
-            return result;
+            return Complete(read, discovery, generation, result);
         }
 
         result.ScannedRoots.AddRange(roots);
@@ -31,12 +41,12 @@ public static class HumanoidConformanceSourceDependencyScanner
         {
             try
             {
-                foreach (string path in XREngine.Data.RuntimeFileDiscoveryServices.Required.EnumerateFiles(roots[rootIndex], "*", SearchOption.AllDirectories))
+                foreach (string path in discovery!.EnumerateFiles(roots[rootIndex], "*", SearchOption.AllDirectories))
                 {
                     if (IsAllowed(path, allowed) || !IsTextCandidate(path))
                         continue;
                     result.ScannedFileCount++;
-                    ScanFile(path, forbidden, result);
+                    ScanFile(path, forbidden, result, files);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -53,14 +63,25 @@ public static class HumanoidConformanceSourceDependencyScanner
             int pathComparison = StringComparer.Ordinal.Compare(left.FilePath, right.FilePath);
             return pathComparison != 0 ? pathComparison : left.Line.CompareTo(right.Line);
         });
+        return Complete(read, discovery, generation, result);
+    }
+
+    private static HumanoidConformanceDependencyScanResult Complete(RuntimeAssetReadLease read,
+        IRuntimeFileDiscovery? discovery, long generation, HumanoidConformanceDependencyScanResult result)
+    {
+        using IDisposable publication = read.BeginPublication();
+        if (!RuntimeFileDiscoveryServices.IsCurrent(discovery, generation))
+            throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the source scan provider changed during the scan.");
         return result;
     }
 
-    private static void ScanFile(string path, IReadOnlyList<string> forbidden, HumanoidConformanceDependencyScanResult result)
+    private static void ScanFile(string path, IReadOnlyList<string> forbidden, HumanoidConformanceDependencyScanResult result,
+        IRuntimeHostFileReadBackend files)
     {
         try
         {
-            using var reader = new StreamReader(path, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            using Stream input = files.OpenRead(path, FileShare.Read);
+            using var reader = new StreamReader(input, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             int lineNumber = 0;
             while (reader.ReadLine() is { } line)
             {
@@ -82,7 +103,8 @@ public static class HumanoidConformanceSourceDependencyScanner
         IEnumerable<string> roots,
         string kind,
         bool requireExisting,
-        HumanoidConformanceDependencyScanResult result)
+        HumanoidConformanceDependencyScanResult result,
+        IAssetMetadataFileBackend directories)
     {
         var normalized = new List<string>();
         foreach (string root in roots)
@@ -94,7 +116,7 @@ public static class HumanoidConformanceSourceDependencyScanner
                 continue;
             }
             string fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-            if (!Directory.Exists(fullPath))
+            if (!directories.DirectoryExists(fullPath))
             {
                 if (requireExisting)
                     result.Errors.Add($"The source dependency scan {kind} root '{fullPath}' does not exist.");
