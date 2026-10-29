@@ -209,6 +209,12 @@ Rooted references retain their direct load candidate. If host-file access is
 not admitted, snapshot capture treats an untracked asset as inline data.
 Discovery generation checks reject stale results but do not retain a provider.
 
+Published config metadata checks its archive path through the admitted host-file
+probe before the archive registry opens it. A missing archive still reports
+missing metadata. The probe and file-mapping backend have separate owners; hosts
+must keep them consistent and usable through archive opening. Desktop Unix file
+mapping uses an unnamed map for the file stream.
+
 Synchronous VMD animation loading requires host-file admission and an installed
 `IRuntimeHostFileReadBackend`. It opens the file with `FileShare.Read` and
 disposes the stream after parsing. The captured provider is not a retirement

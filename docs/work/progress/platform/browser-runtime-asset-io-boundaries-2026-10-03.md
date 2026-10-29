@@ -1,5 +1,31 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Published metadata archive probe (2026-10-29)
+
+Published config metadata checks its archive path through the shared admitted
+host-file probe. Missing archives still produce the missing-metadata diagnostic,
+including when no file discovery or mapping provider is installed. The probe
+rejects a raw source or discovery replacement during the check. Archive mapping
+has a separate backend and lifetime; the preflight does not pin that backend.
+
+The first Linux archive round-trip probe failed because the desktop Unix mapper
+passed a named map to `MemoryMappedFile.CreateFromFile`. .NET rejected that map.
+The mapper now uses an unnamed map. The real packed archive then loaded metadata
+on Linux. The eight focused tests pass for missing paths and metadata, caller
+admission, source and discovery replacement, real archives, and corrupt input.
+The test build has no warnings or errors.
+
+Editor, Server, and VRClient Release builds pass on Linux with Windows targeting
+enabled. The desktop filesystem headless fixture passes. All 19 portable
+manifest projects compile for browser-wasm, and Browser publishes with native
+WASM and pinned Jolt inputs. Gate logs contain no warning or error diagnostics.
+These checks do not establish Windows startup, Windows mapping, or browser
+rendering. The shader and discovery provider lifetime investigations remain open.
+
+The tracked-source scan reports 14 files / 62 direct-file matching lines across
+Data, Core, Rendering, and Host. The expression includes comments and misses
+target-typed constructors. Both broad inventory requirements remain open.
+
 ## Snapshot host-file probes (2026-10-29)
 
 Snapshot asset references use the shared admitted host-file probe. A relative

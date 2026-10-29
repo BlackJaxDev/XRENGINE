@@ -14,7 +14,7 @@ namespace XREngine
                 : MemoryMappedFileAccess.Read;
 
             _length = length;
-            _mappedFile = MemoryMappedFile.CreateFromFile(stream, stream.Name, _length, cProtect, HandleInheritability.None, true);
+            _mappedFile = MemoryMappedFile.CreateFromFile(stream, null, _length, cProtect, HandleInheritability.None, true);
             _mappedFileAccessor = _mappedFile.CreateViewAccessor(offset, _length, cProtect);
             _addr = _mappedFileAccessor.SafeMemoryMappedViewHandle.DangerousGetHandle();
         }

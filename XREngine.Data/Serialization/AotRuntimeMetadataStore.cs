@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using XREngine.Core;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Runtime.AotParity;
 
 namespace XREngine;
@@ -290,7 +291,11 @@ public static class AotRuntimeMetadataStore
     private static AotRuntimeMetadata? LoadMetadata()
     {
         string? configArchivePath = XRRuntimeEnvironment.PublishedConfigArchivePath;
-        if (string.IsNullOrWhiteSpace(configArchivePath) || !File.Exists(configArchivePath))
+        if (string.IsNullOrWhiteSpace(configArchivePath))
+            return null;
+
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+        if (!RuntimeFileDiscoveryServices.HostFileExists(read, configArchivePath, "Published metadata archive lookup"))
             return null;
 
         // The config archive stays open for the life of the config root; the metadata entry is
