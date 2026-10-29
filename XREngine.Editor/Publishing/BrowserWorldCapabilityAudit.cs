@@ -144,6 +144,9 @@ internal static class BrowserWorldCapabilityAudit
                 Collect(() => BrowserPhysicsCapabilityAudit.Inspect(component, path, report, scenePath),
                     scenePath, path, componentName);
                 Collect(() => shadows.Inspect(component, path), scenePath, path, componentName);
+                if (component is AudioSourceComponent { StaticBuffer: { } audio })
+                    Collect(() => BrowserAudioCookProfile.Validate(audio), scenePath, path, componentName,
+                        pass: "audio-pcm", sourcePath: audio.FilePath ?? audio.OriginalPath);
                 Collect(() => rendering.InspectGlobalResources(component, scenePath, path), scenePath, path, componentName);
                 if (component is CameraComponent camera)
                     Collect(() => rendering.Inspect(camera, path, report, scenePath), scenePath, path, componentName,

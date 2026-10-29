@@ -13,8 +13,12 @@
     <ProjectReference Include="../../XREngine.Runtime.InputIntegration/XREngine.Runtime.InputIntegration.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
     <ProjectReference Include="../../XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
+    <ProjectReference Include="../../XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../Audio/BrowserAudioCookingTests.cs" Link="Audio/BrowserAudioCookingTests.cs" />
+    <Compile Include="../Audio/PcmRecordingTransport.cs" Link="Audio/PcmRecordingTransport.cs" />
+    <Compile Include="../../XREngine.Editor/Publishing/BrowserAudioCookProfile.cs" Link="Publishing/BrowserAudioCookProfile.cs" />
     <Compile Include="../Rendering/TextureCookedSamplingTests.cs" Link="Rendering/TextureCookedSamplingTests.cs" />
     <Compile Include="../Rendering/TextureCacheSamplingTests.cs" Link="Rendering/TextureCacheSamplingTests.cs" />
     <Compile Include="../Rendering/TexturePreviewSamplingTests.cs" Link="Rendering/TexturePreviewSamplingTests.cs" />

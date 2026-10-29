@@ -90,12 +90,13 @@ namespace XREngine.Audio
             if (buffer.Data is null)
                 return;
 
-            _data = buffer.Data;
-            _freq = buffer.Frequency;
-            _stereo = buffer.Stereo;
+            if (buffer.ChannelCount is not (1 or 2))
+                throw new NotSupportedException("Audio.PcmChannelsUnsupported: audio buffers require mono or stereo PCM.");
 
             void* ptr = buffer.Data.Address.Pointer;
-            int length = (int)buffer.Data.Length;
+            int length = checked((int)buffer.Data.Length);
+            if (ptr is null && length != 0)
+                throw new InvalidDataException("Audio PCM storage is unavailable.");
             var pcm = new ReadOnlySpan<byte>(ptr, length);
             SampleFormat format = buffer.Type switch
             {
@@ -105,7 +106,10 @@ namespace XREngine.Audio
                 _ => throw new ArgumentOutOfRangeException(nameof(buffer), buffer.Type, "Unsupported PCM sample type."),
             };
             ParentListener.ActiveTransport.UploadBufferData(
-                _transportHandle, pcm, buffer.Frequency, buffer.Stereo ? 2 : 1, format);
+                _transportHandle, pcm, buffer.Frequency, buffer.ChannelCount, format);
+            SetField(ref _data, buffer.Data, nameof(Data));
+            SetField(ref _freq, buffer.Frequency, nameof(Frequency));
+            SetField(ref _stereo, buffer.Stereo, nameof(Stereo));
         }
 
         /// <summary>

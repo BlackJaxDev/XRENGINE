@@ -75,9 +75,11 @@ public sealed partial class WebAudioTransport : IAudioSpatialTransport
         => WebAudioImports.DestroyBuffer(RequireOpen(), checked((int)buffer.Id));
     public void UploadBufferData(AudioBufferHandle buffer, ReadOnlySpan<byte> pcm, int frequency, int channels, SampleFormat format)
     {
+        int context = RequireOpen();
+        WebAudioPcmProfile.Validate(pcm, frequency, channels, format);
         // PCM upload is an asset-boundary operation; JavaScript copies this borrowed view synchronously.
         Span<byte> borrowed = MemoryMarshal.CreateSpan(ref MemoryMarshal.GetReference(pcm), pcm.Length);
-        WebAudioImports.UploadBuffer(RequireOpen(), checked((int)buffer.Id), borrowed, frequency, channels, (int)format);
+        WebAudioImports.UploadBuffer(context, checked((int)buffer.Id), borrowed, frequency, channels, (int)format);
     }
 
     public void Play(AudioSourceHandle source)

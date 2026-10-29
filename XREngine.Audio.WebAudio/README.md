@@ -10,6 +10,30 @@ attenuation and velocity-dependent pitch. Stereo bypasses the panner to preserve
 its authored channel image. Gain bounds apply before listener gain. Singular
 nonpositive/infinite Doppler rates fail by name rather than being silently clamped.
 
+Browser cooking keeps decoded `AudioData` in the existing cooked binary carrier.
+The exact base audio asset has no external sample dependency; its original import
+path is metadata and is not read during playback. Ordinary scene cooking also
+checks embedded clips, including `AudioSourceComponent.StaticBuffer`. The world
+capability report identifies unsupported static clips before publication.
+Registered serializers still own validation of their opaque payloads.
+
+`WebAudioPcmProfile` is shared by cooking and managed upload. It admits unsigned
+8-bit, signed little-endian 16-bit, or little-endian float PCM; mono or stereo;
+8000 through 192000 Hz; and complete, nonempty sample frames. Float samples must
+be finite. It preserves sample values, channel order, and rate without resampling
+or quantization. A clip must fit 8 MiB. The JavaScript transport separately enforces
+the 8 MiB total buffer budget per output context, so individually valid clips do
+not guarantee that all clips can be resident together. The shared audio buffer
+rejects other channel counts and updates its metadata only after successful upload.
+
+This path consumes already decoded assets. It does not add compressed web audio,
+FLAC decoding, automatic segmentation, or a new file codec. WAV, MP3, and Ogg
+imports still use the existing authoring decoders before cooking. The deterministic
+managed checks cover cooked scene and audio hydration through transport upload.
+Run `node XREngine.UnitTests/Audio/web-audio-pcm.mjs` from the repository root to
+check the production JavaScript PCM conversion and buffer budget with a recording
+AudioContext. These checks do not qualify audible output or browser activation.
+
 Initial playback is deferred until a trusted page gesture authorizes output.
 Page visibility/freeze/cache and drawable-surface blockers compose independently.
 Suspension mutes output immediately and freezes the audio clock without retiring

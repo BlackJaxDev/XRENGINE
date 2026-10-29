@@ -290,6 +290,8 @@ internal static partial class ProjectBuilder
         private object? ValidateAndProject(object? value)
         {
             ValidateGameObjectOwnership(value);
+            if (value is XREngine.Data.AudioData audio)
+                Publishing.BrowserAudioCookProfile.Validate(audio);
             if (value is SubMesh subMesh)
             {
                 if (!_plannedSubMeshes.TryGetValue(subMesh, out bool enabled) ||
@@ -392,6 +394,13 @@ internal static partial class ProjectBuilder
             // volume scene paths are package roots, discovered separately by the publisher.
             if (asset.GetType() == typeof(XRScene))
                 return Array.Empty<PublishedCookedAssetDependency>();
+
+            // The exact PCM asset embeds its samples and does not follow its import path.
+            if (asset.GetType() == typeof(XREngine.Data.AudioData))
+            {
+                Publishing.BrowserAudioCookProfile.Validate((XREngine.Data.AudioData)asset);
+                return Array.Empty<PublishedCookedAssetDependency>();
+            }
 
             throw new NotSupportedException(
                 $"Browser asset '{catalogPath}' has no serializer-owned dependency declaration for '{asset.GetType().FullName}'.");

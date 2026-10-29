@@ -30,7 +30,7 @@ The completed UR00 reference-harness requirements and their evidence are in the 
 - [ ] **UR03.03** Add a platform target to cooking (`CookContent` in `XREngine.Editor/ProjectBuilder.cs`). The shared `XRTexture2D` carrier now preserves color space, import usage, normal-map green inversion, anisotropy, and comparison sampling with backward-compatible reading and a versioned optional header. Cache construction retains authored sampling after mip generation and uses a new cache variant key. Texture asset copies and cooked previews retain sampling values; previews clamp their sole resident mip to level zero. See [image and texture boundaries](../../../architecture/rendering/image-media-font-boundaries.md). Live streaming still needs an authored sampling-state policy. Complete the integrated platform cook. Web cooking produces:
   - WGSL shader artifacts;
   - ASTC 4×4 and ETC2 texture variants with RGBA8 fallbacks, reconciled with the [texture compression TODO](../texturing/texture-compression-and-cooked-cache-todo.md);
-  - web-decodable audio;
+  - web-decodable audio. Browser cooking now admits saved PCM `AudioData` assets and validates inline clips against the shared upload profile. Sample format, rate, channel count, frame alignment, finite floats, and the per-clip limit are checked before publication. Encoded web audio, segmentation, and aggregate residency planning remain open; see [browser audio transport](../../../../XREngine.Audio.WebAudio/README.md);
   - per-asset capability requirements.
 
 
