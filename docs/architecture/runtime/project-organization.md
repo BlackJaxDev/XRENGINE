@@ -271,6 +271,17 @@ admission. Desktop registration supplies this capability. Custom authoring hosts
 must provide it. The provider capture does not reserve the selected name or
 make the subsequent save atomic.
 
+Convex-hull authoring cache-root resolution uses the installed metadata file
+backend only when it must probe for a nested `Assets` directory. An explicit
+cache override, environment override, blank root, or root named `Assets`
+returns before that provider lookup. Custom native authoring hosts that use a
+nonstandard root must supply the metadata capability.
+
+The uninstalled rendering facade admits host-file access before using the
+installed read backend for direct bytes. A custom host that calls this fallback
+must supply the read capability. The focused `RuntimeRenderingHostServices.Assets`
+capability still requires a concrete rendering host.
+
 Renderer module assembly hashes capture `IRuntimeHostFileReadBackend` after
 host-file admission. Locationless assemblies return an empty hash without a
 provider. The captured provider owns the existence probe and shared read used

@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Threading;
 using XREngine.Components;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -308,7 +309,10 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     public double TextureUploadFrameBudgetMilliseconds => RuntimeRenderingHostServiceDefaults.TextureUploadFrameBudgetMilliseconds;
 
     public byte[] ReadAllBytes(string filePath)
-        => File.ReadAllBytes(filePath);
+    {
+        RuntimeAssetReadServices.EnsureHostFileAccess("Rendering host file read");
+        return RuntimeFileDiscoveryServices.CaptureHostFileReadBackend().ReadAllBytes(filePath);
+    }
 
     public string ResolveTextureStreamingAuthorityPath(string filePath)
         => string.IsNullOrWhiteSpace(filePath) ? filePath : Path.GetFullPath(filePath);

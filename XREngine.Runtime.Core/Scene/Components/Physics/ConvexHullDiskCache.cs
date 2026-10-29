@@ -1,4 +1,5 @@
 using XREngine.Data.Tools;
+using XREngine.Core.Files;
 using XREngine.Scene.Physics;
 
 namespace XREngine.Components.Physics;
@@ -34,7 +35,8 @@ public static class ConvexHullDiskCache
             return string.IsNullOrWhiteSpace(projectRoot) ? null : Path.Combine(projectRoot, "Cache");
         }
 
-        if (Directory.Exists(Path.Combine(normalizedAssetsPath, "Assets")))
+        IAssetMetadataFileBackend files = AssetFileSystemServices.CaptureMetadataFileBackend("Convex hull cache root");
+        if (files.DirectoryExists(Path.Combine(normalizedAssetsPath, "Assets")))
             return Path.Combine(normalizedAssetsPath, "Cache");
 
         string? parent = Path.GetDirectoryName(normalizedAssetsPath);
