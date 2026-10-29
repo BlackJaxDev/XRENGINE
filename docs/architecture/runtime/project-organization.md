@@ -611,6 +611,11 @@ discovery, working-directory asset selection, writable directory preparation,
 and project-root inference. Desktop composition supplies these operations through
 `DesktopAssetFileSystem`. Custom synchronous authoring hosts must install that
 capability before constructing an asset manager or preparing an asset path.
+`XRAsset.SerializeTo` and `SerializeToAsync` also need an output provider with
+`IHostAssetFileTransactionalOutput`. `XRAsset` keeps the YAML serialization
+policy. The desktop output provider writes an adjacent temporary file, flushes
+it, and replaces the destination. It retries `File.Replace` up to four times.
+The browser tool hosts install this provider before they cook saved fixtures.
 Recursive directory preparation keeps one captured provider for all parent
 probes and creation calls. Provider capture does not add a retirement lease or
 an atomic directory snapshot. Catalog and asynchronous source startup retain

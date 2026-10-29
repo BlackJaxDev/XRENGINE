@@ -13,8 +13,10 @@ namespace XREngine.UnitTests.Core;
 public sealed class ModelCacheAssetManagerIdentityTests
 {
     [Test]
+    [NonParallelizable]
     public void Resolve_UsesSuppliedSettingsAndProjectCookOverridesWithoutParsingSource()
     {
+        using var output = new DesktopHostAssetOutputScope();
         string rootPath = Path.Combine(
             TestContext.CurrentContext.WorkDirectory,
             "ModelCacheAssetManagerIdentity",

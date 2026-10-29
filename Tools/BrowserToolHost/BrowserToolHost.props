@@ -4,5 +4,6 @@
     <Compile Include="$(MSBuildThisFileDirectory)LocalPlatformPaths.cs" Link="Host/LocalPlatformPaths.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Runtime.Platform.Desktop/TextureStreamingCacheFileWriter.cs" Link="Host/TextureStreamingCacheFileWriter.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Runtime.Platform.Desktop/HostBinaryCacheFileWriter.cs" Link="Host/HostBinaryCacheFileWriter.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)../../XREngine.Runtime.Platform.Desktop/DesktopHostAssetFileOutput.cs" Link="Host/DesktopHostAssetFileOutput.cs" />
   </ItemGroup>
 </Project>

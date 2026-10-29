@@ -477,25 +477,10 @@ namespace XREngine.Core.Files
         public virtual void SerializeTo(string filePath, ISerializer defaultSerializer)
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Asset serialization");
-            EnsureDirectoryExists(filePath);
-            string tempPath = CreateTempWritePath(filePath);
-
-            try
-            {
-                using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
-                using (var writer = new StreamWriter(fs, Encoding.UTF8))
-                {
-                    defaultSerializer.Serialize(writer, this, GetType());
-                    writer.Flush();
-                    fs.Flush(true);
-                }
-
-                ReplaceSerializedAssetFile(tempPath, filePath);
-            }
-            finally
-            {
-                TryDeleteTempWritePath(tempPath);
-            }
+            IHostAssetFileTransactionalOutput output = HostAssetFileOutputServices.Required as IHostAssetFileTransactionalOutput
+                ?? throw new NotSupportedException("HostAssetFileOutput.TransactionUnavailable: install an asset file transaction output service before saving.");
+            output.WriteTextWithReplacement(filePath, Encoding.UTF8,
+                writer => defaultSerializer.Serialize(writer, this, GetType()));
         }
 
         /// <summary>
@@ -511,26 +496,10 @@ namespace XREngine.Core.Files
         public virtual async Task SerializeToAsync(string filePath, ISerializer defaultSerializer)
         {
             RuntimeAssetReadServices.EnsureHostFileAccess("Asset serialization");
-            EnsureDirectoryExists(filePath);
-            string tempPath = CreateTempWritePath(filePath);
-            string yaml = defaultSerializer.Serialize(this, GetType());
-
-            try
-            {
-                using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite))
-                using (var writer = new StreamWriter(fs, Encoding.UTF8))
-                {
-                    await writer.WriteAsync(yaml).ConfigureAwait(false);
-                    await writer.FlushAsync().ConfigureAwait(false);
-                    fs.Flush(true);
-                }
-
-                ReplaceSerializedAssetFile(tempPath, filePath);
-            }
-            finally
-            {
-                TryDeleteTempWritePath(tempPath);
-            }
+            IHostAssetFileTransactionalOutput output = HostAssetFileOutputServices.Required as IHostAssetFileTransactionalOutput
+                ?? throw new NotSupportedException("HostAssetFileOutput.TransactionUnavailable: install an asset file transaction output service before saving.");
+            await output.WriteTextWithReplacementAsync(filePath, Encoding.UTF8,
+                () => defaultSerializer.Serialize(this, GetType())).ConfigureAwait(false);
         }
 
         #endregion
@@ -571,74 +540,5 @@ namespace XREngine.Core.Files
 
         #endregion
 
-        #region Methods - Private Helpers
-
-        /// <summary>
-        /// Ensures that the directory for the specified file path exists, creating it if necessary.
-        /// </summary>
-        /// <param name="filePath">The file path whose directory should be created.</param>
-        private static void EnsureDirectoryExists(string filePath)
-        {
-            string? directory = Path.GetDirectoryName(filePath);
-            if (!string.IsNullOrWhiteSpace(directory))
-                Directory.CreateDirectory(directory);
-        }
-
-        private static string CreateTempWritePath(string filePath)
-            => $"{filePath}.{Guid.NewGuid():N}.tmp";
-
-        private static void ReplaceSerializedAssetFile(string tempPath, string filePath)
-        {
-            if (!File.Exists(filePath))
-            {
-                File.Move(tempPath, filePath);
-                return;
-            }
-
-            // File.Replace is occasionally flaky on Windows when the destination was just
-            // created (e.g., a zero-byte placeholder): AV scanners, the search indexer, or
-            // transient share locks cause "Unable to remove the file to be replaced."
-            // Retry a few times, then fall back to delete + move.
-            const int maxAttempts = 4;
-            for (int attempt = 1; attempt <= maxAttempts; attempt++)
-            {
-                try
-                {
-                    File.Replace(tempPath, filePath, destinationBackupFileName: null, ignoreMetadataErrors: true);
-                    return;
-                }
-                catch (IOException) when (attempt < maxAttempts)
-                {
-                    System.Threading.Thread.Sleep(25 * attempt);
-                }
-            }
-
-            // Final fallback: delete the destination and move the temp file into place.
-            try
-            {
-                File.Delete(filePath);
-            }
-            catch (IOException)
-            {
-                // Clear a potential read-only attribute and retry once.
-                try { File.SetAttributes(filePath, FileAttributes.Normal); } catch { }
-                File.Delete(filePath);
-            }
-            File.Move(tempPath, filePath);
-        }
-
-        private static void TryDeleteTempWritePath(string tempPath)
-        {
-            try
-            {
-                if (File.Exists(tempPath))
-                    File.Delete(tempPath);
-            }
-            catch
-            {
-            }
-        }
-
-        #endregion
     }
 }

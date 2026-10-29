@@ -10,6 +10,7 @@ using XREngine.Publishing;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Diagnostics.Native;
+using XREngine.Runtime.Platform.Desktop;
 using XREngine.Scene;
 
 NativeDebugBackendRegistration.EnsureRegistered();
@@ -20,6 +21,7 @@ if (!(args.Length == 3 && args[0] == "--scan") && args.Length != 2)
 // Keep writable state beside the payload so verify and scan do not change it.
 string hostRoot = Path.GetFullPath(args[^1]).TrimEnd(Path.DirectorySeparatorChar) + ".host";
 AssetFileSystemServices.Current = new LocalAssetFileSystem();
+HostAssetFileOutputServices.Current = new DesktopHostAssetFileOutput();
 RuntimePlatformPaths.Current = new LocalPlatformPaths(hostRoot);
 Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.GameAssetsPath, Path.Combine(hostRoot, "Assets"));
 Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.GameCachePath, Path.Combine(hostRoot, "Cache"));

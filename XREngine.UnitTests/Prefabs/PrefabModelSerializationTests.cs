@@ -20,9 +20,21 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.UnitTests.Prefabs;
 
-[TestFixture]
+[TestFixture, NonParallelizable]
 public sealed class PrefabModelSerializationTests
 {
+    private IHostAssetFileOutput? _previousOutput;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousOutput = HostAssetFileOutputServices.Current;
+        HostAssetFileOutputServices.Current = new XREngine.Runtime.Platform.Desktop.DesktopHostAssetFileOutput();
+    }
+
+    [TearDown]
+    public void TearDown() => HostAssetFileOutputServices.Current = _previousOutput;
+
     [Test]
     public void YamlDeserializer_RoundTrips_ModelWithSingleSubMesh()
     {

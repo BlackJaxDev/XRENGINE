@@ -8,13 +8,27 @@ using Shouldly;
 using XREngine.Animation;
 using XREngine.Core.Files;
 using XREngine.Data.Animation;
+using XREngine.Data;
+using XREngine.Runtime.Platform.Desktop;
 using YamlDotNet.Serialization;
 
 namespace XREngine.UnitTests.Animation;
 
-[TestFixture]
+[TestFixture, NonParallelizable]
 public sealed class AnimationClipSerializationTests
 {
+    private IHostAssetFileOutput? _previousOutput;
+
+    [SetUp]
+    public void SetUp()
+    {
+        _previousOutput = HostAssetFileOutputServices.Current;
+        HostAssetFileOutputServices.Current = new DesktopHostAssetFileOutput();
+    }
+
+    [TearDown]
+    public void TearDown() => HostAssetFileOutputServices.Current = _previousOutput;
+
     [Test]
     public void KeyframeOwningTrack_IsRuntimeOnlySerializationLinkage()
     {

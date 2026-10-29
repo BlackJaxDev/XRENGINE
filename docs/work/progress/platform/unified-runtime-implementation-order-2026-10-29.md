@@ -10,7 +10,7 @@ gate still apply to each code change.
 
 | Requirements | Remaining work and dependency |
 |---|---|
-| UR02.03b, UR03.02b2 | Finish the blocking, thread, synchronous asset and physical file inventories. Move reachable operations to an asynchronous owner, native leaf, or cook/editor boundary. Reduced search counts and admission guards do not complete physical separation. Archive writing now belongs to Editor. Canonical recovery retains one source installation through publication; successful shared generations still need a safe retirement contract. Continue with the asset-save transaction and the remaining physical boundaries. |
+| UR02.03b, UR03.02b2 | Finish the blocking, thread, synchronous asset and physical file inventories. Move reachable operations to an asynchronous owner, native leaf, or cook/editor boundary. Reduced search counts and admission guards do not complete physical separation. Archive writing now belongs to Editor. Canonical recovery retains one source installation through publication; successful shared generations still need a safe retirement contract. Asset-save transactions now belong to the desktop output provider. Continue with native loop ownership and the remaining physical boundaries. |
 | UR03.03 | Complete platform cooking, including texture variants, audio delivery and per-asset device requirements. ASTC/ETC2 production needs a reviewed encoder supply; no pinned encoder is currently available in this environment. Live streaming now preserves cooked sampling and retains raw-image target edits, with separate preview and fade state. |
 | UR06.09f2 | Connect the existing GPU LOD selector to normal renderable registration. Preserve native selected-variant coverage. The supported profile has one to four resident-table levels, equal primitive membership, admitted transforms/materials and coherent ownership. Do not remove rejection guards without the required producer data. |
 | UR11.04 | Include the engine assets in the packaged Editor. Keep the normal CLI and Editor action. Verify that the packaged publisher selects its sidecar build graph and produces the game bundle without changing source inputs. |
@@ -74,3 +74,11 @@ The normal saved UI publication passes two fresh browser contexts with 72 and
 14 checkpoints. This includes image, glyph, input, resize and lifecycle checks.
 All 24 desktop/portable/native Browser publication gates passed with zero
 compiler warnings and errors. Physical-device acceptance remains open.
+
+Asset saves now capture the installed transaction output provider before YAML
+serialization. The desktop leaf owns the adjacent temporary file, durable flush,
+replacement retry and cleanup. Eleven focused checks cover creation, replacement,
+serializer and replacement failures, provider capture and admission. The existing
+animation asset save-and-reload test also passes through the real YAML serializer. The shared
+asset type no longer creates files or sleeps during save. The larger physical
+I/O inventory remains open.

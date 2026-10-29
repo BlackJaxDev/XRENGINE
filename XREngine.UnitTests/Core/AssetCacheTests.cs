@@ -154,8 +154,10 @@ public sealed class AssetCacheTests
     }
 
     [Test]
+    [NonParallelizable]
     public void LoadPrefabSource_ExclusiveCodecDoesNotFallThroughToLegacyYaml()
     {
+        using var output = new DesktopHostAssetOutputScope();
         using var sandbox = new AssetCacheSandbox();
         var manager = new AssetManager
         {

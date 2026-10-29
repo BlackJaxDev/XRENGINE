@@ -9,6 +9,7 @@ using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Diagnostics.Native;
+using XREngine.Runtime.Platform.Desktop;
 using XREngine.Scene.Physics;
 
 NativeDebugBackendRegistration.EnsureRegistered();
@@ -36,6 +37,7 @@ try
 {
     ThreadedWorkerBackend.EnsureRegistered();
     AssetFileSystemServices.Current = new LocalAssetFileSystem();
+    HostAssetFileOutputServices.Current = new DesktopHostAssetFileOutput();
     ShaderSourceFileBackendServices.Current = new LocalShaderSourceFileBackend();
     RuntimePlatformPaths.Current = new LocalPlatformPaths(validationRoot);
     using IDisposable services = RuntimeAssetBootstrap.InstallEngineAssetServices();
