@@ -16,6 +16,9 @@ See the [legal guide](LEGAL/README.md) and
 Contributions require the
 [XRENGINE Contributor Agreement](LEGAL/CONTRIBUTING.md).
 
+For code, comments, and change descriptions, see the
+[maintainer style guide](docs/developer-guides/ai/maintainer-style.md).
+
 Scroll down a bit to see technical details and how to bootstrap your own build. Fastest: run `./ExecTool --bootstrap` after cloning.
 
 ## THE WHO
