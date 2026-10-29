@@ -202,6 +202,13 @@ paths gain the asset extension. Rooted paths keep their existing direct route,
 and catalog scene identities use catalog metadata. A caller-thread host cannot
 perform the relative host-file probe.
 
+Snapshot file references use the same admitted host-file probe. A relative
+reference checks the engine root, engine shader root, and game root in that
+order, using one raw-read lease and discovery generation for the lazy scan.
+Rooted references retain their direct load candidate. If host-file access is
+not admitted, snapshot capture treats an untracked asset as inline data.
+Discovery generation checks reject stale results but do not retain a provider.
+
 Synchronous VMD animation loading requires host-file admission and an installed
 `IRuntimeHostFileReadBackend`. It opens the file with `FileShare.Read` and
 disposes the stream after parsing. The captured provider is not a retirement

@@ -43,6 +43,17 @@ public static class RuntimeFileDiscoveryServices
         ArgumentNullException.ThrowIfNull(read);
         read.EnsureHostFileAccess(operation);
         IRuntimeFileDiscovery? discovery = Capture(out long generation);
+        return HostFileExists(read, path, operation, discovery, generation);
+    }
+
+    /// <summary>Checks a host file against a captured discovery installation and raw-read lease.</summary>
+    public static bool HostFileExists(RuntimeAssetReadLease read, string path, string operation,
+        IRuntimeFileDiscovery? discovery, long generation)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        read.EnsureHostFileAccess(operation);
+        if (!IsCurrent(discovery, generation))
+            throw new OperationCanceledException("AssetSource.StaleFileDiscovery: the asset file discovery installation changed during the path lookup.");
         bool exists = discovery is IRuntimeHostFileReadBackend files
             ? files.FileExists(path)
             : read.Exists(path);

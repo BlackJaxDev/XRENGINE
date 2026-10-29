@@ -1,5 +1,29 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Snapshot host-file probes (2026-10-29)
+
+Snapshot asset references use the shared admitted host-file probe. A relative
+scan captures one raw-read lease and discovery generation for its lazy engine,
+shader, and game candidate checks. Rooted load candidates keep their existing
+direct route. When host-file access is not admitted, capture treats an
+untracked file-backed asset as inline data. Source or discovery replacement
+rejects stale probe results. The discovery provider has no retirement lease.
+
+Seven focused snapshot tests pass, including candidate order, lazy evaluation,
+source and provider replacement, rooted checks, inline/reference selection,
+and an inline snapshot serialization round trip. Seven scene-path and 11 YAML
+path tests also pass after the shared probe change. The standalone round-trip
+probe required the native logging backend before snapshot serialization. Editor,
+Server, and VRClient Release builds pass on Linux with Windows targeting enabled.
+The desktop filesystem headless fixture passes. All 19 portable manifest projects
+compile for browser-wasm, and Browser publishes with native WASM and pinned Jolt
+inputs. The gate logs contain no warning or error diagnostics. These checks do
+not establish Windows startup, live editor snapshots, or browser rendering.
+
+The tracked-source scan reports 15 files / 63 direct-file matching lines across
+Data, Core, Rendering, and Host. The expression includes comments and misses
+target-typed constructors. Both broad inventory requirements remain open.
+
 ## Scene path host-file probe (2026-10-29)
 
 Relative host scene paths now use the admitted, source-owned discovery probe

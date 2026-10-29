@@ -1,5 +1,6 @@
 using System;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Runtime.AotParity;
 using XREngine.Diagnostics;
 using XREngine.Serialization;
@@ -172,8 +173,17 @@ internal sealed class SnapshotAssetReference
     /// </summary>
     public static bool HasLoadableFile(string assetPath)
     {
-        foreach (string candidatePath in EnumerateCandidatePaths(assetPath))
-            if (File.Exists(candidatePath))
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+        if (!HasHostFileAdmission(read))
+            return false;
+
+        IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long generation);
+        if (Path.IsPathRooted(assetPath))
+            return ProbeFile(read, discovery, generation, assetPath);
+
+        foreach (string candidatePath in EnumerateRelativeCandidatePaths(
+            assetPath, Engine.Assets.EngineAssetsPath, Engine.Assets.GameAssetsPath, read, discovery, generation))
+            if (ProbeFile(read, discovery, generation, candidatePath))
                 return true;
 
         return false;
@@ -187,16 +197,38 @@ internal sealed class SnapshotAssetReference
             yield break;
         }
 
-        string engineRelativePath = Path.Combine(Engine.Assets.EngineAssetsPath, assetPath);
-        if (File.Exists(engineRelativePath))
+        using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
+        if (!HasHostFileAdmission(read))
+            yield break;
+
+        IRuntimeFileDiscovery? discovery = RuntimeFileDiscoveryServices.Capture(out long generation);
+        foreach (string path in EnumerateRelativeCandidatePaths(
+            assetPath, Engine.Assets.EngineAssetsPath, Engine.Assets.GameAssetsPath, read, discovery, generation))
+            yield return path;
+    }
+
+    private static bool HasHostFileAdmission(RuntimeAssetReadLease read)
+    {
+        try { read.EnsureHostFileAccess("Snapshot asset path lookup"); return true; }
+        catch (NotSupportedException) { return false; }
+    }
+
+    private static bool ProbeFile(RuntimeAssetReadLease read, IRuntimeFileDiscovery? discovery, long generation, string path)
+        => RuntimeFileDiscoveryServices.HostFileExists(read, path, "Snapshot asset path lookup", discovery, generation);
+
+    internal static IEnumerable<string> EnumerateRelativeCandidatePaths(string assetPath, string engineRoot,
+        string gameRoot, RuntimeAssetReadLease read, IRuntimeFileDiscovery? discovery, long generation)
+    {
+        string engineRelativePath = Path.Combine(engineRoot, assetPath);
+        if (ProbeFile(read, discovery, generation, engineRelativePath))
             yield return engineRelativePath;
 
-        string shaderRelativePath = Path.Combine(Engine.Assets.EngineAssetsPath, "Shaders", assetPath);
-        if (File.Exists(shaderRelativePath))
+        string shaderRelativePath = Path.Combine(engineRoot, "Shaders", assetPath);
+        if (ProbeFile(read, discovery, generation, shaderRelativePath))
             yield return shaderRelativePath;
 
-        string gameRelativePath = Path.Combine(Engine.Assets.GameAssetsPath, assetPath);
-        if (File.Exists(gameRelativePath))
+        string gameRelativePath = Path.Combine(gameRoot, assetPath);
+        if (ProbeFile(read, discovery, generation, gameRelativePath))
             yield return gameRelativePath;
     }
 }
