@@ -85,3 +85,10 @@ current owner below explicitly adopts it.
 - [Math Intersections Render FPS And Debug Batching](math-intersections-render-fps-debug-batching-2026-07-22.md)
 - [Physics-Chain Skinned-Mesh Motion Failure](physics-chain-skinned-mesh-motion-2026-07-22.md)
 - [Vulkan Render Query System Upgrade](vulkan-render-query-system-upgrade-2026-07-22.md)
+
+## Browser sky qualification
+
+- [Gradient and solid sky qualification](2026-10-29-gradient-sky-qualification.md)
+  records live pixels and the distinction between rebuilt engine handles and
+  retained native GPU programs. Current acceptance limits are in
+  [platform validation](../../../testing/platform/platform-validation.md#gradient-and-solid-sky--2026-10-29).

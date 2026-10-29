@@ -313,8 +313,8 @@ internal sealed partial class EngineMeshDiagnosticFixture
             _unlitTextures[i].Destroy();
     }
 
-    /// <summary>Unwinds a failed board startup before the exports can retain and dispose this fixture.</summary>
-    private void CleanupFailedUnlitConstruction()
+    /// <summary>Unwinds a failed fixture startup before the exports can retain and dispose this fixture.</summary>
+    private void CleanupFailedConstruction()
     {
         // Rollback must preserve the startup failure and continue after any teardown failure.
         static void Attempt(Action action)
@@ -338,6 +338,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
         }
         if (_renderWorld is { } renderWorld) Attempt(renderWorld.Dispose);
         if (_unlitVisual is { } visual) Attempt(visual.Destroy);
+        if (_skyVisual is { } skyVisual) Attempt(skyVisual.Destroy);
         Attempt(_scene.Dispose);
         if (_mesh is { } mesh) Attempt(() => mesh.Destroy());
         if (_unlitBackgroundMesh is { } background) Attempt(() => background.Destroy());

@@ -32,6 +32,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
     private readonly bool _lit;
     private readonly bool _shadow;
     private readonly bool _debug;
+    private readonly bool _sky;
     private readonly bool _effects;
     private readonly bool _unlit;
     private XRTexture2D? _texture;
@@ -40,7 +41,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
     public EngineMeshDiagnosticFixture(WebGpuRendererHost renderer, ShaderProgramArtifact? artifact, uint width, uint height,
         ShaderProgramArtifact? tonemapArtifact = null, bool shadow = false, bool debug = false,
         WebPipelineArtifactCatalog? effectArtifacts = null, bool unlit = false,
-        EngineUnlitDiagnosticProfile? unlitProfile = null)
+        EngineUnlitDiagnosticProfile? unlitProfile = null, bool sky = false)
     {
         if (!RuntimeWorkScheduler.IsCallerThread)
             throw new InvalidOperationException("EngineMeshDiagnostic.HostRequired: install the real caller-thread rendering host before constructing the fixture.");
@@ -51,7 +52,10 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         _lit = tonemapArtifact is not null && !unlit;
         _shadow = shadow;
         _debug = debug;
-        _effects = effectArtifacts is not null && !unlit;
+        _sky = sky;
+        _effects = effectArtifacts is not null && !unlit && !sky;
+        if (_sky && (!_lit || unlit || shadow || debug || effectArtifacts is null))
+            throw new ArgumentException("A sky fixture requires the verified lit, sky, and presentation catalog.", nameof(sky));
         if (_effects && (shadow || debug))
             throw new ArgumentException("The effects fixture uses its own unshadowed lit scene.", nameof(effectArtifacts));
         if (_shadow && !_lit)
@@ -138,6 +142,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
                 new List<ushort> { 0, 1, 2 });
             VisualScene3D visual = new();
             if (_unlit) _unlitVisual = visual;
+            if (_sky) _skyVisual = visual;
             visual.ApplyRenderDispatchPreference(false);
             visual.SetBounds(new AABB(new Vector3(-2, -2, -5), new Vector3(2, 2, 1)));
             _renderWorld = new RuntimeWorldRenderer(_scene, visual);
@@ -150,6 +155,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
                 else InitializeLights();
                 if (_debug) InitializeDebugScene();
                 if (_effects) InitializeEffectsScene();
+                if (_sky) InitializeSkyScene();
             }
             else
             {
@@ -174,6 +180,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
                 ConfigureLitCamera(camera);
                 if (!_shadow) SetLitCase(0);
                 if (_effects) ConfigureEffectsCamera(camera);
+                if (_sky) ConfigureSkyCamera(camera, cameraTransform);
             }
             if (_debug)
                 camera.CullingMask = LayerMask.Everything;
@@ -211,7 +218,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
                 _viewport.AutomaticallySwapBuffers = true;
                 Engine.Time.Timer.StartCallerThreadLoop();
             }
-            catch (Exception) when (!_unlit)
+            catch (Exception) when (!_unlit && !_sky)
             {
                 _renderWorld.SetCollectPublicationOpen(false);
                 Engine.Time.Timer.CollectVisible -= CollectFrame;
@@ -222,9 +229,9 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
                 throw;
             }
         }
-        catch (Exception) when (_unlit)
+        catch (Exception) when (_unlit || _sky)
         {
-            CleanupFailedUnlitConstruction();
+            CleanupFailedConstruction();
             throw;
         }
     }
@@ -277,7 +284,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         // Step the real caller-thread clock without beginning world play or physics.
         return Engine.Time.Timer.StepFrame(1.0 / 60.0) &&
             _renderer.IsBackendReplacementFrameReady && (_unlit ? _renderer.LastEngineMeshDrawCount >= _unlitMaterials.Count :
-                (_shadow || _debug || _effects) ? _renderer.LastEngineMeshDrawCount >= 2 :
+                (_shadow || _debug || _effects || _sky) ? _renderer.LastEngineMeshDrawCount >= 2 :
                 _renderer.LastEngineMeshDrawCount == (_lit ? 2 : 3)) &&
             (!_shadow || ShadowFrameReady());
     }
@@ -336,6 +343,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         DisposeShadowScene();
         DisposeEffectsScene();
         DisposeUnlitScene();
+        _skyVisual?.Destroy();
         _material.Destroy();
         _texture?.Destroy();
         _vertex?.Destroy();

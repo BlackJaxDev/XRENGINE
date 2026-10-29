@@ -39,7 +39,7 @@ matrices. The camera translation is removed by transforming the reconstructed
 view ray with `w=0`; authored sky rotation remains a Y-axis rotation in degrees
 converted by the existing component publisher. Normal-Z far clip depth is 1.
 
-The admitted output is mono, single-sample, normal-Z, with less-equal depth
+The default-pipeline output admits mono, one or four samples, normal-Z, with less-equal depth
 testing, no depth writes, no blending and no face culling. Sky color and opaque
 alpha are written to HDR before presentation. Foreground depth occludes the sky,
 and sorted transparent surfaces blend over it. The engine's existing normal-Z
@@ -79,9 +79,15 @@ On 2026-10-02, the pinned official Slang 2026.8 toolchain cooked all five sky
 recipes successfully, with their declared view/material/texture ABIs verified
 by ShaderCooker. Its tool build completed with zero warnings and errors.
 The integrated Editor and native-Jolt Browser Release builds also pass with zero
-warnings and errors. Known-value GPU rendering remains a separate acceptance
-step.
-Known-value GPU acceptance must cover asymmetric gradient orientation, camera
-translation/rotation, labeled cube faces and seams, panorama/octahedral mapping,
-HDR values through bloom/tonemap, foreground occlusion, sorted transparency over
-sky, procedural day/night controls and retained sun/moon/ambient behavior.
+warnings and errors.
+
+`Tools/BrowserSmoke` includes `engine-sky-gradient`. Its real engine fixture
+checks asymmetric gradient orientation, camera translation and rotation, linear
+HDR intensity, solid color, foreground occlusion, and tonemapped canvas pixels.
+It also checks non-square resize, restoration, two device sessions, and bounded
+resource retention. The [qualification record](../../work/investigations/rendering/archive/2026-10-29-gradient-sky-qualification.md)
+separates measured software results from broader acceptance.
+
+Known-value GPU acceptance remains open for labeled cube faces and seams,
+panorama/octahedral mapping, sky bloom, sorted transparency over sky, procedural
+day/night controls, retained sun/moon/ambient behavior, and hardware devices.

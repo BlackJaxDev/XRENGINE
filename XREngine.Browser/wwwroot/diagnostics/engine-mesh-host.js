@@ -25,16 +25,17 @@ export class EngineMeshDiagnosticHost {
         this.lastReadySession = 0;
         this.unlitFrameEvidence = null;
         this.unlitResourceOwnership = null;
-        this.unlitNativeIds = new WeakMap();
-        this.nextUnlitNativeId = 0;
-        this.previousUnlitNatives = new WeakSet();
+        this.nativeProgramIds = new WeakMap();
+        this.nextNativeProgramId = 0;
+        this.previousNativePrograms = new WeakSet();
         this.frame = this.frame.bind(this);
+        this.nativeProgramId = this.nativeProgramId.bind(this);
     }
 
     async start(manifestUrl, assetManifestUrl, artifactName = 'engine-depth-probe', executionProfile = 'cpu-x1') {
         if (!['engine-depth-probe', 'engine-texture-probe', 'engine-standard-lit-color',
             'engine-standard-lit-color-directional-shadow', 'engine-standard-lit-color-debug',
-            'engine-standard-lit-color-effects', 'engine-unlit-materials'].includes(artifactName))
+            'engine-standard-lit-color-effects', 'engine-sky-gradient', 'engine-unlit-materials'].includes(artifactName))
             throw new Error('Select an admitted engine raster diagnostic artifact.');
         if (!['cpu-x1', 'cpu-x4', 'cpu-x4-blended', 'cpu-x4-ao',
             'gpu-indirect-x1', 'gpu-indirect-x4', 'gpu-indirect-x4-blended', 'gpu-indirect-x4-ao'].includes(executionProfile) ||
@@ -52,7 +53,8 @@ export class EngineMeshDiagnosticHost {
         this.readyFrames = 0;
         this.settleFrames = 0;
         this.lastReadySession = 0;
-        this.kind = artifactName === 'engine-unlit-materials' ? 'unlit' :
+        this.kind = artifactName === 'engine-sky-gradient' ? 'sky' :
+            artifactName === 'engine-unlit-materials' ? 'unlit' :
             artifactName === 'engine-standard-lit-color-effects' ? 'effects' :
             artifactName === 'engine-standard-lit-color-debug' ? 'debug' :
             artifactName === 'engine-standard-lit-color-directional-shadow' ? 'shadow' :
@@ -79,8 +81,8 @@ export class EngineMeshDiagnosticHost {
                 if (!sourceResponse.ok) throw new Error(`Diagnostic WGSL failed: ${sourceResponse.status}`);
                 return { descriptorJson, source: await sourceResponse.text() };
             };
-            const artifact = this.kind === 'unlit' ? null : await loadArtifact(['debug', 'effects'].includes(this.kind) ? 'engine-standard-lit-color' : artifactName);
-            const tonemap = ['lit', 'shadow', 'debug', 'effects'].includes(this.kind) ? await loadArtifact('engine-tonemap') : null;
+            const artifact = this.kind === 'unlit' ? null : await loadArtifact(['debug', 'effects', 'sky'].includes(this.kind) ? 'engine-standard-lit-color' : artifactName);
+            const tonemap = ['lit', 'shadow', 'debug', 'effects', 'sky'].includes(this.kind) ? await loadArtifact('engine-tonemap') : null;
             const shadowDepth = this.kind === 'shadow' ? await loadArtifact('engine-shadow-depth') : null;
             const debug = this.kind === 'debug' ? {
                 point: await loadArtifact('engine-debug-point'),
@@ -93,6 +95,9 @@ export class EngineMeshDiagnosticHost {
                 ? executionProfile === 'cpu-x1'
                     ? this.exports.CreateUnlitAsync(this.canvas.id, String(assetManifestUrl))
                     : this.exports.CreateUnlitProfileAsync(this.canvas.id, String(assetManifestUrl), executionProfile)
+                : this.kind === 'sky'
+                ? this.exports.CreateSkyAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
+                    tonemap.descriptorJson, tonemap.source)
                 : this.kind === 'effects'
                 ? this.exports.CreateEffectsAsync(this.canvas.id, String(assetManifestUrl), artifact.descriptorJson, artifact.source,
                     tonemap.descriptorJson, tonemap.source)
@@ -112,9 +117,9 @@ export class EngineMeshDiagnosticHost {
             finally { if (this.creation === creation) this.creation = null; }
             if (controller.signal.aborted || epoch !== this.epoch) { this.exports.Stop(session); return; }
             this.session = session;
-            if (this.kind === 'unlit') {
-                this.unlitNativeIds = new WeakMap();
-                this.nextUnlitNativeId = 0;
+            if (['unlit', 'sky'].includes(this.kind)) {
+                this.nativeProgramIds = new WeakMap();
+                this.nextNativeProgramId = 0;
             }
             const renderer = new WebGpuCanvasRenderer(this.canvas,
                 stage => { if (epoch === this.epoch) this.onState(stage); },
@@ -223,7 +228,7 @@ export class EngineMeshDiagnosticHost {
     }
 
     pauseDiagnosticFrames() {
-        if (!this.session || !['effects', 'unlit'].includes(this.kind) || !this.renderer || this.failure || this.effectsPause ||
+        if (!this.session || !['effects', 'unlit', 'sky'].includes(this.kind) || !this.renderer || this.failure || this.effectsPause ||
             this.readyFrames < 2 || this.lastReadySession !== this.session ||
             this.statistics()?.resources?.retiring !== 0 || !this.request)
             throw new Error('Settled engine frames are required before diagnostic sampling.');
@@ -262,30 +267,42 @@ export class EngineMeshDiagnosticHost {
         this.onState('Preparing changed engine surface and light values');
     }
 
+    setSkyCase(sampleCase) {
+        if (!this.session || this.kind !== 'sky' || this.effectsPause)
+            throw new Error('An active, unpaused engine sky diagnostic is required.');
+        this.exports.SetSkyCase(this.session, sampleCase);
+        this.readyFrames = 0;
+        this.lastReadySession = 0;
+        this.settleFrames = 2;
+        this.startedAt = performance.now();
+        this.onState('Preparing changed engine sky values and camera pose');
+    }
+
     setUnlitCase(sampleCase) {
         if (!this.session || this.kind !== 'unlit') throw new Error('An active engine unlit diagnostic is required.');
         this.exports.SetUnlitCase(this.session, sampleCase);
     }
 
+    nativeProgramId(native) {
+        if (!native || typeof native !== 'object') throw new Error('An engine diagnostic GPU program lacks its native object.');
+        if (this.previousNativePrograms.has(native))
+            throw new Error('An engine diagnostic GPU program survived a fresh device session.');
+        let id = this.nativeProgramIds.get(native);
+        if (!id) {
+            id = ++this.nextNativeProgramId;
+            this.nativeProgramIds.set(native, id);
+        }
+        return id;
+    }
+
     unlitState() {
         if (!this.session || this.kind !== 'unlit') throw new Error('An active engine unlit diagnostic is required.');
         const shaders = [], pipelines = [], hdrTargets = [], targets = [];
-        const nativeId = native => {
-            if (!native || typeof native !== 'object') throw new Error('An engine Unlit GPU program lacks its native object.');
-            if (this.previousUnlitNatives.has(native))
-                throw new Error('An engine Unlit GPU program survived a fresh device session.');
-            let id = this.unlitNativeIds.get(native);
-            if (!id) {
-                id = ++this.nextUnlitNativeId;
-                this.unlitNativeIds.set(native, id);
-            }
-            return id;
-        };
         this.renderer._resources.slots.forEach((entry, slot) => {
             if (entry?.owner !== this.session || entry.value.retired) return;
             const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
-            if (entry.kind === 'shader') shaders.push({ ...identity, nativeId: nativeId(entry.value.native) });
-            if (entry.kind === 'render-pipeline') pipelines.push({ ...identity, nativeId: nativeId(entry.value.native),
+            if (entry.kind === 'shader') shaders.push({ ...identity, nativeId: this.nativeProgramId(entry.value.native) });
+            if (entry.kind === 'render-pipeline') pipelines.push({ ...identity, nativeId: this.nativeProgramId(entry.value.native),
                 sampleCount: entry.value.descriptor.multisample?.count ?? 1 });
             if (entry.kind === 'texture') {
                 const target = { ...identity, width: entry.value.width, height: entry.value.height,
@@ -298,7 +315,7 @@ export class EngineMeshDiagnosticHost {
         const observed = JSON.parse(this.exports.GetUnlitState(this.session));
         return { ...observed, shaders, pipelines, hdrTargets, targets,
             submittedFrame: this.unlitFrameEvidence.capture(),
-            resourceOwnership: this.unlitResourceOwnership?.capture(nativeId, observed.indexedCache) ?? null };
+            resourceOwnership: this.unlitResourceOwnership?.capture(this.nativeProgramId, observed.indexedCache) ?? null };
     }
 
     /** Reads only a canonical x1 texture owned by the current ordinary-unlit generation. */
@@ -441,18 +458,29 @@ export class EngineMeshDiagnosticHost {
         return { ...JSON.parse(this.exports.GetShadowState(this.session)), shaders, pipelines, hdrTargets, depthTargets };
     }
 
+    skyState() {
+        if (!this.session || this.kind !== 'sky') throw new Error('An active engine sky diagnostic is required.');
+        const state = this.litState();
+        for (const resource of [...state.shaders, ...state.pipelines]) {
+            const entry = this.renderer._resources.slots[resource.slot];
+            if (entry?.generation !== resource.generation) throw new Error('The engine sky program owner changed during sampling.');
+            resource.nativeId = this.nativeProgramId(entry.value.native);
+        }
+        return state;
+    }
+
     litState() {
-        if (!this.session || !['lit', 'effects'].includes(this.kind)) throw new Error('An active engine lit diagnostic is required.');
+        if (!this.session || !['lit', 'effects', 'sky'].includes(this.kind)) throw new Error('An active engine lit diagnostic is required.');
         const shaders = [], pipelines = [], hdrTargets = [];
         this.renderer._resources.slots.forEach((entry, slot) => {
-            if (entry?.owner !== this.session) return;
+            if (entry?.owner !== this.session || this.kind === 'sky' && entry.value.retired) return;
             const identity = { slot, generation: entry.generation, label: entry.value.label ?? '' };
             if (entry.kind === 'shader') shaders.push(identity);
             if (entry.kind === 'render-pipeline') pipelines.push(identity);
             if (entry.kind === 'texture' && entry.value.format === 'rgba16float')
                 hdrTargets.push({ ...identity, width: entry.value.width, height: entry.value.height });
         });
-        return { ...JSON.parse(this.exports.GetLitState(this.session)), shaders, pipelines, hdrTargets };
+        return { ...JSON.parse(this.kind === 'sky' ? this.exports.GetSkyState(this.session) : this.exports.GetLitState(this.session)), shaders, pipelines, hdrTargets };
     }
 
     resize(width, height) {
@@ -481,7 +509,7 @@ export class EngineMeshDiagnosticHost {
 
     /** Reads a five-pixel square at normalized canvas coordinates from the engine-owned HDR texture. */
     async readHdrAt(u, v) {
-        if (!this.session || !['lit', 'shadow', 'effects', 'unlit'].includes(this.kind))
+        if (!this.session || !['lit', 'shadow', 'effects', 'unlit', 'sky'].includes(this.kind))
             throw new Error('An active engine HDR diagnostic is required.');
         return this.readColorTargetAt('HDRSceneTex', u, v);
     }
@@ -637,11 +665,11 @@ export class EngineMeshDiagnosticHost {
         this.unlitFrameEvidence = null;
         this.unlitResourceOwnership?.dispose();
         this.unlitResourceOwnership = null;
-        if (session && this.kind === 'unlit' && this.renderer) {
-            this.previousUnlitNatives = new WeakSet();
+        if (session && ['unlit', 'sky'].includes(this.kind) && this.renderer) {
+            this.previousNativePrograms = new WeakSet();
             for (const entry of this.renderer._resources.slots)
                 if (entry?.owner === session && ['shader', 'render-pipeline'].includes(entry.kind) && entry.value.native)
-                    this.previousUnlitNatives.add(entry.value.native);
+                    this.previousNativePrograms.add(entry.value.native);
         }
         this.session = 0;
         this.readyFrames = 0;

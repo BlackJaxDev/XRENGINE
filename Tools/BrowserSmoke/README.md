@@ -52,6 +52,18 @@ recheck HDR/display pixels, and require retired GPU resources to drain without
 live-count growth before teardown. This establishes the bounded static rendering path, separately
 from RuntimeWorld/gameplay, shadows, probes, transparency and broader effects.
 
+The `engine-sky-gradient` check uses a real `SkyboxComponent`, a perspective
+camera, and a lit foreground through the shared default pipeline. It requires
+the cooked `engine-skybox-gradient` variant in the engine asset catalog. Seven
+cases cover an asymmetric gradient, camera translation, pitch, yaw, HDR
+intensity, solid color, and restoration. Independent camera rays predict five
+5x5 HDR and canvas regions, including the foreground's retained color and alpha.
+Two start/stop cycles each include non-square resize and restoration. Numeric
+and camera changes retain shader and pipeline handles. Mode changes can replace
+the material but must drain retired resources without live-count growth.
+This covers gradient and solid sky output only. Other projections, procedural
+controls, transparency over sky, and sky bloom remain separate checks.
+
 The `engine-unlit-materials` check starts a separate nine-tile board through the
 packaged material and pipeline catalogs. Factory-created V1 color, V2 linear and
 sRGB texture, V3 forced-opaque texture, V4 cutoff-boundary texture, and V5
@@ -226,8 +238,9 @@ Cook `Build/CommonAssets/Shaders/WebGPU/engine-depth.recipe.json`,
 `engine-standard-lit-color.recipe.json`,
 `engine-standard-lit-color-directional-shadow.recipe.json`,
 `engine-shadow-depth.recipe.json`, `engine-tonemap.recipe.json`,
-`engine-debug-point.recipe.json`, `engine-debug-line.recipe.json`, and
-`engine-debug-triangle.recipe.json` with `Tools/ShaderCooker`; supply the directory
+`engine-debug-point.recipe.json`, `engine-debug-line.recipe.json`,
+`engine-debug-triangle.recipe.json`, and `engine-skybox-gradient.recipe.json`
+with `Tools/ShaderCooker`; supply the directory
 containing its schema 3 `manifest.json`, hashed descriptors, and hashed WGSL. The
 shader artifacts are explicit runtime inputs to the smoke, not dependencies on
 an ignored prior agent run. The browser publish must include

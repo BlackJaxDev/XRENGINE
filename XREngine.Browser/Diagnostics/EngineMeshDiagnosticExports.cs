@@ -23,6 +23,7 @@ public static partial class EngineMeshDiagnosticExports
     private static ShaderProgramArtifact? _tonemapArtifact;
     private static bool _shadow;
     private static bool _debug;
+    private static bool _sky;
     private static bool _unlit;
     private static EngineUnlitDiagnosticProfile _unlitProfile = EngineUnlitDiagnosticProfile.Baseline;
     private static EngineMaterialVariantCatalog? _unlitVariants;
@@ -71,6 +72,13 @@ public static partial class EngineMeshDiagnosticExports
         => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
             null, null, null, effects: true);
 
+    /// <summary>Starts a gradient sky and foreground through the shared HDR pipeline.</summary>
+    [JSExport]
+    public static Task<int> CreateSkyAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
+        string tonemapDescriptorJson, string tonemapWgsl)
+        => CreateCoreAsync(canvasId, assetManifestUrl, descriptorJson, wgsl, tonemapDescriptorJson, tonemapWgsl,
+            null, null, null, sky: true);
+
     [JSExport]
     public static Task<int> CreateShadowAsync(string canvasId, string assetManifestUrl, string descriptorJson, string wgsl,
         string tonemapDescriptorJson, string tonemapWgsl, string shadowDepthDescriptorJson, string shadowDepthWgsl)
@@ -92,7 +100,7 @@ public static partial class EngineMeshDiagnosticExports
     private static async Task<int> CreateCoreAsync(string canvasId, string assetManifestUrl, string? descriptorJson, string? wgsl,
         string? tonemapDescriptorJson, string? tonemapWgsl, string? shadowDepthDescriptorJson, string? shadowDepthWgsl,
         DebugShaderInputs? debugSources, bool effects = false, bool unlit = false,
-        EngineUnlitDiagnosticProfile? unlitProfile = null)
+        EngineUnlitDiagnosticProfile? unlitProfile = null, bool sky = false)
     {
         if (_session != 0)
             throw new InvalidOperationException("EngineMeshDiagnostic.AlreadyActive: stop the existing diagnostic session first.");
@@ -113,7 +121,7 @@ public static partial class EngineMeshDiagnosticExports
             bool lit = tonemapDescriptorJson is not null && tonemapWgsl is not null;
             bool shadow = shadowDepthDescriptorJson is not null && shadowDepthWgsl is not null;
             bool debug = debugSources is not null;
-            if (effects && (artifact?.Name != "engine-standard-lit-color" || !lit || shadow || debug))
+            if ((effects || sky) && (artifact?.Name != "engine-standard-lit-color" || !lit || shadow || debug))
                 throw new InvalidDataException("EngineMeshDiagnostic.EffectArtifactsRequired: select the standard lit surface and tonemap artifacts.");
             if (!unlit && (lit ? artifact?.Pass != "opaque-forward" : artifact?.Pass is not ("depth-probe" or "texture-probe")))
                 throw new InvalidDataException("EngineMeshDiagnostic.ArtifactRequired: select a cooked engine raster diagnostic artifact.");
@@ -202,7 +210,7 @@ public static partial class EngineMeshDiagnosticExports
             }
             WebPipelineArtifactCatalog? effectArtifacts = null;
             EngineUnlitDiagnosticProfile selectedUnlitProfile = unlitProfile ?? EngineUnlitDiagnosticProfile.Baseline;
-            if (effects)
+            if (effects || sky)
             {
                 stage = "load verified effect catalog";
                 artifacts = await _assetSource.LoadShaderArtifactsAsync(cancellation.Token);
@@ -216,10 +224,14 @@ public static partial class EngineMeshDiagnosticExports
                     !effectArtifacts.TryResolve("tonemap", out ShaderProgramArtifact? packagedTonemap) ||
                     packagedTonemap.Identity != tonemap!.Identity)
                     throw new InvalidDataException("EngineMeshDiagnostic.EffectCatalogMismatch: the verified package must own the selected material and tonemap identities.");
-                foreach (string pass in new[] { "depth-normal", "gtao-generate", "gtao-blur-horizontal",
-                    "gtao-blur-vertical", "bloom-copy", "bloom-downsample", "bloom-upsample", "bloom-combine" })
-                    if (!effectArtifacts.TryResolve(pass, out _))
-                        throw new InvalidDataException($"EngineMeshDiagnostic.EffectPassMissing: {pass}.");
+                if (sky && !variants.TryResolve(new EngineMaterialVariantKey(EngineMaterialSemanticIdentity.SkyboxGradientV1,
+                    ShaderCompileTarget.WebGPUWgsl, "background", "fullscreen-sky-v1", "linear-hdr-v1"), out _))
+                    throw new InvalidDataException("EngineMeshDiagnostic.SkyVariantMissing: the package must contain the gradient sky artifact.");
+                if (effects)
+                    foreach (string pass in new[] { "depth-normal", "gtao-generate", "gtao-blur-horizontal",
+                        "gtao-blur-vertical", "bloom-copy", "bloom-downsample", "bloom-upsample", "bloom-combine" })
+                        if (!effectArtifacts.TryResolve(pass, out _))
+                            throw new InvalidDataException($"EngineMeshDiagnostic.EffectPassMissing: {pass}.");
             }
             if (unlit)
             {
@@ -264,6 +276,7 @@ public static partial class EngineMeshDiagnosticExports
             _tonemapArtifact = tonemap;
             _shadow = shadow;
             _debug = debug;
+            _sky = sky;
             _unlit = unlit;
             _unlitProfile = selectedUnlitProfile;
             _unlitVariants = unlit ? variants : null;
@@ -323,7 +336,7 @@ public static partial class EngineMeshDiagnosticExports
             _renderer.Initialize();
             stage = "construct engine fixture";
             _fixture = new EngineMeshDiagnosticFixture(_renderer, _artifact, checked((uint)width), checked((uint)height),
-                _tonemapArtifact, _shadow, _debug, _effectArtifacts, _unlit, _unlitProfile);
+                _tonemapArtifact, _shadow, _debug, _effectArtifacts, _unlit, _unlitProfile, _sky);
             if (_unlit)
                 _fixture.BindUnlitVariantIdentities(_unlitVariants!);
         }
@@ -394,6 +407,20 @@ public static partial class EngineMeshDiagnosticExports
     {
         RequireSession(session);
         return (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).GetLitState();
+    }
+
+    [JSExport]
+    public static void SetSkyCase(int session, int sampleCase)
+    {
+        RequireSession(session);
+        (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).SetSkyCase(sampleCase);
+    }
+
+    [JSExport]
+    public static string GetSkyState(int session)
+    {
+        RequireSession(session);
+        return (_fixture ?? throw new InvalidOperationException("EngineMeshDiagnostic.FixtureRequired.")).GetSkyState();
     }
 
     [JSExport]
@@ -525,6 +552,7 @@ public static partial class EngineMeshDiagnosticExports
         _tonemapArtifact = null;
         _shadow = false;
         _debug = false;
+        _sky = false;
         _unlit = false;
         _unlitProfile = EngineUnlitDiagnosticProfile.Baseline;
         _unlitVariants = null;

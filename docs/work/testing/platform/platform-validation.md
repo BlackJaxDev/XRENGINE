@@ -205,6 +205,37 @@ for the selected fixtures. Hardware performance, mobile devices, desktop parity,
 sky projections, and complete shader coverage remain open. No requirement count
 changes with this evidence.
 
+### Gradient and solid sky — 2026-10-29
+
+`Tools/BrowserSmoke/run.mjs` now includes `engine-sky-gradient` when an engine
+asset manifest is supplied. It uses the real sky component, perspective camera,
+lit foreground, cooked material catalog, and shared default render pipeline.
+Both targeted and full Chromium 154 / SwiftShader runs pass 18 samples over two starts:
+asymmetric gradient, camera translation, pitch, yaw, HDR intensity, solid color,
+restoration, and resize to 640 by 384 and back to 512 by 512. Each sample checks
+five 5-by-5 HDR regions and matching canvas pixels against analytic values.
+
+Numeric and camera changes retain managed handles. Resize retains the native
+shader modules and pipelines through rebuilt engine handles. Mode changes may
+replace the sky material. All 18 settled samples have 69 live resources and
+zero retiring resources. Baseline and pitched captures were viewed. The
+[qualification investigation](../../investigations/rendering/archive/2026-10-29-gradient-sky-qualification.md)
+records the handle-identity distinction and the earlier diagnostic assertions.
+
+The full BrowserSmoke run passes all 14 selected checks, including existing
+unlit materials, MSAA, indirect submission, GTAO, bloom, shadows, and overlays.
+The bare-host shipping autostart, optional published game, and separate Jolt
+spike are skipped. All 24 build and publish gates pass: four desktop builds,
+19 portable builds, and native-WASM browser publication. Builds report no
+warnings or errors. Fresh cooking packages 57 shaders. The separate publish
+bundle passes required-page, desktop-dependency exclusion, native-WASM, Jolt
+notice and pin, and browser restore-graph checks.
+
+This covers single-sample gradient and solid sky output on a software adapter.
+Other projections, procedural controls, sky bloom, transparency over sky,
+authored world serialization, desktop parity, and hardware acceptance remain
+open. It does not close the whole shader requirement.
+
 ### Requirement states
 
 This view preserves all 38 verification IDs: 13 complete and 25 open. The 163-ID metric and full evidence are in the [dated requirement ledger](../../progress/platform/unified-runtime-requirement-ledger-2026-10-07.md). Each result applies to the recorded source and device. An implementation result does not close a browser, desktop, or hardware check.
