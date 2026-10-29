@@ -1,5 +1,54 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Send-local-copy source consistency (2026-10-29)
+
+Implementation commit `31c38ac57ad29b2e5459be3219fa61a55bfe51c4` keeps
+send-local-copy existence probes and asynchronous bytes on the asset manager's
+captured runtime source. Global `DirectStorageIO.Source` replacement no longer
+retargets the bytes after the manager captured its owner. The source keeps its
+own read implementation, including acceleration. The manager checks its owner
+epoch after the probe and read and checks cancellation before remote submission.
+The [composition contract](../../../architecture/runtime/project-organization.md)
+records custom-source semantics and the provider-lifetime limit.
+
+When the manager has no source, the existing host read capability probes the
+path. A missing file still sends a request with no payload; an existing file
+still fails because an asset source is required. Custom hosts must provide a
+host read capability for this null-source probe. A custom source's `Exists`
+result now determines whether its bytes are requested, and errors from `Exists`
+propagate. Desktop `DirectStorageAssetSource.Exists` retains physical
+`File.Exists` behavior. This deliberately pairs a source's probe with its own
+read and does not claim a source-retirement lease for independent global swaps.
+
+A disposable executable against compiled Core and a real one-worker job manager
+passes ten checks. They cover source replacement during the probe, source bytes
+and null payloads, probe and read errors, cancellation including a source that
+ignores its token, owner retirement during a delayed read, null-source missing
+and existing files, and rejection of an async-only source before probing. The
+transport is controlled in memory and does not use network sockets. Core and the
+final harness build in Release with zero warnings and errors. Independent review
+found no concrete regression. No tracked tests changed. Evidence is in
+`Build/_AgentValidation/20261028-120000-webgpu-io/logs/send-copy-build.log`,
+`logs/send-copy-smoke-build.log`, `logs/send-copy-smoke.log`, and
+`reports/send-copy-inventory.json`. The initial gate was stopped after the
+cancellation check was narrowed to this mode; the final gate uses the committed
+source.
+
+The final local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `send-copy-` prefix under the same run's `logs/`;
+the fresh output is `send-copy-browser-publish/wwwroot/`. These checks do not
+establish Windows startup, rendered browser parity, accelerated hardware reads,
+network interoperability, or post-push CI. Shader sources and recipes did not
+change.
+
+The committed-source scan reports 26 files / 88 direct-file matching lines in
+the four roots. Core plus Rendering total 11 files / 29 lines. Blocking counts
+are unchanged. Both broad inventory requirements remain open.
+
 ## Remote download output placement (2026-10-29)
 
 Implementation commit `fed0e8a33b008856e62d462083b276f50244ae28` moves
