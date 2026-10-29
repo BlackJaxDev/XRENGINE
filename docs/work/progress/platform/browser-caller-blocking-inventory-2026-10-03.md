@@ -2,6 +2,15 @@
 
 Updated: 2026-10-28. This is a source inventory for the shared browser compile closure, not a live browser acceptance result. The caller-thread scheduler and physics-chain changes are recorded in [caller-thread physics-chain scheduling](browser-physics-chain-scheduling-2026-10-03.md). The latest committed-source scan below is pinned to 2026-10-28. Earlier sections retain their dated call-path and validation evidence.
 
+## Remote serving follow-up (2026-10-29)
+
+The scan at `db24bf998c8a49ba3725dda3800a5f9696dbb9fe` uses the same roots
+and expressions. Direct-file counts are Core **5 / 16**, Rendering **7 / 18**,
+Host **2 / 5**, and Data **13 / 54**, for **27 files / 93 lines**. Core plus
+Rendering total **12 files / 34 lines**. Blocking counts remain unchanged. The
+[remote serving record](browser-runtime-asset-io-boundaries-2026-10-03.md#remote-asset-serving-file-placement-2026-10-29)
+records the capability contract and runtime checks. Neither broad inventory is complete.
+
 ## Published archive probe follow-up (2026-10-29)
 
 The scan at `1ac20558d3b8177afd11d1719f64e9d3bce6647b` uses the same roots

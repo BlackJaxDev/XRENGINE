@@ -1,5 +1,50 @@
 # Runtime asset I/O boundaries in browser-capable code
 
+## Remote asset serving file placement (2026-10-29)
+
+Implementation commit `db24bf998c8a49ba3725dda3800a5f9696dbb9fe` moves the
+source-null remote-serving existence probes and asynchronous byte read to host
+capabilities. The operation retains one `IRuntimeHostFileReadBackend` for all
+host probes, then uses the same object as `IRuntimeHostFileAsyncReadBackend`.
+Desktop and smoke-publisher adapters implement the new asynchronous capability
+with `File.ReadAllBytesAsync` and the supplied token. Source-backed and catalog
+paths retain their existing ownership and read behavior. The
+[composition contract](../../../architecture/runtime/project-organization.md)
+records the custom-host requirement and provider-lifetime limit.
+
+A disposable executable against compiled Core passes seven checks: successful
+probe/read retain one provider through replacement; missing files stop before
+read or publication; empty paths need no provider; missing read or asynchronous
+capabilities fail explicitly; caller cancellation reaches the read and prevents
+publication; and a read completed after owner disposal is rejected before
+publication. The fake read backend uses the unchanged local publisher adapter
+for real file bytes. An initial retirement check incorrectly expected disposal
+to cancel a pending host read and waited indefinitely. The final check releases
+the read and verifies rejection by the advanced owner epoch. It does not claim
+that provider replacement cancels or leases a provider.
+
+Core and the final harness build in Release with zero warnings and errors.
+Independent source review found no definite lifetime, cancellation, or
+reservation regression. No tracked tests changed. Evidence is in
+`Build/_AgentValidation/20261028-120000-webgpu-io/logs/remote-serve-build.log`,
+`logs/remote-serve-smoke-build.log`, `logs/remote-serve-smoke.log`, and
+`reports/remote-serve-inventory.json`. The harness does not exercise catalog or
+asynchronous-source serving, network transport, or physical remote persistence.
+
+The full local publication gate passes. Editor, Server, and VRClient Release
+builds report zero warnings and errors with `EnableWindowsTargeting=true` on
+Linux. The unchanged desktop filesystem fixture passes one test. All 19
+manifest projects compile for `browser-wasm`; Browser publishes with native
+WASM and pinned Jolt inputs. The browser gate reports no warning or error
+diagnostics. Logs use the `remote-serve-` prefix under the same run's `logs/`;
+the fresh output is `remote-serve-browser-publish/wwwroot/`. These checks do
+not establish Windows startup, rendered browser parity, or post-push CI.
+Shader sources and recipes did not change.
+
+The committed-source scan reports 27 files / 93 direct-file matching lines in
+the four roots. Core plus Rendering total 12 files / 34 lines. Blocking counts
+are unchanged. Both broad inventory requirements remain open.
+
 ## Published archive probe placement (2026-10-29)
 
 Implementation commit `1ac20558d3b8177afd11d1719f64e9d3bce6647b` moves
